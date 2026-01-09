@@ -105,12 +105,12 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         // In standalone mode, the executor calls the provider directly
         let executor = self.app_context.executor();
         let created_by = Some(context.user_id.as_str().to_string());
-        let cmd = kalamdb_raft::SystemCommand::CreateNamespace {
+        let cmd = kalamdb_raft::MetaCommand::CreateNamespace {
             namespace_id: namespace_id.clone(),
             created_by,
         };
         
-        executor.execute_system(cmd).await.map_err(|e| {
+        executor.execute_meta(cmd).await.map_err(|e| {
             KalamDbError::ExecutionError(format!("Failed to create namespace via executor: {}", e))
         })?;
 

@@ -622,6 +622,7 @@ impl UpdateHandler {
             .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize filter: {}", e)))?;
 
         let cmd = SharedDataCommand::Update {
+            required_meta_index: 0, // Stamped by executor
             table_id: table_id.clone(),
             updates_data,
             filter_data: Some(filter_data),
@@ -658,6 +659,7 @@ impl UpdateHandler {
             .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize filter: {}", e)))?;
 
         let cmd = UserDataCommand::Update {
+            required_meta_index: 0, // Stamped by executor
             table_id: table_id.clone(),
             user_id: user_id.clone(),
             updates_data,

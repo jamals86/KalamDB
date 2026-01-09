@@ -177,7 +177,7 @@ impl Default for UsersStateMachine {
 #[async_trait]
 impl KalamStateMachine for UsersStateMachine {
     fn group_id(&self) -> GroupId {
-        GroupId::MetaUsers
+        GroupId::Meta
     }
     
     async fn apply(&self, index: u64, term: u64, command: &[u8]) -> Result<ApplyResult, RaftError> {

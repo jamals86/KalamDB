@@ -366,8 +366,12 @@ Server:
 
 13) why we ever need to wait for all nodes to have the change? dont we make sure we dont return an ack until the change is replicated to min_replication_nodes? so waiting for all nodes is not needed right?
 
-14) do we still need: backend/crates/kalamdb-commons/src/cluster/live_query_broadcast.rs
-and backend/crates/kalamdb-core/src/live/cluster_broadcast.rs since now the usertdata replicated the same way as all the other data: shared/user tables? then no need for this specific code, whenever a data is coming we check if this subscription is there and send it right?
-
 15) When a node catches up after rejoining, INSERT operations can be applied before the corresponding CREATE TABLE because MetaSystem and SharedData are independent Raft groups with separate log sequences. This can cause data loss when the INSERT fails with "Provider NOT FOUND" because the table doesn't exist yet.
 
+16) In the table system.cluster make sure we display also while the node is catching up dehydration and show the progress if available, also if there is any things else we can display there as a column display it
+
+17) Moniotor node health using our own health endpoint: https://deepwiki.com/databendlabs/openraft/6.4-metrics-and-monitoring which should return the nodes as well, only if he has a valid tokens or from localhost or same machine
+
+18) Make sure kalamdb-raft crate doesnt use rocksdb at all, only rely on kalamdb-store crate for storage
+
+19) remove all deprecated meta raft groups and also use the GroupId instead of using a strings everywhere also created_by: Option<String>, use UserId or maybe UserName

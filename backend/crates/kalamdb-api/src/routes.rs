@@ -92,10 +92,13 @@ pub fn configure_ui_routes(cfg: &mut web::ServiceConfig, ui_path: &str) {
 
 /// Health check endpoint handler
 async fn healthcheck_handler() -> HttpResponse {
+    let version = env!("CARGO_PKG_VERSION");
+    let build_date = option_env!("BUILD_DATE").unwrap_or("unknown");
+
     HttpResponse::Ok().json(json!({
         "status": "healthy",
-        //"version": env!("CARGO_PKG_VERSION"),
+        "version": version,
         "api_version": "v1",
-        //"build_date": env!("BUILD_DATE")
+        "build_date": build_date,
     }))
 }

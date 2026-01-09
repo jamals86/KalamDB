@@ -217,7 +217,6 @@ impl TestServer {
             "KALAMDB_JWT_TRUSTED_ISSUERS",
             &test_config.auth.jwt_trusted_issuers,
         );
-        test_config.server.node_id = "test-node".to_string();
         test_config.storage.default_storage_path = storage_base_path.clone();
 
         // Initialize AppContext using singleton pattern (only once for all tests)

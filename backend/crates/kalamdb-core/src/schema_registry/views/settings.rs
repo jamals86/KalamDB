@@ -154,16 +154,30 @@ impl VirtualView for SettingsView {
                 "API version prefix (e.g., v1)",
                 "server",
             );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "server.node_id",
-                &config.server.node_id,
-                "Unique node identifier for distributed setups",
-                "server",
-            );
+
+            // ===== Cluster Settings =====
+            if let Some(cluster) = &config.cluster {
+                Self::add_setting(
+                    &mut names,
+                    &mut values,
+                    &mut descriptions,
+                    &mut categories,
+                    "cluster.node_id",
+                    &cluster.node_id.to_string(),
+                    "Authoritative node identifier for cluster",
+                    "cluster",
+                );
+                Self::add_setting(
+                    &mut names,
+                    &mut values,
+                    &mut descriptions,
+                    &mut categories,
+                    "cluster.cluster_id",
+                    &cluster.cluster_id,
+                    "Unique cluster identifier",
+                    "cluster",
+                );
+            }
 
             // ===== Storage Settings =====
             Self::add_setting(

@@ -15,9 +15,8 @@ use kalamdb_commons::models::{NodeId, UserId};
 use crate::cluster_types::NodeStatus;
 use crate::{
     manager::RaftManager,
-    ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId, JobsCommand, JobsResponse, KalamNode, RaftError,
-    SharedDataCommand, SystemCommand, SystemResponse, UserDataCommand, UsersCommand,
-    UsersResponse,
+    ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId, KalamNode, MetaCommand,
+    MetaResponse, RaftError, SharedDataCommand, UserDataCommand,
 };
 
 /// Result type for executor operations
@@ -67,25 +66,17 @@ impl RaftExecutor {
 
 #[async_trait]
 impl CommandExecutor for RaftExecutor {
-    async fn execute_system(&self, cmd: SystemCommand) -> Result<SystemResponse> {
+    async fn execute_meta(&self, cmd: MetaCommand) -> Result<MetaResponse> {
         let bytes = Self::serialize(&cmd)?;
-        let result = self.manager.propose_system(bytes).await?;
+        let result = self.manager.propose_meta(bytes).await?;
         Self::deserialize(&result)
     }
 
-    async fn execute_users(&self, cmd: UsersCommand) -> Result<UsersResponse> {
-        let bytes = Self::serialize(&cmd)?;
-        let result = self.manager.propose_users(bytes).await?;
-        Self::deserialize(&result)
-    }
-
-    async fn execute_jobs(&self, cmd: JobsCommand) -> Result<JobsResponse> {
-        let bytes = Self::serialize(&cmd)?;
-        let result = self.manager.propose_jobs(bytes).await?;
-        Self::deserialize(&result)
-    }
-
-    async fn execute_user_data(&self, user_id: &UserId, cmd: UserDataCommand) -> Result<DataResponse> {
+    async fn execute_user_data(&self, user_id: &UserId, mut cmd: UserDataCommand) -> Result<DataResponse> {
+        // Stamp the watermark: capture current Meta group's last applied index
+        let meta_index = self.manager.current_meta_index();
+        cmd.set_required_meta_index(meta_index);
+        
         let shard = self.user_shard(user_id);
         let bytes = Self::serialize(&cmd)?;
         let result = self.manager.propose_user_data(shard, bytes).await?;
@@ -99,7 +90,11 @@ impl CommandExecutor for RaftExecutor {
         Ok(response)
     }
 
-    async fn execute_shared_data(&self, cmd: SharedDataCommand) -> Result<DataResponse> {
+    async fn execute_shared_data(&self, mut cmd: SharedDataCommand) -> Result<DataResponse> {
+        // Stamp the watermark: capture current Meta group's last applied index
+        let meta_index = self.manager.current_meta_index();
+        cmd.set_required_meta_index(meta_index);
+        
         let bytes = Self::serialize(&cmd)?;
         // All shared data goes to shard 0
         let result = self.manager.propose_shared_data(0, bytes).await?;
@@ -142,7 +137,7 @@ impl CommandExecutor for RaftExecutor {
             }
         }
         
-        let meta_metrics = self.manager.meta_system_metrics();
+        let meta_metrics = self.manager.meta_metrics();
         let mut voter_ids = BTreeSet::new();
         let mut nodes_map: BTreeMap<u64, KalamNode> = BTreeMap::new();
 

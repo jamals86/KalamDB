@@ -164,9 +164,6 @@ pub struct ServerSettings {
     /// API version prefix for endpoints (default: "v1")
     #[serde(default = "default_api_version")]
     pub api_version: String,
-    /// Unique node identifier for this server instance (default: "node1")
-    #[serde(default = "default_node_id")]
-    pub node_id: String,
     /// Enable HTTP/2 protocol support (default: true)
     /// When true, server uses bind_auto_h2c() for automatic HTTP/1.1 and HTTP/2 cleartext negotiation
     /// When false, server only supports HTTP/1.1
@@ -785,7 +782,6 @@ impl Default for ServerConfig {
                 port: 8080,
                 workers: 0,
                 api_version: default_api_version(),
-                node_id: default_node_id(),
                 enable_http2: default_enable_http2(),
                 ui_path: default_ui_path(),
             },

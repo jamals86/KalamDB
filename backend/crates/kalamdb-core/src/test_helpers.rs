@@ -58,7 +58,6 @@ pub fn init_test_app_context() -> Arc<TestDb> {
 
         // Create minimal test config using Default + overrides
         let mut test_config = kalamdb_commons::config::ServerConfig::default();
-        test_config.server.node_id = "test-node".to_string();
         test_config.storage.default_storage_path = "data/storage".to_string();
         test_config.execution.max_parameters = 50;
         test_config.execution.max_parameter_size_bytes = 512 * 1024;

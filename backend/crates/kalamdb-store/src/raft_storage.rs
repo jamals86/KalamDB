@@ -60,12 +60,8 @@ pub const RAFT_PARTITION_NAME: &str = "raft_data";
 /// dependencies. The conversion is done at the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RaftGroupId {
-    /// System metadata (namespaces, tables, storages)
-    MetaSystem,
-    /// User accounts and authentication
-    MetaUsers,
-    /// Background jobs coordination
-    MetaJobs,
+    /// Unified metadata (namespaces, tables, storages, users, jobs)
+    Meta,
     /// User table data shard
     DataUserShard(u32),
     /// Shared table data shard
@@ -78,9 +74,7 @@ impl RaftGroupId {
     /// All keys in `raft_data` partition are prefixed with this string.
     pub fn key_prefix(&self) -> String {
         match self {
-            RaftGroupId::MetaSystem => "sys".to_string(),
-            RaftGroupId::MetaUsers => "users".to_string(),
-            RaftGroupId::MetaJobs => "jobs".to_string(),
+            RaftGroupId::Meta => "meta".to_string(),
             RaftGroupId::DataUserShard(n) => format!("u:{:05}", n),
             RaftGroupId::DataSharedShard(n) => format!("s:{:05}", n),
         }

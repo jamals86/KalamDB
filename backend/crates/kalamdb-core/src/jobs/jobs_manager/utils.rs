@@ -56,7 +56,7 @@ impl JobsManager {
         let running_jobs = self.list_jobs(filter).await?;
 
         if running_jobs.is_empty() {
-            log::info!("No incomplete jobs to recover");
+            log::debug!("No incomplete jobs to recover");
             return Ok(());
         }
 

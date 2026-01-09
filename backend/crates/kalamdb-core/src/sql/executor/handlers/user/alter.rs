@@ -90,10 +90,10 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
 
         updated.updated_at = chrono::Utc::now().timestamp_millis();
         if self.app_context.executor().is_cluster_mode() {
-            let cmd = kalamdb_raft::UsersCommand::UpdateUser { user: updated.clone() };
+            let cmd = kalamdb_raft::MetaCommand::UpdateUser { user: updated.clone() };
             self.app_context
                 .executor()
-                .execute_users(cmd)
+                .execute_meta(cmd)
                 .await
                 .map_err(|e| {
                     KalamDbError::ExecutionError(format!("Failed to update user via executor: {}", e))

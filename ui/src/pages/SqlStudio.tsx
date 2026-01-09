@@ -195,6 +195,9 @@ export default function SqlStudio() {
   } | null>(null);
   const tabCounter = useRef(initialState.tabCounter);
   const monacoRef = useRef<Monaco | null>(null);
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  // Use a ref to store schema so the completion provider always has access to the latest data
+  const schemaRef = useRef<SchemaNode[]>([]);
   
   // Data type mappings from system.datatypes
   const { toSqlType } = useDataTypes();
@@ -289,6 +292,8 @@ export default function SqlStudio() {
       const namespaces = Array.from(namespaceMap.values());
       console.log(`Loaded schema: ${namespaces.length} namespaces, ${tableMap.size} tables`);
       setSchema(namespaces);
+      // Update ref so completion provider has access to latest schema
+      schemaRef.current = namespaces;
     } catch (error) {
       console.error("Failed to load schema:", error);
     } finally {
@@ -889,6 +894,7 @@ export default function SqlStudio() {
 
   const handleEditorMount = useCallback((editorInstance: editor.IStandaloneCodeEditor, monaco: Monaco) => {
     monacoRef.current = monaco;
+    editorRef.current = editorInstance;
     
     // Add Ctrl/Cmd + Enter shortcut
     editorInstance.addCommand(
@@ -898,10 +904,44 @@ export default function SqlStudio() {
       }
     );
 
+    // Helper function to extract table references from query text
+    const extractTableReferences = (queryText: string): { namespace: string | null; table: string; alias: string | null }[] => {
+      const tables: { namespace: string | null; table: string; alias: string | null }[] = [];
+      // Match patterns like: FROM namespace.table [AS] alias, FROM table [AS] alias
+      // Also matches JOIN statements
+      const tablePattern = /(?:FROM|JOIN)\s+(?:(\w+)\.)?(\w+)(?:\s+(?:AS\s+)?(\w+))?/gi;
+      let match;
+      while ((match = tablePattern.exec(queryText)) !== null) {
+        tables.push({
+          namespace: match[1] || null,
+          table: match[2],
+          alias: match[3] || null,
+        });
+      }
+      return tables;
+    };
+
+    // Helper function to find columns for a table reference
+    const findTableColumns = (tableName: string, namespace: string | null): SchemaNode[] => {
+      const currentSchema = schemaRef.current;
+      for (const ns of currentSchema) {
+        if (namespace && ns.name.toLowerCase() !== namespace.toLowerCase()) continue;
+        for (const table of ns.children || []) {
+          if (table.name.toLowerCase() === tableName.toLowerCase()) {
+            return table.children || [];
+          }
+        }
+      }
+      return [];
+    };
+
     // Register SQL autocomplete provider with schema information
     const completionProvider = monaco.languages.registerCompletionItemProvider('sql', {
-      triggerCharacters: ['.', ' '],
+      triggerCharacters: ['.', ' ', ','],
       provideCompletionItems: (model: editor.ITextModel, position: Monaco['Position']) => {
+        // Use schemaRef.current to always get the latest schema
+        const currentSchema = schemaRef.current;
+        
         const word = model.getWordUntilPosition(position);
         const range = {
           startLineNumber: position.lineNumber,
@@ -910,8 +950,15 @@ export default function SqlStudio() {
           endColumn: word.endColumn,
         };
 
-        // Get text before cursor to detect context
+        // Get full query text and text before cursor for context detection
+        const fullQuery = model.getValue();
         const textBeforeCursor = model.getValueInRange({
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        });
+        const lineBeforeCursor = model.getValueInRange({
           startLineNumber: position.lineNumber,
           startColumn: 1,
           endLineNumber: position.lineNumber,
@@ -920,28 +967,46 @@ export default function SqlStudio() {
 
         const suggestions: Monaco['languages']['CompletionItem'][] = [];
 
-        // Check if we're after a dot (table.column or namespace.table)
-        const dotMatch = textBeforeCursor.match(/(\w+)\.\s*$/);
+        // Check if we're after a dot (table.column, namespace.table, or alias.column)
+        const dotMatch = lineBeforeCursor.match(/(\w+)\.\s*$/);
         
         if (dotMatch) {
           const prefix = dotMatch[1].toLowerCase();
           
           // Look for matching namespace to suggest tables
-          const matchingNamespace = schema.find(ns => ns.name.toLowerCase() === prefix);
+          const matchingNamespace = currentSchema.find(ns => ns.name.toLowerCase() === prefix);
           if (matchingNamespace?.children) {
             matchingNamespace.children.forEach(table => {
               suggestions.push({
                 label: table.name,
                 kind: monaco.languages.CompletionItemKind.Class,
                 insertText: table.name,
-                detail: `Table in ${matchingNamespace.name}`,
+                detail: `${table.tableType || 'user'} table in ${matchingNamespace.name}`,
+                documentation: `${table.children?.length || 0} columns`,
+                range,
+              } as Monaco['languages']['CompletionItem']);
+            });
+          }
+          
+          // Check if prefix is a table alias from the query
+          const tableRefs = extractTableReferences(fullQuery);
+          const aliasMatch = tableRefs.find(ref => ref.alias?.toLowerCase() === prefix);
+          if (aliasMatch) {
+            const columns = findTableColumns(aliasMatch.table, aliasMatch.namespace);
+            columns.forEach(col => {
+              suggestions.push({
+                label: col.name,
+                kind: monaco.languages.CompletionItemKind.Field,
+                insertText: col.name,
+                detail: `${col.dataType}${col.isNullable === false ? ' NOT NULL' : ''}${col.isPrimaryKey ? ' (PK)' : ''}`,
+                documentation: `Column from ${aliasMatch.table}`,
                 range,
               } as Monaco['languages']['CompletionItem']);
             });
           }
           
           // Look for matching table to suggest columns
-          schema.forEach(ns => {
+          currentSchema.forEach(ns => {
             ns.children?.forEach(table => {
               if (table.name.toLowerCase() === prefix) {
                 table.children?.forEach(col => {
@@ -950,54 +1015,184 @@ export default function SqlStudio() {
                     kind: monaco.languages.CompletionItemKind.Field,
                     insertText: col.name,
                     detail: `${col.dataType}${col.isNullable === false ? ' NOT NULL' : ''}${col.isPrimaryKey ? ' (PK)' : ''}`,
+                    documentation: `Column from ${ns.name}.${table.name}`,
                     range,
                   } as Monaco['languages']['CompletionItem']);
                 });
               }
             });
           });
-        } else {
-          // Suggest SQL keywords
-          const keywords = [
-            'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN',
-            'ORDER BY', 'GROUP BY', 'HAVING', 'LIMIT', 'OFFSET', 'JOIN', 'LEFT JOIN',
-            'RIGHT JOIN', 'INNER JOIN', 'OUTER JOIN', 'ON', 'AS', 'DISTINCT', 'COUNT',
-            'SUM', 'AVG', 'MIN', 'MAX', 'INSERT INTO', 'VALUES', 'UPDATE', 'SET',
-            'DELETE FROM', 'CREATE TABLE', 'CREATE NAMESPACE', 'DROP TABLE', 'ALTER TABLE',
-            'NULL', 'TRUE', 'FALSE', 'ASC', 'DESC'
-          ];
           
-          keywords.forEach(kw => {
-            suggestions.push({
-              label: kw,
-              kind: monaco.languages.CompletionItemKind.Keyword,
-              insertText: kw,
-              range,
-            } as Monaco['languages']['CompletionItem']);
-          });
-
-          // Suggest namespaces
-          schema.forEach(ns => {
+          return { suggestions };
+        }
+        
+        // Check context: are we after FROM, JOIN, UPDATE, INTO, etc.?
+        const upperText = textBeforeCursor.toUpperCase();
+        const isAfterTableKeyword = /(?:FROM|JOIN|UPDATE|INTO|TABLE)\s+\w*$/i.test(lineBeforeCursor);
+        const isAfterSelect = /SELECT\s+(?:[\w\s,.*`"[\]]+)?\s*$/i.test(lineBeforeCursor) && !/FROM/i.test(lineBeforeCursor);
+        const isAfterWhere = /WHERE\s+/i.test(upperText) && !/SELECT\s+/i.test(lineBeforeCursor.toUpperCase());
+        const isAfterOn = /\bON\s+\w*$/i.test(lineBeforeCursor);
+        const isAfterComma = /,\s*$/i.test(lineBeforeCursor);
+        
+        // Get table references from query for column suggestions
+        const tableRefs = extractTableReferences(fullQuery);
+        
+        // After FROM, JOIN, UPDATE, INTO - suggest tables
+        if (isAfterTableKeyword) {
+          // First suggest namespaces
+          currentSchema.forEach(ns => {
             suggestions.push({
               label: ns.name,
               kind: monaco.languages.CompletionItemKind.Module,
               insertText: ns.name,
               detail: 'Namespace',
+              documentation: `${ns.children?.length || 0} tables`,
               range,
+              sortText: '0' + ns.name, // Sort namespaces first
             } as Monaco['languages']['CompletionItem']);
 
-            // Also suggest fully qualified table names
+            // Suggest fully qualified table names with higher priority for system tables
             ns.children?.forEach(table => {
+              const isSystem = ns.name === 'system' || ns.name === 'information_schema';
               suggestions.push({
                 label: `${ns.name}.${table.name}`,
                 kind: monaco.languages.CompletionItemKind.Class,
                 insertText: `${ns.name}.${table.name}`,
-                detail: `Table in ${ns.name}`,
+                detail: `${table.tableType || 'user'} table`,
+                documentation: `${table.children?.length || 0} columns`,
                 range,
+                sortText: (isSystem ? '1' : '2') + ns.name + '.' + table.name,
               } as Monaco['languages']['CompletionItem']);
             });
           });
+          
+          return { suggestions };
         }
+        
+        // After SELECT or after comma in SELECT - suggest columns and aggregate functions
+        if (isAfterSelect || (isAfterComma && !isAfterTableKeyword)) {
+          // Suggest aggregate functions
+          const aggregates = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'COUNT(*)'];
+          aggregates.forEach(fn => {
+            suggestions.push({
+              label: fn,
+              kind: monaco.languages.CompletionItemKind.Function,
+              insertText: fn.includes('(') ? fn : fn + '(',
+              detail: 'Aggregate function',
+              range,
+              sortText: '0' + fn,
+            } as Monaco['languages']['CompletionItem']);
+          });
+          
+          // Suggest * for all columns
+          suggestions.push({
+            label: '*',
+            kind: monaco.languages.CompletionItemKind.Operator,
+            insertText: '*',
+            detail: 'All columns',
+            range,
+            sortText: '00',
+          } as Monaco['languages']['CompletionItem']);
+          
+          // If tables are referenced in query, suggest their columns
+          if (tableRefs.length > 0) {
+            tableRefs.forEach(ref => {
+              const columns = findTableColumns(ref.table, ref.namespace);
+              const prefix = ref.alias || (ref.namespace ? `${ref.namespace}.${ref.table}` : ref.table);
+              columns.forEach(col => {
+                suggestions.push({
+                  label: `${prefix}.${col.name}`,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  insertText: `${prefix}.${col.name}`,
+                  detail: col.dataType || 'unknown',
+                  documentation: `Column from ${ref.namespace ? ref.namespace + '.' : ''}${ref.table}`,
+                  range,
+                  sortText: '1' + prefix + col.name,
+                } as Monaco['languages']['CompletionItem']);
+              });
+            });
+          }
+          
+          return { suggestions };
+        }
+        
+        // After WHERE or ON - suggest columns from referenced tables
+        if (isAfterWhere || isAfterOn) {
+          tableRefs.forEach(ref => {
+            const columns = findTableColumns(ref.table, ref.namespace);
+            const prefix = ref.alias || ref.table;
+            columns.forEach(col => {
+              suggestions.push({
+                label: `${prefix}.${col.name}`,
+                kind: monaco.languages.CompletionItemKind.Field,
+                insertText: `${prefix}.${col.name}`,
+                detail: col.dataType || 'unknown',
+                range,
+                sortText: '0' + prefix + col.name,
+              } as Monaco['languages']['CompletionItem']);
+            });
+          });
+          
+          // Also suggest comparison operators and keywords
+          const whereKeywords = ['AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN', 'IS NULL', 'IS NOT NULL', '=', '!=', '<', '>', '<=', '>='];
+          whereKeywords.forEach(kw => {
+            suggestions.push({
+              label: kw,
+              kind: monaco.languages.CompletionItemKind.Keyword,
+              insertText: kw,
+              range,
+              sortText: '2' + kw,
+            } as Monaco['languages']['CompletionItem']);
+          });
+          
+          return { suggestions };
+        }
+        
+        // Default: suggest SQL keywords, namespaces, and tables
+        const keywords = [
+          'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN',
+          'ORDER BY', 'GROUP BY', 'HAVING', 'LIMIT', 'OFFSET', 'JOIN', 'LEFT JOIN',
+          'RIGHT JOIN', 'INNER JOIN', 'OUTER JOIN', 'ON', 'AS', 'DISTINCT', 'COUNT',
+          'SUM', 'AVG', 'MIN', 'MAX', 'INSERT INTO', 'VALUES', 'UPDATE', 'SET',
+          'DELETE FROM', 'CREATE TABLE', 'CREATE NAMESPACE', 'DROP TABLE', 'ALTER TABLE',
+          'NULL', 'TRUE', 'FALSE', 'ASC', 'DESC'
+        ];
+        
+        keywords.forEach(kw => {
+          suggestions.push({
+            label: kw,
+            kind: monaco.languages.CompletionItemKind.Keyword,
+            insertText: kw,
+            range,
+            sortText: '1' + kw,
+          } as Monaco['languages']['CompletionItem']);
+        });
+
+        // Suggest namespaces
+        currentSchema.forEach(ns => {
+          suggestions.push({
+            label: ns.name,
+            kind: monaco.languages.CompletionItemKind.Module,
+            insertText: ns.name,
+            detail: 'Namespace',
+            documentation: `${ns.children?.length || 0} tables`,
+            range,
+            sortText: '2' + ns.name,
+          } as Monaco['languages']['CompletionItem']);
+
+          // Also suggest fully qualified table names
+          ns.children?.forEach(table => {
+            suggestions.push({
+              label: `${ns.name}.${table.name}`,
+              kind: monaco.languages.CompletionItemKind.Class,
+              insertText: `${ns.name}.${table.name}`,
+              detail: `${table.tableType || 'user'} table in ${ns.name}`,
+              documentation: `${table.children?.length || 0} columns`,
+              range,
+              sortText: '3' + ns.name + '.' + table.name,
+            } as Monaco['languages']['CompletionItem']);
+          });
+        });
 
         return { suggestions };
       },
@@ -1007,7 +1202,7 @@ export default function SqlStudio() {
     return () => {
       completionProvider.dispose();
     };
-  }, [executeQuery, schema]);
+  }, [executeQuery]);
 
   const renderSchemaTree = (nodes: SchemaNode[], path: string[] = []) => {
     return nodes.map((node) => {

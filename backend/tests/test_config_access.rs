@@ -62,7 +62,7 @@ async fn test_config_accessible_from_app_context() {
     let config = app_context.config();
 
     // Verify basic config fields
-    assert_eq!(config.server.node_id, "test-node");
+    assert_eq!(app_context.node_id().as_u64(), 1);
     assert_eq!(config.storage.default_storage_path, "data/storage");
 
     // Verify execution settings are present

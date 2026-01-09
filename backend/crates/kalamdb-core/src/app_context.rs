@@ -28,6 +28,11 @@ use once_cell::sync::OnceCell;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+const BUILD_DATE: &str = option_env!("BUILD_DATE").unwrap_or("unknown");
+const GIT_BRANCH: &str = option_env!("GIT_BRANCH").unwrap_or("unknown");
+const GIT_COMMIT_HASH: &str = option_env!("GIT_COMMIT_HASH").unwrap_or("unknown");
+
 static APP_CONTEXT: OnceLock<Arc<AppContext>> = OnceLock::new();
 
 /// AppContext singleton
@@ -336,33 +341,29 @@ impl AppContext {
                     // Convert to RaftManagerConfig using From trait
                     let raft_config = kalamdb_raft::manager::RaftManagerConfig::from(cluster_config.clone());
                     
-                    log::info!("Creating RaftManager...");
+                    log::debug!("Creating RaftManager...");
                     let manager = Arc::new(kalamdb_raft::manager::RaftManager::new(raft_config));
                     
-                    // Wire up the system applier for metadata replication
-                    // This ensures namespaces/tables/storages are persisted on all nodes
-                    log::info!("Wiring SystemApplier for metadata replication...");
-                    let system_applier = Arc::new(crate::applier::ProviderSystemApplier::new(system_tables.clone()));
-                    manager.set_system_applier(system_applier);
-
-                    log::info!("Wiring UsersApplier for user metadata replication...");
-                    let users_applier = Arc::new(crate::applier::ProviderUsersApplier::new(system_tables.clone()));
-                    manager.set_users_applier(users_applier);
+                    // Wire up the unified meta applier for all metadata replication
+                    // This ensures namespaces/tables/storages/users/jobs are persisted on all nodes
+                    log::debug!("Wiring MetaApplier for unified metadata replication...");
+                    let meta_applier = Arc::new(crate::applier::ProviderMetaApplier::new(system_tables.clone()));
+                    manager.set_meta_applier(meta_applier);
                     
                     // Wire up data appliers for user/shared table replication
                     // These ensure INSERT/UPDATE/DELETE data is replicated to all nodes
-                    log::info!("Wiring UserDataApplier for user table data replication...");
+                    log::debug!("Wiring UserDataApplier for user table data replication...");
                     let user_data_applier = Arc::new(crate::applier::ProviderUserDataApplier::new());
                     manager.set_user_data_applier(user_data_applier);
                     
-                    log::info!("Wiring SharedDataApplier for shared table data replication...");
+                    log::debug!("Wiring SharedDataApplier for shared table data replication...");
                     let shared_data_applier = Arc::new(crate::applier::ProviderSharedDataApplier::new());
                     manager.set_shared_data_applier(shared_data_applier);
                     
-                    log::info!("Creating RaftExecutor...");
+                    log::debug!("Creating RaftExecutor...");
                     Arc::new(kalamdb_raft::RaftExecutor::new(manager))
                 } else {
-                    log::info!("Standalone mode (no [cluster] config), using StandaloneExecutor");
+                    //log::info!("Standalone mode (no [cluster] config), using StandaloneExecutor");
                     Arc::new(crate::executor::StandaloneExecutor::new(system_tables.clone()))
                 };
 
@@ -914,8 +915,20 @@ impl AppContext {
         // Node ID
         metrics.push(("node_id".to_string(), self.node_id.to_string()));
 
-        // Server version (from config)
-        metrics.push(("server_version".to_string(), "0.1.1".to_string()));
+        // Server build/version
+        metrics.push(("server_version".to_string(), SERVER_VERSION.to_string()));
+        metrics.push(("server_build_date".to_string(), BUILD_DATE.to_string()));
+        metrics.push(("server_git_branch".to_string(), GIT_BRANCH.to_string()));
+        metrics.push(("server_git_commit".to_string(), GIT_COMMIT_HASH.to_string()));
+
+        // Cluster info
+        metrics.push((
+            "cluster_mode".to_string(),
+            self.config.cluster.is_some().to_string(),
+        ));
+        if let Some(cluster) = &self.config.cluster {
+            metrics.push(("cluster_name".to_string(), cluster.name.clone()))
+        }
 
         metrics
     }

@@ -8,7 +8,6 @@ port = 8080
 workers = 0
 enable_http2 = true
 api_version = "v1"
-node_id = "node3"
 
 [storage]
 rocksdb_path = "/data/rocksdb"

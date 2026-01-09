@@ -331,9 +331,15 @@ impl AutoCompleter {
                         .find(|(k, _)| k.to_ascii_uppercase() == ns_part_upper)
                     {
                         for t in tables {
-                            if t.to_ascii_uppercase().starts_with(&tbl_part_upper) {
+                            let candidate = if t.contains('.') {
+                                t.clone() // already fully qualified
+                            } else {
+                                format!("{}.{}", ns_name, t)
+                            };
+
+                            if candidate.to_ascii_uppercase().starts_with(&tbl_part_upper) {
                                 results.push(StyledPair::new(
-                                    format!("{}.{}", ns_name, t),
+                                    candidate,
                                     CompletionCategory::Table,
                                 ));
                             }
@@ -380,7 +386,11 @@ impl AutoCompleter {
                 if let Some(cols) = self.ns_tables.get(namespace) {
                     // Here `cols` are tables within the namespace
                     for t in cols {
-                        let composite = format!("{}.{}", namespace, t);
+                        let composite = if t.contains('.') {
+                            t.clone() // already qualified, avoid double namespace
+                        } else {
+                            format!("{}.{}", namespace, t)
+                        };
                         if composite.to_ascii_uppercase().starts_with(&input_upper) {
                             results.push(StyledPair::new(composite, CompletionCategory::Table));
                         }

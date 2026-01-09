@@ -548,6 +548,7 @@ impl DeleteHandler {
             .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize PKs: {}", e)))?;
 
         let cmd = SharedDataCommand::Delete {
+            required_meta_index: 0, // Stamped by executor
             table_id: table_id.clone(),
             filter_data: Some(filter_data),
         };
@@ -580,6 +581,7 @@ impl DeleteHandler {
             .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize PKs: {}", e)))?;
 
         let cmd = UserDataCommand::Delete {
+            required_meta_index: 0, // Stamped by executor
             table_id: table_id.clone(),
             user_id: user_id.clone(),
             filter_data: Some(filter_data),

@@ -85,7 +85,7 @@ pub async fn bootstrap(
         config.storage.default_storage_path.clone(),
         config.clone(), // ServerConfig needs to be cloned for Arc storage in AppContext
     );
-    info!(
+    debug!(
         "AppContext initialized with all stores, managers, registries, and providers ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
@@ -146,7 +146,7 @@ pub async fn bootstrap(
     // Initialize system tables and verify schema version (Phase 10 Phase 7, T075-T079)
     let phase_start = std::time::Instant::now();
     kalamdb_system::initialize_system_tables(backend.clone()).await?;
-    info!(
+    debug!(
         "System tables initialized with schema version tracking ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
@@ -155,7 +155,7 @@ pub async fn bootstrap(
     let job_manager = app_context.job_manager();
     let max_concurrent = config.jobs.max_concurrent;
     tokio::spawn(async move {
-        info!(
+        debug!(
             "Starting JobsManager run loop with max {} concurrent jobs",
             max_concurrent
         );
@@ -163,7 +163,7 @@ pub async fn bootstrap(
             log::error!("JobsManager run loop failed: {}", e);
         }
     });
-    info!("JobsManager background task spawned");
+    debug!("JobsManager background task spawned");
 
     // Seed default storage if necessary (using SystemTablesRegistry)
     let phase_start = std::time::Instant::now();
@@ -191,9 +191,9 @@ pub async fn bootstrap(
         storages_provider.insert_storage(default_storage)?;
         info!("Default 'local' storage created successfully");
     } else {
-        info!("Found {} existing storage(s)", storage_count);
+        debug!("Found {} existing storage(s)", storage_count);
     }
-    info!(
+    debug!(
         "Storage initialization completed ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
@@ -219,12 +219,12 @@ pub async fn bootstrap(
     app_context.set_sql_executor(sql_executor.clone());
     live_query_manager.set_sql_executor(sql_executor.clone());
 
-    info!(
+    debug!(
         "SqlExecutor initialized with DROP TABLE support, storage registry, job manager, and table registration"
     );
 
     sql_executor.load_existing_tables().await?;
-    info!(
+    debug!(
         "Existing tables loaded and registered with DataFusion ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
@@ -237,7 +237,7 @@ pub async fn bootstrap(
         window: std::time::Duration::from_secs(1),
     };
     let rate_limiter = Arc::new(RateLimiter::with_config(rate_limit_config));
-    info!(
+    debug!(
         "Rate limiter initialized ({} queries/sec, {} messages/sec, {} max subscriptions)",
         config.rate_limit.max_queries_per_sec,
         config.rate_limit.max_messages_per_sec,
@@ -256,7 +256,7 @@ pub async fn bootstrap(
     let client_timeout = config.websocket.client_timeout_secs.unwrap_or(10);
     let auth_timeout = config.websocket.auth_timeout_secs.unwrap_or(3);
     let heartbeat_interval = 5; // Fixed at 5s in AppContext
-    info!(
+    debug!(
         "ConnectionsManager initialized (client_timeout={}s, auth_timeout={}s, heartbeat_interval={}s)",
         client_timeout,
         auth_timeout,
@@ -269,7 +269,7 @@ pub async fn bootstrap(
     // Crash recovery handled by JobsManager.recover_incomplete_jobs() in run_loop
     // Flush scheduling via FLUSH TABLE/FLUSH ALL TABLES commands
 
-    info!("Job management delegated to JobsManager (already running in background, handles stream eviction)");
+    debug!("Job management delegated to JobsManager (already running in background, handles stream eviction)");
 
     // Get users provider for system user initialization
     let phase_start = std::time::Instant::now();
@@ -280,7 +280,7 @@ pub async fn bootstrap(
 
     // Security warning: Check if remote access is enabled with empty root password
     check_remote_access_security(config, users_provider_for_init).await?;
-    info!(
+    debug!(
         "User initialization completed ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
@@ -310,7 +310,7 @@ pub async fn run(
 ) -> Result<()> {
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting HTTP server on {}", bind_addr);
-    info!("Endpoints: POST /v1/api/sql, GET /v1/ws");
+    debug!("Endpoints: POST /v1/api/sql, GET /v1/ws");
 
     // Log server configuration for debugging
     info!(
@@ -327,7 +327,7 @@ pub async fn run(
     );
 
     if config.rate_limit.enable_connection_protection {
-        info!(
+        debug!(
             "Connection protection: max_conn_per_ip={}, max_req_per_ip_per_sec={}, ban_duration={}s",
             config.rate_limit.max_connections_per_ip,
             config.rate_limit.max_requests_per_ip_per_sec,
@@ -407,7 +407,7 @@ pub async fn run(
         info!("HTTP/2 support enabled (h2c - HTTP/2 cleartext)");
         server.bind_auto_h2c(&bind_addr)?
     } else {
-        info!("HTTP/1.1 only mode");
+        debug!("HTTP/1.1 only mode");
         server.bind(&bind_addr)?
     };
     

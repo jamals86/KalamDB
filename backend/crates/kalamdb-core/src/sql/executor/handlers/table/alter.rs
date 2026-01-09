@@ -13,7 +13,7 @@ use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
-use kalamdb_raft::SystemCommand;
+use kalamdb_raft::MetaCommand;
 use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation};
 use std::sync::Arc;
 
@@ -381,13 +381,13 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
             let schema_json = serde_json::to_string(&table_def).map_err(|e| {
                 KalamDbError::Other(format!("Failed to serialize table definition: {}", e))
             })?;
-            let cmd = SystemCommand::AlterTable {
+            let cmd = MetaCommand::AlterTable {
                 table_id: table_id.clone(),
                 schema_json,
             };
             self.app_context
                 .executor()
-                .execute_system(cmd)
+                .execute_meta(cmd)
                 .await
                 .map_err(|e| {
                     KalamDbError::ExecutionError(format!(

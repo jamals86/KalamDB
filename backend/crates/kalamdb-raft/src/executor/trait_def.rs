@@ -7,8 +7,7 @@ use kalamdb_commons::models::{NodeId, UserId};
 
 use crate::cluster_types::{NodeRole, NodeStatus};
 use crate::commands::{
-    DataResponse, JobsCommand, JobsResponse, SharedDataCommand, SystemCommand, 
-    SystemResponse, UserDataCommand, UsersCommand, UsersResponse,
+    DataResponse, MetaCommand, MetaResponse, SharedDataCommand, UserDataCommand,
 };
 use crate::error::Result;
 use crate::group_id::GroupId;
@@ -98,14 +97,8 @@ pub struct ClusterInfo {
 /// ```
 #[async_trait]
 pub trait CommandExecutor: Send + Sync + Debug {
-    /// Execute a system metadata command (namespaces, tables, storages)
-    async fn execute_system(&self, cmd: SystemCommand) -> Result<SystemResponse>;
-
-    /// Execute a users command (user accounts, authentication)
-    async fn execute_users(&self, cmd: UsersCommand) -> Result<UsersResponse>;
-
-    /// Execute a jobs command (background job coordination)
-    async fn execute_jobs(&self, cmd: JobsCommand) -> Result<JobsResponse>;
+    /// Execute a unified metadata command (namespaces, tables, storages, users, jobs)
+    async fn execute_meta(&self, cmd: MetaCommand) -> Result<MetaResponse>;
 
     /// Execute a user data command (routed by user_id to correct shard)
     async fn execute_user_data(&self, user_id: &UserId, cmd: UserDataCommand) -> Result<DataResponse>;

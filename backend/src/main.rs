@@ -138,14 +138,8 @@ async fn main() -> Result<()> {
     let build_date = env!("BUILD_DATE");
     let branch = env!("GIT_BRANCH");
 
-    info!("╔═══════════════════════════════════════════════════════════════╗");
-    info!("║           KalamDB Server v{:<37} ║", version);
-    info!("╠═══════════════════════════════════════════════════════════════╣");
-    info!("║  Commit:     {:<49} ║", commit);
-    info!("║  Branch:     {:<49} ║", branch);
-    info!("║  Built:      {:<49} ║", build_date);
-    info!("╚═══════════════════════════════════════════════════════════════╝");
-    info!("Host: {}  Port: {}", config.server.host, config.server.port);
+    info!("KalamDB Server v{:<37}", version);
+    // debug!("Host: {}  Port: {}", config.server.host, config.server.port);
 
     // Check file descriptor limits (Unix only)
     #[cfg(unix)]
@@ -169,7 +163,6 @@ async fn main() -> Result<()> {
                     log::warn!("║                                                                   ║");
                     log::warn!("║  To increase the limit:                                           ║");
                     log::warn!("║    ulimit -n 65536                                                ║");
-                    log::warn!("║                                                                   ║");
                     log::warn!("╚═══════════════════════════════════════════════════════════════════╝");
                 }
             }

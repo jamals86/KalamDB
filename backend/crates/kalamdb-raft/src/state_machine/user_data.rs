@@ -5,6 +5,12 @@
 //! - Live query registrations for users in this shard
 //!
 //! Runs in DataUserShard(N) Raft groups where N = user_id % 32.
+//!
+//! ## Watermark Buffering
+//!
+//! Commands with `required_meta_index > current_meta_index` are buffered
+//! until Meta catches up. This ensures data operations don't run before
+//! their dependent metadata (tables, users) is applied locally.
 
 use async_trait::async_trait;
 use kalamdb_commons::models::NodeId;
@@ -18,6 +24,7 @@ use crate::applier::UserDataApplier;
 use crate::{DataResponse, GroupId, RaftError, UserDataCommand};
 
 use super::{decode, encode, ApplyResult, KalamStateMachine, StateMachineSnapshot};
+use super::{PendingBuffer, PendingCommand, get_coordinator};
 
 /// Live query state for this shard
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +58,9 @@ struct UserDataSnapshot {
     recent_operations: Vec<RowOperation>,
     /// Total operations count
     total_operations: u64,
+    /// Pending commands waiting for Meta to catch up (for crash recovery)
+    #[serde(default)]
+    pending_commands: Vec<PendingCommand>,
 }
 
 /// State machine for user data operations
@@ -62,6 +72,12 @@ struct UserDataSnapshot {
 ///
 /// Note: Row data is persisted via the UserDataApplier after Raft consensus.
 /// All nodes (leader and followers) call the applier, ensuring consistent data.
+///
+/// ## Watermark Buffering
+///
+/// Commands with `required_meta_index > current_meta_index` are buffered
+/// in `pending_buffer` until Meta catches up. When Meta applies new entries,
+/// it notifies data shards via `MetadataCoordinator`, triggering drain.
 pub struct UserDataStateMachine {
     /// Which shard this state machine handles (0-31)
     shard: u32,
@@ -77,6 +93,8 @@ pub struct UserDataStateMachine {
     live_queries: RwLock<HashMap<String, LiveQueryState>>,
     /// Optional applier for persisting data to providers
     applier: RwLock<Option<Arc<dyn UserDataApplier>>>,
+    /// Buffer for commands waiting for Meta to catch up
+    pending_buffer: PendingBuffer,
 }
 
 impl std::fmt::Debug for UserDataStateMachine {
@@ -88,6 +106,7 @@ impl std::fmt::Debug for UserDataStateMachine {
                 &self.last_applied_index.load(Ordering::Relaxed),
             )
             .field("has_applier", &self.applier.read().is_some())
+            .field("pending_count", &self.pending_buffer.len())
             .finish()
     }
 }
@@ -104,6 +123,7 @@ impl UserDataStateMachine {
             total_operations: AtomicU64::new(0),
             live_queries: RwLock::new(HashMap::new()),
             applier: RwLock::new(None),
+            pending_buffer: PendingBuffer::new(),
         }
     }
 
@@ -118,6 +138,7 @@ impl UserDataStateMachine {
             total_operations: AtomicU64::new(0),
             live_queries: RwLock::new(HashMap::new()),
             applier: RwLock::new(Some(applier)),
+            pending_buffer: PendingBuffer::new(),
         }
     }
 
@@ -133,6 +154,38 @@ impl UserDataStateMachine {
         );
     }
     
+    /// Drain and apply any buffered commands that are now satisfied
+    ///
+    /// Called after Meta advances to check if any pending commands can now run.
+    async fn drain_pending(&self) -> Result<(), RaftError> {
+        let current_meta = get_coordinator().current_index();
+        let drained = self.pending_buffer.drain_satisfied(current_meta);
+        
+        if !drained.is_empty() {
+            log::info!(
+                "UserDataStateMachine[{}]: Draining {} buffered commands (meta_index={})",
+                self.shard, drained.len(), current_meta
+            );
+        }
+        
+        for pending in drained {
+            // Deserialize and apply the command
+            let cmd: UserDataCommand = decode(&pending.command_bytes)?;
+            let _ = self.apply_command(cmd).await?;
+            log::debug!(
+                "UserDataStateMachine[{}]: Applied buffered command log_index={}",
+                self.shard, pending.log_index
+            );
+        }
+        
+        Ok(())
+    }
+    
+    /// Get the number of pending commands
+    pub fn pending_count(&self) -> usize {
+        self.pending_buffer.len()
+    }
+
     /// Apply a user data command
     /// Note: user_id is extracted from inside each command variant
     async fn apply_command(
@@ -150,6 +203,7 @@ impl UserDataStateMachine {
                 table_id,
                 user_id,
                 rows_data,
+                ..
             } => {
                 log::debug!(
                     "UserDataStateMachine[{}]: Insert into {:?} ({} bytes)",
@@ -193,6 +247,7 @@ impl UserDataStateMachine {
                 user_id,
                 updates_data,
                 filter_data,
+                ..
             } => {
                 log::debug!(
                     "UserDataStateMachine[{}]: Update {:?}",
@@ -234,6 +289,7 @@ impl UserDataStateMachine {
                 table_id,
                 user_id,
                 filter_data,
+                ..
             } => {
                 log::debug!(
                     "UserDataStateMachine[{}]: Delete from {:?}",
@@ -296,7 +352,7 @@ impl UserDataStateMachine {
                 Ok(DataResponse::Subscribed { subscription_id })
             }
             
-            UserDataCommand::UnregisterLiveQuery { subscription_id, user_id } => {
+            UserDataCommand::UnregisterLiveQuery { subscription_id, user_id, .. } => {
                 log::debug!(
                     "UserDataStateMachine[{}]: UnregisterLiveQuery {} for user {:?}",
                     self.shard, subscription_id, user_id
@@ -310,7 +366,7 @@ impl UserDataStateMachine {
                 Ok(DataResponse::Ok)
             }
             
-            UserDataCommand::CleanupNodeSubscriptions { user_id, failed_node_id } => {
+            UserDataCommand::CleanupNodeSubscriptions { user_id, failed_node_id, .. } => {
                 log::info!(
                     "UserDataStateMachine[{}]: Cleanup subscriptions from node {} for user {:?}",
                     self.shard, failed_node_id, user_id
@@ -355,10 +411,38 @@ impl KalamStateMachine for UserDataStateMachine {
             return Ok(ApplyResult::NoOp);
         }
         
-        // Deserialize command directly (user_id is inside each command variant)
+        // Deserialize command to check watermark
         let cmd: UserDataCommand = decode(command)?;
+        let required_meta = cmd.required_meta_index();
+        let current_meta = get_coordinator().current_index();
         
-        // Apply command
+        // Check watermark: if Meta is behind, buffer this command
+        if required_meta > current_meta {
+            log::debug!(
+                "UserDataStateMachine[{}]: Buffering entry {} (required_meta={} > current_meta={})",
+                self.shard, index, required_meta, current_meta
+            );
+            
+            // Buffer the command for later
+            self.pending_buffer.add(PendingCommand {
+                log_index: index,
+                log_term: term,
+                required_meta_index: required_meta,
+                command_bytes: command.to_vec(),
+            });
+            
+            // Advance last_applied (the entry is applied to state, just deferred side effects)
+            self.last_applied_index.store(index, Ordering::Release);
+            self.last_applied_term.store(term, Ordering::Release);
+            
+            // Return Ok with empty data (response will come when drained)
+            return Ok(ApplyResult::ok_with_data(encode(&DataResponse::Ok)?));
+        }
+        
+        // First drain any pending commands that are now satisfied
+        self.drain_pending().await?;
+        
+        // Apply current command
         let response = self.apply_command(cmd).await?;
         
         // Update last applied
@@ -381,12 +465,14 @@ impl KalamStateMachine for UserDataStateMachine {
     
     async fn snapshot(&self) -> Result<StateMachineSnapshot, RaftError> {
         let live_queries = self.live_queries.read().clone();
+        let pending_commands = self.pending_buffer.get_all();
         
         let snapshot = UserDataSnapshot {
             shard: self.shard,
             live_queries,
             recent_operations: Vec::new(), // Not tracking for now
             total_operations: self.total_operations.load(Ordering::Relaxed),
+            pending_commands,
         };
         
         let data = encode(&snapshot)?;
@@ -414,13 +500,17 @@ impl KalamStateMachine for UserDataStateMachine {
             *live_queries = data.live_queries;
         }
         
+        // Restore pending buffer from snapshot
+        self.pending_buffer.load_from(data.pending_commands);
+        
         self.total_operations.store(data.total_operations, Ordering::Release);
         self.last_applied_index.store(snapshot.last_applied_index, Ordering::Release);
         self.last_applied_term.store(snapshot.last_applied_term, Ordering::Release);
         
         log::info!(
-            "UserDataStateMachine[{}]: Restored from snapshot at index {}, term {}",
-            self.shard, snapshot.last_applied_index, snapshot.last_applied_term
+            "UserDataStateMachine[{}]: Restored from snapshot at index {}, term {}, {} pending commands",
+            self.shard, snapshot.last_applied_index, snapshot.last_applied_term,
+            self.pending_buffer.len()
         );
         
         Ok(())
@@ -445,6 +535,7 @@ mod tests {
             table_id: TableId::new(NamespaceId::new("default"), "users".into()),
             user_id: UserId::new("user123"),
             rows_data: vec![1, 2, 3, 4],
+            required_meta_index: 0,
         };
         
         let payload = encode(&cmd).unwrap();
@@ -468,6 +559,7 @@ mod tests {
             filter_json: None,
             node_id: node_id.clone(),
             created_at: chrono::Utc::now(),
+            required_meta_index: 0,
         };
         
         let payload = encode(&cmd).unwrap();
@@ -484,6 +576,7 @@ mod tests {
         let cleanup_cmd = UserDataCommand::CleanupNodeSubscriptions {
             user_id: UserId::new("user456"),
             failed_node_id: node_id.clone(),
+            required_meta_index: 0,
         };
         let payload2 = encode(&cleanup_cmd).unwrap();
         sm.apply(2, 1, &payload2).await.unwrap();

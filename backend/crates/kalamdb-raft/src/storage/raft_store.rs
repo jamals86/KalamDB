@@ -59,9 +59,7 @@ struct StateMachineData {
 /// Convert kalamdb-raft GroupId to kalamdb-store RaftGroupId
 fn to_storage_group_id(group_id: &GroupId) -> RaftGroupId {
     match group_id {
-        GroupId::MetaSystem => RaftGroupId::MetaSystem,
-        GroupId::MetaUsers => RaftGroupId::MetaUsers,
-        GroupId::MetaJobs => RaftGroupId::MetaJobs,
+        GroupId::Meta => RaftGroupId::Meta,
         GroupId::DataUserShard(n) => RaftGroupId::DataUserShard(*n),
         GroupId::DataSharedShard(n) => RaftGroupId::DataSharedShard(*n),
     }
