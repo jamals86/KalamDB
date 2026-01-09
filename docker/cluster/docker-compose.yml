@@ -33,6 +33,7 @@ services:
     environment:
       RUST_LOG: "${RUST_LOG:-info,kalamdb_raft=info,openraft=warn,tracing=warn}"
       KALAMDB_NODE_ID: "1"
+      KALAMDB_ROOT_PASSWORD: "${KALAMDB_ROOT_PASSWORD:-kalamdb123}"
     networks:
       - kalamdb-cluster
     restart: unless-stopped
@@ -60,6 +61,7 @@ services:
     environment:
       RUST_LOG: "${RUST_LOG:-info,kalamdb_raft=info,openraft=warn,tracing=warn}"
       KALAMDB_NODE_ID: "2"
+      KALAMDB_ROOT_PASSWORD: "${KALAMDB_ROOT_PASSWORD:-kalamdb123}"
     networks:
       - kalamdb-cluster
     depends_on:
@@ -90,6 +92,7 @@ services:
     environment:
       RUST_LOG: "${RUST_LOG:-info,kalamdb_raft=info,openraft=warn,tracing=warn}"
       KALAMDB_NODE_ID: "3"
+      KALAMDB_ROOT_PASSWORD: "${KALAMDB_ROOT_PASSWORD:-kalamdb123}"
     networks:
       - kalamdb-cluster
     depends_on:
