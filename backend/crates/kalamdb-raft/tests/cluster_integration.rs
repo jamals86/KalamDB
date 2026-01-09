@@ -18,14 +18,12 @@ use tokio::time::sleep;
 
 use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
 use kalamdb_commons::models::schemas::TableType;
-use kalamdb_commons::types::User;
-use kalamdb_commons::{AuthType, Role, StorageMode};
 use kalamdb_commons::TableId;
 use kalamdb_raft::{
     manager::{RaftManager, RaftManagerConfig, PeerNode},
     executor::RaftExecutor,
-    CommandExecutor, GroupId,
-    commands::{SystemCommand, UsersCommand, JobsCommand, UserDataCommand, SharedDataCommand},
+    GroupId,
+    commands::{MetaCommand, UserDataCommand, SharedDataCommand},
 };
 use kalamdb_raft::{KalamRaftStorage, KalamStateMachine, StateMachineSnapshot, ApplyResult, RaftError};
 use openraft::{Entry, EntryPayload, LogId, RaftSnapshotBuilder, RaftStorage};
@@ -179,7 +177,7 @@ impl SnapshotTestStateMachine {
 #[async_trait]
 impl KalamStateMachine for SnapshotTestStateMachine {
     fn group_id(&self) -> GroupId {
-        GroupId::MetaSystem
+        GroupId::Meta
     }
 
     async fn apply(&self, index: u64, term: u64, command: &[u8]) -> Result<ApplyResult, RaftError> {
@@ -246,7 +244,7 @@ impl KalamStateMachine for SnapshotTestStateMachine {
 async fn test_snapshot_restore_via_storage_install_snapshot() {
     let leader_state = std::sync::Arc::new(AtomicU64::new(0));
     let leader_sm = SnapshotTestStateMachine::new(leader_state.clone());
-    let leader_storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, leader_sm));
+    let leader_storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::Meta, leader_sm));
 
     let entries = vec![
         Entry {
@@ -271,7 +269,7 @@ async fn test_snapshot_restore_via_storage_install_snapshot() {
     let follower_state = std::sync::Arc::new(AtomicU64::new(0));
     let follower_sm = SnapshotTestStateMachine::new(follower_state.clone());
     let mut follower_storage =
-        std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, follower_sm));
+        std::sync::Arc::new(KalamRaftStorage::new(GroupId::Meta, follower_sm));
 
     let snapshot_meta = snapshot.meta.clone();
     let snapshot_data = snapshot.snapshot;
@@ -346,7 +344,7 @@ impl TestCluster {
     /// Wait for leader election to complete for all groups
     async fn wait_for_leaders(&self, timeout: Duration) -> bool {
         let start = std::time::Instant::now();
-        let group_count = 3 + self.user_shards + 1; // meta + user + shared
+        let _group_count = 3 + self.user_shards + 1; // meta + user + shared
         
         while start.elapsed() < timeout {
             let mut all_have_leaders = true;
@@ -374,9 +372,7 @@ impl TestCluster {
     /// Get all group IDs
     fn all_group_ids(&self) -> Vec<GroupId> {
         let mut groups = vec![
-            GroupId::MetaSystem,
-            GroupId::MetaUsers,
-            GroupId::MetaJobs,
+            GroupId::Meta,
         ];
         
         for shard in 0..self.user_shards {
@@ -541,12 +537,12 @@ async fn test_command_proposal_to_leader() {
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(200)).await;
     
-    // Get the leader for MetaSystem
-    let leader = cluster.get_leader_node(GroupId::MetaSystem)
-        .expect("Should have MetaSystem leader");
+    // Get the leader for Meta
+    let leader = cluster.get_leader_node(GroupId::Meta)
+        .expect("Should have Meta leader");
     
-    // Propose a system command
-    let command = SystemCommand::CreateNamespace {
+    // Propose a meta command
+    let command = MetaCommand::CreateNamespace {
         namespace_id: NamespaceId::from("test_ns"),
         created_by: Some("test".to_string()),
     };
@@ -554,7 +550,7 @@ async fn test_command_proposal_to_leader() {
     let encoded = kalamdb_raft::state_machine::encode(&command)
         .expect("Failed to encode command");
     
-    let result = leader.manager.propose_system(encoded).await;
+    let result = leader.manager.propose_meta(encoded).await;
     
     // Command should succeed on leader
     assert!(result.is_ok(), "Command proposal should succeed on leader");
@@ -572,11 +568,11 @@ async fn test_proposal_forwarding_to_leader() {
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(200)).await;
     
-    // Get a follower for MetaSystem
-    let follower = cluster.get_follower_node(GroupId::MetaSystem)
-        .expect("Should have MetaSystem follower");
+    // Get a follower for Meta
+    let follower = cluster.get_follower_node(GroupId::Meta)
+        .expect("Should have Meta follower");
     
-    let leader_id = cluster.get_leader_node(GroupId::MetaSystem)
+    let leader_id = cluster.get_leader_node(GroupId::Meta)
         .map(|n| n.manager.node_id())
         .expect("Should have a leader");
     
@@ -584,7 +580,7 @@ async fn test_proposal_forwarding_to_leader() {
         follower.manager.node_id(), leader_id);
     
     // Propose a command to follower - should be automatically forwarded to leader
-    let command = SystemCommand::CreateNamespace {
+    let command = MetaCommand::CreateNamespace {
         namespace_id: NamespaceId::from("forwarded_ns"),
         created_by: None,
     };
@@ -592,7 +588,7 @@ async fn test_proposal_forwarding_to_leader() {
     let encoded = kalamdb_raft::state_machine::encode(&command)
         .expect("Failed to encode");
     
-    let result = follower.manager.propose_system(encoded).await;
+    let result = follower.manager.propose_meta(encoded).await;
     
     // Proposal on follower should succeed via leader forwarding
     assert!(result.is_ok(), "Proposal on follower should succeed via leader forwarding: {:?}", result);
@@ -610,50 +606,21 @@ async fn test_all_groups_accept_proposals() {
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(300)).await;
     
-    // Test MetaSystem
+    // Test Meta (unified metadata group - covers namespaces, users, jobs)
     {
-        let leader = cluster.get_leader_node(GroupId::MetaSystem).unwrap();
-        let cmd = SystemCommand::CreateNamespace { 
+        let leader = cluster.get_leader_node(GroupId::Meta).unwrap();
+        
+        // Test namespace creation
+        let cmd = MetaCommand::CreateNamespace { 
             namespace_id: NamespaceId::from("ns1"),
             created_by: Some("test".to_string()),
         };
         let encoded = kalamdb_raft::state_machine::encode(&cmd).unwrap();
-        let result = leader.manager.propose_system(encoded).await;
-        assert!(result.is_ok(), "MetaSystem should accept proposals");
-    }
-    
-    // Test MetaUsers
-    {
-        let leader = cluster.get_leader_node(GroupId::MetaUsers).unwrap();
-        let cmd = UsersCommand::CreateUser {
-            user: User {
-                id: UserId::from("user1"),
-                username: "testuser".into(),
-                password_hash: "hash".to_string(),
-                role: Role::User,
-                email: None,
-                auth_type: AuthType::Password,
-                auth_data: None,
-                storage_mode: StorageMode::Table,
-                storage_id: Some(StorageId::from("local")),
-                failed_login_attempts: 0,
-                locked_until: None,
-                last_login_at: None,
-                created_at: Utc::now().timestamp_millis(),
-                updated_at: Utc::now().timestamp_millis(),
-                last_seen: None,
-                deleted_at: None,
-            },
-        };
-        let encoded = kalamdb_raft::state_machine::encode(&cmd).unwrap();
-        let result = leader.manager.propose_users(encoded).await;
-        assert!(result.is_ok(), "MetaUsers should accept proposals");
-    }
-    
-    // Test MetaJobs
-    {
-        let leader = cluster.get_leader_node(GroupId::MetaJobs).unwrap();
-        let cmd = JobsCommand::CreateJob {
+        let result = leader.manager.propose_meta(encoded).await;
+        assert!(result.is_ok(), "Meta should accept namespace proposals");
+        
+        // Test job creation
+        let cmd = MetaCommand::CreateJob {
             job_id: JobId::from("job1"),
             job_type: JobType::Flush,
             namespace_id: Some(NamespaceId::from("ns1")),
@@ -662,14 +629,15 @@ async fn test_all_groups_accept_proposals() {
             created_at: Utc::now(),
         };
         let encoded = kalamdb_raft::state_machine::encode(&cmd).unwrap();
-        let result = leader.manager.propose_jobs(encoded).await;
-        assert!(result.is_ok(), "MetaJobs should accept proposals");
+        let result = leader.manager.propose_meta(encoded).await;
+        assert!(result.is_ok(), "Meta should accept job proposals");
     }
     
     // Test UserDataShards
     for shard in 0..cluster.user_shards {
         let leader = cluster.get_leader_node(GroupId::DataUserShard(shard)).unwrap();
         let cmd = UserDataCommand::Insert {
+            required_meta_index: 0,
             table_id: TableId::new(NamespaceId::from("ns1"), TableName::from(format!("table{}", shard))),
             user_id: UserId::from(format!("user_{}", shard)),
             rows_data: vec![1, 2, 3, 4],
@@ -683,6 +651,7 @@ async fn test_all_groups_accept_proposals() {
     {
         let leader = cluster.get_leader_node(GroupId::DataSharedShard(0)).unwrap();
         let cmd = SharedDataCommand::Insert {
+            required_meta_index: 0,
             table_id: TableId::new(NamespaceId::from("shared"), TableName::from("data")),
             rows_data: vec![4, 5, 6],
         };
@@ -740,16 +709,16 @@ async fn test_data_consistency_after_network_delay() {
     sleep(Duration::from_millis(300)).await;
     
     // Propose multiple commands
-    let leader = cluster.get_leader_node(GroupId::MetaSystem).unwrap();
+    let leader = cluster.get_leader_node(GroupId::Meta).unwrap();
     
     let mut successful_proposals = 0;
     for i in 0..10 {
-        let cmd = SystemCommand::CreateNamespace { 
+        let cmd = MetaCommand::CreateNamespace { 
             namespace_id: NamespaceId::from(format!("consistency_ns_{}", i)),
             created_by: None,
         };
         let encoded = kalamdb_raft::state_machine::encode(&cmd).unwrap();
-        if leader.manager.propose_system(encoded).await.is_ok() {
+        if leader.manager.propose_meta(encoded).await.is_ok() {
             successful_proposals += 1;
         }
     }
@@ -766,12 +735,12 @@ async fn test_data_consistency_after_network_delay() {
 }
 
 // =============================================================================
-// Coverage Tests: All Raft Groups
+// Coverage Tests: Unified Meta Group
 // =============================================================================
 
-/// Comprehensive test of MetaSystem group operations
+/// Comprehensive test of Meta group operations (unified metadata operations)
 #[tokio::test]
-async fn test_meta_system_group_operations() {
+async fn test_meta_group_operations() {
     let cluster = TestCluster::new(3, 10800, 11800, 2);
     
     cluster.start_all().await.expect("Failed to start");
@@ -779,144 +748,41 @@ async fn test_meta_system_group_operations() {
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(200)).await;
     
-    let leader = cluster.get_leader_node(GroupId::MetaSystem).unwrap();
+    let leader = cluster.get_leader_node(GroupId::Meta).unwrap();
     
     // Test CreateNamespace
-    let cmd = SystemCommand::CreateNamespace { 
+    let cmd = MetaCommand::CreateNamespace { 
         namespace_id: NamespaceId::from("test_ns"),
         created_by: Some("test".to_string()),
     };
-    let result = leader.manager.propose_system(
+    let result = leader.manager.propose_meta(
         kalamdb_raft::state_machine::encode(&cmd).unwrap()
     ).await;
     assert!(result.is_ok(), "CreateNamespace should succeed");
     
     // Test CreateTable
-    let cmd = SystemCommand::CreateTable {
+    let cmd = MetaCommand::CreateTable {
         table_id: TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table")),
         table_type: TableType::User,
         schema_json: "{}".to_string(),
     };
-    let result = leader.manager.propose_system(
+    let result = leader.manager.propose_meta(
         kalamdb_raft::state_machine::encode(&cmd).unwrap()
     ).await;
     assert!(result.is_ok(), "CreateTable should succeed");
     
     // Test RegisterStorage
-    let cmd = SystemCommand::RegisterStorage {
+    let cmd = MetaCommand::RegisterStorage {
         storage_id: StorageId::new("storage1".to_string()),
         config_json: "{}".to_string(),
     };
-    let result = leader.manager.propose_system(
+    let result = leader.manager.propose_meta(
         kalamdb_raft::state_machine::encode(&cmd).unwrap()
     ).await;
     assert!(result.is_ok(), "RegisterStorage should succeed");
     
-    println!("✅ MetaSystem group operations verified!");
-}
-
-/// Comprehensive test of MetaUsers group operations
-#[tokio::test]
-async fn test_meta_users_group_operations() {
-    let cluster = TestCluster::new(3, 10900, 11900, 2);
-    
-    cluster.start_all().await.expect("Failed to start");
-    cluster.initialize().await.expect("Failed to init");
-    cluster.wait_for_leaders(Duration::from_secs(5)).await;
-    sleep(Duration::from_millis(200)).await;
-    
-    let leader = cluster.get_leader_node(GroupId::MetaUsers).unwrap();
-    
-    // Test CreateUser
-    let cmd = UsersCommand::CreateUser {
-        user: User {
-            id: UserId::from("u1"),
-            username: "alice".into(),
-            password_hash: "hash123".to_string(),
-            role: Role::User,
-            email: None,
-            auth_type: AuthType::Password,
-            auth_data: None,
-            storage_mode: StorageMode::Table,
-            storage_id: Some(StorageId::from("local")),
-            failed_login_attempts: 0,
-            locked_until: None,
-            last_login_at: None,
-            created_at: Utc::now().timestamp_millis(),
-            updated_at: Utc::now().timestamp_millis(),
-            last_seen: None,
-            deleted_at: None,
-        },
-    };
-    let result = leader.manager.propose_users(
-        kalamdb_raft::state_machine::encode(&cmd).unwrap()
-    ).await;
-    assert!(result.is_ok(), "CreateUser should succeed");
-    
-    // Test UpdateUser
-    let cmd = UsersCommand::UpdateUser {
-        user: User {
-            id: UserId::from("u1"),
-            username: "alice".into(),
-            password_hash: "newhash".to_string(),
-            role: Role::User,
-            email: None,
-            auth_type: AuthType::Password,
-            auth_data: None,
-            storage_mode: StorageMode::Table,
-            storage_id: Some(StorageId::from("local")),
-            failed_login_attempts: 0,
-            locked_until: None,
-            last_login_at: None,
-            created_at: Utc::now().timestamp_millis(),
-            updated_at: Utc::now().timestamp_millis(),
-            last_seen: None,
-            deleted_at: None,
-        },
-    };
-    let result = leader.manager.propose_users(
-        kalamdb_raft::state_machine::encode(&cmd).unwrap()
-    ).await;
-    assert!(result.is_ok(), "UpdateUser should succeed");
-    
-    // Test RecordLogin
-    let cmd = UsersCommand::RecordLogin {
-        user_id: UserId::from("u1"),
-        logged_in_at: Utc::now(),
-    };
-    let result = leader.manager.propose_users(
-        kalamdb_raft::state_machine::encode(&cmd).unwrap()
-    ).await;
-    assert!(result.is_ok(), "RecordLogin should succeed");
-    
-    // Test SetLocked
-    let cmd = UsersCommand::SetLocked {
-        user_id: UserId::from("u1"),
-        locked_until: Some(Utc::now().timestamp_millis()),
-        updated_at: Utc::now(),
-    };
-    let result = leader.manager.propose_users(
-        kalamdb_raft::state_machine::encode(&cmd).unwrap()
-    ).await;
-    assert!(result.is_ok(), "SetLocked should succeed");
-    
-    println!("✅ MetaUsers group operations verified!");
-}
-
-/// Comprehensive test of MetaJobs group operations
-#[tokio::test]
-async fn test_meta_jobs_group_operations() {
-    let cluster = TestCluster::new(3, 11000, 12000, 2);
-    
-    cluster.start_all().await.expect("Failed to start");
-    cluster.initialize().await.expect("Failed to init");
-    cluster.wait_for_leaders(Duration::from_secs(5)).await;
-    sleep(Duration::from_millis(200)).await;
-    
-    let leader = cluster.get_leader_node(GroupId::MetaJobs).unwrap();
-    
     // Test CreateJob
-    let cmd = JobsCommand::CreateJob {
+    let cmd = MetaCommand::CreateJob {
         job_id: JobId::from("j1"),
         job_type: JobType::Flush,
         namespace_id: Some(NamespaceId::from("ns1")),
@@ -924,58 +790,34 @@ async fn test_meta_jobs_group_operations() {
         config_json: None,
         created_at: Utc::now(),
     };
-    let result = leader.manager.propose_jobs(
+    let result = leader.manager.propose_meta(
         kalamdb_raft::state_machine::encode(&cmd).unwrap()
     ).await;
     assert!(result.is_ok(), "CreateJob should succeed");
     
     // Test ClaimJob
-    let cmd = JobsCommand::ClaimJob {
+    let cmd = MetaCommand::ClaimJob {
         job_id: JobId::from("j1"),
         node_id: NodeId::from(1u64),
         claimed_at: Utc::now(),
     };
-    let result = leader.manager.propose_jobs(
+    let result = leader.manager.propose_meta(
         kalamdb_raft::state_machine::encode(&cmd).unwrap()
     ).await;
     assert!(result.is_ok(), "ClaimJob should succeed");
     
     // Test UpdateJobStatus
-    let cmd = JobsCommand::UpdateJobStatus {
+    let cmd = MetaCommand::UpdateJobStatus {
         job_id: JobId::from("j1"),
         status: "running".to_string(),
         updated_at: Utc::now(),
     };
-    let result = leader.manager.propose_jobs(
+    let result = leader.manager.propose_meta(
         kalamdb_raft::state_machine::encode(&cmd).unwrap()
     ).await;
     assert!(result.is_ok(), "UpdateJobStatus should succeed");
     
-    // Test ReleaseJob
-    let cmd = JobsCommand::ReleaseJob {
-        job_id: JobId::from("j1"),
-        reason: "test".to_string(),
-        released_at: Utc::now(),
-    };
-    let result = leader.manager.propose_jobs(
-        kalamdb_raft::state_machine::encode(&cmd).unwrap()
-    ).await;
-    assert!(result.is_ok(), "ReleaseJob should succeed");
-    
-    // Test CreateSchedule
-    let cmd = JobsCommand::CreateSchedule {
-        schedule_id: "s1".to_string(),
-        job_type: JobType::Compact,
-        cron_expression: "0 0 * * *".to_string(),
-        config_json: None,
-        created_at: Utc::now(),
-    };
-    let result = leader.manager.propose_jobs(
-        kalamdb_raft::state_machine::encode(&cmd).unwrap()
-    ).await;
-    assert!(result.is_ok(), "CreateSchedule should succeed");
-    
-    println!("✅ MetaJobs group operations verified!");
+    println!("✅ Meta group operations verified!");
 }
 
 /// Comprehensive test of UserData shard operations
@@ -996,6 +838,7 @@ async fn test_user_data_shard_operations() {
         
         // Test Insert
         let cmd = UserDataCommand::Insert {
+            required_meta_index: 0,
             table_id: table_id.clone(),
             user_id: user_id.clone(),
             rows_data: vec![1, 2, 3, 4],
@@ -1008,6 +851,7 @@ async fn test_user_data_shard_operations() {
         
         // Test Update
         let cmd = UserDataCommand::Update {
+            required_meta_index: 0,
             table_id: table_id.clone(),
             user_id: user_id.clone(),
             updates_data: vec![5, 6, 7, 8],
@@ -1021,6 +865,7 @@ async fn test_user_data_shard_operations() {
         
         // Test Delete
         let cmd = UserDataCommand::Delete {
+            required_meta_index: 0,
             table_id: table_id.clone(),
             user_id: user_id.clone(),
             filter_data: None,
@@ -1033,6 +878,7 @@ async fn test_user_data_shard_operations() {
         
         // Test RegisterLiveQuery
         let cmd = UserDataCommand::RegisterLiveQuery {
+            required_meta_index: 0,
             subscription_id: format!("lq_{}", shard),
             user_id: user_id.clone(),
             query_hash: "abc123".to_string(),
@@ -1068,6 +914,7 @@ async fn test_shared_data_shard_operations() {
     
     // Test Insert
     let cmd = SharedDataCommand::Insert {
+        required_meta_index: 0,
         table_id: table_id.clone(),
         rows_data: vec![10, 20, 30],
     };
@@ -1079,6 +926,7 @@ async fn test_shared_data_shard_operations() {
     
     // Test Update
     let cmd = SharedDataCommand::Update {
+        required_meta_index: 0,
         table_id: table_id.clone(),
         updates_data: vec![40, 50, 60],
         filter_data: None,
@@ -1091,6 +939,7 @@ async fn test_shared_data_shard_operations() {
     
     // Test Delete
     let cmd = SharedDataCommand::Delete {
+        required_meta_index: 0,
         table_id: table_id.clone(),
         filter_data: None,
     };
@@ -1125,6 +974,7 @@ async fn test_proposal_throughput() {
     
     for i in 0..total_proposals {
         let cmd = UserDataCommand::Insert {
+            required_meta_index: 0,
             table_id: TableId::new(NamespaceId::from("perf"), TableName::from("test")),
             user_id: UserId::from(format!("user_{}", i)),
             rows_data: vec![i as u8; 64],
@@ -1172,6 +1022,7 @@ async fn test_concurrent_multi_group_proposals() {
         tokio::spawn(async move {
             for i in 0..25 {
                 let cmd = UserDataCommand::Insert {
+                    required_meta_index: 0,
                     table_id: TableId::new(NamespaceId::from("concurrent"), TableName::from(format!("shard{}", shard))),
                     user_id: UserId::from(format!("user_{}_{}", shard, i)),
                     rows_data: vec![shard as u8, i as u8],
@@ -1298,6 +1149,7 @@ async fn test_invalid_shard_error() {
         table_id: TableId::new(NamespaceId::from("test"), TableName::from("table")),
         user_id: UserId::from("user1"),
         rows_data: vec![1, 2, 3],
+        required_meta_index: 0,
     };
     let encoded = kalamdb_raft::state_machine::encode(&cmd).unwrap();
     
@@ -1323,13 +1175,13 @@ async fn test_proposal_before_start_error() {
     let manager = RaftManager::new(config);
     
     // Try to propose before starting
-    let cmd = SystemCommand::CreateNamespace { 
+    let cmd = MetaCommand::CreateNamespace { 
         namespace_id: NamespaceId::from("ns1"),
         created_by: None,
     };
     let encoded = kalamdb_raft::state_machine::encode(&cmd).unwrap();
     
-    let result = manager.propose_system(encoded).await;
+    let result = manager.propose_meta(encoded).await;
     assert!(result.is_err(), "Proposal before start should fail");
     
     println!("✅ Proposal before start error handling verified!");

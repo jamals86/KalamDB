@@ -19,7 +19,7 @@ pub struct ClusterNodeInfo {
     pub node_id: NodeId,
     /// Node role derived from OpenRaft ServerState
     pub role: NodeRole,
-    /// Node status (active, offline, joining, unknown)
+    /// Node status (active, offline, joining, unknown, catching_up)
     pub status: NodeStatus,
     /// RPC address for Raft communication
     pub rpc_addr: String,
@@ -27,7 +27,7 @@ pub struct ClusterNodeInfo {
     pub api_addr: String,
     /// Whether this is the current node
     pub is_self: bool,
-    /// Whether this node is leader for MetaSystem group
+    /// Whether this node is leader for Meta group
     pub is_leader: bool,
     /// Number of groups this node leads (for multi-group Raft)
     pub groups_leading: u32,
@@ -37,6 +37,12 @@ pub struct ClusterNodeInfo {
     pub current_term: Option<u64>,
     /// Last applied log index (for this node if is_self, otherwise from replication metrics)
     pub last_applied_log: Option<u64>,
+    /// Leader's last log index (target for catchup)
+    pub leader_last_log_index: Option<u64>,
+    /// Snapshot log index (used during snapshot transfer catchup)
+    pub snapshot_index: Option<u64>,
+    /// Catchup progress as percentage (0-100), None if not catching up
+    pub catchup_progress_pct: Option<u8>,
     /// Milliseconds since last heartbeat response (only for leader viewing followers)
     pub millis_since_last_heartbeat: Option<u64>,
     /// Replication lag in log entries (only for leader viewing followers)
@@ -148,4 +154,10 @@ pub trait CommandExecutor: Send + Sync + Debug {
     /// In standalone mode, this is a no-op.
     /// In cluster mode, this stops all Raft groups and optionally transfers leadership.
     async fn shutdown(&self) -> Result<()>;
+    
+    /// Downcast to concrete type (for accessing implementation-specific methods)
+    ///
+    /// This is used sparingly during initialization to wire up appliers.
+    /// Regular operation should use trait methods only.
+    fn as_any(&self) -> &dyn std::any::Any;
 }

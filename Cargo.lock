@@ -3431,6 +3431,7 @@ dependencies = [
  "kalamdb-auth",
  "kalamdb-commons",
  "kalamdb-core",
+ "kalamdb-raft",
  "kalamdb-sql",
  "kalamdb-store",
  "kalamdb-system",

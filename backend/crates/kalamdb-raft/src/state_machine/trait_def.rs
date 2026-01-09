@@ -166,13 +166,13 @@ mod tests {
     #[test]
     fn test_snapshot_creation() {
         let snapshot = StateMachineSnapshot::new(
-            GroupId::MetaSystem,
+            GroupId::Meta,
             100,
             5,
             vec![1, 2, 3, 4],
         );
         
-        assert_eq!(snapshot.group_id, GroupId::MetaSystem);
+        assert_eq!(snapshot.group_id, GroupId::Meta);
         assert_eq!(snapshot.last_applied_index, 100);
         assert_eq!(snapshot.last_applied_term, 5);
         assert_eq!(snapshot.data, vec![1, 2, 3, 4]);

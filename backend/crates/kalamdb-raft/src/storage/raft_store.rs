@@ -816,15 +816,15 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use crate::state_machine::SystemStateMachine;
+    use crate::state_machine::MetaStateMachine;
     use crate::state_machine::{ApplyResult, KalamStateMachine, StateMachineSnapshot};
     use crate::RaftError;
     use openraft::EntryPayload;
 
     #[tokio::test]
     async fn test_storage_creation() {
-        let sm = SystemStateMachine::new();
-        let storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, sm));
+        let sm = MetaStateMachine::new();
+        let storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::Meta, sm));
         
         let mut storage_clone = storage.clone();
         let (last_applied, _) = storage_clone.last_applied_state().await.unwrap();
@@ -833,8 +833,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_vote_operations() {
-        let sm = SystemStateMachine::new();
-        let mut storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, sm));
+        let sm = MetaStateMachine::new();
+        let mut storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::Meta, sm));
         
         assert!(storage.read_vote().await.unwrap().is_none());
         
@@ -846,8 +846,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_log_operations() {
-        let sm = SystemStateMachine::new();
-        let mut storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, sm));
+        let sm = MetaStateMachine::new();
+        let mut storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::Meta, sm));
         
         let state = storage.get_log_state().await.unwrap();
         assert!(state.last_log_id.is_none());
@@ -883,7 +883,7 @@ mod tests {
     #[async_trait]
     impl KalamStateMachine for TestStateMachine {
         fn group_id(&self) -> GroupId {
-            GroupId::MetaSystem
+            GroupId::Meta
         }
 
         async fn apply(&self, index: u64, term: u64, command: &[u8]) -> Result<ApplyResult, RaftError> {
@@ -950,7 +950,7 @@ mod tests {
     async fn test_snapshot_build_and_install_restores_state() {
         let state = std::sync::Arc::new(AtomicU64::new(0));
         let sm = TestStateMachine::new(state.clone());
-        let storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, sm));
+        let storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::Meta, sm));
 
         let entries = vec![
             Entry {
@@ -975,7 +975,7 @@ mod tests {
         let restored_state = std::sync::Arc::new(AtomicU64::new(0));
         let restored_sm = TestStateMachine::new(restored_state.clone());
         let mut restored_storage =
-            std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, restored_sm));
+            std::sync::Arc::new(KalamRaftStorage::new(GroupId::Meta, restored_sm));
 
         let snapshot_meta = snapshot.meta.clone();
         let snapshot_data = snapshot.snapshot;
@@ -992,7 +992,7 @@ mod tests {
     async fn test_snapshot_install_updates_last_applied() {
         let state = std::sync::Arc::new(AtomicU64::new(0));
         let sm = TestStateMachine::new(state.clone());
-        let storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, sm));
+        let storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::Meta, sm));
 
         let entry = Entry {
             log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 4),
@@ -1011,7 +1011,7 @@ mod tests {
         let restored_state = std::sync::Arc::new(AtomicU64::new(0));
         let restored_sm = TestStateMachine::new(restored_state);
         let mut restored_storage =
-            std::sync::Arc::new(KalamRaftStorage::new(GroupId::MetaSystem, restored_sm));
+            std::sync::Arc::new(KalamRaftStorage::new(GroupId::Meta, restored_sm));
 
         let snapshot_meta = snapshot.meta.clone();
         let snapshot_data = snapshot.snapshot;
@@ -1043,9 +1043,9 @@ mod tests {
     #[tokio::test]
     async fn test_persistent_storage_creation() {
         let backend = create_test_backend();
-        let sm = SystemStateMachine::new();
+        let sm = MetaStateMachine::new();
         let storage =
-            KalamRaftStorage::new_persistent(GroupId::MetaSystem, sm, backend.clone()).unwrap();
+            KalamRaftStorage::new_persistent(GroupId::Meta, sm, backend.clone()).unwrap();
 
         assert!(storage.is_persistent());
 
@@ -1061,9 +1061,9 @@ mod tests {
 
         // First instance: save a vote
         {
-            let sm = SystemStateMachine::new();
+            let sm = MetaStateMachine::new();
             let storage =
-                KalamRaftStorage::new_persistent(GroupId::MetaUsers, sm, backend.clone()).unwrap();
+                KalamRaftStorage::new_persistent(GroupId::Meta, sm, backend.clone()).unwrap();
             let mut storage = Arc::new(storage);
 
             let vote = Vote::new(5, 2);
@@ -1072,9 +1072,9 @@ mod tests {
 
         // Second instance: verify vote is recovered
         {
-            let sm = SystemStateMachine::new();
+            let sm = MetaStateMachine::new();
             let storage =
-                KalamRaftStorage::new_persistent(GroupId::MetaUsers, sm, backend.clone()).unwrap();
+                KalamRaftStorage::new_persistent(GroupId::Meta, sm, backend.clone()).unwrap();
             let mut storage = Arc::new(storage);
 
             let recovered_vote = storage.read_vote().await.unwrap();
@@ -1090,9 +1090,9 @@ mod tests {
 
         // First instance: append logs
         {
-            let sm = SystemStateMachine::new();
+            let sm = MetaStateMachine::new();
             let storage =
-                KalamRaftStorage::new_persistent(GroupId::MetaJobs, sm, backend.clone()).unwrap();
+                KalamRaftStorage::new_persistent(GroupId::Meta, sm, backend.clone()).unwrap();
             let mut storage = Arc::new(storage);
 
             let entries = vec![
@@ -1114,9 +1114,9 @@ mod tests {
 
         // Second instance: verify logs are recovered
         {
-            let sm = SystemStateMachine::new();
+            let sm = MetaStateMachine::new();
             let storage =
-                KalamRaftStorage::new_persistent(GroupId::MetaJobs, sm, backend.clone()).unwrap();
+                KalamRaftStorage::new_persistent(GroupId::Meta, sm, backend.clone()).unwrap();
             let mut storage = Arc::new(storage);
 
             let state = storage.get_log_state().await.unwrap();
@@ -1136,9 +1136,9 @@ mod tests {
 
         // First instance: save committed
         {
-            let sm = SystemStateMachine::new();
+            let sm = MetaStateMachine::new();
             let storage =
-                KalamRaftStorage::new_persistent(GroupId::MetaSystem, sm, backend.clone()).unwrap();
+                KalamRaftStorage::new_persistent(GroupId::Meta, sm, backend.clone()).unwrap();
             let mut storage = Arc::new(storage);
 
             let committed = Some(LogId::new(openraft::CommittedLeaderId::new(3, 1), 42));
@@ -1147,9 +1147,9 @@ mod tests {
 
         // Second instance: verify committed is recovered
         {
-            let sm = SystemStateMachine::new();
+            let sm = MetaStateMachine::new();
             let storage =
-                KalamRaftStorage::new_persistent(GroupId::MetaSystem, sm, backend.clone()).unwrap();
+                KalamRaftStorage::new_persistent(GroupId::Meta, sm, backend.clone()).unwrap();
             let mut storage = Arc::new(storage);
 
             let recovered = storage.read_committed().await.unwrap();
@@ -1164,7 +1164,7 @@ mod tests {
 
         // First instance: append and purge logs
         {
-            let sm = SystemStateMachine::new();
+            let sm = MetaStateMachine::new();
             let storage = KalamRaftStorage::new_persistent(GroupId::DataUserShard(0), sm, backend.clone())
                 .unwrap();
             let mut storage = Arc::new(storage);
@@ -1184,7 +1184,7 @@ mod tests {
 
         // Second instance: verify purged logs are gone
         {
-            let sm = SystemStateMachine::new();
+            let sm = MetaStateMachine::new();
             let storage = KalamRaftStorage::new_persistent(GroupId::DataUserShard(0), sm, backend.clone())
                 .unwrap();
             let mut storage = Arc::new(storage);
@@ -1211,7 +1211,7 @@ mod tests {
             let state = Arc::new(AtomicU64::new(0));
             let sm = TestStateMachine::new(state.clone());
             let storage =
-                KalamRaftStorage::new_persistent(GroupId::MetaSystem, sm, backend.clone()).unwrap();
+                KalamRaftStorage::new_persistent(GroupId::Meta, sm, backend.clone()).unwrap();
             let storage = Arc::new(storage);
 
             // Apply some entries
@@ -1233,7 +1233,7 @@ mod tests {
             let state = Arc::new(AtomicU64::new(0));
             let sm = TestStateMachine::new(state);
             let storage =
-                KalamRaftStorage::new_persistent(GroupId::MetaSystem, sm, backend.clone()).unwrap();
+                KalamRaftStorage::new_persistent(GroupId::Meta, sm, backend.clone()).unwrap();
             let mut storage = Arc::new(storage);
 
             let snapshot = storage.get_current_snapshot().await.unwrap();
@@ -1247,11 +1247,11 @@ mod tests {
     async fn test_different_groups_isolated_in_persistent_storage() {
         let backend = create_test_backend();
 
-        // Write to MetaSystem
+        // Write to Meta group
         {
-            let sm = SystemStateMachine::new();
+            let sm = MetaStateMachine::new();
             let storage =
-                KalamRaftStorage::new_persistent(GroupId::MetaSystem, sm, backend.clone()).unwrap();
+                KalamRaftStorage::new_persistent(GroupId::Meta, sm, backend.clone()).unwrap();
             let mut storage = Arc::new(storage);
 
             let vote = Vote::new(1, 1);
@@ -1264,22 +1264,22 @@ mod tests {
             storage.append_to_log(entries).await.unwrap();
         }
 
-        // Write to MetaUsers (different group)
+        // Write to DataUserShard(1) (different group)
         {
-            let sm = SystemStateMachine::new();
+            let sm = MetaStateMachine::new();
             let storage =
-                KalamRaftStorage::new_persistent(GroupId::MetaUsers, sm, backend.clone()).unwrap();
+                KalamRaftStorage::new_persistent(GroupId::DataUserShard(1), sm, backend.clone()).unwrap();
             let mut storage = Arc::new(storage);
 
             let vote = Vote::new(5, 2);
             storage.save_vote(&vote).await.unwrap();
         }
 
-        // Verify MetaSystem data
+        // Verify Meta data
         {
-            let sm = SystemStateMachine::new();
+            let sm = MetaStateMachine::new();
             let storage =
-                KalamRaftStorage::new_persistent(GroupId::MetaSystem, sm, backend.clone()).unwrap();
+                KalamRaftStorage::new_persistent(GroupId::Meta, sm, backend.clone()).unwrap();
             let mut storage = Arc::new(storage);
 
             let vote = storage.read_vote().await.unwrap().unwrap();
@@ -1289,17 +1289,17 @@ mod tests {
             assert!(state.last_log_id.is_some());
         }
 
-        // Verify MetaUsers data (should be independent)
+        // Verify DataUserShard(1) data (should be independent)
         {
-            let sm = SystemStateMachine::new();
+            let sm = MetaStateMachine::new();
             let storage =
-                KalamRaftStorage::new_persistent(GroupId::MetaUsers, sm, backend.clone()).unwrap();
+                KalamRaftStorage::new_persistent(GroupId::DataUserShard(1), sm, backend.clone()).unwrap();
             let mut storage = Arc::new(storage);
 
             let vote = storage.read_vote().await.unwrap().unwrap();
             assert_eq!(vote.leader_id().term, 5);
 
-            // MetaUsers should have no logs
+            // DataUserShard(1) should have no logs
             let state = storage.get_log_state().await.unwrap();
             assert!(state.last_log_id.is_none());
         }

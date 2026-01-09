@@ -365,8 +365,32 @@ Display the clusterName here and which node we are connecting to: ● KalamDB[{{
 
 19) remove all deprecated meta raft groups and also use the GroupId instead of using a strings everywhere also created_by: Option<String>, use UserId or maybe UserName
 
+
+
+
+
+
+
 21) why we have this: backend\crates\kalamdb-core\src\schema_registry\views\settings.rs can't we do a code which loop over all the settings and print them? no need for description or category for the UI we can add these in a separate file
 
 22) move pub fn compute_metrics(&self) -> Vec<(String, String)> to the other metrics file code: backend\crates\kalamdb-core\src\metrics
 
 23) WHEN BUILDING ON WINDOWS OR MAYBE LINUX ADD TO THE BINARY properties details like verison and other things
+
+
+
+
+24) all commands either they came from replication or from manual current node should be the same for example:     async fn alter_table has a specific logic for on replication we should use the same logic for both cases not different ones in this way we reduce code rewritten and bugs
+
+25) We should consider changing how things is done using an event driven system:
+- User create/alter/delete table
+- We call the applier
+- it apply the command if its a leader
+- if its a follower it forwards it to the leader and wait
+- The leader apply the command
+- the leader call all followers
+- they all apply the command
+- Once all applied we return ok to the follower who forwarded the command
+- the follower ack to the user who called from a client
+
+Note: this should be done in case of cluster or standalone the same way no difference

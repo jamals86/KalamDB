@@ -355,22 +355,6 @@ impl AppContext {
                     log::debug!("Creating RaftManager...");
                     let manager = Arc::new(kalamdb_raft::manager::RaftManager::new(raft_config));
                     
-                    // Wire up the unified meta applier for all metadata replication
-                    // This ensures namespaces/tables/storages/users/jobs are persisted on all nodes
-                    log::debug!("Wiring MetaApplier for unified metadata replication...");
-                    let meta_applier = Arc::new(crate::applier::ProviderMetaApplier::new(system_tables.clone()));
-                    manager.set_meta_applier(meta_applier);
-                    
-                    // Wire up data appliers for user/shared table replication
-                    // These ensure INSERT/UPDATE/DELETE data is replicated to all nodes
-                    log::debug!("Wiring UserDataApplier for user table data replication...");
-                    let user_data_applier = Arc::new(crate::applier::ProviderUserDataApplier::new());
-                    manager.set_user_data_applier(user_data_applier);
-                    
-                    log::debug!("Wiring SharedDataApplier for shared table data replication...");
-                    let shared_data_applier = Arc::new(crate::applier::ProviderSharedDataApplier::new());
-                    manager.set_shared_data_applier(shared_data_applier);
-                    
                     log::debug!("Creating RaftExecutor...");
                     Arc::new(kalamdb_raft::RaftExecutor::new(manager))
                 } else {
@@ -432,6 +416,35 @@ impl AppContext {
                 app_ctx.system_tables().manifest().set_in_memory_checker(
                     Arc::new(move |cache_key: &str| manifest_for_checker.is_in_hot_cache_by_string(cache_key))
                 );
+
+                // Wire up Raft appliers NOW that AppContext is fully initialized
+                // This ensures metadata and data replication work correctly on followers
+                if app_ctx.executor().is_cluster_mode() {
+                    log::info!("Wiring Raft appliers for cluster mode...");
+                    
+                    // Get the RaftManager from the executor
+                    if let Some(raft_executor) = app_ctx.executor().as_any().downcast_ref::<kalamdb_raft::RaftExecutor>() {
+                        let manager = raft_executor.manager();
+                        
+                        // Wire up unified meta applier (namespaces, tables, storages, users, jobs)
+                        log::debug!("Wiring MetaApplier with AppContext for table provider registration...");
+                        let meta_applier = Arc::new(crate::applier::ProviderMetaApplier::new(Arc::clone(&app_ctx)));
+                        manager.set_meta_applier(meta_applier);
+                        
+                        // Wire up data appliers for user/shared table replication
+                        log::debug!("Wiring UserDataApplier for user table data replication...");
+                        let user_data_applier = Arc::new(crate::applier::ProviderUserDataApplier::new());
+                        manager.set_user_data_applier(user_data_applier);
+                        
+                        log::debug!("Wiring SharedDataApplier for shared table data replication...");
+                        let shared_data_applier = Arc::new(crate::applier::ProviderSharedDataApplier::new());
+                        manager.set_shared_data_applier(shared_data_applier);
+                        
+                        log::info!("✓ Raft appliers wired successfully");
+                    } else {
+                        log::error!("Failed to downcast executor to RaftExecutor - appliers NOT wired!");
+                    }
+                }
 
                 // Cleanup orphan live queries from previous server run
                 // Live queries don't persist across restarts (WebSocket connections are lost)

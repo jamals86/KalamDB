@@ -64,32 +64,25 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         let namespace_id = statement.namespace_id.clone();
         let table_name = statement.table_name.clone();
         let table_type = statement.table_type;
-
-        // Delegate to helper function
-        let message = table_creation::create_table(
-            self.app_context.clone(),
-            statement,
-            &context.user_id,
-            context.user_role,
-        )?;
-
-        // Create TableId for audit logging
         let table_id = TableId::new(namespace_id.clone(), table_name.clone());
 
-        if self.app_context.executor().is_cluster_mode() {
-            let table_def = self
-                .app_context
-                .schema_registry()
-                .get_table_definition(&table_id)?
-                .ok_or_else(|| {
-                    KalamDbError::Other(format!(
-                        "Table definition missing for {} after creation",
-                        table_id
-                    ))
-                })?;
-            let schema_json = serde_json::to_string(table_def.as_ref()).map_err(|e| {
+        // Unified execution path:
+        // - Cluster mode: Raft-first (propose to Raft, applier executes on ALL nodes including leader)
+        // - Standalone mode: Execute locally via helper
+        let message = if self.app_context.executor().is_cluster_mode() {
+            // Build TableDefinition for replication (validate + build, no local execution)
+            let table_def = table_creation::build_table_definition(
+                self.app_context.clone(),
+                &statement,
+                &context.user_id,
+                context.user_role,
+            )?;
+
+            let schema_json = serde_json::to_string(&table_def).map_err(|e| {
                 KalamDbError::Other(format!("Failed to serialize table definition: {}", e))
             })?;
+
+            // Propose to Raft - applier will execute on ALL nodes (including this leader)
             let cmd = MetaCommand::CreateTable {
                 table_id: table_id.clone(),
                 table_type,
@@ -105,8 +98,23 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
                         e
                     ))
                 })?;
-        }
-        
+
+            format!(
+                "{} table {}.{} created successfully",
+                table_type,
+                namespace_id.as_str(),
+                table_name.as_str()
+            )
+        } else {
+            // Standalone mode: Execute locally via helper
+            table_creation::create_table(
+                self.app_context.clone(),
+                statement,
+                &context.user_id,
+                context.user_role,
+            )?
+        };
+
         // Log DDL operation
         let audit_entry = audit::log_ddl_operation(
             context,

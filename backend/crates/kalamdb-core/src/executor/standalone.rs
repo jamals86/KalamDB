@@ -476,6 +476,9 @@ impl CommandExecutor for StandaloneExecutor {
                 last_applied_log: None,
                 millis_since_last_heartbeat: None,
                 replication_lag: None,
+                catchup_progress_pct: None,
+                leader_last_log_index: None,
+                snapshot_index: None,
             }],
             total_groups: 0,
             user_shards: 0,
@@ -497,5 +500,9 @@ impl CommandExecutor for StandaloneExecutor {
     
     async fn shutdown(&self) -> Result<()> {
         Ok(())
+    }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }

@@ -268,6 +268,9 @@ impl CommandExecutor for DirectExecutor {
                 total_groups: 0,
                 current_term: None,
                 last_applied_log: None,
+                leader_last_log_index: None,
+                snapshot_index: None,
+                catchup_progress_pct: None,
                 millis_since_last_heartbeat: None,
                 replication_lag: None,
             }],
@@ -295,11 +298,16 @@ impl CommandExecutor for DirectExecutor {
         // No-op for standalone mode
         Ok(())
     }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::MetaCommand;
 
     #[tokio::test]
     async fn test_direct_executor_standalone() {
@@ -307,31 +315,30 @@ mod tests {
         
         assert!(!executor.is_cluster_mode());
         assert_eq!(executor.node_id(), NodeId::default());
-        assert!(executor.is_leader(GroupId::MetaSystem).await);
-        assert!(executor.get_leader(GroupId::MetaSystem).await.is_none());
+        assert!(executor.is_leader(GroupId::Meta).await);
+        assert!(executor.get_leader(GroupId::Meta).await.is_none());
     }
 
     #[tokio::test]
-    async fn test_execute_system_create_namespace() {
+    async fn test_execute_meta_create_namespace() {
         use kalamdb_commons::models::NamespaceId;
         
         let executor = DirectExecutor::new();
-        let cmd = SystemCommand::CreateNamespace {
+        let cmd = MetaCommand::CreateNamespace {
             namespace_id: NamespaceId::new("test_ns"),
             created_by: Some("user1".to_string()),
         };
         
-        let response = executor.execute_system(cmd).await.unwrap();
-        assert!(matches!(response, SystemResponse::NamespaceCreated { .. }));
+        let response = executor.execute_meta(cmd).await.unwrap();
+        assert!(matches!(response, MetaResponse::NamespaceCreated { .. }));
     }
 
     #[tokio::test]
-    async fn test_execute_jobs_create() {
-        use kalamdb_commons::models::{JobType, NamespaceId, TableName};
-        use kalamdb_commons::JobId;
+    async fn test_execute_meta_create_job() {
+        use kalamdb_commons::models::{JobId, JobType, NamespaceId, TableName};
         
         let executor = DirectExecutor::new();
-        let cmd = JobsCommand::CreateJob {
+        let cmd = MetaCommand::CreateJob {
             job_id: JobId::from("job_123"),
             job_type: JobType::Flush,
             namespace_id: Some(NamespaceId::from("ns")),
@@ -340,7 +347,7 @@ mod tests {
             created_at: chrono::Utc::now(),
         };
         
-        let response = executor.execute_jobs(cmd).await.unwrap();
-        assert!(matches!(response, JobsResponse::JobCreated { .. }));
+        let response = executor.execute_meta(cmd).await.unwrap();
+        assert!(matches!(response, MetaResponse::JobCreated { .. }));
     }
 }

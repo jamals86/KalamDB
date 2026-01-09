@@ -2,17 +2,17 @@
 //!
 //! This is a dynamic view that fetches live data from OpenRaft metrics,
 //! not a persisted table. It shows:
-//! - Node ID, role (leader/follower/learner/candidate), status (active/offline/joining/unknown)
+//! - Node ID, role (leader/follower/learner/candidate), status (active/offline/joining/catching_up/unknown)
 //! - RPC and API addresses
 //! - Whether this is the current node
 //! - Raft group leadership counts
-//! - OpenRaft metrics: term, log index, replication lag, heartbeat timing
+//! - OpenRaft metrics: term, log index, replication lag, snapshot index, catchup progress
 
 use std::any::Any;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datafusion::arrow::array::{BooleanArray, StringArray, UInt32Array, UInt64Array};
+use datafusion::arrow::array::{BooleanArray, StringArray, UInt32Array, UInt64Array, UInt8Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::MemTable;
@@ -43,6 +43,9 @@ fn cluster_schema() -> SchemaRef {
                 // OpenRaft metrics
                 Field::new("current_term", DataType::UInt64, true),
                 Field::new("last_applied_log", DataType::UInt64, true),
+                Field::new("leader_last_log_index", DataType::UInt64, true),
+                Field::new("snapshot_index", DataType::UInt64, true),
+                Field::new("catchup_progress_pct", DataType::UInt8, true),
                 Field::new("replication_lag", DataType::UInt64, true),
             ]))
         })
@@ -99,6 +102,9 @@ impl ClusterTableProvider {
         let total_groups: Vec<u32> = info.nodes.iter().map(|n| n.total_groups).collect();
         let current_terms: Vec<Option<u64>> = info.nodes.iter().map(|n| n.current_term).collect();
         let last_applied_logs: Vec<Option<u64>> = info.nodes.iter().map(|n| n.last_applied_log).collect();
+        let leader_last_log_indexes: Vec<Option<u64>> = info.nodes.iter().map(|n| n.leader_last_log_index).collect();
+        let snapshot_indexes: Vec<Option<u64>> = info.nodes.iter().map(|n| n.snapshot_index).collect();
+        let catchup_progress_pcts: Vec<Option<u8>> = info.nodes.iter().map(|n| n.catchup_progress_pct).collect();
         let replication_lags: Vec<Option<u64>> = info.nodes.iter().map(|n| n.replication_lag).collect();
 
         Ok(RecordBatch::try_new(
@@ -116,6 +122,9 @@ impl ClusterTableProvider {
                 Arc::new(UInt32Array::from(total_groups)),
                 Arc::new(UInt64Array::from(current_terms)),
                 Arc::new(UInt64Array::from(last_applied_logs)),
+                Arc::new(UInt64Array::from(leader_last_log_indexes)),
+                Arc::new(UInt64Array::from(snapshot_indexes)),
+                Arc::new(UInt8Array::from(catchup_progress_pcts)),
                 Arc::new(UInt64Array::from(replication_lags)),
             ],
         )?)

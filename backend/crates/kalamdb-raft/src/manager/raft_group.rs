@@ -584,14 +584,14 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state_machine::SystemStateMachine;
+    use crate::state_machine::MetaStateMachine;
 
     #[test]
     fn test_raft_group_creation() {
-        let sm = SystemStateMachine::new();
-        let group = RaftGroup::new(GroupId::MetaSystem, sm);
+        let sm = MetaStateMachine::new();
+        let group = RaftGroup::new(GroupId::Meta, sm);
         
-        assert_eq!(group.group_id(), GroupId::MetaSystem);
+        assert_eq!(group.group_id(), GroupId::Meta);
         assert!(!group.is_started());
         assert!(!group.is_leader());
     }

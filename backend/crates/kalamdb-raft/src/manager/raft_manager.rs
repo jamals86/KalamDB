@@ -936,10 +936,9 @@ mod tests {
         let manager = RaftManager::new(test_config());
         
         // Before start, no group should have a leader
-        assert!(!manager.is_leader(GroupId::MetaSystem));
-        assert!(!manager.is_leader(GroupId::MetaUsers));
-        assert!(!manager.is_leader(GroupId::MetaJobs));
+        assert!(!manager.is_leader(GroupId::Meta));
         assert!(!manager.is_leader(GroupId::DataUserShard(0)));
+        assert!(!manager.is_leader(GroupId::DataSharedShard(0)));
     }
 
     #[test]
@@ -947,7 +946,7 @@ mod tests {
         let manager = RaftManager::new(test_config());
         
         // Before start, no leader should be known
-        assert!(manager.current_leader(GroupId::MetaSystem).is_none());
-        assert!(manager.current_leader(GroupId::MetaUsers).is_none());
+        assert!(manager.current_leader(GroupId::Meta).is_none());
+        assert!(manager.current_leader(GroupId::DataUserShard(0)).is_none());
     }
 }
