@@ -61,7 +61,23 @@ export function Results({ result, isLoading }: ResultsProps) {
             return <span className={value ? 'text-green-600' : 'text-red-600'}>{String(value)}</span>;
           }
           if (typeof value === 'object') {
-            return <span className="text-blue-600 font-mono text-xs">{JSON.stringify(value)}</span>;
+            // Format JSON with syntax highlighting
+            const jsonStr = JSON.stringify(value, null, 2);
+            return (
+              <pre className="font-mono text-xs overflow-x-auto">
+                <code dangerouslySetInnerHTML={{ 
+                  __html: jsonStr
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"([^"]+)":/g, '<span class="text-purple-600">"$1"</span>:') // keys
+                    .replace(/: "([^"]*)"/g, ': <span class="text-green-600">"$1"</span>') // string values
+                    .replace(/: (\d+\.?\d*)/g, ': <span class="text-blue-600">$1</span>') // numbers
+                    .replace(/: (true|false)/g, ': <span class="text-orange-600">$1</span>') // booleans
+                    .replace(/: (null)/g, ': <span class="text-gray-400">$1</span>') // null
+                }} />
+              </pre>
+            );
           }
           return <span className="font-mono text-sm">{String(value)}</span>;
         },

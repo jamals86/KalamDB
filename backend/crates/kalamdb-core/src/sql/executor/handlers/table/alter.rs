@@ -239,7 +239,8 @@ fn apply_alter_operation(
                     column_name
                 )));
             }
-            if table_def.columns.iter().any(|c| c.column_name == *column_name) {
+            // Perform case-insensitive check to prevent duplicates like 'col1' vs 'COL1'
+            if table_def.columns.iter().any(|c| c.column_name.eq_ignore_ascii_case(column_name)) {
                 log::error!("❌ ALTER TABLE failed: Column '{}' already exists in {}", column_name, table_id);
                 return Err(KalamDbError::InvalidOperation(format!(
                     "Column '{}' already exists",

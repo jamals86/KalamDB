@@ -117,7 +117,9 @@ export function ClusterNodesList({ nodes, isLoading, onRefresh }: ClusterNodesLi
                   <TableHead>RPC Address</TableHead>
                   <TableHead className="text-center">Groups</TableHead>
                   <TableHead className="text-right">Term</TableHead>
-                  <TableHead className="text-right">Log Index</TableHead>
+                  <TableHead className="text-right">Applied Log</TableHead>
+                  <TableHead className="text-right">Leader Log</TableHead>
+                  <TableHead className="text-right">Snapshot</TableHead>
                   <TableHead className="text-right">Lag</TableHead>
                   <TableHead className="text-center">Progress</TableHead>
                 </TableRow>
@@ -125,7 +127,7 @@ export function ClusterNodesList({ nodes, isLoading, onRefresh }: ClusterNodesLi
               <TableBody>
                 {filteredNodes.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
                       {searchQuery ? 'No nodes match your search' : 'No cluster nodes found'}
                     </TableCell>
                   </TableRow>
@@ -177,6 +179,12 @@ export function ClusterNodesList({ nodes, isLoading, onRefresh }: ClusterNodesLi
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm">
                         {formatNumber(node.last_applied_log)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                        {formatNumber(node.leader_last_log_index)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                        {formatNumber(node.snapshot_index)}
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm">
                         {node.replication_lag !== null && node.replication_lag > 0 ? (

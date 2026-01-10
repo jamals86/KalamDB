@@ -68,15 +68,21 @@ impl PlanCache {
     /// Clear cache (MUST be called on any DDL operation like CREATE/DROP/ALTER)
     pub fn clear(&self) {
         self.cache.invalidate_all();
+        // Moka executes some invalidations asynchronously; flush pending work so
+        // follow-up size checks (tests/diagnostics) observe the cleared state.
+        self.cache.run_pending_tasks();
     }
 
     /// Get current cache size
     pub fn len(&self) -> usize {
+        // Moka's entry_count can lag behind without flushing pending tasks.
+        self.cache.run_pending_tasks();
         self.cache.entry_count() as usize
     }
 
     /// Check if cache is empty
     pub fn is_empty(&self) -> bool {
+        self.cache.run_pending_tasks();
         self.cache.entry_count() == 0
     }
 }

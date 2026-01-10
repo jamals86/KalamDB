@@ -20,6 +20,20 @@ pub use std::os::unix::fs::PermissionsExt;
 static SERVER_URL: OnceLock<String> = OnceLock::new();
 static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
 
+/// Get the server URL for tests.
+///
+/// Configure via `KALAMDB_SERVER_URL` environment variable.
+/// Default: `http://127.0.0.1:8080`
+///
+/// # Examples
+///
+/// ```bash
+/// # Test against different port
+/// KALAMDB_SERVER_URL="http://127.0.0.1:3000" cargo test
+///
+/// # Test against remote server
+/// KALAMDB_SERVER_URL="https://kalamdb.example.com" cargo test
+/// ```
 pub fn server_url() -> &'static str {
     SERVER_URL
         .get_or_init(|| {
@@ -28,8 +42,25 @@ pub fn server_url() -> &'static str {
         })
         .as_str()
 }
+
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
-/// Default password for the root user
+
+/// Get the root user password for tests.
+///
+/// Configure via `KALAMDB_ROOT_PASSWORD` environment variable.
+/// Default: empty string `""`
+///
+/// # Examples
+///
+/// ```bash
+/// # Test with authentication enabled
+/// KALAMDB_ROOT_PASSWORD="secure-password" cargo test
+///
+/// # Test with both URL and password
+/// KALAMDB_SERVER_URL="http://127.0.0.1:3000" \
+/// KALAMDB_ROOT_PASSWORD="mypass" \
+/// cargo test
+/// ```
 pub fn root_password() -> &'static str {
     ROOT_PASSWORD
         .get_or_init(|| {

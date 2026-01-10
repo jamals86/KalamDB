@@ -59,6 +59,11 @@ impl SqlExecutor {
         self.plan_cache.clear();
     }
 
+    /// Get current plan cache size (diagnostics/testing)
+    pub fn plan_cache_len(&self) -> usize {
+        self.plan_cache.len()
+    }
+
     /// Execute a statement without request metadata.
     pub async fn execute(
         &self,

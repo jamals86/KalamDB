@@ -58,3 +58,5 @@ mod smoke_test_cli_commands;
 mod smoke_test_cluster_operations;
 #[path = "smoke/smoke_test_schema_history.rs"]
 mod smoke_test_schema_history;
+#[path = "smoke/smoke_test_alter_with_data.rs"]
+mod smoke_test_alter_with_data;

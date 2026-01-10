@@ -587,19 +587,29 @@ impl RaftManager {
     /// Does NOT forward - should only be called when we are the leader.
     /// Uses standard quorum-based replication.
     pub async fn propose_for_group(&self, group_id: GroupId, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
+        let (data, _log_index) = self.propose_for_group_with_index(group_id, command).await?;
+        Ok(data)
+    }
+    
+    /// Propose a command to any group and return both response data and log index
+    ///
+    /// Used by the RaftService when receiving a forwarded proposal.
+    /// Does NOT forward - should only be called when we are the leader.
+    /// Returns (response_data, log_index) for read-your-writes consistency.
+    pub async fn propose_for_group_with_index(&self, group_id: GroupId, command: Vec<u8>) -> Result<(Vec<u8>, u64), RaftError> {
         match group_id {
-            GroupId::Meta => self.meta.propose(command).await,
+            GroupId::Meta => self.meta.propose_with_index(command).await,
             GroupId::DataUserShard(shard) => {
                 if shard >= self.user_shards_count {
                     return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
                 }
-                self.user_data_shards[shard as usize].propose(command).await
+                self.user_data_shards[shard as usize].propose_with_index(command).await
             }
             GroupId::DataSharedShard(shard) => {
                 if shard >= self.shared_shards_count {
                     return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
                 }
-                self.shared_data_shards[shard as usize].propose(command).await
+                self.shared_data_shards[shard as usize].propose_with_index(command).await
             }
         }
     }
