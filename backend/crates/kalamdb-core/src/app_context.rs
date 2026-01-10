@@ -9,6 +9,7 @@ use crate::jobs::executors::{
     JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
 };
 use crate::live::ConnectionsManager;
+use crate::applier::UnifiedApplier;
 use crate::live_query::LiveQueryManager;
 use crate::schema_registry::settings::{SettingsTableProvider, SettingsView};
 use crate::schema_registry::stats::StatsTableProvider;
@@ -106,6 +107,9 @@ pub struct AppContext {
     // ===== Manifest Service (unified: hot cache + RocksDB + cold storage) =====
     manifest_service: Arc<crate::manifest::ManifestService>,
 
+    // ===== Unified Applier (single execution path for all commands) =====
+    applier: Arc<dyn UnifiedApplier>,
+
     // ===== Shared SqlExecutor =====
     sql_executor: OnceCell<Arc<SqlExecutor>>,
 
@@ -129,6 +133,7 @@ impl std::fmt::Debug for AppContext {
             .field("base_session_context", &"Arc<SessionContext>")
             .field("system_tables", &"Arc<SystemTablesRegistry>")
             .field("executor", &"Arc<dyn CommandExecutor>")
+            .field("applier", &"Arc<dyn UnifiedApplier>")
             .field("system_columns_service", &"Arc<SystemColumnsService>")
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
             .field("manifest_service", &"Arc<ManifestService>")
@@ -378,6 +383,11 @@ impl AppContext {
                     .register_table("cluster".to_string(), cluster_provider)
                     .expect("Failed to register system.cluster");
 
+                // Create unified applier (lazy initialization)
+                // Cluster mode if [cluster] config section exists
+                let is_cluster_mode = config.cluster.is_some();
+                let applier = crate::applier::create_applier(is_cluster_mode);
+
                 let app_ctx = Arc::new(AppContext {
                     node_id,
                     config,
@@ -392,6 +402,7 @@ impl AppContext {
                     storage_registry,
                     system_tables,
                     executor,
+                    applier: applier.clone(),
                     session_factory,
                     base_session_context,
                     system_columns_service,
@@ -403,6 +414,9 @@ impl AppContext {
 
                 // Attach AppContext to components that require it (JobsManager)
                 job_manager.set_app_context(Arc::clone(&app_ctx));
+                
+                // Wire up UnifiedApplier with AppContext (lazy initialization)
+                applier.set_app_context(Arc::clone(&app_ctx));
 
                 // Wire up StatsTableProvider metrics callback now that AppContext exists
                 let app_ctx_for_stats = Arc::clone(&app_ctx);
@@ -433,11 +447,11 @@ impl AppContext {
                         
                         // Wire up data appliers for user/shared table replication
                         log::debug!("Wiring UserDataApplier for user table data replication...");
-                        let user_data_applier = Arc::new(crate::applier::ProviderUserDataApplier::new());
+                        let user_data_applier = Arc::new(crate::applier::ProviderUserDataApplier::new(Arc::clone(&app_ctx)));
                         manager.set_user_data_applier(user_data_applier);
                         
                         log::debug!("Wiring SharedDataApplier for shared table data replication...");
-                        let shared_data_applier = Arc::new(crate::applier::ProviderSharedDataApplier::new());
+                        let shared_data_applier = Arc::new(crate::applier::ProviderSharedDataApplier::new(Arc::clone(&app_ctx)));
                         manager.set_shared_data_applier(shared_data_applier);
                         
                         log::info!("✓ Raft appliers wired successfully");
@@ -591,6 +605,9 @@ impl AppContext {
 
         // Create standalone executor for tests
         let executor = Arc::new(crate::executor::StandaloneExecutor::new(system_tables.clone()));
+        
+        // Create unified applier for tests (standalone mode)
+        let applier = crate::applier::create_applier(false);
 
         AppContext {
             node_id,
@@ -606,6 +623,7 @@ impl AppContext {
             storage_registry,
             system_tables,
             executor,
+            applier,
             session_factory,
             base_session_context,
             system_columns_service,
@@ -714,6 +732,14 @@ impl AppContext {
     /// Check if this node is running in cluster mode
     pub fn is_cluster_mode(&self) -> bool {
         self.executor.is_cluster_mode()
+    }
+
+    /// Get the unified applier (Phase 19 - Unified Command Applier)
+    ///
+    /// Returns the applier that handles all database commands.
+    /// All mutations flow through this applier, regardless of mode.
+    pub fn applier(&self) -> Arc<dyn UnifiedApplier> {
+        self.applier.clone()
     }
 
     /// Get the system columns service (Phase 12, US5, T027)

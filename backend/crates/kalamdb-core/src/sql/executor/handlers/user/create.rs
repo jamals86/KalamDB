@@ -114,18 +114,14 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
             deleted_at: None,
         };
 
-        if self.app_context.executor().is_cluster_mode() {
-            let cmd = kalamdb_raft::MetaCommand::CreateUser { user: user.clone() };
-            self.app_context
-                .executor()
-                .execute_meta(cmd)
-                .await
-                .map_err(|e| {
-                    KalamDbError::ExecutionError(format!("Failed to create user via executor: {}", e))
-                })?;
-        } else {
-            users.create_user(user)?;
-        }
+        // Delegate to unified applier (handles standalone vs cluster internally)
+        use crate::applier::commands::CreateUserCommand;
+        let cmd = CreateUserCommand { user };
+        self.app_context
+            .applier()
+            .create_user(cmd)
+            .await
+            .map_err(|e| KalamDbError::ExecutionError(format!("CREATE USER failed: {}", e)))?;
 
         // Log DDL operation
         use crate::sql::executor::helpers::audit;

@@ -7,7 +7,6 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::Role;
-use kalamdb_raft::MetaCommand;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
 
@@ -46,6 +45,7 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         use crate::sql::executor::helpers::audit;
         use crate::sql::executor::helpers::table_creation;
+        use crate::applier::commands::CreateTableCommand;
 
         let mut statement = statement;
         let effective_type = Self::resolve_table_type(&statement, context);
@@ -60,60 +60,34 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
             statement.table_type = effective_type;
         }
 
-        // Capture details for audit log before moving statement
+        // Capture details for audit log
         let namespace_id = statement.namespace_id.clone();
         let table_name = statement.table_name.clone();
         let table_type = statement.table_type;
         let table_id = TableId::new(namespace_id.clone(), table_name.clone());
 
-        // Unified execution path:
-        // - Cluster mode: Raft-first (propose to Raft, applier executes on ALL nodes including leader)
-        // - Standalone mode: Execute locally via helper
-        let message = if self.app_context.executor().is_cluster_mode() {
-            // Build TableDefinition for replication (validate + build, no local execution)
-            let table_def = table_creation::build_table_definition(
-                self.app_context.clone(),
-                &statement,
-                &context.user_id,
-                context.user_role,
-            )?;
+        // Build TableDefinition (validate + build, no execution yet)
+        let table_def = table_creation::build_table_definition(
+            self.app_context.clone(),
+            &statement,
+            &context.user_id,
+            context.user_role,
+        )?;
 
-            let schema_json = serde_json::to_string(&table_def).map_err(|e| {
-                KalamDbError::Other(format!("Failed to serialize table definition: {}", e))
-            })?;
-
-            // Propose to Raft - applier will execute on ALL nodes (including this leader)
-            let cmd = MetaCommand::CreateTable {
-                table_id: table_id.clone(),
-                table_type,
-                schema_json,
-            };
-            self.app_context
-                .executor()
-                .execute_meta(cmd)
-                .await
-                .map_err(|e| {
-                    KalamDbError::ExecutionError(format!(
-                        "Failed to replicate table metadata via executor: {}",
-                        e
-                    ))
-                })?;
-
-            format!(
-                "{} table {}.{} created successfully",
-                table_type,
-                namespace_id.as_str(),
-                table_name.as_str()
-            )
-        } else {
-            // Standalone mode: Execute locally via helper
-            table_creation::create_table(
-                self.app_context.clone(),
-                statement,
-                &context.user_id,
-                context.user_role,
-            )?
+        // Build command and delegate to unified applier
+        // The applier handles standalone vs cluster mode internally
+        let cmd = CreateTableCommand {
+            table_id: table_id.clone(),
+            table_type,
+            table_def,
         };
+
+        let message = self
+            .app_context
+            .applier()
+            .create_table(cmd)
+            .await
+            .map_err(|e| KalamDbError::ExecutionError(format!("CREATE TABLE failed: {}", e)))?;
 
         // Log DDL operation
         let audit_entry = audit::log_ddl_operation(

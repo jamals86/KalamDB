@@ -394,3 +394,13 @@ Display the clusterName here and which node we are connecting to: ● KalamDB[{{
 - the follower ack to the user who called from a client
 
 Note: this should be done in case of cluster or standalone the same way no difference
+
+26) CommandForwarder should use gRPC instead of HTTP for forwarding commands to the leader node
+27) There is many logic which scattered inside kalamdb-core which deals with multiple things i prefer combining them and make some organizing of the code and check if its categorized and combined correctly, check all the code start from the applier we added and go from there so each category should be in the same place and not scattered.
+
+
+28) I can see the applier has many boilerplates which i think we can prevent adding or make it more effecient i have these things can you check them and tell me if they are needed anymore or we can improve anything in the design:
+- why we have this standalone applier: backend/crates/kalamdb-core/src/executor? can't we always have a cluster mode and one executor which is the cluster and the logic will be inside the kalamdb-raft? in this way we will test the same code either in standalone or cluster
+- in backend/crates/kalamdb-core/src/applier we have separate logic for the data from the meta data why not for all commands use the same logic? for example: backend/crates/kalamdb-core/src/applier/commands/types.rs has only Metadata not the userdata commands as wel, we not using all the same logic for all commands? since the appliers inside kalamdb-raft is unified and all share the same logic
+- The main part is to have a logic which is used in both of them not inventing different one for each
+

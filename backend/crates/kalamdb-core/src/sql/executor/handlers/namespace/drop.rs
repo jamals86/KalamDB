@@ -9,7 +9,6 @@ use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::{NamespaceId, TableId};
-use kalamdb_raft::MetaCommand;
 use kalamdb_sql::ddl::DropNamespaceStatement;
 use std::sync::Arc;
 
@@ -81,20 +80,14 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                     // Construct TableId from namespace and table name
                     let table_id = TableId::new(table.namespace_id.clone(), table.table_name.clone());
                     
-                    // Delete from system.tables
-                    if self.app_context.executor().is_cluster_mode() {
-                        let cmd = MetaCommand::DropTable {
-                            table_id: table_id.clone(),
-                        };
-                        self.app_context.executor().execute_meta(cmd).await.map_err(|e| {
-                            KalamDbError::ExecutionError(format!(
-                                "Failed to drop table via executor: {}",
-                                e
-                            ))
-                        })?;
-                    } else {
-                        tables_provider.delete_table(&table_id)?;
-                    }
+                    // Delegate to unified applier
+                    use crate::applier::commands::DropTableCommand;
+                    let cmd = DropTableCommand { table_id: table_id.clone() };
+                    self.app_context
+                        .applier()
+                        .drop_table(cmd)
+                        .await
+                        .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
                     
                     // Log table drop as part of cascade
                     use crate::sql::executor::helpers::audit;
@@ -117,20 +110,14 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
             }
         }
 
-        // Delete namespace via provider
-        if self.app_context.executor().is_cluster_mode() {
-            let cmd = MetaCommand::DeleteNamespace {
-                namespace_id: namespace_id.clone(),
-            };
-            self.app_context.executor().execute_meta(cmd).await.map_err(|e| {
-                KalamDbError::ExecutionError(format!(
-                    "Failed to delete namespace via executor: {}",
-                    e
-                ))
-            })?;
-        } else {
-            namespaces_provider.delete_namespace(&namespace_id)?;
-        }
+        // Delegate to unified applier (handles standalone vs cluster internally)
+        use crate::applier::commands::DropNamespaceCommand;
+        let cmd = DropNamespaceCommand { namespace_id: namespace_id.clone() };
+        self.app_context
+            .applier()
+            .drop_namespace(cmd)
+            .await
+            .map_err(|e| KalamDbError::ExecutionError(format!("DROP NAMESPACE failed: {}", e)))?;
 
         // Deregister schema from DataFusion catalog
         self.deregister_namespace_schema(&namespace_id);

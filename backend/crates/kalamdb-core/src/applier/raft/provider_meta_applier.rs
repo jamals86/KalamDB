@@ -1,42 +1,57 @@
-//! ProviderMetaApplier - unified applier for all metadata operations
+//! ProviderMetaApplier - Raft state machine applier for metadata operations
 //!
 //! This applier implements the MetaApplier trait and delegates to the
-//! appropriate system table providers for persistence.
+//! CommandExecutorImpl for actual persistence. This ensures a SINGLE
+//! code path for all mutations regardless of standalone/cluster mode.
 //!
 //! Used by the Raft state machine to apply replicated commands on followers.
 
 use async_trait::async_trait;
-use kalamdb_commons::models::schemas::{TableDefinition, TableOptions};
+use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableId, TableName, UserId};
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::system::{Job, Namespace, Storage};
+use kalamdb_commons::system::{Job, Storage};
 use kalamdb_commons::types::User;
 use kalamdb_commons::JobStatus;
 use kalamdb_raft::applier::MetaApplier;
 use kalamdb_raft::RaftError;
 use crate::app_context::AppContext;
+use crate::applier::executor::CommandExecutorImpl;
+use crate::applier::ApplierError;
 use std::sync::Arc;
 
 /// Unified applier that persists all metadata operations to system tables
 ///
 /// This is used by the Raft state machine on follower nodes to apply
-/// replicated commands locally. It calls the underlying system table
-/// providers to persist the changes.
+/// replicated commands locally. It delegates to CommandExecutorImpl to ensure
+/// a single code path for all mutations.
+///
+/// ## Architecture
+///
+/// - DDL operations (create/alter/drop table) → DdlExecutor
+/// - Namespace operations → NamespaceExecutor
+/// - User operations → UserExecutor
+/// - Storage operations → StorageExecutor
+/// - Job operations → Local (jobs are Raft-only, no SQL handlers)
 pub struct ProviderMetaApplier {
+    executor: CommandExecutorImpl,
     app_context: Arc<AppContext>,
 }
 
 impl ProviderMetaApplier {
     /// Create a new ProviderMetaApplier
     pub fn new(app_context: Arc<AppContext>) -> Self {
-        Self { app_context }
+        Self {
+            executor: CommandExecutorImpl::new(Arc::clone(&app_context)),
+            app_context,
+        }
     }
 }
 
 #[async_trait]
 impl MetaApplier for ProviderMetaApplier {
     // =========================================================================
-    // Namespace Operations
+    // Namespace Operations - Delegate to NamespaceExecutor
     // =========================================================================
     
     async fn create_namespace(
@@ -46,12 +61,10 @@ impl MetaApplier for ProviderMetaApplier {
     ) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Creating namespace {} by {:?}", namespace_id, created_by);
         
-        let namespace = Namespace::new(namespace_id.as_str());
-        
-        self.app_context.system_tables()
-            .namespaces()
-            .create_namespace(namespace)
-            .map_err(|e| RaftError::Internal(format!("Failed to create namespace: {}", e)))?;
+        self.executor.namespace()
+            .create_namespace(namespace_id)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -59,16 +72,16 @@ impl MetaApplier for ProviderMetaApplier {
     async fn delete_namespace(&self, namespace_id: &NamespaceId) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Deleting namespace {}", namespace_id);
         
-        self.app_context.system_tables()
-            .namespaces()
-            .delete_namespace(namespace_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to delete namespace: {}", e)))?;
+        self.executor.namespace()
+            .drop_namespace(namespace_id)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
 
     // =========================================================================
-    // Table Operations
+    // Table Operations - Delegate to DdlExecutor
     // =========================================================================
     
     async fn create_table(
@@ -82,85 +95,11 @@ impl MetaApplier for ProviderMetaApplier {
         let table_def: TableDefinition = serde_json::from_str(schema_json)
             .map_err(|e| RaftError::Internal(format!("Failed to deserialize table schema: {}", e)))?;
         
-        // 1. Persist to system.tables
-        self.app_context.system_tables()
-            .tables()
-            .create_table(table_id, &table_def)
-            .map_err(|e| RaftError::Internal(format!("Failed to create table: {}", e)))?;
+        self.executor.ddl()
+            .create_table(table_id, table_type, &table_def)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
-        // 2. Prime the schema cache with the table definition
-        use crate::schema_registry::CachedTableData;
-        let schema_registry = self.app_context.schema_registry();
-        let table_def_arc = std::sync::Arc::new(table_def);
-        
-        // Extract storage_id from table_options based on table_type (stream tables don't have storage_id)
-        let (storage_id_opt, template) = match &table_def_arc.table_options {
-            TableOptions::User(opts) => {
-                let storage_id = opts.storage_id.clone();
-                let template = PathResolver::resolve_storage_path_template(
-                    table_id,
-                    table_type,
-                    &storage_id,
-                ).map_err(|e| RaftError::Internal(format!("Failed to resolve storage path: {}", e)))?;
-                (Some(storage_id), template)
-            }
-            TableOptions::Shared(opts) => {
-                let storage_id = opts.storage_id.clone();
-                let template = PathResolver::resolve_storage_path_template(
-                    table_id,
-                    table_type,
-                    &storage_id,
-                ).map_err(|e| RaftError::Internal(format!("Failed to resolve storage path: {}", e)))?;
-                (Some(storage_id), template)
-            }
-            TableOptions::Stream(_) => {
-                // Stream tables use in-memory storage, no storage_id
-                (None, String::new())
-            }
-            TableOptions::System(_) => {
-                // System tables don't have user-defined storage
-                return Ok(());
-            }
-        };
-        
-        use crate::schema_registry::PathResolver;
-        let data = CachedTableData::with_storage_config(
-            std::sync::Arc::clone(&table_def_arc),
-            storage_id_opt.clone(),
-            template,
-        );
-        schema_registry.insert(table_id.clone(), std::sync::Arc::new(data));
-        
-        // 3. Register the table provider with DataFusion
-        use crate::sql::executor::helpers::table_registration;
-        let arrow_schema = schema_registry.get_arrow_schema(table_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to get Arrow schema: {}", e)))?;
-        
-        match table_type {
-            TableType::User => {
-                table_registration::register_user_table_provider(&self.app_context, table_id, arrow_schema)
-                    .map_err(|e| RaftError::Internal(format!("Failed to register user table provider: {}", e)))?;
-            }
-            TableType::Shared => {
-                table_registration::register_shared_table_provider(&self.app_context, table_id, arrow_schema)
-                    .map_err(|e| RaftError::Internal(format!("Failed to register shared table provider: {}", e)))?;
-            }
-            TableType::Stream => {
-                // Extract TTL from stream options
-                let ttl_seconds = match &table_def_arc.table_options {
-                    TableOptions::Stream(opts) => Some(opts.ttl_seconds),
-                    _ => None,
-                };
-                table_registration::register_stream_table_provider(&self.app_context, table_id, arrow_schema, ttl_seconds)
-                    .map_err(|e| RaftError::Internal(format!("Failed to register stream table provider: {}", e)))?;
-            }
-            TableType::System => {
-                // System tables are registered separately, not through replication
-                log::warn!("ProviderMetaApplier: Ignoring SYSTEM table creation for {}", table_id);
-            }
-        }
-        
-        log::info!("ProviderMetaApplier: Successfully created and registered table {}", table_id.full_name());
         Ok(())
     }
 
@@ -174,106 +113,28 @@ impl MetaApplier for ProviderMetaApplier {
         let table_def: TableDefinition = serde_json::from_str(schema_json)
             .map_err(|e| RaftError::Internal(format!("Failed to deserialize table schema: {}", e)))?;
         
-        // 1. Update system.tables
-        self.app_context.system_tables()
-            .tables()
-            .update_table(table_id, &table_def)
-            .map_err(|e| RaftError::Internal(format!("Failed to alter table: {}", e)))?;
+        // For Raft replication, we don't have the old version, so pass 0
+        self.executor.ddl()
+            .alter_table(table_id, &table_def, 0)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
-        //TODO: This should be shared between when manual alter and from replication and not deal with it differently
-        // 2. Update the schema cache with new definition
-        let schema_registry = self.app_context.schema_registry();
-        let table_def_arc = std::sync::Arc::new(table_def);
-        let table_type = table_def_arc.table_type;
-        
-        // Extract storage_id from table_options based on table_type
-        let (storage_id_opt, template) = match &table_def_arc.table_options {
-            TableOptions::User(opts) => {
-                let storage_id = opts.storage_id.clone();
-                let template = PathResolver::resolve_storage_path_template(
-                    table_id,
-                    table_type,
-                    &storage_id,
-                ).map_err(|e| RaftError::Internal(format!("Failed to resolve storage path: {}", e)))?;
-                (Some(storage_id), template)
-            }
-            TableOptions::Shared(opts) => {
-                let storage_id = opts.storage_id.clone();
-                let template = PathResolver::resolve_storage_path_template(
-                    table_id,
-                    table_type,
-                    &storage_id,
-                ).map_err(|e| RaftError::Internal(format!("Failed to resolve storage path: {}", e)))?;
-                (Some(storage_id), template)
-            }
-            TableOptions::Stream(_) => {
-                // Stream tables use in-memory storage
-                (None, String::new())
-            }
-            TableOptions::System(_) => {
-                // System tables don't have user-defined storage
-                return Ok(());
-            }
-        };
-        
-        use crate::schema_registry::{CachedTableData, PathResolver};
-        let data = CachedTableData::with_storage_config(
-            std::sync::Arc::clone(&table_def_arc),
-            storage_id_opt,
-            template,
-        );
-        
-        // Invalidate old cached entry and deregister from DataFusion
-        schema_registry.invalidate(table_id);
-        
-        // Insert new schema into cache
-        schema_registry.insert(table_id.clone(), std::sync::Arc::new(data));
-        
-        // 3. Register the table provider with the new schema
-        use crate::sql::executor::helpers::table_registration;
-        let arrow_schema = schema_registry.get_arrow_schema(table_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to get Arrow schema: {}", e)))?;
-        
-        // Register with new schema
-        match table_type {
-            TableType::User => {
-                table_registration::register_user_table_provider(&self.app_context, table_id, arrow_schema)
-                    .map_err(|e| RaftError::Internal(format!("Failed to register user table provider: {}", e)))?;
-            }
-            TableType::Shared => {
-                table_registration::register_shared_table_provider(&self.app_context, table_id, arrow_schema)
-                    .map_err(|e| RaftError::Internal(format!("Failed to register shared table provider: {}", e)))?;
-            }
-            TableType::Stream => {
-                let ttl_seconds = match &table_def_arc.table_options {
-                    TableOptions::Stream(opts) => Some(opts.ttl_seconds),
-                    _ => None,
-                };
-                table_registration::register_stream_table_provider(&self.app_context, table_id, arrow_schema, ttl_seconds)
-                    .map_err(|e| RaftError::Internal(format!("Failed to register stream table provider: {}", e)))?;
-            }
-            TableType::System => {
-                log::warn!("ProviderMetaApplier: Ignoring SYSTEM table alteration for {}", table_id);
-            }
-        }
-        
-        log::info!("ProviderMetaApplier: Successfully altered and re-registered table {}", table_id.full_name());
         Ok(())
     }
 
     async fn drop_table(&self, table_id: &TableId) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Dropping table {}", table_id.full_name());
         
-        self.app_context.system_tables()
-            .tables()
-            .delete_table(table_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to drop table: {}", e)))?;
+        self.executor.ddl()
+            .drop_table(table_id)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
 
     // =========================================================================
-    // Storage Operations
+    // Storage Operations - Delegate to StorageExecutor
     // =========================================================================
     
     async fn register_storage(
@@ -286,10 +147,10 @@ impl MetaApplier for ProviderMetaApplier {
         let storage: Storage = serde_json::from_str(config_json)
             .map_err(|e| RaftError::Internal(format!("Failed to deserialize storage config: {}", e)))?;
         
-        self.app_context.system_tables()
-            .storages()
-            .create_storage(storage)
-            .map_err(|e| RaftError::Internal(format!("Failed to register storage: {}", e)))?;
+        self.executor.storage()
+            .create_storage(&storage)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -297,25 +158,25 @@ impl MetaApplier for ProviderMetaApplier {
     async fn unregister_storage(&self, storage_id: &StorageId) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Unregistering storage {}", storage_id);
         
-        self.app_context.system_tables()
-            .storages()
-            .delete_storage(storage_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to unregister storage: {}", e)))?;
+        self.executor.storage()
+            .drop_storage(storage_id)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
 
     // =========================================================================
-    // User Operations
+    // User Operations - Delegate to UserExecutor
     // =========================================================================
     
     async fn create_user(&self, user: &User) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Creating user {:?} ({})", user.id, user.username);
         
-        self.app_context.system_tables()
-            .users()
-            .create_user(user.clone())
-            .map_err(|e| RaftError::Internal(format!("Failed to create user: {}", e)))?;
+        self.executor.user()
+            .create_user(user)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -323,10 +184,10 @@ impl MetaApplier for ProviderMetaApplier {
     async fn update_user(&self, user: &User) -> Result<(), RaftError> {
         log::debug!("ProviderMetaApplier: Updating user {:?}", user.id);
         
-        self.app_context.system_tables()
-            .users()
-            .update_user(user.clone())
-            .map_err(|e| RaftError::Internal(format!("Failed to update user: {}", e)))?;
+        self.executor.user()
+            .update_user(user)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -334,10 +195,10 @@ impl MetaApplier for ProviderMetaApplier {
     async fn delete_user(&self, user_id: &UserId, _deleted_at: i64) -> Result<(), RaftError> {
         log::debug!("ProviderMetaApplier: Deleting user {:?}", user_id);
         
-        self.app_context.system_tables()
-            .users()
+        self.executor.user()
             .delete_user(user_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to delete user: {}", e)))?;
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -345,15 +206,10 @@ impl MetaApplier for ProviderMetaApplier {
     async fn record_login(&self, user_id: &UserId, logged_in_at: i64) -> Result<(), RaftError> {
         log::debug!("ProviderMetaApplier: Recording login for {:?}", user_id);
         
-        if let Some(mut user) = self.app_context.system_tables().users().get_user_by_id(user_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to get user: {}", e)))? 
-        {
-            user.last_login_at = Some(logged_in_at);
-            self.app_context.system_tables()
-                .users()
-                .update_user(user)
-                .map_err(|e| RaftError::Internal(format!("Failed to update user login: {}", e)))?;
-        }
+        self.executor.user()
+            .record_login(user_id, logged_in_at)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -366,21 +222,16 @@ impl MetaApplier for ProviderMetaApplier {
     ) -> Result<(), RaftError> {
         log::debug!("ProviderMetaApplier: Setting user {:?} locked until {:?}", user_id, locked_until);
         
-        if let Some(mut user) = self.app_context.system_tables().users().get_user_by_id(user_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to get user: {}", e)))?
-        {
-            user.locked_until = locked_until;
-            self.app_context.system_tables()
-                .users()
-                .update_user(user)
-                .map_err(|e| RaftError::Internal(format!("Failed to update user lock: {}", e)))?;
-        }
+        self.executor.user()
+            .set_user_locked(user_id, locked_until)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
 
     // =========================================================================
-    // Job Operations
+    // Job Operations - Stay local (no SQL handlers for jobs)
     // =========================================================================
     
     async fn create_job(

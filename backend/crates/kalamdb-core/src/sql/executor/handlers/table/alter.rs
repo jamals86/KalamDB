@@ -4,16 +4,12 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::block_system_namespace_modification;
-use crate::sql::executor::helpers::table_registration::{
-    register_shared_table_provider, register_stream_table_provider, register_user_table_provider,
-    unregister_table_provider,
-};
+// Note: table_registration moved to unified applier commands
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
-use kalamdb_raft::MetaCommand;
 use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation};
 use std::sync::Arc;
 
@@ -105,79 +101,6 @@ impl AlterTableHandler {
 
         Ok((table_def, change_desc))
     }
-
-    /// Apply the altered table definition locally (for standalone mode or after Raft apply).
-    /// This persists to system.tables, updates cache, and registers providers.
-    fn apply_altered_table_locally(
-        &self,
-        table_id: &TableId,
-        table_def: &TableDefinition,
-    ) -> Result<(), KalamDbError> {
-        use crate::schema_registry::CachedTableData;
-
-        let registry = self.app_context.schema_registry();
-
-        // Persist via registry
-        registry.put_table_definition(table_id, table_def)?;
-
-        // Store versioned entry
-        let tables_provider = self.app_context.system_tables().tables();
-        tables_provider.put_versioned_schema(table_id, table_def).map_err(|e| {
-            KalamDbError::Other(format!("Failed to persist table version: {}", e))
-        })?;
-
-        // Update main tables store
-        tables_provider.update_table(table_id, table_def).map_err(|e| {
-            KalamDbError::Other(format!("Failed to update table definition: {}", e))
-        })?;
-
-        // Prime cache with updated definition
-        {
-            let old_entry = registry.get(table_id);
-            let new_data = CachedTableData::from_altered_table(
-                table_id,
-                Arc::new(table_def.clone()),
-                old_entry.as_deref(),
-            )?;
-
-            log::debug!(
-                "✓ Updated cache for {}: storage_id={:?}, template={}",
-                table_id,
-                new_data.storage_id.as_ref().map(|s| s.as_str()),
-                new_data.storage_path_template
-            );
-
-            registry.insert(table_id.clone(), Arc::new(new_data));
-        }
-
-        // Get arrow schema and re-register provider
-        let arrow_schema = registry.get_arrow_schema(table_id)?;
-        unregister_table_provider(&self.app_context, table_id)?;
-
-        match table_def.table_type {
-            TableType::User => {
-                register_user_table_provider(&self.app_context, table_id, arrow_schema)?;
-            }
-            TableType::Shared => {
-                register_shared_table_provider(&self.app_context, table_id, arrow_schema)?;
-            }
-            TableType::Stream => {
-                let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) =
-                    &table_def.table_options
-                {
-                    Some(opts.ttl_seconds)
-                } else {
-                    None
-                };
-                register_stream_table_provider(&self.app_context, table_id, arrow_schema, ttl_seconds)?;
-            }
-            TableType::System => {
-                // System tables are not altered this way
-            }
-        }
-
-        Ok(())
-    }
 }
 
 #[async_trait::async_trait]
@@ -188,41 +111,31 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        use crate::sql::executor::helpers::audit;
+        use crate::applier::commands::AlterTableCommand;
+
         let namespace_id: NamespaceId = statement.namespace_id.clone();
         let table_id = TableId::from_strings(namespace_id.as_str(), statement.table_name.as_str());
 
         // Build the altered table definition (validate + apply mutation)
         let (table_def, change_desc) = self.build_altered_table_definition(&statement, context)?;
+        let old_version = table_def.schema_version.saturating_sub(1);
 
-        // Unified execution path:
-        // - Cluster mode: Raft-first (propose to Raft, applier executes on ALL nodes)
-        // - Standalone mode: Execute locally
-        if self.app_context.executor().is_cluster_mode() {
-            // Serialize and propose to Raft - applier will execute on ALL nodes
-            let schema_json = serde_json::to_string(&table_def).map_err(|e| {
-                KalamDbError::Other(format!("Failed to serialize table definition: {}", e))
-            })?;
-            let cmd = MetaCommand::AlterTable {
-                table_id: table_id.clone(),
-                schema_json,
-            };
-            self.app_context
-                .executor()
-                .execute_meta(cmd)
-                .await
-                .map_err(|e| {
-                    KalamDbError::ExecutionError(format!(
-                        "Failed to replicate table metadata via executor: {}",
-                        e
-                    ))
-                })?;
-        } else {
-            // Standalone mode: Apply locally
-            self.apply_altered_table_locally(&table_id, &table_def)?;
-        }
+        // Build command and delegate to unified applier
+        // The applier handles standalone vs cluster mode internally
+        let cmd = AlterTableCommand {
+            table_id: table_id.clone(),
+            table_def: table_def.clone(),
+            old_version,
+        };
+
+        self.app_context
+            .applier()
+            .alter_table(cmd)
+            .await
+            .map_err(|e| KalamDbError::ExecutionError(format!("ALTER TABLE failed: {}", e)))?;
 
         // Log DDL operation
-        use crate::sql::executor::helpers::audit;
         let audit_entry = audit::log_ddl_operation(
             context,
             "ALTER",

@@ -1,0 +1,107 @@
+//! Implementation of UserDataApplier for provider persistence
+//!
+//! This module provides the concrete implementation of `kalamdb_raft::UserDataApplier`
+//! that persists user table data to the actual providers (RocksDB-backed stores).
+//!
+//! Called by UserDataStateMachine after Raft consensus on all nodes.
+
+use async_trait::async_trait;
+use std::sync::Arc;
+
+use crate::app_context::AppContext;
+use crate::applier::executor::CommandExecutorImpl;
+use kalamdb_commons::models::UserId;
+use kalamdb_commons::TableId;
+use kalamdb_raft::{RaftError, UserDataApplier};
+
+/// UserDataApplier implementation using Unified Command Executor
+///
+/// This is called by the Raft state machine when applying committed commands.
+/// It delegates to `CommandExecutorImpl::dml()` for actual logic.
+pub struct ProviderUserDataApplier {
+    executor: CommandExecutorImpl,
+}
+
+impl ProviderUserDataApplier {
+    /// Create a new ProviderUserDataApplier
+    pub fn new(app_context: Arc<AppContext>) -> Self {
+        Self {
+            executor: CommandExecutorImpl::new(app_context),
+        }
+    }
+}
+
+impl Default for ProviderUserDataApplier {
+    fn default() -> Self {
+        // Fallback for tests or default init - tries to get global AppContext
+        // Note: Ideally we should always pass AppContext
+        if let Ok(app_ctx) = std::panic::catch_unwind(|| AppContext::get()) {
+            Self::new(app_ctx)
+        } else {
+             // If we can't get AppContext, we can't function. 
+             // But Default trait doesn't allow failure. 
+             // We'll panic if accessed, or assume the caller uses new() properly.
+             panic!("ProviderUserDataApplier::default() called but AppContext not available. Use new(Arc<AppContext>) instead.");
+        }
+    }
+}
+
+#[async_trait]
+impl UserDataApplier for ProviderUserDataApplier {
+    async fn insert(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        rows_data: &[u8],
+    ) -> Result<usize, RaftError> {
+        log::debug!(
+            "ProviderUserDataApplier: Inserting into {} for user {} ({} bytes)",
+            table_id,
+            user_id,
+            rows_data.len()
+        );
+        
+        self.executor.dml()
+            .insert_user_data(table_id, user_id, rows_data)
+            .await
+            .map_err(|e| RaftError::provider(e.to_string()))
+    }
+
+    async fn update(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        updates_data: &[u8],
+        filter_data: Option<&[u8]>,
+    ) -> Result<usize, RaftError> {
+        log::debug!(
+            "ProviderUserDataApplier: Updating {} for user {} ({} bytes)",
+            table_id,
+            user_id,
+            updates_data.len()
+        );
+        
+        self.executor.dml()
+            .update_user_data(table_id, user_id, updates_data, filter_data)
+            .await
+            .map_err(|e| RaftError::provider(e.to_string()))
+    }
+
+    async fn delete(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        filter_data: Option<&[u8]>,
+    ) -> Result<usize, RaftError> {
+        log::debug!(
+            "ProviderUserDataApplier: Deleting from {} for user {}",
+            table_id,
+            user_id
+        );
+        
+        self.executor.dml()
+            .delete_user_data(table_id, user_id, filter_data)
+            .await
+            .map_err(|e| RaftError::provider(e.to_string()))
+    }
+}
