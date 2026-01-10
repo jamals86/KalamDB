@@ -34,6 +34,19 @@ fn settings_schema() -> SchemaRef {
         .clone()
 }
 
+/// Macro to add multiple settings in a concise way
+/// Usage: add_settings!(builders, [ (name, value, description, category), ... ])
+macro_rules! add_settings {
+    ($names:expr, $values:expr, $descs:expr, $cats:expr, [ $( ($n:expr, $v:expr, $d:expr, $c:expr) ),* $(,)? ]) => {
+        $(
+            $names.append_value($n);
+            $values.append_value(&$v.to_string());
+            $descs.append_value($d);
+            $cats.append_value($c);
+        )*
+    };
+}
+
 /// Virtual view that displays server configuration settings
 ///
 /// **DataFusion Design**:
@@ -64,23 +77,6 @@ impl SettingsView {
     pub fn set_config(&self, config: ServerConfig) {
         *self.config.write().unwrap() = Some(config);
     }
-
-    /// Helper to add a setting row
-    fn add_setting(
-        names: &mut StringBuilder,
-        values: &mut StringBuilder,
-        descriptions: &mut StringBuilder,
-        categories: &mut StringBuilder,
-        name: &str,
-        value: &str,
-        description: &str,
-        category: &str,
-    ) {
-        names.append_value(name);
-        values.append_value(value);
-        descriptions.append_value(description);
-        categories.append_value(category);
-    }
 }
 
 impl Default for SettingsView {
@@ -103,464 +99,124 @@ impl VirtualView for SettingsView {
         let config_guard = self.config.read().unwrap();
 
         if let Some(config) = config_guard.as_ref() {
-            // ===== Server Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "server.host",
-                &config.server.host,
-                "Server bind address",
-                "server",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "server.port",
-                &config.server.port.to_string(),
-                "Server port number",
-                "server",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "server.workers",
-                &config.server.workers.to_string(),
-                "Number of worker threads (0 = auto-detect CPU cores)",
-                "server",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "server.enable_http2",
-                &config.server.enable_http2.to_string(),
-                "Enable HTTP/2 protocol support",
-                "server",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "server.api_version",
-                &config.server.api_version,
-                "API version prefix (e.g., v1)",
-                "server",
-            );
+            // Server Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("server.host", config.server.host, "Server bind address", "server"),
+                ("server.port", config.server.port, "Server port number", "server"),
+                ("server.workers", config.server.workers, "Number of worker threads (0 = auto-detect CPU cores)", "server"),
+                ("server.enable_http2", config.server.enable_http2, "Enable HTTP/2 protocol support", "server"),
+                ("server.api_version", config.server.api_version, "API version prefix (e.g., v1)", "server"),
+            ]);
 
-            // ===== Cluster Settings =====
+            // Cluster Settings (optional)
             if let Some(cluster) = &config.cluster {
-                Self::add_setting(
-                    &mut names,
-                    &mut values,
-                    &mut descriptions,
-                    &mut categories,
-                    "cluster.node_id",
-                    &cluster.node_id.to_string(),
-                    "Authoritative node identifier for cluster",
-                    "cluster",
-                );
-                Self::add_setting(
-                    &mut names,
-                    &mut values,
-                    &mut descriptions,
-                    &mut categories,
-                    "cluster.cluster_id",
-                    &cluster.cluster_id,
-                    "Unique cluster identifier",
-                    "cluster",
-                );
+                add_settings!(names, values, descriptions, categories, [
+                    ("cluster.node_id", cluster.node_id, "Authoritative node identifier for cluster", "cluster"),
+                    ("cluster.cluster_id", cluster.cluster_id, "Unique cluster identifier", "cluster"),
+                ]);
             }
 
-            // ===== Storage Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "storage.rocksdb_path",
-                &config.storage.rocksdb_path,
-                "RocksDB data directory path",
-                "storage",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "storage.default_storage_path",
-                &config.storage.default_storage_path,
-                "Default path for Parquet file storage",
-                "storage",
-            );
+            // Storage Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("storage.rocksdb_path", config.storage.rocksdb_path, "RocksDB data directory path", "storage"),
+                ("storage.default_storage_path", config.storage.default_storage_path, "Default path for Parquet file storage", "storage"),
+                ("storage.rocksdb.write_buffer_size", config.storage.rocksdb.write_buffer_size, "Write buffer size per column family in bytes", "storage"),
+                ("storage.rocksdb.max_write_buffers", config.storage.rocksdb.max_write_buffers, "Maximum number of write buffers", "storage"),
+                ("storage.rocksdb.block_cache_size", config.storage.rocksdb.block_cache_size, "Block cache size for reads in bytes", "storage"),
+            ]);
 
-            // ===== RocksDB Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "storage.rocksdb.write_buffer_size",
-                &config.storage.rocksdb.write_buffer_size.to_string(),
-                "Write buffer size per column family in bytes",
-                "storage",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "storage.rocksdb.max_write_buffers",
-                &config.storage.rocksdb.max_write_buffers.to_string(),
-                "Maximum number of write buffers",
-                "storage",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "storage.rocksdb.block_cache_size",
-                &config.storage.rocksdb.block_cache_size.to_string(),
-                "Block cache size for reads in bytes",
-                "storage",
-            );
+            // DataFusion Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("datafusion.memory_limit", config.datafusion.memory_limit, "Memory limit for query execution in bytes", "datafusion"),
+                ("datafusion.batch_size", config.datafusion.batch_size, "Batch size for query processing", "datafusion"),
+                ("datafusion.query_parallelism", config.datafusion.query_parallelism, "Number of parallel threads for query execution", "datafusion"),
+                ("datafusion.max_partitions", config.datafusion.max_partitions, "Maximum number of partitions per query", "datafusion"),
+            ]);
 
-            // ===== DataFusion Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "datafusion.memory_limit",
-                &config.datafusion.memory_limit.to_string(),
-                "Memory limit for query execution in bytes",
-                "datafusion",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "datafusion.query_parallelism",
-                &config.datafusion.query_parallelism.to_string(),
-                "Number of parallel threads for query execution",
-                "datafusion",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "datafusion.batch_size",
-                &config.datafusion.batch_size.to_string(),
-                "Batch size for record processing",
-                "datafusion",
-            );
+            // Limits Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("limits.max_message_size", config.limits.max_message_size, "Maximum message size for REST API requests", "limits"),
+                ("limits.max_query_limit", config.limits.max_query_limit, "Maximum rows returned in a single query", "limits"),
+                ("limits.default_query_limit", config.limits.default_query_limit, "Default LIMIT for queries", "limits"),
+            ]);
 
-            // ===== Flush Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "flush.default_row_limit",
-                &config.flush.default_row_limit.to_string(),
-                "Default row limit for flush policies",
-                "flush",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "flush.default_time_interval",
-                &config.flush.default_time_interval.to_string(),
-                "Default time interval for flush in seconds",
-                "flush",
-            );
+            // Logging Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("logging.level", config.logging.level, "Log level filter", "logging"),
+                ("logging.format", config.logging.format, "Log format (text, json)", "logging"),
+                ("logging.logs_path", config.logging.logs_path, "Directory for log files", "logging"),
+            ]);
 
-            // ===== Limits Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "limits.max_message_size",
-                &config.limits.max_message_size.to_string(),
-                "Maximum message size for REST API requests in bytes",
-                "limits",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "limits.max_query_limit",
-                &config.limits.max_query_limit.to_string(),
-                "Maximum rows that can be returned in a single query",
-                "limits",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "limits.default_query_limit",
-                &config.limits.default_query_limit.to_string(),
-                "Default LIMIT for queries without explicit LIMIT clause",
-                "limits",
-            );
+            // Flush Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("flush.default_row_limit", config.flush.default_row_limit, "Default row limit for flush policies", "flush"),
+                ("flush.default_time_interval", config.flush.default_time_interval, "Default time interval for flush (seconds)", "flush"),
+            ]);
 
-            // ===== Logging Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "logging.level",
-                &config.logging.level,
-                "Log level: error, warn, info, debug, trace",
-                "logging",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "logging.logs_path",
-                &config.logging.logs_path,
-                "Directory for log files",
-                "logging",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "logging.log_to_console",
-                &config.logging.log_to_console.to_string(),
-                "Also log to console/stdout",
-                "logging",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "logging.slow_query_threshold_ms",
-                &config.logging.slow_query_threshold_ms.to_string(),
-                "Slow query logging threshold in milliseconds",
-                "logging",
-            );
+            // Manifest Cache Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("manifest_cache.max_entries", config.manifest_cache.max_entries, "Maximum manifest cache entries", "manifest_cache"),
+                ("manifest_cache.eviction_ttl_days", config.manifest_cache.eviction_ttl_days, "Cache eviction TTL in days", "manifest_cache"),
+            ]);
 
-            // ===== Performance Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "performance.request_timeout",
-                &config.performance.request_timeout.to_string(),
-                "Request timeout in seconds",
-                "performance",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "performance.max_connections",
-                &config.performance.max_connections.to_string(),
-                "Maximum concurrent connections",
-                "performance",
-            );
+            // Retention Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("retention.default_deleted_retention_hours", config.retention.default_deleted_retention_hours, "Default retention hours for soft-deleted rows", "retention"),
+            ]);
 
-            // ===== Stream Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "stream.default_ttl_seconds",
-                &config.stream.default_ttl_seconds.to_string(),
-                "Default TTL for stream table rows in seconds",
-                "stream",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "stream.default_max_buffer",
-                &config.stream.default_max_buffer.to_string(),
-                "Default maximum buffer size for stream tables",
-                "stream",
-            );
+            // Stream Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("stream.default_ttl_seconds", config.stream.default_ttl_seconds, "Default TTL for stream rows (seconds)", "stream"),
+                ("stream.default_max_buffer", config.stream.default_max_buffer, "Default maximum buffer size", "stream"),
+                ("stream.eviction_interval_seconds", config.stream.eviction_interval_seconds, "Stream eviction check interval (seconds)", "stream"),
+            ]);
 
-            // ===== Retention Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "retention.default_deleted_retention_hours",
-                &config.retention.default_deleted_retention_hours.to_string(),
-                "Default retention hours for soft-deleted rows",
-                "retention",
-            );
+            // WebSocket Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("websocket.client_timeout_secs", config.websocket.client_timeout_secs.unwrap_or(10), "WebSocket client timeout (seconds)", "websocket"),
+                ("websocket.heartbeat_interval_secs", config.websocket.heartbeat_interval_secs.unwrap_or(5), "WebSocket heartbeat interval (seconds)", "websocket"),
+            ]);
 
-            // ===== Rate Limit Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "rate_limit.max_queries_per_sec",
-                &config.rate_limit.max_queries_per_sec.to_string(),
-                "Maximum SQL queries per second per user",
-                "rate_limit",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "rate_limit.max_subscriptions_per_user",
-                &config.rate_limit.max_subscriptions_per_user.to_string(),
-                "Maximum concurrent live query subscriptions per user",
-                "rate_limit",
-            );
+            // Rate Limit Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("rate_limit.max_queries_per_sec", config.rate_limit.max_queries_per_sec, "Maximum SQL queries per second per user", "rate_limit"),
+                ("rate_limit.max_subscriptions_per_user", config.rate_limit.max_subscriptions_per_user, "Maximum concurrent live query subscriptions", "rate_limit"),
+            ]);
 
-            // ===== Auth Settings (redacted sensitive values) =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "auth.bcrypt_cost",
-                &config.auth.bcrypt_cost.to_string(),
-                "Bcrypt cost factor for password hashing",
-                "auth",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "auth.min_password_length",
-                &config.auth.min_password_length.to_string(),
-                "Minimum password length",
-                "auth",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "auth.allow_remote_access",
-                &config.auth.allow_remote_access.to_string(),
-                "Allow remote access for system users",
-                "auth",
-            );
-            // Note: jwt_secret is intentionally not exposed for security
+            // Auth Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("auth.bcrypt_cost", config.auth.bcrypt_cost, "Bcrypt cost factor for password hashing", "auth"),
+                ("auth.min_password_length", config.auth.min_password_length, "Minimum password length", "auth"),
+                ("auth.allow_remote_access", config.auth.allow_remote_access, "Allow remote access for system users", "auth"),
+            ]);
 
-            // ===== Jobs Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "jobs.max_concurrent",
-                &config.jobs.max_concurrent.to_string(),
-                "Maximum number of concurrent jobs",
-                "jobs",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "jobs.max_retries",
-                &config.jobs.max_retries.to_string(),
-                "Maximum number of retry attempts per job",
-                "jobs",
-            );
+            // Jobs Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("jobs.max_concurrent", config.jobs.max_concurrent, "Maximum number of concurrent jobs", "jobs"),
+                ("jobs.max_retries", config.jobs.max_retries, "Maximum retry attempts per job", "jobs"),
+            ]);
 
-            // ===== Execution Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "execution.handler_timeout_seconds",
-                &config.execution.handler_timeout_seconds.to_string(),
-                "Handler execution timeout in seconds",
-                "execution",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "execution.max_parameters",
-                &config.execution.max_parameters.to_string(),
-                "Maximum number of parameters per statement",
-                "execution",
-            );
+            // Execution Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("execution.handler_timeout_seconds", config.execution.handler_timeout_seconds, "Handler execution timeout in seconds", "execution"),
+                ("execution.max_parameters", config.execution.max_parameters, "Maximum number of parameters per statement", "execution"),
+            ]);
 
-            // ===== Security Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "security.max_request_body_size",
-                &config.security.max_request_body_size.to_string(),
-                "Maximum request body size in bytes",
-                "security",
-            );
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "security.max_ws_message_size",
-                &config.security.max_ws_message_size.to_string(),
-                "Maximum WebSocket message size in bytes",
-                "security",
-            );
+            // Security Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("security.max_request_body_size", config.security.max_request_body_size, "Maximum request body size in bytes", "security"),
+                ("security.max_ws_message_size", config.security.max_ws_message_size, "Maximum WebSocket message size in bytes", "security"),
+            ]);
 
-            // ===== Shutdown Settings =====
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "shutdown.flush.timeout",
-                &config.shutdown.flush.timeout.to_string(),
-                "Timeout in seconds to wait for flush jobs during shutdown",
-                "shutdown",
-            );
+            // Shutdown Settings
+            add_settings!(names, values, descriptions, categories, [
+                ("shutdown.flush.timeout", config.shutdown.flush.timeout, "Timeout in seconds to wait for flush jobs during shutdown", "shutdown"),
+            ]);
         } else {
             // No config available yet
-            Self::add_setting(
-                &mut names,
-                &mut values,
-                &mut descriptions,
-                &mut categories,
-                "status",
-                "not_initialized",
-                "Configuration not yet loaded",
-                "system",
-            );
+            add_settings!(names, values, descriptions, categories, [
+                ("status", "not_initialized", "Configuration not yet loaded", "system"),
+            ]);
         }
 
         RecordBatch::try_new(

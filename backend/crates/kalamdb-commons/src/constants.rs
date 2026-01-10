@@ -107,6 +107,11 @@ impl SystemColumnNames {
 
     /// Sequence column used for MVCC versioning
     pub const SEQ: &'static str = "_seq";
+
+    /// Check if a column name is a system column
+    pub fn is_system_column(column_name: &str) -> bool {
+        matches!(column_name, Self::DELETED | Self::SEQ)
+    }
 }
 
 /// Global instance of system column names.

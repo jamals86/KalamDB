@@ -4,6 +4,9 @@
 //! tests and other crates can leverage CLI formatting and behaviors without
 //! going through the binary entry point.
 
+/// CLI version constant (avoids repeated env! macro calls)
+pub const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub mod completer;
 pub mod config;
 pub mod credentials;

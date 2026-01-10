@@ -4,6 +4,7 @@
 //! lives in dedicated modules so this file remains a thin orchestrator.
 
 use kalamdb_server::{config, middleware, routes};
+use kalamdb_core::metrics::SERVER_VERSION;
 
 mod lifecycle;
 mod logging;
@@ -133,12 +134,7 @@ async fn main() -> Result<()> {
     )?;
 
     // Display enhanced version information
-    let version = env!("CARGO_PKG_VERSION");
-    // let _commit = env!("GIT_COMMIT_HASH");
-    // let _build_date = env!("BUILD_DATE");
-    // let _branch = env!("GIT_BRANCH");
-
-    info!("KalamDB Server v{:<37}", version);
+    info!("KalamDB Server v{:<37}", SERVER_VERSION);
     // debug!("Host: {}  Port: {}", config.server.host, config.server.port);
 
     // // Check file descriptor limits (Unix only)

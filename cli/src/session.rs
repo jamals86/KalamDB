@@ -7,6 +7,7 @@
 //! Manages the connection to KalamDB server and execution state throughout
 //! the CLI session lifetime.
 
+use crate::CLI_VERSION;
 use clap::ValueEnum;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -780,7 +781,7 @@ impl CLISession {
             "📚".dimmed(),
             format!(
                 "CLI version: {} (built: {})",
-                env!("CARGO_PKG_VERSION"),
+                CLI_VERSION,
                 env!("BUILD_DATE")
             )
             .dimmed()
@@ -2007,7 +2008,7 @@ impl CLISession {
 
         // Client info
         println!("{}", "Client:".yellow().bold());
-        println!("  CLI Version:    {}", env!("CARGO_PKG_VERSION").green());
+        println!("  CLI Version:    {}", CLI_VERSION.green());
         println!("  Build Date:     {}", env!("BUILD_DATE").green());
         println!("  Git Branch:     {}", env!("GIT_BRANCH").green());
         println!("  Git Commit:     {}", env!("GIT_COMMIT_HASH").green());

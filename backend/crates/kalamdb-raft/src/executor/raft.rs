@@ -92,8 +92,9 @@ impl CommandExecutor for RaftExecutor {
         let response: DataResponse = Self::deserialize(&result)?;
         
         // Check if the response is an error and convert to RaftError
+        // Use Internal instead of Provider since the message already contains full context
         if let DataResponse::Error { message } = response {
-            return Err(RaftError::Provider(message));
+            return Err(RaftError::Internal(message));
         }
         
         Ok(response)
@@ -110,8 +111,9 @@ impl CommandExecutor for RaftExecutor {
         let response: DataResponse = Self::deserialize(&result)?;
         
         // Check if the response is an error and convert to RaftError
+        // Use Internal instead of Provider since the message already contains full context
         if let DataResponse::Error { message } = response {
-            return Err(RaftError::Provider(message));
+            return Err(RaftError::Internal(message));
         }
         
         Ok(response)

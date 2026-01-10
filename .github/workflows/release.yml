@@ -1247,6 +1247,18 @@ jobs:
           tags: |
             ${{ steps.vars.outputs.docker_repo }}:${{ steps.vars.outputs.version }}-amd64
 
+      - name: Test Docker image (linux/amd64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          
+          # Pull the just-built image
+          docker pull ${{ steps.vars.outputs.docker_repo }}:${{ steps.vars.outputs.version }}-amd64
+          
+          # Run smoke test
+          chmod +x docker/backend/test-docker-image.sh
+          ./docker/backend/test-docker-image.sh ${{ steps.vars.outputs.docker_repo }}:${{ steps.vars.outputs.version }}-amd64
+
       - name: Build and push Docker image (linux/arm64)
         uses: docker/build-push-action@v6
         with:

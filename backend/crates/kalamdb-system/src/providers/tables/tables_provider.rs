@@ -201,11 +201,36 @@ impl TablesTableProvider {
         self.list_tables()
     }
 
-    /// Scan all tables and return as RecordBatch (latest versions only)
+    /// Scan all tables and return as RecordBatch (all schema versions)
+    ///
+    /// Returns all schema versions for schema history queries.
+    /// Each ALTER TABLE creates a new version entry with an incremented schema_version.
+    /// The `is_latest` column indicates which version is the current active schema.
     pub fn scan_all_tables(&self) -> Result<RecordBatch, SystemError> {
-        // Only return latest versions to avoid duplicates
-        // (the store has both <lat> pointer AND <ver>N entries)
-        let entries = self.store.scan_all_latest()?;
+        use kalamdb_commons::models::TableId;
+        use std::collections::HashMap;
+        
+        // Return ALL versions including historical ones for schema evolution support
+        // (the store has both <lat> pointer AND <ver>N entries - we skip <lat> and use <ver> entries)
+        let entries = self.store.scan_all_with_versions()?;
+        
+        // First pass: find the max version for each table to compute is_latest
+        let mut max_versions: HashMap<TableId, u32> = HashMap::new();
+        for (version_key, table_def, _) in &entries {
+            if version_key.is_latest() {
+                continue; // Skip <lat> entries
+            }
+            let table_id = version_key.table_id().clone();
+            let version = table_def.schema_version;
+            max_versions
+                .entry(table_id)
+                .and_modify(|max| {
+                    if version > *max {
+                        *max = version;
+                    }
+                })
+                .or_insert(version);
+        }
 
         // Extract data into vectors
         let mut table_ids = Vec::with_capacity(entries.len());
@@ -223,9 +248,18 @@ impl TablesTableProvider {
         let mut storage_ids = Vec::with_capacity(entries.len());
         let mut use_user_storage_flags = Vec::with_capacity(entries.len());
 
-        for (_table_id, table_def) in entries {
-            // All entries from scan_all_latest are latest versions
-            let is_latest = true;
+        for (version_key, table_def, _) in entries {
+            // Skip <lat> entries - only include <ver>N versioned entries
+            // The <lat> pointer is just a shortcut to the latest version, not a distinct row
+            if version_key.is_latest() {
+                continue;
+            }
+            
+            // Compute is_latest by comparing with the max version for this table
+            let table_id = version_key.table_id();
+            let max_version = max_versions.get(table_id).copied().unwrap_or(0);
+            let is_latest = table_def.schema_version == max_version;
+            
             // Convert TableId to string format
             let table_id_str = format!(
                 "{}:{}",
@@ -471,10 +505,10 @@ mod tests {
             provider.create_table(&table_id, &table_def).unwrap();
         }
 
-        // Scan - should have 6 rows (3 latest + 3 versioned)
+        // Scan - should have 3 rows (3 versioned entries, lat pointers are skipped)
         let batch = provider.scan_all_tables().unwrap();
-        assert_eq!(batch.num_rows(), 6);
-        assert_eq!(batch.num_columns(), 12); // All 12 columns from system.tables definition
+        assert_eq!(batch.num_rows(), 3);
+        assert_eq!(batch.num_columns(), 14); // All 14 columns from system.tables definition
     }
 
     #[test]
@@ -488,9 +522,9 @@ mod tests {
         table_def.schema_version = 2;
         provider.update_table(&table_id, &table_def).unwrap();
 
-        // Scan - should have 3 rows (1 latest + 2 versioned)
+        // Scan - should have 2 rows (2 versioned entries, lat pointers are skipped)
         let batch = provider.scan_all_tables().unwrap();
-        assert_eq!(batch.num_rows(), 3);
+        assert_eq!(batch.num_rows(), 2);
     }
 
     #[tokio::test]
