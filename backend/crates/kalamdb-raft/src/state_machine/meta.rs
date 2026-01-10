@@ -11,7 +11,7 @@
 //! Runs in the unified Meta Raft group (replaces MetaSystem + MetaUsers + MetaJobs).
 
 use async_trait::async_trait;
-use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableId, UserId};
+use kalamdb_commons::models::{JobId, JobStatus, JobType, NamespaceId, NodeId, StorageId, TableId};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::types::User;
 use parking_lot::RwLock;
@@ -34,7 +34,7 @@ use super::{ApplyResult, KalamStateMachine, StateMachineSnapshot, encode, decode
 struct JobState {
     job_id: JobId,
     job_type: JobType,
-    status: String,
+    status: JobStatus,
     claimed_by: Option<NodeId>,
     error_message: Option<String>,
 }
@@ -160,8 +160,7 @@ impl MetaStateMachine {
                 log::debug!("MetaStateMachine: CreateNamespace {:?} by {:?}", namespace_id, created_by);
                 
                 if let Some(ref a) = applier {
-                    let created_by_ref = created_by.as_ref().map(|s| UserId::new(s.clone()));
-                    a.create_namespace(&namespace_id, created_by_ref.as_ref()).await?;
+                    a.create_namespace(&namespace_id, created_by.as_ref()).await?;
                 }
                 
                 {
@@ -372,7 +371,7 @@ impl MetaStateMachine {
                 let job_state = JobState {
                     job_id: job_id.clone(),
                     job_type,
-                    status: "pending".to_string(),
+                    status: JobStatus::Queued,
                     claimed_by: None,
                     error_message: None,
                 };
@@ -408,17 +407,17 @@ impl MetaStateMachine {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(job) = cache.jobs.get_mut(&job_id) {
                         job.claimed_by = Some(node_id.clone());
-                        job.status = "running".to_string();
+                        job.status = JobStatus::Running;
                     }
                 }
                 Ok(MetaResponse::JobClaimed { job_id, node_id })
             }
             
             MetaCommand::UpdateJobStatus { job_id, status, updated_at } => {
-                log::debug!("MetaStateMachine: UpdateJobStatus {} -> {}", job_id, status);
+                log::debug!("MetaStateMachine: UpdateJobStatus {} -> {:?}", job_id, status);
                 
                 if let Some(ref a) = applier {
-                    a.update_job_status(&job_id, &status, updated_at.timestamp_millis()).await?;
+                    a.update_job_status(&job_id, status, updated_at.timestamp_millis()).await?;
                 }
                 
                 {
@@ -440,7 +439,7 @@ impl MetaStateMachine {
                 {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(job) = cache.jobs.get_mut(&job_id) {
-                        job.status = "completed".to_string();
+                        job.status = JobStatus::Completed;
                         job.claimed_by = None;
                     }
                 }
@@ -457,7 +456,7 @@ impl MetaStateMachine {
                 {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(job) = cache.jobs.get_mut(&job_id) {
-                        job.status = "failed".to_string();
+                        job.status = JobStatus::Failed;
                         job.error_message = Some(error_message);
                         job.claimed_by = None;
                     }
@@ -475,7 +474,7 @@ impl MetaStateMachine {
                 {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(job) = cache.jobs.get_mut(&job_id) {
-                        job.status = "pending".to_string();
+                        job.status = JobStatus::Queued;
                         job.claimed_by = None;
                     }
                 }
@@ -492,7 +491,7 @@ impl MetaStateMachine {
                 {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(job) = cache.jobs.get_mut(&job_id) {
-                        job.status = "cancelled".to_string();
+                        job.status = JobStatus::Cancelled;
                         job.claimed_by = None;
                     }
                 }

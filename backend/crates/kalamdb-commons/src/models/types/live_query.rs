@@ -2,6 +2,7 @@
 
 use crate::models::{
     ids::{LiveQueryId, NamespaceId, UserId},
+    NodeId,
     TableName,
 };
 use crate::types::LiveQueryStatus;
@@ -63,6 +64,7 @@ pub struct LiveQuery {
     // 8-byte aligned fields first (i64, String/pointer types)
     pub created_at: i64,         // Unix timestamp in milliseconds
     pub last_update: i64,        // Unix timestamp in milliseconds
+    pub last_ping_at: i64,       // Unix timestamp in milliseconds (for heartbeat/failover)
     pub changes: i64,
     pub live_id: LiveQueryId, // Format: {user_id}-{unique_conn_id}-{table_name}-{subscription_id}
     pub connection_id: String,
@@ -73,7 +75,9 @@ pub struct LiveQuery {
     pub user_id: UserId,
     pub query: String,
     pub options: Option<String>, // JSON
-    pub node: String,
+    /// Node identifier that holds this subscription's WebSocket connection
+    #[bincode(with_serde)]
+    pub node_id: NodeId,
     // Enum (typically 1-4 bytes depending on variant count)
     pub status: LiveQueryStatus, // Active, Paused, Completed, Error
 }
@@ -96,8 +100,9 @@ mod tests {
             status: LiveQueryStatus::Active,
             created_at: 1730000000000,
             last_update: 1730000300000,
+            last_ping_at: 1730000300000,
             changes: 42,
-            node: "server-01".to_string(),
+            node_id: NodeId::from(1u64),
         };
 
         // Test bincode serialization

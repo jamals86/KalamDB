@@ -119,9 +119,10 @@ impl SubscriptionService {
             created_at: timestamp,
             last_update: timestamp,
             changes: 0,
-            node: self.node_id.to_string(),
+            node_id: self.node_id.clone(),
             subscription_id: request.id.clone(),
             status: kalamdb_commons::types::LiveQueryStatus::Active,
+            last_ping_at: timestamp,
         };
 
         // Insert into system.live_queries (async - uses EntityStoreAsync internally)

@@ -43,7 +43,6 @@
 //! ```
 
 pub mod arrow_utils;
-pub mod cluster;
 pub mod config;
 pub mod constants;
 pub mod errors;

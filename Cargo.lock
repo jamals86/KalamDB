@@ -3499,14 +3499,17 @@ dependencies = [
  "dashmap",
  "datafusion",
  "hex",
+ "log",
  "num_cpus",
  "once_cell",
+ "openraft",
  "parking_lot",
  "serde",
  "serde_json",
  "sqlparser",
  "thiserror 2.0.17",
  "toml",
+ "uuid",
 ]
 
 [[package]]

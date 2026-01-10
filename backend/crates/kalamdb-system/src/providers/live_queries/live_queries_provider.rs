@@ -16,7 +16,8 @@ use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::ConnectionId;
 use kalamdb_commons::system::LiveQuery;
-use kalamdb_commons::{LiveQueryId, StorageKey, TableId, UserId};
+use kalamdb_commons::types::LiveQueryStatus;
+use kalamdb_commons::{LiveQueryId, NodeId, StorageKey, TableId, UserId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -366,8 +367,9 @@ impl LiveQueriesTableProvider {
         let mut statuses = Vec::with_capacity(live_queries.len());
         let mut created_ats = Vec::with_capacity(live_queries.len());
         let mut last_updates = Vec::with_capacity(live_queries.len());
+        let mut last_ping_ats = Vec::with_capacity(live_queries.len());
         let mut changes = Vec::with_capacity(live_queries.len());
-        let mut nodes = Vec::with_capacity(live_queries.len());
+        let mut node_ids = Vec::with_capacity(live_queries.len());
 
         for (_key, lq) in live_queries {
             live_ids.push(Some(lq.live_id.as_str().to_string()));
@@ -381,11 +383,19 @@ impl LiveQueriesTableProvider {
             statuses.push(Some(lq.status.as_str().to_string()));
             created_ats.push(Some(lq.created_at));
             last_updates.push(Some(lq.last_update));
+            last_ping_ats.push(Some(lq.last_ping_at));
             changes.push(Some(lq.changes));
-            nodes.push(Some(lq.node));
+            node_ids.push(Some(lq.node_id.as_u64() as i64));
         }
 
         // Build batch using RecordBatchBuilder
+        // Column order MUST match the schema definition in live_queries_table_definition:
+        // 1-9: String columns
+        // 10: created_at (Timestamp)
+        // 11: last_update (Timestamp)
+        // 12: changes (Int64)
+        // 13: node_id (Int64)
+        // 14: last_ping_at (Timestamp)
         let mut builder = RecordBatchBuilder::new(self.schema.clone());
         builder
             .add_string_column_owned(live_ids)
@@ -400,11 +410,62 @@ impl LiveQueriesTableProvider {
             .add_timestamp_micros_column(created_ats)
             .add_timestamp_micros_column(last_updates)
             .add_int64_column(changes)
-            .add_string_column_owned(nodes);
+            .add_int64_column(node_ids)
+            .add_timestamp_micros_column(last_ping_ats);
 
         let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
 
         Ok(batch)
+    }
+
+    // =========================================================================
+    // Phase 5: Live Query Sharding - Failover Support Methods
+    // =========================================================================
+
+    /// List all active subscriptions
+    ///
+    /// Returns subscriptions with Active status.
+    pub fn list_all_active(&self) -> Result<Vec<LiveQuery>, SystemError> {
+        let all_queries = self.list_live_queries()?;
+        Ok(all_queries
+            .into_iter()
+            .filter(|lq| lq.status == LiveQueryStatus::Active)
+            .collect())
+    }
+
+    /// List subscriptions by node ID
+    ///
+    /// Returns all subscriptions owned by the specified node.
+    pub fn list_by_node(&self, node_id: NodeId) -> Result<Vec<LiveQuery>, SystemError> {
+        let all_queries = self.list_live_queries()?;
+        Ok(all_queries
+            .into_iter()
+            .filter(|lq| lq.node_id == node_id)
+            .collect())
+    }
+
+    /// Update subscription status
+    ///
+    /// Used for marking subscriptions as completed during failover cleanup.
+    pub fn update_status(&self, live_id: &LiveQueryId, status: LiveQueryStatus) -> Result<(), SystemError> {
+        let mut live_query = self.get_live_query_by_id(live_id)?
+            .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
+
+        live_query.status = status;
+        self.store.insert(live_id, &live_query)?;
+        Ok(())
+    }
+
+    /// Update last ping timestamp
+    ///
+    /// Called periodically by WebSocket handlers to keep subscriptions alive.
+    pub fn update_last_ping(&self, live_id: &LiveQueryId, timestamp_ms: i64) -> Result<(), SystemError> {
+        let mut live_query = self.get_live_query_by_id(live_id)?
+            .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
+
+        live_query.last_ping_at = timestamp_ms;
+        self.store.insert(live_id, &live_query)?;
+        Ok(())
     }
 }
 
@@ -479,8 +540,9 @@ mod tests {
             status: kalamdb_commons::types::LiveQueryStatus::Active,
             created_at: 1000,
             last_update: 1000,
+            last_ping_at: 1000,
             changes: 0,
-            node: "node1".to_string(),
+            node_id: NodeId::from(1u64),
         }
     }
 
@@ -561,7 +623,7 @@ mod tests {
         // Scan
         let batch = provider.scan_all_live_queries().unwrap();
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 13); // Schema has 13 columns (see live_queries_table_definition)
+        assert_eq!(batch.num_columns(), 14); // Schema has 14 columns (see live_queries_table_definition)
     }
 
     #[tokio::test]

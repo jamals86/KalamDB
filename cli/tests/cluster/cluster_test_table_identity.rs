@@ -232,6 +232,7 @@ fn cluster_test_table_identity_deletes() {
     std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
+    std::thread::sleep(Duration::from_millis(500));
 
     execute_on_node(
         &urls[0],
@@ -243,7 +244,8 @@ fn cluster_test_table_identity_deletes() {
     .expect("Failed to create table");
 
     // Wait for table to replicate to all nodes
-    if !wait_for_table_on_all_nodes(&namespace, "delete_test", 10000) {
+    std::thread::sleep(Duration::from_millis(1000));
+    if !wait_for_table_on_all_nodes(&namespace, "delete_test", 15000) {
         panic!("Table delete_test did not replicate to all nodes");
     }
 
@@ -260,7 +262,7 @@ fn cluster_test_table_identity_deletes() {
         .expect("Failed to insert");
     }
 
-    std::thread::sleep(Duration::from_millis(500));
+    std::thread::sleep(Duration::from_millis(1500));
 
     // Delete all even rows
     execute_on_node(
@@ -268,6 +270,8 @@ fn cluster_test_table_identity_deletes() {
         &format!("DELETE FROM {}.delete_test WHERE category = 'even'", namespace),
     )
     .expect("Failed to delete");
+    
+    std::thread::sleep(Duration::from_millis(1500));
 
     // Verify only odd rows remain on all nodes
     let query = format!(

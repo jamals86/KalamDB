@@ -35,7 +35,7 @@ pub fn new_live_queries_store(backend: Arc<dyn StorageBackend>) -> LiveQueriesSt
 mod tests {
     use super::*;
     use kalamdb_commons::models::ConnectionId;
-    use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
+    use kalamdb_commons::{NamespaceId, NodeId, TableId, TableName, UserId};
     use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;
 
@@ -66,9 +66,10 @@ mod tests {
             created_at: 1000,
             last_update: 1000,
             changes: 0,
-            node: "node1".to_string(),
+             node_id: NodeId::new(1),
             subscription_id: subscription_id.to_string(),
             status: kalamdb_commons::types::LiveQueryStatus::Active,
+            last_ping_at: 1000,
         }
     }
 

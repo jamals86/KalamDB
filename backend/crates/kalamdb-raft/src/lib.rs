@@ -63,7 +63,7 @@ pub use state_machine::{UserDataStateMachine, SharedDataStateMachine};
 
 // Re-exports - Core types
 pub use cluster_types::{NodeRole, NodeStatus, ServerStateExt};
-pub use config::{ClusterConfig as RaftClusterConfig, PeerConfig, ReplicationMode};
+pub use config::{ClusterConfig as RaftClusterConfig, PeerConfig};
 pub use error::{RaftError, Result};
 pub use executor::{ClusterInfo, ClusterNodeInfo, CommandExecutor, RaftExecutor};
 pub use group_id::{GroupId, ShardRouter};

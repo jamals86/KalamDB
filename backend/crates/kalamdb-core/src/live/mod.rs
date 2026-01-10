@@ -9,6 +9,7 @@
 
 pub mod connections_manager;
 pub mod error;
+pub mod failover;
 pub mod filter_eval;
 pub mod initial_data;
 pub mod manager;
@@ -27,6 +28,7 @@ pub use connections_manager::{
     NotificationSender, SharedConnectionState, SubscriptionState,
 };
 
+pub use failover::{LiveQueryFailoverHandler, CleanupReport as LiveQueryCleanupReport};
 pub use filter_eval::{matches as filter_matches, parse_where_clause};
 pub use initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 pub use manager::LiveQueryManager;

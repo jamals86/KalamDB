@@ -7,8 +7,6 @@ use std::time::Duration;
 
 use kalamdb_commons::models::NodeId;
 
-use crate::config::ReplicationMode;
-
 /// Default number of user data shards
 pub const DEFAULT_USER_DATA_SHARDS: u32 = 32;
 
@@ -48,11 +46,17 @@ pub struct RaftManagerConfig {
     
     /// Raft election timeout range (min, max) in milliseconds
     pub election_timeout_ms: (u64, u64),
-
-    /// Replication mode: Quorum (fast) or All (strong consistency)
-    pub replication_mode: ReplicationMode,
     
-    /// Timeout for waiting for all replicas (when replication_mode = All)
+    /// Snapshot policy (default: "LogsSinceLast(1000)")
+    pub snapshot_policy: String,
+    
+    /// Maximum number of snapshots to keep
+    pub max_snapshots_to_keep: u32,
+    
+    /// Replication timeout for learner catchup during cluster membership changes
+    pub replication_timeout_ms: u64,
+    
+    /// Timeout for waiting for learner catchup during cluster membership changes
     pub replication_timeout: Duration,
 }
 
@@ -67,7 +71,9 @@ impl Default for RaftManagerConfig {
             shared_shards: DEFAULT_SHARED_DATA_SHARDS,
             heartbeat_interval_ms: 250,
             election_timeout_ms: (500, 1000),
-            replication_mode: ReplicationMode::Quorum,
+            snapshot_policy: "LogsSinceLast(1000)".to_string(),
+            max_snapshots_to_keep: 3,
+            replication_timeout_ms: 5000,
             replication_timeout: Duration::from_secs(5),
         }
     }
@@ -95,7 +101,9 @@ impl RaftManagerConfig {
             shared_shards: 1, // Single shard - no distribution needed
             heartbeat_interval_ms: 250,
             election_timeout_ms: (500, 1000),
-            replication_mode: ReplicationMode::Quorum,
+            snapshot_policy: "LogsSinceLast(1000)".to_string(),
+            max_snapshots_to_keep: 1,  // Keep only most recent snapshot for single-node
+            replication_timeout_ms: 5000,
             replication_timeout: Duration::from_secs(5),
         }
     }
@@ -104,11 +112,6 @@ impl RaftManagerConfig {
 /// Convert from the TOML-parseable ClusterConfig to runtime RaftManagerConfig
 impl From<kalamdb_commons::config::ClusterConfig> for RaftManagerConfig {
     fn from(config: kalamdb_commons::config::ClusterConfig) -> Self {
-        let replication_mode = match config.replication_mode.as_str() {
-            "all" => ReplicationMode::All,
-            _ => ReplicationMode::Quorum,
-        };
-        
         Self {
             node_id: NodeId::new(config.node_id),
             rpc_addr: config.rpc_addr,
@@ -118,7 +121,9 @@ impl From<kalamdb_commons::config::ClusterConfig> for RaftManagerConfig {
             shared_shards: config.shared_shards,
             heartbeat_interval_ms: config.heartbeat_interval_ms,
             election_timeout_ms: config.election_timeout_ms,
-            replication_mode,
+            snapshot_policy: config.snapshot_policy,
+            max_snapshots_to_keep: config.max_snapshots_to_keep,
+            replication_timeout_ms: config.replication_timeout_ms,
             replication_timeout: Duration::from_millis(config.replication_timeout_ms),
         }
     }

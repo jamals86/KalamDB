@@ -10,7 +10,7 @@
 //! for data groups.
 
 use chrono::{DateTime, Utc};
-use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
+use kalamdb_commons::models::{JobId, JobStatus, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::TableId;
 use kalamdb_commons::types::User;
@@ -32,7 +32,7 @@ pub enum MetaCommand {
     /// Create a new namespace
     CreateNamespace {
         namespace_id: NamespaceId,
-        created_by: Option<String>,
+        created_by: Option<UserId>,
     },
     
     /// Delete a namespace
@@ -135,7 +135,7 @@ pub enum MetaCommand {
     /// Update job status
     UpdateJobStatus {
         job_id: JobId,
-        status: String,
+        status: JobStatus,
         updated_at: DateTime<Utc>,
     },
 

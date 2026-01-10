@@ -544,7 +544,7 @@ async fn test_command_proposal_to_leader() {
     // Propose a meta command
     let command = MetaCommand::CreateNamespace {
         namespace_id: NamespaceId::from("test_ns"),
-        created_by: Some("test".to_string()),
+        created_by: Some(UserId::from("tester")),
     };
     
     let encoded = kalamdb_raft::state_machine::encode(&command)
@@ -613,7 +613,7 @@ async fn test_all_groups_accept_proposals() {
         // Test namespace creation
         let cmd = MetaCommand::CreateNamespace { 
             namespace_id: NamespaceId::from("ns1"),
-            created_by: Some("test".to_string()),
+            created_by: Some(UserId::from("admin"))
         };
         let encoded = kalamdb_raft::state_machine::encode(&cmd).unwrap();
         let result = leader.manager.propose_meta(encoded).await;
@@ -753,7 +753,7 @@ async fn test_meta_group_operations() {
     // Test CreateNamespace
     let cmd = MetaCommand::CreateNamespace { 
         namespace_id: NamespaceId::from("test_ns"),
-        created_by: Some("test".to_string()),
+        created_by: Some(UserId::from("tester"))
     };
     let result = leader.manager.propose_meta(
         kalamdb_raft::state_machine::encode(&cmd).unwrap()
@@ -809,7 +809,7 @@ async fn test_meta_group_operations() {
     // Test UpdateJobStatus
     let cmd = MetaCommand::UpdateJobStatus {
         job_id: JobId::from("j1"),
-        status: "running".to_string(),
+        status: kalamdb_commons::JobStatus::Completed,
         updated_at: Utc::now(),
     };
     let result = leader.manager.propose_meta(

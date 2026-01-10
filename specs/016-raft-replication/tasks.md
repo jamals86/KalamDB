@@ -377,36 +377,10 @@ Display the clusterName here and which node we are connecting to: ● KalamDB[{{
 
 23) WHEN BUILDING ON WINDOWS OR MAYBE LINUX ADD TO THE BINARY properties details like verison and other things
 
-
-
-
-24) all commands either they came from replication or from manual current node should be the same for example:     async fn alter_table has a specific logic for on replication we should use the same logic for both cases not different ones in this way we reduce code rewritten and bugs
-
-25) We should consider changing how things is done using an event driven system:
-- User create/alter/delete table
-- We call the applier
-- it apply the command if its a leader
-- if its a follower it forwards it to the leader and wait
-- The leader apply the command
-- the leader call all followers
-- they all apply the command
-- Once all applied we return ok to the follower who forwarded the command
-- the follower ack to the user who called from a client
-
-Note: this should be done in case of cluster or standalone the same way no difference
-
-26) CommandForwarder should use gRPC instead of HTTP for forwarding commands to the leader node
-27) There is many logic which scattered inside kalamdb-core which deals with multiple things i prefer combining them and make some organizing of the code and check if its categorized and combined correctly, check all the code start from the applier we added and go from there so each category should be in the same place and not scattered.
-
-
-28) I can see the applier has many boilerplates which i think we can prevent adding or make it more effecient i have these things can you check them and tell me if they are needed anymore or we can improve anything in the design:
-- why we have this standalone applier: backend/crates/kalamdb-core/src/executor? can't we always have a cluster mode and one executor which is the cluster and the logic will be inside the kalamdb-raft? in this way we will test the same code either in standalone or cluster
-- in backend/crates/kalamdb-core/src/applier we have separate logic for the data from the meta data why not for all commands use the same logic? for example: backend/crates/kalamdb-core/src/applier/commands/types.rs has only Metadata not the userdata commands as wel, we not using all the same logic for all commands? since the appliers inside kalamdb-raft is unified and all share the same logic
-- The main part is to have a logic which is used in both of them not inventing different one for each
-
-
-29) single node cluster disable rpc server since its not needed, find other things to turn off to reduce memory usage and making the server faster
-
 30) see how errors is not displayed with duplicate messages:
 ● KalamDB[] root@localhost:8080 ❯ INSERT INTO chat.conversations (id, title) VALUES (2, 'Chat with AI About KalamDB');
 ✗ Server error (400): Statement 1 failed: Invalid operation: Raft insert failed: Provider error: Provider error: Execution error: Failed to insert batch: Already exists: Primary key violation: value '2' already exists in column 'id'
+
+31) Prevent altering _seq/_deleted columns in a table
+32) whenever we alter a table and there is not change been done no need to create a new schema version, in this case nothing should be done there is no change been made then
+33) Add test where we flush a table in a cluster and verify the data

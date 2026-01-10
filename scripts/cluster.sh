@@ -348,7 +348,6 @@ host = "127.0.0.1"
 port = $http_port
 workers = 0
 api_version = "v1"
-node_id = "node-$node_id"
 
 [storage]
 rocksdb_path = "$data_dir/data/rocksdb"
@@ -389,7 +388,6 @@ rpc_addr = "127.0.0.1:$rpc_port"
 api_addr = "http://127.0.0.1:$http_port"
 heartbeat_interval_ms = 150
 election_timeout_ms = [300, 500]
-replication_mode = "quorum"
 replication_timeout_ms = 5000
 
 # Note: Raft uses quorum by design; there is no min_replication_nodes setting.

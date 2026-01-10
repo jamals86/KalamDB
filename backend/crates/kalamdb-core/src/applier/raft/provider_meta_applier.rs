@@ -321,15 +321,15 @@ impl MetaApplier for ProviderMetaApplier {
     async fn update_job_status(
         &self,
         job_id: &JobId,
-        status: &str,
+        status: JobStatus,
         updated_at: i64,
     ) -> Result<(), RaftError> {
-        log::debug!("ProviderMetaApplier: Updating job {} status to {}", job_id, status);
+        log::debug!("ProviderMetaApplier: Updating job {} status to {:?}", job_id, status);
         
         if let Some(mut job) = self.app_context.system_tables().jobs().get_job(job_id)
             .map_err(|e| RaftError::Internal(format!("Failed to get job: {}", e)))?
         {
-            job.status = status.parse().unwrap_or(JobStatus::Failed);
+            job.status = status;
             job.updated_at = updated_at;
             
             self.app_context.system_tables()

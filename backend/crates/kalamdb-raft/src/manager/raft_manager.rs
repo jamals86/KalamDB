@@ -15,7 +15,6 @@ use kalamdb_store::{Partition, StorageBackend};
 use openraft::RaftMetrics;
 use parking_lot::RwLock;
 
-use crate::config::ReplicationMode;
 use crate::manager::config::RaftManagerConfig;
 use crate::manager::RaftGroup;
 use crate::state_machine::{
@@ -212,9 +211,9 @@ impl RaftManager {
         }
         
         log::info!("Starting Raft Cluster: node={} rpc={} api={}", self.node_id, self.config.rpc_addr, self.config.api_addr);
-        log::info!("Groups: {} (1 meta + {}u + {}s) │ Peers: {} │ Mode: {}", 
+        log::info!("Groups: {} (1 meta + {}u + {}s) │ Peers: {}", 
             self.group_count(), self.user_shards_count, self.shared_shards_count, 
-            self.config.peers.len(), self.config.replication_mode);
+            self.config.peers.len());
         for peer in &self.config.peers {
             log::info!("[CLUSTER] Peer node_id={}: rpc={}, api={}", 
                 peer.node_id, peer.rpc_addr, peer.api_addr);
@@ -542,48 +541,28 @@ impl RaftManager {
         self.meta.storage().state_machine().last_applied_index()
     }
     
-    /// Internal helper to propose with replication mode awareness
+    /// Internal helper to propose to a group with leader forwarding
     async fn propose_to_group<SM: crate::state_machine::KalamStateMachine + Send + Sync + 'static>(
         &self,
         group: &Arc<RaftGroup<SM>>,
         command: Vec<u8>,
     ) -> Result<Vec<u8>, RaftError> {
-        match self.config.replication_mode {
-            ReplicationMode::Quorum => {
-                // Standard quorum-based replication (fast)
-                group.propose_with_forward(command).await
-            }
-            ReplicationMode::All => {
-                // Strong consistency: wait for ALL nodes
-                if group.is_leader() {
-                    group.propose_with_all_replicas(
-                        command,
-                        self.config.replication_timeout,
-                        self.total_nodes(),
-                    ).await
-                } else {
-                    // Follower: forward to leader (leader will wait for all replicas)
-                    group.propose_with_forward(command).await
-                }
-            }
-        }
+        // Use standard quorum-based replication (OpenRaft default)
+        group.propose_with_forward(command).await
     }
     
     /// Propose a command to the unified Meta group (with leader forwarding)
     ///
     /// If this node is a follower, the request is automatically forwarded to the leader.
-    /// Respects the configured replication_mode (Quorum or All).
+    /// Uses standard quorum-based replication.
     pub async fn propose_meta(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
         self.propose_to_group(&self.meta, command).await
     }
     
-    /// Propose a command to the MetaSystem group (with leader forwarding)
-    ///
-    /// If this node is a follower, the request is automatically forwarded to the leader.
     /// Propose a command to a user data shard (with leader forwarding)
     ///
     /// If this node is a follower, the request is automatically forwarded to the leader.
-    /// Respects the configured replication_mode (Quorum or All).
+    /// Uses standard quorum-based replication.
     pub async fn propose_user_data(&self, shard: u32, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
         if shard >= self.user_shards_count {
             return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
@@ -594,7 +573,7 @@ impl RaftManager {
     /// Propose a command to a shared data shard (with leader forwarding)
     ///
     /// If this node is a follower, the request is automatically forwarded to the leader.
-    /// Respects the configured replication_mode (Quorum or All).
+    /// Uses standard quorum-based replication.
     pub async fn propose_shared_data(&self, shard: u32, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
         if shard >= self.shared_shards_count {
             return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
@@ -606,46 +585,21 @@ impl RaftManager {
     ///
     /// Used by the RaftService when receiving a forwarded proposal.
     /// Does NOT forward - should only be called when we are the leader.
-    /// Respects the configured replication_mode (Quorum or All).
+    /// Uses standard quorum-based replication.
     pub async fn propose_for_group(&self, group_id: GroupId, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
-        match self.config.replication_mode {
-            ReplicationMode::Quorum => {
-                // Standard quorum-based replication
-                match group_id {
-                    GroupId::Meta => self.meta.propose(command).await,
-                    GroupId::DataUserShard(shard) => {
-                        if shard >= self.user_shards_count {
-                            return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
-                        }
-                        self.user_data_shards[shard as usize].propose(command).await
-                    }
-                    GroupId::DataSharedShard(shard) => {
-                        if shard >= self.shared_shards_count {
-                            return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
-                        }
-                        self.shared_data_shards[shard as usize].propose(command).await
-                    }
+        match group_id {
+            GroupId::Meta => self.meta.propose(command).await,
+            GroupId::DataUserShard(shard) => {
+                if shard >= self.user_shards_count {
+                    return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
                 }
+                self.user_data_shards[shard as usize].propose(command).await
             }
-            ReplicationMode::All => {
-                // Strong consistency: wait for ALL nodes
-                let total = self.total_nodes();
-                let timeout = self.config.replication_timeout;
-                match group_id {
-                    GroupId::Meta => self.meta.propose_with_all_replicas(command, timeout, total).await,
-                    GroupId::DataUserShard(shard) => {
-                        if shard >= self.user_shards_count {
-                            return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
-                        }
-                        self.user_data_shards[shard as usize].propose_with_all_replicas(command, timeout, total).await
-                    }
-                    GroupId::DataSharedShard(shard) => {
-                        if shard >= self.shared_shards_count {
-                            return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
-                        }
-                        self.shared_data_shards[shard as usize].propose_with_all_replicas(command, timeout, total).await
-                    }
+            GroupId::DataSharedShard(shard) => {
+                if shard >= self.shared_shards_count {
+                    return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
                 }
+                self.shared_data_shards[shard as usize].propose(command).await
             }
         }
     }
@@ -917,12 +871,7 @@ impl RaftManager {
         Ok(())
     }
     
-    /// Get the replication mode (Quorum or All)
-    pub fn replication_mode(&self) -> ReplicationMode {
-        self.config.replication_mode
-    }
-    
-    /// Get the replication timeout
+    /// Get the replication timeout (used for learner catchup)
     pub fn replication_timeout(&self) -> Duration {
         self.config.replication_timeout
     }

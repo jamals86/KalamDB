@@ -331,14 +331,42 @@ max_parameter_size_bytes = 524288
 # # Number of shared data shards (default: 1)
 # shared_shards = 1
 # 
-# # Raft heartbeat interval in milliseconds (default: 50)
-# heartbeat_interval_ms = 50
+# # Raft heartbeat interval in milliseconds (default: 250)
+# heartbeat_interval_ms = 250
 # 
-# # Raft election timeout range [min, max] in milliseconds (default: [150, 300])
-# election_timeout_ms = [150, 300]
+# # Raft election timeout range [min, max] in milliseconds (default: [500, 1000])
+# election_timeout_ms = [500, 1000]
 # 
-# # Maximum entries per Raft snapshot (default: 10000)
-# snapshot_threshold = 10000
+# # Snapshot policy (default: "LogsSinceLast(1000)")
+# # Applies to both single-node and multi-node clusters.
+# # Options:
+# #   - "LogsSinceLast(N)" - Create snapshot after N log entries since last snapshot
+# #   - "Never" - Disable automatic snapshots (not recommended for production)
+# # 
+# # Lower values (e.g., 100) create snapshots more frequently:
+# #   + Faster follower catchup (smaller log to replay)
+# #   + Smaller memory footprint
+# #   - More disk I/O for snapshot creation
+# # 
+# # Higher values (e.g., 10000) reduce snapshot frequency:
+# #   + Less disk I/O
+# #   - Slower follower catchup
+# #   - Larger memory footprint
+# snapshot_policy = "LogsSinceLast(1000)"
+# 
+# # Maximum number of snapshots to keep (default: 3)
+# # Older snapshots are automatically deleted. Set to 0 to keep all snapshots.
+# # For single-node deployments, you may want to set this to 1 to minimize disk usage.
+# # 
+# # Examples:
+# #   max_snapshots_to_keep = 1   # Keep only the most recent snapshot (minimal disk usage)
+# #   max_snapshots_to_keep = 3   # Keep last 3 snapshots (balanced approach)
+# #   max_snapshots_to_keep = 0   # Keep all snapshots (useful for backup/recovery)
+# max_snapshots_to_keep = 3
+# 
+# # Timeout in milliseconds to wait for learner catchup during cluster membership changes
+# # (default: 5000ms = 5 seconds)
+# replication_timeout_ms = 5000
 # 
 # # NOTE: OpenRaft uses standard Raft quorum: (N/2)+1
 # # For 3 nodes: quorum = 2 (majority required for commit)

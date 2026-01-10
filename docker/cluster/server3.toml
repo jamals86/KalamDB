@@ -118,7 +118,7 @@ shared_shards = 1
 heartbeat_interval_ms = 100
 election_timeout_ms = [300, 500]
 snapshot_threshold = 10000
-replication_mode = "quorum"
+
 replication_timeout_ms = 5000
 
 # Peer nodes

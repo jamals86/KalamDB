@@ -19,7 +19,8 @@ use kalamdb_commons::{NamespaceId, TableName};
 /// - created_at TIMESTAMP NOT NULL
 /// - last_update TIMESTAMP NOT NULL
 /// - changes BIGINT NOT NULL
-/// - node TEXT NOT NULL
+/// - node_id BIGINT NOT NULL (node identifier)
+/// - last_ping_at TIMESTAMP NOT NULL (for stale detection)
 ///
 /// Note: last_seq_id is tracked in-memory only (WebSocketSession), not persisted
 pub fn live_queries_table_definition() -> TableDefinition {
@@ -161,14 +162,25 @@ pub fn live_queries_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             13,
-            "node",
+            "node_id",
             13,
-            KalamDataType::Text,
+            KalamDataType::BigInt,
             false,
             false,
             false,
             ColumnDefault::None,
-            Some("Server node handling this live query".to_string()),
+            Some("Server node ID handling this live query".to_string()),
+        ),
+        ColumnDefinition::new(
+            14,
+            "last_ping_at",
+            14,
+            KalamDataType::Timestamp,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Last ping timestamp for stale detection".to_string()),
         ),
     ];
 

@@ -81,7 +81,7 @@ pub fn table_id_index_prefix(table_id: &TableId) -> Vec<u8> {
 mod tests {
     use super::*;
     use kalamdb_commons::models::ConnectionId;
-    use kalamdb_commons::{NamespaceId, TableName, UserId};
+    use kalamdb_commons::{NamespaceId, NodeId, TableName, UserId};
 
     fn create_test_live_query() -> (LiveQueryId, LiveQuery) {
         let live_id = LiveQueryId::new(
@@ -100,9 +100,10 @@ mod tests {
             created_at: 1000,
             last_update: 1000,
             changes: 0,
-            node: "node1".to_string(),
+            node_id: NodeId::new(1),
             subscription_id: "sub789".to_string(),
             status: kalamdb_commons::types::LiveQueryStatus::Active,
+            last_ping_at: 1000,
         };
         (live_id, lq)
     }

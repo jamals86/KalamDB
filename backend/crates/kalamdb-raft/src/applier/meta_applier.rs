@@ -11,7 +11,7 @@
 
 use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableType;
-use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableId, TableName, UserId};
+use kalamdb_commons::models::{JobId, JobStatus, JobType, NamespaceId, NodeId, StorageId, TableId, TableName, UserId};
 use kalamdb_commons::types::User;
 
 use crate::RaftError;
@@ -136,7 +136,7 @@ pub trait MetaApplier: Send + Sync {
     async fn update_job_status(
         &self,
         job_id: &JobId,
-        status: &str,
+        status: JobStatus,
         updated_at: i64,
     ) -> Result<(), RaftError>;
     
@@ -252,7 +252,7 @@ impl MetaApplier for NoOpMetaApplier {
     async fn claim_job(&self, _: &JobId, _: NodeId, _: i64) -> Result<(), RaftError> {
         Ok(())
     }
-    async fn update_job_status(&self, _: &JobId, _: &str, _: i64) -> Result<(), RaftError> {
+    async fn update_job_status(&self, _: &JobId, _: JobStatus, _: i64) -> Result<(), RaftError> {
         Ok(())
     }
     async fn complete_job(&self, _: &JobId, _: Option<&str>, _: i64) -> Result<(), RaftError> {
@@ -272,5 +272,309 @@ impl MetaApplier for NoOpMetaApplier {
     }
     async fn delete_schedule(&self, _: &str) -> Result<(), RaftError> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kalamdb_commons::models::{AuthType, NamespaceId, StorageMode, TableName, UserName};
+    use kalamdb_commons::Role;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// Mock applier that tracks all operations
+    struct MockMetaApplier {
+        namespace_ops: Arc<AtomicUsize>,
+        table_ops: Arc<AtomicUsize>,
+        user_ops: Arc<AtomicUsize>,
+        job_ops: Arc<AtomicUsize>,
+        storage_ops: Arc<AtomicUsize>,
+    }
+
+    impl MockMetaApplier {
+        fn new() -> Self {
+            Self {
+                namespace_ops: Arc::new(AtomicUsize::new(0)),
+                table_ops: Arc::new(AtomicUsize::new(0)),
+                user_ops: Arc::new(AtomicUsize::new(0)),
+                job_ops: Arc::new(AtomicUsize::new(0)),
+                storage_ops: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn get_counts(&self) -> (usize, usize, usize, usize, usize) {
+            (
+                self.namespace_ops.load(Ordering::SeqCst),
+                self.table_ops.load(Ordering::SeqCst),
+                self.user_ops.load(Ordering::SeqCst),
+                self.job_ops.load(Ordering::SeqCst),
+                self.storage_ops.load(Ordering::SeqCst),
+            )
+        }
+    }
+
+    #[async_trait]
+    impl MetaApplier for MockMetaApplier {
+        async fn create_namespace(&self, _: &NamespaceId, _: Option<&UserId>) -> Result<(), RaftError> {
+            self.namespace_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn delete_namespace(&self, _: &NamespaceId) -> Result<(), RaftError> {
+            self.namespace_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn create_table(&self, _: &TableId, _: TableType, _: &str) -> Result<(), RaftError> {
+            self.table_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn alter_table(&self, _: &TableId, _: &str) -> Result<(), RaftError> {
+            self.table_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn drop_table(&self, _: &TableId) -> Result<(), RaftError> {
+            self.table_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn register_storage(&self, _: &StorageId, _: &str) -> Result<(), RaftError> {
+            self.storage_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn unregister_storage(&self, _: &StorageId) -> Result<(), RaftError> {
+            self.storage_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn create_user(&self, _: &User) -> Result<(), RaftError> {
+            self.user_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn update_user(&self, _: &User) -> Result<(), RaftError> {
+            self.user_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn delete_user(&self, _: &UserId, _: i64) -> Result<(), RaftError> {
+            self.user_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn record_login(&self, _: &UserId, _: i64) -> Result<(), RaftError> {
+            self.user_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn set_user_locked(&self, _: &UserId, _: Option<i64>, _: i64) -> Result<(), RaftError> {
+            self.user_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn create_job(&self, _: &JobId, _: JobType, _: Option<&NamespaceId>, _: Option<&TableName>, _: Option<&str>, _: i64) -> Result<(), RaftError> {
+            self.job_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn claim_job(&self, _: &JobId, _: NodeId, _: i64) -> Result<(), RaftError> {
+            self.job_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn update_job_status(&self, _: &JobId, _: JobStatus, _: i64) -> Result<(), RaftError> {
+            self.job_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn complete_job(&self, _: &JobId, _: Option<&str>, _: i64) -> Result<(), RaftError> {
+            self.job_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn fail_job(&self, _: &JobId, _: &str, _: i64) -> Result<(), RaftError> {
+            self.job_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn release_job(&self, _: &JobId, _: &str, _: i64) -> Result<(), RaftError> {
+            self.job_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn cancel_job(&self, _: &JobId, _: &str, _: i64) -> Result<(), RaftError> {
+            self.job_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn create_schedule(&self, _: &str, _: JobType, _: &str, _: Option<&str>, _: i64) -> Result<(), RaftError> {
+            self.job_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn delete_schedule(&self, _: &str) -> Result<(), RaftError> {
+            self.job_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_namespace_operations() {
+        let applier = MockMetaApplier::new();
+        let ns_id = NamespaceId::from("test_namespace");
+        let user_id = UserId::from("user_123");
+
+        applier.create_namespace(&ns_id, Some(&user_id)).await.unwrap();
+        applier.delete_namespace(&ns_id).await.unwrap();
+
+        assert_eq!(applier.get_counts(), (2, 0, 0, 0, 0));
+    }
+
+    #[tokio::test]
+    async fn test_table_operations() {
+        let applier = MockMetaApplier::new();
+        let table_id = TableId::new(NamespaceId::from("ns"), TableName::from("table"));
+        let schema_json = r#"{"columns":[]}"#;
+
+        applier.create_table(&table_id, TableType::User, schema_json).await.unwrap();
+        applier.alter_table(&table_id, schema_json).await.unwrap();
+        applier.drop_table(&table_id).await.unwrap();
+
+        assert_eq!(applier.get_counts(), (0, 3, 0, 0, 0));
+    }
+
+    #[tokio::test]
+    async fn test_user_operations() {
+        let applier = MockMetaApplier::new();
+        let user = User {
+            id: UserId::from("user_123"),
+            username: UserName::new("testuser"),
+            password_hash: "$2b$12$hash".to_string(),
+            role: Role::User,
+            email: None,
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: None,
+            failed_login_attempts: 0,
+            locked_until: None,
+            last_login_at: None,
+            created_at: 1000,
+            updated_at: 1000,
+            last_seen: None,
+            deleted_at: None,
+        };
+
+        applier.create_user(&user).await.unwrap();
+        applier.update_user(&user).await.unwrap();
+        applier.record_login(&user.id, 2000).await.unwrap();
+        applier.set_user_locked(&user.id, Some(3000), 2000).await.unwrap();
+        applier.delete_user(&user.id, 4000).await.unwrap();
+
+        assert_eq!(applier.get_counts(), (0, 0, 5, 0, 0));
+    }
+
+    #[tokio::test]
+    async fn test_job_operations() {
+        let applier = MockMetaApplier::new();
+        let job_id = JobId::from("FL-12345");
+        let namespace_id = NamespaceId::from("test_ns");
+        let table_name = TableName::from("test_table");
+
+        applier.create_job(&job_id, JobType::Flush, Some(&namespace_id), Some(&table_name), None, 1000).await.unwrap();
+        applier.claim_job(&job_id, NodeId::from(1), 1100).await.unwrap();
+        applier.update_job_status(&job_id, JobStatus::Running, 1200).await.unwrap();
+        applier.complete_job(&job_id, Some("{}"), 1300).await.unwrap();
+
+        assert_eq!(applier.get_counts(), (0, 0, 0, 4, 0));
+    }
+
+    #[tokio::test]
+    async fn test_storage_operations() {
+        let applier = MockMetaApplier::new();
+        let storage_id = StorageId::from("local");
+        let config = r#"{"type":"local"}"#;
+
+        applier.register_storage(&storage_id, config).await.unwrap();
+        applier.unregister_storage(&storage_id).await.unwrap();
+
+        assert_eq!(applier.get_counts(), (0, 0, 0, 0, 2));
+    }
+
+    #[tokio::test]
+    async fn test_noop_applier_all_operations() {
+        let applier = NoOpMetaApplier;
+        let ns_id = NamespaceId::from("test");
+        let table_id = TableId::new(ns_id.clone(), TableName::from("table"));
+        let user_id = UserId::from("user");
+        let user = User {
+            id: user_id.clone(),
+            username: UserName::new("test"),
+            password_hash: "$2b$12$hash".to_string(),
+            role: Role::User,
+            email: None,
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: None,
+            failed_login_attempts: 0,
+            locked_until: None,
+            last_login_at: None,
+            created_at: 1000,
+            updated_at: 1000,
+            last_seen: None,
+            deleted_at: None,
+        };
+
+        // All operations should succeed and do nothing
+        assert!(applier.create_namespace(&ns_id, Some(&user_id)).await.is_ok());
+        assert!(applier.create_table(&table_id, TableType::User, "{}").await.is_ok());
+        assert!(applier.create_user(&user).await.is_ok());
+        assert!(applier.create_job(&JobId::from("J-1"), JobType::Flush, None, None, None, 1000).await.is_ok());
+        assert!(applier.register_storage(&StorageId::from("s1"), "{}").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_job_lifecycle() {
+        let applier = MockMetaApplier::new();
+        let job_id = JobId::from("FL-lifecycle");
+
+        // Create -> Claim -> Update -> Complete
+        applier.create_job(&job_id, JobType::Flush, None, None, None, 1000).await.unwrap();
+        applier.claim_job(&job_id, NodeId::from(1), 1100).await.unwrap();
+        applier.update_job_status(&job_id, JobStatus::Running, 1200).await.unwrap();
+        applier.complete_job(&job_id, None, 1300).await.unwrap();
+
+        assert_eq!(applier.job_ops.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn test_job_failure_path() {
+        let applier = MockMetaApplier::new();
+        let job_id = JobId::from("FL-fail");
+
+        applier.create_job(&job_id, JobType::Flush, None, None, None, 1000).await.unwrap();
+        applier.claim_job(&job_id, NodeId::from(1), 1100).await.unwrap();
+        applier.fail_job(&job_id, "Timeout", 1200).await.unwrap();
+
+        assert_eq!(applier.job_ops.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn test_mixed_operations() {
+        let applier = MockMetaApplier::new();
+        let ns_id = NamespaceId::from("mixed");
+        let table_id = TableId::new(ns_id.clone(), TableName::from("t1"));
+        let user_id = UserId::from("u1");
+        let user = User {
+            id: user_id.clone(),
+            username: UserName::new("test"),
+            password_hash: "$2b$12$hash".to_string(),
+            role: Role::User,
+            email: None,
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: None,
+            failed_login_attempts: 0,
+            locked_until: None,
+            last_login_at: None,
+            created_at: 1000,
+            updated_at: 1000,
+            last_seen: None,
+            deleted_at: None,
+        };
+
+        // Mix of different operation types
+        applier.create_namespace(&ns_id, Some(&user_id)).await.unwrap();
+        applier.create_table(&table_id, TableType::User, "{}").await.unwrap();
+        applier.create_user(&user).await.unwrap();
+        applier.create_job(&JobId::from("J1"), JobType::Cleanup, Some(&ns_id), None, None, 1000).await.unwrap();
+
+        assert_eq!(applier.get_counts(), (1, 1, 1, 1, 0));
     }
 }

@@ -105,8 +105,8 @@ pub async fn bootstrap(
         info!("╚═══════════════════════════════════════════════════════════════════╝");
         info!("Cluster: {} | Node: {} | Peers: {}", 
             cluster_config.cluster_id, cluster_config.node_id, cluster_config.peers.len());
-        info!("Shards: {} user, {} shared | Replication: {}", 
-            cluster_config.user_shards, cluster_config.shared_shards, cluster_config.replication_mode);
+        info!("Shards: {} user, {} shared", 
+            cluster_config.user_shards, cluster_config.shared_shards);
         
         debug!("RPC: {} | API: {}", cluster_config.rpc_addr, cluster_config.api_addr);
         debug!("Heartbeat: {}ms | Election timeout: {:?}ms", 

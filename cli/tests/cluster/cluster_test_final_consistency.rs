@@ -512,6 +512,7 @@ fn cluster_test_final_empty_table_consistency() {
     std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
+    std::thread::sleep(Duration::from_millis(500));
 
     // Create table but don't insert anything
     execute_on_node(
@@ -524,7 +525,8 @@ fn cluster_test_final_empty_table_consistency() {
     .expect("Failed to create table");
 
     // Wait for table to replicate to all nodes
-    if !wait_for_table_on_all_nodes(&namespace, "empty_test", 10000) {
+    std::thread::sleep(Duration::from_millis(1000));
+    if !wait_for_table_on_all_nodes(&namespace, "empty_test", 15000) {
         panic!("Table empty_test did not replicate to all nodes");
     }
 

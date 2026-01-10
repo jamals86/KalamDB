@@ -65,7 +65,7 @@ pub trait UnifiedApplier: Send + Sync {
     async fn create_namespace(
         &self,
         namespace_id: NamespaceId,
-        created_by: Option<String>,
+        created_by: Option<UserId>,
     ) -> Result<String, ApplierError>;
 
     /// Drop a namespace
@@ -336,7 +336,7 @@ impl UnifiedApplier for RaftApplier {
     async fn create_namespace(
         &self,
         namespace_id: NamespaceId,
-        created_by: Option<String>,
+        created_by: Option<UserId>,
     ) -> Result<String, ApplierError> {
         let cmd = MetaCommand::CreateNamespace {
             namespace_id,
