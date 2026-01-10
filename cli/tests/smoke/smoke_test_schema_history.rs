@@ -69,9 +69,7 @@ fn smoke_test_schema_history_in_system_tables() {
     println!("After CREATE: {}", output_v1);
 
     // Parse JSON and count rows
-    let v1_json: serde_json::Value =
-        serde_json::from_str(&output_v1).expect("Failed to parse JSON");
-    let v1_rows = v1_json.as_array().expect("Expected JSON array");
+    let v1_rows = extract_rows_from_response(&output_v1);
 
     assert_eq!(
         v1_rows.len(),
@@ -132,9 +130,7 @@ fn smoke_test_schema_history_in_system_tables() {
 
     println!("After ALTER 1: {}", output_v2);
 
-    let v2_json: serde_json::Value =
-        serde_json::from_str(&output_v2).expect("Failed to parse JSON");
-    let v2_rows = v2_json.as_array().expect("Expected JSON array");
+    let v2_rows = extract_rows_from_response(&output_v2);
 
     assert_eq!(
         v2_rows.len(),
@@ -183,9 +179,7 @@ fn smoke_test_schema_history_in_system_tables() {
 
     println!("After ALTER 2: {}", output_v3);
 
-    let v3_json: serde_json::Value =
-        serde_json::from_str(&output_v3).expect("Failed to parse JSON");
-    let v3_rows = v3_json.as_array().expect("Expected JSON array");
+    let v3_rows = extract_rows_from_response(&output_v3);
 
     assert_eq!(
         v3_rows.len(),
@@ -227,9 +221,7 @@ fn smoke_test_schema_history_in_system_tables() {
 
     println!("After all ALTERs: {}", output_final);
 
-    let final_json: serde_json::Value =
-        serde_json::from_str(&output_final).expect("Failed to parse JSON");
-    let final_rows = final_json.as_array().expect("Expected JSON array");
+    let final_rows = extract_rows_from_response(&output_final);
 
     let expected_rows = 3 + num_additional_alters; // 3 from before + 5 more
     assert_eq!(
@@ -279,6 +271,50 @@ fn smoke_test_schema_history_in_system_tables() {
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+/// Extract rows from CLI JSON response
+/// The response format is: {"status": "success", "results": [{"schema": [...], "rows": [[...], ...]}]}
+/// Returns rows as objects with column names as keys
+fn extract_rows_from_response(json_str: &str) -> Vec<serde_json::Value> {
+    let json: serde_json::Value = serde_json::from_str(json_str)
+        .expect("Failed to parse JSON");
+    
+    // Get schema for column names
+    let schema = json.get("results")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|results| results.first())
+        .and_then(|result| result.get("schema"))
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    
+    let column_names: Vec<String> = schema.iter()
+        .filter_map(|col| col.get("name").and_then(serde_json::Value::as_str).map(String::from))
+        .collect();
+    
+    // Get rows as arrays
+    let rows_arrays = json.get("results")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|results| results.first())
+        .and_then(|result| result.get("rows"))
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    
+    // Convert each row array to an object with column names as keys
+    rows_arrays.iter()
+        .filter_map(|row| {
+            let arr = row.as_array()?;
+            let mut obj = serde_json::Map::new();
+            for (i, col_name) in column_names.iter().enumerate() {
+                if let Some(value) = arr.get(i) {
+                    obj.insert(col_name.clone(), value.clone());
+                }
+            }
+            Some(serde_json::Value::Object(obj))
+        })
+        .collect()
+}
 
 /// Extract i32 value from a JSON row object
 fn extract_i32_from_row(row: &serde_json::Value, column: &str) -> Option<i32> {
@@ -377,9 +413,7 @@ fn smoke_test_drop_table_removes_schema_history() {
     println!("After DROP: {}", after_output);
 
     // Parse and verify count is 0
-    let after_json: serde_json::Value =
-        serde_json::from_str(&after_output).expect("Failed to parse JSON");
-    let after_rows = after_json.as_array().expect("Expected JSON array");
+    let after_rows = extract_rows_from_response(&after_output);
 
     if !after_rows.is_empty() {
         // Extract count value
@@ -390,6 +424,9 @@ fn smoke_test_drop_table_removes_schema_history() {
                     obj.get("Int64")
                         .or(obj.get("Int32"))
                         .and_then(|x| x.as_i64())
+                } else if let Some(s) = v.as_str() {
+                    // BigInt values come as strings to preserve precision
+                    s.parse::<i64>().ok()
                 } else {
                     v.as_i64()
                 }

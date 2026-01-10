@@ -118,7 +118,7 @@ jobs:
 
   build_cli_linux_x86_64:
     name: Build CLI Linux x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout
@@ -339,7 +339,7 @@ jobs:
 
   build_linux_x86_64:
     name: Build Server Linux x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: build_ui
     env:
       VERSION_TAG_INPUT: ${{ github.event.inputs.version_tag }}

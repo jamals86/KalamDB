@@ -95,6 +95,12 @@ impl UserTableProvider {
             .schema_registry()
             .get_arrow_schema(core.table_id())?;
 
+        log::debug!(
+             "UserTableProvider: Created for {} with schema fields: {:?}",
+             core.table_id(),
+             schema.fields().iter().map(|f| f.name()).collect::<Vec<_>>()
+        );
+
         let pk_index = UserTablePkIndex::new(
             core.table_id(),
             &primary_key_field_name,

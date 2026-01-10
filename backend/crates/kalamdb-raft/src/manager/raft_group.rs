@@ -340,6 +340,16 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// Note: This method only works if this node is the leader.
     /// For automatic forwarding, use `propose_with_forward`.
     pub async fn propose(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
+        let (data, _log_index) = self.propose_with_index(command).await?;
+        Ok(data)
+    }
+    
+    /// Propose a command and return both response data and log index
+    ///
+    /// Returns (response_data, log_index) after the command is committed and applied.
+    /// The log_index is useful for read-your-writes consistency when forwarding.
+    /// Note: This method only works if this node is the leader.
+    pub async fn propose_with_index(&self, command: Vec<u8>) -> Result<(Vec<u8>, u64), RaftError> {
         let raft = {
             let guard = self.raft.read();
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
@@ -349,7 +359,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         let response = raft.client_write(command).await
             .map_err(|e| RaftError::Proposal(format!("{:?}", e)))?;
         
-        Ok(response.data)
+        Ok((response.data, response.log_id.index))
     }
     
     /// Propose a command with automatic leader forwarding
@@ -357,6 +367,9 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// If this node is the leader, proposes locally.
     /// If this node is a follower, forwards the proposal to the leader via gRPC.
     /// Includes retry logic for transient failures (e.g., leader unknown).
+    /// 
+    /// For the Meta group, when forwarding, waits for the log entry to be applied
+    /// locally to ensure read-your-writes consistency.
     pub async fn propose_with_forward(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
         // Fast path: if we are the leader, propose locally
         if self.is_leader() {
@@ -383,7 +396,44 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                             
                             // Try to forward
                             match self.forward_to_leader(&leader_node.rpc_addr, command.clone()).await {
-                                Ok(result) => return Ok(result),
+                                Ok((payload, log_index)) => {
+                                    // Wait for local apply to ensure read-your-writes consistency
+                                    // This applies to ALL groups (Meta and Data shards)
+                                    if log_index > 0 {
+                                        log::debug!(
+                                            "Waiting for {} log index {} to be applied locally for read-your-writes consistency",
+                                            self.group_id, log_index
+                                        );
+                                        
+                                        // Poll the state machine until the log is applied
+                                        let start = Instant::now();
+                                        let timeout = Duration::from_secs(10);
+                                        let poll_interval = Duration::from_millis(5);
+                                        
+                                        loop {
+                                            let applied = self.storage.state_machine().last_applied_index();
+                                            if applied >= log_index {
+                                                log::debug!(
+                                                    "{} log index {} applied locally (current: {}), read-your-writes consistency achieved",
+                                                    self.group_id, log_index, applied
+                                                );
+                                                break;
+                                            }
+                                            
+                                            if start.elapsed() > timeout {
+                                                log::warn!(
+                                                    "Timeout waiting for {} log index {} to be applied locally (current: {}). \
+                                                     Read-your-writes consistency may not be guaranteed.",
+                                                    self.group_id, log_index, applied
+                                                );
+                                                break;
+                                            }
+                                            
+                                            tokio::time::sleep(poll_interval).await;
+                                        }
+                                    }
+                                    return Ok(payload);
+                                }
                                 Err(e) => {
                                     log::debug!("Forward attempt {} failed: {}", attempt + 1, e);
                                     last_error = Some(e);
@@ -426,11 +476,14 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     }
     
     /// Forward a proposal to the leader via gRPC
+    /// 
+    /// Returns (payload, log_index) where log_index is the Raft log index
+    /// of the applied entry (for read-your-writes consistency).
     async fn forward_to_leader(
         &self, 
         leader_addr: &str, 
         command: Vec<u8>,
-    ) -> Result<Vec<u8>, RaftError> {
+    ) -> Result<(Vec<u8>, u64), RaftError> {
         use tonic::transport::Channel;
         use crate::network::{RaftClient, ClientProposalRequest};
         
@@ -462,7 +515,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         let inner = response.into_inner();
         
         if inner.success {
-            Ok(inner.payload)
+            Ok((inner.payload, inner.log_index))
         } else if let Some(leader_hint) = inner.leader_hint {
             // Leader might have changed - return not_leader error with hint
             Err(RaftError::not_leader(self.group_id.to_string(), Some(leader_hint)))

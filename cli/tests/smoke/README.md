@@ -4,6 +4,43 @@
 
 This directory contains comprehensive smoke tests for KalamDB features documented in `docs/reference/sql.md` and `docs/getting-started/cli.md`. These tests verify end-to-end functionality using the CLI and cover all table types, custom functions, system tables, flush operations, and DDL/DML operations.
 
+## Configuration
+
+### Server URL and Authentication
+
+By default, tests connect to `http://127.0.0.1:8080` with an empty root password. You can configure these via environment variables:
+
+```bash
+# Custom server URL (different port, host, or protocol)
+export KALAMDB_SERVER_URL="http://127.0.0.1:3000"
+
+# Custom root password (if authentication is enabled)
+export KALAMDB_ROOT_PASSWORD="your-secure-password"
+
+# Run tests with custom configuration
+cd cli
+cargo test --test smoke -- --nocapture
+```
+
+**Examples:**
+
+```bash
+# Test against server on port 3000
+KALAMDB_SERVER_URL="http://127.0.0.1:3000" cargo test --test smoke -- --nocapture
+
+# Test against remote server with authentication
+KALAMDB_SERVER_URL="https://kalamdb.example.com" \
+KALAMDB_ROOT_PASSWORD="mypassword123" \
+cargo test --test smoke -- --nocapture
+
+# Test against cluster node
+KALAMDB_SERVER_URL="http://127.0.0.1:8081" cargo test --test smoke -- --nocapture
+```
+
+**Environment Variables:**
+- `KALAMDB_SERVER_URL` - Full server URL including protocol and port (default: `http://127.0.0.1:8080`)
+- `KALAMDB_ROOT_PASSWORD` - Root user password (default: empty string `""`)
+
 ## New Test Files (November 2025)
 
 ### 1. `smoke_test_custom_functions.rs`
@@ -60,19 +97,67 @@ Tests advanced DML operations:
 ## Running Tests
 
 ### Prerequisites
+
+**1. Start the KalamDB server:**
 ```bash
-# Start the KalamDB server
+# Default configuration (port 8080)
 cd backend
 cargo run --release --bin kalamdb-server
+
+# Or with custom port (update tests with KALAMDB_SERVER_URL)
+cd backend
+cargo run --release --bin kalamdb-server -- --port 3000
+```
+
+**2. Configure test environment (if needed):**
+```bash
+# If using non-default port or authentication
+export KALAMDB_SERVER_URL="http://127.0.0.1:3000"
+export KALAMDB_ROOT_PASSWORD="your-password"
 ```
 
 ### All smoke tests
+
+**Using helper scripts (recommended):**
+```bash
+# Unix/Linux/macOS
+cd cli
+./run-tests.sh --test smoke --nocapture
+
+# Windows PowerShell
+cd cli
+.\run-tests.ps1 -Test "smoke" -NoCapture
+```
+
+**Using cargo directly:**
 ```bash
 cd cli
 cargo test --test smoke -- --nocapture
 ```
 
 ### Specific test file
+
+**Using helper scripts:**
+```bash
+# Unix/Linux/macOS
+./run-tests.sh --test smoke_test_core_operations --nocapture
+
+**Using helper scripts:**
+```bash
+# Unix/Linux/macOS
+./run-tests.sh --test smoke_test_core_operations --nocapture
+
+# Windows PowerShell
+.\run-tests.ps1 -Test "smoke_test_core_operations" -NoCapture
+```
+
+**Using cargo directly:**
+
+# Windows PowerShell
+.\run-tests.ps1 -Test "smoke_test_core_operations" -NoCapture
+```
+
+**Using cargo directly:**
 ```bash
 cargo test --test smoke <file_name> -- --nocapture
 ```

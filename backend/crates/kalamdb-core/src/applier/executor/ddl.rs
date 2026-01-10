@@ -22,6 +22,15 @@ impl DdlExecutor {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
     }
+
+    fn clear_plan_cache_if_available(&self) {
+        if let Some(sql_executor) = self.app_context.try_sql_executor() {
+            // Important for cluster followers: DDL is applied via Raft applier,
+            // bypassing SqlExecutor's normal post-DDL cache invalidation.
+            sql_executor.clear_plan_cache();
+            log::debug!("DdlExecutor: Cleared SQL plan cache after DDL");
+        }
+    }
     
     /// Execute CREATE TABLE
     ///
@@ -54,6 +63,9 @@ impl DdlExecutor {
         
         // 3. Register the DataFusion provider
         self.register_table_provider(table_id, table_type, table_def)?;
+
+        // 4. Invalidate cached plans across this node
+        self.clear_plan_cache_if_available();
         
         Ok(format!(
             "{} table {}.{} created successfully",
@@ -71,10 +83,11 @@ impl DdlExecutor {
         old_version: u32,
     ) -> Result<String, ApplierError> {
         log::info!(
-            "CommandExecutorImpl: Altering table {} (version {} -> {})",
+            "CommandExecutorImpl: Altering table {} (version {} -> {}). New columns: {:?}",
             table_id.full_name(),
             old_version,
-            table_def.schema_version
+            table_def.schema_version,
+            table_def.columns.iter().map(|c| c.column_name.as_str()).collect::<Vec<_>>()
         );
         
         // 1. Update in system.tables
@@ -83,13 +96,31 @@ impl DdlExecutor {
             .tables()
             .update_table(table_id, table_def)
             .map_err(|e| ApplierError::Execution(format!("Failed to alter table: {}", e)))?;
+        log::debug!("CommandExecutorImpl: Updated system.tables for {}", table_id.full_name());
         
         // 2. Update schema cache
         let table_type = table_def.table_type;
         self.prime_schema_cache(table_id, table_type, table_def)?;
+        log::debug!("CommandExecutorImpl: Primed schema cache for {}", table_id.full_name());
         
         // 3. Re-register provider with new schema
         self.register_table_provider(table_id, table_type, table_def)?;
+        log::debug!("CommandExecutorImpl: Re-registered provider for {}", table_id.full_name());
+
+        // 4. Invalidate cached plans across this node
+        self.clear_plan_cache_if_available();
+        
+        // 4. Verify the schema was updated correctly
+        if let Some(cached) = self.app_context.schema_registry().get(table_id) {
+            if let Ok(schema) = cached.arrow_schema() {
+                log::info!(
+                    "CommandExecutorImpl: ALTER TABLE {} complete - Arrow schema now has {} fields: {:?}",
+                    table_id.full_name(),
+                    schema.fields().len(),
+                    schema.fields().iter().map(|f| f.name()).collect::<Vec<_>>()
+                );
+            }
+        }
         
         Ok(format!(
             "Table {}.{} altered successfully (version {} -> {})",
@@ -119,6 +150,9 @@ impl DdlExecutor {
             .schema_registry()
             .remove_provider(table_id)
             .map_err(|e| ApplierError::Execution(format!("Failed to deregister provider: {}", e)))?;
+
+        // 4. Invalidate cached plans across this node
+        self.clear_plan_cache_if_available();
         
         Ok(format!(
             "Table {}.{} dropped successfully",
@@ -218,5 +252,109 @@ impl DdlExecutor {
         }
         
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DdlExecutor;
+    use crate::app_context::AppContext;
+    use crate::sql::executor::SqlExecutor;
+    use crate::sql::executor::models::ExecutionContext;
+    use crate::test_helpers::init_test_app_context;
+    use kalamdb_commons::models::datatypes::KalamDataType;
+    use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableOptions};
+    use kalamdb_commons::models::{NamespaceId, TableId, TableName};
+    use kalamdb_commons::schemas::{ColumnDefault, TableType};
+    use kalamdb_commons::{Role, UserId};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn ddl_applied_via_applier_clears_plan_cache() {
+        init_test_app_context();
+        let app_ctx = AppContext::get();
+
+        // Register SqlExecutor into AppContext so DdlExecutor can clear plan cache.
+        let sql_executor = Arc::new(SqlExecutor::new(app_ctx.clone(), false));
+        app_ctx.set_sql_executor(sql_executor.clone());
+
+        // Build a minimal STREAM table definition (avoids storage registry requirements).
+        let namespace = NamespaceId::new("test_ns");
+        let table_name = TableName::new("test_table");
+        let table_id = TableId::new(namespace.clone(), table_name.clone());
+
+        let id_col = ColumnDefinition::new(
+            1,
+            "id".to_string(),
+            1,
+            KalamDataType::BigInt,
+            false,
+            true,
+            false,
+            ColumnDefault::None,
+            None,
+        );
+
+        let mut table_def = TableDefinition::new(
+            namespace.clone(),
+            table_name.clone(),
+            TableType::Stream,
+            vec![id_col],
+            TableOptions::stream(3600),
+            None,
+        )
+        .expect("Failed to create TableDefinition");
+
+        // Inject system columns (_seq, _deleted) to match runtime tables.
+        app_ctx
+            .system_columns_service()
+            .add_system_columns(&mut table_def)
+            .expect("Failed to add system columns");
+
+        // Create table via DDL executor (registers provider).
+        let ddl = DdlExecutor::new(app_ctx.clone());
+        ddl.create_table(&table_id, TableType::Stream, &table_def)
+            .await
+            .expect("CREATE TABLE failed");
+
+        // Execute a SELECT to populate the plan cache on this node.
+        let exec_ctx = ExecutionContext::new(
+            UserId::from("test_user"),
+            Role::User,
+            app_ctx.base_session_context(),
+        );
+
+        let _ = sql_executor
+            .execute("SELECT * FROM test_ns.test_table", &exec_ctx, vec![])
+            .await
+            .expect("SELECT failed");
+
+        assert!(sql_executor.plan_cache_len() > 0, "Expected plan cache to be populated");
+
+        // Now apply an ALTER TABLE via the applier path (simulates follower replication).
+        let mut altered = table_def.clone();
+        let new_col = ColumnDefinition::new(
+            999,
+            "col1".to_string(),
+            (altered.columns.len() + 1) as u32,
+            KalamDataType::Text,
+            true,
+            false,
+            false,
+            ColumnDefault::None,
+            None,
+        );
+        altered.columns.push(new_col);
+        altered.increment_version();
+
+        ddl.alter_table(&table_id, &altered, 1)
+            .await
+            .expect("ALTER TABLE failed");
+
+        assert_eq!(
+            sql_executor.plan_cache_len(),
+            0,
+            "Expected plan cache to be cleared after ALTER TABLE applied via applier"
+        );
     }
 }

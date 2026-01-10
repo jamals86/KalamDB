@@ -66,6 +66,12 @@ pub struct ClientProposalResponse {
     /// Leader node ID hint (if we're not the leader)
     #[prost(uint64, optional, tag = "4")]
     pub leader_hint: Option<u64>,
+    
+    /// Log index of the applied entry (for read-your-writes consistency)
+    /// Followers should wait for this index to be applied locally before
+    /// returning to the client.
+    #[prost(uint64, tag = "5")]
+    pub log_index: u64,
 }
 
 /// Generated gRPC client module
@@ -324,24 +330,27 @@ impl raft_server::Raft for RaftService {
                 payload: Vec::new(),
                 error: format!("Not leader for group {}", group_id),
                 leader_hint: leader.map(|n| n.as_u64()),
+                log_index: 0,
             }));
         }
         
         // We are the leader - propose the command locally
-        let result = self.manager.propose_for_group(group_id, req.command).await;
+        let result = self.manager.propose_for_group_with_index(group_id, req.command).await;
         
         match result {
-            Ok(payload) => Ok(Response::new(ClientProposalResponse {
+            Ok((payload, log_index)) => Ok(Response::new(ClientProposalResponse {
                 success: true,
                 payload,
                 error: String::new(),
                 leader_hint: None,
+                log_index,
             })),
             Err(e) => Ok(Response::new(ClientProposalResponse {
                 success: false,
                 payload: Vec::new(),
                 error: e.to_string(),
                 leader_hint: self.manager.current_leader(group_id).map(|n| n.as_u64()),
+                log_index: 0,
             })),
         }
     }

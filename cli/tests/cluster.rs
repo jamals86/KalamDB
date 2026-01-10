@@ -270,7 +270,7 @@ mod cluster_common {
     pub fn wait_for_table_on_all_nodes(
         namespace: &str,
         table_name: &str,
-        _timeout_ms: u64,
+        timeout_ms: u64,
     ) -> bool {
         let urls = cluster_urls();
         let query = format!(
@@ -278,37 +278,76 @@ mod cluster_common {
             namespace, table_name
         );
 
-        urls.iter().all(|url| {
-            matches!(execute_on_node(url, &query), Ok(result) if result.contains(table_name))
-        })
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        
+        while start.elapsed() < timeout {
+            let all_visible = urls.iter().all(|url| {
+                matches!(execute_on_node(url, &query), Ok(result) if result.contains(table_name))
+            });
+            
+            if all_visible {
+                return true;
+            }
+            
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        
+        false
     }
 
     /// Wait for a namespace to be visible on all cluster nodes
-    pub fn wait_for_namespace_on_all_nodes(namespace: &str, _timeout_ms: u64) -> bool {
+    pub fn wait_for_namespace_on_all_nodes(namespace: &str, timeout_ms: u64) -> bool {
         let urls = cluster_urls();
         let query = format!(
             "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '{}'",
             namespace
         );
 
-        urls.iter().all(|url| {
-            matches!(execute_on_node(url, &query), Ok(result) if result.contains(namespace))
-        })
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        
+        while start.elapsed() < timeout {
+            let all_visible = urls.iter().all(|url| {
+                matches!(execute_on_node(url, &query), Ok(result) if result.contains(namespace))
+            });
+            
+            if all_visible {
+                return true;
+            }
+            
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        
+        false
     }
 
     /// Wait for row count to reach expected value on all nodes
     pub fn wait_for_row_count_on_all_nodes(
         full_table: &str,
         expected: i64,
-        _timeout_ms: u64,
+        timeout_ms: u64,
     ) -> bool {
         let urls = cluster_urls();
         let query = format!("SELECT count(*) as count FROM {}", full_table);
 
-        urls
-            .iter()
-            .map(|url| query_count_on_url(url, &query))
-            .all(|count| count == expected)
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        
+        while start.elapsed() < timeout {
+            let all_match = urls
+                .iter()
+                .map(|url| query_count_on_url(url, &query))
+                .all(|count| count == expected);
+            
+            if all_match {
+                return true;
+            }
+            
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        
+        false
     }
 }
 

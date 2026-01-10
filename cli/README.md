@@ -31,6 +31,68 @@ The binary will be available at `target/release/kalam-cli`.
 cargo install --path kalam-cli
 ```
 
+## Testing
+
+### Running Tests
+
+By default, tests connect to `http://127.0.0.1:8080`. Configure via environment variables or helper scripts.
+
+#### Using Helper Scripts (Recommended)
+
+**Unix/Linux/macOS:**
+```bash
+# Run all tests with defaults
+./run-tests.sh
+
+# Custom server URL
+./run-tests.sh --url http://localhost:3000
+
+# With authentication
+./run-tests.sh --url http://localhost:3000 --password mypass
+
+# Run specific test
+./run-tests.sh --test smoke --nocapture
+```
+
+**Windows PowerShell:**
+```powershell
+# Run all tests with defaults
+.\run-tests.ps1
+
+# Custom server URL
+.\run-tests.ps1 -Url "http://localhost:3000"
+
+# With authentication
+.\run-tests.ps1 -Url "http://localhost:3000" -Password "mypass"
+
+# Run specific test
+.\run-tests.ps1 -Test "smoke" -NoCapture
+```
+
+#### Using Environment Variables
+
+```bash
+# Set custom server URL and root password
+export KALAMDB_SERVER_URL="http://127.0.0.1:3000"
+export KALAMDB_ROOT_PASSWORD="your-password"
+
+# Run all tests
+cd cli
+cargo test
+
+# Run smoke tests
+cargo test --test smoke -- --nocapture
+
+# Or inline for a single run
+KALAMDB_SERVER_URL="http://localhost:3000" \
+KALAMDB_ROOT_PASSWORD="mypass" \
+cargo test --test smoke -- --nocapture
+```
+
+**Environment Variables:**
+- `KALAMDB_SERVER_URL` - Server URL (default: `http://127.0.0.1:8080`)
+- `KALAMDB_ROOT_PASSWORD` - Root password (default: `""`)
+
 ## Quick Start
 
 ### Connect to Server

@@ -1988,9 +1988,9 @@ export default function SqlStudio() {
             }
           }}
           onAddColumn={() => {
-            // Insert ALTER TABLE ... ADD COLUMN statement
+            // Insert ALTER TABLE ... ADD COLUMN statement (using KalamDataType)
             updateTab(activeTabId, {
-              query: `ALTER TABLE ${selectedTable.namespace}.${selectedTable.tableName} ADD COLUMN new_column VARCHAR`,
+              query: `ALTER TABLE ${selectedTable.namespace}.${selectedTable.tableName} ADD COLUMN new_column STRING`,
             });
           }}
           onCreateTable={() => {
