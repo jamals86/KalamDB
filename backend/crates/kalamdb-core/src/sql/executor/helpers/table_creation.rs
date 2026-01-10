@@ -297,7 +297,10 @@ pub fn build_table_definition(
         }
         (TableOptions::Shared(opts), TableType::Shared) => {
             opts.storage_id = storage_id.clone();
-            opts.access_level = stmt.access_level;
+            // Only override access_level if explicitly specified in SQL; otherwise keep the default (Private)
+            if let Some(access) = stmt.access_level {
+                opts.access_level = Some(access);
+            }
             opts.flush_policy = stmt.flush_policy.clone();
         }
         (TableOptions::Stream(opts), TableType::Stream) => {

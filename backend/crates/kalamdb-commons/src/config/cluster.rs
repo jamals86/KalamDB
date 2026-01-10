@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 /// node_id = 1
 /// rpc_addr = "0.0.0.0:9100"
 /// api_addr = "0.0.0.0:8080"
-/// user_shards = 32
+/// user_shards = 12
 /// shared_shards = 1
 /// heartbeat_interval_ms = 50
 /// election_timeout_ms = [150, 300]
@@ -58,7 +58,7 @@ pub struct ClusterConfig {
     #[serde(default)]
     pub peers: Vec<PeerConfig>,
     
-    /// Number of user data shards (default: 32)
+    /// Number of user data shards (default: 12)
     /// Each shard is a separate Raft group for user table data.
     #[serde(default = "default_user_shards")]
     pub user_shards: u32,
@@ -142,7 +142,7 @@ fn default_api_addr() -> String {
 }
 
 fn default_user_shards() -> u32 {
-    32
+    12
 }
 
 fn default_shared_shards() -> u32 {

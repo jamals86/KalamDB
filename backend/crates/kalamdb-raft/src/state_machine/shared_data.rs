@@ -130,7 +130,7 @@ impl SharedDataStateMachine {
     pub fn set_applier(&self, applier: Arc<dyn SharedDataApplier>) {
         let mut guard = self.applier.write();
         *guard = Some(applier);
-        log::info!(
+        log::debug!(
             "SharedDataStateMachine[{}]: Applier registered for data persistence",
             self.shard
         );

@@ -115,11 +115,9 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
         };
 
         // Delegate to unified applier (handles standalone vs cluster internally)
-        use crate::applier::commands::CreateUserCommand;
-        let cmd = CreateUserCommand { user };
         self.app_context
             .applier()
-            .create_user(cmd)
+            .create_user(user)
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("CREATE USER failed: {}", e)))?;
 

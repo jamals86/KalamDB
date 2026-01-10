@@ -85,19 +85,43 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             return Ok(());
         }
         
-        // Create Raft configuration with tuned timeouts for reliability
-        // - Increased heartbeat_interval to reduce replication frequency and timeout errors
-        // - replication_lag_threshold: After 5 heartbeat intervals, consider node lagging
-        // Note: OpenRaft's internal replication timeout is based on heartbeat_interval
-        let raft_config = Config {
-            cluster_name: format!("kalamdb-{}", self.group_id),
-            election_timeout_min: config.election_timeout_ms.0,
-            election_timeout_max: config.election_timeout_ms.1,
-            heartbeat_interval: config.heartbeat_interval_ms,
-            install_snapshot_timeout: 10000,
-            max_in_snapshot_log_to_keep: 100,
-            purge_batch_size: 256,
-            ..Default::default()
+        // Detect single-node mode (no peers configured)
+        let is_single_node = config.peers.is_empty();
+        
+        // Create Raft configuration with optimizations for single-node mode
+        // Single-node optimizations (OpenRaft recommendations):
+        // - Disable snapshot purging (max_in_snapshot_log_to_keep = 0)
+        // - Reduce heartbeat/election timeouts
+        // - Smaller purge batch to reduce CPU overhead
+        // - Keep tick and elect enabled (required for Raft state machine to function)
+        let raft_config = if is_single_node {
+            log::debug!("[SINGLE-NODE] Applying lightweight Raft optimizations for {}", self.group_id);
+            Config {
+                cluster_name: format!("kalamdb-{}", self.group_id),
+                election_timeout_min: 150,  // Faster elections (default 150-300ms)
+                election_timeout_max: 300,
+                heartbeat_interval: 50,      // Faster heartbeats (default 50ms)
+                install_snapshot_timeout: 5000,
+                max_in_snapshot_log_to_keep: 0,  // Disable log retention after snapshot
+                purge_batch_size: 64,        // Smaller purge batches
+                
+                enable_heartbeat: false,    // Disable heartbeats (no followers to send to)
+                enable_elect: true,         // Keep elections enabled (needed to become leader)
+                enable_tick: true,          // Keep tick enabled (REQUIRED for Raft to function)
+                ..Default::default()
+            }
+        } else {
+            // Multi-node cluster: use conservative settings for network reliability
+            Config {
+                cluster_name: format!("kalamdb-{}", self.group_id),
+                election_timeout_min: config.election_timeout_ms.0,
+                election_timeout_max: config.election_timeout_ms.1,
+                heartbeat_interval: config.heartbeat_interval_ms,
+                install_snapshot_timeout: 10000,
+                max_in_snapshot_log_to_keep: 100,
+                purge_batch_size: 256,
+                ..Default::default()
+            }
         };
         
         let config = Arc::new(raft_config.validate().map_err(|e| RaftError::Config(e.to_string()))?);
@@ -121,7 +145,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             *guard = Some(raft);
         }
         
-        log::info!("Started Raft group {} on node {}", self.group_id, node_id);
+        log::debug!("Started Raft group {} on node {}", self.group_id, node_id);
         Ok(())
     }
     
@@ -141,7 +165,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         raft.initialize(members).await
             .map_err(|e| RaftError::Internal(format!("Failed to initialize cluster: {:?}", e)))?;
         
-        log::info!("Initialized Raft group {} cluster with node {}", self.group_id, node_id);
+        log::debug!("Initialized Raft group {} cluster with node {}", self.group_id, node_id);
         Ok(())
     }
     

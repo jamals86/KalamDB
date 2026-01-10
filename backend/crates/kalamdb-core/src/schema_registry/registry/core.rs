@@ -196,6 +196,9 @@ impl SchemaRegistry {
     }
 
     /// Register a provider with DataFusion's catalog
+    ///
+    /// If the table already exists (e.g., during ALTER TABLE), it will be
+    /// deregistered first, then re-registered with the new provider.
     fn register_with_datafusion(
         &self,
         table_id: &TableId,
@@ -220,19 +223,50 @@ impl SchemaRegistry {
                     new_schema
                 });
 
-            // Register table with DataFusion, tolerate duplicates
-            match schema.register_table(table_id.table_name().as_str().to_string(), provider) {
+            // Register table with DataFusion
+            // If table already exists, deregister first then re-register (needed for ALTER TABLE)
+            match schema.register_table(table_id.table_name().as_str().to_string(), provider.clone()) {
                 Ok(_) => {}
                 Err(e) => {
                     let msg = e.to_string();
-                    // If the table already exists, treat as idempotent success
+                    // If the table already exists, deregister and re-register
                     if msg.to_lowercase().contains("already exists")
                         || msg.to_lowercase().contains("exists")
                     {
-                        log::warn!(
-                            "[SchemaRegistry] Table {} already registered in DataFusion; continuing",
+                        log::info!(
+                            "[SchemaRegistry] Table {} already registered in DataFusion; re-registering with new schema",
                             table_id
                         );
+                        // Deregister the old table
+                        if let Err(dereg_err) = schema.deregister_table(table_id.table_name().as_str()) {
+                            log::warn!(
+                                "[SchemaRegistry] Failed to deregister table {}: {}",
+                                table_id, dereg_err
+                            );
+                        }
+                        // Re-register with new provider
+                        match schema.register_table(table_id.table_name().as_str().to_string(), provider) {
+                            Ok(_) => {}
+                            Err(rereg_err) => {
+                                // If re-registration also fails with "already exists", 
+                                // treat it as idempotent success (table is registered, just not with our provider)
+                                let rereg_msg = rereg_err.to_string();
+                                if rereg_msg.to_lowercase().contains("already exists")
+                                    || rereg_msg.to_lowercase().contains("exists")
+                                {
+                                    log::warn!(
+                                        "[SchemaRegistry] Table {} still exists after deregister attempt; treating as already registered",
+                                        table_id
+                                    );
+                                    // Continue without error - the table is registered, just with an older provider
+                                } else {
+                                    return Err(KalamDbError::InvalidOperation(format!(
+                                        "Failed to re-register table with DataFusion: {}",
+                                        rereg_err
+                                    )));
+                                }
+                            }
+                        }
                     } else {
                         return Err(KalamDbError::InvalidOperation(format!(
                             "Failed to register table with DataFusion: {}",

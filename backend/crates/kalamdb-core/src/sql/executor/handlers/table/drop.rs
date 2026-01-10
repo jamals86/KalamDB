@@ -501,13 +501,9 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         registry.delete_table_definition(&table_id)?;
 
         // Delegate to unified applier (handles standalone vs cluster internally)
-        use crate::applier::commands::DropTableCommand;
-        let cmd = DropTableCommand {
-            table_id: table_id.clone(),
-        };
         self.app_context
             .applier()
-            .drop_table(cmd)
+            .drop_table(table_id.clone())
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
 

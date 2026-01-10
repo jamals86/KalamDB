@@ -404,3 +404,9 @@ Note: this should be done in case of cluster or standalone the same way no diffe
 - in backend/crates/kalamdb-core/src/applier we have separate logic for the data from the meta data why not for all commands use the same logic? for example: backend/crates/kalamdb-core/src/applier/commands/types.rs has only Metadata not the userdata commands as wel, we not using all the same logic for all commands? since the appliers inside kalamdb-raft is unified and all share the same logic
 - The main part is to have a logic which is used in both of them not inventing different one for each
 
+
+29) single node cluster disable rpc server since its not needed, find other things to turn off to reduce memory usage and making the server faster
+
+30) see how errors is not displayed with duplicate messages:
+● KalamDB[] root@localhost:8080 ❯ INSERT INTO chat.conversations (id, title) VALUES (2, 'Chat with AI About KalamDB');
+✗ Server error (400): Statement 1 failed: Invalid operation: Raft insert failed: Provider error: Provider error: Execution error: Failed to insert batch: Already exists: Primary key violation: value '2' already exists in column 'id'

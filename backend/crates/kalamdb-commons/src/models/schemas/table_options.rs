@@ -267,7 +267,7 @@ impl Default for SharedTableOptions {
     fn default() -> Self {
         Self {
             storage_id: StorageId::default(),
-            access_level: None,
+            access_level: Some(TableAccess::Private),
             flush_policy: None,
             compression: default_compression(),
         }

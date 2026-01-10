@@ -76,28 +76,27 @@ pub struct ClusterInfo {
     pub millis_since_quorum_ack: Option<u64>,
 }
 
-/// Unified interface for executing commands in both standalone and cluster modes.
+/// Unified interface for executing commands (Phase 20 - Unified Raft Executor).
 ///
-/// This trait eliminates the need for if/else checks throughout the codebase.
-/// Handlers simply call `ctx.executor().execute_*()` and the correct implementation
-/// is invoked based on the server's configuration.
+/// This trait provides a single interface for all command execution.
+/// Both single-node and cluster modes use RaftExecutor, ensuring
+/// consistent behavior and testing.
 ///
-/// # Implementations
+/// # Implementation
 ///
-/// - [`DirectExecutor`]: Standalone mode - calls providers directly, zero overhead
-/// - `RaftExecutor`: Cluster mode - routes commands through Raft consensus
+/// - [`RaftExecutor`]: The only implementation - handles both single-node and cluster modes
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// // In a DDL handler:
 /// async fn create_table(ctx: &AppContext, table: TableDefinition) -> Result<()> {
-///     let cmd = SystemCommand::CreateTable { 
+///     let cmd = MetaCommand::CreateTable { 
 ///         table_id: table.id.clone(),
-///         table_type: "user".to_string(),
+///         table_type: TableType::User,
 ///         schema_json: serde_json::to_string(&table)?,
 ///     };
-///     ctx.executor().execute_system(cmd).await?;
+///     ctx.executor().execute_meta(cmd).await?;
 ///     Ok(())
 /// }
 /// ```

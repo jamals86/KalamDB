@@ -134,40 +134,42 @@ async fn main() -> Result<()> {
 
     // Display enhanced version information
     let version = env!("CARGO_PKG_VERSION");
-    let commit = env!("GIT_COMMIT_HASH");
-    let build_date = env!("BUILD_DATE");
-    let branch = env!("GIT_BRANCH");
+    // let _commit = env!("GIT_COMMIT_HASH");
+    // let _build_date = env!("BUILD_DATE");
+    // let _branch = env!("GIT_BRANCH");
 
     info!("KalamDB Server v{:<37}", version);
     // debug!("Host: {}  Port: {}", config.server.host, config.server.port);
 
-    // Check file descriptor limits (Unix only)
-    #[cfg(unix)]
-    {
-        use std::process::Command;
-        if let Ok(output) = Command::new("sh").arg("-c").arg("ulimit -n").output() {
-            let limit = String::from_utf8_lossy(&output.stdout);
-            info!("File descriptor limit: {}", limit.trim());
+    // // Check file descriptor limits (Unix only)
+    // #[cfg(unix)]
+    // {
+    //     use std::process::Command;
+    //     if let Ok(output) = Command::new("sh").arg("-c").arg("ulimit -n").output() {
+    //         use log::debug;
+
+    //         let limit = String::from_utf8_lossy(&output.stdout);
+    //         debug!("File descriptor limit: {}", limit.trim());
             
-            // Warn if limit is too low
-            if let Ok(limit_num) = limit.trim().parse::<u32>() {
-                if limit_num < 10000 {
-                    log::warn!("╔═══════════════════════════════════════════════════════════════════╗");
-                    log::warn!("║                    ⚠️  FILE DESCRIPTOR WARNING ⚠️                  ║");
-                    log::warn!("╠═══════════════════════════════════════════════════════════════════╣");
-                    log::warn!("║  Current limit: {:<52} ║", format!("{} file descriptors", limit_num));
-                    log::warn!("║  Recommended:   {:<52} ║", "65536 file descriptors");
-                    log::warn!("║                                                                   ║");
-                    log::warn!("║  This limit may be too low for production use and could cause     ║");
-                    log::warn!("║  'Too many open files' errors under heavy load.                  ║");
-                    log::warn!("║                                                                   ║");
-                    log::warn!("║  To increase the limit:                                           ║");
-                    log::warn!("║    ulimit -n 65536                                                ║");
-                    log::warn!("╚═══════════════════════════════════════════════════════════════════╝");
-                }
-            }
-        }
-    }
+    //         // Warn if limit is too low
+    //         if let Ok(limit_num) = limit.trim().parse::<u32>() {
+    //             if limit_num < 10000 {
+    //                 log::warn!("╔═══════════════════════════════════════════════════════════════════╗");
+    //                 log::warn!("║                    ⚠️  FILE DESCRIPTOR WARNING ⚠️                  ║");
+    //                 log::warn!("╠═══════════════════════════════════════════════════════════════════╣");
+    //                 log::warn!("║  Current limit: {:<52} ║", format!("{} file descriptors", limit_num));
+    //                 log::warn!("║  Recommended:   {:<52} ║", "65536 file descriptors");
+    //                 log::warn!("║                                                                   ║");
+    //                 log::warn!("║  This limit may be too low for production use and could cause     ║");
+    //                 log::warn!("║  'Too many open files' errors under heavy load.                  ║");
+    //                 log::warn!("║                                                                   ║");
+    //                 log::warn!("║  To increase the limit:                                           ║");
+    //                 log::warn!("║    ulimit -n 65536                                                ║");
+    //                 log::warn!("╚═══════════════════════════════════════════════════════════════════╝");
+    //             }
+    //         }
+    //     }
+    // }
 
     // Build application state and kick off background services
     let (components, app_context) = bootstrap(&config).await?;

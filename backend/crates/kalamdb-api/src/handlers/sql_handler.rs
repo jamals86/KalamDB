@@ -278,11 +278,7 @@ async fn forward_sql_if_follower(
     req: &QueryRequest,
     app_context: &Arc<kalamdb_core::app_context::AppContext>,
 ) -> Option<HttpResponse> {
-    // Not in cluster mode - no forwarding needed
-    if !app_context.is_cluster_mode() {
-        return None;
-    }
-
+    // Phase 20: Always check for leader (single-node setups are always leader)
     let cluster_info = app_context.executor().get_cluster_info();
     let leader = cluster_info.nodes.iter().find(|node| node.is_leader)?;
 

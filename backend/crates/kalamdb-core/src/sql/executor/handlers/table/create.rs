@@ -45,7 +45,6 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         use crate::sql::executor::helpers::audit;
         use crate::sql::executor::helpers::table_creation;
-        use crate::applier::commands::CreateTableCommand;
 
         let mut statement = statement;
         let effective_type = Self::resolve_table_type(&statement, context);
@@ -74,18 +73,11 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
             context.user_role,
         )?;
 
-        // Build command and delegate to unified applier
-        // The applier handles standalone vs cluster mode internally
-        let cmd = CreateTableCommand {
-            table_id: table_id.clone(),
-            table_type,
-            table_def,
-        };
-
+        // Delegate to unified applier - pass raw parameters
         let message = self
             .app_context
             .applier()
-            .create_table(cmd)
+            .create_table(table_id.clone(), table_type, table_def)
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("CREATE TABLE failed: {}", e)))?;
 

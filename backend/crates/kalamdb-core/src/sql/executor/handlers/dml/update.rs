@@ -128,116 +128,22 @@ impl StatementHandler for UpdateHandler {
                     let id_value_opt =
                         self.extract_row_id_for_column(&where_pair, pk_column, &params)?;
 
-                    if app_context.is_cluster_mode() {
-                        if let Some(id_value) = id_value_opt {
-                            let rows_affected = self
-                                .execute_user_update_via_raft(
-                                    &table_id,
-                                    effective_user_id,
-                                    &id_value,
-                                    updates.clone(),
-                                )
-                                .await?;
-                            Ok(ExecutionResult::Updated { rows_affected })
-                        } else {
-                            Err(KalamDbError::InvalidOperation(
-                                "UPDATE on user tables in cluster mode requires a primary key filter"
-                                    .to_string(),
-                            ))
-                        }
-                    } else {
-                        if let Some(id_value) = id_value_opt {
-                            match provider.update_by_id_field(
+                    // Phase 20: Always route through Raft (single-node or cluster)
+                    // PK filter is required for update operations
+                    if let Some(id_value) = id_value_opt {
+                        let rows_affected = self
+                            .execute_user_update_via_raft(
+                                &table_id,
                                 effective_user_id,
                                 &id_value,
                                 updates.clone(),
-                            ) {
-                                Ok(_) => {
-                                    Ok(ExecutionResult::Updated { rows_affected: 1 })
-                                }
-                                Err(e) => {
-                                    // Common case: PK is not a string (e.g. INT). Our update_by_id_field
-                                    // fast-path delegates to update_by_pk_value(&str), which may not be able
-                                    // to locate the row for non-string PK encodings.
-                                    // Fall back to a key lookup that compares ScalarValues correctly.
-                                    if matches!(e, crate::error::KalamDbError::NotFound(_)) {
-                                        if let Some(key) = provider.find_row_key_by_id_field(
-                                            effective_user_id,
-                                            &id_value,
-                                        )? {
-                                            provider.update(effective_user_id, &key, updates)?;
-                                            return Ok(ExecutionResult::Updated { rows_affected: 1 });
-                                        }
-
-                                        // Isolation-friendly semantics: updating a non-existent row under this user_id
-                                        // should return success with 0 rows affected (no-op), not an error.
-                                        return Ok(ExecutionResult::Updated { rows_affected: 0 });
-                                    }
-
-                                    Err(e)
-                                }
-                            }
-                        } else {
-                            // Multi-row update path (scan -> update)
-                            // Build filter expression
-                            let (filter, filter_col_val) =
-                                if let Some((col_name, val_str)) = &where_pair {
-                                    let col_type = col_types.get(col_name).ok_or_else(|| {
-                                        KalamDbError::InvalidOperation(format!(
-                                            "Column {} not found",
-                                            col_name
-                                        ))
-                                    })?;
-                                    let val = self.token_to_scalar_value(
-                                        val_str,
-                                        &params,
-                                        Some(col_type),
-                                    )?;
-
-                                    use datafusion::prelude::{col, lit};
-                                    (
-                                        Some(col(col_name).eq(lit(val.clone()))),
-                                        Some((col_name.clone(), val)),
-                                    )
-                                } else {
-                                    (None, None) // Update all rows
-                                };
-
-                            // Scan for matching rows
-                            let rows = provider.scan_with_version_resolution_to_kvs(
-                                effective_user_id,
-                                filter.as_ref(),
-                                None,
-                                None,
-                                false,
-                            )?;
-
-                            // Update each matching row
-                            let mut count = 0;
-                            for (key, row) in rows {
-                                // Manual filter check (needed because scan_with_version_resolution_to_kvs
-                                // might not filter hot rows by the expression)
-                                let matches = if let Some((col_name, target_val)) = &filter_col_val
-                                {
-                                    if let Some(row_val) = row.fields.values.get(col_name) {
-                                        row_val == target_val
-                                    } else {
-                                        false // Column missing or null, doesn't match value
-                                    }
-                                } else {
-                                    true // No filter, match all
-                                };
-
-                                if matches {
-                                    provider.update(effective_user_id, &key, updates.clone())?;
-                                    count += 1;
-                                }
-                            }
-
-                            Ok(ExecutionResult::Updated {
-                                rows_affected: count,
-                            })
-                        }
+                            )
+                            .await?;
+                        Ok(ExecutionResult::Updated { rows_affected })
+                    } else {
+                        Err(KalamDbError::InvalidOperation(
+                            "UPDATE on user tables requires a primary key filter".to_string(),
+                        ))
                     }
                 } else {
                     Err(KalamDbError::InvalidOperation(
@@ -285,36 +191,13 @@ impl StatementHandler for UpdateHandler {
                     if let Some(id_value) =
                         self.extract_row_id_for_column(&where_pair, pk_column, &params)?
                     {
-                        // In cluster mode, route through Raft for replication
-                        if app_context.is_cluster_mode() {
-                            let rows_affected = self.execute_update_via_raft(
-                                &table_id,
-                                &id_value,
-                                updates,
-                            ).await?;
-                            Ok(ExecutionResult::Updated { rows_affected })
-                        } else {
-                            // Standalone mode: update directly
-                            match provider.update_by_id_field(
-                                effective_user_id,
-                                &id_value,
-                                updates.clone(),
-                            ) {
-                                Ok(_) => Ok(ExecutionResult::Updated { rows_affected: 1 }),
-                                Err(crate::error::KalamDbError::NotFound(_)) => {
-                                    // Same fallback as USER tables: allow non-string PKs.
-                                    if let Some(key) = provider
-                                        .find_row_key_by_id_field(effective_user_id, &id_value)?
-                                    {
-                                        provider.update(effective_user_id, &key, updates)?;
-                                        Ok(ExecutionResult::Updated { rows_affected: 1 })
-                                    } else {
-                                        Ok(ExecutionResult::Updated { rows_affected: 0 })
-                                    }
-                                }
-                                Err(e) => Err(e),
-                            }
-                        }
+                        // Phase 20: Always route through Raft (single-node or cluster)
+                        let rows_affected = self.execute_update_via_raft(
+                            &table_id,
+                            &id_value,
+                            updates,
+                        ).await?;
+                        Ok(ExecutionResult::Updated { rows_affected })
                     } else {
                         Err(KalamDbError::InvalidOperation(format!(
                             "UPDATE on SHARED tables requires WHERE {} = <value> (predicate updates not yet supported)",

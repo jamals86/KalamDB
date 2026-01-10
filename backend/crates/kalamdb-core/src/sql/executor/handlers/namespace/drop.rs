@@ -81,11 +81,9 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                     let table_id = TableId::new(table.namespace_id.clone(), table.table_name.clone());
                     
                     // Delegate to unified applier
-                    use crate::applier::commands::DropTableCommand;
-                    let cmd = DropTableCommand { table_id: table_id.clone() };
                     self.app_context
                         .applier()
-                        .drop_table(cmd)
+                        .drop_table(table_id.clone())
                         .await
                         .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
                     
@@ -111,11 +109,9 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         }
 
         // Delegate to unified applier (handles standalone vs cluster internally)
-        use crate::applier::commands::DropNamespaceCommand;
-        let cmd = DropNamespaceCommand { namespace_id: namespace_id.clone() };
         self.app_context
             .applier()
-            .drop_namespace(cmd)
+            .drop_namespace(namespace_id.clone())
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("DROP NAMESPACE failed: {}", e)))?;
 

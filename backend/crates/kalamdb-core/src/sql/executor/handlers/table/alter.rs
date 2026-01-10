@@ -112,26 +112,17 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         use crate::sql::executor::helpers::audit;
-        use crate::applier::commands::AlterTableCommand;
 
         let namespace_id: NamespaceId = statement.namespace_id.clone();
         let table_id = TableId::from_strings(namespace_id.as_str(), statement.table_name.as_str());
 
         // Build the altered table definition (validate + apply mutation)
         let (table_def, change_desc) = self.build_altered_table_definition(&statement, context)?;
-        let old_version = table_def.schema_version.saturating_sub(1);
 
-        // Build command and delegate to unified applier
-        // The applier handles standalone vs cluster mode internally
-        let cmd = AlterTableCommand {
-            table_id: table_id.clone(),
-            table_def: table_def.clone(),
-            old_version,
-        };
-
+        // Delegate to unified applier - pass raw parameters
         self.app_context
             .applier()
-            .alter_table(cmd)
+            .alter_table(table_id.clone(), table_def.clone())
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("ALTER TABLE failed: {}", e)))?;
 

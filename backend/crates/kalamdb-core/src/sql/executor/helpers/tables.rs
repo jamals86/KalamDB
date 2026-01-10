@@ -122,7 +122,10 @@ pub fn save_table_definition(
         (TableOptions::Shared(opts), TableType::Shared) => {
             let storage = stmt.storage_id.clone().unwrap_or_else(StorageId::local);
             opts.storage_id = storage;
-            opts.access_level = stmt.access_level;
+            // Only override access_level if explicitly specified in SQL; otherwise keep the default (Private)
+            if let Some(access) = stmt.access_level {
+                opts.access_level = Some(access);
+            }
             opts.flush_policy = stmt.flush_policy.clone();
         }
         (TableOptions::Stream(opts), TableType::Stream) => {

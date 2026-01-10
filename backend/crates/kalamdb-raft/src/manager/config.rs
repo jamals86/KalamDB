@@ -73,6 +73,34 @@ impl Default for RaftManagerConfig {
     }
 }
 
+impl RaftManagerConfig {
+    /// Create a single-node configuration for standalone mode
+    ///
+    /// In single-node mode:
+    /// - Only this node participates in Raft consensus
+    /// - Leader election is instant (self-vote)
+    /// - No network overhead (all operations are local)
+    /// - Same code path as cluster mode (no separate standalone logic)
+    /// - Single shard for both user and shared data (no distribution needed)
+    ///
+    /// This ensures the same Raft-based execution path is used in both
+    /// standalone and cluster deployments, simplifying testing and maintenance.
+    pub fn for_single_node(api_addr: String) -> Self {
+        Self {
+            node_id: NodeId::new(1),
+            rpc_addr: "127.0.0.1:0".to_string(), // Port 0 = OS assigns random available port
+            api_addr,
+            peers: vec![], // No peers - single node cluster
+            user_shards: 1,  // Single shard - no distribution needed
+            shared_shards: 1, // Single shard - no distribution needed
+            heartbeat_interval_ms: 250,
+            election_timeout_ms: (500, 1000),
+            replication_mode: ReplicationMode::Quorum,
+            replication_timeout: Duration::from_secs(5),
+        }
+    }
+}
+
 /// Convert from the TOML-parseable ClusterConfig to runtime RaftManagerConfig
 impl From<kalamdb_commons::config::ClusterConfig> for RaftManagerConfig {
     fn from(config: kalamdb_commons::config::ClusterConfig) -> Self {

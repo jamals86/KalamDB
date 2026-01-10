@@ -66,9 +66,10 @@ impl RaftExecutor {
         use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
         
+        let num_shards = self.manager.config().user_shards;
         let mut hasher = DefaultHasher::new();
         user_id.as_str().hash(&mut hasher);
-        (hasher.finish() % 32) as u32
+        (hasher.finish() % num_shards as u64) as u32
     }
 }
 

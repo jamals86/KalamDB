@@ -1,18 +1,21 @@
-//! Unified Applier trait and implementations
+//! Unified Applier (Phase 20 - Single Code Path)
 //!
-//! The applier provides a single interface for executing commands,
-//! whether in standalone or cluster mode.
+//! All commands flow through Raft, even in single-node mode.
+//! This ensures the same code path is tested in both modes.
 
 use async_trait::async_trait;
+use chrono::Utc;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 
-use super::commands::{
-    CreateTableCommand, AlterTableCommand, DropTableCommand,
-    CreateNamespaceCommand, DropNamespaceCommand,
-    CreateStorageCommand, DropStorageCommand,
-    CreateUserCommand, UpdateUserCommand, DeleteUserCommand,
+use kalamdb_commons::models::schemas::{TableDefinition, TableType};
+use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
+use kalamdb_commons::system::Storage;
+use kalamdb_commons::types::User;
+use kalamdb_raft::{
+    DataResponse, GroupId, MetaCommand, RaftExecutor, SharedDataCommand, UserDataCommand,
 };
+
 use super::error::ApplierError;
 use super::executor::CommandExecutorImpl;
 use crate::app_context::AppContext;
@@ -28,271 +31,483 @@ pub struct LeaderInfo {
 
 /// Unified Applier trait - the single interface for all command execution
 ///
-/// This trait is dyn-compatible and provides methods for each command type.
-/// Implementations handle the mode-specific logic (standalone vs cluster).
+/// All commands flow through Raft consensus (even in single-node mode).
+/// This ensures consistent behavior and testing across all deployment modes.
 #[async_trait]
 pub trait UnifiedApplier: Send + Sync {
     // =========================================================================
-    // DDL Operations
+    // DDL Operations (Meta Raft Group)
     // =========================================================================
-    
+
     /// Create a table
-    async fn create_table(&self, cmd: CreateTableCommand) -> Result<String, ApplierError>;
-    
+    async fn create_table(
+        &self,
+        table_id: TableId,
+        table_type: TableType,
+        table_def: TableDefinition,
+    ) -> Result<String, ApplierError>;
+
     /// Alter a table
-    async fn alter_table(&self, cmd: AlterTableCommand) -> Result<String, ApplierError>;
-    
+    async fn alter_table(
+        &self,
+        table_id: TableId,
+        table_def: TableDefinition,
+    ) -> Result<String, ApplierError>;
+
     /// Drop a table
-    async fn drop_table(&self, cmd: DropTableCommand) -> Result<String, ApplierError>;
-    
+    async fn drop_table(&self, table_id: TableId) -> Result<String, ApplierError>;
+
     // =========================================================================
-    // Namespace Operations
+    // Namespace Operations (Meta Raft Group)
     // =========================================================================
-    
+
     /// Create a namespace
-    async fn create_namespace(&self, cmd: CreateNamespaceCommand) -> Result<String, ApplierError>;
-    
+    async fn create_namespace(
+        &self,
+        namespace_id: NamespaceId,
+        created_by: Option<String>,
+    ) -> Result<String, ApplierError>;
+
     /// Drop a namespace
-    async fn drop_namespace(&self, cmd: DropNamespaceCommand) -> Result<String, ApplierError>;
-    
+    async fn drop_namespace(&self, namespace_id: NamespaceId) -> Result<String, ApplierError>;
+
     // =========================================================================
-    // Storage Operations
+    // Storage Operations (Meta Raft Group)
     // =========================================================================
-    
+
     /// Create a storage backend
-    async fn create_storage(&self, cmd: CreateStorageCommand) -> Result<String, ApplierError>;
-    
+    async fn create_storage(&self, storage: Storage) -> Result<String, ApplierError>;
+
     /// Drop a storage backend
-    async fn drop_storage(&self, cmd: DropStorageCommand) -> Result<String, ApplierError>;
-    
+    async fn drop_storage(&self, storage_id: StorageId) -> Result<String, ApplierError>;
+
     // =========================================================================
-    // User Operations
+    // User Operations (Meta Raft Group)
     // =========================================================================
-    
+
     /// Create a user
-    async fn create_user(&self, cmd: CreateUserCommand) -> Result<String, ApplierError>;
-    
+    async fn create_user(&self, user: User) -> Result<String, ApplierError>;
+
     /// Update a user
-    async fn update_user(&self, cmd: UpdateUserCommand) -> Result<String, ApplierError>;
-    
+    async fn update_user(&self, user: User) -> Result<String, ApplierError>;
+
     /// Delete a user (soft delete)
-    async fn delete_user(&self, cmd: DeleteUserCommand) -> Result<String, ApplierError>;
-    
+    async fn delete_user(&self, user_id: UserId) -> Result<String, ApplierError>;
+
+    // =========================================================================
+    // DML Operations - User Tables (User Data Raft Shards)
+    // =========================================================================
+
+    /// Insert rows into a user table
+    async fn insert_user_data(
+        &self,
+        table_id: TableId,
+        user_id: UserId,
+        rows_data: Vec<u8>,
+    ) -> Result<DataResponse, ApplierError>;
+
+    /// Update rows in a user table
+    async fn update_user_data(
+        &self,
+        table_id: TableId,
+        user_id: UserId,
+        updates_data: Vec<u8>,
+        filter_data: Option<Vec<u8>>,
+    ) -> Result<DataResponse, ApplierError>;
+
+    /// Delete rows from a user table
+    async fn delete_user_data(
+        &self,
+        table_id: TableId,
+        user_id: UserId,
+        filter_data: Option<Vec<u8>>,
+    ) -> Result<DataResponse, ApplierError>;
+
+    // =========================================================================
+    // DML Operations - Shared Tables (Shared Data Raft Shard)
+    // =========================================================================
+
+    /// Insert rows into a shared table
+    async fn insert_shared_data(
+        &self,
+        table_id: TableId,
+        rows_data: Vec<u8>,
+    ) -> Result<DataResponse, ApplierError>;
+
+    /// Update rows in a shared table
+    async fn update_shared_data(
+        &self,
+        table_id: TableId,
+        updates_data: Vec<u8>,
+        filter_data: Option<Vec<u8>>,
+    ) -> Result<DataResponse, ApplierError>;
+
+    /// Delete rows from a shared table
+    async fn delete_shared_data(
+        &self,
+        table_id: TableId,
+        filter_data: Option<Vec<u8>>,
+    ) -> Result<DataResponse, ApplierError>;
+
     // =========================================================================
     // Status Methods
     // =========================================================================
-    
-    /// Check if this node can accept writes
+
+    /// Check if this node can accept writes (always true - forwards to leader)
     fn can_accept_writes(&self) -> bool;
-    
-    /// Check if we're in cluster mode
-    fn is_cluster_mode(&self) -> bool;
-    
-    /// Get leader info for forwarding (cluster mode only)
+
+    /// Get leader info for forwarding (if not leader)
     fn get_leader_info(&self) -> Option<LeaderInfo>;
-    
+
     /// Initialize the applier with AppContext (called after AppContext is created)
     fn set_app_context(&self, app_context: Arc<AppContext>);
 }
 
-/// Standalone applier - executes commands directly
-/// 
-/// Uses lazy initialization pattern to avoid circular dependency with AppContext.
-/// The executor is created when `set_app_context()` is called.
-pub struct StandaloneApplier {
+/// Raft Applier - routes all commands through Raft consensus
+///
+/// This is the ONLY applier implementation. All commands go through Raft:
+/// - Meta commands (DDL, namespaces, users) → Meta Raft group
+/// - User data commands → User data shards (by user_id)
+/// - Shared data commands → Shared data shard
+///
+/// Even in single-node mode, we use a single-node Raft cluster for consistency.
+pub struct RaftApplier {
     executor: OnceCell<CommandExecutorImpl>,
 }
 
-impl Default for StandaloneApplier {
+impl Default for RaftApplier {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl StandaloneApplier {
-    /// Create a new standalone applier (executor not yet initialized)
+impl RaftApplier {
+    /// Create a new Raft applier
     pub fn new() -> Self {
         Self {
             executor: OnceCell::new(),
         }
     }
-    
-    /// Get reference to the executor (panics if not initialized)
-    pub fn executor(&self) -> &CommandExecutorImpl {
-        self.executor.get().expect("StandaloneApplier not initialized - call set_app_context first")
+
+    /// Get the executor (panics if not initialized)
+    fn executor(&self) -> &CommandExecutorImpl {
+        self.executor
+            .get()
+            .expect("RaftApplier not initialized - call set_app_context first")
     }
-    
-    /// Check if executor is initialized
-    pub fn is_initialized(&self) -> bool {
-        self.executor.get().is_some()
+
+    /// Get leader info for meta group
+    fn get_meta_leader_info(&self) -> Option<LeaderInfo> {
+        let app_ctx = self.executor().app_context();
+        let executor = app_ctx.executor();
+        let raft_exec = executor.as_any().downcast_ref::<RaftExecutor>()?;
+        let mgr = raft_exec.manager();
+        let leader_node_id = mgr.current_leader(GroupId::Meta)?;
+
+        let config = mgr.config();
+        let leader_addr = if leader_node_id == config.node_id {
+            config.rpc_addr.clone()
+        } else {
+            config
+                .peers
+                .iter()
+                .find(|p| p.node_id == leader_node_id)
+                .map(|p| p.rpc_addr.clone())?
+        };
+
+        Some(LeaderInfo {
+            node_id: leader_node_id.as_u64(),
+            address: leader_addr,
+        })
+    }
+
+    /// Propose a meta command to the Meta Raft group
+    async fn propose_meta(
+        &self,
+        command: MetaCommand,
+        cmd_type: &str,
+    ) -> Result<String, ApplierError> {
+        let command_bytes = bincode::serde::encode_to_vec(&command, bincode::config::standard())
+            .map_err(|e| ApplierError::Serialization(e.to_string()))?;
+
+        let app_ctx = self.executor().app_context();
+        let executor = app_ctx.executor();
+        let raft_exec = executor
+            .as_any()
+            .downcast_ref::<RaftExecutor>()
+            .ok_or(ApplierError::NoLeader)?;
+        let raft_mgr = raft_exec.manager();
+
+        log::debug!(
+            "RaftApplier: Proposing {} to meta Raft (leader={}, we_are_leader={})",
+            cmd_type,
+            raft_mgr
+                .current_leader(GroupId::Meta)
+                .map(|n| n.as_u64())
+                .unwrap_or(0),
+            raft_mgr.is_leader(GroupId::Meta)
+        );
+
+        raft_mgr
+            .propose_meta(command_bytes)
+            .await
+            .map_err(|e| ApplierError::Raft(e.to_string()))?;
+
+        Ok(format!("{} completed via Raft consensus", cmd_type))
+    }
+
+    /// Execute a user data command through the appropriate shard
+    async fn execute_user_data_cmd(
+        &self,
+        cmd: UserDataCommand,
+    ) -> Result<DataResponse, ApplierError> {
+        let app_ctx = self.executor().app_context();
+        let user_id = cmd.user_id().clone();
+
+        app_ctx
+            .executor()
+            .execute_user_data(&user_id, cmd)
+            .await
+            .map_err(|e| ApplierError::Raft(e.to_string()))
+    }
+
+    /// Execute a shared data command
+    async fn execute_shared_data_cmd(
+        &self,
+        cmd: SharedDataCommand,
+    ) -> Result<DataResponse, ApplierError> {
+        let app_ctx = self.executor().app_context();
+
+        app_ctx
+            .executor()
+            .execute_shared_data(cmd)
+            .await
+            .map_err(|e| ApplierError::Raft(e.to_string()))
     }
 }
 
 #[async_trait]
-impl UnifiedApplier for StandaloneApplier {
+impl UnifiedApplier for RaftApplier {
+    // =========================================================================
     // DDL Operations
-    async fn create_table(&self, cmd: CreateTableCommand) -> Result<String, ApplierError> {
-        cmd.validate()?;
-        self.executor().ddl().create_table(
-            &cmd.table_id,
-            cmd.table_type,
-            &cmd.table_def,
-        ).await
+    // =========================================================================
+
+    async fn create_table(
+        &self,
+        table_id: TableId,
+        table_type: TableType,
+        table_def: TableDefinition,
+    ) -> Result<String, ApplierError> {
+        let schema_json = serde_json::to_string(&table_def)
+            .map_err(|e| ApplierError::Serialization(e.to_string()))?;
+
+        let cmd = MetaCommand::CreateTable {
+            table_id,
+            table_type,
+            schema_json,
+        };
+        self.propose_meta(cmd, "CREATE TABLE").await
     }
-    
-    async fn alter_table(&self, cmd: AlterTableCommand) -> Result<String, ApplierError> {
-        cmd.validate()?;
-        self.executor().ddl().alter_table(
-            &cmd.table_id,
-            &cmd.table_def,
-            cmd.old_version,
-        ).await
+
+    async fn alter_table(
+        &self,
+        table_id: TableId,
+        table_def: TableDefinition,
+    ) -> Result<String, ApplierError> {
+        let schema_json = serde_json::to_string(&table_def)
+            .map_err(|e| ApplierError::Serialization(e.to_string()))?;
+
+        let cmd = MetaCommand::AlterTable {
+            table_id,
+            schema_json,
+        };
+        self.propose_meta(cmd, "ALTER TABLE").await
     }
-    
-    async fn drop_table(&self, cmd: DropTableCommand) -> Result<String, ApplierError> {
-        cmd.validate()?;
-        self.executor().ddl().drop_table(&cmd.table_id).await
+
+    async fn drop_table(&self, table_id: TableId) -> Result<String, ApplierError> {
+        let cmd = MetaCommand::DropTable { table_id };
+        self.propose_meta(cmd, "DROP TABLE").await
     }
-    
+
+    // =========================================================================
     // Namespace Operations
-    async fn create_namespace(&self, cmd: CreateNamespaceCommand) -> Result<String, ApplierError> {
-        cmd.validate()?;
-        self.executor().namespace().create_namespace(&cmd.namespace_id).await
+    // =========================================================================
+
+    async fn create_namespace(
+        &self,
+        namespace_id: NamespaceId,
+        created_by: Option<String>,
+    ) -> Result<String, ApplierError> {
+        let cmd = MetaCommand::CreateNamespace {
+            namespace_id,
+            created_by,
+        };
+        self.propose_meta(cmd, "CREATE NAMESPACE").await
     }
-    
-    async fn drop_namespace(&self, cmd: DropNamespaceCommand) -> Result<String, ApplierError> {
-        cmd.validate()?;
-        self.executor().namespace().drop_namespace(&cmd.namespace_id).await
+
+    async fn drop_namespace(&self, namespace_id: NamespaceId) -> Result<String, ApplierError> {
+        let cmd = MetaCommand::DeleteNamespace { namespace_id };
+        self.propose_meta(cmd, "DROP NAMESPACE").await
     }
-    
+
+    // =========================================================================
     // Storage Operations
-    async fn create_storage(&self, cmd: CreateStorageCommand) -> Result<String, ApplierError> {
-        cmd.validate()?;
-        self.executor().storage().create_storage(&cmd.storage).await
+    // =========================================================================
+
+    async fn create_storage(&self, storage: Storage) -> Result<String, ApplierError> {
+        let config_json = serde_json::to_string(&storage)
+            .map_err(|e| ApplierError::Serialization(e.to_string()))?;
+
+        let cmd = MetaCommand::RegisterStorage {
+            storage_id: storage.storage_id.clone(),
+            config_json,
+        };
+        self.propose_meta(cmd, "CREATE STORAGE").await
     }
-    
-    async fn drop_storage(&self, cmd: DropStorageCommand) -> Result<String, ApplierError> {
-        cmd.validate()?;
-        self.executor().storage().drop_storage(&cmd.storage_id).await
+
+    async fn drop_storage(&self, storage_id: StorageId) -> Result<String, ApplierError> {
+        let cmd = MetaCommand::UnregisterStorage { storage_id };
+        self.propose_meta(cmd, "DROP STORAGE").await
     }
-    
+
+    // =========================================================================
     // User Operations
-    async fn create_user(&self, cmd: CreateUserCommand) -> Result<String, ApplierError> {
-        cmd.validate()?;
-        self.executor().user().create_user(&cmd.user).await
+    // =========================================================================
+
+    async fn create_user(&self, user: User) -> Result<String, ApplierError> {
+        let cmd = MetaCommand::CreateUser { user };
+        self.propose_meta(cmd, "CREATE USER").await
     }
-    
-    async fn update_user(&self, cmd: UpdateUserCommand) -> Result<String, ApplierError> {
-        cmd.validate()?;
-        self.executor().user().update_user(&cmd.user).await
+
+    async fn update_user(&self, user: User) -> Result<String, ApplierError> {
+        let cmd = MetaCommand::UpdateUser { user };
+        self.propose_meta(cmd, "UPDATE USER").await
     }
-    
-    async fn delete_user(&self, cmd: DeleteUserCommand) -> Result<String, ApplierError> {
-        cmd.validate()?;
-        self.executor().user().delete_user(&cmd.user_id).await
+
+    async fn delete_user(&self, user_id: UserId) -> Result<String, ApplierError> {
+        let cmd = MetaCommand::DeleteUser {
+            user_id,
+            deleted_at: Utc::now(),
+        };
+        self.propose_meta(cmd, "DELETE USER").await
     }
-    
+
+    // =========================================================================
+    // DML Operations - User Tables
+    // =========================================================================
+
+    async fn insert_user_data(
+        &self,
+        table_id: TableId,
+        user_id: UserId,
+        rows_data: Vec<u8>,
+    ) -> Result<DataResponse, ApplierError> {
+        let raft_cmd = UserDataCommand::Insert {
+            required_meta_index: 0, // Will be set by RaftExecutor
+            table_id,
+            user_id,
+            rows_data,
+        };
+        self.execute_user_data_cmd(raft_cmd).await
+    }
+
+    async fn update_user_data(
+        &self,
+        table_id: TableId,
+        user_id: UserId,
+        updates_data: Vec<u8>,
+        filter_data: Option<Vec<u8>>,
+    ) -> Result<DataResponse, ApplierError> {
+        let raft_cmd = UserDataCommand::Update {
+            required_meta_index: 0, // Will be set by RaftExecutor
+            table_id,
+            user_id,
+            updates_data,
+            filter_data,
+        };
+        self.execute_user_data_cmd(raft_cmd).await
+    }
+
+    async fn delete_user_data(
+        &self,
+        table_id: TableId,
+        user_id: UserId,
+        filter_data: Option<Vec<u8>>,
+    ) -> Result<DataResponse, ApplierError> {
+        let raft_cmd = UserDataCommand::Delete {
+            required_meta_index: 0, // Will be set by RaftExecutor
+            table_id,
+            user_id,
+            filter_data,
+        };
+        self.execute_user_data_cmd(raft_cmd).await
+    }
+
+    // =========================================================================
+    // DML Operations - Shared Tables
+    // =========================================================================
+
+    async fn insert_shared_data(
+        &self,
+        table_id: TableId,
+        rows_data: Vec<u8>,
+    ) -> Result<DataResponse, ApplierError> {
+        let raft_cmd = SharedDataCommand::Insert {
+            required_meta_index: 0, // Will be set by RaftExecutor
+            table_id,
+            rows_data,
+        };
+        self.execute_shared_data_cmd(raft_cmd).await
+    }
+
+    async fn update_shared_data(
+        &self,
+        table_id: TableId,
+        updates_data: Vec<u8>,
+        filter_data: Option<Vec<u8>>,
+    ) -> Result<DataResponse, ApplierError> {
+        let raft_cmd = SharedDataCommand::Update {
+            required_meta_index: 0, // Will be set by RaftExecutor
+            table_id,
+            updates_data,
+            filter_data,
+        };
+        self.execute_shared_data_cmd(raft_cmd).await
+    }
+
+    async fn delete_shared_data(
+        &self,
+        table_id: TableId,
+        filter_data: Option<Vec<u8>>,
+    ) -> Result<DataResponse, ApplierError> {
+        let raft_cmd = SharedDataCommand::Delete {
+            required_meta_index: 0, // Will be set by RaftExecutor
+            table_id,
+            filter_data,
+        };
+        self.execute_shared_data_cmd(raft_cmd).await
+    }
+
+    // =========================================================================
     // Status Methods
+    // =========================================================================
+
     fn can_accept_writes(&self) -> bool {
-        true // Standalone always accepts writes
+        // Always accept writes - they'll be forwarded to leader if needed
+        true
     }
-    
-    fn is_cluster_mode(&self) -> bool {
-        false
-    }
-    
+
     fn get_leader_info(&self) -> Option<LeaderInfo> {
-        None // No leader in standalone mode
+        self.get_meta_leader_info()
     }
-    
+
     fn set_app_context(&self, app_context: Arc<AppContext>) {
-        if self.executor.set(CommandExecutorImpl::new(app_context)).is_err() {
-            log::warn!("StandaloneApplier already initialized; ignoring duplicate set_app_context");
+        if self
+            .executor
+            .set(CommandExecutorImpl::new(app_context))
+            .is_err()
+        {
+            log::warn!("RaftApplier already initialized; ignoring duplicate set_app_context");
         }
-    }
-}
-
-// Validation trait implementation for commands
-trait CommandValidate {
-    fn validate(&self) -> Result<(), ApplierError>;
-}
-
-impl CommandValidate for CreateTableCommand {
-    fn validate(&self) -> Result<(), ApplierError> {
-        if self.table_id.table_name().as_str().is_empty() {
-            return Err(ApplierError::Validation("Table name cannot be empty".into()));
-        }
-        if self.table_id.namespace_id().as_str().is_empty() {
-            return Err(ApplierError::Validation("Namespace cannot be empty".into()));
-        }
-        Ok(())
-    }
-}
-
-impl CommandValidate for AlterTableCommand {
-    fn validate(&self) -> Result<(), ApplierError> {
-        if self.table_def.schema_version <= self.old_version {
-            return Err(ApplierError::Validation(
-                "New version must be greater than old version".into()
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl CommandValidate for DropTableCommand {
-    fn validate(&self) -> Result<(), ApplierError> {
-        Ok(())
-    }
-}
-
-impl CommandValidate for CreateNamespaceCommand {
-    fn validate(&self) -> Result<(), ApplierError> {
-        if self.namespace_id.as_str().is_empty() {
-            return Err(ApplierError::Validation("Namespace name cannot be empty".into()));
-        }
-        Ok(())
-    }
-}
-
-impl CommandValidate for DropNamespaceCommand {
-    fn validate(&self) -> Result<(), ApplierError> {
-        Ok(())
-    }
-}
-
-impl CommandValidate for CreateStorageCommand {
-    fn validate(&self) -> Result<(), ApplierError> {
-        if self.storage.storage_id.as_str().is_empty() {
-            return Err(ApplierError::Validation("Storage ID cannot be empty".into()));
-        }
-        Ok(())
-    }
-}
-
-impl CommandValidate for DropStorageCommand {
-    fn validate(&self) -> Result<(), ApplierError> {
-        Ok(())
-    }
-}
-
-impl CommandValidate for CreateUserCommand {
-    fn validate(&self) -> Result<(), ApplierError> {
-        if self.user.id.as_str().is_empty() {
-            return Err(ApplierError::Validation("User ID cannot be empty".into()));
-        }
-        Ok(())
-    }
-}
-
-impl CommandValidate for UpdateUserCommand {
-    fn validate(&self) -> Result<(), ApplierError> {
-        Ok(())
-    }
-}
-
-impl CommandValidate for DeleteUserCommand {
-    fn validate(&self) -> Result<(), ApplierError> {
-        Ok(())
     }
 }

@@ -91,11 +91,9 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
         updated.updated_at = chrono::Utc::now().timestamp_millis();
 
         // Delegate to unified applier (handles standalone vs cluster internally)
-        use crate::applier::commands::UpdateUserCommand;
-        let cmd = UpdateUserCommand { user: updated };
         self.app_context
             .applier()
-            .update_user(cmd)
+            .update_user(updated)
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("ALTER USER failed: {}", e)))?;
 

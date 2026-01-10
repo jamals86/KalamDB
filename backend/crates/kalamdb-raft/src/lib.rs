@@ -3,10 +3,10 @@
 //! This crate provides Multi-Raft consensus for KalamDB, enabling multi-node
 //! clustering with strong consistency guarantees.
 //!
-//! ## Architecture
+//! ## Architecture (Phase 20 - Unified Raft Executor)
 //!
 //! - **34 Raft Groups**: 1 unified metadata group + 32 user data shards + 1 shared data shard
-//! - **CommandExecutor Pattern**: Generic abstraction eliminating if/else for cluster vs standalone
+//! - **Unified Code Path**: Both single-node and cluster modes use RaftExecutor
 //! - **Leader-Only Jobs**: Background jobs (flush, compaction) run only on the leader
 //! - **Meta→Data Watermarking**: Data commands carry `required_meta_index` for ordering
 //!
@@ -16,18 +16,23 @@
 //! - [`ShardRouter`]: Routes operations to the correct shard based on user_id
 //! - [`MetaCommand`]: Unified metadata command (namespaces, tables, users, jobs)
 //! - [`MetaStateMachine`]: Unified state machine for all metadata
-//! - [`CommandExecutor`]: Generic trait for executing commands (standalone or cluster)
+//! - [`CommandExecutor`]: Generic trait for executing commands
+//! - [`RaftExecutor`]: The only executor implementation (handles both single-node and cluster)
 //!
 //! ## Usage
 //!
 //! ```rust,ignore
-//! // In standalone mode (no [cluster] config):
-//! let executor = DirectExecutor::new(providers);
+//! // Single-node mode (no [cluster] config):
+//! let config = RaftManagerConfig::for_single_node("127.0.0.1:8080".to_string());
+//! let manager = RaftManager::new(config);
+//! let executor = RaftExecutor::new(manager);
 //!
-//! // In cluster mode:
-//! let executor = RaftExecutor::new(raft_manager);
+//! // Cluster mode:
+//! let config = RaftManagerConfig::from(cluster_config);
+//! let manager = RaftManager::new(config);
+//! let executor = RaftExecutor::new(manager);
 //!
-//! // Handlers use the same interface:
+//! // Same interface in both modes:
 //! ctx.executor().execute_meta(MetaCommand::CreateTable { ... }).await?;
 //! ```
 
@@ -60,7 +65,7 @@ pub use state_machine::{UserDataStateMachine, SharedDataStateMachine};
 pub use cluster_types::{NodeRole, NodeStatus, ServerStateExt};
 pub use config::{ClusterConfig as RaftClusterConfig, PeerConfig, ReplicationMode};
 pub use error::{RaftError, Result};
-pub use executor::{ClusterInfo, ClusterNodeInfo, CommandExecutor, DirectExecutor, RaftExecutor};
+pub use executor::{ClusterInfo, ClusterNodeInfo, CommandExecutor, RaftExecutor};
 pub use group_id::{GroupId, ShardRouter};
 pub use state_machine::{KalamStateMachine, StateMachineSnapshot, ApplyResult};
 pub use storage::{KalamRaftStorage, KalamTypeConfig, KalamNode};

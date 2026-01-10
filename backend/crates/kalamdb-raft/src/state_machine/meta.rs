@@ -135,7 +135,7 @@ impl MetaStateMachine {
     pub fn set_applier(&self, applier: Arc<dyn MetaApplier>) {
         let mut guard = self.applier.write();
         *guard = Some(applier);
-        log::info!("MetaStateMachine: Applier registered for persistence");
+        log::debug!("MetaStateMachine: Applier registered for persistence");
     }
     
     /// Get the current last applied index

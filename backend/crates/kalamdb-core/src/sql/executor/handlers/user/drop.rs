@@ -43,11 +43,9 @@ impl TypedStatementHandler<DropUserStatement> for DropUserHandler {
         let user = existing.unwrap();
 
         // Delegate to unified applier (handles standalone vs cluster internally)
-        use crate::applier::commands::DeleteUserCommand;
-        let cmd = DeleteUserCommand { user_id: user.id.clone() };
         self.app_context
             .applier()
-            .delete_user(cmd)
+            .delete_user(user.id.clone())
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("DROP USER failed: {}", e)))?;
 
