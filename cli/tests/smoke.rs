@@ -56,3 +56,5 @@ mod smoke_test_as_user_impersonation;
 mod smoke_test_cli_commands;
 #[path = "smoke/smoke_test_cluster_operations.rs"]
 mod smoke_test_cluster_operations;
+#[path = "smoke/smoke_test_schema_history.rs"]
+mod smoke_test_schema_history;

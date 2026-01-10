@@ -340,3 +340,5 @@ mod cluster_test_final_consistency;
 mod cluster_test_node_rejoin;
 #[path = "cluster/cluster_test_leader_jobs.rs"]
 mod cluster_test_leader_jobs;
+#[path = "cluster/cluster_test_flush.rs"]
+mod cluster_test_flush;

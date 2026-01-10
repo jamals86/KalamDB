@@ -5,6 +5,7 @@
 use crate::embedded_ui;
 use crate::handlers;
 use actix_web::{web, HttpResponse};
+use kalamdb_core::metrics::{BUILD_DATE, SERVER_VERSION};
 use serde_json::json;
 
 /// Configure API routes for KalamDB
@@ -98,13 +99,10 @@ pub fn configure_ui_routes(cfg: &mut web::ServiceConfig, ui_path: &str) {
 
 /// Health check endpoint handler
 async fn healthcheck_handler() -> HttpResponse {
-    let version = env!("CARGO_PKG_VERSION");
-    let build_date = option_env!("BUILD_DATE").unwrap_or("unknown");
-
     HttpResponse::Ok().json(json!({
         "status": "healthy",
-        "version": version,
+        "version": SERVER_VERSION,
         "api_version": "v1",
-        "build_date": build_date,
+        "build_date": BUILD_DATE,
     }))
 }

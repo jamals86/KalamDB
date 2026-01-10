@@ -7,6 +7,7 @@
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use kalamdb_core::app_context::AppContext;
+use kalamdb_core::metrics::{BUILD_DATE, SERVER_VERSION};
 use kalamdb_raft::ServerStateExt;
 use serde::Serialize;
 use std::sync::Arc;
@@ -100,8 +101,6 @@ pub async fn cluster_health_handler(
     }
 
     let cluster_info = ctx.executor().get_cluster_info();
-    let version = env!("CARGO_PKG_VERSION");
-    let build_date = option_env!("BUILD_DATE").unwrap_or("unknown");
 
     // Calculate overall health status
     let status = if cluster_info.is_cluster_mode {
@@ -147,8 +146,8 @@ pub async fn cluster_health_handler(
 
     let response = ClusterHealthResponse {
         status: status.to_string(),
-        version: version.to_string(),
-        build_date: build_date.to_string(),
+        version: SERVER_VERSION.to_string(),
+        build_date: BUILD_DATE.to_string(),
         is_cluster_mode: cluster_info.is_cluster_mode,
         cluster_id: cluster_info.cluster_id,
         node_id: cluster_info.current_node_id.as_u64(),
