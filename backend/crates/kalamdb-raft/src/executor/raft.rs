@@ -38,6 +38,14 @@ impl RaftExecutor {
         Self { manager }
     }
     
+    /// Get a reference to the underlying RaftManager
+    ///
+    /// This is used during AppContext initialization to wire up appliers
+    /// after the full context is created.
+    pub fn manager(&self) -> &Arc<RaftManager> {
+        &self.manager
+    }
+    
     /// Serialize a command to bytes using bincode with serde
     fn serialize<T: serde::Serialize>(cmd: &T) -> Result<Vec<u8>> {
         bincode::serde::encode_to_vec(cmd, config::standard()).map_err(|e| {
@@ -58,9 +66,10 @@ impl RaftExecutor {
         use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
         
+        let num_shards = self.manager.config().user_shards;
         let mut hasher = DefaultHasher::new();
         user_id.as_str().hash(&mut hasher);
-        (hasher.finish() % 32) as u32
+        (hasher.finish() % num_shards as u64) as u32
     }
 }
 
@@ -199,6 +208,13 @@ impl CommandExecutor for RaftExecutor {
             NodeStatus::Unknown
         };
 
+        // Get snapshot index for catchup progress calculation
+        let snapshot_idx = if let Some(metrics) = meta_metrics.as_ref() {
+            metrics.snapshot.map(|log_id| log_id.index)
+        } else {
+            None
+        };
+
         // Use OpenRaft ServerState directly for self role
         let self_role = self_state;
 
@@ -221,24 +237,39 @@ impl CommandExecutor for RaftExecutor {
             };
             
             // Determine status and replication metrics for other nodes
-            let (status, replication_lag, last_applied_log) = if is_self {
-                (self_status, None, last_applied)
+            let (status, replication_lag, last_applied_log, catchup_progress_pct) = if is_self {
+                (self_status, None, last_applied, None)
             } else if let Some(ref repl) = replication_metrics {
                 // If we have replication metrics (leader's view), use them
                 if let Some(matching) = repl.get(&node_id) {
-                    let lag = matching.as_ref().map(|log_id| {
-                        last_log_index.unwrap_or(0).saturating_sub(log_id.index)
-                    });
-                    let applied = matching.as_ref().map(|log_id| log_id.index);
-                    // If we have replication info, node is likely active
-                    (NodeStatus::Active, lag, applied)
+                    let matched_index = matching.as_ref().map(|log_id| log_id.index).unwrap_or(0);
+                    let leader_log_idx = last_log_index.unwrap_or(0);
+                    let lag = Some(leader_log_idx.saturating_sub(matched_index));
+                    let applied = Some(matched_index);
+                    
+                    // Calculate catchup progress
+                    // If lag > 0, node is catching up
+                    let (node_status, progress) = if leader_log_idx > 0 && matched_index < leader_log_idx {
+                        // Calculate progress as percentage
+                        let pct = if leader_log_idx > 0 {
+                            ((matched_index as f64 / leader_log_idx as f64) * 100.0) as u8
+                        } else {
+                            100
+                        };
+                        (NodeStatus::CatchingUp, Some(pct))
+                    } else {
+                        // No lag = active
+                        (NodeStatus::Active, None)
+                    };
+                    
+                    (node_status, lag, applied, progress)
                 } else {
                     // Node in membership but no replication info yet
-                    (NodeStatus::Joining, None, None)
+                    (NodeStatus::Joining, None, None, Some(0))
                 }
             } else {
                 // We're not the leader, so we don't have replication metrics for other nodes
-                (NodeStatus::Unknown, None, None)
+                (NodeStatus::Unknown, None, None, None)
             };
 
             nodes.push(ClusterNodeInfo {
@@ -253,6 +284,9 @@ impl CommandExecutor for RaftExecutor {
                 total_groups,
                 current_term: Some(current_term),
                 last_applied_log,
+                leader_last_log_index: last_log_index,
+                snapshot_index: snapshot_idx,
+                catchup_progress_pct,
                 millis_since_last_heartbeat: None, // TODO: heartbeat metrics are in OpenRaft 0.10+
                 replication_lag,
             });
@@ -289,6 +323,10 @@ impl CommandExecutor for RaftExecutor {
     async fn shutdown(&self) -> Result<()> {
         log::info!("RaftExecutor shutting down with graceful cluster leave...");
         self.manager.shutdown().await
+    }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

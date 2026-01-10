@@ -12,6 +12,7 @@ use serde_json::json;
 /// Health check endpoints (both point to same handler):
 /// - GET /health - Simple health check (root level, no version prefix)
 /// - GET /v1/api/healthcheck - Health check endpoint (versioned API path)
+/// - GET /v1/api/cluster/health - Cluster health with OpenRaft metrics (local/auth required)
 ///
 /// Other endpoints use the /v1 version prefix:
 /// - POST /v1/api/sql - Execute SQL statements (requires Authorization header)
@@ -32,6 +33,11 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                         .service(handlers::execute_sql_v1)
                         // Also support health check at versioned path
                         .route("/healthcheck", web::get().to(healthcheck_handler))
+                        // Cluster health endpoint (with OpenRaft metrics)
+                        .service(
+                            web::scope("/cluster")
+                                .route("/health", web::get().to(handlers::cluster_health_handler)),
+                        )
                         // Auth routes for Admin UI
                         .service(
                             web::scope("/auth")

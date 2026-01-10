@@ -79,6 +79,9 @@ regex = { workspace = true }
 # HTTP client for cluster notifications
 reqwest = { workspace = true }
 
+# gRPC client for Raft forwarding
+tonic = { workspace = true }
+
 # Binary encoding helpers
 base64 = { workspace = true }
 hex = { workspace = true }

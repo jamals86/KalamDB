@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn test_append_and_get_log() {
-        let store = create_test_store(RaftGroupId::MetaSystem);
+        let store = create_test_store(RaftGroupId::Meta);
 
         let entries = vec![
             RaftLogEntry {
@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn test_scan_logs() {
-        let store = create_test_store(RaftGroupId::MetaUsers);
+        let store = create_test_store(RaftGroupId::Meta);
 
         let entries: Vec<RaftLogEntry> = (1..=10)
             .map(|i| RaftLogEntry {
@@ -554,7 +554,7 @@ mod tests {
 
     #[test]
     fn test_first_last_log_index() {
-        let store = create_test_store(RaftGroupId::MetaJobs);
+        let store = create_test_store(RaftGroupId::Meta);
 
         // Empty log
         assert!(store.first_log_index().unwrap().is_none());
@@ -616,7 +616,7 @@ mod tests {
 
     #[test]
     fn test_vote_operations() {
-        let store = create_test_store(RaftGroupId::MetaSystem);
+        let store = create_test_store(RaftGroupId::Meta);
 
         // No vote initially
         assert!(store.read_vote().unwrap().is_none());
@@ -677,7 +677,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_operations() {
-        let store = create_test_store(RaftGroupId::MetaSystem);
+        let store = create_test_store(RaftGroupId::Meta);
 
         // No snapshot initially
         assert!(store.read_snapshot_meta().unwrap().is_none());
@@ -728,8 +728,8 @@ mod tests {
             .create_partition(&Partition::new(RAFT_PARTITION_NAME))
             .unwrap();
 
-        let store1 = RaftPartitionStore::new(backend.clone(), RaftGroupId::MetaSystem);
-        let store2 = RaftPartitionStore::new(backend.clone(), RaftGroupId::MetaUsers);
+        let store1 = RaftPartitionStore::new(backend.clone(), RaftGroupId::Meta);
+        let store2 = RaftPartitionStore::new(backend.clone(), RaftGroupId::Meta);
 
         // Add entries to store1
         store1
@@ -761,9 +761,7 @@ mod tests {
 
     #[test]
     fn test_group_id_key_prefixes() {
-        assert_eq!(RaftGroupId::MetaSystem.key_prefix(), "sys");
-        assert_eq!(RaftGroupId::MetaUsers.key_prefix(), "users");
-        assert_eq!(RaftGroupId::MetaJobs.key_prefix(), "jobs");
+        assert_eq!(RaftGroupId::Meta.key_prefix(), "meta");
         assert_eq!(RaftGroupId::DataUserShard(0).key_prefix(), "u:00000");
         assert_eq!(RaftGroupId::DataUserShard(31).key_prefix(), "u:00031");
         assert_eq!(RaftGroupId::DataSharedShard(0).key_prefix(), "s:00000");

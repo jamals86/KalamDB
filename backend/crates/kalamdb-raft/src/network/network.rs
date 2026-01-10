@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_network_factory_creation() {
-        let factory = RaftNetworkFactory::new(GroupId::MetaSystem);
+        let factory = RaftNetworkFactory::new(GroupId::Meta);
         
         factory.register_node(1, KalamNode {
             rpc_addr: "127.0.0.1:9000".to_string(),

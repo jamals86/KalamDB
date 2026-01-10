@@ -169,6 +169,20 @@ impl TestServer {
         #[allow(clippy::type_complexity)]
         static TEST_RESOURCES: Lazy<Mutex<Option<(Arc<TempDir>, Arc<rocksdb::DB>, String)>>> =
             Lazy::new(|| Mutex::new(None));
+        
+        // Dedicated Tokio runtime for Raft background tasks
+        // This runtime persists across all tests, preventing Raft tasks from being killed
+        // when individual test runtimes are dropped
+        static RAFT_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_name("raft-test-runtime")
+                .build()
+                .expect("Failed to create Raft test runtime")
+        });
+        
+        // Raft cluster initialization flag (uses std::sync for cross-runtime safety)
+        static RAFT_INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
         // Get or create shared test resources
         let (temp_dir, db, storage_base_path) = {
@@ -302,6 +316,33 @@ impl TestServer {
                 storages_provider
                     .insert_storage(default_storage)
                     .expect("Failed to create default storage");
+            }
+        }
+
+        // Initialize Raft cluster (single-node mode for tests) - ONCE for all tests
+        // CRITICAL: Spawn Raft tasks on the dedicated RAFT_RUNTIME to prevent them from being killed
+        // when individual test runtimes are dropped (each #[actix_web::test] has its own runtime)
+        {
+            let mut raft_init = RAFT_INITIALIZED.lock().unwrap();
+            if !*raft_init {
+                let executor = app_context.executor();
+                // Spawn on the dedicated runtime (this handles the nested runtime issue)
+                let handle = RAFT_RUNTIME.handle().clone();
+                let (tx, rx) = std::sync::mpsc::channel();
+                
+                handle.spawn(async move {
+                    let result = async {
+                        executor.start().await?;
+                        executor.initialize_cluster().await
+                    }.await;
+                    let _ = tx.send(result);
+                });
+                
+                // Wait for initialization to complete
+                let result = rx.recv().expect("Raft init channel closed unexpectedly");
+                result.expect("Failed to initialize Raft cluster for tests");
+                
+                *raft_init = true;
             }
         }
 

@@ -118,26 +118,15 @@ impl StatementHandler for DeleteHandler {
                         return Ok(ExecutionResult::Deleted { rows_affected: 0 });
                     }
 
-                    if app_context.is_cluster_mode() {
-                        let rows_affected = self
-                            .execute_user_delete_via_raft(
-                                &table_id,
-                                effective_user_id,
-                                pks_to_delete,
-                            )
-                            .await?;
-                        Ok(ExecutionResult::Deleted { rows_affected })
-                    } else {
-                        let mut deleted_count = 0;
-                        for pk in pks_to_delete {
-                            if provider.delete_by_id_field(effective_user_id, &pk)? {
-                                deleted_count += 1;
-                            }
-                        }
-                        Ok(ExecutionResult::Deleted {
-                            rows_affected: deleted_count,
-                        })
-                    }
+                    // Phase 20: Always route through Raft (single-node or cluster)
+                    let rows_affected = self
+                        .execute_user_delete_via_raft(
+                            &table_id,
+                            effective_user_id,
+                            pks_to_delete,
+                        )
+                        .await?;
+                    Ok(ExecutionResult::Deleted { rows_affected })
                 } else {
                     Err(KalamDbError::InvalidOperation(
                         "Cached provider type mismatch for user table".into(),
@@ -198,23 +187,12 @@ impl StatementHandler for DeleteHandler {
                         return Ok(ExecutionResult::Deleted { rows_affected: 0 });
                     }
 
-                    // In cluster mode, route through Raft for replication
-                    if app_context.is_cluster_mode() {
-                        let rows_affected = self.execute_delete_via_raft(
-                            &table_id,
-                            pks_to_delete,
-                        ).await?;
-                        Ok(ExecutionResult::Deleted { rows_affected })
-                    } else {
-                        // Standalone mode: delete directly
-                        let mut deleted_count = 0;
-                        for pk in pks_to_delete {
-                            if provider.delete_by_id_field(effective_user_id, &pk)? {
-                                deleted_count += 1;
-                            }
-                        }
-                        Ok(ExecutionResult::Deleted { rows_affected: deleted_count })
-                    }
+                    // Phase 20: Always route through Raft (single-node or cluster)
+                    let rows_affected = self.execute_delete_via_raft(
+                        &table_id,
+                        pks_to_delete,
+                    ).await?;
+                    Ok(ExecutionResult::Deleted { rows_affected })
                 } else {
                     Err(KalamDbError::InvalidOperation(
                         "Cached provider type mismatch for shared table".into(),
@@ -262,26 +240,15 @@ impl StatementHandler for DeleteHandler {
                     return Ok(ExecutionResult::Deleted { rows_affected: 0 });
                 }
 
-                if app_context.is_cluster_mode() {
-                    let rows_affected = self
-                        .execute_user_delete_via_raft(
-                            &table_id,
-                            effective_user_id,
-                            pks_to_delete,
-                        )
-                        .await?;
-                    Ok(ExecutionResult::Deleted { rows_affected })
-                } else {
-                    let mut deleted_count = 0;
-                    for pk in pks_to_delete {
-                        if provider.delete_by_id_field(effective_user_id, &pk)? {
-                            deleted_count += 1;
-                        }
-                    }
-                    Ok(ExecutionResult::Deleted {
-                        rows_affected: deleted_count,
-                    })
-                }
+                // Phase 20: Always route through Raft (single-node or cluster)
+                let rows_affected = self
+                    .execute_user_delete_via_raft(
+                        &table_id,
+                        effective_user_id,
+                        pks_to_delete,
+                    )
+                    .await?;
+                Ok(ExecutionResult::Deleted { rows_affected })
             }
             TableType::System => Err(KalamDbError::InvalidOperation(
                 "Cannot DELETE from SYSTEM tables".into(),

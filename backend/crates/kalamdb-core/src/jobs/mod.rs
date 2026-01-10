@@ -47,8 +47,18 @@ pub mod health_monitor;
 pub mod jobs_manager;
 pub mod stream_eviction;
 
+// ============================================================================
+// PHASE 16: LEADER-ONLY JOB EXECUTION (CLUSTER MODE)
+// ============================================================================
+pub mod leader_guard;
+pub mod leader_failover;
+
 // Phase 9 exports (production API)
 pub use executors::{JobContext, JobDecision, JobExecutor as JobExecutorTrait, JobRegistry};
 pub use health_monitor::HealthMonitor;
 pub use jobs_manager::JobsManager;
 pub use stream_eviction::StreamEvictionScheduler;
+
+// Phase 16 exports (cluster mode)
+pub use leader_guard::{LeaderOnlyJobGuard, LeadershipStatus};
+pub use leader_failover::{LeaderFailoverHandler, JobRecoveryAction, RecoveryReport};

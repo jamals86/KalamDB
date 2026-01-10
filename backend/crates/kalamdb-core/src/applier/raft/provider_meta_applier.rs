@@ -1,7 +1,8 @@
-//! ProviderMetaApplier - unified applier for all metadata operations
+//! ProviderMetaApplier - Raft state machine applier for metadata operations
 //!
 //! This applier implements the MetaApplier trait and delegates to the
-//! appropriate system table providers for persistence.
+//! CommandExecutorImpl for actual persistence. This ensures a SINGLE
+//! code path for all mutations regardless of standalone/cluster mode.
 //!
 //! Used by the Raft state machine to apply replicated commands on followers.
 
@@ -9,34 +10,48 @@ use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableId, TableName, UserId};
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::system::{Job, Namespace, Storage};
+use kalamdb_commons::system::{Job, Storage};
 use kalamdb_commons::types::User;
 use kalamdb_commons::JobStatus;
 use kalamdb_raft::applier::MetaApplier;
 use kalamdb_raft::RaftError;
-use kalamdb_system::SystemTablesRegistry;
+use crate::app_context::AppContext;
+use crate::applier::executor::CommandExecutorImpl;
+use crate::applier::ApplierError;
 use std::sync::Arc;
 
 /// Unified applier that persists all metadata operations to system tables
 ///
 /// This is used by the Raft state machine on follower nodes to apply
-/// replicated commands locally. It calls the underlying system table
-/// providers to persist the changes.
+/// replicated commands locally. It delegates to CommandExecutorImpl to ensure
+/// a single code path for all mutations.
+///
+/// ## Architecture
+///
+/// - DDL operations (create/alter/drop table) → DdlExecutor
+/// - Namespace operations → NamespaceExecutor
+/// - User operations → UserExecutor
+/// - Storage operations → StorageExecutor
+/// - Job operations → Local (jobs are Raft-only, no SQL handlers)
 pub struct ProviderMetaApplier {
-    system_tables: Arc<SystemTablesRegistry>,
+    executor: CommandExecutorImpl,
+    app_context: Arc<AppContext>,
 }
 
 impl ProviderMetaApplier {
     /// Create a new ProviderMetaApplier
-    pub fn new(system_tables: Arc<SystemTablesRegistry>) -> Self {
-        Self { system_tables }
+    pub fn new(app_context: Arc<AppContext>) -> Self {
+        Self {
+            executor: CommandExecutorImpl::new(Arc::clone(&app_context)),
+            app_context,
+        }
     }
 }
 
 #[async_trait]
 impl MetaApplier for ProviderMetaApplier {
     // =========================================================================
-    // Namespace Operations
+    // Namespace Operations - Delegate to NamespaceExecutor
     // =========================================================================
     
     async fn create_namespace(
@@ -46,12 +61,10 @@ impl MetaApplier for ProviderMetaApplier {
     ) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Creating namespace {} by {:?}", namespace_id, created_by);
         
-        let namespace = Namespace::new(namespace_id.as_str());
-        
-        self.system_tables
-            .namespaces()
-            .create_namespace(namespace)
-            .map_err(|e| RaftError::Internal(format!("Failed to create namespace: {}", e)))?;
+        self.executor.namespace()
+            .create_namespace(namespace_id)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -59,33 +72,33 @@ impl MetaApplier for ProviderMetaApplier {
     async fn delete_namespace(&self, namespace_id: &NamespaceId) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Deleting namespace {}", namespace_id);
         
-        self.system_tables
-            .namespaces()
-            .delete_namespace(namespace_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to delete namespace: {}", e)))?;
+        self.executor.namespace()
+            .drop_namespace(namespace_id)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
 
     // =========================================================================
-    // Table Operations
+    // Table Operations - Delegate to DdlExecutor
     // =========================================================================
     
     async fn create_table(
         &self,
         table_id: &TableId,
-        _table_type: TableType,
+        table_type: TableType,
         schema_json: &str,
     ) -> Result<(), RaftError> {
-        log::info!("ProviderMetaApplier: Creating table {}", table_id.full_name());
+        log::info!("ProviderMetaApplier: Creating table {} (type: {})", table_id.full_name(), table_type);
         
         let table_def: TableDefinition = serde_json::from_str(schema_json)
             .map_err(|e| RaftError::Internal(format!("Failed to deserialize table schema: {}", e)))?;
         
-        self.system_tables
-            .tables()
-            .create_table(table_id, &table_def)
-            .map_err(|e| RaftError::Internal(format!("Failed to create table: {}", e)))?;
+        self.executor.ddl()
+            .create_table(table_id, table_type, &table_def)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -100,10 +113,11 @@ impl MetaApplier for ProviderMetaApplier {
         let table_def: TableDefinition = serde_json::from_str(schema_json)
             .map_err(|e| RaftError::Internal(format!("Failed to deserialize table schema: {}", e)))?;
         
-        self.system_tables
-            .tables()
-            .update_table(table_id, &table_def)
-            .map_err(|e| RaftError::Internal(format!("Failed to alter table: {}", e)))?;
+        // For Raft replication, we don't have the old version, so pass 0
+        self.executor.ddl()
+            .alter_table(table_id, &table_def, 0)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -111,16 +125,16 @@ impl MetaApplier for ProviderMetaApplier {
     async fn drop_table(&self, table_id: &TableId) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Dropping table {}", table_id.full_name());
         
-        self.system_tables
-            .tables()
-            .delete_table(table_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to drop table: {}", e)))?;
+        self.executor.ddl()
+            .drop_table(table_id)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
 
     // =========================================================================
-    // Storage Operations
+    // Storage Operations - Delegate to StorageExecutor
     // =========================================================================
     
     async fn register_storage(
@@ -133,10 +147,10 @@ impl MetaApplier for ProviderMetaApplier {
         let storage: Storage = serde_json::from_str(config_json)
             .map_err(|e| RaftError::Internal(format!("Failed to deserialize storage config: {}", e)))?;
         
-        self.system_tables
-            .storages()
-            .create_storage(storage)
-            .map_err(|e| RaftError::Internal(format!("Failed to register storage: {}", e)))?;
+        self.executor.storage()
+            .create_storage(&storage)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -144,25 +158,25 @@ impl MetaApplier for ProviderMetaApplier {
     async fn unregister_storage(&self, storage_id: &StorageId) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Unregistering storage {}", storage_id);
         
-        self.system_tables
-            .storages()
-            .delete_storage(storage_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to unregister storage: {}", e)))?;
+        self.executor.storage()
+            .drop_storage(storage_id)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
 
     // =========================================================================
-    // User Operations
+    // User Operations - Delegate to UserExecutor
     // =========================================================================
     
     async fn create_user(&self, user: &User) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Creating user {:?} ({})", user.id, user.username);
         
-        self.system_tables
-            .users()
-            .create_user(user.clone())
-            .map_err(|e| RaftError::Internal(format!("Failed to create user: {}", e)))?;
+        self.executor.user()
+            .create_user(user)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -170,10 +184,10 @@ impl MetaApplier for ProviderMetaApplier {
     async fn update_user(&self, user: &User) -> Result<(), RaftError> {
         log::debug!("ProviderMetaApplier: Updating user {:?}", user.id);
         
-        self.system_tables
-            .users()
-            .update_user(user.clone())
-            .map_err(|e| RaftError::Internal(format!("Failed to update user: {}", e)))?;
+        self.executor.user()
+            .update_user(user)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -181,10 +195,10 @@ impl MetaApplier for ProviderMetaApplier {
     async fn delete_user(&self, user_id: &UserId, _deleted_at: i64) -> Result<(), RaftError> {
         log::debug!("ProviderMetaApplier: Deleting user {:?}", user_id);
         
-        self.system_tables
-            .users()
+        self.executor.user()
             .delete_user(user_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to delete user: {}", e)))?;
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -192,15 +206,10 @@ impl MetaApplier for ProviderMetaApplier {
     async fn record_login(&self, user_id: &UserId, logged_in_at: i64) -> Result<(), RaftError> {
         log::debug!("ProviderMetaApplier: Recording login for {:?}", user_id);
         
-        if let Some(mut user) = self.system_tables.users().get_user_by_id(user_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to get user: {}", e)))? 
-        {
-            user.last_login_at = Some(logged_in_at);
-            self.system_tables
-                .users()
-                .update_user(user)
-                .map_err(|e| RaftError::Internal(format!("Failed to update user login: {}", e)))?;
-        }
+        self.executor.user()
+            .record_login(user_id, logged_in_at)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
@@ -213,21 +222,16 @@ impl MetaApplier for ProviderMetaApplier {
     ) -> Result<(), RaftError> {
         log::debug!("ProviderMetaApplier: Setting user {:?} locked until {:?}", user_id, locked_until);
         
-        if let Some(mut user) = self.system_tables.users().get_user_by_id(user_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to get user: {}", e)))?
-        {
-            user.locked_until = locked_until;
-            self.system_tables
-                .users()
-                .update_user(user)
-                .map_err(|e| RaftError::Internal(format!("Failed to update user lock: {}", e)))?;
-        }
+        self.executor.user()
+            .set_user_locked(user_id, locked_until)
+            .await
+            .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
         
         Ok(())
     }
 
     // =========================================================================
-    // Job Operations
+    // Job Operations - Stay local (no SQL handlers for jobs)
     // =========================================================================
     
     async fn create_job(
@@ -281,7 +285,7 @@ impl MetaApplier for ProviderMetaApplier {
             cpu_used: None,
         };
         
-        self.system_tables
+        self.app_context.system_tables()
             .jobs()
             .create_job(job)
             .map_err(|e| RaftError::Internal(format!("Failed to create job: {}", e)))?;
@@ -297,7 +301,7 @@ impl MetaApplier for ProviderMetaApplier {
     ) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Claiming job {} by node {}", job_id, node_id);
         
-        if let Some(mut job) = self.system_tables.jobs().get_job(job_id)
+        if let Some(mut job) = self.app_context.system_tables().jobs().get_job(job_id)
             .map_err(|e| RaftError::Internal(format!("Failed to get job: {}", e)))?
         {
             job.node_id = node_id;
@@ -305,7 +309,7 @@ impl MetaApplier for ProviderMetaApplier {
             job.status = JobStatus::Running;
             job.updated_at = claimed_at;
             
-            self.system_tables
+            self.app_context.system_tables()
                 .jobs()
                 .update_job(job)
                 .map_err(|e| RaftError::Internal(format!("Failed to claim job: {}", e)))?;
@@ -317,18 +321,18 @@ impl MetaApplier for ProviderMetaApplier {
     async fn update_job_status(
         &self,
         job_id: &JobId,
-        status: &str,
+        status: JobStatus,
         updated_at: i64,
     ) -> Result<(), RaftError> {
-        log::debug!("ProviderMetaApplier: Updating job {} status to {}", job_id, status);
+        log::debug!("ProviderMetaApplier: Updating job {} status to {:?}", job_id, status);
         
-        if let Some(mut job) = self.system_tables.jobs().get_job(job_id)
+        if let Some(mut job) = self.app_context.system_tables().jobs().get_job(job_id)
             .map_err(|e| RaftError::Internal(format!("Failed to get job: {}", e)))?
         {
-            job.status = status.parse().unwrap_or(JobStatus::Failed);
+            job.status = status;
             job.updated_at = updated_at;
             
-            self.system_tables
+            self.app_context.system_tables()
                 .jobs()
                 .update_job(job)
                 .map_err(|e| RaftError::Internal(format!("Failed to update job status: {}", e)))?;
@@ -345,7 +349,7 @@ impl MetaApplier for ProviderMetaApplier {
     ) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Completing job {}", job_id);
         
-        if let Some(mut job) = self.system_tables.jobs().get_job(job_id)
+        if let Some(mut job) = self.app_context.system_tables().jobs().get_job(job_id)
             .map_err(|e| RaftError::Internal(format!("Failed to get job: {}", e)))?
         {
             job.status = JobStatus::Completed;
@@ -353,7 +357,7 @@ impl MetaApplier for ProviderMetaApplier {
             job.finished_at = Some(completed_at);
             job.updated_at = completed_at;
             
-            self.system_tables
+            self.app_context.system_tables()
                 .jobs()
                 .update_job(job)
                 .map_err(|e| RaftError::Internal(format!("Failed to complete job: {}", e)))?;
@@ -370,7 +374,7 @@ impl MetaApplier for ProviderMetaApplier {
     ) -> Result<(), RaftError> {
         log::warn!("ProviderMetaApplier: Failing job {}: {}", job_id, error_message);
         
-        if let Some(mut job) = self.system_tables.jobs().get_job(job_id)
+        if let Some(mut job) = self.app_context.system_tables().jobs().get_job(job_id)
             .map_err(|e| RaftError::Internal(format!("Failed to get job: {}", e)))?
         {
             job.status = JobStatus::Failed;
@@ -378,7 +382,7 @@ impl MetaApplier for ProviderMetaApplier {
             job.finished_at = Some(failed_at);
             job.updated_at = failed_at;
             
-            self.system_tables
+            self.app_context.system_tables()
                 .jobs()
                 .update_job(job)
                 .map_err(|e| RaftError::Internal(format!("Failed to fail job: {}", e)))?;
@@ -395,7 +399,7 @@ impl MetaApplier for ProviderMetaApplier {
     ) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Releasing job {}", job_id);
         
-        if let Some(mut job) = self.system_tables.jobs().get_job(job_id)
+        if let Some(mut job) = self.app_context.system_tables().jobs().get_job(job_id)
             .map_err(|e| RaftError::Internal(format!("Failed to get job: {}", e)))?
         {
             job.status = JobStatus::New;
@@ -403,7 +407,7 @@ impl MetaApplier for ProviderMetaApplier {
             job.started_at = None;
             job.updated_at = released_at;
             
-            self.system_tables
+            self.app_context.system_tables()
                 .jobs()
                 .update_job(job)
                 .map_err(|e| RaftError::Internal(format!("Failed to release job: {}", e)))?;
@@ -420,7 +424,7 @@ impl MetaApplier for ProviderMetaApplier {
     ) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Cancelling job {}: {}", job_id, reason);
         
-        if let Some(mut job) = self.system_tables.jobs().get_job(job_id)
+        if let Some(mut job) = self.app_context.system_tables().jobs().get_job(job_id)
             .map_err(|e| RaftError::Internal(format!("Failed to get job: {}", e)))?
         {
             job.status = JobStatus::Cancelled;
@@ -428,7 +432,7 @@ impl MetaApplier for ProviderMetaApplier {
             job.message = Some(reason.to_string());
             job.updated_at = cancelled_at;
             
-            self.system_tables
+            self.app_context.system_tables()
                 .jobs()
                 .update_job(job)
                 .map_err(|e| RaftError::Internal(format!("Failed to cancel job: {}", e)))?;

@@ -5,6 +5,7 @@
 //! - DataUserShard(0..N): User table data shards (default 32)
 //! - DataSharedShard(0..M): Shared table data shards (default 1)
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,7 +15,6 @@ use kalamdb_store::{Partition, StorageBackend};
 use openraft::RaftMetrics;
 use parking_lot::RwLock;
 
-use crate::config::ReplicationMode;
 use crate::manager::config::RaftManagerConfig;
 use crate::manager::RaftGroup;
 use crate::state_machine::{
@@ -210,19 +210,12 @@ impl RaftManager {
             return Ok(());
         }
         
-        log::info!("╔═══════════════════════════════════════════════════════════════════╗");
-        log::info!("║               Starting Raft Cluster Mode                          ║");
-        log::info!("╚═══════════════════════════════════════════════════════════════════╝");
-        log::info!("[CLUSTER] Node ID: {}", self.node_id);
-        log::info!("[CLUSTER] RPC Address: {}", self.config.rpc_addr);
-        log::info!("[CLUSTER] API Address: {}", self.config.api_addr);
-        log::info!("[CLUSTER] Replication Mode: {} (timeout: {:?})", 
-            self.config.replication_mode, self.config.replication_timeout);
-        log::info!("[CLUSTER] Total Raft Groups: {} (1 meta + {} user shards + {} shared shards)", 
-            self.group_count(), self.user_shards_count, self.shared_shards_count);
-        log::info!("[CLUSTER] Peers configured: {}", self.config.peers.len());
+        log::info!("Starting Raft Cluster: node={} rpc={} api={}", self.node_id, self.config.rpc_addr, self.config.api_addr);
+        log::info!("Groups: {} (1 meta + {}u + {}s) │ Peers: {}", 
+            self.group_count(), self.user_shards_count, self.shared_shards_count, 
+            self.config.peers.len());
         for peer in &self.config.peers {
-            log::info!("[CLUSTER]   - Peer node_id={}: rpc={}, api={}", 
+            log::info!("[CLUSTER] Peer node_id={}: rpc={}, api={}", 
                 peer.node_id, peer.rpc_addr, peer.api_addr);
         }
         
@@ -233,19 +226,19 @@ impl RaftManager {
         }
         
         // Start unified meta group
-        log::info!("Starting unified meta group...");
+        log::debug!("Starting unified meta group...");
         self.meta.start(self.node_id.as_u64(), &self.config).await?;
         log::debug!("  ✓ Meta group started");
         
         // Start all user data shards
-        log::info!("Starting {} user data shards...", self.user_data_shards.len());
+        log::debug!("Starting {} user data shards...", self.user_data_shards.len());
         for (i, shard) in self.user_data_shards.iter().enumerate() {
             shard.start(self.node_id.as_u64(), &self.config).await?;
             log::debug!("  ✓ UserDataShard[{}] started", i);
         }
         
         // Start all shared data shards
-        log::info!("Starting {} shared data shards...", self.shared_data_shards.len());
+        log::debug!("Starting {} shared data shards...", self.shared_data_shards.len());
         for (i, shard) in self.shared_data_shards.iter().enumerate() {
             shard.start(self.node_id.as_u64(), &self.config).await?;
             log::debug!("  ✓ SharedDataShard[{}] started", i);
@@ -257,9 +250,7 @@ impl RaftManager {
             *started = true;
         }
         
-        log::info!("╔═══════════════════════════════════════════════════════════════════╗");
-        log::info!("║         Raft Cluster Started Successfully on Node {}              ║", self.node_id);
-        log::info!("╚═══════════════════════════════════════════════════════════════════╝");
+        log::debug!("✓ Raft cluster started: {} groups on node {}", self.group_count(), self.node_id);
         Ok(())
     }
     
@@ -270,83 +261,167 @@ impl RaftManager {
         if !self.is_started() {
             return Err(RaftError::NotStarted("RaftManager not started".to_string()));
         }
+
+        // IMPORTANT:
+        // - OpenRaft cluster initialization is a one-time operation.
+        // - On restart, a node should NOT re-run initialize() or membership changes.
+        // We detect whether this node has already initialized the meta group by checking
+        // whether OpenRaft has applied any log entry (including membership entries).
+        // When last_applied is Some(..), the Raft state is persisted and initialization
+        // has already happened at least once.
+        let meta_metrics = self.meta.metrics();
+        let meta_last_applied = meta_metrics
+            .as_ref()
+            .and_then(|m| m.last_applied.map(|log_id| log_id.index))
+            .unwrap_or(0);
+        let meta_voters: BTreeSet<u64> = meta_metrics
+            .as_ref()
+            .map(|m| m.membership_config.voter_ids().collect())
+            .unwrap_or_default();
+
+        let already_initialized = meta_last_applied > 0;
         
         let self_node = KalamNode {
             rpc_addr: self.config.rpc_addr.clone(),
             api_addr: self.config.api_addr.clone(),
         };
-        
-        log::info!("╔═══════════════════════════════════════════════════════════════════╗");
-        log::info!("║           Initializing Raft Cluster (Bootstrap)                   ║");
-        log::info!("╚═══════════════════════════════════════════════════════════════════╝");
-        log::info!("[CLUSTER] Bootstrap node_id={}, rpc={}, api={}", 
-            self.node_id, self_node.rpc_addr, self_node.api_addr);
-        log::info!("[CLUSTER] Node {} elected as LEADER for all {} groups (bootstrap)", 
-            self.node_id, self.group_count());
-        
-        // Initialize unified meta group
-        log::info!("Initializing unified meta group...");
-        self.meta.initialize(self.node_id.as_u64(), self_node.clone()).await?;
-        log::debug!("  ✓ Meta initialized");
-        
-        log::info!("Initializing user data shards...");
-        for (i, shard) in self.user_data_shards.iter().enumerate() {
-            shard.initialize(self.node_id.as_u64(), self_node.clone()).await?;
-            log::debug!("  ✓ UserDataShard[{}] initialized", i);
+
+        if already_initialized {
+            log::info!(
+                "Cluster already initialized (meta last_applied={}); skipping group initialization",
+                meta_last_applied
+            );
+        } else {
+            log::info!(
+                "Bootstrapping cluster: node {} as LEADER for {} groups",
+                self.node_id,
+                self.group_count()
+            );
+
+            // Initialize unified meta group
+            log::debug!("Initializing unified meta group...");
+            self.meta.initialize(self.node_id.as_u64(), self_node.clone()).await?;
+            log::debug!("  ✓ Meta initialized");
+
+            log::debug!("Initializing user data shards...");
+            for (i, shard) in self.user_data_shards.iter().enumerate() {
+                shard.initialize(self.node_id.as_u64(), self_node.clone()).await?;
+                log::debug!("  ✓ UserDataShard[{}] initialized", i);
+            }
+
+            log::debug!("Initializing shared data shards...");
+            for (i, shard) in self.shared_data_shards.iter().enumerate() {
+                shard.initialize(self.node_id.as_u64(), self_node.clone()).await?;
+                log::debug!("  ✓ SharedDataShard[{}] initialized", i);
+            }
+
+            log::info!(
+                "✓ Cluster initialized: node {} is LEADER for all {} groups",
+                self.node_id,
+                self.group_count()
+            );
         }
         
-        log::info!("Initializing shared data shards...");
-        for (i, shard) in self.shared_data_shards.iter().enumerate() {
-            shard.initialize(self.node_id.as_u64(), self_node.clone()).await?;
-            log::debug!("  ✓ SharedDataShard[{}] initialized", i);
-        }
-        
-        log::info!("╔═══════════════════════════════════════════════════════════════════╗");
-        log::info!("║         Cluster Initialized Successfully!                         ║");
-        log::info!("║         This node is now the leader of all {} groups              ║", self.group_count());
-        log::info!("╚═══════════════════════════════════════════════════════════════════╝");
-        
-        // After initialization, add peer nodes to the cluster with retry logic
-        // Peers may not be ready immediately (RPC server starting up), so we retry with backoff
-        if !self.config.peers.is_empty() {
-            log::info!("Adding {} peer nodes to cluster (with retry)...", self.config.peers.len());
+        // After initialization, wait for peer nodes to come online before adding them to the cluster.
+        // This prevents OpenRaft from generating thousands of connection errors when trying to
+        // replicate to offline nodes. We wait for each peer's RPC endpoint to respond before
+        // calling add_node(), which ensures a clean cluster formation with minimal error logs.
+        let should_attempt_peer_join = if !already_initialized {
+            // First boot: always attempt to add configured peers.
+            true
+        } else {
+            // Restart: only attempt to continue initial formation if the cluster is still
+            // single-node (only this node is a voter in the meta group).
+            meta_voters.len() == 1 && meta_voters.contains(&self.node_id.as_u64())
+        };
+
+        if should_attempt_peer_join && !self.config.peers.is_empty() {
+            // Only perform membership operations when we lead all groups.
+            let leader_for_all_groups = self.meta.is_leader()
+                && self.user_data_shards.iter().all(|g| g.is_leader())
+                && self.shared_data_shards.iter().all(|g| g.is_leader());
+
+            if !leader_for_all_groups {
+                log::info!(
+                    "Skipping peer join: node {} is not leader for all groups",
+                    self.node_id
+                );
+                return Ok(());
+            }
+
+            log::info!("Waiting for {} peer nodes to come online...", self.config.peers.len());
             
-            const MAX_RETRIES: u32 = 30;
+            const MAX_RETRIES: u32 = 60;  // 60 retries × 0.5s initial = ~30s max wait
             const INITIAL_DELAY_MS: u64 = 500;
-            const MAX_DELAY_MS: u64 = 5000;
+            const MAX_DELAY_MS: u64 = 2000;
             
             for peer in &self.config.peers {
-                log::info!("  Adding peer node_id={} (rpc={}, api={})...", 
-                    peer.node_id, peer.rpc_addr, peer.api_addr);
+                log::info!("  Waiting for peer node_id={} (rpc={}) to be online...", 
+                    peer.node_id, peer.rpc_addr);
                 
-                let mut attempt = 0;
-                let mut delay_ms = INITIAL_DELAY_MS;
-                
-                loop {
-                    attempt += 1;
-                    match self.add_node(peer.node_id, peer.rpc_addr.clone(), peer.api_addr.clone()).await {
-                        Ok(_) => {
-                            log::info!("    ✓ Peer {} added successfully (attempt {})", peer.node_id, attempt);
-                            break;
-                        }
-                        Err(e) => {
-                            if attempt >= MAX_RETRIES {
-                                log::error!("    ✗ Failed to add peer {} after {} attempts: {}", 
-                                    peer.node_id, MAX_RETRIES, e);
-                                break;
+                // Wait for the peer's RPC endpoint to respond
+                match self.wait_for_peer_online(&peer.rpc_addr, MAX_RETRIES, INITIAL_DELAY_MS, MAX_DELAY_MS).await {
+                    Ok(_) => {
+                        log::info!("    ✓ Peer {} is online, adding to cluster...", peer.node_id);
+                        
+                        // Now add the node - should succeed immediately since it's online
+                        match self.add_node(peer.node_id, peer.rpc_addr.clone(), peer.api_addr.clone()).await {
+                            Ok(_) => {
+                                log::info!("    ✓ Peer {} joined cluster successfully", peer.node_id);
                             }
-                            log::warn!("    ⏳ Peer {} not ready (attempt {}/{}): {} - retrying in {}ms", 
-                                peer.node_id, attempt, MAX_RETRIES, e, delay_ms);
-                            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                            delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
+                            Err(e) => {
+                                log::error!("    ✗ Failed to add peer {} to cluster: {}", peer.node_id, e);
+                            }
                         }
+                    }
+                    Err(e) => {
+                        log::error!("    ✗ Peer {} did not come online: {}", peer.node_id, e);
                     }
                 }
             }
-            log::info!("Peer nodes processing complete");
+            log::info!("Cluster formation complete");
         }
         
         Ok(())
+    }
+    
+    /// Wait for a peer node to be online and ready to join the cluster
+    /// 
+    /// This checks if the peer's RPC endpoint is responding before attempting to add it.
+    /// This prevents OpenRaft from generating thousands of connection errors when trying
+    /// to replicate to an offline node.
+    async fn wait_for_peer_online(&self, rpc_addr: &str, max_retries: u32, initial_delay_ms: u64, max_delay_ms: u64) -> Result<(), RaftError> {
+        let mut attempt = 0;
+        let mut delay_ms = initial_delay_ms;
+        
+        loop {
+            attempt += 1;
+            
+            // Try to connect to the peer's RPC endpoint using tonic
+            let uri = format!("http://{}", rpc_addr);
+            match tonic::transport::Endpoint::from_shared(uri.clone())
+                .map_err(|e| RaftError::Internal(format!("Invalid RPC address {}: {}", rpc_addr, e)))?
+                .connect()
+                .await
+            {
+                Ok(_channel) => {
+                    // Connection successful - peer is online
+                    log::debug!("[CLUSTER] Peer {} is online and accepting connections", rpc_addr);
+                    return Ok(());
+                }
+                Err(_) => {
+                    // Connection failed - peer not ready
+                    if attempt >= max_retries {
+                        return Err(RaftError::Internal(format!("Peer {} not reachable after {} attempts", rpc_addr, max_retries)));
+                    }
+                    if attempt == 1 || attempt % 10 == 0 {
+                        log::debug!("[CLUSTER] Waiting for peer {} to be online (attempt {}/{})...", rpc_addr, attempt, max_retries);
+                    }
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    delay_ms = (delay_ms * 2).min(max_delay_ms);
+                }
+            }
+        }
     }
     
     /// Add a new node to the cluster
@@ -466,48 +541,28 @@ impl RaftManager {
         self.meta.storage().state_machine().last_applied_index()
     }
     
-    /// Internal helper to propose with replication mode awareness
+    /// Internal helper to propose to a group with leader forwarding
     async fn propose_to_group<SM: crate::state_machine::KalamStateMachine + Send + Sync + 'static>(
         &self,
         group: &Arc<RaftGroup<SM>>,
         command: Vec<u8>,
     ) -> Result<Vec<u8>, RaftError> {
-        match self.config.replication_mode {
-            ReplicationMode::Quorum => {
-                // Standard quorum-based replication (fast)
-                group.propose_with_forward(command).await
-            }
-            ReplicationMode::All => {
-                // Strong consistency: wait for ALL nodes
-                if group.is_leader() {
-                    group.propose_with_all_replicas(
-                        command,
-                        self.config.replication_timeout,
-                        self.total_nodes(),
-                    ).await
-                } else {
-                    // Follower: forward to leader (leader will wait for all replicas)
-                    group.propose_with_forward(command).await
-                }
-            }
-        }
+        // Use standard quorum-based replication (OpenRaft default)
+        group.propose_with_forward(command).await
     }
     
     /// Propose a command to the unified Meta group (with leader forwarding)
     ///
     /// If this node is a follower, the request is automatically forwarded to the leader.
-    /// Respects the configured replication_mode (Quorum or All).
+    /// Uses standard quorum-based replication.
     pub async fn propose_meta(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
         self.propose_to_group(&self.meta, command).await
     }
     
-    /// Propose a command to the MetaSystem group (with leader forwarding)
-    ///
-    /// If this node is a follower, the request is automatically forwarded to the leader.
     /// Propose a command to a user data shard (with leader forwarding)
     ///
     /// If this node is a follower, the request is automatically forwarded to the leader.
-    /// Respects the configured replication_mode (Quorum or All).
+    /// Uses standard quorum-based replication.
     pub async fn propose_user_data(&self, shard: u32, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
         if shard >= self.user_shards_count {
             return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
@@ -518,7 +573,7 @@ impl RaftManager {
     /// Propose a command to a shared data shard (with leader forwarding)
     ///
     /// If this node is a follower, the request is automatically forwarded to the leader.
-    /// Respects the configured replication_mode (Quorum or All).
+    /// Uses standard quorum-based replication.
     pub async fn propose_shared_data(&self, shard: u32, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
         if shard >= self.shared_shards_count {
             return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
@@ -530,46 +585,21 @@ impl RaftManager {
     ///
     /// Used by the RaftService when receiving a forwarded proposal.
     /// Does NOT forward - should only be called when we are the leader.
-    /// Respects the configured replication_mode (Quorum or All).
+    /// Uses standard quorum-based replication.
     pub async fn propose_for_group(&self, group_id: GroupId, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
-        match self.config.replication_mode {
-            ReplicationMode::Quorum => {
-                // Standard quorum-based replication
-                match group_id {
-                    GroupId::Meta => self.meta.propose(command).await,
-                    GroupId::DataUserShard(shard) => {
-                        if shard >= self.user_shards_count {
-                            return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
-                        }
-                        self.user_data_shards[shard as usize].propose(command).await
-                    }
-                    GroupId::DataSharedShard(shard) => {
-                        if shard >= self.shared_shards_count {
-                            return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
-                        }
-                        self.shared_data_shards[shard as usize].propose(command).await
-                    }
+        match group_id {
+            GroupId::Meta => self.meta.propose(command).await,
+            GroupId::DataUserShard(shard) => {
+                if shard >= self.user_shards_count {
+                    return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
                 }
+                self.user_data_shards[shard as usize].propose(command).await
             }
-            ReplicationMode::All => {
-                // Strong consistency: wait for ALL nodes
-                let total = self.total_nodes();
-                let timeout = self.config.replication_timeout;
-                match group_id {
-                    GroupId::Meta => self.meta.propose_with_all_replicas(command, timeout, total).await,
-                    GroupId::DataUserShard(shard) => {
-                        if shard >= self.user_shards_count {
-                            return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
-                        }
-                        self.user_data_shards[shard as usize].propose_with_all_replicas(command, timeout, total).await
-                    }
-                    GroupId::DataSharedShard(shard) => {
-                        if shard >= self.shared_shards_count {
-                            return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
-                        }
-                        self.shared_data_shards[shard as usize].propose_with_all_replicas(command, timeout, total).await
-                    }
+            GroupId::DataSharedShard(shard) => {
+                if shard >= self.shared_shards_count {
+                    return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
                 }
+                self.shared_data_shards[shard as usize].propose(command).await
             }
         }
     }
@@ -657,7 +687,7 @@ impl RaftManager {
     pub fn set_meta_applier(&self, applier: std::sync::Arc<dyn crate::applier::MetaApplier>) {
         let sm = self.meta.storage().state_machine();
         sm.set_applier(applier);
-        log::info!("RaftManager: Meta applier registered for metadata replication");
+        log::debug!("RaftManager: Meta applier registered for metadata replication");
     }
 
     /// Set the user data applier for persisting per-user data to providers
@@ -670,7 +700,7 @@ impl RaftManager {
             sm.set_applier(applier.clone());
             log::debug!("RaftManager: User data applier set for shard {}", shard_id);
         }
-        log::info!(
+        log::debug!(
             "RaftManager: User data applier registered for {} shards",
             self.user_data_shards.len()
         );
@@ -686,7 +716,7 @@ impl RaftManager {
             sm.set_applier(applier.clone());
             log::debug!("RaftManager: Shared data applier set for shard {}", shard_id);
         }
-        log::info!(
+        log::debug!(
             "RaftManager: Shared data applier registered for {} shards",
             self.shared_data_shards.len()
         );
@@ -841,12 +871,7 @@ impl RaftManager {
         Ok(())
     }
     
-    /// Get the replication mode (Quorum or All)
-    pub fn replication_mode(&self) -> ReplicationMode {
-        self.config.replication_mode
-    }
-    
-    /// Get the replication timeout
+    /// Get the replication timeout (used for learner catchup)
     pub fn replication_timeout(&self) -> Duration {
         self.config.replication_timeout
     }
@@ -936,10 +961,9 @@ mod tests {
         let manager = RaftManager::new(test_config());
         
         // Before start, no group should have a leader
-        assert!(!manager.is_leader(GroupId::MetaSystem));
-        assert!(!manager.is_leader(GroupId::MetaUsers));
-        assert!(!manager.is_leader(GroupId::MetaJobs));
+        assert!(!manager.is_leader(GroupId::Meta));
         assert!(!manager.is_leader(GroupId::DataUserShard(0)));
+        assert!(!manager.is_leader(GroupId::DataSharedShard(0)));
     }
 
     #[test]
@@ -947,7 +971,7 @@ mod tests {
         let manager = RaftManager::new(test_config());
         
         // Before start, no leader should be known
-        assert!(manager.current_leader(GroupId::MetaSystem).is_none());
-        assert!(manager.current_leader(GroupId::MetaUsers).is_none());
+        assert!(manager.current_leader(GroupId::Meta).is_none());
+        assert!(manager.current_leader(GroupId::DataUserShard(0)).is_none());
     }
 }

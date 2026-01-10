@@ -45,16 +45,14 @@ async fn test_single_node_cluster_startup() {
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     
     // Check that we're the leader for all groups (single node = always leader)
-    assert!(manager.is_leader(GroupId::MetaSystem));
-    assert!(manager.is_leader(GroupId::MetaUsers));
-    assert!(manager.is_leader(GroupId::MetaJobs));
+    assert!(manager.is_leader(GroupId::Meta));
     assert!(manager.is_leader(GroupId::DataUserShard(0)));
     assert!(manager.is_leader(GroupId::DataSharedShard(0)));
     
     println!("✅ Single-node cluster started successfully!");
     println!("   - Node ID: {}", manager.node_id());
     println!("   - Groups: {}", manager.group_count());
-    println!("   - Is MetaSystem leader: {}", manager.is_leader(GroupId::MetaSystem));
+    println!("   - Is Meta leader: {}", manager.is_leader(GroupId::Meta));
 }
 
 /// Test RaftExecutor with running cluster
@@ -81,7 +79,7 @@ async fn test_raft_executor_with_cluster() {
     // Verify executor state
     assert!(executor.is_cluster_mode());
     assert_eq!(executor.node_id(), NodeId::new(1));
-    assert!(executor.is_leader(GroupId::MetaSystem).await);
+    assert!(executor.is_leader(GroupId::Meta).await);
     
     println!("✅ RaftExecutor ready for cluster operations");
 }

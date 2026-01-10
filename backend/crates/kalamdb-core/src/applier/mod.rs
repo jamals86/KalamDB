@@ -1,12 +1,69 @@
-//! Applier implementations for Raft state machine persistence
+//! Unified Command Applier (Phase 20 - Single Code Path)
 //!
-//! These implementations connect the Raft state machines to the actual
-//! provider infrastructure, enabling replicated state across all nodes.
+//! All commands flow through Raft consensus, even in single-node mode.
+//! This ensures the same code path is tested in both deployment modes.
+//!
+//! ## Architecture
+//!
+//! ```text
+//! SQL Handler
+//!      │
+//!      ▼
+//! UnifiedApplier (trait)
+//!      │
+//!      ▼
+//! RaftApplier (only implementation)
+//!      │
+//!      ├── Meta commands (DDL, users) → Meta Raft Group
+//!      ├── User data → User Data Shards (by user_id)
+//!      └── Shared data → Shared Data Shard
+//!      │
+//!      ▼
+//! Raft Consensus (even single-node)
+//!      │
+//!      ▼
+//! State Machine Apply
+//!      │
+//!      ▼
+//! CommandExecutorImpl (actual mutations)
+//! ```
+//!
+//! ## Key Invariants
+//!
+//! 1. **Single Mutation Point**: All mutations in `CommandExecutorImpl`
+//! 2. **No Code Duplication**: Logic exists in exactly one place
+//! 3. **No Mode Branching**: Same code for single-node and cluster
+//! 4. **OpenRaft Quorum**: We trust OpenRaft for consensus
 
-mod provider_meta_applier;
-mod provider_shared_data_applier;
-mod provider_user_data_applier;
+mod applier;
+mod command;
+mod error;
+pub mod executor;
 
-pub use provider_meta_applier::ProviderMetaApplier;
-pub use provider_shared_data_applier::ProviderSharedDataApplier;
-pub use provider_user_data_applier::ProviderUserDataApplier;
+// Events module
+pub mod events;
+
+// Raft applier implementations (traits defined in kalamdb-raft)
+pub mod raft;
+
+// Re-exports
+pub use applier::{LeaderInfo, RaftApplier, UnifiedApplier};
+pub use command::{CommandResult, CommandType, Validate};
+pub use error::ApplierError;
+pub use executor::CommandExecutorImpl;
+
+// Re-export Raft appliers
+pub use raft::{ProviderMetaApplier, ProviderSharedDataApplier, ProviderUserDataApplier};
+
+use std::sync::Arc;
+
+/// Create the unified Raft applier
+///
+/// The applier is created without AppContext - call `set_app_context()`
+/// after AppContext is fully initialized.
+///
+/// All commands flow through Raft (even in single-node mode).
+pub fn create_applier() -> Arc<dyn UnifiedApplier> {
+    log::debug!("Creating RaftApplier (unified Raft mode)");
+    Arc::new(RaftApplier::new())
+}

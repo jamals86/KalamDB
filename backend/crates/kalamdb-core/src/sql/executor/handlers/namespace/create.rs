@@ -12,7 +12,7 @@ use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::catalog::MemorySchemaProvider;
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::{NamespaceId, UserId};
 use kalamdb_commons::system::Namespace;
 use kalamdb_sql::ddl::CreateNamespaceStatement;
 use std::sync::Arc;
@@ -104,7 +104,7 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         // In cluster mode, route through executor for Raft replication
         // In standalone mode, the executor calls the provider directly
         let executor = self.app_context.executor();
-        let created_by = Some(context.user_id.as_str().to_string());
+        let created_by = Some(UserId::new(context.user_id.as_str()));
         let cmd = kalamdb_raft::MetaCommand::CreateNamespace {
             namespace_id: namespace_id.clone(),
             created_by,

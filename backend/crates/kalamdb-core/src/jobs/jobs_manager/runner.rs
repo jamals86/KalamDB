@@ -3,8 +3,10 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::JobDecision;
 use crate::jobs::{HealthMonitor, StreamEvictionScheduler};
+use crate::jobs::leader_guard::LeaderOnlyJobGuard;
 use kalamdb_commons::system::{Job, JobFilter, JobSortField, SortOrder};
 use kalamdb_commons::JobStatus;
+use kalamdb_raft::GroupId;
 use tokio::time::{sleep, Duration, Instant};
 
 impl JobsManager {
@@ -18,11 +20,31 @@ impl JobsManager {
             .into_kalamdb_error("Failed to update job")
     }
 
+    /// Check if this node should process jobs (leader check for cluster mode)
+    ///
+    /// In standalone mode, always returns true.
+    /// In cluster mode, only the leader of the Meta group processes jobs.
+    async fn should_process_jobs(&self) -> bool {
+        let app_ctx = self.get_attached_app_context();
+        
+        // Check if we're in cluster mode
+        if !app_ctx.executor().is_cluster_mode() {
+            // Standalone mode - always process jobs
+            return true;
+        }
+        
+        // Cluster mode - only leader processes jobs
+        app_ctx.executor().is_leader(GroupId::Meta).await
+    }
+
     /// Run job processing loop
     ///
     /// Continuously polls for queued jobs and executes them using registered executors.
     /// Implements idempotency checks, retry logic with exponential backoff, and crash recovery.
     /// Also periodically checks for stream tables requiring TTL eviction.
+    ///
+    /// **Leader-Only Execution**: In cluster mode, only the leader node executes jobs.
+    /// Follower nodes will skip job processing and wait for leadership changes.
     ///
     /// # Arguments
     /// * `max_concurrent` - Maximum number of concurrent jobs to run
@@ -50,12 +72,43 @@ impl JobsManager {
         let eviction_interval_secs = app_context.config().stream.eviction_interval_seconds;
         let stream_eviction_interval = Duration::from_secs(eviction_interval_secs);
         let mut last_stream_eviction = Instant::now();
+        
+        // Leadership check interval (for cluster mode)
+        let leadership_check_interval = Duration::from_secs(1);
+        let mut last_leadership_check = Instant::now();
+        let mut was_leader = false;
 
         loop {
             // Check for shutdown signal (lock-free atomic check)
             if self.shutdown.load(std::sync::atomic::Ordering::Acquire) {
                 log::info!("Shutdown signal received, stopping job loop");
                 break;
+            }
+
+            // Check leadership status (for cluster mode)
+            let is_leader = if last_leadership_check.elapsed() >= leadership_check_interval {
+                last_leadership_check = Instant::now();
+                let should_process = self.should_process_jobs().await;
+                
+                // Log leadership transitions
+                if should_process && !was_leader {
+                    log::info!("[JobLoop] This node became leader - starting job processing");
+                    // Perform leader failover recovery
+                    self.handle_leader_failover().await;
+                } else if !should_process && was_leader {
+                    log::info!("[JobLoop] This node lost leadership - pausing job processing");
+                }
+                
+                was_leader = should_process;
+                should_process
+            } else {
+                was_leader
+            };
+
+            // Skip job processing if not leader in cluster mode
+            if !is_leader {
+                sleep(Duration::from_millis(500)).await;
+                continue;
             }
 
             // Periodic health metrics logging
@@ -67,7 +120,7 @@ impl JobsManager {
                 last_health_check = Instant::now();
             }
 
-            // Periodic stream eviction job creation
+            // Periodic stream eviction job creation (leader-only)
             if eviction_interval_secs > 0
                 && last_stream_eviction.elapsed() >= stream_eviction_interval
             {
@@ -262,5 +315,51 @@ impl JobsManager {
         }
 
         Ok(())
+    }
+
+    /// Handle leader failover by recovering orphaned jobs
+    ///
+    /// Called when this node becomes the leader in cluster mode.
+    async fn handle_leader_failover(&self) {
+        use std::collections::HashSet;
+        use crate::jobs::leader_failover::LeaderFailoverHandler;
+        
+        let app_ctx = self.get_attached_app_context();
+        
+        // Get active nodes from cluster info
+        let cluster_info = app_ctx.executor().get_cluster_info();
+        let active_nodes: HashSet<_> = cluster_info
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.status, kalamdb_raft::NodeStatus::Active))
+            .map(|n| n.node_id.clone())
+            .collect();
+        
+        // Create leader guard
+        let job_guard = LeaderOnlyJobGuard::new(app_ctx.executor().clone());
+        
+        // Create failover handler
+        let failover_handler = LeaderFailoverHandler::new(
+            job_guard,
+            self.jobs_provider.clone(),
+            active_nodes,
+        );
+        
+        // Perform failover recovery
+        match failover_handler.on_become_leader().await {
+            Ok(report) => {
+                if !report.is_empty() {
+                    log::info!(
+                        "[JobLoop] Failover recovery: {} requeued, {} failed, {} continued",
+                        report.requeued.len(),
+                        report.marked_failed.len(),
+                        report.continued.len()
+                    );
+                }
+            }
+            Err(e) => {
+                log::error!("[JobLoop] Failover recovery failed: {}", e);
+            }
+        }
     }
 }

@@ -14,7 +14,6 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use kalamdb_commons::models::{StorageId, TableId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::JobType;
-use kalamdb_raft::MetaCommand;
 use kalamdb_sql::ddl::DropTableStatement;
 use std::sync::Arc;
 
@@ -501,24 +500,12 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         // Mark table as deleted in SchemaRegistry (soft delete)
         registry.delete_table_definition(&table_id)?;
 
-        if self.app_context.executor().is_cluster_mode() {
-            let cmd = MetaCommand::DropTable {
-                table_id: table_id.clone(),
-            };
-            self.app_context
-                .executor()
-                .execute_meta(cmd)
-                .await
-                .map_err(|e| {
-                    KalamDbError::ExecutionError(format!(
-                        "Failed to replicate table drop via executor: {}",
-                        e
-                    ))
-                })?;
-        } else {
-            let tables_provider = self.app_context.system_tables().tables();
-            tables_provider.delete_table(&table_id)?;
-        }
+        // Delegate to unified applier (handles standalone vs cluster internally)
+        self.app_context
+            .applier()
+            .drop_table(table_id.clone())
+            .await
+            .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
 
         // Create cleanup job for async data removal (with retry on failure)
         let params = CleanupParams {

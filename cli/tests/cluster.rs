@@ -316,6 +316,8 @@ mod cluster_common {
 mod cluster_test_consistency;
 #[path = "cluster/cluster_test_failover.rs"]
 mod cluster_test_failover;
+#[path = "cluster/cluster_test_snapshot.rs"]
+mod cluster_test_snapshot;
 #[path = "cluster/cluster_test_data_digest.rs"]
 mod cluster_test_data_digest;
 #[path = "cluster/cluster_test_replication.rs"]
@@ -336,3 +338,5 @@ mod cluster_test_multi_node_smoke;
 mod cluster_test_final_consistency;
 #[path = "cluster/cluster_test_node_rejoin.rs"]
 mod cluster_test_node_rejoin;
+#[path = "cluster/cluster_test_leader_jobs.rs"]
+mod cluster_test_leader_jobs;

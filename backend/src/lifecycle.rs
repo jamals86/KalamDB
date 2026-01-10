@@ -93,53 +93,55 @@ pub async fn bootstrap(
     // Log runtime snapshot (CPU/memory/threads) using shared sysinfo helper
     app_context.log_runtime_metrics();
 
-    // Start the executor (Raft cluster in cluster mode, no-op in standalone)
+    // Start the executor (always Raft - single-node or cluster)
     let phase_start = std::time::Instant::now();
-    if app_context.executor().is_cluster_mode() {
+    let is_cluster_mode = config.cluster.is_some();
+    
+    if is_cluster_mode {
+        // Multi-node cluster mode
+        let cluster_config = config.cluster.as_ref().unwrap();
         info!("╔═══════════════════════════════════════════════════════════════════╗");
-        info!("║               Starting Raft Cluster                               ║");
+        info!("║                     Multi-Node Cluster Mode                       ║");
         info!("╚═══════════════════════════════════════════════════════════════════╝");
-        info!("Node ID: {}", app_context.executor().node_id());
-        info!("Starting Raft networking and group initialization...");
+        info!("Cluster: {} | Node: {} | Peers: {}", 
+            cluster_config.cluster_id, cluster_config.node_id, cluster_config.peers.len());
+        info!("Shards: {} user, {} shared", 
+            cluster_config.user_shards, cluster_config.shared_shards);
+        
+        debug!("RPC: {} | API: {}", cluster_config.rpc_addr, cluster_config.api_addr);
+        debug!("Heartbeat: {}ms | Election timeout: {:?}ms", 
+            cluster_config.heartbeat_interval_ms, cluster_config.election_timeout_ms);
+        for peer in &cluster_config.peers {
+            debug!("  Peer {}: rpc={}, api={}", peer.node_id, peer.rpc_addr, peer.api_addr);
+        }
         
         app_context.executor().start().await
             .map_err(|e| anyhow::anyhow!("Failed to start Raft cluster: {}", e))?;
-        info!("✓ Raft networking started successfully");
         
-        // Auto-bootstrap: The node with the lowest node_id among available nodes becomes the bootstrap node.
-        // For single-node clusters or when this is node_id=1, always bootstrap.
-        // For multi-node clusters, node_id=1 is the designated bootstrap node.
-        let should_bootstrap = config.cluster.as_ref().map(|c| {
-            // Bootstrap if: single-node mode (no peers) OR this is node_id=1 (designated bootstrap)
-            c.peers.is_empty() || c.node_id == 1
-        }).unwrap_or(false);
+        // Auto-bootstrap: node_id=1 is the designated bootstrap node
+        let should_bootstrap = cluster_config.peers.is_empty() || cluster_config.node_id == 1;
         
         if should_bootstrap {
-            let has_peers = config.cluster.as_ref().map(|c| !c.peers.is_empty()).unwrap_or(false);
-            if has_peers {
-                info!("Node {} is the designated bootstrap node - initializing cluster with peers", 
-                    config.cluster.as_ref().map(|c| c.node_id).unwrap_or(1));
-            } else {
-                info!("No peers configured - initializing as single-node cluster");
+            if !cluster_config.peers.is_empty() {
+                info!("Node {} is bootstrap node - initializing cluster", cluster_config.node_id);
             }
             app_context.executor().initialize_cluster().await
                 .map_err(|e| anyhow::anyhow!("Failed to initialize cluster: {}", e))?;
-            info!("✓ Cluster initialized successfully");
         } else {
-            let peer_count = config.cluster.as_ref().map(|c| c.peers.len()).unwrap_or(0);
-            let node_id = config.cluster.as_ref().map(|c| c.node_id).unwrap_or(0);
-            info!("Node {} joining cluster with {} peers - waiting for leader (node_id=1 is bootstrap)", node_id, peer_count);
-            // Non-bootstrap nodes wait for the bootstrap node (node_id=1) to initialize the cluster,
-            // then they will be added as learners and promoted to voters
+            info!("Node {} waiting for bootstrap node (node_id=1)", cluster_config.node_id);
         }
         
-        info!(
-            "✓ Raft cluster started ({:.2}ms)",
-            phase_start.elapsed().as_secs_f64() * 1000.0
-        );
-        info!("───────────────────────────────────────────────────────────────────");
+        info!("✓ Raft cluster started ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
     } else {
-        info!("Standalone mode - no Raft cluster to start");
+        // Single-node mode (lightweight Raft)
+        debug!("Single-node mode - initializing lightweight Raft");
+        
+        app_context.executor().start().await
+            .map_err(|e| anyhow::anyhow!("Failed to start Raft: {}", e))?;
+        app_context.executor().initialize_cluster().await
+            .map_err(|e| anyhow::anyhow!("Failed to initialize single-node Raft: {}", e))?;
+        
+        debug!("✓ Single-node Raft initialized ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
     }
 
     // Manifest cache uses lazy loading via get_or_load() - no pre-loading needed

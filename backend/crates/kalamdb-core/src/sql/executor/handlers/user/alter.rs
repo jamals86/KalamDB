@@ -89,18 +89,13 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
         }
 
         updated.updated_at = chrono::Utc::now().timestamp_millis();
-        if self.app_context.executor().is_cluster_mode() {
-            let cmd = kalamdb_raft::MetaCommand::UpdateUser { user: updated.clone() };
-            self.app_context
-                .executor()
-                .execute_meta(cmd)
-                .await
-                .map_err(|e| {
-                    KalamDbError::ExecutionError(format!("Failed to update user via executor: {}", e))
-                })?;
-        } else {
-            users.update_user(updated)?;
-        }
+
+        // Delegate to unified applier (handles standalone vs cluster internally)
+        self.app_context
+            .applier()
+            .update_user(updated)
+            .await
+            .map_err(|e| KalamDbError::ExecutionError(format!("ALTER USER failed: {}", e)))?;
 
         // Log DDL operation (with password redaction)
         use crate::sql::executor::helpers::audit;

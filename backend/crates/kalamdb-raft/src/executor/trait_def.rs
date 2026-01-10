@@ -19,7 +19,7 @@ pub struct ClusterNodeInfo {
     pub node_id: NodeId,
     /// Node role derived from OpenRaft ServerState
     pub role: NodeRole,
-    /// Node status (active, offline, joining, unknown)
+    /// Node status (active, offline, joining, unknown, catching_up)
     pub status: NodeStatus,
     /// RPC address for Raft communication
     pub rpc_addr: String,
@@ -27,7 +27,7 @@ pub struct ClusterNodeInfo {
     pub api_addr: String,
     /// Whether this is the current node
     pub is_self: bool,
-    /// Whether this node is leader for MetaSystem group
+    /// Whether this node is leader for Meta group
     pub is_leader: bool,
     /// Number of groups this node leads (for multi-group Raft)
     pub groups_leading: u32,
@@ -37,6 +37,12 @@ pub struct ClusterNodeInfo {
     pub current_term: Option<u64>,
     /// Last applied log index (for this node if is_self, otherwise from replication metrics)
     pub last_applied_log: Option<u64>,
+    /// Leader's last log index (target for catchup)
+    pub leader_last_log_index: Option<u64>,
+    /// Snapshot log index (used during snapshot transfer catchup)
+    pub snapshot_index: Option<u64>,
+    /// Catchup progress as percentage (0-100), None if not catching up
+    pub catchup_progress_pct: Option<u8>,
     /// Milliseconds since last heartbeat response (only for leader viewing followers)
     pub millis_since_last_heartbeat: Option<u64>,
     /// Replication lag in log entries (only for leader viewing followers)
@@ -70,28 +76,27 @@ pub struct ClusterInfo {
     pub millis_since_quorum_ack: Option<u64>,
 }
 
-/// Unified interface for executing commands in both standalone and cluster modes.
+/// Unified interface for executing commands (Phase 20 - Unified Raft Executor).
 ///
-/// This trait eliminates the need for if/else checks throughout the codebase.
-/// Handlers simply call `ctx.executor().execute_*()` and the correct implementation
-/// is invoked based on the server's configuration.
+/// This trait provides a single interface for all command execution.
+/// Both single-node and cluster modes use RaftExecutor, ensuring
+/// consistent behavior and testing.
 ///
-/// # Implementations
+/// # Implementation
 ///
-/// - [`DirectExecutor`]: Standalone mode - calls providers directly, zero overhead
-/// - `RaftExecutor`: Cluster mode - routes commands through Raft consensus
+/// - [`RaftExecutor`]: The only implementation - handles both single-node and cluster modes
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// // In a DDL handler:
 /// async fn create_table(ctx: &AppContext, table: TableDefinition) -> Result<()> {
-///     let cmd = SystemCommand::CreateTable { 
+///     let cmd = MetaCommand::CreateTable { 
 ///         table_id: table.id.clone(),
-///         table_type: "user".to_string(),
+///         table_type: TableType::User,
 ///         schema_json: serde_json::to_string(&table)?,
 ///     };
-///     ctx.executor().execute_system(cmd).await?;
+///     ctx.executor().execute_meta(cmd).await?;
 ///     Ok(())
 /// }
 /// ```
@@ -148,4 +153,222 @@ pub trait CommandExecutor: Send + Sync + Debug {
     /// In standalone mode, this is a no-op.
     /// In cluster mode, this stops all Raft groups and optionally transfers leadership.
     async fn shutdown(&self) -> Result<()>;
+    
+    /// Downcast to concrete type (for accessing implementation-specific methods)
+    ///
+    /// This is used sparingly during initialization to wire up appliers.
+    /// Regular operation should use trait methods only.
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cluster_node_info_construction() {
+        let node_info = ClusterNodeInfo {
+            node_id: NodeId::from(1),
+            role: NodeRole::Leader,
+            status: NodeStatus::Active,
+            rpc_addr: "127.0.0.1:9081".to_string(),
+            api_addr: "http://127.0.0.1:8081".to_string(),
+            is_self: true,
+            is_leader: true,
+            groups_leading: 14,
+            total_groups: 14,
+            current_term: Some(1),
+            last_applied_log: Some(100),
+            leader_last_log_index: Some(100),
+            snapshot_index: None,
+            catchup_progress_pct: None,
+            millis_since_last_heartbeat: None,
+            replication_lag: None,
+        };
+
+        assert_eq!(node_info.node_id, NodeId::from(1));
+        assert!(matches!(node_info.role, NodeRole::Leader));
+        assert!(node_info.is_self);
+        assert_eq!(node_info.groups_leading, 14);
+    }
+
+    #[test]
+    fn test_cluster_node_info_follower() {
+        let follower = ClusterNodeInfo {
+            node_id: NodeId::from(2),
+            role: NodeRole::Follower,
+            status: NodeStatus::Active,
+            rpc_addr: "127.0.0.1:9082".to_string(),
+            api_addr: "http://127.0.0.1:8082".to_string(),
+            is_self: false,
+            is_leader: false,
+            groups_leading: 0,
+            total_groups: 14,
+            current_term: Some(1),
+            last_applied_log: Some(95),
+            leader_last_log_index: Some(100),
+            snapshot_index: None,
+            catchup_progress_pct: None,
+            millis_since_last_heartbeat: Some(50),
+            replication_lag: Some(5),
+        };
+
+        assert_eq!(follower.node_id, NodeId::from(2));
+        assert!(matches!(follower.role, NodeRole::Follower));
+        assert!(!follower.is_leader);
+        assert_eq!(follower.replication_lag, Some(5));
+        assert_eq!(follower.millis_since_last_heartbeat, Some(50));
+    }
+
+    #[test]
+    fn test_cluster_info_construction() {
+        let cluster_info = ClusterInfo {
+            cluster_id: "test-cluster".to_string(),
+            current_node_id: NodeId::from(1),
+            is_cluster_mode: true,
+            nodes: vec![],
+            total_groups: 14,
+            user_shards: 12,
+            shared_shards: 1,
+            current_term: 5,
+            last_log_index: Some(250),
+            last_applied: Some(250),
+            millis_since_quorum_ack: Some(20),
+        };
+
+        assert_eq!(cluster_info.cluster_id, "test-cluster");
+        assert_eq!(cluster_info.current_node_id, NodeId::from(1));
+        assert!(cluster_info.is_cluster_mode);
+        assert_eq!(cluster_info.total_groups, 14);
+        assert_eq!(cluster_info.user_shards, 12);
+        assert_eq!(cluster_info.shared_shards, 1);
+    }
+
+    #[test]
+    fn test_cluster_info_standalone_mode() {
+        let standalone = ClusterInfo {
+            cluster_id: "standalone".to_string(),
+            current_node_id: NodeId::from(0),
+            is_cluster_mode: false,
+            nodes: vec![],
+            total_groups: 0,
+            user_shards: 0,
+            shared_shards: 0,
+            current_term: 0,
+            last_log_index: None,
+            last_applied: None,
+            millis_since_quorum_ack: None,
+        };
+
+        assert!(!standalone.is_cluster_mode);
+        assert_eq!(standalone.total_groups, 0);
+    }
+
+    #[test]
+    fn test_node_status_variants() {
+        // Ensure all NodeStatus variants can be created
+        let _active = NodeStatus::Active;
+        let _offline = NodeStatus::Offline;
+        let _joining = NodeStatus::Joining;
+        let _catching_up = NodeStatus::CatchingUp;
+        let _unknown = NodeStatus::Unknown;
+    }
+
+    #[test]
+    fn test_node_role_variants() {
+        // Ensure all NodeRole variants can be created
+        let _leader = NodeRole::Leader;
+        let _follower = NodeRole::Follower;
+        let _candidate = NodeRole::Candidate;
+        let _learner = NodeRole::Learner;
+    }
+
+    #[test]
+    fn test_cluster_node_info_clone() {
+        let original = ClusterNodeInfo {
+            node_id: NodeId::from(3),
+            role: NodeRole::Learner,
+            status: NodeStatus::Joining,
+            rpc_addr: "127.0.0.1:9083".to_string(),
+            api_addr: "http://127.0.0.1:8083".to_string(),
+            is_self: false,
+            is_leader: false,
+            groups_leading: 0,
+            total_groups: 14,
+            current_term: Some(2),
+            last_applied_log: Some(10),
+            leader_last_log_index: Some(100),
+            snapshot_index: Some(50),
+            catchup_progress_pct: Some(50),
+            millis_since_last_heartbeat: Some(100),
+            replication_lag: Some(90),
+        };
+
+        let cloned = original.clone();
+        assert_eq!(cloned.node_id, original.node_id);
+        assert_eq!(cloned.catchup_progress_pct, Some(50));
+        assert_eq!(cloned.snapshot_index, Some(50));
+    }
+
+    #[test]
+    fn test_cluster_info_with_multiple_nodes() {
+        let nodes = vec![
+            ClusterNodeInfo {
+                node_id: NodeId::from(1),
+                role: NodeRole::Leader,
+                status: NodeStatus::Active,
+                rpc_addr: "127.0.0.1:9081".to_string(),
+                api_addr: "http://127.0.0.1:8081".to_string(),
+                is_self: true,
+                is_leader: true,
+                groups_leading: 14,
+                total_groups: 14,
+                current_term: Some(3),
+                last_applied_log: Some(200),
+                leader_last_log_index: Some(200),
+                snapshot_index: None,
+                catchup_progress_pct: None,
+                millis_since_last_heartbeat: None,
+                replication_lag: None,
+            },
+            ClusterNodeInfo {
+                node_id: NodeId::from(2),
+                role: NodeRole::Follower,
+                status: NodeStatus::Active,
+                rpc_addr: "127.0.0.1:9082".to_string(),
+                api_addr: "http://127.0.0.1:8082".to_string(),
+                is_self: false,
+                is_leader: false,
+                groups_leading: 0,
+                total_groups: 14,
+                current_term: Some(3),
+                last_applied_log: Some(198),
+                leader_last_log_index: Some(200),
+                snapshot_index: None,
+                catchup_progress_pct: None,
+                millis_since_last_heartbeat: Some(25),
+                replication_lag: Some(2),
+            },
+        ];
+
+        let cluster_info = ClusterInfo {
+            cluster_id: "multi-node".to_string(),
+            current_node_id: NodeId::from(1),
+            is_cluster_mode: true,
+            nodes,
+            total_groups: 14,
+            user_shards: 12,
+            shared_shards: 1,
+            current_term: 3,
+            last_log_index: Some(200),
+            last_applied: Some(200),
+            millis_since_quorum_ack: Some(10),
+        };
+
+        assert_eq!(cluster_info.nodes.len(), 2);
+        assert_eq!(cluster_info.nodes[0].node_id, NodeId::from(1));
+        assert_eq!(cluster_info.nodes[1].node_id, NodeId::from(2));
+        assert!(cluster_info.nodes[0].is_leader);
+        assert!(!cluster_info.nodes[1].is_leader);
+    }
 }

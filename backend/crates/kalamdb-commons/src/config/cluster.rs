@@ -21,12 +21,11 @@ use serde::{Deserialize, Serialize};
 /// node_id = 1
 /// rpc_addr = "0.0.0.0:9100"
 /// api_addr = "0.0.0.0:8080"
-/// user_shards = 32
+/// user_shards = 12
 /// shared_shards = 1
 /// heartbeat_interval_ms = 50
 /// election_timeout_ms = [150, 300]
 /// snapshot_threshold = 10000
-/// replication_mode = "quorum"  # or "all"
 /// replication_timeout_ms = 5000
 ///
 /// [[cluster.peers]]
@@ -58,7 +57,7 @@ pub struct ClusterConfig {
     #[serde(default)]
     pub peers: Vec<PeerConfig>,
     
-    /// Number of user data shards (default: 32)
+    /// Number of user data shards (default: 12)
     /// Each shard is a separate Raft group for user table data.
     #[serde(default = "default_user_shards")]
     pub user_shards: u32,
@@ -77,17 +76,29 @@ pub struct ClusterConfig {
     #[serde(default = "default_election_timeout_ms")]
     pub election_timeout_ms: (u64, u64),
     
-    /// Maximum entries per Raft snapshot (default: 10000)
-    #[serde(default = "default_snapshot_threshold")]
-    pub snapshot_threshold: u64,
+    /// Snapshot policy (default: "LogsSinceLast(1000)")
+    /// Options:
+    /// - "LogsSinceLast(N)" - Snapshot after N log entries since last snapshot
+    /// - "Never" - Disable automatic snapshots (not recommended for production)
+    /// 
+    /// Lower values (e.g., 100) create snapshots more frequently:
+    ///   + Faster follower catchup (smaller log to replay)
+    ///   + Smaller memory footprint
+    ///   - More disk I/O
+    /// Higher values (e.g., 10000) reduce snapshot frequency:
+    ///   + Less disk I/O
+    ///   - Slower follower catchup
+    ///   - Larger memory footprint
+    #[serde(default = "default_snapshot_policy")]
+    pub snapshot_policy: String,
     
-    /// Replication mode: "quorum" (fast, default) or "all" (strong consistency)
-    /// - quorum: ACK after majority commits (may have brief inconsistency on followers)
-    /// - all: ACK only after ALL nodes commit (guarantees no stale reads anywhere)
-    #[serde(default = "default_replication_mode")]
-    pub replication_mode: String,
+    /// Maximum number of snapshots to keep (default: 3)
+    /// Older snapshots are automatically deleted. Set to 0 to keep all snapshots.
+    /// For single-node, you may want to set this to 1 to minimize disk usage.
+    #[serde(default = "default_max_snapshots_to_keep")]
+    pub max_snapshots_to_keep: u32,
     
-    /// Timeout in milliseconds to wait for all replicas when replication_mode = "all"
+    /// Timeout in milliseconds to wait for learner catchup during cluster membership changes
     #[serde(default = "default_replication_timeout_ms")]
     pub replication_timeout_ms: u64,
 }
@@ -101,30 +112,6 @@ pub struct PeerConfig {
     pub rpc_addr: String,
     /// Peer's API address for client requests (e.g., "10.0.0.2:8080")
     pub api_addr: String,
-}
-
-/// Replication mode for command acknowledgment
-///
-/// Controls when the leader acknowledges a write to the client:
-/// - `Quorum`: ACK after majority of nodes commit (fast, default Raft behavior)
-/// - `All`: ACK only after ALL nodes have committed (strong consistency, slower)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ReplicationMode {
-    /// Standard Raft quorum (majority) - fast but may have stale reads on followers
-    #[default]
-    Quorum,
-    /// Wait for ALL nodes to commit - slower but guarantees no stale state
-    All,
-}
-
-impl std::fmt::Display for ReplicationMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ReplicationMode::Quorum => write!(f, "quorum"),
-            ReplicationMode::All => write!(f, "all"),
-        }
-    }
 }
 
 // Default value functions for serde
@@ -142,7 +129,7 @@ fn default_api_addr() -> String {
 }
 
 fn default_user_shards() -> u32 {
-    32
+    12
 }
 
 fn default_shared_shards() -> u32 {
@@ -157,19 +144,46 @@ fn default_election_timeout_ms() -> (u64, u64) {
     (500, 1000)
 }
 
-fn default_snapshot_threshold() -> u64 {
-    10000
+fn default_snapshot_policy() -> String {
+    "LogsSinceLast(1000)".to_string()
 }
 
-fn default_replication_mode() -> String {
-    "quorum".to_string()
+fn default_max_snapshots_to_keep() -> u32 {
+    3
 }
 
 fn default_replication_timeout_ms() -> u64 {
-    5000 // 5 seconds
+    5000 // 5 seconds for learner catchup
 }
 
 impl ClusterConfig {
+    /// Parse snapshot policy string into OpenRaft SnapshotPolicy
+    /// 
+    /// Supported formats:
+    /// - "LogsSinceLast(N)" - Snapshot after N log entries (e.g., "LogsSinceLast(100)")
+    /// - "Never" - Disable automatic snapshots
+    pub fn parse_snapshot_policy(policy_str: &str) -> Result<openraft::SnapshotPolicy, String> {
+        let trimmed = policy_str.trim();
+        
+        if trimmed.eq_ignore_ascii_case("never") {
+            return Ok(openraft::SnapshotPolicy::Never);
+        }
+        
+        // Parse LogsSinceLast(N)
+        if let Some(inner) = trimmed.strip_prefix("LogsSinceLast(") {
+            if let Some(num_str) = inner.strip_suffix(")") {
+                let num = num_str.trim().parse::<u64>()
+                    .map_err(|e| format!("Invalid number in LogsSinceLast: {}", e))?;
+                return Ok(openraft::SnapshotPolicy::LogsSinceLast(num));
+            }
+        }
+        
+        Err(format!(
+            "Invalid snapshot policy: '{}'. Expected 'LogsSinceLast(N)' or 'Never'",
+            policy_str
+        ))
+    }
+    
     /// Check if this configuration is valid
     pub fn validate(&self) -> Result<(), String> {
         if self.cluster_id.is_empty() {
@@ -244,8 +258,8 @@ mod tests {
             shared_shards: 1,
             heartbeat_interval_ms: 50,
             election_timeout_ms: (150, 300),
-            snapshot_threshold: 10000,
-            replication_mode: "quorum".to_string(),
+            snapshot_policy: "LogsSinceLast(1000)".to_string(),
+            max_snapshots_to_keep: 3,
             replication_timeout_ms: 5000,
         }
     }

@@ -7,7 +7,6 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::Role;
-use kalamdb_raft::MetaCommand;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
 
@@ -60,53 +59,28 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
             statement.table_type = effective_type;
         }
 
-        // Capture details for audit log before moving statement
+        // Capture details for audit log
         let namespace_id = statement.namespace_id.clone();
         let table_name = statement.table_name.clone();
         let table_type = statement.table_type;
+        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
 
-        // Delegate to helper function
-        let message = table_creation::create_table(
+        // Build TableDefinition (validate + build, no execution yet)
+        let table_def = table_creation::build_table_definition(
             self.app_context.clone(),
-            statement,
+            &statement,
             &context.user_id,
             context.user_role,
         )?;
 
-        // Create TableId for audit logging
-        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+        // Delegate to unified applier - pass raw parameters
+        let message = self
+            .app_context
+            .applier()
+            .create_table(table_id.clone(), table_type, table_def)
+            .await
+            .map_err(|e| KalamDbError::ExecutionError(format!("CREATE TABLE failed: {}", e)))?;
 
-        if self.app_context.executor().is_cluster_mode() {
-            let table_def = self
-                .app_context
-                .schema_registry()
-                .get_table_definition(&table_id)?
-                .ok_or_else(|| {
-                    KalamDbError::Other(format!(
-                        "Table definition missing for {} after creation",
-                        table_id
-                    ))
-                })?;
-            let schema_json = serde_json::to_string(table_def.as_ref()).map_err(|e| {
-                KalamDbError::Other(format!("Failed to serialize table definition: {}", e))
-            })?;
-            let cmd = MetaCommand::CreateTable {
-                table_id: table_id.clone(),
-                table_type,
-                schema_json,
-            };
-            self.app_context
-                .executor()
-                .execute_meta(cmd)
-                .await
-                .map_err(|e| {
-                    KalamDbError::ExecutionError(format!(
-                        "Failed to replicate table metadata via executor: {}",
-                        e
-                    ))
-                })?;
-        }
-        
         // Log DDL operation
         let audit_entry = audit::log_ddl_operation(
             context,

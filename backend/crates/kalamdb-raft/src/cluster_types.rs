@@ -38,8 +38,10 @@ pub enum NodeStatus {
     Active,
     /// Node is offline or unreachable
     Offline,
-    /// Node is joining the cluster (learner catching up)
+    /// Node is joining the cluster (learner being added)
     Joining,
+    /// Node is catching up with replication (dehydration in progress)
+    CatchingUp,
     /// Node status is unknown (no metrics available)
     Unknown,
 }
@@ -51,6 +53,7 @@ impl NodeStatus {
             "active" => NodeStatus::Active,
             "offline" => NodeStatus::Offline,
             "joining" => NodeStatus::Joining,
+            "catching_up" | "catchingup" => NodeStatus::CatchingUp,
             "unknown" => NodeStatus::Unknown,
             _ => NodeStatus::Unknown,
         }
@@ -62,6 +65,7 @@ impl NodeStatus {
             NodeStatus::Active => "active",
             NodeStatus::Offline => "offline",
             NodeStatus::Joining => "joining",
+            NodeStatus::CatchingUp => "catching_up",
             NodeStatus::Unknown => "unknown",
         }
     }
@@ -98,6 +102,8 @@ mod tests {
         assert_eq!(NodeStatus::from_str("ACTIVE"), NodeStatus::Active);
         assert_eq!(NodeStatus::from_str("offline"), NodeStatus::Offline);
         assert_eq!(NodeStatus::from_str("joining"), NodeStatus::Joining);
+        assert_eq!(NodeStatus::from_str("catching_up"), NodeStatus::CatchingUp);
+        assert_eq!(NodeStatus::from_str("catchingup"), NodeStatus::CatchingUp);
         assert_eq!(NodeStatus::from_str("unknown"), NodeStatus::Unknown);
         assert_eq!(NodeStatus::from_str("random"), NodeStatus::Unknown);
     }
@@ -107,6 +113,7 @@ mod tests {
         assert_eq!(NodeStatus::Active.as_str(), "active");
         assert_eq!(NodeStatus::Offline.as_str(), "offline");
         assert_eq!(NodeStatus::Joining.as_str(), "joining");
+        assert_eq!(NodeStatus::CatchingUp.as_str(), "catching_up");
         assert_eq!(NodeStatus::Unknown.as_str(), "unknown");
     }
 

@@ -11,6 +11,7 @@ import LiveQueries from "./pages/LiveQueries";
 import AuditLogs from "./pages/AuditLogs";
 import ServerLogs from "./pages/ServerLogs";
 import Settings from "./pages/Settings";
+import Cluster from "./pages/Cluster";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import Layout from "./components/layout/Layout";
 
@@ -36,6 +37,7 @@ function App() {
             <Route path="namespaces" element={<Namespaces />} />
             <Route path="jobs" element={<Jobs />} />
             <Route path="live-queries" element={<LiveQueries />} />
+            <Route path="cluster" element={<Cluster />} />
             <Route path="audit-logs" element={<AuditLogs />} />
             <Route path="server-logs" element={<ServerLogs />} />
             <Route path="settings" element={<Settings />} />

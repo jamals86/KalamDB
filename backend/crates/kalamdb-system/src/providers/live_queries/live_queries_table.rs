@@ -32,7 +32,8 @@ impl LiveQueriesTableSchema {
     /// - created_at: TimestampMillisecond
     /// - last_update: TimestampMillisecond
     /// - changes: Int64
-    /// - node: Utf8
+    /// - node_id: Int64 (server node ID)
+    /// - last_ping_at: TimestampMillisecond (for stale detection)
     ///
     /// Note: last_seq_id is tracked in-memory only (WebSocketSession), not persisted
     pub fn schema() -> SchemaRef {

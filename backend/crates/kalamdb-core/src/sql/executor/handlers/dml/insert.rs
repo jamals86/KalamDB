@@ -13,7 +13,6 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::providers::arrow_json_conversion::scalar_value_to_json;
-use crate::providers::base::BaseTableProvider;
 use crate::sql::executor::default_evaluator::evaluate_default;
 use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
@@ -29,7 +28,6 @@ use sqlparser::ast::{Expr, Statement, Values as SqlValues};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 use std::collections::{BTreeMap, HashSet};
-use tokio::task;
 
 /// Handler for INSERT statements
 ///
@@ -551,11 +549,8 @@ impl InsertHandler {
 
     /// Execute native INSERT using UserTableInsertHandler
     ///
-    /// **Cluster Mode**: Routes inserts through Raft consensus for replication
-    /// **Standalone Mode**: Executes directly on local providers
-    ///
-    /// **Performance Optimization** (standalone): For small batches (≤3 rows), 
-    /// executes inline to avoid spawn_blocking overhead.
+    /// **Phase 20**: Always routes through Raft consensus (single-node or cluster).
+    /// This ensures consistent behavior and eliminates mode-specific code paths.
     async fn execute_native_insert(
         &self,
         table_id: &kalamdb_commons::models::TableId,
@@ -567,55 +562,15 @@ impl InsertHandler {
         let table_type = table_def.table_type;
         let table_options = table_def.table_options.clone();
 
-        // Check if we're in cluster mode - route shared/user inserts through Raft for replication
-        if self.app_context.is_cluster_mode()
-            && matches!(table_type, TableType::User | TableType::Shared | TableType::Stream)
-        {
-            return self.execute_insert_via_raft(
-                table_id,
-                table_type,
-                &table_options,
-                user_id,
-                role,
-                rows,
-            ).await;
-        }
-
-        // Standalone mode: execute directly on local providers
-        const INLINE_THRESHOLD: usize = 3;
-
-        if rows.len() <= INLINE_THRESHOLD {
-            return self.execute_insert_sync(
-                table_id,
-                table_type,
-                &table_options,
-                user_id,
-                role,
-                rows,
-            );
-        }
-
-        // For larger batches, use spawn_blocking to avoid blocking async runtime
-        let app_ctx = self.app_context.clone();
-        let table_id_clone = table_id.clone();
-        let rows_for_insert = rows;
-        let user_id_clone = user_id.clone();
-
-        let rows_affected = task::spawn_blocking(move || {
-            Self::execute_insert_blocking(
-                &app_ctx,
-                &table_id_clone,
-                table_type,
-                &table_options,
-                &user_id_clone,
-                role,
-                rows_for_insert,
-            )
-        })
-        .await
-        .into_kalamdb_error("spawn_blocking join error")??;
-
-        Ok(rows_affected)
+        // Always route through Raft for consistency (single-node or cluster)
+        self.execute_insert_via_raft(
+            table_id,
+            table_type,
+            &table_options,
+            user_id,
+            role,
+            rows,
+        ).await
     }
 
     /// Execute INSERT via Raft consensus for cluster replication
@@ -726,124 +681,6 @@ impl InsertHandler {
                     table_id
                 )))
             }
-        }
-    }
-
-    /// Execute insert synchronously (used for inline small batches)
-    fn execute_insert_sync(
-        &self,
-        table_id: &kalamdb_commons::models::TableId,
-        table_type: TableType,
-        table_options: &kalamdb_commons::schemas::TableOptions,
-        user_id: &kalamdb_commons::models::UserId,
-        role: kalamdb_commons::Role,
-        rows: Vec<Row>,
-    ) -> Result<usize, KalamDbError> {
-        Self::execute_insert_blocking(
-            &self.app_context,
-            table_id,
-            table_type,
-            table_options,
-            user_id,
-            role,
-            rows,
-        )
-    }
-
-    /// Shared blocking insert logic (called from both sync and spawn_blocking paths)
-    fn execute_insert_blocking(
-        app_ctx: &std::sync::Arc<AppContext>,
-        table_id: &kalamdb_commons::models::TableId,
-        table_type: TableType,
-        table_options: &kalamdb_commons::schemas::TableOptions,
-        user_id: &kalamdb_commons::models::UserId,
-        role: kalamdb_commons::Role,
-        rows: Vec<Row>,
-    ) -> Result<usize, KalamDbError> {
-        match (table_type, rows) {
-            (TableType::User, rows) => {
-                let provider_arc = app_ctx.schema_registry().get_provider(table_id).ok_or_else(|| {
-                    KalamDbError::InvalidOperation(format!(
-                        "User table provider not found for: {}",
-                        table_id
-                    ))
-                })?;
-
-                if let Some(provider) = provider_arc
-                    .as_any()
-                    .downcast_ref::<crate::providers::UserTableProvider>()
-                {
-                    let row_ids = provider.insert_batch(user_id, rows)?;
-                    Ok(row_ids.len())
-                } else {
-                    Err(KalamDbError::InvalidOperation(
-                        "Cached provider type mismatch for user table".into(),
-                    ))
-                }
-            }
-            (TableType::Shared, rows) => {
-                use kalamdb_auth::rbac::can_write_shared_table;
-                use kalamdb_commons::schemas::TableOptions;
-                use kalamdb_commons::TableAccess;
-
-                let access_level = if let TableOptions::Shared(opts) = table_options {
-                    opts.access_level.unwrap_or(TableAccess::Private)
-                } else {
-                    TableAccess::Private
-                };
-
-                if !can_write_shared_table(access_level, false, role) {
-                    return Err(KalamDbError::Unauthorized(format!(
-                        "Insufficient privileges to write to shared table '{}' (Access Level: {:?})",
-                        table_id,
-                        access_level
-                    )));
-                }
-
-                let provider_arc = app_ctx.schema_registry().get_provider(table_id).ok_or_else(|| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Shared table provider not found for: {}",
-                        table_id
-                    ))
-                })?;
-
-                if let Some(shared_provider) = provider_arc
-                    .as_any()
-                    .downcast_ref::<crate::providers::SharedTableProvider>(
-                ) {
-                    let row_ids = shared_provider.insert_batch(user_id, rows)?;
-                    Ok(row_ids.len())
-                } else {
-                    Err(KalamDbError::InvalidOperation(format!(
-                        "Cached provider type mismatch for shared table {}",
-                        table_id
-                    )))
-                }
-            }
-            (TableType::Stream, rows) => {
-                let provider_arc = app_ctx.schema_registry().get_provider(table_id).ok_or_else(|| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Stream table provider not found for: {}",
-                        table_id
-                    ))
-                })?;
-
-                if let Some(stream_provider) = provider_arc
-                    .as_any()
-                    .downcast_ref::<crate::providers::StreamTableProvider>(
-                ) {
-                    let row_ids = stream_provider.insert_batch(user_id, rows)?;
-                    Ok(row_ids.len())
-                } else {
-                    Err(KalamDbError::InvalidOperation(format!(
-                        "Cached provider type mismatch for stream table {}",
-                        table_id
-                    )))
-                }
-            }
-            (TableType::System, _) => Err(KalamDbError::InvalidOperation(
-                "Cannot INSERT into SYSTEM tables".to_string(),
-            )),
         }
     }
 }

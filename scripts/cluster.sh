@@ -160,7 +160,7 @@ docker_start_cluster() {
     echo -e "${GREEN}Cluster starting...${NC}"
     echo "Waiting for nodes to be healthy..."
     
-    # Wait for health checks
+    # Wait for HTTP health checks (process up)
     for i in {1..15}; do
         node1_ok=$(curl -sf http://localhost:$NODE1_HTTP/v1/api/healthcheck 2>/dev/null && echo "1" || echo "0")
         node2_ok=$(curl -sf http://localhost:$NODE2_HTTP/v1/api/healthcheck 2>/dev/null && echo "1" || echo "0")
@@ -168,7 +168,7 @@ docker_start_cluster() {
         
         if [[ "$node1_ok" == "1" && "$node2_ok" == "1" && "$node3_ok" == "1" ]]; then
             echo ""
-            echo -e "${GREEN}✓ All nodes are healthy!${NC}"
+            echo -e "${GREEN}✓ All nodes are responding (HTTP up)${NC}"
             break
         fi
         
@@ -177,6 +177,17 @@ docker_start_cluster() {
     done
     
     echo ""
+
+    echo "Waiting for cluster to become Raft-ready (leader elected, node active)..."
+    for i in {1..30}; do
+        if curl -sf "http://localhost:${NODE1_HTTP}/v1/api/cluster/health" 2>/dev/null | grep -q '"status":"healthy"'; then
+            echo -e "${GREEN}✓ Cluster is healthy${NC}"
+            break
+        fi
+        echo -n "."
+        sleep 1
+    done
+
     docker_show_status
 }
 
@@ -210,9 +221,9 @@ docker_show_status() {
         
         # Check if container is running
         if docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
-            # Check health
+            # Check HTTP health (process up)
             if curl -sf "http://localhost:${port}/v1/api/healthcheck" &> /dev/null; then
-                echo -e "  Node $node (port $port): ${GREEN}● Healthy${NC}"
+                echo -e "  Node $node (port $port): ${GREEN}● HTTP up${NC}"
             else
                 echo -e "  Node $node (port $port): ${YELLOW}○ Starting...${NC}"
             fi
@@ -337,7 +348,6 @@ host = "127.0.0.1"
 port = $http_port
 workers = 0
 api_version = "v1"
-node_id = "node-$node_id"
 
 [storage]
 rocksdb_path = "$data_dir/data/rocksdb"
@@ -378,9 +388,9 @@ rpc_addr = "127.0.0.1:$rpc_port"
 api_addr = "http://127.0.0.1:$http_port"
 heartbeat_interval_ms = 150
 election_timeout_ms = [300, 500]
-replication_mode = "all"
 replication_timeout_ms = 5000
-min_replication_nodes = 3
+
+# Note: Raft uses quorum by design; there is no min_replication_nodes setting.
 
 $peer_blocks
 
@@ -470,6 +480,13 @@ check_node_health() {
     curl -sf "http://127.0.0.1:$http_port/v1/api/healthcheck" >/dev/null 2>&1
 }
 
+check_cluster_ready() {
+    # Cluster is considered ready when cluster health reports status=healthy.
+    # This implies a leader is known and this node is active.
+    local http_port=$1
+    curl -sf "http://127.0.0.1:$http_port/v1/api/cluster/health" 2>/dev/null | grep -q '"status":"healthy"'
+}
+
 start_cluster() {
     print_header
     echo -e "${GREEN}Starting 3-node local cluster...${NC}"
@@ -494,9 +511,9 @@ start_cluster() {
     start_node $NODE3_ID $NODE3_HTTP $NODE3_RPC
 
     echo ""
-    echo -e "${YELLOW}Waiting for cluster to initialize...${NC}"
+    echo -e "${YELLOW}Waiting for processes to come up...${NC}"
 
-    # Wait for all nodes to be healthy
+    # Wait for all nodes to be HTTP healthy
     local healthy=0
     for i in {1..30}; do
         local count=0
@@ -513,6 +530,20 @@ start_cluster() {
 
     echo ""
     if [ "$healthy" -eq 1 ]; then
+        echo -e "${YELLOW}Waiting for cluster to become Raft-ready (leader elected, node active)...${NC}"
+        local raft_ready=0
+        for i in {1..60}; do
+            if check_cluster_ready $NODE1_HTTP; then
+                raft_ready=1
+                break
+            fi
+            sleep 1
+        done
+
+        if [ "$raft_ready" -ne 1 ]; then
+            echo -e "${YELLOW}Cluster is responding but not healthy yet (see /v1/api/cluster/health).${NC}"
+        fi
+
         echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
         echo -e "${GREEN}║                    Cluster Ready!                                 ║${NC}"
         echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════════╝${NC}"

@@ -1,17 +1,17 @@
 //! CommandExecutor trait and implementations
 //!
 //! The CommandExecutor pattern provides a unified interface for executing
-//! commands, eliminating if/else checks for cluster vs standalone mode.
+//! commands through Raft consensus (Phase 20 - Unified Raft Executor).
 //!
 //! ```text
-//! STANDALONE: Handler → DirectExecutor → Provider → RocksDB
-//! CLUSTER:    Handler → RaftExecutor → Raft → StateMachine → Provider → RocksDB
+//! SINGLE-NODE: Handler → RaftExecutor → Single-node Raft → StateMachine → Provider → RocksDB
+//! CLUSTER:     Handler → RaftExecutor → Multi-node Raft → StateMachine → Provider → RocksDB
 //! ```
+//!
+//! Both modes use the same RaftExecutor, ensuring consistent behavior and testing.
 
-mod direct;
 mod raft;
 mod trait_def;
 
-pub use direct::DirectExecutor;
 pub use raft::RaftExecutor;
 pub use trait_def::{ClusterInfo, ClusterNodeInfo, CommandExecutor};

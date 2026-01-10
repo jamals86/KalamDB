@@ -148,7 +148,7 @@ impl UserDataStateMachine {
     pub fn set_applier(&self, applier: Arc<dyn UserDataApplier>) {
         let mut guard = self.applier.write();
         *guard = Some(applier);
-        log::info!(
+        log::debug!(
             "UserDataStateMachine[{}]: Applier registered for data persistence",
             self.shard
         );

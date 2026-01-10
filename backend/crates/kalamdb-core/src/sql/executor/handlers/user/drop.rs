@@ -41,21 +41,13 @@ impl TypedStatementHandler<DropUserStatement> for DropUserHandler {
             )));
         }
         let user = existing.unwrap();
-        if self.app_context.executor().is_cluster_mode() {
-            let cmd = kalamdb_raft::MetaCommand::DeleteUser {
-                user_id: user.id.clone(),
-                deleted_at: chrono::Utc::now(),
-            };
-            self.app_context
-                .executor()
-                .execute_meta(cmd)
-                .await
-                .map_err(|e| {
-                    KalamDbError::ExecutionError(format!("Failed to delete user via executor: {}", e))
-                })?;
-        } else {
-            users.delete_user(&user.id)?;
-        }
+
+        // Delegate to unified applier (handles standalone vs cluster internally)
+        self.app_context
+            .applier()
+            .delete_user(user.id.clone())
+            .await
+            .map_err(|e| KalamDbError::ExecutionError(format!("DROP USER failed: {}", e)))?;
 
         // Log DDL operation
         use crate::sql::executor::helpers::audit;

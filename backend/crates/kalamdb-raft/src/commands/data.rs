@@ -246,3 +246,168 @@ impl DataResponse {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kalamdb_commons::models::{NamespaceId, TableName};
+
+    #[test]
+    fn test_user_data_command_watermark_get_set() {
+        let mut cmd = UserDataCommand::Insert {
+            required_meta_index: 100,
+            table_id: TableId::new(NamespaceId::from("ns"), TableName::from("table")),
+            user_id: UserId::from("user_1"),
+            rows_data: vec![1, 2, 3],
+        };
+
+        assert_eq!(cmd.required_meta_index(), 100);
+        cmd.set_required_meta_index(200);
+        assert_eq!(cmd.required_meta_index(), 200);
+    }
+
+    #[test]
+    fn test_user_data_command_user_id() {
+        let user_id = UserId::from("user_123");
+        let cmd = UserDataCommand::Delete {
+            required_meta_index: 50,
+            table_id: TableId::new(NamespaceId::from("ns"), TableName::from("table")),
+            user_id: user_id.clone(),
+            filter_data: None,
+        };
+
+        assert_eq!(cmd.user_id(), &user_id);
+    }
+
+    #[test]
+    fn test_shared_data_command_watermark() {
+        let mut cmd = SharedDataCommand::Update {
+            required_meta_index: 300,
+            table_id: TableId::new(NamespaceId::from("ns"), TableName::from("shared_table")),
+            updates_data: vec![],
+            filter_data: None,
+        };
+
+        assert_eq!(cmd.required_meta_index(), 300);
+        cmd.set_required_meta_index(400);
+        assert_eq!(cmd.required_meta_index(), 400);
+    }
+
+    #[test]
+    fn test_shared_data_command_table_id() {
+        let table_id = TableId::new(NamespaceId::from("shared_ns"), TableName::from("shared_t"));
+        let cmd = SharedDataCommand::Insert {
+            required_meta_index: 10,
+            table_id: table_id.clone(),
+            rows_data: vec![],
+        };
+
+        assert_eq!(cmd.table_id(), &table_id);
+    }
+
+    #[test]
+    fn test_data_response_is_ok() {
+        assert!(DataResponse::Ok.is_ok());
+        assert!(DataResponse::RowsAffected(5).is_ok());
+        assert!(DataResponse::Subscribed { subscription_id: "sub_1".to_string() }.is_ok());
+        assert!(!DataResponse::Error { message: "error".to_string() }.is_ok());
+    }
+
+    #[test]
+    fn test_data_response_rows_affected() {
+        assert_eq!(DataResponse::Ok.rows_affected(), 0);
+        assert_eq!(DataResponse::RowsAffected(10).rows_affected(), 10);
+        assert_eq!(DataResponse::Error { message: "err".to_string() }.rows_affected(), 0);
+    }
+
+    #[test]
+    fn test_data_response_error_constructor() {
+        let response = DataResponse::error("test error");
+        assert!(!response.is_ok());
+        match response {
+            DataResponse::Error { message } => assert_eq!(message, "test error"),
+            _ => panic!("Expected error response"),
+        }
+    }
+
+    #[test]
+    fn test_user_command_serialization() {
+        let cmd = UserDataCommand::Insert {
+            required_meta_index: 123,
+            table_id: TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table")),
+            user_id: UserId::from("user_456"),
+            rows_data: vec![1, 2, 3, 4],
+        };
+
+        assert_eq!(cmd.required_meta_index(), 123);
+        assert_eq!(cmd.user_id(), &UserId::from("user_456"));
+    }
+
+    #[test]
+    fn test_shared_command_serialization() {
+        let cmd = SharedDataCommand::Delete {
+            required_meta_index: 999,
+            table_id: TableId::new(NamespaceId::from("shared"), TableName::from("data")),
+            filter_data: Some(vec![10, 20]),
+        };
+
+        assert_eq!(cmd.required_meta_index(), 999);
+    }
+
+    #[test]
+    fn test_live_query_commands() {
+        let now = Utc::now();
+        let cmd = UserDataCommand::RegisterLiveQuery {
+            required_meta_index: 50,
+            subscription_id: "sub_123".to_string(),
+            user_id: UserId::from("user_1"),
+            query_hash: "hash_abc".to_string(),
+            table_id: TableId::new(NamespaceId::from("ns"), TableName::from("table")),
+            filter_json: Some(r#"{"id": 1}"#.to_string()),
+            node_id: NodeId::from(1),
+            created_at: now,
+        };
+
+        assert_eq!(cmd.required_meta_index(), 50);
+        assert_eq!(cmd.user_id(), &UserId::from("user_1"));
+    }
+
+    #[test]
+    fn test_all_user_command_variants_get_watermark() {
+        let table_id = TableId::new(NamespaceId::from("n"), TableName::from("t"));
+        let user_id = UserId::from("u");
+
+        let commands = vec![
+            UserDataCommand::Insert { required_meta_index: 1, table_id: table_id.clone(), user_id: user_id.clone(), rows_data: vec![] },
+            UserDataCommand::Update { required_meta_index: 2, table_id: table_id.clone(), user_id: user_id.clone(), updates_data: vec![], filter_data: None },
+            UserDataCommand::Delete { required_meta_index: 3, table_id: table_id.clone(), user_id: user_id.clone(), filter_data: None },
+            UserDataCommand::RegisterLiveQuery { 
+                required_meta_index: 4, subscription_id: "s".to_string(), user_id: user_id.clone(), 
+                query_hash: "h".to_string(), table_id: table_id.clone(), filter_json: None, 
+                node_id: NodeId::from(1), created_at: Utc::now() 
+            },
+            UserDataCommand::UnregisterLiveQuery { required_meta_index: 5, subscription_id: "s".to_string(), user_id: user_id.clone() },
+            UserDataCommand::CleanupNodeSubscriptions { required_meta_index: 6, user_id: user_id.clone(), failed_node_id: NodeId::from(2) },
+            UserDataCommand::PingLiveQuery { required_meta_index: 7, subscription_id: "s".to_string(), user_id: user_id.clone(), pinged_at: Utc::now() },
+        ];
+
+        for (i, cmd) in commands.iter().enumerate() {
+            assert_eq!(cmd.required_meta_index(), (i + 1) as u64);
+        }
+    }
+
+    #[test]
+    fn test_all_shared_command_variants_get_watermark() {
+        let table_id = TableId::new(NamespaceId::from("n"), TableName::from("t"));
+
+        let commands = vec![
+            SharedDataCommand::Insert { required_meta_index: 10, table_id: table_id.clone(), rows_data: vec![] },
+            SharedDataCommand::Update { required_meta_index: 20, table_id: table_id.clone(), updates_data: vec![], filter_data: None },
+            SharedDataCommand::Delete { required_meta_index: 30, table_id: table_id.clone(), filter_data: None },
+        ];
+
+        assert_eq!(commands[0].required_meta_index(), 10);
+        assert_eq!(commands[1].required_meta_index(), 20);
+        assert_eq!(commands[2].required_meta_index(), 30);
+    }
+}

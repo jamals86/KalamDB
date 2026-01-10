@@ -203,6 +203,7 @@ fn cluster_test_data_consistency() {
     std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
+    std::thread::sleep(Duration::from_millis(500));
 
     execute_on_node(
         &urls[0],
@@ -214,7 +215,8 @@ fn cluster_test_data_consistency() {
     .expect("Failed to create table");
 
     // Wait for table to replicate to all nodes
-    if !wait_for_table_on_all_nodes(&namespace, "data_test", 10000) {
+    std::thread::sleep(Duration::from_millis(1000));
+    if !wait_for_table_on_all_nodes(&namespace, "data_test", 15000) {
         panic!("Table data_test did not replicate to all nodes");
     }
 

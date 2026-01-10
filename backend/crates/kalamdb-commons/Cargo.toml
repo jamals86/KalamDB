@@ -29,6 +29,9 @@ arrow-schema = { workspace = true, optional = true }
 bincode = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 arrow = { workspace = true, optional = true }
+openraft = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
 
 [features]
 # Feature to enable serde support for serialization
@@ -39,6 +42,9 @@ serde = [
 	"dep:arrow-schema",
 	"dep:bincode",
 	"dep:chrono",
+	"dep:openraft",
+	"dep:uuid",
+	"dep:log",
 ]
 # Full feature set including datafusion (for server use)
 full = ["serde", "dep:datafusion"]

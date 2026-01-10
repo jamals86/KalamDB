@@ -85,19 +85,59 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             return Ok(());
         }
         
-        // Create Raft configuration with tuned timeouts for reliability
-        // - Increased heartbeat_interval to reduce replication frequency and timeout errors
-        // - replication_lag_threshold: After 5 heartbeat intervals, consider node lagging
-        // Note: OpenRaft's internal replication timeout is based on heartbeat_interval
-        let raft_config = Config {
-            cluster_name: format!("kalamdb-{}", self.group_id),
-            election_timeout_min: config.election_timeout_ms.0,
-            election_timeout_max: config.election_timeout_ms.1,
-            heartbeat_interval: config.heartbeat_interval_ms,
-            install_snapshot_timeout: 10000,
-            max_in_snapshot_log_to_keep: 100,
-            purge_batch_size: 256,
-            ..Default::default()
+        // Detect single-node mode (no peers configured)
+        let is_single_node = config.peers.is_empty();
+        
+        // Parse snapshot policy from configuration
+        let snapshot_policy = kalamdb_commons::config::ClusterConfig::parse_snapshot_policy(&config.snapshot_policy)
+            .map_err(|e| RaftError::Config(format!("Invalid snapshot policy: {}", e)))?;
+        
+        // Create Raft configuration with optimizations for single-node mode
+        // Single-node optimizations (OpenRaft recommendations):
+        // - Disable snapshot purging (max_in_snapshot_log_to_keep = 0)
+        // - Reduce heartbeat/election timeouts
+        // - Smaller purge batch to reduce CPU overhead
+        // - Keep tick and elect enabled (required for Raft state machine to function)
+        // - Snapshot policy from config (default: 1000 entries)
+        let raft_config = if is_single_node {
+            log::debug!("[SINGLE-NODE] Applying lightweight Raft optimizations for {}", self.group_id);
+            log::debug!("[SINGLE-NODE] Snapshot policy: {:?}", snapshot_policy);
+            let mut cfg = Config {
+                cluster_name: format!("kalamdb-{}", self.group_id),
+                election_timeout_min: 150,  // Faster elections (default 150-300ms)
+                election_timeout_max: 300,
+                heartbeat_interval: 50,      // Faster heartbeats (default 50ms)
+                install_snapshot_timeout: 5000,
+                max_in_snapshot_log_to_keep: 0,  // Disable log retention after snapshot
+                purge_batch_size: 64,        // Smaller purge batches
+                
+                enable_heartbeat: false,    // Disable heartbeats (no followers to send to)
+                enable_elect: true,         // Keep elections enabled (needed to become leader)
+                enable_tick: true,          // Keep tick enabled (REQUIRED for Raft to function)
+                ..Default::default()
+            };
+            
+            // Configure snapshot policy from config
+            cfg.snapshot_policy = snapshot_policy;
+            cfg
+        } else {
+            // Multi-node cluster: use conservative settings for network reliability
+            log::debug!("[MULTI-NODE] Cluster Raft configuration for {}", self.group_id);
+            log::debug!("[MULTI-NODE] Snapshot policy: {:?}", snapshot_policy);
+            let mut cfg = Config {
+                cluster_name: format!("kalamdb-{}", self.group_id),
+                election_timeout_min: config.election_timeout_ms.0,
+                election_timeout_max: config.election_timeout_ms.1,
+                heartbeat_interval: config.heartbeat_interval_ms,
+                install_snapshot_timeout: 10000,
+                max_in_snapshot_log_to_keep: config.max_snapshots_to_keep as u64,
+                purge_batch_size: 256,
+                ..Default::default()
+            };
+            
+            // Configure snapshot policy from config
+            cfg.snapshot_policy = snapshot_policy;
+            cfg
         };
         
         let config = Arc::new(raft_config.validate().map_err(|e| RaftError::Config(e.to_string()))?);
@@ -121,7 +161,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             *guard = Some(raft);
         }
         
-        log::info!("Started Raft group {} on node {}", self.group_id, node_id);
+        log::debug!("Started Raft group {} on node {}", self.group_id, node_id);
         Ok(())
     }
     
@@ -141,7 +181,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         raft.initialize(members).await
             .map_err(|e| RaftError::Internal(format!("Failed to initialize cluster: {:?}", e)))?;
         
-        log::info!("Initialized Raft group {} cluster with node {}", self.group_id, node_id);
+        log::debug!("Initialized Raft group {} cluster with node {}", self.group_id, node_id);
         Ok(())
     }
     
@@ -312,123 +352,6 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         Ok(response.data)
     }
     
-    /// Propose a command with strong replication (wait for ALL nodes)
-    ///
-    /// This method:
-    /// 1. Proposes the command via Raft (commits after quorum)
-    /// 2. Waits until ALL cluster members have applied the log entry
-    /// 3. Only then returns success to the caller
-    ///
-    /// Use this when you need guaranteed consistency across all nodes.
-    pub async fn propose_with_all_replicas(
-        &self, 
-        command: Vec<u8>,
-        timeout: std::time::Duration,
-        total_nodes: usize,
-    ) -> Result<Vec<u8>, RaftError> {
-        let raft = {
-            let guard = self.raft.read();
-            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
-        };
-        
-        // Get command description for logging (first 50 bytes)
-        let cmd_preview = if command.len() > 50 {
-            format!("[{} bytes]", command.len())
-        } else {
-            format!("[{} bytes]", command.len())
-        };
-        
-        log::info!(
-            "[RAFT:{}] Proposing command {} with ALL-node replication (timeout: {:?})",
-            self.group_id, cmd_preview, timeout
-        );
-        
-        // Step 1: Submit the command and wait for quorum commit
-        let response = raft.client_write(command).await
-            .map_err(|e| RaftError::Proposal(format!("{:?}", e)))?;
-        
-        let committed_log_id = response.log_id;
-        log::info!(
-            "[RAFT:{}] Command committed at log_id={:?}, waiting for all {} nodes to apply...",
-            self.group_id, committed_log_id, total_nodes
-        );
-        
-        // Step 2: Wait for ALL nodes to apply the log entry
-        let start = std::time::Instant::now();
-        let poll_interval = std::time::Duration::from_millis(50);
-        
-        loop {
-            // Check timeout
-            if start.elapsed() > timeout {
-                log::error!(
-                    "[RAFT:{}] Timeout waiting for all replicas! Committed log_id={:?} but not all nodes applied.",
-                    self.group_id, committed_log_id
-                );
-                return Err(RaftError::ReplicationTimeout {
-                    group: self.group_id.to_string(),
-                    committed_log_id: format!("{:?}", committed_log_id),
-                    timeout_ms: timeout.as_millis() as u64,
-                });
-            }
-            
-            // Get current metrics
-            let metrics = raft.metrics().borrow().clone();
-            
-            // Count how many nodes have applied at least up to committed_log_id
-            // The leader's last_applied shows our own progress
-            let leader_applied = metrics.last_applied.map(|lid| lid.index).unwrap_or(0);
-            let committed_index = committed_log_id.index;
-            let expected_nodes: Vec<u64> = metrics
-                .membership_config
-                .nodes()
-                .map(|(node_id, _)| *node_id)
-                .collect();
-            
-            let mut all_replicated = false;
-            if expected_nodes.len() != total_nodes {
-                log::debug!(
-                    "[RAFT:{}] Membership size {} does not match expected {}, waiting...",
-                    self.group_id,
-                    expected_nodes.len(),
-                    total_nodes
-                );
-            } else if let (Some(leader_id), Some(ref replication)) =
-                (metrics.current_leader, metrics.replication.as_ref())
-            {
-                all_replicated = expected_nodes.iter().all(|node_id| {
-                    if *node_id == leader_id {
-                        leader_applied >= committed_index
-                    } else {
-                        replication
-                            .get(node_id)
-                            .and_then(|matched| matched.map(|lid| lid.index))
-                            .map(|idx| {
-                                if idx < committed_index {
-                                    log::debug!(
-                                        "[RAFT:{}] Node {} at index {}, need {}",
-                                        self.group_id, node_id, idx, committed_index
-                                    );
-                                }
-                                idx >= committed_index
-                            })
-                            .unwrap_or(false)
-                    }
-                });
-            }
-            
-            if all_replicated {
-                log::info!(
-                    "[RAFT:{}] Command replicated to ALL {} nodes successfully! log_id={:?}, took {:?}",
-                    self.group_id, total_nodes, committed_log_id, start.elapsed()
-                );
-                return Ok(response.data);
-            }
-            
-            // Wait before next poll
-            tokio::time::sleep(poll_interval).await;
-        }
-    }
-    
     /// Propose a command with automatic leader forwarding
     ///
     /// If this node is the leader, proposes locally.
@@ -584,14 +507,14 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state_machine::SystemStateMachine;
+    use crate::state_machine::MetaStateMachine;
 
     #[test]
     fn test_raft_group_creation() {
-        let sm = SystemStateMachine::new();
-        let group = RaftGroup::new(GroupId::MetaSystem, sm);
+        let sm = MetaStateMachine::new();
+        let group = RaftGroup::new(GroupId::Meta, sm);
         
-        assert_eq!(group.group_id(), GroupId::MetaSystem);
+        assert_eq!(group.group_id(), GroupId::Meta);
         assert!(!group.is_started());
         assert!(!group.is_leader());
     }

@@ -10,7 +10,7 @@
 //! for data groups.
 
 use chrono::{DateTime, Utc};
-use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
+use kalamdb_commons::models::{JobId, JobStatus, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::TableId;
 use kalamdb_commons::types::User;
@@ -32,7 +32,7 @@ pub enum MetaCommand {
     /// Create a new namespace
     CreateNamespace {
         namespace_id: NamespaceId,
-        created_by: Option<String>,
+        created_by: Option<UserId>,
     },
     
     /// Delete a namespace
@@ -135,7 +135,7 @@ pub enum MetaCommand {
     /// Update job status
     UpdateJobStatus {
         job_id: JobId,
-        status: String,
+        status: JobStatus,
         updated_at: DateTime<Utc>,
     },
 
@@ -258,6 +258,29 @@ impl MetaResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::{AuthType, Role, StorageMode};
+    use kalamdb_commons::models::UserName;
+    
+    fn test_user() -> User {
+        User {
+            id: UserId::from("test_user"),
+            username: UserName::from("testuser"),
+            password_hash: "hash".to_string(),
+            email: None,
+            auth_type: AuthType::Password,
+            auth_data: None,
+            role: Role::User,
+            storage_id: None,
+            storage_mode: StorageMode::Table,
+            locked_until: None,
+            failed_login_attempts: 0,
+            last_login_at: None,
+            created_at: 0,
+            updated_at: 0,
+            last_seen: None,
+            deleted_at: None,
+        }
+    }
     
     #[test]
     fn test_meta_command_category() {
@@ -268,7 +291,7 @@ mod tests {
         assert_eq!(cmd.category(), "namespace");
         
         let cmd = MetaCommand::CreateUser { 
-            user: User::default(),
+            user: test_user(),
         };
         assert_eq!(cmd.category(), "user");
     }
