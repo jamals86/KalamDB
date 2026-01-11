@@ -384,3 +384,7 @@ Display the clusterName here and which node we are connecting to: ● KalamDB[{{
 31) Prevent altering _seq/_deleted columns in a table
 32) whenever we alter a table and there is not change been done no need to create a new schema version, in this case nothing should be done there is no change been made then
 33) Add test where we flush a table in a cluster and verify the data
+
+
+34) isnt struct MetaSnapshot - a waste of resources? or memory? since why having them here as a hashmap in memory?
+

@@ -6,12 +6,16 @@
 //! 3. Concurrent queries return correct user-scoped data
 //! 4. Role-based access control works correctly
 
+#[path = "../../crates/kalamdb-core/tests/test_helpers.rs"]
+mod test_helpers;
+
+use test_helpers::init_test_app_context;
+
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::schemas::UserRole;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::models::ExecutionContext;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::test_helpers::init_test_app_context;
 use std::sync::Arc;
 use tokio;
 

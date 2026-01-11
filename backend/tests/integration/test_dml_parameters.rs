@@ -11,12 +11,14 @@
 //! - Parameter validation (max 50 params, 512KB per param)
 //! - Native write paths used (not DataFusion)
 
+#[path = "../../crates/kalamdb-core/tests/test_helpers.rs"]
+mod test_helpers;
+
+use test_helpers::create_test_session;
+
 use kalamdb_core::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use kalamdb_core::test_helpers::create_test_session;
 use kalamdb_core::sql::executor::handlers::dml::{InsertHandler, UpdateHandler, DeleteHandler};
-use kalamdb_core::test_helpers::create_test_session;
 use kalamdb_core::sql::executor::handlers::StatementHandler;
-use kalamdb_core::test_helpers::create_test_session;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::Role;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};

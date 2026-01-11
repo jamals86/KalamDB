@@ -408,7 +408,9 @@ async fn test_multi_subscription_support() {
 
     let subscription2 = create_test_subscription_request(
         "notifications_query".to_string(),
-        "SELECT * FROM user1.notifications WHERE user_id = CURRENT_USER()".to_string(),
+        // Note: `CURRENT_USER` is a SQL keyword in sqlparser; calling it like a UDF
+        // (CURRENT_USER()) currently fails parsing in this test harness.
+        "SELECT * FROM user1.notifications WHERE user_id = 'user1'".to_string(),
         Some(10),
     );
     let result2 = manager

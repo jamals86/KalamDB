@@ -86,6 +86,12 @@ impl LiveQueryManager {
         &self.node_id
     }
 
+    /// Set the AppContext for Raft command execution.
+    /// Called after AppContext is fully constructed.
+    pub fn set_app_context(&self, app_ctx: Arc<crate::app_context::AppContext>) {
+        self.subscription_service.set_app_context(app_ctx);
+    }
+
     /// Provide shared SqlExecutor so initial data fetches reuse common execution path
     pub fn set_sql_executor(&self, executor: Arc<SqlExecutor>) {
         self.initial_data_fetcher.set_sql_executor(executor);

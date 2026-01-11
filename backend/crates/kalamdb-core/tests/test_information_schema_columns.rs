@@ -4,7 +4,8 @@
 //! registered and can be queried via SQL.
 
 use kalamdb_core::app_context::AppContext;
-use kalamdb_core::test_helpers::init_test_app_context;
+mod test_helpers;
+use test_helpers::init_test_app_context;
 
 #[tokio::test]
 async fn test_information_schema_columns_query() {

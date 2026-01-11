@@ -8,12 +8,13 @@ use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::models::ExecutionContext;
 use kalamdb_core::sql::executor::models::ExecutionResult;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::test_helpers::create_test_session;
+mod test_helpers;
+use test_helpers::create_test_session;
 use std::sync::Arc;
 
 fn init_app_context() -> Arc<AppContext> {
     // Use test helper to initialize AppContext
-    let _test_db = kalamdb_core::test_helpers::init_test_app_context();
+    let _test_db = test_helpers::init_test_app_context();
     AppContext::get()
 }
 

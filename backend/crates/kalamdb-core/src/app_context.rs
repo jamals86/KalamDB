@@ -11,9 +11,9 @@ use crate::jobs::executors::{
 use crate::live::ConnectionsManager;
 use crate::applier::UnifiedApplier;
 use crate::live_query::LiveQueryManager;
-use crate::schema_registry::settings::{SettingsTableProvider, SettingsView};
+use crate::views::settings::{SettingsTableProvider, SettingsView};
 use crate::schema_registry::stats::StatsTableProvider;
-use crate::schema_registry::views::datatypes::{DatatypesTableProvider, DatatypesView};
+use crate::views::datatypes::{DatatypesTableProvider, DatatypesView};
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::sql::executor::SqlExecutor;
@@ -204,11 +204,9 @@ impl AppContext {
                 let settings_provider = Arc::new(SettingsTableProvider::new(settings_view));
                 system_tables.set_settings_provider(settings_provider);
 
-                // Inject ServerLogsTableProvider with logs path (reads JSON log files)
-                let server_logs_provider = Arc::new(
-                    kalamdb_system::ServerLogsTableProvider::new(&config.logging.logs_path),
-                );
-                system_tables.set_server_logs_provider(server_logs_provider);
+                // Inject ServerLogsTableProvider with logs path (reads JSON log files - dev only)
+                let server_logs_provider = crate::views::create_server_logs_provider(&config.logging.logs_path);
+                system_tables.set_server_logs_provider(Arc::new(server_logs_provider));
 
                 // Register all system tables in DataFusion
                 // Use config-driven DataFusion settings for parallelism
@@ -312,7 +310,7 @@ impl AppContext {
                     Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
 
                 // Create unified manifest service (hot cache + RocksDB + cold storage)
-                let base_storage_path = config.storage.default_storage_path.clone();
+                let base_storage_path = config.storage.storage_dir().to_string_lossy().into_owned();
                 let manifest_service = Arc::new(crate::manifest::ManifestService::new(
                     storage_backend.clone(),
                     base_storage_path,
@@ -333,7 +331,15 @@ impl AppContext {
                 };
                 
                 log::debug!("Creating RaftManager...");
-                let manager = Arc::new(kalamdb_raft::manager::RaftManager::new(raft_config));
+                let snapshots_dir = config.storage.resolved_snapshots_dir();
+                let manager = Arc::new(
+                    kalamdb_raft::manager::RaftManager::new_persistent(
+                        raft_config,
+                        storage_backend.clone(),
+                        snapshots_dir,
+                    )
+                    .expect("Failed to create persistent RaftManager"),
+                );
                 
                 log::debug!("Creating RaftExecutor...");
                 let executor: Arc<dyn CommandExecutor> = Arc::new(kalamdb_raft::RaftExecutor::new(manager));
@@ -342,10 +348,8 @@ impl AppContext {
                 // data consistency across nodes, and each node notifies its own
                 // live query subscribers locally when data is applied.
 
-                // Wire up ClusterTableProvider with the executor
-                let cluster_provider = Arc::new(
-                    kalamdb_system::ClusterTableProvider::new(executor.clone())
-                );
+                // Wire up ClusterTableProvider with the executor (cluster mode only)
+                let cluster_provider = Arc::new(crate::views::create_cluster_provider(executor.clone()));
                 system_tables.set_cluster_provider(cluster_provider.clone());
                 
                 // Register cluster with DataFusion system schema
@@ -522,9 +526,8 @@ impl AppContext {
         system_tables.set_settings_provider(settings_provider);
 
         // Inject ServerLogsTableProvider with temp path for testing
-        let server_logs_provider =
-            Arc::new(kalamdb_system::ServerLogsTableProvider::new("/tmp/kalamdb-test/logs"));
-        system_tables.set_server_logs_provider(server_logs_provider);
+        let server_logs_provider = crate::views::create_server_logs_provider("/tmp/kalamdb-test/logs");
+        system_tables.set_server_logs_provider(Arc::new(server_logs_provider));
 
         // Create DataFusion session
         let session_factory = Arc::new(

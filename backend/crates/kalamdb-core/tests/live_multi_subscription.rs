@@ -1,7 +1,8 @@
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, UserId};
 use kalamdb_commons::websocket::{SubscriptionOptions, SubscriptionRequest};
 use kalamdb_core::app_context::AppContext;
-use kalamdb_core::test_helpers::init_test_app_context;
+mod test_helpers;
+use test_helpers::init_test_app_context;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multi_subscription_lifecycle() {

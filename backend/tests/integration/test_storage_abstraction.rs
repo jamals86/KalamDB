@@ -11,7 +11,8 @@
 use reqwest;
 use serde_json::json;
 
-const BASE_URL: &str = "http://localhost:3000";
+#[path = "common/mod.rs"]
+mod common;
 
 #[tokio::test]
 async fn test_storage_trait_interface_exists() {
@@ -19,11 +20,16 @@ async fn test_storage_trait_interface_exists() {
     // This test verifies the StorageBackend trait is properly defined
     // by checking that we can use it through the RocksDB implementation
     
+    let http_server = common::start_http_test_server()
+        .await
+        .expect("Failed to start test HTTP server");
+    let base_url = http_server.base_url().to_string();
+
     let client = reqwest::Client::new();
     
     // Create a test namespace
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "CREATE NAMESPACE test_storage_trait",
             "user_id": "test_user"
@@ -36,7 +42,7 @@ async fn test_storage_trait_interface_exists() {
     
     // Create a storage (tests that storage operations work through trait)
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "CREATE STORAGE test_local URI 'file:///tmp/test_storage'",
             "user_id": "test_user"
@@ -49,7 +55,7 @@ async fn test_storage_trait_interface_exists() {
     
     // Cleanup
     client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "DROP NAMESPACE test_storage_trait",
             "user_id": "test_user"
@@ -57,6 +63,8 @@ async fn test_storage_trait_interface_exists() {
         .send()
         .await
         .ok();
+
+    http_server.shutdown().await;
 }
 
 #[tokio::test]
@@ -65,11 +73,16 @@ async fn test_rocksdb_implements_storage_trait() {
     // The fact that the server runs and can perform operations
     // proves RocksDB implements StorageBackend correctly
     
+    let http_server = common::start_http_test_server()
+        .await
+        .expect("Failed to start test HTTP server");
+    let base_url = http_server.base_url().to_string();
+
     let client = reqwest::Client::new();
     
     // Create namespace (uses partition creation through trait)
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "CREATE NAMESPACE test_rocksdb_trait",
             "user_id": "test_user"
@@ -82,7 +95,7 @@ async fn test_rocksdb_implements_storage_trait() {
     
     // Create table (uses put operations through trait)
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "CREATE TABLE test_rocksdb_trait.test_table (id BIGINT PRIMARY KEY, name STRING) WITH (TYPE = 'USER')",
             "user_id": "test_user"
@@ -95,7 +108,7 @@ async fn test_rocksdb_implements_storage_trait() {
     
     // Insert data (uses put through trait)
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "INSERT INTO test_rocksdb_trait.test_table (id, name) VALUES (1, 'test')",
             "user_id": "test_user"
@@ -108,7 +121,7 @@ async fn test_rocksdb_implements_storage_trait() {
     
     // Query data (uses get/scan through trait)
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "SELECT * FROM test_rocksdb_trait.test_table",
             "user_id": "test_user"
@@ -124,7 +137,7 @@ async fn test_rocksdb_implements_storage_trait() {
     
     // Cleanup
     client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "DROP NAMESPACE test_rocksdb_trait",
             "user_id": "test_user"
@@ -132,17 +145,24 @@ async fn test_rocksdb_implements_storage_trait() {
         .send()
         .await
         .ok();
+
+    http_server.shutdown().await;
 }
 
 #[tokio::test]
 async fn test_system_storages_table_renamed() {
     // T422: Query system.storages, verify old name gone
     
+    let http_server = common::start_http_test_server()
+        .await
+        .expect("Failed to start test HTTP server");
+    let base_url = http_server.base_url().to_string();
+
     let client = reqwest::Client::new();
     
     // Query system.storages (new name)
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "SELECT * FROM system.storages",
             "user_id": "test_user"
@@ -155,7 +175,7 @@ async fn test_system_storages_table_renamed() {
     
     // Try to query system.storage_locations (old name - should fail)
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "SELECT * FROM system.storage_locations",
             "user_id": "test_user"
@@ -169,6 +189,8 @@ async fn test_system_storages_table_renamed() {
         response.status().is_client_error() || response.status().is_server_error(),
         "system.storage_locations should not exist (should be renamed to system.storages)"
     );
+
+    http_server.shutdown().await;
 }
 
 #[tokio::test]
@@ -177,11 +199,16 @@ async fn test_storage_operations_through_abstraction() {
     // This test exercises the full CRUD cycle to ensure all operations
     // go through the StorageBackend trait
     
+    let http_server = common::start_http_test_server()
+        .await
+        .expect("Failed to start test HTTP server");
+    let base_url = http_server.base_url().to_string();
+
     let client = reqwest::Client::new();
     
     // CREATE: Create storage
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "CREATE STORAGE test_crud_storage URI 'file:///tmp/test_crud'",
             "user_id": "test_user"
@@ -194,7 +221,7 @@ async fn test_storage_operations_through_abstraction() {
     
     // READ: Query storage
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "SELECT * FROM system.storages WHERE storage_id = 'test_crud_storage'",
             "user_id": "test_user"
@@ -213,7 +240,7 @@ async fn test_storage_operations_through_abstraction() {
     
     // DELETE: Drop storage
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "DROP STORAGE test_crud_storage",
             "user_id": "test_user"
@@ -226,7 +253,7 @@ async fn test_storage_operations_through_abstraction() {
     
     // Verify deletion
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "SELECT * FROM system.storages WHERE storage_id = 'test_crud_storage'",
             "user_id": "test_user"
@@ -238,6 +265,8 @@ async fn test_storage_operations_through_abstraction() {
     assert_eq!(response.status(), 200);
     let body: serde_json::Value = response.json().await.expect("Failed to parse JSON");
     assert_eq!(body["rows"].as_array().unwrap().len(), 0);
+
+    http_server.shutdown().await;
 }
 
 #[tokio::test]
@@ -245,11 +274,16 @@ async fn test_column_family_abstraction() {
     // T424: Verify CF concepts work through Partition abstraction
     // Each table gets its own partition (column family in RocksDB)
     
+    let http_server = common::start_http_test_server()
+        .await
+        .expect("Failed to start test HTTP server");
+    let base_url = http_server.base_url().to_string();
+
     let client = reqwest::Client::new();
     
     // Create namespace
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "CREATE NAMESPACE test_partition_ns",
             "user_id": "test_user"
@@ -262,7 +296,7 @@ async fn test_column_family_abstraction() {
     
     // Create multiple tables (each should create a partition)
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "CREATE TABLE test_partition_ns.table1 (id BIGINT PRIMARY KEY, data STRING) WITH (TYPE = 'USER')",
             "user_id": "test_user"
@@ -274,7 +308,7 @@ async fn test_column_family_abstraction() {
     assert_eq!(response.status(), 200);
     
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "CREATE TABLE test_partition_ns.table2 (id BIGINT PRIMARY KEY, value BIGINT) WITH (TYPE = 'USER')",
             "user_id": "test_user"
@@ -287,7 +321,7 @@ async fn test_column_family_abstraction() {
     
     // Insert data into both tables
     client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "INSERT INTO test_partition_ns.table1 (id, data) VALUES (1, 'test')",
             "user_id": "test_user"
@@ -297,7 +331,7 @@ async fn test_column_family_abstraction() {
         .expect("Failed to send request");
     
     client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "INSERT INTO test_partition_ns.table2 (id, value) VALUES (1, 42)",
             "user_id": "test_user"
@@ -308,7 +342,7 @@ async fn test_column_family_abstraction() {
     
     // Verify data is isolated between partitions
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "SELECT * FROM test_partition_ns.table1",
             "user_id": "test_user"
@@ -321,7 +355,7 @@ async fn test_column_family_abstraction() {
     assert_eq!(body["rows"].as_array().unwrap().len(), 1);
     
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "SELECT * FROM test_partition_ns.table2",
             "user_id": "test_user"
@@ -335,7 +369,7 @@ async fn test_column_family_abstraction() {
     
     // Cleanup
     client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "DROP NAMESPACE test_partition_ns",
             "user_id": "test_user"
@@ -343,17 +377,24 @@ async fn test_column_family_abstraction() {
         .send()
         .await
         .ok();
+
+    http_server.shutdown().await;
 }
 
 #[tokio::test]
 async fn test_storage_backend_error_handling() {
     // T425: Trigger storage errors, verify graceful handling
     
+    let http_server = common::start_http_test_server()
+        .await
+        .expect("Failed to start test HTTP server");
+    let base_url = http_server.base_url().to_string();
+
     let client = reqwest::Client::new();
     
     // Try to create storage with invalid URI
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "CREATE STORAGE bad_storage URI ''",
             "user_id": "test_user"
@@ -367,7 +408,7 @@ async fn test_storage_backend_error_handling() {
     
     // Try to query non-existent table (partition not found)
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "SELECT * FROM nonexistent.table",
             "user_id": "test_user"
@@ -380,7 +421,7 @@ async fn test_storage_backend_error_handling() {
     
     // Try to insert into non-existent table
     let response = client
-        .post(&format!("{}/v1/api/sql", BASE_URL))
+        .post(&format!("{}/v1/api/sql", base_url))
         .json(&json!({
             "sql": "INSERT INTO nonexistent.table (id) VALUES (1)",
             "user_id": "test_user"
@@ -390,4 +431,6 @@ async fn test_storage_backend_error_handling() {
         .expect("Failed to send request");
     
     assert!(response.status().is_client_error() || response.status().is_server_error());
+
+    http_server.shutdown().await;
 }

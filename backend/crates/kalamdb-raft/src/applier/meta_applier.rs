@@ -11,7 +11,7 @@
 
 use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableType;
-use kalamdb_commons::models::{JobId, JobStatus, JobType, NamespaceId, NodeId, StorageId, TableId, TableName, UserId};
+use kalamdb_commons::models::{JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableId, TableName, UserId};
 use kalamdb_commons::types::User;
 
 use crate::RaftError;
@@ -118,9 +118,13 @@ pub trait MetaApplier: Send + Sync {
         &self,
         job_id: &JobId,
         job_type: JobType,
-        namespace_id: Option<&NamespaceId>,
-        table_name: Option<&TableName>,
-        config_json: Option<&str>,
+        status: JobStatus,
+        parameters_json: Option<&str>,
+        idempotency_key: Option<&str>,
+        max_retries: u8,
+        queue: Option<&str>,
+        priority: Option<i32>,
+        node_id: NodeId,
         created_at: i64,
     ) -> Result<(), RaftError>;
     
@@ -184,6 +188,47 @@ pub trait MetaApplier: Send + Sync {
     
     /// Delete a schedule
     async fn delete_schedule(&self, schedule_id: &str) -> Result<(), RaftError>;
+
+    // =========================================================================
+    // Live Query Operations
+    // =========================================================================
+
+    /// Create a live query subscription (replicated across cluster)
+    async fn create_live_query(
+        &self,
+        live_id: &LiveQueryId,
+        connection_id: &str,
+        namespace_id: &NamespaceId,
+        table_name: &TableName,
+        user_id: &UserId,
+        query: &str,
+        options_json: Option<&str>,
+        node_id: NodeId,
+        subscription_id: &str,
+        created_at: i64,
+    ) -> Result<(), RaftError>;
+
+    /// Update a live query (last_update, changes count)
+    async fn update_live_query(
+        &self,
+        live_id: &LiveQueryId,
+        last_update: i64,
+        changes: i64,
+    ) -> Result<(), RaftError>;
+
+    /// Delete a live query subscription
+    async fn delete_live_query(
+        &self,
+        live_id: &LiveQueryId,
+        deleted_at: i64,
+    ) -> Result<(), RaftError>;
+
+    /// Delete all live queries for a connection
+    async fn delete_live_queries_by_connection(
+        &self,
+        connection_id: &str,
+        deleted_at: i64,
+    ) -> Result<(), RaftError>;
 }
 
 /// No-op applier for testing or standalone scenarios
@@ -242,9 +287,13 @@ impl MetaApplier for NoOpMetaApplier {
         &self,
         _: &JobId,
         _: JobType,
-        _: Option<&NamespaceId>,
-        _: Option<&TableName>,
+        _: JobStatus,
         _: Option<&str>,
+        _: Option<&str>,
+        _: u8,
+        _: Option<&str>,
+        _: Option<i32>,
+        _: NodeId,
         _: i64,
     ) -> Result<(), RaftError> {
         Ok(())
@@ -271,6 +320,32 @@ impl MetaApplier for NoOpMetaApplier {
         Ok(())
     }
     async fn delete_schedule(&self, _: &str) -> Result<(), RaftError> {
+        Ok(())
+    }
+
+    // Live query operations
+    async fn create_live_query(
+        &self,
+        _: &LiveQueryId,
+        _: &str,
+        _: &NamespaceId,
+        _: &TableName,
+        _: &UserId,
+        _: &str,
+        _: Option<&str>,
+        _: NodeId,
+        _: &str,
+        _: i64,
+    ) -> Result<(), RaftError> {
+        Ok(())
+    }
+    async fn update_live_query(&self, _: &LiveQueryId, _: i64, _: i64) -> Result<(), RaftError> {
+        Ok(())
+    }
+    async fn delete_live_query(&self, _: &LiveQueryId, _: i64) -> Result<(), RaftError> {
+        Ok(())
+    }
+    async fn delete_live_queries_by_connection(&self, _: &str, _: i64) -> Result<(), RaftError> {
         Ok(())
     }
 }
@@ -364,7 +439,7 @@ mod tests {
             self.user_ops.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
-        async fn create_job(&self, _: &JobId, _: JobType, _: Option<&NamespaceId>, _: Option<&TableName>, _: Option<&str>, _: i64) -> Result<(), RaftError> {
+        async fn create_job(&self, _: &JobId, _: JobType, _: JobStatus, _: Option<&str>, _: Option<&str>, _: u8, _: Option<&str>, _: Option<i32>, _: NodeId, _: i64) -> Result<(), RaftError> {
             self.job_ops.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -398,6 +473,19 @@ mod tests {
         }
         async fn delete_schedule(&self, _: &str) -> Result<(), RaftError> {
             self.job_ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        // Live query operations
+        async fn create_live_query(&self, _: &LiveQueryId, _: &str, _: &NamespaceId, _: &TableName, _: &UserId, _: &str, _: Option<&str>, _: NodeId, _: &str, _: i64) -> Result<(), RaftError> {
+            Ok(())
+        }
+        async fn update_live_query(&self, _: &LiveQueryId, _: i64, _: i64) -> Result<(), RaftError> {
+            Ok(())
+        }
+        async fn delete_live_query(&self, _: &LiveQueryId, _: i64) -> Result<(), RaftError> {
+            Ok(())
+        }
+        async fn delete_live_queries_by_connection(&self, _: &str, _: i64) -> Result<(), RaftError> {
             Ok(())
         }
     }
@@ -462,10 +550,8 @@ mod tests {
     async fn test_job_operations() {
         let applier = MockMetaApplier::new();
         let job_id = JobId::from("FL-12345");
-        let namespace_id = NamespaceId::from("test_ns");
-        let table_name = TableName::from("test_table");
 
-        applier.create_job(&job_id, JobType::Flush, Some(&namespace_id), Some(&table_name), None, 1000).await.unwrap();
+        applier.create_job(&job_id, JobType::Flush, JobStatus::Queued, None, None, 3, None, None, NodeId::from(1), 1000).await.unwrap();
         applier.claim_job(&job_id, NodeId::from(1), 1100).await.unwrap();
         applier.update_job_status(&job_id, JobStatus::Running, 1200).await.unwrap();
         applier.complete_job(&job_id, Some("{}"), 1300).await.unwrap();
@@ -514,7 +600,7 @@ mod tests {
         assert!(applier.create_namespace(&ns_id, Some(&user_id)).await.is_ok());
         assert!(applier.create_table(&table_id, TableType::User, "{}").await.is_ok());
         assert!(applier.create_user(&user).await.is_ok());
-        assert!(applier.create_job(&JobId::from("J-1"), JobType::Flush, None, None, None, 1000).await.is_ok());
+        assert!(applier.create_job(&JobId::from("J-1"), JobType::Flush, JobStatus::Queued, None, None, 3, None, None, NodeId::from(1), 1000).await.is_ok());
         assert!(applier.register_storage(&StorageId::from("s1"), "{}").await.is_ok());
     }
 
@@ -524,7 +610,7 @@ mod tests {
         let job_id = JobId::from("FL-lifecycle");
 
         // Create -> Claim -> Update -> Complete
-        applier.create_job(&job_id, JobType::Flush, None, None, None, 1000).await.unwrap();
+        applier.create_job(&job_id, JobType::Flush, JobStatus::Queued, None, None, 3, None, None, NodeId::from(1), 1000).await.unwrap();
         applier.claim_job(&job_id, NodeId::from(1), 1100).await.unwrap();
         applier.update_job_status(&job_id, JobStatus::Running, 1200).await.unwrap();
         applier.complete_job(&job_id, None, 1300).await.unwrap();
@@ -537,7 +623,7 @@ mod tests {
         let applier = MockMetaApplier::new();
         let job_id = JobId::from("FL-fail");
 
-        applier.create_job(&job_id, JobType::Flush, None, None, None, 1000).await.unwrap();
+        applier.create_job(&job_id, JobType::Flush, JobStatus::Queued, None, None, 3, None, None, NodeId::from(1), 1000).await.unwrap();
         applier.claim_job(&job_id, NodeId::from(1), 1100).await.unwrap();
         applier.fail_job(&job_id, "Timeout", 1200).await.unwrap();
 
@@ -573,7 +659,7 @@ mod tests {
         applier.create_namespace(&ns_id, Some(&user_id)).await.unwrap();
         applier.create_table(&table_id, TableType::User, "{}").await.unwrap();
         applier.create_user(&user).await.unwrap();
-        applier.create_job(&JobId::from("J1"), JobType::Cleanup, Some(&ns_id), None, None, 1000).await.unwrap();
+        applier.create_job(&JobId::from("J1"), JobType::Cleanup, JobStatus::Queued, None, None, 3, None, None, NodeId::from(1), 1000).await.unwrap();
 
         assert_eq!(applier.get_counts(), (1, 1, 1, 1, 0));
     }

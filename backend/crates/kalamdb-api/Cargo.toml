@@ -65,6 +65,7 @@ moka = { workspace = true }
 
 [build-dependencies]
 chrono = { workspace = true }
+cc = { workspace = true }
 
 [dev-dependencies]
 # Testing utilities

@@ -4,9 +4,8 @@
 //! in `main.rs`: bootstrapping databases and services, wiring the HTTP
 //! server, and coordinating graceful shutdown.
 
-use crate::middleware;
-use crate::routes;
-use crate::ServerConfig;
+use crate::config::ServerConfig;
+use crate::{middleware, routes};
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
 use kalamdb_api::handlers::AuthConfig;
@@ -20,6 +19,7 @@ use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
 use log::debug;
 use log::{info, warn};
+use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
 
 /// Aggregated application components that need to be shared across the
@@ -44,7 +44,7 @@ pub async fn bootstrap(
 
     // Initialize RocksDB
     let phase_start = std::time::Instant::now();
-    let db_path = std::path::PathBuf::from(&config.storage.rocksdb_path);
+    let db_path = config.storage.rocksdb_dir();
     std::fs::create_dir_all(&db_path)?;
 
     let db_init = RocksDbInit::new(db_path.to_str().unwrap(), config.storage.rocksdb.clone());
@@ -82,7 +82,7 @@ pub async fn bootstrap(
     let app_context = kalamdb_core::app_context::AppContext::init(
         backend.clone(),
         node_id,
-        config.storage.default_storage_path.clone(),
+        config.storage.storage_dir().to_string_lossy().into_owned(),
         config.clone(), // ServerConfig needs to be cloned for Arc storage in AppContext
     );
     debug!(
@@ -185,7 +185,7 @@ pub async fn bootstrap(
             storage_name: "Local Filesystem".to_string(),
             description: Some("Default local filesystem storage".to_string()),
             storage_type: kalamdb_commons::models::StorageType::Filesystem,
-            base_directory: config.storage.default_storage_path.clone(), // Need clone for Storage struct
+            base_directory: config.storage.storage_dir().to_string_lossy().into_owned(),
             credentials: None,
             config_json: None,
             shared_tables_template: config.storage.shared_tables_template.clone(), // Need clone for Storage struct
@@ -223,6 +223,8 @@ pub async fn bootstrap(
 
     app_context.set_sql_executor(sql_executor.clone());
     live_query_manager.set_sql_executor(sql_executor.clone());
+    // Set AppContext on LiveQueryManager for Raft command execution
+    live_query_manager.set_app_context(app_context.clone());
 
     debug!(
         "SqlExecutor initialized with DROP TABLE support, storage registry, job manager, and table registration"
@@ -512,6 +514,120 @@ pub async fn run(
 
     info!("Server shutdown complete");
     Ok(())
+}
+
+/// A running HTTP server instance intended for integration tests.
+///
+/// This starts the same Actix app wiring as the production server (middleware stack,
+/// route registration, app_data wiring, auth config, rate limiting, etc.) but binds
+/// to an ephemeral port and provides an explicit shutdown handle.
+pub struct RunningTestHttpServer {
+    pub base_url: String,
+    pub bind_addr: SocketAddr,
+    pub app_context: Arc<kalamdb_core::app_context::AppContext>,
+    server_handle: actix_web::dev::ServerHandle,
+    server_task: tokio::task::JoinHandle<std::io::Result<()>>,
+}
+
+impl RunningTestHttpServer {
+    pub async fn shutdown(self) {
+        self.server_handle.stop(true).await;
+        let _ = self.server_task.await;
+    }
+}
+
+/// Start the HTTP server for integration tests on a random available port.
+///
+/// Notes:
+/// - Does not install Ctrl+C handling.
+/// - Caller must invoke `shutdown()` to stop the server.
+pub async fn run_for_tests(
+    config: &ServerConfig,
+    components: ApplicationComponents,
+    app_context: Arc<kalamdb_core::app_context::AppContext>,
+) -> Result<RunningTestHttpServer> {
+    let bind_ip = if config.server.host.is_empty() {
+        "127.0.0.1"
+    } else {
+        config.server.host.as_str()
+    };
+
+    let listener = TcpListener::bind((bind_ip, 0))?;
+    let bind_addr = listener.local_addr()?;
+
+    let session_factory = components.session_factory.clone();
+    let sql_executor = components.sql_executor.clone();
+    let rate_limiter = components.rate_limiter.clone();
+    let live_query_manager = components.live_query_manager.clone();
+    let user_repo = components.user_repo.clone();
+    let connection_registry = components.connection_registry.clone();
+
+    let connection_protection = middleware::ConnectionProtection::from_server_config(config);
+    let cors_config = config.clone();
+
+    let app_context_for_handler = app_context.clone();
+    let connection_registry_for_handler = connection_registry.clone();
+
+    let auth_config = AuthConfig::from_server_config(config);
+    let ui_path = config.server.ui_path.clone();
+
+    let server = HttpServer::new(move || {
+        let mut app = App::new()
+            .wrap(connection_protection.clone())
+            .wrap(middleware::request_logger())
+            .wrap(middleware::build_cors_from_config(&cors_config))
+            .app_data(web::Data::new(app_context_for_handler.clone()))
+            .app_data(web::Data::new(session_factory.clone()))
+            .app_data(web::Data::new(sql_executor.clone()))
+            .app_data(web::Data::new(rate_limiter.clone()))
+            .app_data(web::Data::new(live_query_manager.clone()))
+            .app_data(web::Data::new(user_repo.clone()))
+            .app_data(web::Data::new(connection_registry_for_handler.clone()))
+            .app_data(web::Data::new(auth_config.clone()))
+            .configure(routes::configure);
+
+        if kalamdb_api::routes::is_embedded_ui_available() {
+            app = app.configure(kalamdb_api::routes::configure_embedded_ui_routes);
+        } else if let Some(ref path) = ui_path {
+            let path = path.clone();
+            app = app.configure(move |cfg| {
+                kalamdb_api::routes::configure_ui_routes(cfg, &path);
+            });
+        }
+
+        app
+    })
+    .backlog(config.performance.backlog);
+
+    let server = server
+        .listen(listener)?
+        .workers(if config.server.workers == 0 {
+            num_cpus::get()
+        } else {
+            config.server.workers
+        })
+        .max_connections(config.performance.max_connections)
+        .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
+        .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
+        .client_request_timeout(std::time::Duration::from_secs(
+            config.performance.client_request_timeout,
+        ))
+        .client_disconnect_timeout(std::time::Duration::from_secs(
+            config.performance.client_disconnect_timeout,
+        ))
+        .run();
+
+    let server_handle = server.handle();
+    let server_task = tokio::spawn(server);
+    let base_url = format!("http://{}", bind_addr);
+
+    Ok(RunningTestHttpServer {
+        base_url,
+        bind_addr,
+        app_context,
+        server_handle,
+        server_task,
+    })
 }
 
 /// T125-T127: Create default system user on database initialization

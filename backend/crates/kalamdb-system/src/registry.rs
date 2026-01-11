@@ -7,8 +7,8 @@
 //! a single struct for cleaner AppContext API.
 
 use super::providers::{
-    AuditLogsTableProvider, ClusterTableProvider, JobsTableProvider, LiveQueriesTableProvider, ManifestTableProvider,
-    NamespacesTableProvider, ServerLogsTableProvider, StatsTableProvider, StoragesTableProvider,
+    AuditLogsTableProvider, JobsTableProvider, LiveQueriesTableProvider, ManifestTableProvider,
+    NamespacesTableProvider, StoragesTableProvider,
     TablesTableProvider, UsersTableProvider,
 };
 // SchemaRegistry will be passed as Arc parameter from kalamdb-core
@@ -37,10 +37,10 @@ pub struct SystemTablesRegistry {
     manifest: Arc<ManifestTableProvider>,
 
     // ===== Virtual tables =====
-    stats: RwLock<Arc<dyn TableProvider + Send + Sync>>,
-    settings: RwLock<Arc<dyn TableProvider + Send + Sync>>,
-    server_logs: RwLock<Option<Arc<ServerLogsTableProvider>>>,
-    cluster: RwLock<Option<Arc<ClusterTableProvider>>>,
+    stats: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    settings: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    server_logs: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    cluster: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
 }
 
 impl SystemTablesRegistry {
@@ -77,9 +77,9 @@ impl SystemTablesRegistry {
             manifest: Arc::new(ManifestTableProvider::new(storage_backend)),
 
             // Virtual tables
-            stats: RwLock::new(Arc::new(StatsTableProvider::new(None))), // Will be wired with cache later
-            settings: RwLock::new(Arc::new(StatsTableProvider::new(None))), // Placeholder, will be replaced from kalamdb-core
-            server_logs: RwLock::new(None), // Initialized via set_server_logs_provider()
+            stats: RwLock::new(None), // Will be wired by kalamdb-core
+            settings: RwLock::new(None), // Will be wired by kalamdb-core
+            server_logs: RwLock::new(None), // Will be wired by kalamdb-core (dev only)
             cluster: RwLock::new(None), // Initialized via set_cluster_provider()
         }
     }
@@ -122,34 +122,34 @@ impl SystemTablesRegistry {
     }
 
     /// Get the system.stats provider (virtual table)
-    pub fn stats(&self) -> Arc<dyn TableProvider + Send + Sync> {
+    pub fn stats(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.stats.read().unwrap().clone()
     }
 
     /// Set the system.stats provider (called from kalamdb-core)
     pub fn set_stats_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         log::debug!("SystemTablesRegistry: Setting stats provider");
-        *self.stats.write().unwrap() = provider;
+        *self.stats.write().unwrap() = Some(provider);
     }
 
     /// Get the system.settings provider (virtual table)
-    pub fn settings(&self) -> Arc<dyn TableProvider + Send + Sync> {
+    pub fn settings(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.settings.read().unwrap().clone()
     }
 
     /// Set the system.settings provider (called from kalamdb-core)
     pub fn set_settings_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         log::debug!("SystemTablesRegistry: Setting settings provider");
-        *self.settings.write().unwrap() = provider;
+        *self.settings.write().unwrap() = Some(provider);
     }
 
     /// Get the system.server_logs provider (virtual table reading JSON logs)
-    pub fn server_logs(&self) -> Option<Arc<ServerLogsTableProvider>> {
+    pub fn server_logs(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.server_logs.read().unwrap().clone()
     }
 
     /// Set the system.server_logs provider (called from kalamdb-core with logs path)
-    pub fn set_server_logs_provider(&self, provider: Arc<ServerLogsTableProvider>) {
+    pub fn set_server_logs_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         log::debug!("SystemTablesRegistry: Setting server_logs provider");
         *self.server_logs.write().unwrap() = Some(provider);
     }
@@ -160,12 +160,12 @@ impl SystemTablesRegistry {
     }
 
     /// Get the system.cluster provider (virtual table showing cluster status)
-    pub fn cluster(&self) -> Option<Arc<ClusterTableProvider>> {
+    pub fn cluster(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.cluster.read().unwrap().clone()
     }
 
     /// Set the system.cluster provider (called from kalamdb-core with executor)
-    pub fn set_cluster_provider(&self, provider: Arc<ClusterTableProvider>) {
+    pub fn set_cluster_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         log::debug!("SystemTablesRegistry: Setting cluster provider");
         *self.cluster.write().unwrap() = Some(provider);
     }
@@ -208,20 +208,26 @@ impl SystemTablesRegistry {
                 self.audit_logs.clone() as Arc<dyn datafusion::datasource::TableProvider>,
             ),
             (
-                "stats",
-                self.stats.read().unwrap().clone()
-                    as Arc<dyn datafusion::datasource::TableProvider>,
-            ),
-            (
-                "settings",
-                self.settings.read().unwrap().clone()
-                    as Arc<dyn datafusion::datasource::TableProvider>,
-            ),
-            (
                 "manifest",
                 self.manifest.clone() as Arc<dyn datafusion::datasource::TableProvider>,
             ),
         ];
+
+        // Add stats if initialized (virtual view from kalamdb-core)
+        if let Some(stats) = self.stats.read().unwrap().clone() {
+            providers.push((
+                "stats",
+                stats as Arc<dyn datafusion::datasource::TableProvider>,
+            ));
+        }
+
+        // Add settings if initialized (virtual view from kalamdb-core)
+        if let Some(settings) = self.settings.read().unwrap().clone() {
+            providers.push((
+                "settings",
+                settings as Arc<dyn datafusion::datasource::TableProvider>,
+            ));
+        }
 
         // Add server_logs if initialized
         if let Some(server_logs) = self.server_logs.read().unwrap().clone() {

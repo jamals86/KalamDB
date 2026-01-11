@@ -31,17 +31,16 @@ enable_http2 = true
 api_version = "v1"
 
 [storage]
-# RocksDB data directory path (relative or absolute)
-rocksdb_path = "./data/rocksdb"
-
-# Default storage path for 'local' storage (when base_directory='')
-# Used for table flushes to Parquet files (default: "./data/storage")
-# Default base path for flushed Parquet files (relative paths resolve from server CWD)
-default_storage_path = "./data/storage"
+# Base data directory for all KalamDB storage
+# Subdirectories are automatically created:
+#   ./data/rocksdb  - RocksDB hot storage (write buffer)
+#   ./data/storage  - Parquet cold storage (flushed segments)
+#   ./data/snapshots - Raft snapshots (consensus state)
+data_path = "./data"
 
 # Templates for table storage paths (used by 'local' storage)
 # Available placeholders: {namespace}, {tableName}, {userId}
-# Final paths: {default_storage_path}/{template}
+# Final paths: {data_path}/storage/{template}
 # Examples:
 #   Shared table: ./data/storage/myapp/products
 #   User table: ./data/storage/myapp/preferences/user123

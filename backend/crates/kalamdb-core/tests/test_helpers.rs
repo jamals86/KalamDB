@@ -1,9 +1,11 @@
-//! Test helpers compiled only for kalamdb-core unit tests.
+//! Test helpers for initializing AppContext with minimal dependencies
+//!
+//! This module provides utilities for setting up AppContext in unit tests.
 
-use crate::app_context::AppContext;
-use crate::jobs::executors::{
-    BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobRegistry, RestoreExecutor,
-    RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
+use kalamdb_core::app_context::AppContext;
+use kalamdb_core::jobs::executors::{
+    BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobRegistry,
+    RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
 };
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::{NamespaceId, NodeId, StorageId};
@@ -18,11 +20,25 @@ static TEST_RUNTIME: OnceCell<Arc<tokio::runtime::Runtime>> = OnceCell::new();
 static INIT: Once = Once::new();
 static BOOTSTRAP_INIT: Once = Once::new();
 
-/// Initialize AppContext with minimal test dependencies.
+/// Initialize AppContext with minimal test dependencies
 ///
-/// This is used by unit tests inside `kalamdb-core/src/**` that run with `cfg(test)`.
+/// Uses AppContext::init() with 4 parameters including test config.
+/// Thread-safe: uses Once to ensure single initialization.
+///
+/// # Example
+/// ```no_run
+/// use kalamdb_core::test_helpers::init_test_app_context;
+///
+/// #[test]
+/// fn my_test() {
+///     init_test_app_context();
+///     // Now AppContext::get() will work
+/// }
+/// ```
 pub fn init_test_app_context() -> Arc<TestDb> {
+    // Use Once to ensure we only initialize once across all tests
     INIT.call_once(|| {
+        // Create test database with all required column families
         let test_db = Arc::new(
             TestDb::new(&[
                 "system_tables",
@@ -39,38 +55,36 @@ pub fn init_test_app_context() -> Arc<TestDb> {
             .unwrap(),
         );
 
+        // Store in static for reuse
         TEST_DB.set(test_db.clone()).ok();
 
         let storage_backend: Arc<dyn StorageBackend> =
             Arc::new(RocksDBBackend::new(test_db.db.clone()));
 
+        // Create minimal test config using Default + overrides
         let mut test_config = kalamdb_commons::config::ServerConfig::default();
         test_config.storage.data_path = "data".to_string();
         test_config.execution.max_parameters = 50;
         test_config.execution.max_parameter_size_bytes = 512 * 1024;
 
+        // Phase 5: Simple 4-parameter initialization with config!
+        // Uses constants from kalamdb_commons for table prefixes
         AppContext::init(
             storage_backend,
-            NodeId::new(1),
+            NodeId::new(1), // test node ID
             "data/storage".to_string(),
             test_config,
         );
     });
 
-    // One-time bootstrap that matches server startup behavior closely:
-    // - Start + initialize single-node Raft so meta operations have a leader
-    // - Seed default namespace + default local storage so scans can resolve storage paths
     BOOTSTRAP_INIT.call_once(|| {
         let app_ctx = AppContext::get();
         let executor = app_ctx.executor();
 
-        // Keep a dedicated Tokio runtime alive for the lifetime of the test process.
-        // Raft spawns background tasks that must keep running after init.
         let rt = TEST_RUNTIME
             .get_or_init(|| Arc::new(tokio::runtime::Runtime::new().expect("tokio runtime")))
             .clone();
 
-        // Kick off raft start+bootstrap on the dedicated runtime and synchronously wait.
         let (tx, rx) = std::sync::mpsc::channel();
         rt.spawn(async move {
             let result = async {
@@ -132,15 +146,27 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         }
     });
 
+    // Return the test DB (guaranteed to be set by Once)
     TEST_DB
         .get()
         .expect("TEST_DB should be initialized")
         .clone()
 }
 
+/// Create a JobsTableProvider for testing
+///
+/// Returns the jobs provider from the initialized AppContext.
+pub fn create_test_jobs_provider() -> Arc<kalamdb_system::JobsTableProvider> {
+    init_test_app_context();
+    let ctx = AppContext::get();
+    ctx.system_tables().jobs().clone()
+}
+
+/// Create a JobRegistry with all executors for testing
 pub fn create_test_job_registry() -> JobRegistry {
     let registry = JobRegistry::new();
 
+    // Register all 8 executors
     registry.register(Arc::new(FlushExecutor::new()));
     registry.register(Arc::new(CleanupExecutor::new()));
     registry.register(Arc::new(RetentionExecutor::new()));
@@ -153,6 +179,21 @@ pub fn create_test_job_registry() -> JobRegistry {
     registry
 }
 
+/// Create a test SessionContext
+///
+/// Returns an Arc<SessionContext> for use in tests.
+/// Each call creates a new session, but they share the same DataFusion config.
+///
+/// # Example
+/// ```no_run
+/// use kalamdb_core::test_helpers::create_test_session;
+///
+/// #[test]
+/// fn my_test() {
+///     let session = create_test_session();
+///     // Use session in ExecutionContext::new(user_id, role, session)
+/// }
+/// ```
 pub fn create_test_session() -> Arc<SessionContext> {
     init_test_app_context();
     Arc::new(AppContext::get().session_factory().create_session())

@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 /// - `created_at`: Unix timestamp in milliseconds when subscription was created
 /// - `last_update`: Unix timestamp in milliseconds of last update notification
 /// - `changes`: Number of changes sent
-/// - `node`: Node/server handling this subscription
+/// - `node_id`: Node/server handling this subscription
 ///
 /// **Note**: `last_seq_id` is tracked in-memory only (in WebSocketSession.subscription_metadata),
 /// not persisted to system.live_queries table.
@@ -38,23 +38,29 @@ use serde::{Deserialize, Serialize};
 /// ## Example
 ///
 /// ```rust
-/// use kalamdb_commons::types::LiveQuery;
-/// use kalamdb_commons::{UserId, NamespaceId, TableName, LiveQueryId};
+/// use kalamdb_commons::models::ids::{ConnectionId, LiveQueryId, NamespaceId, UserId};
+/// use kalamdb_commons::models::types::LiveQuery;
+/// use kalamdb_commons::types::LiveQueryStatus;
+/// use kalamdb_commons::{NodeId, TableName};
+///
+/// let user_id = UserId::new("u_123");
+/// let connection_id = ConnectionId::new("conn_456");
 ///
 /// let live_query = LiveQuery {
-///     live_id: LiveQueryId::new("u_123-conn_456-events-sub_1"),
-///     connection_id: "conn_456".to_string(),
+///     live_id: LiveQueryId::new(user_id.clone(), connection_id.clone(), "sub_1"),
+///     connection_id: connection_id.as_str().to_string(),
 ///     subscription_id: "sub_1".to_string(),
 ///     namespace_id: NamespaceId::new("default"),
 ///     table_name: TableName::new("events"),
-///     user_id: UserId::new("u_123"),
+///     user_id,
 ///     query: "SELECT * FROM events WHERE type = 'click'".to_string(),
 ///     options: Some(r#"{"include_initial": true}"#.to_string()),
 ///     status: LiveQueryStatus::Active,
 ///     created_at: 1730000000000,
 ///     last_update: 1730000300000,
+///     last_ping_at: 1730000300000,
 ///     changes: 42,
-///     node: "server-01".to_string(),
+///     node_id: NodeId::from(1u64),
 /// };
 /// ```
 /// LiveQuery struct with fields ordered for optimal memory alignment.

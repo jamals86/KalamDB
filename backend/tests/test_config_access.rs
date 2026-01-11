@@ -3,6 +3,9 @@
 //! Verifies that the config centralization allows parameter limits to be
 //! read from ServerConfig via AppContext.
 
+#[path = "../crates/kalamdb-core/tests/test_helpers.rs"]
+mod test_helpers;
+
 use datafusion::common::ScalarValue;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
@@ -10,7 +13,7 @@ use kalamdb_core::sql::executor::parameter_validation::{validate_parameters, Par
 #[tokio::test]
 async fn test_parameter_limits_from_config() {
     // Initialize AppContext (from test_helpers)
-    kalamdb_core::test_helpers::init_test_app_context();
+    test_helpers::init_test_app_context();
 
     // Verify config is accessible
     let app_context = AppContext::get();
@@ -55,7 +58,7 @@ async fn test_parameter_limits_from_config() {
 #[tokio::test]
 async fn test_config_accessible_from_app_context() {
     // Initialize AppContext
-    kalamdb_core::test_helpers::init_test_app_context();
+    test_helpers::init_test_app_context();
 
     // Verify config can be accessed
     let app_context = AppContext::get();
@@ -63,7 +66,7 @@ async fn test_config_accessible_from_app_context() {
 
     // Verify basic config fields
     assert_eq!(app_context.node_id().as_u64(), 1);
-    assert_eq!(config.storage.default_storage_path, "data/storage");
+    assert_eq!(config.storage.data_path, "data");
 
     // Verify execution settings are present
     assert!(config.execution.max_parameters > 0);

@@ -422,6 +422,10 @@ impl SqlExecutor {
         };
         use kalamdb_commons::schemas::TableType;
 
+        let is_already_registered = |e: &KalamDbError| -> bool {
+            matches!(e, KalamDbError::InvalidOperation(msg) if msg.to_lowercase().contains("already exists"))
+        };
+
         let app_context = &self.app_context;
         let schema_registry = app_context.schema_registry();
 
@@ -469,11 +473,34 @@ impl SqlExecutor {
             // Register provider based on type
             match table_def.table_type {
                 TableType::User => {
-                    register_user_table_provider(app_context, &table_id, arrow_schema)?;
+                    if let Err(e) = register_user_table_provider(app_context, &table_id, arrow_schema)
+                    {
+                        if is_already_registered(&e) {
+                            log::debug!(
+                                "Skipping already-registered USER table provider for {}: {}",
+                                table_id,
+                                e
+                            );
+                            continue;
+                        }
+                        return Err(e);
+                    }
                     user_count += 1;
                 }
                 TableType::Shared => {
-                    register_shared_table_provider(app_context, &table_id, arrow_schema)?;
+                    if let Err(e) =
+                        register_shared_table_provider(app_context, &table_id, arrow_schema)
+                    {
+                        if is_already_registered(&e) {
+                            log::debug!(
+                                "Skipping already-registered SHARED table provider for {}: {}",
+                                table_id,
+                                e
+                            );
+                            continue;
+                        }
+                        return Err(e);
+                    }
                     shared_count += 1;
                 }
                 TableType::Stream => {
@@ -486,12 +513,22 @@ impl SqlExecutor {
                         } else {
                             None
                         };
-                    register_stream_table_provider(
+                    if let Err(e) = register_stream_table_provider(
                         app_context,
                         &table_id,
                         arrow_schema,
                         ttl_seconds,
-                    )?;
+                    ) {
+                        if is_already_registered(&e) {
+                            log::debug!(
+                                "Skipping already-registered STREAM table provider for {}: {}",
+                                table_id,
+                                e
+                            );
+                            continue;
+                        }
+                        return Err(e);
+                    }
                     stream_count += 1;
                 }
                 TableType::System => {

@@ -729,7 +729,7 @@ mod tests {
             .unwrap();
 
         let store1 = RaftPartitionStore::new(backend.clone(), RaftGroupId::Meta);
-        let store2 = RaftPartitionStore::new(backend.clone(), RaftGroupId::Meta);
+        let store2 = RaftPartitionStore::new(backend.clone(), RaftGroupId::DataUserShard(0));
 
         // Add entries to store1
         store1
@@ -740,7 +740,7 @@ mod tests {
             }])
             .unwrap();
 
-        // Add entries to store2
+        // Add entries to store2 (different group)
         store2
             .append_logs(&[RaftLogEntry {
                 index: 1,

@@ -3,7 +3,7 @@
 //! This module provides the VirtualView trait and ViewTableProvider wrapper
 //! to standardize how views compute their data dynamically using DataFusion patterns.
 
-use super::super::error::RegistryError;
+use crate::schema_registry::RegistryError;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -35,7 +35,7 @@ pub trait VirtualView: Send + Sync + std::fmt::Debug {
 ///
 /// This generic wrapper eliminates code duplication across all view implementations.
 /// Each view only needs to implement the VirtualView trait.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ViewTableProvider<V: VirtualView> {
     view: Arc<V>,
 }

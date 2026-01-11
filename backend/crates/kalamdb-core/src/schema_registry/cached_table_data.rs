@@ -327,14 +327,19 @@ impl CachedTableData {
     /// # Errors
     /// Returns error if no storage_id configured or storage not found
     pub fn object_store(&self) -> Result<Arc<dyn ObjectStore>, KalamDbError> {
-        let storage_id = self.storage_id.as_ref().ok_or_else(|| {
-            KalamDbError::InvalidOperation(
-                "Cannot get ObjectStore: no storage_id configured".to_string(),
-            )
-        })?;
+        let storage_id = self
+            .storage_id
+            .as_ref()
+            .cloned()
+            .or_else(|| Self::extract_storage_id(&self.table))
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(
+                    "Cannot get ObjectStore: no storage_id configured".to_string(),
+                )
+            })?;
 
         let app_ctx = crate::app_context::AppContext::get();
-        app_ctx.storage_registry().get_object_store(storage_id)
+        app_ctx.storage_registry().get_object_store(&storage_id)
     }
 
     /// Get cached Bloom filter columns (PRIMARY KEY + _seq)

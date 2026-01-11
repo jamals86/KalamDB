@@ -110,7 +110,7 @@ impl VirtualView for DatatypesView {
         datatypes_schema()
     }
 
-    fn compute_batch(&self) -> Result<RecordBatch, super::super::error::RegistryError> {
+    fn compute_batch(&self) -> Result<RecordBatch, crate::schema_registry::RegistryError> {
         let mut arrow_types = StringBuilder::new();
         let mut kalam_types = StringBuilder::new();
         let mut sql_names = StringBuilder::new();
@@ -133,7 +133,7 @@ impl VirtualView for DatatypesView {
             ],
         )
         .map_err(|e| {
-            super::super::error::RegistryError::Other(format!(
+            crate::schema_registry::RegistryError::Other(format!(
                 "Failed to build datatypes batch: {}",
                 e
             ))

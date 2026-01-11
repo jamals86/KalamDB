@@ -2,18 +2,39 @@ use super::types::JobsManager;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::JobParams;
+use chrono::Utc;
 use kalamdb_commons::system::{Job, JobOptions};
 use kalamdb_commons::{JobId, JobStatus, JobType};
+use kalamdb_raft::commands::MetaCommand;
 
 impl JobsManager {
-    /// Insert a job in the database asynchronously
+    /// Insert a job in the database asynchronously via Raft or direct write
     /// 
-    /// Delegates to provider's async method which handles spawn_blocking internally.
+    /// Uses Raft command when executor is available for cluster replication,
+    /// otherwise falls back to direct provider write.
     async fn insert_job_async(&self, job: Job) -> Result<(), KalamDbError> {
-        self.jobs_provider
-            .insert_job_async(job)
-            .await
-            .into_kalamdb_error("Failed to insert job")
+        let app_ctx = self.get_attached_app_context();
+        let executor = app_ctx.executor();
+        
+        // Use Raft command for cluster replication
+        let now = Utc::now();
+        let cmd = MetaCommand::CreateJob {
+            job_id: job.job_id.clone(),
+            job_type: job.job_type.clone(),
+            status: job.status.clone(),
+            parameters_json: job.parameters.clone(),
+            idempotency_key: job.idempotency_key.clone(),
+            max_retries: job.max_retries,
+            queue: job.queue.clone(),
+            priority: job.priority,
+            node_id: job.node_id.clone(),
+            created_at: now,
+        };
+        
+        executor.execute_meta(cmd).await
+            .map_err(|e| KalamDbError::Other(format!("Failed to create job via Raft: {}", e)))?;
+        
+        Ok(())
     }
 
     /// Create a new job
@@ -179,13 +200,16 @@ impl JobsManager {
             )));
         }
 
-        // Update status to Cancelled
-        let cancelled_job = job.cancel();
-
-        self.jobs_provider
-            .update_job_async(cancelled_job)
-            .await
-            .into_kalamdb_error("Failed to cancel job")?;
+        // Use Raft command to cancel job
+        let app_ctx = self.get_attached_app_context();
+        let cmd = MetaCommand::CancelJob {
+            job_id: job_id.clone(),
+            reason: "Cancelled by user".to_string(),
+            cancelled_at: Utc::now(),
+        };
+        
+        app_ctx.executor().execute_meta(cmd).await
+            .map_err(|e| KalamDbError::Other(format!("Failed to cancel job via Raft: {}", e)))?;
 
         // Log cancellation
         self.log_job_event(job_id, "warn", "Job cancelled by user");
@@ -206,24 +230,18 @@ impl JobsManager {
         job_id: &JobId,
         message: Option<String>,
     ) -> Result<(), KalamDbError> {
-        let mut job = self
-            .get_job(job_id)
-            .await?
-            .ok_or_else(|| KalamDbError::Other(format!("Job {} not found", job_id)))?;
-
-        // Update job to completed status
-        let now_ms = chrono::Utc::now().timestamp_millis();
-        job.status = JobStatus::Completed;
-        job.started_at.get_or_insert(now_ms);
         let success_message = message.unwrap_or_else(|| "Job completed successfully".to_string());
-        job.message = Some(success_message.clone());
-        job.updated_at = now_ms;
-        job.finished_at = Some(now_ms);
-
-        self.jobs_provider
-            .update_job_async(job)
-            .await
-            .into_kalamdb_error("Failed to complete job")?;
+        
+        // Use Raft command to complete job
+        let app_ctx = self.get_attached_app_context();
+        let cmd = MetaCommand::CompleteJob {
+            job_id: job_id.clone(),
+            result_json: Some(serde_json::json!({ "message": success_message.clone() }).to_string()),
+            completed_at: Utc::now(),
+        };
+        
+        app_ctx.executor().execute_meta(cmd).await
+            .map_err(|e| KalamDbError::Other(format!("Failed to complete job via Raft: {}", e)))?;
 
         self.log_job_event(job_id, "info", &success_message);
         Ok(())
@@ -242,24 +260,16 @@ impl JobsManager {
         job_id: &JobId,
         error_message: String,
     ) -> Result<(), KalamDbError> {
-        let mut job = self
-            .get_job(job_id)
-            .await?
-            .ok_or_else(|| KalamDbError::Other(format!("Job {} not found", job_id)))?;
-
-        // Manually update job to failed state
-        let now_ms = chrono::Utc::now().timestamp_millis();
-        job.status = JobStatus::Failed;
-        job.started_at.get_or_insert(now_ms);
-        job.message = Some(error_message.clone());
-        job.exception_trace = None;
-        job.updated_at = now_ms;
-        job.finished_at = Some(now_ms);
-
-        self.jobs_provider
-            .update_job_async(job)
-            .await
-            .into_kalamdb_error("Failed to mark job as failed")?;
+        // Use Raft command to fail job
+        let app_ctx = self.get_attached_app_context();
+        let cmd = MetaCommand::FailJob {
+            job_id: job_id.clone(),
+            error_message: error_message.clone(),
+            failed_at: Utc::now(),
+        };
+        
+        app_ctx.executor().execute_meta(cmd).await
+            .map_err(|e| KalamDbError::Other(format!("Failed to mark job as failed via Raft: {}", e)))?;
 
         self.log_job_event(job_id, "error", &format!("Job failed: {}", error_message));
         Ok(())

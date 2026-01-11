@@ -11,7 +11,7 @@
 //! Runs in the unified Meta Raft group (replaces MetaSystem + MetaUsers + MetaJobs).
 
 use async_trait::async_trait;
-use kalamdb_commons::models::{JobId, JobStatus, JobType, NamespaceId, NodeId, StorageId, TableId};
+use kalamdb_commons::models::{JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableId};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::types::User;
 use parking_lot::RwLock;
@@ -62,6 +62,18 @@ struct MetaSnapshot {
     // Job metadata
     jobs: HashMap<JobId, JobState>,
     schedules: HashMap<String, ScheduleState>,
+    
+    // Live query metadata (replicated across cluster)
+    live_queries: HashMap<LiveQueryId, LiveQueryState>,
+}
+
+/// Live query state for snapshot
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LiveQueryState {
+    live_id: LiveQueryId,
+    connection_id: String,
+    node_id: NodeId,
+    created_at: i64,
 }
 
 // =============================================================================
@@ -354,16 +366,20 @@ impl MetaStateMachine {
             // =================================================================
             // Job Operations
             // =================================================================
-            MetaCommand::CreateJob { job_id, job_type, namespace_id, table_name, config_json, created_at } => {
+            MetaCommand::CreateJob { job_id, job_type, status, parameters_json, idempotency_key, max_retries, queue, priority, node_id, created_at } => {
                 log::debug!("MetaStateMachine: CreateJob {} (type: {})", job_id, job_type);
                 
                 if let Some(ref a) = applier {
                     a.create_job(
                         &job_id,
                         job_type.clone(),
-                        namespace_id.as_ref(),
-                        table_name.as_ref(),
-                        config_json.as_deref(),
+                        status.clone(),
+                        parameters_json.as_deref(),
+                        idempotency_key.as_deref(),
+                        max_retries,
+                        queue.as_deref(),
+                        priority,
+                        node_id.clone(),
                         created_at.timestamp_millis(),
                     ).await?;
                 }
@@ -371,7 +387,7 @@ impl MetaStateMachine {
                 let job_state = JobState {
                     job_id: job_id.clone(),
                     job_type,
-                    status: JobStatus::Queued,
+                    status: status.clone(),
                     claimed_by: None,
                     error_message: None,
                 };
@@ -531,6 +547,84 @@ impl MetaStateMachine {
                 {
                     let mut cache = self.snapshot_cache.write();
                     cache.schedules.remove(&schedule_id);
+                }
+                Ok(MetaResponse::Ok)
+            }
+
+            // =================================================================
+            // Live Query Operations
+            // =================================================================
+            MetaCommand::CreateLiveQuery { 
+                live_id, connection_id, namespace_id, table_name, user_id, 
+                query, options_json, node_id, subscription_id, created_at 
+            } => {
+                log::debug!("MetaStateMachine: CreateLiveQuery {} on node {}", live_id, node_id);
+                
+                if let Some(ref a) = applier {
+                    a.create_live_query(
+                        &live_id,
+                        &connection_id,
+                        &namespace_id,
+                        &table_name,
+                        &user_id,
+                        &query,
+                        options_json.as_deref(),
+                        node_id.clone(),
+                        &subscription_id,
+                        created_at.timestamp_millis(),
+                    ).await?;
+                }
+                
+                let lq_state = LiveQueryState {
+                    live_id: live_id.clone(),
+                    connection_id,
+                    node_id,
+                    created_at: created_at.timestamp_millis(),
+                };
+                
+                {
+                    let mut cache = self.snapshot_cache.write();
+                    cache.live_queries.insert(live_id.clone(), lq_state);
+                }
+                self.approximate_size.fetch_add(200, Ordering::Relaxed);
+                Ok(MetaResponse::LiveQueryCreated { live_id })
+            }
+
+            MetaCommand::UpdateLiveQuery { live_id, last_update, changes } => {
+                log::trace!("MetaStateMachine: UpdateLiveQuery {} (changes={})", live_id, changes);
+                
+                if let Some(ref a) = applier {
+                    a.update_live_query(&live_id, last_update.timestamp_millis(), changes).await?;
+                }
+                
+                // Live query state in cache is minimal - full state is in provider
+                Ok(MetaResponse::Ok)
+            }
+
+            MetaCommand::DeleteLiveQuery { live_id, deleted_at } => {
+                log::debug!("MetaStateMachine: DeleteLiveQuery {}", live_id);
+                
+                if let Some(ref a) = applier {
+                    a.delete_live_query(&live_id, deleted_at.timestamp_millis()).await?;
+                }
+                
+                {
+                    let mut cache = self.snapshot_cache.write();
+                    cache.live_queries.remove(&live_id);
+                }
+                Ok(MetaResponse::Ok)
+            }
+
+            MetaCommand::DeleteLiveQueriesByConnection { connection_id, deleted_at } => {
+                log::debug!("MetaStateMachine: DeleteLiveQueriesByConnection {}", connection_id);
+                
+                if let Some(ref a) = applier {
+                    a.delete_live_queries_by_connection(&connection_id, deleted_at.timestamp_millis()).await?;
+                }
+                
+                {
+                    let mut cache = self.snapshot_cache.write();
+                    cache.live_queries.retain(|_, lq| lq.connection_id != connection_id);
                 }
                 Ok(MetaResponse::Ok)
             }

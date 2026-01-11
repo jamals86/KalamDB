@@ -10,7 +10,7 @@
 //! for data groups.
 
 use chrono::{DateTime, Utc};
-use kalamdb_commons::models::{JobId, JobStatus, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
+use kalamdb_commons::models::{JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableName, UserId};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::TableId;
 use kalamdb_commons::types::User;
@@ -119,9 +119,14 @@ pub enum MetaCommand {
     CreateJob {
         job_id: JobId,
         job_type: JobType,
-        namespace_id: Option<NamespaceId>,
-        table_name: Option<TableName>,
-        config_json: Option<String>,
+        status: JobStatus,
+        /// Parameters JSON (contains namespace_id, table_name, and other config)
+        parameters_json: Option<String>,
+        idempotency_key: Option<String>,
+        max_retries: u8,
+        queue: Option<String>,
+        priority: Option<i32>,
+        node_id: NodeId,
         created_at: DateTime<Utc>,
     },
 
@@ -180,6 +185,43 @@ pub enum MetaCommand {
     DeleteSchedule {
         schedule_id: String,
     },
+
+    // =========================================================================
+    // Live Query Operations (cluster-wide replication)
+    // =========================================================================
+
+    /// Register a live query subscription (replicated across cluster)
+    CreateLiveQuery {
+        live_id: LiveQueryId,
+        connection_id: String,
+        namespace_id: NamespaceId,
+        table_name: TableName,
+        user_id: UserId,
+        query: String,
+        options_json: Option<String>,
+        node_id: NodeId,
+        subscription_id: String,
+        created_at: DateTime<Utc>,
+    },
+
+    /// Update a live query (e.g., last_ping, changes count)
+    UpdateLiveQuery {
+        live_id: LiveQueryId,
+        last_update: DateTime<Utc>,
+        changes: i64,
+    },
+
+    /// Delete a live query subscription
+    DeleteLiveQuery {
+        live_id: LiveQueryId,
+        deleted_at: DateTime<Utc>,
+    },
+
+    /// Delete all live queries for a connection (when connection closes)
+    DeleteLiveQueriesByConnection {
+        connection_id: String,
+        deleted_at: DateTime<Utc>,
+    },
 }
 
 impl MetaCommand {
@@ -195,6 +237,8 @@ impl MetaCommand {
                 | Self::CompleteJob { .. } | Self::FailJob { .. } | Self::ReleaseJob { .. }
                 | Self::CancelJob { .. } => "job",
             Self::CreateSchedule { .. } | Self::DeleteSchedule { .. } => "schedule",
+            Self::CreateLiveQuery { .. } | Self::UpdateLiveQuery { .. } 
+                | Self::DeleteLiveQuery { .. } | Self::DeleteLiveQueriesByConnection { .. } => "live_query",
         }
     }
 }
@@ -227,6 +271,11 @@ pub enum MetaResponse {
     JobClaimed {
         job_id: JobId,
         node_id: NodeId,
+    },
+    
+    // === Live Query responses ===
+    LiveQueryCreated {
+        live_id: LiveQueryId,
     },
     
     // === Error ===

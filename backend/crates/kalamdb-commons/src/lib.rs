@@ -46,6 +46,7 @@ pub mod arrow_utils;
 pub mod config;
 pub mod constants;
 pub mod errors;
+pub mod file_helpers;
 pub mod ids;
 pub mod models;
 pub mod security; // Security utilities (SQL redaction, etc.)

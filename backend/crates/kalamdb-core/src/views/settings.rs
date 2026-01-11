@@ -3,7 +3,7 @@
 //! **Type**: Virtual View (not backed by persistent storage)
 //!
 //! Provides server configuration settings as a queryable table with columns:
-//! - name: Setting name (e.g., "server.host", "storage.rocksdb_path")
+//! - name: Setting name (e.g., "server.host", "storage.data_path")
 //! - value: Current setting value as string
 //! - description: Human-readable description of the setting
 //! - category: Setting category (e.g., "server", "storage", "limits")
@@ -90,7 +90,7 @@ impl VirtualView for SettingsView {
         settings_schema()
     }
 
-    fn compute_batch(&self) -> Result<RecordBatch, super::super::error::RegistryError> {
+    fn compute_batch(&self) -> Result<RecordBatch, crate::schema_registry::RegistryError> {
         let mut names = StringBuilder::new();
         let mut values = StringBuilder::new();
         let mut descriptions = StringBuilder::new();
@@ -111,15 +111,14 @@ impl VirtualView for SettingsView {
             // Cluster Settings (optional)
             if let Some(cluster) = &config.cluster {
                 add_settings!(names, values, descriptions, categories, [
-                    ("cluster.node_id", cluster.node_id, "Authoritative node identifier for cluster", "cluster"),
+                    ("storage.data_path", config.storage.data_path, "Base data directory (auto-creates rocksdb/, storage/, snapshots/ subdirs)", "storage"),
                     ("cluster.cluster_id", cluster.cluster_id, "Unique cluster identifier", "cluster"),
                 ]);
             }
 
             // Storage Settings
             add_settings!(names, values, descriptions, categories, [
-                ("storage.rocksdb_path", config.storage.rocksdb_path, "RocksDB data directory path", "storage"),
-                ("storage.default_storage_path", config.storage.default_storage_path, "Default path for Parquet file storage", "storage"),
+                ("storage.data_path", config.storage.data_path, "Base data directory (auto-creates rocksdb/, storage/, snapshots/ subdirs)", "storage"),
                 ("storage.rocksdb.write_buffer_size", config.storage.rocksdb.write_buffer_size, "Write buffer size per column family in bytes", "storage"),
                 ("storage.rocksdb.max_write_buffers", config.storage.rocksdb.max_write_buffers, "Maximum number of write buffers", "storage"),
                 ("storage.rocksdb.block_cache_size", config.storage.rocksdb.block_cache_size, "Block cache size for reads in bytes", "storage"),
@@ -229,7 +228,7 @@ impl VirtualView for SettingsView {
             ],
         )
         .map_err(|e| {
-            super::super::error::RegistryError::Other(format!(
+            crate::schema_registry::RegistryError::Other(format!(
                 "Failed to build settings batch: {}",
                 e
             ))

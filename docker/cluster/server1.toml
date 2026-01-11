@@ -10,8 +10,9 @@ enable_http2 = true
 api_version = "v1"
 
 [storage]
-rocksdb_path = "/data/rocksdb"
-default_storage_path = "/data/storage"
+# Base data directory inside the container
+# Subdirectories automatically created: /data/rocksdb, /data/storage, /data/snapshots
+data_path = "/data"
 shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 

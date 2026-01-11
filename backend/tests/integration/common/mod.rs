@@ -51,6 +51,62 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
 
+/// A near-production KalamDB HTTP server for integration tests.
+///
+/// Unlike `TestServer` (which exercises the core execution path in-process), this
+/// boots the real Actix-Web server stack (middleware, routes, auth wiring, rate
+/// limiter, WebSocket endpoints) using the same lifecycle code as the `backend`
+/// binary.
+pub struct HttpTestServer {
+    _temp_dir: TempDir,
+    pub config: kalamdb_commons::config::ServerConfig,
+    pub running: kalamdb_server::lifecycle::RunningTestHttpServer,
+}
+
+impl HttpTestServer {
+    pub fn base_url(&self) -> &str {
+        &self.running.base_url
+    }
+
+    pub fn ws_url(&self) -> String {
+        // WebSocket route is mounted at /v1/ws (see lifecycle.rs log message)
+        format!("{}/v1/ws", self.running.base_url.replace("http://", "ws://"))
+    }
+
+    pub async fn shutdown(self) {
+        self.running.shutdown().await;
+    }
+}
+
+/// Start a near-production HTTP server on a random available port.
+///
+/// This is the preferred helper for tests that use `reqwest` or WebSocket clients.
+pub async fn start_http_test_server() -> anyhow::Result<HttpTestServer> {
+    let temp_dir = TempDir::new()?;
+
+    let mut config = kalamdb_commons::config::ServerConfig::default();
+    config.server.host = "127.0.0.1".to_string();
+    config.server.port = 0;
+    config.server.ui_path = None;
+
+    // Keep all data isolated per test.
+    config.storage.data_path = temp_dir.path().join("data").to_string_lossy().into_owned();
+
+    // Ensure JWT env var is set exactly like the real binary does.
+    if std::env::var("KALAMDB_JWT_SECRET").is_err() {
+        std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
+    }
+
+    let (components, app_context) = kalamdb_server::lifecycle::bootstrap(&config).await?;
+    let running = kalamdb_server::lifecycle::run_for_tests(&config, components, app_context).await?;
+
+    Ok(HttpTestServer {
+        _temp_dir: temp_dir,
+        config,
+        running,
+    })
+}
+
 pub mod fixtures;
 pub mod websocket;
 
@@ -231,7 +287,7 @@ impl TestServer {
             "KALAMDB_JWT_TRUSTED_ISSUERS",
             &test_config.auth.jwt_trusted_issuers,
         );
-        test_config.storage.default_storage_path = storage_base_path.clone();
+        test_config.storage.data_path = PathBuf::from(&storage_base_path).parent().unwrap().to_string_lossy().to_string();
 
         // Initialize AppContext using singleton pattern (only once for all tests)
         // All tests in the same process will share both AppContext AND RocksDB

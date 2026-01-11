@@ -120,6 +120,7 @@ impl RaftManager {
     pub fn new_persistent(
         config: RaftManagerConfig,
         backend: Arc<dyn StorageBackend>,
+        snapshots_dir: std::path::PathBuf,
     ) -> Result<Self, RaftError> {
         let user_shards_count = config.user_shards;
         let shared_shards_count = config.shared_shards;
@@ -132,11 +133,16 @@ impl RaftManager {
                 .map_err(|e| RaftError::Storage(format!("Failed to create raft partition: {}", e)))?;
         }
 
+        std::fs::create_dir_all(&snapshots_dir).map_err(|e| {
+            RaftError::Storage(format!("Failed to create snapshots directory {}: {}", snapshots_dir.display(), e))
+        })?;
+
         // Create unified meta group with persistent storage
         let meta = Arc::new(RaftGroup::new_persistent(
             GroupId::Meta,
             MetaStateMachine::new(),
             backend.clone(),
+            snapshots_dir.clone(),
         )?);
 
         // Create user data shards with persistent storage
@@ -146,6 +152,7 @@ impl RaftManager {
                     GroupId::DataUserShard(shard_id),
                     UserDataStateMachine::new(shard_id),
                     backend.clone(),
+                    snapshots_dir.clone(),
                 )
                 .map(Arc::new)
             })
@@ -158,6 +165,7 @@ impl RaftManager {
                     GroupId::DataSharedShard(shard_id),
                     SharedDataStateMachine::new(shard_id),
                     backend.clone(),
+                    snapshots_dir.clone(),
                 )
                 .map(Arc::new)
             })

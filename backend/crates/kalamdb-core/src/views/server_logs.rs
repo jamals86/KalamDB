@@ -1,46 +1,40 @@
-//! system.server_logs virtual table
+//! system.server_logs virtual view
+//!
+//! **Type**: Virtual View (not backed by persistent storage)
 //!
 //! Provides read access to server log files in JSON Lines format.
 //! Requires `format = "json"` in logging configuration.
+//!
+//! **DataFusion Pattern**: Implements VirtualView trait for consistent view behavior
+//! - Reads log files dynamically on each query (no cached state)
+//! - Only used in development environments
+//! - No memory consumption when idle
 
-use crate::{SystemError, SystemTableProviderExt};
-use async_trait::async_trait;
+use super::view_base::{VirtualView, ViewTableProvider};
+use crate::schema_registry::RegistryError;
 use datafusion::arrow::array::{ArrayRef, Int64Builder, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::ExecutionPlan;
-use std::any::Any;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 /// Static schema for system.server_logs
-static SERVER_LOGS_SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
+static SERVER_LOGS_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
 
-/// Schema helper for system.server_logs
-pub struct ServerLogsTableSchema;
-
-impl ServerLogsTableSchema {
-    pub fn schema() -> SchemaRef {
-        SERVER_LOGS_SCHEMA
-            .get_or_init(|| {
-                Arc::new(Schema::new(vec![
-                    Field::new("timestamp", DataType::Utf8, false),
-                    Field::new("level", DataType::Utf8, false),
-                    Field::new("thread", DataType::Utf8, true),
-                    Field::new("target", DataType::Utf8, true),
-                    Field::new("line", DataType::Int64, true),
-                    Field::new("message", DataType::Utf8, false),
-                ]))
-            })
-            .clone()
-    }
-
-    pub fn table_name() -> &'static str {
-        "server_logs"
-    }
+/// Get or initialize the server_logs schema
+fn server_logs_schema() -> SchemaRef {
+    SERVER_LOGS_SCHEMA
+        .get_or_init(|| {
+            Arc::new(Schema::new(vec![
+                Field::new("timestamp", DataType::Utf8, false),
+                Field::new("level", DataType::Utf8, false),
+                Field::new("thread", DataType::Utf8, true),
+                Field::new("target", DataType::Utf8, true),
+                Field::new("line", DataType::Int64, true),
+                Field::new("message", DataType::Utf8, false),
+            ]))
+        })
+        .clone()
 }
 
 /// JSON log entry structure (matches the logging format)
@@ -54,31 +48,22 @@ struct JsonLogEntry {
     message: String,
 }
 
-/// Virtual table that reads server log files
-pub struct ServerLogsTableProvider {
-    schema: SchemaRef,
+/// ServerLogsView - Reads server log files dynamically
+#[derive(Debug)]
+pub struct ServerLogsView {
     logs_path: PathBuf,
 }
 
-impl std::fmt::Debug for ServerLogsTableProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ServerLogsTableProvider")
-            .field("logs_path", &self.logs_path)
-            .finish()
-    }
-}
-
-impl ServerLogsTableProvider {
-    /// Create a new server logs table provider
+impl ServerLogsView {
+    /// Create a new server logs view
     pub fn new(logs_path: impl Into<PathBuf>) -> Self {
         Self {
-            schema: ServerLogsTableSchema::schema(),
             logs_path: logs_path.into(),
         }
     }
 
     /// Read and parse log entries from the server.jsonl file
-    fn read_log_entries(&self) -> Result<Vec<JsonLogEntry>, SystemError> {
+    fn read_log_entries(&self) -> Result<Vec<JsonLogEntry>, RegistryError> {
         // Try .jsonl first (JSON format), fallback to .log (compact format)
         let jsonl_path = self.logs_path.join("server.jsonl");
         let log_file_path = if jsonl_path.exists() {
@@ -93,7 +78,7 @@ impl ServerLogsTableProvider {
         }
 
         let content = std::fs::read_to_string(&log_file_path).map_err(|e| {
-            SystemError::Other(format!(
+            RegistryError::Other(format!(
                 "Failed to read log file {}: {}",
                 log_file_path.display(),
                 e
@@ -120,9 +105,14 @@ impl ServerLogsTableProvider {
 
         Ok(entries)
     }
+}
 
-    /// Build a RecordBatch from log entries
-    fn build_batch(&self) -> Result<RecordBatch, SystemError> {
+impl VirtualView for ServerLogsView {
+    fn schema(&self) -> SchemaRef {
+        server_logs_schema()
+    }
+
+    fn compute_batch(&self) -> Result<RecordBatch, RegistryError> {
         let entries = self.read_log_entries()?;
 
         let mut timestamps = StringBuilder::new();
@@ -157,8 +147,8 @@ impl ServerLogsTableProvider {
             messages.append_value(&entry.message);
         }
 
-        let batch = RecordBatch::try_new(
-            self.schema.clone(),
+        RecordBatch::try_new(
+            self.schema(),
             vec![
                 Arc::new(timestamps.finish()) as ArrayRef,
                 Arc::new(levels.finish()) as ArrayRef,
@@ -168,57 +158,20 @@ impl ServerLogsTableProvider {
                 Arc::new(messages.finish()) as ArrayRef,
             ],
         )
-        .map_err(SystemError::Arrow)?;
+        .map_err(|e| RegistryError::Other(format!("Failed to build server_logs batch: {}", e)))
+    }
 
-        Ok(batch)
+    fn view_name(&self) -> &str {
+        "system.server_logs"
     }
 }
 
-#[async_trait]
-impl TableProvider for ServerLogsTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+/// Type alias for the server logs table provider
+pub type ServerLogsTableProvider = ViewTableProvider<ServerLogsView>;
 
-    fn schema(&self) -> SchemaRef {
-        self.schema.clone()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::View
-    }
-
-    async fn scan(
-        &self,
-        _state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
-        _limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::datasource::MemTable;
-
-        let batch = self
-            .build_batch()
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-        let mem_table = MemTable::try_new(self.schema.clone(), vec![vec![batch]])?;
-        mem_table.scan(_state, projection, _filters, _limit).await
-    }
-}
-
-#[async_trait]
-impl SystemTableProviderExt for ServerLogsTableProvider {
-    fn table_name(&self) -> &str {
-        ServerLogsTableSchema::table_name()
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        self.schema.clone()
-    }
-
-    fn load_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.build_batch()
-    }
+/// Helper function to create a server logs table provider
+pub fn create_server_logs_provider(logs_path: impl Into<PathBuf>) -> ServerLogsTableProvider {
+    ViewTableProvider::new(Arc::new(ServerLogsView::new(logs_path)))
 }
 
 #[cfg(test)]
@@ -229,7 +182,7 @@ mod tests {
 
     #[test]
     fn test_schema() {
-        let schema = ServerLogsTableSchema::schema();
+        let schema = server_logs_schema();
         assert_eq!(schema.fields().len(), 6);
         assert_eq!(schema.field(0).name(), "timestamp");
         assert_eq!(schema.field(1).name(), "level");
@@ -257,8 +210,8 @@ mod tests {
         )
         .unwrap();
 
-        let provider = ServerLogsTableProvider::new(dir.path());
-        let entries = provider.read_log_entries().unwrap();
+        let view = ServerLogsView::new(dir.path());
+        let entries = view.read_log_entries().unwrap();
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].level, "INFO");
@@ -271,9 +224,28 @@ mod tests {
         let dir = tempdir().unwrap();
         // Don't create the log file
 
-        let provider = ServerLogsTableProvider::new(dir.path());
-        let entries = provider.read_log_entries().unwrap();
+        let view = ServerLogsView::new(dir.path());
+        let entries = view.read_log_entries().unwrap();
 
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_compute_batch() {
+        let dir = tempdir().unwrap();
+        let log_file = dir.path().join("server.jsonl");
+
+        let mut file = std::fs::File::create(&log_file).unwrap();
+        writeln!(
+            file,
+            r#"{{"timestamp":"2024-01-15T10:30:00Z","level":"INFO","message":"Test"}}"#
+        )
+        .unwrap();
+
+        let view = ServerLogsView::new(dir.path());
+        let batch = view.compute_batch().unwrap();
+
+        assert_eq!(batch.num_rows(), 1);
+        assert_eq!(batch.num_columns(), 6);
     }
 }

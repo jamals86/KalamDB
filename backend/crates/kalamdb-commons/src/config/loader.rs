@@ -14,9 +14,23 @@ impl ServerConfig {
         // Override with environment variables if present
         config.apply_env_overrides()?;
 
+        // Normalize local filesystem paths (rocksdb/logs/storage/snapshots)
+        config.normalize_paths();
+
         config.validate()?;
 
         Ok(config)
+    }
+
+    /// Normalize directory-like paths to absolute paths for consistent runtime behavior.
+    ///
+    /// This keeps semantics the same (relative paths remain relative to current working dir),
+    /// but avoids each subsystem re-implementing path handling.
+    fn normalize_paths(&mut self) {
+        use crate::file_helpers::normalize_dir_path;
+
+        self.storage.data_path = normalize_dir_path(&self.storage.data_path);
+        self.logging.logs_path = normalize_dir_path(&self.logging.logs_path);
     }
 
     /// Apply environment variable overrides for sensitive configuration
@@ -27,8 +41,8 @@ impl ServerConfig {
     /// - KALAMDB_LOG_LEVEL: Override logging.level
     /// - KALAMDB_LOG_FILE: Override logging.file_path
     /// - KALAMDB_LOG_TO_CONSOLE: Override logging.log_to_console
-    /// - KALAMDB_DATA_DIR: Override storage.rocksdb_path
-    /// - KALAMDB_ROCKSDB_PATH: Override storage.rocksdb_path (legacy, prefer KALAMDB_DATA_DIR)
+    /// - KALAMDB_DATA_DIR: Override storage.data_path (base directory for rocksdb, storage, snapshots)
+    /// - KALAMDB_ROCKSDB_PATH: Override storage.data_path (legacy, extracts parent dir)
     /// - KALAMDB_LOG_FILE_PATH: Override logging.file_path (legacy, prefer KALAMDB_LOG_FILE)
     /// - KALAMDB_HOST: Override server.host (legacy, prefer KALAMDB_SERVER_HOST)
     /// - KALAMDB_PORT: Override server.port (legacy, prefer KALAMDB_SERVER_PORT)
@@ -85,10 +99,12 @@ impl ServerConfig {
 
         // Data directory (new naming convention)
         if let Ok(path) = env::var("KALAMDB_DATA_DIR") {
-            self.storage.rocksdb_path = path;
+            self.storage.data_path = path;
         } else if let Ok(path) = env::var("KALAMDB_ROCKSDB_PATH") {
-            // Legacy fallback
-            self.storage.rocksdb_path = path;
+            // Legacy fallback - KALAMDB_ROCKSDB_PATH now sets the parent data dir
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                self.storage.data_path = parent.to_string_lossy().to_string();
+            }
         }
 
         Ok(())
@@ -255,7 +271,7 @@ mod tests {
         env::set_var("KALAMDB_DATA_DIR", "/custom/data");
         let mut config = ServerConfig::default();
         config.apply_env_overrides().unwrap();
-        assert_eq!(config.storage.rocksdb_path, "/custom/data");
+        assert_eq!(config.storage.data_path, "/custom/data");
         env::remove_var("KALAMDB_DATA_DIR");
     }
 

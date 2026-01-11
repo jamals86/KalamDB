@@ -383,7 +383,7 @@ async fn test_full_lifecycle_with_alter_and_flush() {
 /// Helper: Query system.tables to get table schema with column_ids (excludes system columns)
 async fn get_table_schema(server: &TestServer, namespace: &str, table_name: &str) -> Vec<HashMap<String, Value>> {
     let query = format!(
-        "SELECT columns FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        "SELECT columns FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}' AND is_latest = true",
         namespace, table_name
     );
     

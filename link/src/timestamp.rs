@@ -91,8 +91,8 @@ impl Default for TimestampFormatterConfig {
 /// use kalam_link::timestamp::{TimestampFormatter, TimestampFormat};
 ///
 /// let formatter = TimestampFormatter::new(TimestampFormat::Iso8601);
-/// let formatted = formatter.format(1734211234567);
-/// assert_eq!(formatted, "2024-12-14T19:13:54.567Z");
+/// let formatted = formatter.format(Some(1734211234567));
+/// assert_eq!(formatted, "2024-12-14T21:20:34.567Z");
 /// ```
 #[derive(Debug, Clone)]
 pub struct TimestampFormatter {
@@ -242,7 +242,7 @@ impl Default for TimestampFormatter {
 /// use kalam_link::timestamp::parse_iso8601;
 ///
 /// let ms = parse_iso8601("2024-12-14T15:30:45.123Z").unwrap();
-/// assert_eq!(ms, 1734191445123);
+/// assert_eq!(ms, 1734190245123);
 /// ```
 pub fn parse_iso8601(iso: &str) -> Result<i64, chrono::ParseError> {
     let dt = DateTime::parse_from_rfc3339(iso)?;

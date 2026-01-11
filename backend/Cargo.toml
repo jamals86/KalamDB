@@ -166,6 +166,7 @@ path = "tests/test_row_count_behavior.rs"
 
 [build-dependencies]
 chrono = { workspace = true }
+cc = { workspace = true }
 
 [dev-dependencies]
 # Internal crates (needed for tests)
@@ -180,6 +181,7 @@ kalamdb-tables = { path = "crates/kalamdb-tables" }
 # External dependencies
 tempfile = { workspace = true }
 serde_json = { workspace = true }
+reqwest = { workspace = true }
 actix-web = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }

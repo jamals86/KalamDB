@@ -12,6 +12,8 @@ fn main() {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default());
     let repo_root = find_repo_root(&manifest_dir).unwrap_or_else(|| manifest_dir.clone());
 
+    build_isoc23_glibc_shim_if_needed(&repo_root);
+
     // Build UI for release builds FIRST (before rust-embed macro runs).
     // Run for the top-level server crate (project-level) and kalamdb-api when applicable.
     if package_name == "kalamdb-api" {
@@ -76,6 +78,32 @@ fn main() {
     if version_toml.exists() {
         println!("cargo:rerun-if-changed={}", version_toml.display());
     }
+}
+
+fn build_isoc23_glibc_shim_if_needed(repo_root: &Path) {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+
+    // Only relevant for linux-gnu builds.
+    if target_os != "linux" || target_env != "gnu" {
+        return;
+    }
+
+    // This build script is shared across crates (e.g. kalamdb-api uses ../../build.rs),
+    // so resolve the shim from the repository root.
+    let shim_path = repo_root.join("backend").join("build").join("isoc23_shim.c");
+    if !shim_path.exists() {
+        panic!(
+            "Expected glibc shim file at {} but it was not found",
+            shim_path.display()
+        );
+    }
+
+    println!("cargo:rerun-if-changed={}", shim_path.display());
+
+    cc::Build::new()
+        .file(&shim_path)
+        .compile("kalamdb_isoc23_shim");
 }
 
 fn find_repo_root(start: &Path) -> Option<PathBuf> {

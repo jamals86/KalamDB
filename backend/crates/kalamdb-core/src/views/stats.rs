@@ -87,7 +87,7 @@ impl VirtualView for StatsView {
         stats_schema()
     }
 
-    fn compute_batch(&self) -> Result<RecordBatch, super::super::error::RegistryError> {
+    fn compute_batch(&self) -> Result<RecordBatch, crate::schema_registry::RegistryError> {
         let mut names = StringBuilder::new();
         let mut values = StringBuilder::new();
 
@@ -123,7 +123,7 @@ impl VirtualView for StatsView {
             ],
         )
         .map_err(|e| {
-            super::super::error::RegistryError::Other(format!("Failed to build stats batch: {}", e))
+            crate::schema_registry::RegistryError::Other(format!("Failed to build stats batch: {}", e))
         })
     }
 

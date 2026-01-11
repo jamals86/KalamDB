@@ -59,8 +59,9 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         group_id: GroupId,
         state_machine: SM,
         backend: Arc<dyn StorageBackend>,
+        snapshots_dir: std::path::PathBuf,
     ) -> Result<Self, RaftError> {
-        let storage = KalamRaftStorage::new_persistent(group_id, state_machine, backend)
+        let storage = KalamRaftStorage::new_persistent(group_id, state_machine, backend, snapshots_dir)
             .map_err(|e| RaftError::Storage(format!("Failed to create persistent storage: {}", e)))?;
 
         Ok(Self {

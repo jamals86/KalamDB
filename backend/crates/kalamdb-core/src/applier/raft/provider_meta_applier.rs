@@ -8,10 +8,10 @@
 
 use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableDefinition;
-use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableId, TableName, UserId};
+use kalamdb_commons::models::{JobId, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableId, TableName, UserId};
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::system::{Job, Storage};
-use kalamdb_commons::types::User;
+use kalamdb_commons::system::{Job, LiveQuery, Storage};
+use kalamdb_commons::types::{LiveQueryStatus, User};
 use kalamdb_commons::JobStatus;
 use kalamdb_raft::applier::MetaApplier;
 use kalamdb_raft::RaftError;
@@ -238,45 +238,30 @@ impl MetaApplier for ProviderMetaApplier {
         &self,
         job_id: &JobId,
         job_type: JobType,
-        namespace_id: Option<&NamespaceId>,
-        table_name: Option<&TableName>,
-        config_json: Option<&str>,
+        status: JobStatus,
+        parameters_json: Option<&str>,
+        idempotency_key: Option<&str>,
+        max_retries: u8,
+        queue: Option<&str>,
+        priority: Option<i32>,
+        node_id: NodeId,
         created_at: i64,
     ) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Creating job {} (type: {:?})", job_id, job_type);
         
-        // Build parameters JSON
-        let mut params = serde_json::Map::new();
-        if let Some(ns_id) = namespace_id {
-            params.insert("namespace_id".to_string(), serde_json::Value::String(ns_id.as_str().to_string()));
-        }
-        if let Some(tbl_name) = table_name {
-            params.insert("table_name".to_string(), serde_json::Value::String(tbl_name.as_str().to_string()));
-        }
-        if let Some(cfg) = config_json {
-            if let Ok(cfg_val) = serde_json::from_str::<serde_json::Value>(cfg) {
-                if let serde_json::Value::Object(obj) = cfg_val {
-                    for (k, v) in obj {
-                        params.insert(k, v);
-                    }
-                }
-            }
-        }
-        let parameters = if params.is_empty() { None } else { Some(serde_json::to_string(&params).unwrap_or_default()) };
-        
         let job = Job {
             job_id: job_id.clone(),
             job_type,
-            status: JobStatus::New,
-            node_id: NodeId::default(),
-            parameters,
-            idempotency_key: None,
+            status,
+            node_id,
+            parameters: parameters_json.map(String::from),
+            idempotency_key: idempotency_key.map(String::from),
             retry_count: 0,
-            max_retries: 3,
+            max_retries,
             message: None,
             exception_trace: None,
-            queue: None,
-            priority: None,
+            queue: queue.map(String::from),
+            priority,
             created_at,
             updated_at: created_at,
             started_at: None,
@@ -455,6 +440,113 @@ impl MetaApplier for ProviderMetaApplier {
 
     async fn delete_schedule(&self, schedule_id: &str) -> Result<(), RaftError> {
         log::info!("ProviderMetaApplier: Deleting schedule {}", schedule_id);
+        Ok(())
+    }
+
+    // =========================================================================
+    // Live Query Operations - Persist to system.live_queries
+    // =========================================================================
+
+    async fn create_live_query(
+        &self,
+        live_id: &LiveQueryId,
+        connection_id: &str,
+        namespace_id: &NamespaceId,
+        table_name: &TableName,
+        user_id: &UserId,
+        query: &str,
+        options_json: Option<&str>,
+        node_id: NodeId,
+        subscription_id: &str,
+        created_at: i64,
+    ) -> Result<(), RaftError> {
+        log::info!("ProviderMetaApplier: Creating live query {} on node {}", live_id, node_id);
+        
+        let live_query = LiveQuery {
+            live_id: live_id.clone(),
+            connection_id: connection_id.to_string(),
+            namespace_id: namespace_id.clone(),
+            table_name: table_name.clone(),
+            user_id: user_id.clone(),
+            query: query.to_string(),
+            options: options_json.map(|s| s.to_string()),
+            created_at,
+            last_update: created_at,
+            changes: 0,
+            node_id,
+            subscription_id: subscription_id.to_string(),
+            status: LiveQueryStatus::Active,
+            last_ping_at: created_at,
+        };
+        
+        self.app_context.system_tables()
+            .live_queries()
+            .create_live_query(live_query)
+            .map_err(|e| RaftError::Internal(format!("Failed to create live query: {}", e)))?;
+        
+        Ok(())
+    }
+
+    async fn update_live_query(
+        &self,
+        live_id: &LiveQueryId,
+        last_update: i64,
+        changes: i64,
+    ) -> Result<(), RaftError> {
+        log::trace!("ProviderMetaApplier: Updating live query {} (changes={})", live_id, changes);
+        
+        if let Some(mut lq) = self.app_context.system_tables().live_queries().get_live_query_by_id(live_id)
+            .map_err(|e| RaftError::Internal(format!("Failed to get live query: {}", e)))?
+        {
+            lq.last_update = last_update;
+            lq.changes = changes;
+            
+            self.app_context.system_tables()
+                .live_queries()
+                .update_live_query(lq)
+                .map_err(|e| RaftError::Internal(format!("Failed to update live query: {}", e)))?;
+        }
+        
+        Ok(())
+    }
+
+    async fn delete_live_query(
+        &self,
+        live_id: &LiveQueryId,
+        _deleted_at: i64,
+    ) -> Result<(), RaftError> {
+        log::info!("ProviderMetaApplier: Deleting live query {}", live_id);
+        
+        self.app_context.system_tables()
+            .live_queries()
+            .delete_live_query(live_id)
+            .map_err(|e| RaftError::Internal(format!("Failed to delete live query: {}", e)))?;
+        
+        Ok(())
+    }
+
+    async fn delete_live_queries_by_connection(
+        &self,
+        connection_id: &str,
+        _deleted_at: i64,
+    ) -> Result<(), RaftError> {
+        log::info!("ProviderMetaApplier: Deleting live queries for connection {}", connection_id);
+        
+        // Get all live queries for this connection and delete them
+        let live_queries = self.app_context.system_tables()
+            .live_queries()
+            .list_live_queries()
+            .map_err(|e| RaftError::Internal(format!("Failed to list live queries: {}", e)))?;
+        
+        for lq in live_queries {
+            if lq.connection_id == connection_id {
+                self.app_context.system_tables()
+                    .live_queries()
+                    .delete_live_query(&lq.live_id)
+                    .map_err(|e| RaftError::Internal(format!("Failed to delete live query {}: {}", lq.live_id, e)))?;
+            }
+        }
+        
         Ok(())
     }
 }

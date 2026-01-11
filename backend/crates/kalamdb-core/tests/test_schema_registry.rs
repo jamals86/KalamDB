@@ -1,5 +1,4 @@
-use super::*;
-use crate::schema_registry::CachedTableData;
+use kalamdb_core::schema_registry::{CachedTableData, SchemaRegistry};
 use datafusion::catalog::TableProvider;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
@@ -122,7 +121,7 @@ fn test_invalidate() {
 
 #[test]
 fn test_storage_path_resolution() {
-    use crate::schema_registry::PathResolver;
+    use kalamdb_core::schema_registry::PathResolver;
 
     // Create test data with properly set storage_path_template
     let schema = create_test_schema();
@@ -505,7 +504,7 @@ fn stress_concurrent_access() {
 
 #[test]
 fn test_provider_cache_insert_and_get() {
-    use kalamdb_system::providers::stats::StatsTableProvider;
+    use kalamdb_core::views::stats::{StatsTableProvider, StatsView};
 
     let cache = SchemaRegistry::new(1000);
     let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("stats"));
@@ -516,7 +515,8 @@ fn test_provider_cache_insert_and_get() {
     cache.insert(table_id.clone(), Arc::new(cached_data));
 
     // Now insert provider into the cached data
-    let provider = Arc::new(StatsTableProvider::new(None)) as Arc<dyn TableProvider + Send + Sync>;
+    let stats_view = Arc::new(StatsView::new());
+    let provider = Arc::new(StatsTableProvider::new(stats_view)) as Arc<dyn TableProvider + Send + Sync>;
 
     // Get the cached data and set provider directly (tests CachedTableData.set_provider)
     let cached = cache.get(&table_id).expect("should have cached data");
@@ -535,7 +535,7 @@ fn test_provider_cache_insert_and_get() {
 
 #[test]
 fn test_cached_table_data_includes_system_columns() {
-    use crate::system_columns::SystemColumnsService;
+    use kalamdb_core::system_columns::SystemColumnsService;
     use arrow::datatypes::DataType;
     use kalamdb_commons::models::datatypes::KalamDataType;
     use kalamdb_commons::models::schemas::{ColumnDefinition, TableOptions, TableType};

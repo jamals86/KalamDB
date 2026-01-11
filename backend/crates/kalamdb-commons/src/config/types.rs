@@ -179,10 +179,14 @@ pub struct ServerSettings {
 /// Storage settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageSettings {
-    pub rocksdb_path: String,
-    /// Default path for 'local' storage when base_directory='' (T164a)
-    #[serde(default = "default_storage_path")]
-    pub default_storage_path: String,
+    /// Base data directory for all KalamDB storage
+    /// Default: "./data"
+    /// Subdirectories are automatically created:
+    /// - {data_path}/rocksdb - RocksDB hot storage
+    /// - {data_path}/storage - Parquet cold storage
+    /// - {data_path}/snapshots - Raft snapshots
+    #[serde(default = "default_data_path")]
+    pub data_path: String,
     /// Template for shared table paths (placeholders: {namespace}, {tableName})
     #[serde(default = "default_shared_tables_template")]
     pub shared_tables_template: String,
@@ -191,6 +195,23 @@ pub struct StorageSettings {
     pub user_tables_template: String,
     #[serde(default)]
     pub rocksdb: RocksDbSettings,
+}
+
+impl StorageSettings {
+    /// Get RocksDB directory path (data_path/rocksdb)
+    pub fn rocksdb_dir(&self) -> std::path::PathBuf {
+        crate::file_helpers::join_path(&self.data_path, "rocksdb")
+    }
+
+    /// Get Parquet storage directory path (data_path/storage)
+    pub fn storage_dir(&self) -> std::path::PathBuf {
+        crate::file_helpers::join_path(&self.data_path, "storage")
+    }
+
+    /// Get Raft snapshots directory path (data_path/snapshots)
+    pub fn resolved_snapshots_dir(&self) -> std::path::PathBuf {
+        crate::file_helpers::join_path(&self.data_path, "snapshots")
+    }
 }
 
 /// RocksDB-specific settings
@@ -786,8 +807,7 @@ impl Default for ServerConfig {
                 ui_path: default_ui_path(),
             },
             storage: StorageSettings {
-                rocksdb_path: "./data/rocksdb".to_string(),
-                default_storage_path: default_storage_path(),
+                data_path: default_data_path(),
                 shared_tables_template: default_shared_tables_template(),
                 user_tables_template: default_user_tables_template(),
                 rocksdb: RocksDbSettings::default(),

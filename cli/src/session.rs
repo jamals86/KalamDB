@@ -24,8 +24,53 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::io::IsTerminal;
+
+#[cfg(unix)]
+use tokio::io::AsyncReadExt;
+
 // Fallback system tables for autocomplete when the server does not return them
 const SYSTEM_TABLES: &[&str] = &["users", "jobs", "namespaces", "storages", "live_queries", "tables", "audit_logs", "manifest", "stats", "settings", "server_logs", "cluster"];
+
+#[cfg(unix)]
+struct TerminalRawModeGuard {
+    original: libc::termios,
+}
+
+#[cfg(unix)]
+impl TerminalRawModeGuard {
+    fn new() -> std::io::Result<Self> {
+        unsafe {
+            let fd = libc::STDIN_FILENO;
+            let mut term: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(fd, &mut term) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            let original = term;
+            // Disable canonical mode, echo, and ISIG so Ctrl+C becomes byte 0x03.
+            libc::cfmakeraw(&mut term);
+            term.c_cc[libc::VMIN] = 1;
+            term.c_cc[libc::VTIME] = 0;
+
+            if libc::tcsetattr(fd, libc::TCSANOW, &term) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            Ok(Self { original })
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for TerminalRawModeGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &self.original);
+        }
+    }
+}
 
 use crate::{
     completer::{AutoCompleter, SQL_KEYWORDS, SQL_TYPES},
@@ -1229,6 +1274,22 @@ impl CLISession {
     ///
     /// **Implements T102**: WebSocket subscription display with timestamps and change indicators
     /// **Implements T103**: Ctrl+C handler for graceful subscription cancellation
+    #[cfg(unix)]
+    async fn wait_for_exit_key_for_subscription() {
+        let mut stdin = tokio::io::stdin();
+        let mut buf = [0u8; 1];
+
+        loop {
+            if stdin.read_exact(&mut buf).await.is_err() {
+                break;
+            }
+            match buf[0] {
+                3 | b'q' | b'Q' => break, // Ctrl+C or q
+                _ => {}
+            }
+        }
+    }
+
     async fn run_subscription(&mut self, config: SubscriptionConfig) -> Result<()> {
         let sql_display = config.sql.clone();
         let ws_url_display = config.ws_url.clone();
@@ -1242,7 +1303,7 @@ impl CLISession {
                 eprintln!("WebSocket endpoint: {}", ws_url);
             }
             eprintln!("Subscription ID: {}", requested_id);
-            eprintln!("Press Ctrl+C to unsubscribe and return to CLI\n");
+            eprintln!("Press Ctrl+C (or 'q') to unsubscribe and return to CLI\n");
         }
 
         let mut subscription = self.client.subscribe_with_config(config).await?;
@@ -1254,7 +1315,71 @@ impl CLISession {
             );
         }
 
-        // Set up Ctrl+C handler for graceful unsubscribe
+        // On unix TTYs, SIGINT can be intercepted by the readline layer.
+        // Switch stdin to raw mode and watch for Ctrl+C bytes (0x03) / 'q' for a reliable exit.
+        #[cfg(unix)]
+        if std::io::stdin().is_terminal() {
+            if let Ok(_raw_guard) = TerminalRawModeGuard::new() {
+                let mut exit_key = Box::pin(Self::wait_for_exit_key_for_subscription());
+
+                loop {
+                    if self.subscription_paused {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        continue;
+                    }
+
+                    tokio::select! {
+                        _ = exit_key.as_mut() => {
+                            if self.color {
+                                println!("\n\x1b[33m⚠ Unsubscribing...\x1b[0m");
+                            } else {
+                                println!("\n⚠ Unsubscribing...");
+                            }
+
+                            // Close, but don't hang forever.
+                            let close_res = tokio::time::timeout(Duration::from_secs(2), subscription.close()).await;
+                            if let Err(_) = close_res {
+                                eprintln!("Warning: Timed out while closing subscription; exiting anyway");
+                            } else if let Ok(Err(e)) = close_res {
+                                eprintln!("Warning: Failed to close subscription cleanly: {}", e);
+                            }
+
+                            if self.color {
+                                println!("\x1b[32m✓ Unsubscribed\x1b[0m Back to CLI prompt");
+                            } else {
+                                println!("✓ Unsubscribed - Back to CLI prompt");
+                            }
+                            break;
+                        }
+
+                        event_result = subscription.next() => {
+                            match event_result {
+                                Some(Ok(event)) => {
+                                    if matches!(event, kalam_link::ChangeEvent::Error { .. }) {
+                                        self.display_change_event(&sql_display, &event);
+                                        println!("\nSubscription failed - returning to CLI prompt");
+                                        break;
+                                    }
+                                    self.display_change_event(&sql_display, &event);
+                                }
+                                Some(Err(e)) => {
+                                    eprintln!("Subscription error: {}", e);
+                                    break;
+                                }
+                                None => {
+                                    println!("Subscription ended by server");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return Ok(());
+            }
+        }
+
+        // Fallback: SIGINT-based cancellation.
         let ctrl_c = tokio::signal::ctrl_c();
         tokio::pin!(ctrl_c);
 
@@ -1274,8 +1399,11 @@ impl CLISession {
                     } else {
                         println!("\n⚠ Unsubscribing...");
                     }
-                    // Close subscription gracefully
-                    if let Err(e) = subscription.close().await {
+                    // Close subscription gracefully, but don't hang forever.
+                    let close_res = tokio::time::timeout(Duration::from_secs(2), subscription.close()).await;
+                    if let Err(_) = close_res {
+                        eprintln!("Warning: Timed out while closing subscription; exiting anyway");
+                    } else if let Ok(Err(e)) = close_res {
                         eprintln!("Warning: Failed to close subscription cleanly: {}", e);
                     }
                     if self.color {
@@ -1334,7 +1462,7 @@ impl CLISession {
             if let Some(timeout) = timeout {
                 eprintln!("Timeout: {:?}", timeout);
             } else {
-                eprintln!("Press Ctrl+C to unsubscribe and return to CLI");
+                eprintln!("Press Ctrl+C (or 'q') to unsubscribe and return to CLI");
             }
             eprintln!();
         }
@@ -1348,7 +1476,113 @@ impl CLISession {
             );
         }
 
-        // Set up Ctrl+C handler for graceful unsubscribe
+        // Unix TTY path: raw-mode key cancel (Ctrl+C byte / 'q')
+        #[cfg(unix)]
+        if std::io::stdin().is_terminal() {
+            if let Ok(_raw_guard) = TerminalRawModeGuard::new() {
+                let mut exit_key = Box::pin(Self::wait_for_exit_key_for_subscription());
+
+                // Track when initial data is complete and when timeout should fire
+                let mut initial_data_complete = false;
+                let timeout_deadline = timeout.map(|d| tokio::time::Instant::now() + d);
+
+                loop {
+                    if initial_data_complete {
+                        if let Some(deadline) = timeout_deadline {
+                            if tokio::time::Instant::now() >= deadline {
+                                if self.animations {
+                                    eprintln!("\n⏱ Subscription timeout reached");
+                                }
+                                let close_res = tokio::time::timeout(Duration::from_secs(2), subscription.close()).await;
+                                if let Err(_) = close_res {
+                                    eprintln!("Warning: Timed out while closing subscription; exiting anyway");
+                                } else if let Ok(Err(e)) = close_res {
+                                    eprintln!("Warning: Failed to close subscription cleanly: {}", e);
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    if self.subscription_paused {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        continue;
+                    }
+
+                    let poll_timeout = if timeout.is_some() {
+                        tokio::time::Duration::from_millis(100)
+                    } else {
+                        tokio::time::Duration::from_secs(3600)
+                    };
+
+                    tokio::select! {
+                        _ = exit_key.as_mut() => {
+                            if self.color {
+                                println!("\n\x1b[33m⚠ Unsubscribing...\x1b[0m");
+                            } else {
+                                println!("\n⚠ Unsubscribing...");
+                            }
+                            let close_res = tokio::time::timeout(Duration::from_secs(2), subscription.close()).await;
+                            if let Err(_) = close_res {
+                                eprintln!("Warning: Timed out while closing subscription; exiting anyway");
+                            } else if let Ok(Err(e)) = close_res {
+                                eprintln!("Warning: Failed to close subscription cleanly: {}", e);
+                            }
+                            if self.color {
+                                println!("\x1b[32m✓ Unsubscribed\x1b[0m Back to CLI prompt");
+                            } else {
+                                println!("✓ Unsubscribed - Back to CLI prompt");
+                            }
+                            break;
+                        }
+
+                        _ = tokio::time::sleep(poll_timeout) => {
+                            continue;
+                        }
+
+                        event_result = subscription.next() => {
+                            match event_result {
+                                Some(Ok(event)) => {
+                                    if matches!(event, kalam_link::ChangeEvent::Error { .. }) {
+                                        self.display_change_event(&sql_display, &event);
+                                        println!("\nSubscription failed - returning to CLI prompt");
+                                        break;
+                                    }
+
+                                    match &event {
+                                        kalam_link::ChangeEvent::InitialDataBatch { batch_control, .. } => {
+                                            if !batch_control.has_more {
+                                                initial_data_complete = true;
+                                            }
+                                        }
+                                        kalam_link::ChangeEvent::Ack { batch_control, .. } => {
+                                            if !batch_control.has_more {
+                                                initial_data_complete = true;
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+
+                                    self.display_change_event(&sql_display, &event);
+                                }
+                                Some(Err(e)) => {
+                                    eprintln!("Subscription error: {}", e);
+                                    break;
+                                }
+                                None => {
+                                    println!("Subscription ended by server");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return Ok(());
+            }
+        }
+
+        // Fallback: SIGINT-based cancellation.
         let ctrl_c = tokio::signal::ctrl_c();
         tokio::pin!(ctrl_c);
 
@@ -1364,8 +1598,11 @@ impl CLISession {
                         if self.animations {
                             eprintln!("\n⏱ Subscription timeout reached");
                         }
-                        // Close subscription gracefully
-                        if let Err(e) = subscription.close().await {
+                        // Close subscription gracefully, but don't hang forever.
+                        let close_res = tokio::time::timeout(Duration::from_secs(2), subscription.close()).await;
+                        if let Err(_) = close_res {
+                            eprintln!("Warning: Timed out while closing subscription; exiting anyway");
+                        } else if let Ok(Err(e)) = close_res {
                             eprintln!("Warning: Failed to close subscription cleanly: {}", e);
                         }
                         break;

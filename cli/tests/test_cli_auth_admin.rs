@@ -485,9 +485,6 @@ async fn test_cli_flush_table() {
         None
     };
 
-    // Wait for job to complete
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
     // If we have a job ID, query for that specific job
     // Note: system.jobs stores namespace/table info inside the JSON `parameters` column.
     let jobs_query = if let Some(ref job_id) = job_id {
@@ -504,32 +501,45 @@ async fn test_cli_flush_table() {
             .to_string()
     };
 
-    let jobs_result = execute_sql_as_root(&jobs_query).await.unwrap();
+    // In cluster mode, job creation/visibility can lag due to Raft replication.
+    // Poll briefly until the job row becomes visible.
+    let deadline = std::time::Instant::now() + Duration::from_secs(8);
+    let (jobs_result, jobs_data) = loop {
+        let jobs_result = execute_sql_as_root(&jobs_query).await.unwrap();
 
-    assert_eq!(
-        jobs_result["status"], "success",
-        "Should be able to query system.jobs: {:?}",
-        jobs_result
-    );
+        assert_eq!(
+            jobs_result["status"], "success",
+            "Should be able to query system.jobs: {:?}",
+            jobs_result
+        );
 
-    // Handle both "data" array format and "results" format
-    let jobs_data = if let Some(data) = jobs_result["data"].as_array() {
-        data.clone()
-    } else if let Some(results) = jobs_result["results"].as_array() {
-        // Results format - extract from first result if available
-        if let Some(first_result) = results.first() {
-            if let Some(rows) = first_result["rows"].as_array() {
-                rows.clone()
-            } else if let Some(data) = first_result["data"].as_array() {
-                data.clone()
+        // Handle both "data" array format and "results" format
+        let jobs_data = if let Some(data) = jobs_result["data"].as_array() {
+            data.clone()
+        } else if let Some(results) = jobs_result["results"].as_array() {
+            // Results format - extract from first result if available
+            if let Some(first_result) = results.first() {
+                if let Some(rows) = first_result["rows"].as_array() {
+                    rows.clone()
+                } else if let Some(data) = first_result["data"].as_array() {
+                    data.clone()
+                } else {
+                    vec![]
+                }
             } else {
                 vec![]
             }
         } else {
             vec![]
+        };
+
+        if !jobs_data.is_empty() {
+            break (jobs_result, jobs_data);
         }
-    } else {
-        vec![]
+        if std::time::Instant::now() > deadline {
+            break (jobs_result, jobs_data);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     };
 
     assert!(

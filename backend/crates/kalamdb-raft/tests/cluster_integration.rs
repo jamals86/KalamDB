@@ -12,12 +12,15 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde_json;
+
 use chrono::Utc;
 use parking_lot::RwLock;
 use tokio::time::sleep;
 
 use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
 use kalamdb_commons::models::schemas::TableType;
+use kalamdb_commons::JobStatus;
 use kalamdb_commons::TableId;
 use kalamdb_raft::{
     manager::{RaftManager, RaftManagerConfig, PeerNode},
@@ -620,12 +623,20 @@ async fn test_all_groups_accept_proposals() {
         assert!(result.is_ok(), "Meta should accept namespace proposals");
         
         // Test job creation
+        let params = serde_json::json!({
+            "namespace_id": "ns1",
+            "table_name": "t1"
+        });
         let cmd = MetaCommand::CreateJob {
             job_id: JobId::from("job1"),
             job_type: JobType::Flush,
-            namespace_id: Some(NamespaceId::from("ns1")),
-            table_name: Some(TableName::from("t1")),
-            config_json: None,
+            status: JobStatus::New,
+            parameters_json: Some(params.to_string()),
+            idempotency_key: None,
+            max_retries: 3,
+            queue: None,
+            priority: None,
+            node_id: NodeId::from(1),
             created_at: Utc::now(),
         };
         let encoded = kalamdb_raft::state_machine::encode(&cmd).unwrap();
@@ -782,12 +793,17 @@ async fn test_meta_group_operations() {
     assert!(result.is_ok(), "RegisterStorage should succeed");
     
     // Test CreateJob
+    let params = serde_json::json!({"namespace_id": "ns1", "table_name": "t1"});
     let cmd = MetaCommand::CreateJob {
         job_id: JobId::from("j1"),
         job_type: JobType::Flush,
-        namespace_id: Some(NamespaceId::from("ns1")),
-        table_name: Some(TableName::from("t1")),
-        config_json: None,
+        status: JobStatus::New,
+        parameters_json: Some(params.to_string()),
+        idempotency_key: None,
+        max_retries: 3,
+        queue: None,
+        priority: None,
+        node_id: NodeId::from(1),
         created_at: Utc::now(),
     };
     let result = leader.manager.propose_meta(

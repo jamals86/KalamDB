@@ -9,6 +9,9 @@
 //! - T133: corrupt manifest → rebuild from Parquet footers → queries resume (TODO: recovery)
 //! - T134: manifest pruning reduces file scans by 80%+ (TODO: performance test)
 
+#[path = "../crates/kalamdb-core/tests/test_helpers.rs"]
+mod test_helpers;
+
 use kalamdb_commons::config::ManifestCacheSettings;
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::types::{Manifest, SegmentMetadata};
@@ -26,7 +29,7 @@ fn create_test_service() -> (ManifestService, TempDir) {
     let config = ManifestCacheSettings::default();
     let service = ManifestService::new(backend, temp_dir.path().to_string_lossy().to_string(), config);
     // Initialize a test AppContext for SchemaRegistry and providers (used by ManifestService)
-    kalamdb_core::test_helpers::init_test_app_context();
+    test_helpers::init_test_app_context();
     
     // Register "local" storage required by flush operations
     {

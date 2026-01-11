@@ -3,15 +3,14 @@
 //! The heavy lifting (initialization, middleware wiring, graceful shutdown)
 //! lives in dedicated modules so this file remains a thin orchestrator.
 
-use kalamdb_server::{config, middleware, routes};
+use kalamdb_server::config;
 use kalamdb_core::metrics::SERVER_VERSION;
 
-mod lifecycle;
 mod logging;
 
 use anyhow::Result;
 use config::ServerConfig;
-use lifecycle::{bootstrap, run};
+use kalamdb_server::lifecycle::{bootstrap, run};
 use log::info;
 
 #[actix_web::main]
