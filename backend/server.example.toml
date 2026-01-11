@@ -333,7 +333,7 @@ max_parameter_size_bytes = 524288
 
 # [cluster]
 # # Unique cluster identifier - all nodes must share this
-# cluster_id = "kalamdb-prod-cluster"
+# cluster_id = "prod-cluster"
 # 
 # # This node's unique ID within the cluster (must be >= 1)
 # # Node with node_id=1 is the designated bootstrap node
@@ -387,7 +387,7 @@ max_parameter_size_bytes = 524288
 #
 # Node 1 configuration (server1.toml):
 # [cluster]
-# cluster_id = "kalamdb-prod"
+# cluster_id = "prod"
 # node_id = 1
 # rpc_addr = "node1.example.com:9090"
 # api_addr = "http://node1.example.com:8080"

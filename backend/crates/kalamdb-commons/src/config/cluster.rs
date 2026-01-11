@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// Example server.toml:
 /// ```toml
 /// [cluster]
-/// cluster_id = "kalamdb-cluster"
+/// cluster_id = "cluster"
 /// node_id = 1
 /// rpc_addr = "0.0.0.0:9100"
 /// api_addr = "0.0.0.0:8080"
@@ -117,7 +117,7 @@ pub struct PeerConfig {
 // Default value functions for serde
 
 fn default_cluster_id() -> String {
-    "kalamdb-cluster".to_string()
+    "cluster".to_string()
 }
 
 fn default_rpc_addr() -> String {

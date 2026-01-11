@@ -49,8 +49,16 @@ impl TerminalRawModeGuard {
             }
 
             let original = term;
-            // Disable canonical mode, echo, and ISIG so Ctrl+C becomes byte 0x03.
-            libc::cfmakeraw(&mut term);
+            // We want to read Ctrl+C as raw byte (0x03) and allow single-byte reads,
+            // but we must NOT disable output post-processing.
+            //
+            // `cfmakeraw` also disables output processing (OPOST), which stops the terminal
+            // from translating `\n` into `\r\n`. That makes every subsequent line start at the
+            // current column, producing the huge leading spaces seen during subscriptions.
+            //
+            // So we only adjust input-related flags and leave output flags untouched.
+            term.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
+            term.c_iflag &= !(libc::IXON | libc::ICRNL);
             term.c_cc[libc::VMIN] = 1;
             term.c_cc[libc::VTIME] = 0;
 

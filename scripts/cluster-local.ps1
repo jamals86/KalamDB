@@ -105,7 +105,7 @@ file = "$($DataDir -replace '\\', '/')/logs/server.jsonl"
 
 [cluster]
 enabled = true
-cluster_id = "kalamdb-local-cluster"
+cluster_id = "local-cluster"
 node_id = $NodeId
 rpc_host = "127.0.0.1"
 rpc_port = $RpcPort

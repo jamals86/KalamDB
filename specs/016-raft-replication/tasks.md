@@ -377,14 +377,12 @@ Display the clusterName here and which node we are connecting to: ● KalamDB[{{
 
 23) WHEN BUILDING ON WINDOWS OR MAYBE LINUX ADD TO THE BINARY properties details like verison and other things
 
-30) see how errors is not displayed with duplicate messages:
-● KalamDB[] root@localhost:8080 ❯ INSERT INTO chat.conversations (id, title) VALUES (2, 'Chat with AI About KalamDB');
-✗ Server error (400): Statement 1 failed: Invalid operation: Raft insert failed: Provider error: Provider error: Execution error: Failed to insert batch: Already exists: Primary key violation: value '2' already exists in column 'id'
 
-31) Prevent altering _seq/_deleted columns in a table
-32) whenever we alter a table and there is not change been done no need to create a new schema version, in this case nothing should be done there is no change been made then
 33) Add test where we flush a table in a cluster and verify the data
 
 
 34) isnt struct MetaSnapshot - a waste of resources? or memory? since why having them here as a hashmap in memory?
 
+35) In backend tests add testserver which runs a cluster of 3 nodes and run tests against it
+
+36) instead of adding clustername: kalamdb- 

@@ -312,7 +312,7 @@ max_parameter_size_bytes = 524288
 
 # [cluster]
 # # Unique identifier for this cluster
-# cluster_id = "kalamdb-cluster"
+# cluster_id = "prd-cluster"
 # 
 # # This node's unique ID (must be >= 1)
 # # Node with node_id=1 is the designated bootstrap node

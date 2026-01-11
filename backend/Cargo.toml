@@ -73,39 +73,35 @@ path = "src/main.rs"
 
 [[test]]
 name = "test_shared_tables"
-path = "tests/integration/tables/shared/test_shared_tables.rs"
+path = "tests/testserver/tables/test_shared_tables_http.rs"
 
 [[test]]
 name = "test_user_tables"
-path = "tests/integration/tables/user/test_user_tables.rs"
-
-[[test]]
-name = "test_user_drop_cleanup"
-path = "tests/integration/tables/user/test_user_drop_cleanup.rs"
-
-[[test]]
-name = "test_shared_drop_cleanup"
-path = "tests/integration/tables/shared/test_shared_drop_cleanup.rs"
+path = "tests/testserver/tables/test_user_tables_http.rs"
 
 [[test]]
 name = "test_stream_tables"
-path = "tests/integration/tables/stream/test_stream_tables.rs"
+path = "tests/testserver/tables/test_stream_tables_http.rs"
 
 [[test]]
 name = "test_quickstart"
-path = "tests/integration/combined/test_quickstart.rs"
+path = "tests/testserver/sql/test_quickstart_http.rs"
 
 [[test]]
 name = "test_system_tables"
-path = "tests/integration/tables/system/test_system_tables.rs"
+path = "tests/testserver/system/test_system_tables_http.rs"
 
 [[test]]
 name = "test_flush_operations"
-path = "tests/integration/flush/test_flush_operations.rs"
+path = "tests/testserver/flush/test_flush_policy_verification_http.rs"
 
 [[test]]
 name = "test_storage_management"
-path = "tests/integration/storage_management/test_storage_management.rs"
+path = "tests/testserver/storage/test_storage_management_http.rs"
+
+[[test]]
+name = "test_dml_parameters"
+path = "tests/testserver/sql/test_dml_parameters_http.rs"
 
 # Disabled: WebSocket test infrastructure incomplete
 # Needs: receive_notifications(), get_notifications(), HTTP server setup
@@ -114,28 +110,16 @@ path = "tests/integration/storage_management/test_storage_management.rs"
 # path = "tests/integration/combined/test_live_query_changes.rs"
 
 [[test]]
-name = "test_manual_flush_verification"
-path = "tests/integration/flush/test_manual_flush_verification.rs"
-
-[[test]]
 name = "test_namespace_validation"
-path = "tests/integration/combined/test_namespace_validation.rs"
+path = "tests/testserver/sql/test_namespace_validation_http.rs"
 
 # [[test]]
 # name = "test_enhanced_api_features"
 # path = "tests/integration/api/test_enhanced_api_features.rs"
 
 [[test]]
-name = "test_automatic_flushing"
-path = "tests/integration/flush/test_automatic_flushing.rs"
-
-[[test]]
-name = "test_automatic_flushing_comprehensive"
-path = "tests/integration/flush/test_automatic_flushing_comprehensive.rs"
-
-[[test]]
 name = "test_pk_uniqueness_hot_cold"
-path = "tests/integration/flush/test_pk_uniqueness_hot_cold.rs"
+path = "tests/testserver/flush/test_pk_uniqueness_hot_cold_http.rs"
 
 [[test]]
 name = "test_manifest_flush"
@@ -148,11 +132,47 @@ harness = true
 
 [[test]]
 name = "test_stress_and_memory"
-path = "tests/integration/combined/test_stress_and_memory.rs"
+path = "tests/testserver/stress/test_stress_and_memory_http.rs"
 
 [[test]]
 name = "test_row_count_behavior"
 path = "tests/test_row_count_behavior.rs"
+
+[[test]]
+name = "test_http_test_server_smoke"
+path = "tests/testserver/test_http_test_server_smoke.rs"
+
+[[test]]
+name = "test_storage_abstraction_http"
+path = "tests/testserver/test_storage_abstraction_http.rs"
+
+[[test]]
+name = "test_naming_validation_http"
+path = "tests/testserver/sql/test_naming_validation_http.rs"
+
+[[test]]
+name = "test_user_sql_commands_http"
+path = "tests/testserver/sql/test_user_sql_commands_http.rs"
+
+[[test]]
+name = "test_flush_jobs_http"
+path = "tests/testserver/flush/test_flush_jobs_http.rs"
+
+[[test]]
+name = "test_flush_unregistered_suite_http"
+path = "tests/testserver/flush/test_flush_unregistered_suite_http.rs"
+
+[[test]]
+name = "test_manifest_flush_http"
+path = "tests/testserver/manifest/test_manifest_flush_http_v2.rs"
+
+[[test]]
+name = "test_manifest_persistence_http"
+path = "tests/testserver/manifest/test_manifest_persistence_http.rs"
+
+[[test]]
+name = "test_production_observability_http"
+path = "tests/testserver/observability/test_production_observability_http.rs"
 
 # Disabled: basic auth tests rely on legacy middleware; will be re-enabled after auth refactor
 # [[test]]

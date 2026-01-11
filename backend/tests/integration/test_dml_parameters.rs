@@ -11,18 +11,12 @@
 //! - Parameter validation (max 50 params, 512KB per param)
 //! - Native write paths used (not DataFusion)
 
-#[path = "../../crates/kalamdb-core/tests/test_helpers.rs"]
-mod test_helpers;
-
-use test_helpers::create_test_session;
-
 use kalamdb_core::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_core::sql::executor::handlers::dml::{InsertHandler, UpdateHandler, DeleteHandler};
 use kalamdb_core::sql::executor::handlers::StatementHandler;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::Role;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
-use datafusion::execution::context::SessionContext;
 
 mod common;
 use common::TestServer;
@@ -37,6 +31,7 @@ async fn test_insert_with_simple_parameters() {
     let ctx = ExecutionContext::new(
         UserId::from("test_user"),
         Role::User,
+        server.session_context.clone(),
     );
 
     // Create test table
@@ -45,7 +40,6 @@ async fn test_insert_with_simple_parameters() {
 
     // Execute INSERT with parameters
     let handler = InsertHandler::new();
-    let session = SessionContext::new();
     let stmt = SqlStatement::new(
         "INSERT INTO default.test_insert (id, name, age) VALUES ($1, $2, $3)".to_string(),
         SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
@@ -56,7 +50,7 @@ async fn test_insert_with_simple_parameters() {
         ScalarValue::Int32(Some(30)),
     ];
 
-    let result = handler.execute(&session, stmt, params, &ctx).await;
+    let result = handler.execute(stmt, params, &ctx).await;
     assert!(result.is_ok(), "INSERT with parameters failed: {:?}", result.err());
 
     match result.unwrap() {
@@ -73,6 +67,7 @@ async fn test_insert_multiple_rows_with_parameters() {
     let ctx = ExecutionContext::new(
         UserId::from("test_user"),
         Role::User,
+        server.session_context.clone(),
     );
 
     // Create test table
@@ -81,14 +76,13 @@ async fn test_insert_multiple_rows_with_parameters() {
 
     // Execute INSERT with multiple rows
     let handler = InsertHandler::new();
-    let session = SessionContext::new();
     let stmt = SqlStatement::new(
         "INSERT INTO default.test_insert_multi (id, name) VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')".to_string(),
         SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
     );
     let params = vec![];
 
-    let result = handler.execute(&session, stmt, params, &ctx).await;
+    let result = handler.execute(stmt, params, &ctx).await;
     assert!(result.is_ok(), "Multi-row INSERT failed: {:?}", result.err());
 
     match result.unwrap() {
@@ -105,11 +99,11 @@ async fn test_insert_parameter_count_validation() {
     let ctx = ExecutionContext::new(
         UserId::from("test_user"),
         Role::User,
+        server.session_context.clone(),
     );
 
     // Try to INSERT with 51 parameters (exceeds limit of 50)
     let handler = InsertHandler::new();
-    let session = SessionContext::new();
     
     // Build SQL with 51 placeholders
     let mut params = Vec::new();
@@ -121,7 +115,7 @@ async fn test_insert_parameter_count_validation() {
         SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
     );
 
-    let result = handler.execute(&session, stmt, params, &ctx).await;
+    let result = handler.execute(stmt, params, &ctx).await;
     assert!(result.is_err(), "Expected parameter count validation error");
     assert!(
         result.unwrap_err().to_string().contains("Parameter count exceeds limit"),
@@ -135,11 +129,11 @@ async fn test_insert_parameter_size_validation() {
     let ctx = ExecutionContext::new(
         UserId::from("test_user"),
         Role::User,
+        server.session_context.clone(),
     );
 
     // Try to INSERT with 600KB parameter (exceeds limit of 512KB)
     let handler = InsertHandler::new();
-    let session = SessionContext::new();
     let large_string = "a".repeat(600_000); // 600KB
     let stmt = SqlStatement::new(
         "INSERT INTO default.test_insert_size (id, data) VALUES ($1, $2)".to_string(),
@@ -150,7 +144,7 @@ async fn test_insert_parameter_size_validation() {
         ScalarValue::Utf8(Some(large_string)),
     ];
 
-    let result = handler.execute(&session, stmt, params, &ctx).await;
+    let result = handler.execute(stmt, params, &ctx).await;
     assert!(result.is_err(), "Expected parameter size validation error");
     assert!(
         result.unwrap_err().to_string().contains("size exceeds limit"),
@@ -168,6 +162,7 @@ async fn test_update_with_simple_parameters() {
     let ctx = ExecutionContext::new(
         UserId::from("test_user"),
         Role::User,
+        server.session_context.clone(),
     );
 
     // Create test table and insert data
@@ -181,7 +176,6 @@ async fn test_update_with_simple_parameters() {
 
     // Execute UPDATE with parameters
     let handler = UpdateHandler::new();
-    let session = SessionContext::new();
     let stmt = SqlStatement::new(
         "UPDATE default.test_update SET name = $1, age = $2 WHERE id = 'row1'".to_string(),
         SqlStatementKind::Update(kalamdb_sql::ddl::UpdateStatement),
@@ -191,7 +185,7 @@ async fn test_update_with_simple_parameters() {
         ScalarValue::Int32(Some(31)),
     ];
 
-    let result = handler.execute(&session, stmt, params, &ctx).await;
+    let result = handler.execute(stmt, params, &ctx).await;
     assert!(result.is_ok(), "UPDATE with parameters failed: {:?}", result.err());
 
     match result.unwrap() {
@@ -208,11 +202,11 @@ async fn test_update_parameter_count_validation() {
     let ctx = ExecutionContext::new(
         UserId::from("test_user"),
         Role::User,
+        server.session_context.clone(),
     );
 
     // Try to UPDATE with 51 parameters (exceeds limit of 50)
     let handler = UpdateHandler::new();
-    let session = SessionContext::new();
     
     // Build SQL with 51 parameters
     let mut params = Vec::new();
@@ -224,7 +218,7 @@ async fn test_update_parameter_count_validation() {
         SqlStatementKind::Update(kalamdb_sql::ddl::UpdateStatement),
     );
 
-    let result = handler.execute(&session, stmt, params, &ctx).await;
+    let result = handler.execute(stmt, params, &ctx).await;
     assert!(result.is_err(), "Expected parameter count validation error");
     assert!(
         result.unwrap_err().to_string().contains("Parameter count exceeds limit"),
@@ -238,11 +232,11 @@ async fn test_update_parameter_size_validation() {
     let ctx = ExecutionContext::new(
         UserId::from("test_user"),
         Role::User,
+        server.session_context.clone(),
     );
 
     // Try to UPDATE with 600KB parameter (exceeds limit of 512KB)
     let handler = UpdateHandler::new();
-    let session = SessionContext::new();
     let large_string = "a".repeat(600_000); // 600KB
     let stmt = SqlStatement::new(
         "UPDATE default.test_update_size SET data = $1 WHERE id = 'row1'".to_string(),
@@ -250,7 +244,7 @@ async fn test_update_parameter_size_validation() {
     );
     let params = vec![ScalarValue::Utf8(Some(large_string))];
 
-    let result = handler.execute(&session, stmt, params, &ctx).await;
+    let result = handler.execute(stmt, params, &ctx).await;
     assert!(result.is_err(), "Expected parameter size validation error");
     assert!(
         result.unwrap_err().to_string().contains("size exceeds limit"),
@@ -268,6 +262,7 @@ async fn test_delete_with_simple_parameters() {
     let ctx = ExecutionContext::new(
         UserId::from("test_user"),
         Role::User,
+        server.session_context.clone(),
     );
 
     // Create test table and insert data
@@ -281,14 +276,13 @@ async fn test_delete_with_simple_parameters() {
 
     // Execute DELETE
     let handler = DeleteHandler::new();
-    let session = SessionContext::new();
     let stmt = SqlStatement::new(
         "DELETE FROM default.test_delete WHERE id = 'row1'".to_string(),
         SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement),
     );
     let params = vec![];
 
-    let result = handler.execute(&session, stmt, params, &ctx).await;
+    let result = handler.execute(stmt, params, &ctx).await;
     assert!(result.is_ok(), "DELETE failed: {:?}", result.err());
 
     match result.unwrap() {
@@ -305,11 +299,11 @@ async fn test_delete_parameter_count_validation() {
     let ctx = ExecutionContext::new(
         UserId::from("test_user"),
         Role::User,
+        server.session_context.clone(),
     );
 
     // Try to DELETE with 51 parameters (exceeds limit of 50)
     let handler = DeleteHandler::new();
-    let session = SessionContext::new();
     
     // Build SQL with 51 parameters (unrealistic but tests validation)
     let mut params = Vec::new();
@@ -321,7 +315,7 @@ async fn test_delete_parameter_count_validation() {
         SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement),
     );
 
-    let result = handler.execute(&session, stmt, params, &ctx).await;
+    let result = handler.execute(stmt, params, &ctx).await;
     assert!(result.is_err(), "Expected parameter count validation error");
     assert!(
         result.unwrap_err().to_string().contains("Parameter count exceeds limit"),
@@ -335,11 +329,11 @@ async fn test_delete_parameter_size_validation() {
     let ctx = ExecutionContext::new(
         UserId::from("test_user"),
         Role::User,
+        server.session_context.clone(),
     );
 
     // Try to DELETE with 600KB parameter (exceeds limit of 512KB)
     let handler = DeleteHandler::new();
-    let session = SessionContext::new();
     let large_string = "a".repeat(600_000); // 600KB
     let stmt = SqlStatement::new(
         "DELETE FROM default.test_delete_size WHERE id = 'row1'".to_string(),
@@ -347,7 +341,7 @@ async fn test_delete_parameter_size_validation() {
     );
     let params = vec![ScalarValue::Utf8(Some(large_string))];
 
-    let result = handler.execute(&session, stmt, params, &ctx).await;
+    let result = handler.execute(stmt, params, &ctx).await;
     assert!(result.is_err(), "Expected parameter size validation error");
     assert!(
         result.unwrap_err().to_string().contains("size exceeds limit"),
@@ -365,6 +359,7 @@ async fn test_dml_e2e_insert_update_delete() {
     let ctx = ExecutionContext::new(
         UserId::from("test_user"),
         Role::User,
+        server.session_context.clone(),
     );
 
     // Create test table
@@ -377,7 +372,6 @@ async fn test_dml_e2e_insert_update_delete() {
 
     // Step 1: INSERT with parameters
     let insert_handler = InsertHandler::new();
-    let session = SessionContext::new();
     let insert_stmt = SqlStatement::new(
         "INSERT INTO default.test_e2e (id, name, age) VALUES ($1, $2, $3)".to_string(),
         SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
@@ -387,7 +381,7 @@ async fn test_dml_e2e_insert_update_delete() {
         ScalarValue::Utf8(Some("Alice".to_string())),
         ScalarValue::Int32(Some(30)),
     ];
-    let insert_result = insert_handler.execute(&session, insert_stmt, insert_params, &ctx).await;
+    let insert_result = insert_handler.execute(insert_stmt, insert_params, &ctx).await;
     assert!(insert_result.is_ok(), "INSERT failed");
 
     // Step 2: UPDATE with parameters
@@ -397,7 +391,7 @@ async fn test_dml_e2e_insert_update_delete() {
         SqlStatementKind::Update(kalamdb_sql::ddl::UpdateStatement),
     );
     let update_params = vec![ScalarValue::Int32(Some(31))];
-    let update_result = update_handler.execute(&session, update_stmt, update_params, &ctx).await;
+    let update_result = update_handler.execute(update_stmt, update_params, &ctx).await;
     assert!(update_result.is_ok(), "UPDATE failed");
 
     // Step 3: DELETE
@@ -407,7 +401,7 @@ async fn test_dml_e2e_insert_update_delete() {
         SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement),
     );
     let delete_params = vec![];
-    let delete_result = delete_handler.execute(&session, delete_stmt, delete_params, &ctx).await;
+    let delete_result = delete_handler.execute(delete_stmt, delete_params, &ctx).await;
     assert!(delete_result.is_ok(), "DELETE failed");
 }
 

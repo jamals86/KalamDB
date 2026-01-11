@@ -693,7 +693,7 @@ impl RaftStateMachine<TypeConfig> for KalamStateMachine {
 ```toml
 [cluster]
 # These are the ONLY cluster settings needed:
-cluster_id = "kalamdb-cluster"
+cluster_id = "cluster"
 node_id = 1
 rpc_addr = "0.0.0.0:9100"
 api_addr = "0.0.0.0:8080"
