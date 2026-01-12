@@ -2,7 +2,7 @@
 //!
 //! Lives under `tests/testserver` to group all HTTP-server-backed tests.
 
-#[path = "commons/mod.rs"]
+#[path = "../common/testserver/mod.rs"]
 mod test_support;
 
 use tokio::time::Duration;

@@ -429,6 +429,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires storage backend setup"]
     async fn test_user_table_initial_fetch_returns_rows() {
         let _guard = INITIAL_DATA_TEST_GUARD.lock().await;
         // Initialize global AppContext for the test (idempotent)
@@ -573,6 +574,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires storage backend setup"]
     async fn test_user_table_batch_fetching() {
         let _guard = INITIAL_DATA_TEST_GUARD.lock().await;
         // Initialize global AppContext for the test (idempotent)
@@ -755,6 +757,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires storage backend setup"]
     async fn test_user_table_fetch_last_rows() {
         let _guard = INITIAL_DATA_TEST_GUARD.lock().await;
         // Initialize global AppContext for the test (idempotent)

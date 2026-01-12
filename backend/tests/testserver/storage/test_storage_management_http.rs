@@ -6,7 +6,7 @@
 //! - Template validation
 //! - Prevent dropping in-use storage
 
-#[path = "../commons/mod.rs"]
+#[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
 use kalamdb_api::models::ResponseStatus;

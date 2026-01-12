@@ -3,7 +3,7 @@
 //! These are intentionally short (seconds, not minutes) and run through the real
 //! HTTP surface to cover business logic without flaking CI.
 
-#[path = "../commons/mod.rs"]
+#[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
 use futures_util::future::try_join_all;

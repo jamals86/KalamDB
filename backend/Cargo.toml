@@ -103,11 +103,18 @@ path = "tests/testserver/storage/test_storage_management_http.rs"
 name = "test_dml_parameters"
 path = "tests/testserver/sql/test_dml_parameters_http.rs"
 
-# Disabled: WebSocket test infrastructure incomplete
-# Needs: receive_notifications(), get_notifications(), HTTP server setup
-# [[test]]
-# name = "test_live_query_changes"
-# path = "tests/integration/combined/test_live_query_changes.rs"
+# Live Query WebSocket tests (split into separate files for proper test isolation)
+[[test]]
+name = "test_live_query_inserts"
+path = "tests/testserver/subscription/test_live_query_inserts.rs"
+
+[[test]]
+name = "test_live_query_updates"
+path = "tests/testserver/subscription/test_live_query_updates.rs"
+
+[[test]]
+name = "test_live_query_deletes"
+path = "tests/testserver/subscription/test_live_query_deletes.rs"
 
 [[test]]
 name = "test_namespace_validation"
@@ -123,7 +130,7 @@ path = "tests/testserver/flush/test_pk_uniqueness_hot_cold_http.rs"
 
 [[test]]
 name = "test_manifest_flush"
-path = "tests/test_manifest_flush_integration.rs"
+path = "tests/misc/test_manifest_flush_integration.rs"
 harness = true
 
 # [[test]]
@@ -136,7 +143,7 @@ path = "tests/testserver/stress/test_stress_and_memory_http.rs"
 
 [[test]]
 name = "test_row_count_behavior"
-path = "tests/test_row_count_behavior.rs"
+path = "tests/misc/test_row_count_behavior.rs"
 
 [[test]]
 name = "test_http_test_server_smoke"
@@ -144,7 +151,7 @@ path = "tests/testserver/test_http_test_server_smoke.rs"
 
 [[test]]
 name = "test_storage_abstraction_http"
-path = "tests/testserver/test_storage_abstraction_http.rs"
+path = "tests/testserver/storage/test_storage_abstraction_http.rs"
 
 [[test]]
 name = "test_naming_validation_http"
@@ -174,15 +181,19 @@ path = "tests/testserver/manifest/test_manifest_persistence_http.rs"
 name = "test_production_observability_http"
 path = "tests/testserver/observability/test_production_observability_http.rs"
 
+[[test]]
+name = "test_stream_ttl_eviction_sql"
+path = "tests/testserver/subscription/test_stream_ttl_eviction_sql.rs"
+
 # Disabled: basic auth tests rely on legacy middleware; will be re-enabled after auth refactor
 # [[test]]
 # name = "test_basic_auth"
-# path = "tests/test_basic_auth.rs"
+# path = "tests/misc/test_basic_auth.rs"
 
 # Disabled: relies on deprecated TestServer/AuthService patterns, file removed during migration
 # [[test]]
 # name = "test_edge_cases"
-# path = "tests/test_edge_cases.rs"
+# path = "tests/misc/test_edge_cases.rs"
 
 [build-dependencies]
 chrono = { workspace = true }
@@ -197,6 +208,7 @@ kalamdb-sql = { path = "crates/kalamdb-sql" }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
 kalamdb-tables = { path = "crates/kalamdb-tables" }
+kalam-link = { path = "../link" }
 
 # External dependencies
 tempfile = { workspace = true }

@@ -1,6 +1,6 @@
 //! System tables smoke coverage over the real HTTP SQL API.
 
-#[path = "../commons/mod.rs"]
+#[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
 use kalamdb_api::models::ResponseStatus;

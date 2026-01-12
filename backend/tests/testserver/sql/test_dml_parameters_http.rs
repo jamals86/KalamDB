@@ -5,7 +5,7 @@
 //! - Parameter validation (max 50 params, 512KB each)
 //! - Params not allowed with multi-statement batches
 
-#[path = "../commons/mod.rs"]
+#[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
 use kalamdb_api::models::ResponseStatus;

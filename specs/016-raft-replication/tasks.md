@@ -386,3 +386,12 @@ Display the clusterName here and which node we are connecting to: ● KalamDB[{{
 35) In backend tests add testserver which runs a cluster of 3 nodes and run tests against it
 
 36) instead of adding clustername: kalamdb- 
+
+37) in manifest.json when serializing tableid serialize it with:
+  "table_id": "flush_test_ns_mkav1q2g_3.metrics"
+
+  instead of:
+  "table_id": {
+    "namespace_id": "flush_test_ns_mkav1q2g_3",
+    "table_name": "metrics"
+  },

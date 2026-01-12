@@ -448,22 +448,3 @@ async fn test_multi_subscription_support() {
     assert_ne!(live_id1.to_string(), live_id3.to_string());
     assert_ne!(live_id2.to_string(), live_id3.to_string());
 }
-
-#[tokio::test]
-#[ignore = "TODO: Filter compilation during subscription registration not yet implemented"]
-async fn test_filter_compilation_and_caching() {
-    // This test is ignored until filter compilation is implemented
-    // The test was checking for a filter_cache() method that doesn't exist
-}
-
-#[tokio::test]
-#[ignore = "TODO: Filter compilation during subscription registration not yet implemented"]
-async fn test_notification_filtering() {
-    // This test is ignored until filter compilation is implemented
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "TODO: Filter compilation during subscription registration not yet implemented"]
-async fn test_filter_cleanup_on_unsubscribe() {
-    // This test is ignored until filter compilation is implemented
-}

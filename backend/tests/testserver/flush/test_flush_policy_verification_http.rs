@@ -6,7 +6,7 @@
 //! - tests/integration/flush/test_automatic_flushing_comprehensive.rs
 //! - tests/integration/flush/test_flush_operations.rs
 
-#[path = "../commons/mod.rs"]
+#[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
 use kalamdb_api::models::ResponseStatus;

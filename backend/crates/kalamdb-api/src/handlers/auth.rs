@@ -7,8 +7,8 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{Duration, Utc};
 use kalamdb_auth::{
     cookie::{extract_auth_token, CookieConfig},
-    create_auth_cookie, create_logout_cookie, generate_jwt_token,
-    jwt_auth::{validate_jwt_token, JwtClaims, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER},
+    create_auth_cookie, create_logout_cookie,
+    jwt_auth::{validate_jwt_token, JwtClaims, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER, create_and_sign_token},
     password::verify_password,
     UserRepository,
 };
@@ -202,15 +202,14 @@ pub async fn login_handler(
     }
 
     // Generate JWT token
-    let claims = JwtClaims::new(
+    let (token, _claims) = match create_and_sign_token(
         user.id.as_ref(),
         user.username.as_str(),
         user.role.as_str(),
         user.email.as_deref(),
         Some(config.jwt_expiry_hours),
-    );
-
-    let token = match generate_jwt_token(&claims, &config.jwt_secret) {
+        &config.jwt_secret
+    ) {
         Ok(t) => t,
         Err(e) => {
             log::error!("Error generating JWT: {}", e);
@@ -291,15 +290,14 @@ pub async fn refresh_handler(
     };
 
     // Generate new token
-    let new_claims = JwtClaims::new(
+    let (new_token, _new_claims) = match create_and_sign_token(
         user.id.as_ref(),
         user.username.as_str(),
         user.role.as_str(),
         user.email.as_deref(),
         Some(config.jwt_expiry_hours),
-    );
-
-    let new_token = match generate_jwt_token(&new_claims, &config.jwt_secret) {
+        &config.jwt_secret
+    ) {
         Ok(t) => t,
         Err(e) => {
             log::error!("Error generating JWT: {}", e);

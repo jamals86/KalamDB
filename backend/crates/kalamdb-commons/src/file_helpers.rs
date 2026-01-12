@@ -103,8 +103,17 @@ mod tests {
 
     #[test]
     fn test_normalize_absolute_path() {
-        let abs_path = "/tmp/data";
-        assert_eq!(normalize_dir_path(abs_path), abs_path);
+        #[cfg(unix)]
+        {
+            let abs_path = "/tmp/data";
+            assert_eq!(normalize_dir_path(abs_path), abs_path);
+        }
+        
+        #[cfg(windows)]
+        {
+            let abs_path = "C:/tmp/data";
+            assert_eq!(normalize_dir_path(abs_path), abs_path);
+        }
     }
 
     #[test]

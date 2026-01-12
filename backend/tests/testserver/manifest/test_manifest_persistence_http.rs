@@ -1,6 +1,6 @@
 //! Manifest persistence behavior over the real HTTP SQL API.
 
-#[path = "../commons/mod.rs"]
+#[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
 use kalamdb_api::models::ResponseStatus;
@@ -113,7 +113,10 @@ async fn test_user_table_manifest_persistence_over_http() {
                 .into_iter()
                 .filter(|p| {
                     let s = p.to_string_lossy();
-                    s.contains(&ns) && s.contains(table) && s.contains("/u_")
+                    // Check for namespace, table, and user directory (u_<hash>)
+                    s.contains(&ns) && s.contains(table) && p.components().any(|c| {
+                        c.as_os_str().to_string_lossy().starts_with("u_")
+                    })
                 })
                 .collect::<Vec<_>>();
             assert!(
@@ -136,7 +139,10 @@ async fn test_user_table_manifest_persistence_over_http() {
                 let candidates = find_manifest_files(&storage_root);
                 if let Some(path) = candidates.iter().find(|p| {
                     let s = p.to_string_lossy();
-                    s.contains(&ns) && s.contains(table) && s.contains("/u_")
+                    // Check for namespace, table, and user directory (u_<hash>)
+                    s.contains(&ns) && s.contains(table) && p.components().any(|c| {
+                        c.as_os_str().to_string_lossy().starts_with("u_")
+                    })
                 }) {
                     break path.to_path_buf();
                 }
@@ -220,7 +226,10 @@ async fn test_user_table_manifest_persistence_over_http() {
                 let candidates = find_manifest_files(&storage_root);
                 if let Some(path) = candidates.iter().find(|p| {
                     let s = p.to_string_lossy();
-                    s.contains(&ns) && s.contains(table) && s.contains("/u_")
+                    // Check for namespace, table, and user directory (u_<hash>)
+                    s.contains(&ns) && s.contains(table) && p.components().any(|c| {
+                        c.as_os_str().to_string_lossy().starts_with("u_")
+                    })
                 }) {
                     break path.to_path_buf();
                 }

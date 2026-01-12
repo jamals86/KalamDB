@@ -3627,6 +3627,7 @@ dependencies = [
  "futures-util",
  "hex",
  "jsonwebtoken",
+ "kalam-link",
  "kalamdb-api",
  "kalamdb-auth",
  "kalamdb-commons",

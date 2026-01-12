@@ -82,6 +82,22 @@ pub fn generate_jwt_token(claims: &JwtClaims, secret: &str) -> AuthResult<String
         .map_err(|e| AuthError::HashingError(format!("JWT encoding error: {}", e)))
 }
 
+/// Create and sign a new JWT token in one step.
+/// 
+/// This is the preferred way to generate tokens to ensure consistency.
+pub fn create_and_sign_token(
+    user_id: &str,
+    username: &str,
+    role: &str,
+    email: Option<&str>,
+    expiry_hours: Option<i64>,
+    secret: &str,
+) -> AuthResult<(String, JwtClaims)> {
+    let claims = JwtClaims::new(user_id, username, role, email, expiry_hours);
+    let token = generate_jwt_token(&claims, secret)?;
+    Ok((token, claims))
+}
+
 /// Refresh a JWT token by generating a new token with extended expiration.
 ///
 /// This validates the existing token first, then creates a new token
@@ -106,17 +122,14 @@ pub fn refresh_jwt_token(
     let trusted_issuers = vec![KALAMDB_ISSUER.to_string()];
     let old_claims = validate_jwt_token(token, secret, &trusted_issuers)?;
 
-    // Create new claims with same user info but new expiration
-    let new_claims = JwtClaims::new(
+    create_and_sign_token(
         &old_claims.sub,
         old_claims.username.as_deref().unwrap_or(""),
         old_claims.role.as_deref().unwrap_or("user"),
         old_claims.email.as_deref(),
         expiry_hours,
-    );
-
-    let new_token = generate_jwt_token(&new_claims, secret)?;
-    Ok((new_token, new_claims))
+        secret,
+    )
 }
 
 /// Validate a JWT token and extract claims.
