@@ -73,8 +73,7 @@ async fn test_scenario_02_offline_sync_parallel() {
 
             for user_idx in 0..user_count {
                 let user_id = format!("user_{}", user_idx);
-                ensure_user_exists(server, &user_id, "test123", &Role::User).await?;
-                let client = server.link_client(&user_id);
+                let client = create_user_and_client(server, &user_id, &Role::User).await?;
 
                 for i in 0..items_per_user {
                     let item_id = user_idx * 10000 + i;
@@ -226,8 +225,7 @@ async fn test_scenario_02_offline_drift_resume() {
                 .await?;
             assert_success(&resp, "CREATE items table");
 
-            ensure_user_exists(server, "drift_user", "test123", &Role::User).await?;
-            let client = server.link_client("drift_user");
+            let client = create_user_and_client(server, "drift_user", &Role::User).await?;
 
             // Insert initial data
             for i in 1..=10 {
@@ -315,8 +313,7 @@ async fn test_scenario_02_changes_during_snapshot() {
                 .await?;
             assert_success(&resp, "CREATE items table");
 
-            ensure_user_exists(server, "concurrent_user", "test123", &Role::User).await?;
-            let client = server.link_client("concurrent_user");
+            let client = create_user_and_client(server, "concurrent_user", &Role::User).await?;
 
             // Insert initial items
             for i in 1..=20 {

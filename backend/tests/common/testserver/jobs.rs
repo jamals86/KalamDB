@@ -3,7 +3,6 @@ use kalam_link::models::ResponseStatus;
 use tokio::time::{sleep, Duration, Instant};
 
 use super::http_server::HttpTestServer;
-use super::query_result_ext::QueryResultTestExt;
 
 fn is_pending_job_status(status: &str) -> bool {
     matches!(status, "new" | "queued" | "running" | "retrying")

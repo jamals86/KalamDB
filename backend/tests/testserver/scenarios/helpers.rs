@@ -199,6 +199,15 @@ pub fn get_i64_value(row: &[serde_json::Value], idx: usize) -> Option<i64> {
     row.get(idx).and_then(|v| v.as_i64())
 }
 
+/// Extract an i64 value from a JSON value, handling both Number and String types
+pub fn json_to_i64(v: &serde_json::Value) -> Option<i64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
 // =============================================================================
 // User Isolation Assertions
 // =============================================================================
@@ -663,7 +672,10 @@ where
 
 /// Generate unique namespace name for test isolation
 pub fn unique_ns(prefix: &str) -> String {
-    format!("{}_{}", prefix, std::process::id())
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("{}_{}_{}", prefix, std::process::id(), id)
 }
 
 /// Generate unique table name

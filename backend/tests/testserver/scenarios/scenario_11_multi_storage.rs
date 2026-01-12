@@ -70,8 +70,7 @@ async fn test_scenario_11_multi_storage_basic() {
             // =========================================================
             // Step 4: Insert data to both tables
             // =========================================================
-            ensure_user_exists(server, "storage_user", "test123", &Role::User).await?;
-            let client = server.link_client("storage_user");
+            let client = create_user_and_client(server, "storage_user", &Role::User).await?;
 
             // Insert to hot_data
             for i in 1..=100 {
@@ -132,7 +131,7 @@ async fn test_scenario_11_multi_storage_basic() {
             assert!(resp.success(), "Query hot_data count");
             let hot_count = resp.rows_as_maps().first()
                 .and_then(|r| r.get("cnt"))
-                .and_then(|v| v.as_i64())
+                .and_then(|v| json_to_i64(v))
                 .unwrap_or(0);
             assert_eq!(hot_count, 100, "hot_data should have 100 rows after flush");
 
@@ -146,7 +145,7 @@ async fn test_scenario_11_multi_storage_basic() {
             assert!(resp.success(), "Query cold_data count");
             let cold_count = resp.rows_as_maps().first()
                 .and_then(|r| r.get("cnt"))
-                .and_then(|v| v.as_i64())
+                .and_then(|v| json_to_i64(v))
                 .unwrap_or(0);
             assert_eq!(cold_count, 100, "cold_data should have 100 rows after flush");
 
@@ -196,8 +195,7 @@ async fn test_scenario_11_storage_constraints() {
             assert_success(&resp, "CREATE constrained table");
 
             // Insert data
-            ensure_user_exists(server, "constraint_user", "test123", &Role::User).await?;
-            let client = server.link_client("constraint_user");
+            let client = create_user_and_client(server, "constraint_user", &Role::User).await?;
             for i in 1..=50 {
                 let resp = client
                     .execute_query(
@@ -231,7 +229,7 @@ async fn test_scenario_11_storage_constraints() {
             assert!(resp.success(), "Query count");
             let count = resp.rows_as_maps().first()
                 .and_then(|r| r.get("cnt"))
-                .and_then(|v| v.as_i64())
+                .and_then(|v| json_to_i64(v))
                 .unwrap_or(0);
             assert_eq!(count, 50, "Should have 50 rows");
 
@@ -274,7 +272,7 @@ async fn test_scenario_11_table_types_storage() {
                     r#"CREATE TABLE {}.shared_table (
                         id BIGINT PRIMARY KEY,
                         config TEXT
-                    ) WITH (TYPE = 'SHARED')"#,
+                    ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'PUBLIC')"#,
                     ns
                 ))
                 .await?;
@@ -286,16 +284,15 @@ async fn test_scenario_11_table_types_storage() {
                     r#"CREATE TABLE {}.stream_table (
                         id BIGINT PRIMARY KEY,
                         event TEXT
-                    ) WITH (TYPE = 'STREAM', ttl = '3600')"#,
+                    ) WITH (TYPE = 'STREAM', TTL_SECONDS = 3600)"#,
                     ns
                 ))
                 .await?;
             assert_success(&resp, "CREATE STREAM table");
 
-            // Get clients
-            create_test_users(server, &[("storage_user1", &Role::User), ("storage_user2", &Role::User)]).await?;
-            let user1_client = server.link_client("storage_user1");
-            let user2_client = server.link_client("storage_user2");
+            // Get clients - use create_user_and_client to get proper user_id mapping
+            let user1_client = create_user_and_client(server, "storage_user1", &Role::User).await?;
+            let user2_client = create_user_and_client(server, "storage_user2", &Role::User).await?;
             let admin_client = server.link_client("root");
 
             // Insert USER data (per-user isolation)
@@ -310,7 +307,10 @@ async fn test_scenario_11_table_types_storage() {
                         None,
                     )
                     .await?;
-                assert!(resp.success(), "User1 insert {}", i);
+                if !resp.success() {
+                    eprintln!("DEBUG: User1 insert {} FAILED: {:?}", i, resp.error);
+                }
+                assert!(resp.success(), "User1 insert {}: {:?}", i, resp.error);
             }
 
             for i in 11..=20 {
@@ -374,7 +374,7 @@ async fn test_scenario_11_table_types_storage() {
                 .await?;
             let user1_count = resp.rows_as_maps().first()
                 .and_then(|r| r.get("cnt"))
-                .and_then(|v| v.as_i64())
+                .and_then(|v| json_to_i64(v))
                 .unwrap_or(0);
             assert_eq!(user1_count, 10, "User1 should see 10 rows");
 
@@ -388,7 +388,7 @@ async fn test_scenario_11_table_types_storage() {
                 .await?;
             let user2_count = resp.rows_as_maps().first()
                 .and_then(|r| r.get("cnt"))
-                .and_then(|v| v.as_i64())
+                .and_then(|v| json_to_i64(v))
                 .unwrap_or(0);
             assert_eq!(user2_count, 10, "User2 should see 10 rows");
 
@@ -402,7 +402,7 @@ async fn test_scenario_11_table_types_storage() {
                 .await?;
             let shared_count = resp.rows_as_maps().first()
                 .and_then(|r| r.get("cnt"))
-                .and_then(|v| v.as_i64())
+                .and_then(|v| json_to_i64(v))
                 .unwrap_or(0);
             assert_eq!(shared_count, 10, "Shared table should have 10 rows");
 

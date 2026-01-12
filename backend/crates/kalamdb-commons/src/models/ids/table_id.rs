@@ -104,51 +104,50 @@ impl Serialize for TableId {
     }
 }
 
-// Custom Deserialize implementation: deserialize from "namespace.table" string or struct
+// Custom Deserialize implementation: deserialize from "namespace.table" string
+// Uses a Visitor pattern to avoid deserialize_any (which bincode doesn't support)
 impl<'de> Deserialize<'de> for TableId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        use serde::de::Error;
+        use serde::de::{Error, Visitor};
+        use std::fmt;
         
-        // Helper struct for deserializing the old format
-        #[derive(Deserialize)]
-        struct TableIdHelper {
-            namespace_id: String,
-            table_name: String,
-        }
+        struct TableIdVisitor;
         
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum TableIdFormat {
-            String(String),
-            Struct(TableIdHelper),
-        }
-        
-        let format = TableIdFormat::deserialize(deserializer)?;
-        
-        match format {
-            TableIdFormat::String(s) => {
+        impl<'de> Visitor<'de> for TableIdVisitor {
+            type Value = TableId;
+            
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a string in the format 'namespace.table'")
+            }
+            
+            fn visit_str<E>(self, value: &str) -> Result<TableId, E>
+            where
+                E: Error,
+            {
                 // Parse "namespace.table" format
-                let parts: Vec<&str> = s.split('.').collect();
+                let parts: Vec<&str> = value.split('.').collect();
                 if parts.len() == 2 {
                     Ok(TableId {
                         namespace_id: NamespaceId::new(parts[0]),
                         table_name: TableName::new(parts[1]),
                     })
                 } else {
-                    Err(D::Error::custom(format!("Invalid table_id format: {}", s)))
+                    Err(E::custom(format!("Invalid table_id format: {}", value)))
                 }
             }
-            TableIdFormat::Struct(helper) => {
-                // Support old nested format for backwards compatibility
-                Ok(TableId {
-                    namespace_id: NamespaceId::new(&helper.namespace_id),
-                    table_name: TableName::new(&helper.table_name),
-                })
+            
+            fn visit_string<E>(self, value: String) -> Result<TableId, E>
+            where
+                E: Error,
+            {
+                self.visit_str(&value)
             }
         }
+        
+        deserializer.deserialize_str(TableIdVisitor)
     }
 }
 

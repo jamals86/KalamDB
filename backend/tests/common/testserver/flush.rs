@@ -1,4 +1,3 @@
-use super::query_result_ext::QueryResultTestExt;
 use anyhow::Result;
 use kalam_link::models::ResponseStatus;
 use std::path::{Path, PathBuf};

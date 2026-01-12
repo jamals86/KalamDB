@@ -603,8 +603,15 @@ impl QueryResponse {
     }
 
     /// Get an i64 value from the first row by column name
+    ///
+    /// Handles both numeric values and string-encoded integers (for Int64 precision).
+    /// The backend serializes Int64 as strings to preserve precision in JSON.
     pub fn get_i64(&self, column_name: &str) -> Option<i64> {
-        self.get_value(column_name).and_then(|v| v.as_i64())
+        self.get_value(column_name).and_then(|v| match v {
+            JsonValue::Number(n) => n.as_i64(),
+            JsonValue::String(s) => s.parse::<i64>().ok(),
+            _ => None,
+        })
     }
 
     /// Get a string value from the first row by column name

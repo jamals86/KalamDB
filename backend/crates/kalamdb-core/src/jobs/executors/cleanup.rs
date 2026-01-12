@@ -58,8 +58,7 @@ pub struct StorageCleanupDetails {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CleanupParams {
     /// Table identifier (required)
-    #[serde(flatten)]
-    pub table_id: TableId,
+     pub table_id: TableId,
     /// Table type (required)
     pub table_type: TableType,
     /// Cleanup operation (required)

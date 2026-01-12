@@ -266,9 +266,9 @@ mod tests {
             iss: "kalamdb-test".to_string(),
             exp: ((now as i64) + exp_offset_secs) as usize,
             iat: now,
-            username: Some("testuser".to_string()),
+            username: Some(UserName::new("testuser")),
             email: Some("test@example.com".to_string()),
-            role: Some("user".to_string()),
+            role: Some(Role::User),
         };
 
         let header = Header::new(Algorithm::HS256);
@@ -288,7 +288,7 @@ mod tests {
         let claims = result.unwrap();
         assert_eq!(claims.sub, "user_123");
         assert_eq!(claims.iss, "kalamdb-test");
-        assert_eq!(claims.username, Some("testuser".to_string()));
+        assert_eq!(claims.username, Some(UserName::new("testuser")));
     }
 
     #[test]

@@ -75,7 +75,7 @@ async fn test_scenario_10_multi_tenant_isolation() {
                         flag_name TEXT PRIMARY KEY,
                         enabled BOOLEAN NOT NULL,
                         description TEXT
-                    ) WITH (TYPE = 'SHARED')"#,
+                    ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'PUBLIC')"#,
                     global
                 ))
                 .await?;

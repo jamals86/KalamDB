@@ -4,11 +4,12 @@ use kalamdb_commons::{Role, UserId, UserName};
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
+use std::fs::OpenOptions;
 use std::path::Path;
 use std::path::PathBuf;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration, Instant};
-use kalam_link::{AuthProvider, KalamLinkClient};
+use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
 use kalam_link::models::{QueryResponse, ResponseStatus};
 
 static HTTP_TEST_SERVER_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -201,6 +202,16 @@ impl HttpTestServer {
         KalamLinkClient::builder()
             .base_url(self.base_url())
             .auth(AuthProvider::jwt_token(token))
+            .timeouts(
+                KalamLinkTimeouts::builder()
+                    .connection_timeout_secs(5)
+                    .receive_timeout_secs(120)
+                    .send_timeout_secs(30)
+                    .subscribe_timeout_secs(15)
+                    .auth_timeout_secs(10)
+                    .initial_data_timeout(Duration::from_secs(120))
+                    .build(),
+            )
             .build()
             .expect("Failed to build KalamLinkClient")
     }
@@ -213,6 +224,16 @@ impl HttpTestServer {
         KalamLinkClient::builder()
             .base_url(self.base_url())
             .auth(AuthProvider::jwt_token(token))
+            .timeouts(
+                KalamLinkTimeouts::builder()
+                    .connection_timeout_secs(5)
+                    .receive_timeout_secs(120)
+                    .send_timeout_secs(30)
+                    .subscribe_timeout_secs(15)
+                    .auth_timeout_secs(10)
+                    .initial_data_timeout(Duration::from_secs(120))
+                    .build(),
+            )
             .build()
             .expect("Failed to build KalamLinkClient")
     }
@@ -502,13 +523,18 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
     config.server.port = 0;
     config.server.ui_path = None;
     config.storage.data_path = data_path.to_string_lossy().into_owned();
+    // Increase rate limits for tests (default is 100/sec which is too low for insert loops)
+    config.rate_limit.max_queries_per_sec = 100000;
+    config.rate_limit.max_messages_per_sec = 10000;
 
     // Match production behavior: set env var early so auth uses the same secret.
     if std::env::var("KALAMDB_JWT_SECRET").is_err() {
         std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
     }
 
-    let (components, app_context) = kalamdb_server::lifecycle::bootstrap(&config).await?;
+    // Use bootstrap_isolated to ensure each test gets a fresh AppContext
+    // This prevents state leakage between tests (Raft logs, system tables, etc.)
+    let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
     let running =
         kalamdb_server::lifecycle::run_for_tests(&config, components, app_context).await?;
 
@@ -546,6 +572,9 @@ pub async fn start_http_test_server_with_config(
     config.server.port = 0;
     config.server.ui_path = None;
     config.storage.data_path = data_path.to_string_lossy().into_owned();
+    // Increase rate limits for tests (default is 100/sec which is too low for insert loops)
+    config.rate_limit.max_queries_per_sec = 100000;
+    config.rate_limit.max_messages_per_sec = 10000;
 
     override_config(&mut config);
 
@@ -553,7 +582,8 @@ pub async fn start_http_test_server_with_config(
         std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
     }
 
-    let (components, app_context) = kalamdb_server::lifecycle::bootstrap(&config).await?;
+    // Use bootstrap_isolated to ensure each test gets a fresh AppContext
+    let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
     let running =
         kalamdb_server::lifecycle::run_for_tests(&config, components, app_context).await?;
 

@@ -46,7 +46,7 @@ async fn test_scenario_05_dashboards_shared_reference() {
                         name TEXT NOT NULL,
                         price DOUBLE NOT NULL,
                         features TEXT
-                    ) WITH (TYPE = 'SHARED')"#,
+                    ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'PUBLIC')"#,
                     ns
                 ))
                 .await?;
@@ -100,9 +100,8 @@ async fn test_scenario_05_dashboards_shared_reference() {
             // =========================================================
             // Step 4: Insert user data
             // =========================================================
-            create_test_users(server, &[("dash_user1", &Role::User), ("dash_user2", &Role::User)]).await?;
-            let user1_client = server.link_client("dash_user1");
-            let user2_client = server.link_client("dash_user2");
+            let user1_client = create_user_and_client(server, "dash_user1", &Role::User).await?;
+            let user2_client = create_user_and_client(server, "dash_user2", &Role::User).await?;
 
             // User 1: Pro plan activities
             for i in 1..=5 {
@@ -275,13 +274,14 @@ async fn test_scenario_05_rbac_restrictions() {
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
             assert_success(&resp, "CREATE NAMESPACE");
 
-            // Create restricted shared table (only admin can write)
+            // Create shared table with PUBLIC access (any authenticated user can read)
+            // but only admin can write
             let resp = server
                 .execute_sql(&format!(
                     r#"CREATE TABLE {}.system_config (
                         key TEXT PRIMARY KEY,
                         value TEXT NOT NULL
-                    ) WITH (TYPE = 'SHARED')"#,
+                    ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'PUBLIC')"#,
                     ns
                 ))
                 .await?;
@@ -302,8 +302,7 @@ async fn test_scenario_05_rbac_restrictions() {
             assert!(resp.success(), "Admin should write to shared table");
 
             // Regular user can read
-            ensure_user_exists(server, "regular_user", "test123", &Role::User).await?;
-            let user_client = server.link_client("regular_user");
+            let user_client = create_user_and_client(server, "regular_user", &Role::User).await?;
             let resp = user_client
                 .execute_query(
                     &format!("SELECT * FROM {}.system_config", ns),
@@ -347,8 +346,7 @@ async fn test_scenario_05_schema_evolution() {
                 .await?;
             assert_success(&resp, "CREATE events table");
 
-            ensure_user_exists(server, "schema_user", "test123", &Role::User).await?;
-            let client = server.link_client("schema_user");
+            let client = create_user_and_client(server, "schema_user", &Role::User).await?;
 
             // Insert initial data
             for i in 1..=5 {

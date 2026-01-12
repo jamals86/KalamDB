@@ -314,6 +314,149 @@ pub async fn bootstrap(
     Ok((components, app_context))
 }
 
+/// Bootstrap the server for tests with isolated AppContext
+/// 
+/// Unlike `bootstrap()`, this does NOT use the global AppContext singleton.
+/// Each call creates a completely fresh AppContext instance, which is essential
+/// for test isolation where each test needs its own independent state.
+///
+/// **Warning**: Only use this in tests! Production code should use `bootstrap()`.
+pub async fn bootstrap_isolated(
+    config: &ServerConfig,
+) -> Result<(
+    ApplicationComponents,
+    Arc<kalamdb_core::app_context::AppContext>,
+)> {
+    let bootstrap_start = std::time::Instant::now();
+
+    // Initialize RocksDB
+    let phase_start = std::time::Instant::now();
+    let db_path = config.storage.rocksdb_dir();
+    std::fs::create_dir_all(&db_path)?;
+
+    let db_init = RocksDbInit::new(db_path.to_str().unwrap(), config.storage.rocksdb.clone());
+    let db = db_init.open()?;
+    debug!(
+        "RocksDB initialized at {} ({:.2}ms)",
+        db_path.display(),
+        phase_start.elapsed().as_secs_f64() * 1000.0
+    );
+
+    let backend = Arc::new(RocksDBBackend::with_options(
+        db,
+        config.storage.rocksdb.sync_writes,
+        config.storage.rocksdb.disable_wal,
+    ));
+
+    // Node ID: use cluster.node_id (u64) if cluster mode, otherwise default to 1 for standalone
+    let node_id = if let Some(cluster) = &config.cluster {
+        kalamdb_commons::NodeId::new(cluster.node_id)
+    } else {
+        kalamdb_commons::NodeId::new(1) // Standalone mode uses node ID 1
+    };
+    
+    // Use create_isolated instead of init to bypass the global singleton
+    let app_context = kalamdb_core::app_context::AppContext::create_isolated(
+        backend.clone(),
+        node_id,
+        config.storage.storage_dir().to_string_lossy().into_owned(),
+        config.clone(),
+    );
+
+    // Start Raft (same as bootstrap)
+    app_context.executor().start().await
+        .map_err(|e| anyhow::anyhow!("Failed to start Raft: {}", e))?;
+    app_context.executor().initialize_cluster().await
+        .map_err(|e| anyhow::anyhow!("Failed to initialize single-node Raft: {}", e))?;
+    
+    app_context.wire_raft_appliers();
+
+    // Initialize system tables
+    kalamdb_system::initialize_system_tables(backend.clone()).await?;
+
+    // Start JobsManager run loop
+    let job_manager = app_context.job_manager();
+    let max_concurrent = config.jobs.max_concurrent;
+    tokio::spawn(async move {
+        if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
+            log::error!("JobsManager run loop failed: {}", e);
+        }
+    });
+
+    // Seed default storage if necessary
+    let storages_provider = app_context.system_tables().storages();
+    let existing_storages = storages_provider.scan_all_storages()?;
+    if existing_storages.num_rows() == 0 {
+        let now = chrono::Utc::now().timestamp_millis();
+        let default_storage = kalamdb_commons::system::Storage {
+            storage_id: StorageId::from("local"),
+            storage_name: "Local Filesystem".to_string(),
+            description: Some("Default local filesystem storage".to_string()),
+            storage_type: kalamdb_commons::models::StorageType::Filesystem,
+            base_directory: config.storage.storage_dir().to_string_lossy().into_owned(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template: config.storage.shared_tables_template.clone(),
+            user_tables_template: config.storage.user_tables_template.clone(),
+            created_at: now,
+            updated_at: now,
+        };
+        storages_provider.insert_storage(default_storage)?;
+    }
+
+    // Get references from AppContext
+    let live_query_manager = app_context.live_query_manager();
+    let session_factory = app_context.session_factory();
+    let users_provider = app_context.system_tables().users();
+    let user_repo: Arc<dyn kalamdb_auth::UserRepository> = Arc::new(
+        kalamdb_api::repositories::CoreUsersRepo::new(users_provider),
+    );
+
+    // SqlExecutor
+    let sql_executor = Arc::new(SqlExecutor::new(
+        app_context.clone(),
+        config.auth.enforce_password_complexity,
+    ));
+
+    app_context.set_sql_executor(sql_executor.clone());
+    live_query_manager.set_sql_executor(sql_executor.clone());
+    live_query_manager.set_app_context(app_context.clone());
+
+    sql_executor.load_existing_tables().await?;
+
+    // Rate limiter
+    let rate_limit_config = RateLimitConfig {
+        max_queries_per_user: config.rate_limit.max_queries_per_sec,
+        max_subscriptions_per_user: config.rate_limit.max_subscriptions_per_user,
+        max_messages_per_connection: config.rate_limit.max_messages_per_sec,
+        window: std::time::Duration::from_secs(1),
+    };
+    let rate_limiter = Arc::new(RateLimiter::with_config(rate_limit_config));
+
+    let connection_registry = app_context.connection_registry();
+
+    // Create default system user
+    let users_provider_for_init = app_context.system_tables().users();
+    create_default_system_user(users_provider_for_init.clone()).await?;
+    check_remote_access_security(config, users_provider_for_init).await?;
+
+    let components = ApplicationComponents {
+        session_factory,
+        sql_executor,
+        rate_limiter,
+        live_query_manager,
+        user_repo,
+        connection_registry,
+    };
+
+    debug!(
+        "🚀 Server bootstrap (isolated) completed in {:.2}ms",
+        bootstrap_start.elapsed().as_secs_f64() * 1000.0
+    );
+
+    Ok((components, app_context))
+}
+
 /// Start the HTTP server and manage graceful shutdown.
 pub async fn run(
     config: &ServerConfig,
@@ -536,8 +679,22 @@ pub struct RunningTestHttpServer {
 
 impl RunningTestHttpServer {
     pub async fn shutdown(self) {
-        self.server_handle.stop(true).await;
+        println!("Shutting down test HTTP server at {}", self.base_url);
+        // Stop the HTTP server first
+        self.server_handle.stop(false).await;
         let _ = self.server_task.await;
+        
+        // Then shutdown the Raft executor to cleanly stop all Raft groups
+        // This prevents "Fatal(Stopped)" errors in subsequent tests
+        log::debug!("Shutting down Raft executor for test server...");
+        println!("Shutting down Raft executor for test server...");
+        if let Err(e) = self.app_context.executor().shutdown().await {
+            log::warn!("Failed to shutdown Raft executor: {}", e);
+        }
+        
+        println!("Test HTTP server shutdown complete");
+        // Brief delay to allow background tasks to clean up
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 }
 

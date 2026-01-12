@@ -283,8 +283,7 @@ async fn test_scenario_03_filtered_subscription() {
                 .await?;
             assert_success(&resp, "CREATE cart_items table");
 
-            ensure_user_exists(server, "sub_user", "test123", &Role::User).await?;
-            let client = server.link_client("sub_user");
+            let client = create_user_and_client(server, "sub_user", &Role::User).await?;
 
             // Insert items for two carts
             for i in 1..=5 {

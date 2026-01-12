@@ -8,7 +8,7 @@ use chrono::{Duration, Utc};
 use kalamdb_auth::{
     cookie::{extract_auth_token, CookieConfig},
     create_auth_cookie, create_logout_cookie,
-    jwt_auth::{validate_jwt_token, JwtClaims, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER, create_and_sign_token},
+    jwt_auth::{validate_jwt_token, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER, create_and_sign_token},
     password::verify_password,
     UserRepository,
 };

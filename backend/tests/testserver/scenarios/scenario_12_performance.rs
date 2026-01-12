@@ -43,8 +43,7 @@ async fn test_scenario_12_insert_performance() {
                 .await?;
             assert_success(&resp, "CREATE metrics table");
 
-            ensure_user_exists(server, "perf_user", "test123", &Role::User).await?;
-            let client = server.link_client("perf_user");
+            let client = create_user_and_client(server, "perf_user", &Role::User).await?;
 
             // =========================================================
             // Measure insert time per batch
@@ -135,8 +134,7 @@ async fn test_scenario_12_query_time_growth() {
                 .await?;
             assert_success(&resp, "CREATE readings table");
 
-            ensure_user_exists(server, "query_perf_user", "test123", &Role::User).await?;
-            let client = server.link_client("query_perf_user");
+            let client = create_user_and_client(server, "query_perf_user", &Role::User).await?;
 
             // Insert rows in batches and measure query time after each batch
             let batch_sizes = [100, 200, 300, 400, 500];
@@ -230,8 +228,7 @@ async fn test_scenario_12_subscription_snapshot_timing() {
                 .await?;
             assert_success(&resp, "CREATE documents table");
 
-            ensure_user_exists(server, "sub_perf_user", "test123", &Role::User).await?;
-            let client = server.link_client("sub_perf_user");
+            let client = create_user_and_client(server, "sub_perf_user", &Role::User).await?;
 
             // Insert varying amounts of data and measure subscription snapshot time
             let data_sizes = [50, 100, 200, 500];
@@ -331,8 +328,7 @@ async fn test_scenario_12_memory_baseline() {
                 .await?;
             assert_success(&resp, "CREATE large_data table");
 
-            ensure_user_exists(server, "memory_user", "test123", &Role::User).await?;
-            let client = server.link_client("memory_user");
+            let client = create_user_and_client(server, "memory_user", &Role::User).await?;
 
             // Insert data in batches (larger payloads)
             let payload = "X".repeat(1000); // 1KB per row

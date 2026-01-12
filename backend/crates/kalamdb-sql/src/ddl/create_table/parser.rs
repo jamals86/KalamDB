@@ -21,7 +21,9 @@ impl CreateTableStatement {
     pub fn parse(sql: &str, default_namespace: &str) -> Result<Self, String> {
         let (normalized_sql, legacy_table_type) = normalize_create_table_sql(sql);
 
-        let dialect = sqlparser::dialect::GenericDialect {};
+        // Use PostgreSqlDialect because GenericDialect has issues with TEXT/STRING PRIMARY KEY
+        // in sqlparser 0.59.0. PostgreSqlDialect properly handles TEXT as a data type.
+        let dialect = sqlparser::dialect::PostgreSqlDialect {};
         let mut statements = sqlparser::parser::Parser::parse_sql(&dialect, &normalized_sql)
             .map_err(|e| e.to_string())?;
         if statements.len() != 1 {
@@ -548,6 +550,35 @@ CREATE TABLE sales.activity (
 
         let err = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap_err();
         assert!(err.contains("STREAM tables must specify"));
+    }
+
+    #[test]
+    fn test_text_primary_key_shared() {
+        // Test STRING PRIMARY KEY
+        let sql_string = r#"
+CREATE TABLE sales.system_config (
+    key STRING PRIMARY KEY,
+    value STRING
+) WITH (
+    TYPE = 'SHARED'
+)
+"#;
+        let stmt = CreateTableStatement::parse(sql_string, DEFAULT_NS).unwrap();
+        assert_eq!(stmt.primary_key_column.as_deref(), Some("key"));
+        assert_eq!(stmt.table_type, TableType::Shared);
+        
+        // Test TEXT PRIMARY KEY (common in tests and docs)
+        let sql_text = r#"
+CREATE TABLE sales.config2 (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+) WITH (
+    TYPE = 'SHARED'
+)
+"#;
+        let stmt = CreateTableStatement::parse(sql_text, DEFAULT_NS).unwrap();
+        assert_eq!(stmt.primary_key_column.as_deref(), Some("key"));
+        assert_eq!(stmt.table_type, TableType::Shared);
     }
 
     #[test]

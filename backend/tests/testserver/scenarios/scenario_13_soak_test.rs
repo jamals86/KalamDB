@@ -55,7 +55,7 @@ async fn test_scenario_13_mixed_workload_soak() {
                         id BIGINT PRIMARY KEY,
                         action TEXT,
                         timestamp BIGINT
-                    ) WITH (TYPE = 'STREAM', ttl = '7200')"#,
+                    ) WITH (TYPE = 'STREAM', TTL_SECONDS = 7200)"#,
                     ns
                 ))
                 .await?;
@@ -340,8 +340,7 @@ async fn test_scenario_13_schema_evolution_under_load() {
                 .await?;
             assert_success(&resp, "CREATE products table");
 
-            ensure_user_exists(server, "schema_user", "test123", &Role::User).await?;
-            let client = server.link_client("schema_user");
+            let client = create_user_and_client(server, "schema_user", &Role::User).await?;
 
             // Insert initial data
             for i in 1..=50 {

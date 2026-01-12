@@ -26,12 +26,17 @@ use kalamdb_store::StorageBackend;
 use kalamdb_system::SystemTablesRegistry;
 use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use once_cell::sync::OnceCell;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::metrics::runtime::collect_runtime_metrics;
 
-static APP_CONTEXT: OnceLock<Arc<AppContext>> = OnceLock::new();
+// Use RwLock instead of OnceLock to allow resetting in tests
+// The RwLock is wrapped in a OnceLock for lazy initialization
+use std::sync::RwLock as StdRwLock;
+use once_cell::sync::Lazy;
+
+static APP_CONTEXT: Lazy<StdRwLock<Option<Arc<AppContext>>>> = Lazy::new(|| StdRwLock::new(None));
 
 /// AppContext singleton
 ///
@@ -165,10 +170,60 @@ impl AppContext {
         storage_base_path: String,
         config: ServerConfig,
     ) -> Arc<AppContext> {
+        // Check if already initialized
+        {
+            let guard = APP_CONTEXT.read().expect("APP_CONTEXT lock poisoned");
+            if let Some(existing) = guard.as_ref() {
+                return existing.clone();
+            }
+        }
+        
+        // Initialize
+        let app_ctx = Self::create_impl(storage_backend, node_id, storage_base_path, config);
+        {
+            let mut guard = APP_CONTEXT.write().expect("APP_CONTEXT lock poisoned");
+            *guard = Some(app_ctx.clone());
+        }
+        app_ctx
+    }
+    
+    /// Create an isolated AppContext instance for tests
+    ///
+    /// Unlike `init()`, this **replaces** the global singleton, ensuring the
+    /// new instance is used by all code that calls `AppContext::get()`.
+    /// The previous AppContext is dropped.
+    ///
+    /// This is essential for test isolation where each test needs its own
+    /// independent state (separate RocksDB, Raft groups, etc.)
+    ///
+    /// **Warning**: Only use this in tests! Production code should use `init()`.
+    pub fn create_isolated(
+        storage_backend: Arc<dyn StorageBackend>,
+        node_id: NodeId,
+        storage_base_path: String,
+        config: ServerConfig,
+    ) -> Arc<AppContext> {
+        let app_ctx = Self::create_impl(storage_backend, node_id, storage_base_path, config);
+        // Replace the global singleton so AppContext::get() returns the new instance
+        {
+            let mut guard = APP_CONTEXT.write().expect("APP_CONTEXT lock poisoned");
+            *guard = Some(app_ctx.clone());
+        }
+        app_ctx
+    }
+
+    /// Internal implementation that creates an AppContext
+    ///
+    /// Extracted to allow both singleton and isolated initialization.
+    fn create_impl(
+        storage_backend: Arc<dyn StorageBackend>,
+        node_id: NodeId,
+        storage_base_path: String,
+        config: ServerConfig,
+    ) -> Arc<AppContext> {
         let node_id = Arc::new(node_id); // Wrap NodeId in Arc for zero-copy sharing (FR-000)
         let config = Arc::new(config); // Wrap config in Arc for zero-copy sharing
-        APP_CONTEXT
-            .get_or_init(|| {
+        {
                 // Create stores using constants from kalamdb_commons
                 let user_table_store = Arc::new(UserTableStore::new(
                     storage_backend.clone(),
@@ -425,8 +480,7 @@ impl AppContext {
                 }
 
                 app_ctx
-            })
-            .clone()
+            }
     }
 
     /// Wire Raft appliers that apply replicated commands into local providers.
@@ -627,14 +681,19 @@ impl AppContext {
     /// Panics if AppContext::init() has not been called yet
     pub fn get() -> Arc<AppContext> {
         APP_CONTEXT
-            .get()
+            .read()
+            .expect("APP_CONTEXT lock poisoned")
+            .as_ref()
             .expect("AppContext not initialized")
             .clone()
     }
 
     /// Try to get the AppContext singleton without panicking
     pub fn try_get() -> Option<Arc<AppContext>> {
-        APP_CONTEXT.get().cloned()
+        APP_CONTEXT
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().cloned())
     }
 
     // ===== Getters =====

@@ -705,7 +705,7 @@ impl RaftManager {
     pub fn set_meta_applier(&self, applier: std::sync::Arc<dyn crate::applier::MetaApplier>) {
         let sm = self.meta.storage().state_machine();
         sm.set_applier(applier);
-        log::debug!("RaftManager: Meta applier registered for metadata replication");
+        log::info!("RaftManager: Meta applier registered for metadata replication");
     }
 
     /// Set the user data applier for persisting per-user data to providers
@@ -810,7 +810,7 @@ impl RaftManager {
     ///
     /// This performs:
     /// 1. Leadership transfer if this node is leader (to minimize downtime)
-    /// 2. Logs cluster leave event
+    /// 2. Shuts down all Raft groups (calls OpenRaft's Raft::shutdown())
     /// 3. Marks the manager as stopped
     pub async fn shutdown(&self) -> Result<(), RaftError> {
         if !self.is_started() {
@@ -875,6 +875,30 @@ impl RaftManager {
                 log::warn!("[CLUSTER] No peers available for leadership transfer - cluster may experience brief unavailability");
             }
         }
+        
+        // Shutdown all Raft groups (calls OpenRaft's Raft::shutdown())
+        log::info!("[CLUSTER] Shutting down all Raft groups...");
+        
+        // Shutdown Meta group
+        if let Err(e) = self.meta.shutdown().await {
+            log::warn!("[CLUSTER] ⚠ Failed to shutdown Meta group: {}", e);
+        }
+        
+        // Shutdown user data shards
+        for (i, shard) in self.user_data_shards.iter().enumerate() {
+            if let Err(e) = shard.shutdown().await {
+                log::warn!("[CLUSTER] ⚠ Failed to shutdown UserDataShard[{}]: {}", i, e);
+            }
+        }
+        
+        // Shutdown shared data shards
+        for (i, shard) in self.shared_data_shards.iter().enumerate() {
+            if let Err(e) = shard.shutdown().await {
+                log::warn!("[CLUSTER] ⚠ Failed to shutdown SharedDataShard[{}]: {}", i, e);
+            }
+        }
+        
+        log::info!("[CLUSTER] All Raft groups shutdown complete");
         
         // Mark as stopped
         {

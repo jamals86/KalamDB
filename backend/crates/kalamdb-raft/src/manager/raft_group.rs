@@ -169,6 +169,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// Initialize the cluster (call on first node only)
     ///
     /// This bootstraps the cluster with an initial membership containing only this node.
+    /// If the cluster is already initialized (has existing log entries), this is a no-op.
     pub async fn initialize(&self, node_id: u64, node: KalamNode) -> Result<(), RaftError> {
         let raft = {
             let guard = self.raft.read();
@@ -179,11 +180,20 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         let mut members = std::collections::BTreeMap::new();
         members.insert(node_id, node);
         
-        raft.initialize(members).await
-            .map_err(|e| RaftError::Internal(format!("Failed to initialize cluster: {:?}", e)))?;
-        
-        log::debug!("Initialized Raft group {} cluster with node {}", self.group_id, node_id);
-        Ok(())
+        match raft.initialize(members).await {
+            Ok(_) => {
+                log::debug!("Initialized Raft group {} cluster with node {}", self.group_id, node_id);
+                Ok(())
+            }
+            Err(openraft::error::RaftError::APIError(openraft::error::InitializeError::NotAllowed(_))) => {
+                // Cluster already initialized (has log entries) - this is fine for restart
+                log::debug!("Raft group {} already initialized, skipping", self.group_id);
+                Ok(())
+            }
+            Err(e) => {
+                Err(RaftError::Internal(format!("Failed to initialize cluster: {:?}", e)))
+            }
+        }
     }
     
     /// Add a learner (non-voting member) to the cluster
@@ -554,6 +564,26 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             "Leadership transfer requested for group {} - relying on automatic re-election on shutdown",
             self.group_id
         );
+        Ok(())
+    }
+    
+    /// Shutdown this Raft group
+    ///
+    /// Calls OpenRaft's Raft::shutdown() to cleanly terminate the internal tasks.
+    /// This is important for test cleanup to prevent "Fatal(Stopped)" errors.
+    pub async fn shutdown(&self) -> Result<(), RaftError> {
+        let raft = {
+            let mut guard = self.raft.write();
+            guard.take() // Take ownership to drop after shutdown
+        };
+        
+        if let Some(raft) = raft {
+            log::debug!("Shutting down Raft group {}", self.group_id);
+            raft.shutdown().await
+                .map_err(|e| RaftError::Internal(format!("Failed to shutdown Raft group {}: {:?}", self.group_id, e)))?;
+            log::debug!("Raft group {} shutdown complete", self.group_id);
+        }
+        
         Ok(())
     }
 }

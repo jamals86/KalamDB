@@ -97,7 +97,8 @@ pub async fn start_http_test_server() -> anyhow::Result<HttpTestServer> {
         std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
     }
 
-    let (components, app_context) = kalamdb_server::lifecycle::bootstrap(&config).await?;
+    // Use bootstrap_isolated to ensure each test gets a fresh AppContext
+    let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
     let running = kalamdb_server::lifecycle::run_for_tests(&config, components, app_context).await?;
 
     Ok(HttpTestServer {

@@ -44,8 +44,7 @@ async fn test_scenario_09_ddl_while_active() {
                 .await?;
             assert_success(&resp, "CREATE data table");
 
-            ensure_user_exists(server, "ddl_user", "test123", &Role::User).await?;
-            let client = server.link_client("ddl_user");
+            let client = create_user_and_client(server, "ddl_user", &Role::User).await?;
 
             // =========================================================
             // Step 2: Insert initial data
@@ -220,8 +219,7 @@ async fn test_scenario_09_drop_column() {
                 .await?;
             assert_success(&resp, "CREATE data table");
 
-            ensure_user_exists(server, "drop_col_user", "test123", &Role::User).await?;
-            let client = server.link_client("drop_col_user");
+            let client = create_user_and_client(server, "drop_col_user", &Role::User).await?;
 
             // Insert data with old_column
             for i in 1..=5 {
@@ -310,8 +308,7 @@ async fn test_scenario_09_concurrent_reads_during_ddl() {
                 .await?;
             assert_success(&resp, "CREATE data table");
 
-            ensure_user_exists(server, "concurrent_ddl_user", "test123", &Role::User).await?;
-            let client = server.link_client("concurrent_ddl_user");
+            let client = create_user_and_client(server, "concurrent_ddl_user", &Role::User).await?;
 
             // Insert data
             for i in 1..=20 {

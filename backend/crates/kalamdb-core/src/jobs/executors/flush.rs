@@ -41,7 +41,6 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlushParams {
     /// Table identifier (required)
-    #[serde(flatten)]
     pub table_id: TableId,
     /// Table type (required)
     pub table_type: TableType,

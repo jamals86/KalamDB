@@ -43,7 +43,6 @@ fn default_batch_size() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamEvictionParams {
     /// Table identifier (required)
-    #[serde(flatten)]
     pub table_id: TableId,
     /// Table type (must be Stream - validated in validate())
     pub table_type: TableType,

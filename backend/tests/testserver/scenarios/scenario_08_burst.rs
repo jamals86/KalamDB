@@ -46,8 +46,7 @@ async fn test_scenario_08_burst_writes() {
                 .await?;
             assert_success(&resp, "CREATE events table");
 
-            ensure_user_exists(server, "burst_user", "test123", &Role::User).await?;
-            let client = server.link_client("burst_user");
+            let client = create_user_and_client(server, "burst_user", &Role::User).await?;
 
             // =========================================================
             // Step 2: Start subscription
@@ -219,8 +218,7 @@ async fn test_scenario_08_sustained_load() {
                 .await?;
             assert_success(&resp, "CREATE events table");
 
-            ensure_user_exists(server, "sustained_user", "test123", &Role::User).await?;
-            let client = server.link_client("sustained_user");
+            let client = create_user_and_client(server, "sustained_user", &Role::User).await?;
 
             // Start subscription
             let sql = format!("SELECT * FROM {}.events ORDER BY id", ns);
@@ -312,8 +310,7 @@ async fn test_scenario_08_subscription_reconnect() {
                 .await?;
             assert_success(&resp, "CREATE events table");
 
-            ensure_user_exists(server, "reconnect_user", "test123", &Role::User).await?;
-            let client = server.link_client("reconnect_user");
+            let client = create_user_and_client(server, "reconnect_user", &Role::User).await?;
 
             // Insert initial data
             for i in 1..=5 {

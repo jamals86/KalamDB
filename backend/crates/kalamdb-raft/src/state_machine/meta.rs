@@ -150,6 +150,11 @@ impl MetaStateMachine {
         log::debug!("MetaStateMachine: Applier registered for persistence");
     }
     
+    /// Check if an applier is registered
+    pub fn has_applier(&self) -> bool {
+        self.applier.read().is_some()
+    }
+    
     /// Get the current last applied index
     ///
     /// This is used by data groups to capture the watermark at proposal time.
