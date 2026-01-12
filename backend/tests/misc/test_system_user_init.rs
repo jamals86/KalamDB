@@ -7,7 +7,7 @@
 mod common;
 
 use common::{QueryResultTestExt, TestServer};
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 use kalamdb_commons::constants::AuthConstants;
 
 #[tokio::test]

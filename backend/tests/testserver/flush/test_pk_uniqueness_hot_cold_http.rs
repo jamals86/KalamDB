@@ -3,9 +3,9 @@
 #[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
+use kalamdb_commons::UserName;
 use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
-use test_support::query_result_ext::QueryResultTestExt;
 use test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_table};
 use tokio::time::Duration;
 
@@ -18,7 +18,7 @@ async fn create_user(server: &test_support::http_server::HttpTestServer, usernam
         ))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE USER failed: {:?}", resp.error);
-    Ok(HttpTestServer::basic_auth_header(username, password))
+    Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
 }
 
 async fn count_rows(server: &test_support::http_server::HttpTestServer, auth: &str, ns: &str, table: &str) -> anyhow::Result<i64> {

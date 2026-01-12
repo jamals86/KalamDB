@@ -295,7 +295,7 @@ impl CommandExecutor for RaftExecutor {
         }
         
         ClusterInfo {
-            cluster_id: "kalamdb-cluster".to_string(), // TODO: Get from config
+            cluster_id: config.cluster_id.clone(),
             current_node_id: config.node_id,
             is_cluster_mode: true,
             nodes,

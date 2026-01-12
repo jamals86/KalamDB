@@ -7,9 +7,9 @@
 #[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
+use kalamdb_commons::UserName;
 use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
-use test_support::query_result_ext::QueryResultTestExt;
 use tokio::time::{sleep, Duration, Instant};
 
 fn is_pending_job_status(status: &str) -> bool {
@@ -118,7 +118,7 @@ async fn create_user(server: &HttpTestServer, username: &str, password: &str) ->
 		"CREATE USER failed: {:?}",
 		resp.error
 	);
-	Ok(HttpTestServer::basic_auth_header(username, password))
+	Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
 }
 
 async fn create_user_table(

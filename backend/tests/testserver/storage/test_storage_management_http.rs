@@ -9,9 +9,8 @@
 #[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 use test_support::http_server::with_http_test_server_timeout;
-use test_support::query_result_ext::QueryResultTestExt;
 use tokio::time::Duration;
 
 #[tokio::test]

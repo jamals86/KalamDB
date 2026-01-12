@@ -3,7 +3,7 @@
 #[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 use tokio::time::Duration;
 
 #[tokio::test]

@@ -6,7 +6,7 @@
 mod common;
 
 use common::TestServer;
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
 
 async fn create_system_user(server: &TestServer, username: &str) -> UserId {

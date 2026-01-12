@@ -5,7 +5,7 @@ mod test_support;
 
 use futures_util::StreamExt;
 use kalam_link::models::ChangeEvent;
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 use test_support::http_server::with_http_test_server_timeout;
 use tokio::time::Duration;
 

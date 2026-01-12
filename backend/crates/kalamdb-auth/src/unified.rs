@@ -444,7 +444,7 @@ async fn authenticate_bearer(
         .ok_or_else(|| AuthError::MissingClaim("username".to_string()))?;
 
     // Look up user
-    let user = repo.get_user_by_username(username).await?;
+    let user = repo.get_user_by_username(username.as_str()).await?;
 
     if user.deleted_at.is_some() {
         return Err(AuthError::InvalidCredentials(
@@ -455,34 +455,23 @@ async fn authenticate_bearer(
     // SECURITY: Validate role from claims matches database
     // If JWT contains a role claim, it must match the user's actual role in the database.
     // This prevents privilege escalation attacks where an attacker modifies JWT claims.
-    let role = if let Some(claimed_role_str) = claims.role.as_deref() {
-        let claimed_role = match claimed_role_str.to_lowercase().as_str() {
-            "system" => Some(Role::System),
-            "dba" => Some(Role::Dba),
-            "service" => Some(Role::Service),
-            "user" => Some(Role::User),
-            _ => None,
-        };
-
-        if let Some(claimed) = claimed_role {
-            // Role claim present and valid - must match database
-            if claimed != user.role {
-                log::warn!(
-                    "JWT role mismatch for user '{}': claimed {:?}, actual {:?}",
-                    username, claimed, user.role
-                );
-                return Err(AuthError::InvalidCredentials(
-                    "Token role does not match user role".to_string(),
-                ));
-            }
-            claimed
-        } else {
-            // Invalid role string in claim - use database role
-            user.role
+    let role = if let Some(claimed_role) = &claims.role {
+        // Role claim present - must match database
+        if *claimed_role != user.role {
+            log::warn!(
+                "JWT role mismatch: claimed={:?}, actual={:?} for user={}",
+                claimed_role,
+                user.role,
+                user.username
+            );
+            return Err(AuthError::InvalidCredentials(
+                "Token role does not match user role".to_string(),
+            ));
         }
+        claimed_role.clone()
     } else {
         // No role claim - use database role
-        user.role
+        user.role.clone()
     };
 
     Ok(AuthenticatedUser::new(

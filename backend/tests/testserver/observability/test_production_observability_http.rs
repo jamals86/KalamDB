@@ -3,9 +3,9 @@
 #[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
+use kalamdb_commons::UserName;
 use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
-use test_support::query_result_ext::QueryResultTestExt;
 use tokio::time::{sleep, Duration, Instant};
 
 #[tokio::test]
@@ -66,7 +66,7 @@ async fn test_observability_system_tables_and_jobs_over_http() {
             .await?;
         assert_eq!(resp.status, ResponseStatus::Success);
 
-        let user_auth = HttpTestServer::basic_auth_header(&username, password);
+        let user_auth = HttpTestServer::basic_auth_header(&UserName::new(&username), password);
 
         let resp = server
             .execute_sql_with_auth(

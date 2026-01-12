@@ -3,11 +3,10 @@
 #[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 use test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_table};
 use test_support::http_server::with_http_test_server_timeout;
 use test_support::jobs::{extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent};
-use test_support::query_result_ext::QueryResultTestExt;
 use tokio::time::Duration;
 
 #[tokio::test]

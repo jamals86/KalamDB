@@ -3,9 +3,9 @@
 #[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
+use kalamdb_commons::UserName;
 use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
-use test_support::query_result_ext::QueryResultTestExt;
 use tokio::time::{sleep, Duration, Instant};
 
 fn find_manifest_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -81,7 +81,7 @@ async fn test_user_table_manifest_persistence_over_http() {
                 .await?;
             assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);
 
-            let user_auth = HttpTestServer::basic_auth_header(user, password);
+            let user_auth = HttpTestServer::basic_auth_header(&UserName::new(user), password);
 
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
             assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);
@@ -186,7 +186,7 @@ async fn test_user_table_manifest_persistence_over_http() {
                 .await?;
             assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);
 
-            let user_auth = HttpTestServer::basic_auth_header(user, password);
+            let user_auth = HttpTestServer::basic_auth_header(&UserName::new(user), password);
 
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
             assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);

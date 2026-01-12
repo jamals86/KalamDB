@@ -219,9 +219,9 @@ impl RaftManager {
         }
         
         log::info!("Starting Raft Cluster: node={} rpc={} api={}", self.node_id, self.config.rpc_addr, self.config.api_addr);
-        log::info!("Groups: {} (1 meta + {}u + {}s) │ Peers: {}", 
-            self.group_count(), self.user_shards_count, self.shared_shards_count, 
-            self.config.peers.len());
+        // log::info!("Groups: {} (1 meta + {}u + {}s) │ Peers: {}", 
+        //     self.group_count(), self.user_shards_count, self.shared_shards_count, 
+        //     self.config.peers.len());
         for peer in &self.config.peers {
             log::info!("[CLUSTER] Peer node_id={}: rpc={}, api={}", 
                 peer.node_id, peer.rpc_addr, peer.api_addr);

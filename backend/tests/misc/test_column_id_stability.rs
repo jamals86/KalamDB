@@ -10,7 +10,7 @@
 mod common;
 
 use common::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 use serde_json::Value;
 use std::collections::HashMap;
 

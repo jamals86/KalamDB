@@ -16,7 +16,7 @@
 mod common;
 
 use common::{fixtures, QueryResultTestExt, TestServer};
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 
 /// T051: CREATE TABLE without PK should be rejected
 #[actix_web::test]

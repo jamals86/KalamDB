@@ -1,5 +1,5 @@
 use anyhow::Result;
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 use tokio::time::{sleep, Duration, Instant};
 
 use super::http_server::HttpTestServer;

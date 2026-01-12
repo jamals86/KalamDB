@@ -163,6 +163,15 @@ impl MetaStateMachine {
             let guard = self.applier.read();
             guard.clone()
         };
+
+        if applier.is_none() {
+            // Without an applier, Raft metadata operations will update only the in-memory snapshot
+            // cache and will NOT be persisted into providers (system tables, schema registry, etc.).
+            // This can make DDL appear to succeed while subsequent queries cannot see the change.
+            log::warn!(
+                "MetaStateMachine: No applier registered; applying MetaCommand without persistence"
+            );
+        }
         
         match cmd {
             // =================================================================

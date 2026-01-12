@@ -5,7 +5,7 @@
 use anyhow::{anyhow, Result};
 pub use kalamdb_commons::system_tables::SystemTable;
 use sqlparser::ast::Statement;
-use sqlparser::dialect::GenericDialect;
+use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 
 /// SQL statement types supported for system tables
@@ -34,13 +34,13 @@ pub enum SystemStatement {
 
 /// SQL parser for system tables
 pub struct SqlParser {
-    dialect: GenericDialect,
+    dialect: PostgreSqlDialect,
 }
 
 impl SqlParser {
     pub fn new() -> Self {
         Self {
-            dialect: GenericDialect {},
+            dialect: PostgreSqlDialect {},
         }
     }
 

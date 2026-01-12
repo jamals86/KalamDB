@@ -15,7 +15,7 @@
 mod common;
 
 use common::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 use std::sync::Arc;
 use tokio::task::JoinSet;
 
@@ -507,7 +507,7 @@ async fn test_concurrent_updates() {
     let mut success_count = 0;
     while let Some(result) = tasks.join_next().await {
         if let Ok(response) = result {
-            if response.status == kalamdb_api::models::ResponseStatus::Success {
+            if response.status == ResponseStatus::Success {
                 success_count += 1;
             }
         }

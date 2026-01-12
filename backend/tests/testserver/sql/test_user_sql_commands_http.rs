@@ -3,8 +3,8 @@
 #[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
-use kalamdb_api::models::ResponseStatus;
-use test_support::query_result_ext::QueryResultTestExt;
+use kalam_link::models::ResponseStatus;
+use kalamdb_commons::UserName;
 
 #[tokio::test]
 async fn test_user_sql_commands_over_http() {
@@ -15,7 +15,7 @@ async fn test_user_sql_commands_over_http() {
         |server| {
             Box::pin(async move {
                 let admin_auth = test_support::http_server::HttpTestServer::basic_auth_header(
-                    "root",
+                    &UserName::new("root"),
                     "",
                 );
 
@@ -66,7 +66,7 @@ async fn test_user_sql_commands_over_http() {
 
                 let regular_auth =
                     test_support::http_server::HttpTestServer::basic_auth_header(
-                        "regular_user",
+                        &UserName::new("regular_user"),
                         "Pass123!A",
                     );
                 let sql = "CREATE USER 'charlie' WITH PASSWORD 'TestPass123!B' ROLE user";

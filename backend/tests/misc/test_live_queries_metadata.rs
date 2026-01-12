@@ -4,6 +4,7 @@ mod common;
 use common::TestServer;
 use kalamdb_commons::websocket::{SubscriptionRequest, SubscriptionOptions};
 use kalamdb_commons::models::{ConnectionId, UserId, ConnectionInfo};
+use kalam_link::models::ResponseStatus;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_live_queries_metadata() {
@@ -45,7 +46,7 @@ async fn test_live_queries_metadata() {
     let response = server.execute_sql(sql).await;
     println!("SQL executed");
     
-    assert_eq!(response.status, kalamdb_api::models::ResponseStatus::Success, "SQL failed: {:?}", response.error);
+    assert_eq!(response.status, ResponseStatus::Success, "SQL failed: {:?}", response.error);
     let rows = response.results[0].rows.as_ref().expect("Expected rows");
     assert_eq!(rows.len(), 1, "Expected 1 row in system.live_queries");
 
@@ -57,7 +58,7 @@ async fn test_live_queries_metadata() {
 
     // 5. Query again - should be empty
     let response_after = server.execute_sql(sql).await;
-    assert_eq!(response_after.status, kalamdb_api::models::ResponseStatus::Success, "SQL failed: {:?}", response_after.error);
+    assert_eq!(response_after.status, ResponseStatus::Success, "SQL failed: {:?}", response_after.error);
     let rows_after = response_after.results[0].rows.as_ref().expect("Expected rows");
     assert_eq!(rows_after.len(), 0, "Expected 0 rows in system.live_queries after unsubscribe");
 

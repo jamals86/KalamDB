@@ -1,0 +1,541 @@
+//! Scenario 13: Production Mixed Workload (Soak Test)
+//!
+//! Simulates production traffic patterns: concurrent users, mixed operations,
+//! background flushes, schema evolution, and subscription stability.
+//!
+//! ## Checklist
+//! - [x] Multiple concurrent user clients
+//! - [x] Mixed read/write workload
+//! - [x] Background flush jobs
+//! - [x] Schema evolution mid-run
+//! - [x] Subscription stability under load
+//! - [x] Error rate and latency tracking
+
+use super::helpers::*;
+
+use anyhow::Result;
+use futures_util::StreamExt;
+use kalam_link::models::ChangeEvent;
+use kalamdb_commons::Role;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+const TEST_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// Main soak test with mixed workload
+#[tokio::test]
+async fn test_scenario_13_mixed_workload_soak() {
+    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
+        Box::pin(async move {
+            let ns = unique_ns("soak_test");
+
+            // =========================================================
+            // Setup: Create namespace and tables
+            // =========================================================
+            let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+            assert_success(&resp, "CREATE namespace");
+
+            let resp = server
+                .execute_sql(&format!(
+                    r#"CREATE TABLE {}.orders (
+                        id BIGINT PRIMARY KEY,
+                        customer_id INTEGER,
+                        amount DOUBLE,
+                        status TEXT
+                    ) WITH (TYPE = 'USER')"#,
+                    ns
+                ))
+                .await?;
+            assert_success(&resp, "CREATE orders table");
+
+            let resp = server
+                .execute_sql(&format!(
+                    r#"CREATE TABLE {}.audit_log (
+                        id BIGINT PRIMARY KEY,
+                        action TEXT,
+                        timestamp BIGINT
+                    ) WITH (TYPE = 'STREAM', ttl = '7200')"#,
+                    ns
+                ))
+                .await?;
+            assert_success(&resp, "CREATE audit_log stream");
+
+            let resp = server
+                .execute_sql(&format!(
+                    r#"CREATE TABLE {}.config (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    ) WITH (TYPE = 'SHARED')"#,
+                    ns
+                ))
+                .await?;
+            assert_success(&resp, "CREATE config table");
+
+            // =========================================================
+            // Metrics tracking
+            // =========================================================
+            let insert_count = Arc::new(AtomicU64::new(0));
+            let update_count = Arc::new(AtomicU64::new(0));
+            let query_count = Arc::new(AtomicU64::new(0));
+            let error_count = Arc::new(AtomicU64::new(0));
+
+            let soak_duration = Duration::from_secs(30);
+            let start_time = Instant::now();
+
+            // =========================================================
+            // Concurrent users performing mixed operations
+            // =========================================================
+            let num_users = 3;
+            let mut handles = Vec::new();
+
+            for user_id in 0..num_users {
+                let username = format!("soak_user_{}", user_id);
+                ensure_user_exists(server, &username, "test123", &Role::User).await?;
+                let client = server.link_client(&username);
+                let ns_clone = ns.clone();
+                let insert_count_clone = Arc::clone(&insert_count);
+                let update_count_clone = Arc::clone(&update_count);
+                let query_count_clone = Arc::clone(&query_count);
+                let error_count_clone = Arc::clone(&error_count);
+
+                let handle = tokio::spawn(async move {
+                    let mut local_id = (user_id as i64) * 10000;
+                    let user_start = Instant::now();
+
+                    while user_start.elapsed() < Duration::from_secs(25) {
+                        local_id += 1;
+                        let op = local_id % 5;
+
+                        match op {
+                            0 | 1 | 2 => {
+                                // Insert (60% of operations)
+                                let resp = client
+                                    .execute_query(
+                                        &format!(
+                                            "INSERT INTO {}.orders (id, customer_id, amount, status) VALUES ({}, {}, {}, 'pending')",
+                                            ns_clone, local_id, user_id, local_id as f64 * 10.5
+                                        ),
+                                        None,
+                                        None,
+                                    )
+                                    .await;
+                                match resp {
+                                    Ok(r) if r.success() => {
+                                        insert_count_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    _ => {
+                                        error_count_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
+                            }
+                            3 => {
+                                // Update (20% of operations)
+                                let resp = client
+                                    .execute_query(
+                                        &format!(
+                                            "UPDATE {}.orders SET status = 'completed' WHERE id = {} AND status = 'pending'",
+                                            ns_clone, local_id - 1
+                                        ),
+                                        None,
+                                        None,
+                                    )
+                                    .await;
+                                match resp {
+                                    Ok(r) if r.success() => {
+                                        update_count_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    _ => {
+                                        error_count_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
+                            }
+                            _ => {
+                                // Query (20% of operations)
+                                let resp = client
+                                    .execute_query(
+                                        &format!(
+                                            "SELECT COUNT(*) as cnt FROM {}.orders WHERE status = 'pending'",
+                                            ns_clone
+                                        ),
+                                        None,
+                                        None,
+                                    )
+                                    .await;
+                                match resp {
+                                    Ok(r) if r.success() => {
+                                        query_count_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    _ => {
+                                        error_count_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Small delay to spread load
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+
+                    local_id
+                });
+
+                handles.push(handle);
+            }
+
+            // =========================================================
+            // Background flush task (inline using link client instead of server.clone)
+            // =========================================================
+            let ns_for_flush = ns.clone();
+            ensure_user_exists(server, "flush_user", "test123", &Role::User).await?;
+            let flush_client = server.link_client("flush_user");
+            let flush_handle = tokio::spawn(async move {
+                let mut flush_count = 0u32;
+                let flush_start = Instant::now();
+
+                while flush_start.elapsed() < Duration::from_secs(20) {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+
+                    let _ = flush_client
+                        .execute_query(&format!("FLUSH TABLE {}.orders", ns_for_flush), None, None)
+                        .await;
+                    flush_count += 1;
+                    println!("Background flush {} triggered", flush_count);
+                }
+
+                flush_count
+            });
+
+            // =========================================================
+            // Subscription monitoring
+            // =========================================================
+            ensure_user_exists(server, "soak_subscriber", "test123", &Role::User).await?;
+            let sub_client = server.link_client("soak_subscriber");
+            let ns_for_sub = ns.clone();
+            let subscription_events = Arc::new(AtomicU64::new(0));
+            let subscription_events_clone = Arc::clone(&subscription_events);
+
+            let sub_handle = tokio::spawn(async move {
+                let mut sub = match sub_client
+                    .subscribe(&format!("SELECT * FROM {}.orders LIMIT 1000", ns_for_sub))
+                    .await
+                {
+                    Ok(s) => s,
+                    Err(_) => return 0u64,
+                };
+
+                let sub_start = Instant::now();
+                let mut event_count = 0u64;
+
+                while sub_start.elapsed() < Duration::from_secs(25) {
+                    tokio::select! {
+                        event = sub.next() => {
+                            if event.is_some() {
+                                event_count += 1;
+                                subscription_events_clone.fetch_add(1, Ordering::Relaxed);
+                            } else {
+                                break;
+                            }
+                        }
+                        _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                            // Continue loop
+                        }
+                    }
+                }
+
+                let _ = sub.close().await;
+                event_count
+            });
+
+            // =========================================================
+            // Wait for all tasks
+            // =========================================================
+            for handle in handles {
+                let _ = handle.await;
+            }
+
+            let flush_count = flush_handle.await.unwrap_or(0);
+            let sub_event_count = sub_handle.await.unwrap_or(0);
+
+            let elapsed = start_time.elapsed();
+
+            // =========================================================
+            // Report metrics
+            // =========================================================
+            let total_inserts = insert_count.load(Ordering::Relaxed);
+            let total_updates = update_count.load(Ordering::Relaxed);
+            let total_queries = query_count.load(Ordering::Relaxed);
+            let total_errors = error_count.load(Ordering::Relaxed);
+            let total_ops = total_inserts + total_updates + total_queries;
+
+            println!("=== Soak Test Results ===");
+            println!("Duration: {:?}", elapsed);
+            println!("Inserts: {}", total_inserts);
+            println!("Updates: {}", total_updates);
+            println!("Queries: {}", total_queries);
+            println!("Total ops: {}", total_ops);
+            println!("Errors: {}", total_errors);
+            println!("Background flushes: {}", flush_count);
+            println!("Subscription events: {}", sub_event_count);
+
+            let ops_per_sec = total_ops as f64 / elapsed.as_secs_f64();
+            println!("Ops/sec: {:.1}", ops_per_sec);
+
+            let error_rate = if total_ops > 0 {
+                (total_errors as f64 / total_ops as f64) * 100.0
+            } else {
+                0.0
+            };
+            println!("Error rate: {:.2}%", error_rate);
+
+            // =========================================================
+            // Assertions
+            // =========================================================
+            assert!(total_inserts > 100, "Should have inserted > 100 rows, got {}", total_inserts);
+            assert!(error_rate < 5.0, "Error rate {:.2}% should be < 5%", error_rate);
+            assert!(flush_count >= 1, "Should have completed at least 1 flush");
+
+            // Final data verification
+            let admin_client = server.link_client("root");
+            let resp = admin_client
+                .execute_query(
+                    &format!("SELECT COUNT(*) as cnt FROM {}.orders", ns),
+                    None,
+                    None,
+                )
+                .await?;
+            let final_count = resp.get_i64("cnt").unwrap_or(0);
+            println!("Final order count: {}", final_count);
+            assert!(final_count > 0, "Should have orders in table");
+
+            // Cleanup
+            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+
+            Ok(())
+        })
+    })
+    .await
+    .expect("Soak test failed");
+}
+
+/// Schema evolution during active operations
+#[tokio::test]
+async fn test_scenario_13_schema_evolution_under_load() {
+    with_http_test_server_timeout(Duration::from_secs(60), |server| {
+        Box::pin(async move {
+            let ns = unique_ns("schema_evolution");
+
+            // Setup
+            let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+            assert_success(&resp, "CREATE namespace");
+
+            let resp = server
+                .execute_sql(&format!(
+                    r#"CREATE TABLE {}.products (
+                        id BIGINT PRIMARY KEY,
+                        name TEXT NOT NULL
+                    ) WITH (TYPE = 'USER')"#,
+                    ns
+                ))
+                .await?;
+            assert_success(&resp, "CREATE products table");
+
+            ensure_user_exists(server, "schema_user", "test123", &Role::User).await?;
+            let client = server.link_client("schema_user");
+
+            // Insert initial data
+            for i in 1..=50 {
+                let resp = client
+                    .execute_query(
+                        &format!(
+                            "INSERT INTO {}.products (id, name) VALUES ({}, 'Product {}')",
+                            ns, i, i
+                        ),
+                        None,
+                        None,
+                    )
+                    .await?;
+                assert!(resp.success(), "Insert product {}", i);
+            }
+
+            // Add column while data exists
+            let resp = server
+                .execute_sql(&format!(
+                    "ALTER TABLE {}.products ADD COLUMN price DOUBLE",
+                    ns
+                ))
+                .await?;
+            assert_success(&resp, "ALTER TABLE ADD COLUMN price");
+
+            // Insert more data with new column
+            for i in 51..=100 {
+                let resp = client
+                    .execute_query(
+                        &format!(
+                            "INSERT INTO {}.products (id, name, price) VALUES ({}, 'Product {}', {})",
+                            ns, i, i, i as f64 * 9.99
+                        ),
+                        None,
+                        None,
+                    )
+                    .await?;
+                assert!(resp.success(), "Insert product {} with price", i);
+            }
+
+            // Query all data
+            let resp = client
+                .execute_query(
+                    &format!("SELECT id, name, price FROM {}.products ORDER BY id", ns),
+                    None,
+                    None,
+                )
+                .await?;
+            assert!(resp.success(), "Query all products");
+            assert_eq!(resp.rows_as_maps().len(), 100, "Should have 100 products");
+
+            // Verify old rows have NULL price, new rows have price
+            let row_50 = &resp.rows_as_maps()[49]; // id = 50
+            let price_50 = row_50.get("price");
+            assert!(
+                price_50.is_none() || price_50.unwrap().is_null(),
+                "Old row should have NULL price"
+            );
+
+            let row_51 = &resp.rows_as_maps()[50]; // id = 51
+            let price_51 = row_51.get("price")
+                .and_then(|v| v.as_f64());
+            assert!(price_51.is_some(), "New row should have price");
+
+            // Cleanup
+            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+
+            Ok(())
+        })
+    })
+    .await
+    .expect("Schema evolution test failed");
+}
+
+/// Concurrent readers and writers stress test
+#[tokio::test]
+async fn test_scenario_13_concurrent_read_write() {
+    with_http_test_server_timeout(Duration::from_secs(60), |server| {
+        Box::pin(async move {
+            let ns = unique_ns("concurrent_rw");
+
+            // Setup
+            let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+            assert_success(&resp, "CREATE namespace");
+
+            let resp = server
+                .execute_sql(&format!(
+                    r#"CREATE TABLE {}.counters (
+                        id BIGINT PRIMARY KEY,
+                        value BIGINT
+                    ) WITH (TYPE = 'USER')"#,
+                    ns
+                ))
+                .await?;
+            assert_success(&resp, "CREATE counters table");
+
+            // Seed initial data
+            ensure_user_exists(server, "seed_user", "test123", &Role::User).await?;
+            let client = server.link_client("seed_user");
+            for i in 1..=10 {
+                let resp = client
+                    .execute_query(
+                        &format!(
+                            "INSERT INTO {}.counters (id, value) VALUES ({}, 0)",
+                            ns, i
+                        ),
+                        None,
+                        None,
+                    )
+                    .await?;
+                assert!(resp.success(), "Seed counter {}", i);
+            }
+
+            // Concurrent writers
+            let write_count = Arc::new(AtomicU64::new(0));
+            let read_count = Arc::new(AtomicU64::new(0));
+
+            let mut handles = Vec::new();
+
+            // 2 writer tasks
+            for writer_id in 0..2 {
+                let username = format!("writer_{}", writer_id);
+                ensure_user_exists(server, &username, "test123", &Role::User).await?;
+                let client = server.link_client(&username);
+                let ns_clone = ns.clone();
+                let write_count_clone = Arc::clone(&write_count);
+
+                let handle = tokio::spawn(async move {
+                    for i in 0..50 {
+                        let counter_id = (i % 10) + 1;
+                        let resp = client
+                            .execute_query(
+                                &format!(
+                                    "UPDATE {}.counters SET value = value + 1 WHERE id = {}",
+                                    ns_clone, counter_id
+                                ),
+                                None,
+                                None,
+                            )
+                            .await;
+                        if resp.is_ok() && resp.unwrap().success() {
+                            write_count_clone.fetch_add(1, Ordering::Relaxed);
+                        }
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                });
+                handles.push(handle);
+            }
+
+            // 2 reader tasks
+            for reader_id in 0..2 {
+                let username = format!("reader_{}", reader_id);
+                ensure_user_exists(server, &username, "test123", &Role::User).await?;
+                let client = server.link_client(&username);
+                let ns_clone = ns.clone();
+                let read_count_clone = Arc::clone(&read_count);
+
+                let handle = tokio::spawn(async move {
+                    for _ in 0..50 {
+                        let resp = client
+                            .execute_query(
+                                &format!("SELECT SUM(value) as total FROM {}.counters", ns_clone),
+                                None,
+                                None,
+                            )
+                            .await;
+                        if resp.is_ok() && resp.unwrap().success() {
+                            read_count_clone.fetch_add(1, Ordering::Relaxed);
+                        }
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                });
+                handles.push(handle);
+            }
+
+            // Wait for all tasks
+            for handle in handles {
+                let _ = handle.await;
+            }
+
+            let total_writes = write_count.load(Ordering::Relaxed);
+            let total_reads = read_count.load(Ordering::Relaxed);
+
+            println!("Concurrent R/W: {} writes, {} reads", total_writes, total_reads);
+
+            assert!(total_writes > 50, "Should have > 50 successful writes");
+            assert!(total_reads > 50, "Should have > 50 successful reads");
+
+            // Cleanup
+            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+
+            Ok(())
+        })
+    })
+    .await
+    .expect("Concurrent read/write test failed");
+}

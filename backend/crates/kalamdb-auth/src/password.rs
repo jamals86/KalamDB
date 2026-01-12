@@ -8,7 +8,22 @@ use std::sync::OnceLock;
 /// Bcrypt cost factor for password hashing.
 /// Higher values = more secure but slower.
 /// Default: 12 (recommended for 2024)
+/// Tests: 4 (much faster, sufficient for testing)
 pub const BCRYPT_COST: u32 = DEFAULT_COST;
+
+/// Test-only bcrypt cost factor (much faster)
+/// Use this in test environments to speed up tests
+#[cfg(test)]
+pub const TEST_BCRYPT_COST: u32 = 4;
+
+/// Get bcrypt cost - uses lower cost in test mode
+pub fn get_bcrypt_cost() -> u32 {
+    if cfg!(test) {
+        4  // Fast cost for tests
+    } else {
+        BCRYPT_COST  // Secure cost for production
+    }
+}
 
 /// Minimum password length (default policy)
 pub const MIN_PASSWORD_LENGTH: usize = 8;
@@ -37,7 +52,7 @@ static COMMON_PASSWORDS: OnceLock<HashSet<String>> = OnceLock::new();
 /// Returns `AuthError::HashingError` if bcrypt fails
 pub async fn hash_password(password: &str, cost: Option<u32>) -> AuthResult<String> {
     let password = password.to_string();
-    let cost = cost.unwrap_or(BCRYPT_COST);
+    let cost = cost.unwrap_or_else(get_bcrypt_cost);
 
     // Run bcrypt on blocking thread pool (CPU-intensive)
     tokio::task::spawn_blocking(move || {

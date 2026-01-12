@@ -2,7 +2,7 @@
 // Composite key for system.tables entries
 
 use bincode::{Decode, Encode};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
 use super::namespace_id::NamespaceId;
@@ -13,7 +13,12 @@ use crate::StorageKey;
 ///
 /// This composite key provides type-safe access to table metadata,
 /// ensuring namespace and table name are always paired correctly.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+///
+/// # Serialization
+/// 
+/// Serializes as "namespace.table" string format for JSON compatibility.
+/// For example: `"flush_test_ns_mkav1q2g_3.metrics"`
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Encode, Decode)]
 pub struct TableId {
     namespace_id: NamespaceId,
     table_name: TableName,
@@ -86,6 +91,64 @@ impl TableId {
     /// For storage key format (namespace:table), use `as_storage_key()` instead.
     pub fn full_name(&self) -> String {
         format!("{}.{}", self.namespace_id.as_str(), self.table_name.as_str())
+    }
+}
+
+// Custom Serialize implementation: serialize as "namespace.table" string
+impl Serialize for TableId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.full_name())
+    }
+}
+
+// Custom Deserialize implementation: deserialize from "namespace.table" string or struct
+impl<'de> Deserialize<'de> for TableId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error;
+        
+        // Helper struct for deserializing the old format
+        #[derive(Deserialize)]
+        struct TableIdHelper {
+            namespace_id: String,
+            table_name: String,
+        }
+        
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum TableIdFormat {
+            String(String),
+            Struct(TableIdHelper),
+        }
+        
+        let format = TableIdFormat::deserialize(deserializer)?;
+        
+        match format {
+            TableIdFormat::String(s) => {
+                // Parse "namespace.table" format
+                let parts: Vec<&str> = s.split('.').collect();
+                if parts.len() == 2 {
+                    Ok(TableId {
+                        namespace_id: NamespaceId::new(parts[0]),
+                        table_name: TableName::new(parts[1]),
+                    })
+                } else {
+                    Err(D::Error::custom(format!("Invalid table_id format: {}", s)))
+                }
+            }
+            TableIdFormat::Struct(helper) => {
+                // Support old nested format for backwards compatibility
+                Ok(TableId {
+                    namespace_id: NamespaceId::new(&helper.namespace_id),
+                    table_name: TableName::new(&helper.table_name),
+                })
+            }
+        }
     }
 }
 

@@ -89,6 +89,7 @@ rustyline = { version = "17.0.2" }
 # System
 num_cpus = "1.16"
 sysinfo = "0.37.2"
+hostname = "0.4"
 
 # Testing
 tempfile = "3.24.0"

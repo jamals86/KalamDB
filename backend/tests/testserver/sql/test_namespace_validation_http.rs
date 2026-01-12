@@ -3,7 +3,8 @@
 #[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
+use kalamdb_commons::UserName;
 use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
 use tokio::time::Duration;
 
@@ -67,7 +68,7 @@ async fn test_namespace_validation_over_http() {
                     .await?;
                 assert_eq!(resp.status, ResponseStatus::Success);
 
-                let auth = HttpTestServer::basic_auth_header(user, password);
+                let auth = HttpTestServer::basic_auth_header(&UserName::new(user), password);
 
                 let sql = r#"CREATE TABLE workspace.notes (
                     id INT PRIMARY KEY,

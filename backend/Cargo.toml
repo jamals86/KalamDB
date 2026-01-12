@@ -185,6 +185,18 @@ path = "tests/testserver/observability/test_production_observability_http.rs"
 name = "test_stream_ttl_eviction_sql"
 path = "tests/testserver/subscription/test_stream_ttl_eviction_sql.rs"
 
+[[test]]
+name = "test_scenarios"
+path = "tests/testserver/test_scenarios.rs"
+
+[[test]]
+name = "test_system_table_index_usage"
+path = "tests/misc/test_system_table_index_usage.rs"
+
+[[test]]
+name = "test_explain_index_usage"
+path = "tests/misc/test_explain_index_usage.rs"
+
 # Disabled: basic auth tests rely on legacy middleware; will be re-enabled after auth refactor
 # [[test]]
 # name = "test_basic_auth"

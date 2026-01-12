@@ -9,14 +9,14 @@
 #[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
+use kalamdb_commons::UserName;
 use test_support::flush::{
     count_parquet_files_for_table, flush_table_and_wait, wait_for_parquet_files_for_table,
     wait_for_parquet_files_for_user_table,
 };
 use test_support::jobs::{extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent};
 use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
-use test_support::query_result_ext::QueryResultTestExt;
 use tokio::time::Duration;
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<(String, String)> {
@@ -53,7 +53,7 @@ async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<
         .ok_or_else(|| anyhow::anyhow!("missing user_id for {}", username))?
         .to_string();
 
-    Ok((HttpTestServer::basic_auth_header(username, password), user_id))
+    Ok((HttpTestServer::basic_auth_header(&UserName::new(username), password), user_id))
 }
 
 #[tokio::test]

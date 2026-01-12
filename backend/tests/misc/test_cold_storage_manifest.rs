@@ -18,7 +18,7 @@
 mod common;
 
 use common::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 
 /// Test: User table cold storage query uses manifest cache
 ///

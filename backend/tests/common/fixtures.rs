@@ -27,9 +27,9 @@
 //! }
 //! ```
 
-use crate::common::TestServer;
+use super::TestServer;
 use anyhow::Result;
-use kalamdb_api::models::{QueryResult, ResponseStatus, SqlResponse};
+use kalam_link::models::{QueryResult, QueryResponse, ResponseStatus};
 use kalamdb_commons::models::NamespaceId;
 use serde_json::json;
 use std::time::{Duration, Instant};
@@ -45,14 +45,14 @@ use tokio::time::sleep;
 ///
 /// # Returns
 ///
-/// * `Result<SqlResponse>` - Response from the SQL execution
+/// * `Result<QueryResponse>` - Response from the SQL execution
 ///
 /// # Example
 ///
 /// ```no_run
 /// fixtures::execute_sql(&server, "CREATE TABLE test.messages (...)", "user1").await.unwrap();
 /// ```
-pub async fn execute_sql(server: &TestServer, sql: &str, user_id: &str) -> Result<SqlResponse> {
+pub async fn execute_sql(server: &TestServer, sql: &str, user_id: &str) -> Result<QueryResponse> {
     Ok(server.execute_sql_as_user(sql, user_id).await)
 }
 
@@ -68,11 +68,11 @@ pub async fn execute_sql(server: &TestServer, sql: &str, user_id: &str) -> Resul
 /// ```no_run
 /// fixtures::create_namespace(&server, "app").await;
 /// ```
-pub async fn create_namespace(server: &TestServer, namespace: &str) -> SqlResponse {
+pub async fn create_namespace(server: &TestServer, namespace: &str) -> QueryResponse {
     let sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
     // Perform namespace creation as 'root' admin user for RBAC enforcement
     let resp = server.execute_sql_as_user(&sql, "root").await;
-    if resp.status != kalamdb_api::models::ResponseStatus::Success {
+    if resp.status != ResponseStatus::Success {
         panic!(
             "CREATE NAMESPACE failed: ns={}, error={:?}",
             namespace, resp.error
@@ -112,7 +112,7 @@ pub async fn create_namespace_with_options(
     server: &TestServer,
     namespace: &str,
     options: &str,
-) -> SqlResponse {
+) -> QueryResponse {
     let sql = format!("CREATE NAMESPACE {} WITH OPTIONS {}", namespace, options);
     server.execute_sql(&sql).await
 }
@@ -123,7 +123,7 @@ pub async fn create_namespace_with_options(
 ///
 /// * `server` - Test server instance
 /// * `namespace` - Name of the namespace to drop
-pub async fn drop_namespace(server: &TestServer, namespace: &str) -> SqlResponse {
+pub async fn drop_namespace(server: &TestServer, namespace: &str) -> QueryResponse {
     let sql = format!("DROP NAMESPACE {} CASCADE", namespace);
     server.execute_sql(&sql).await
 }
@@ -150,7 +150,7 @@ pub async fn create_messages_table(
     server: &TestServer,
     namespace: &str,
     _user_id: Option<&str>,
-) -> SqlResponse {
+) -> QueryResponse {
     let sql = format!(
         r#"CREATE TABLE IF NOT EXISTS {}.messages (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
@@ -165,14 +165,14 @@ pub async fn create_messages_table(
     );
     // Use system user since only System/Dba roles can create tables
     let resp = server.execute_sql_as_user(&sql, "system").await;
-    if resp.status != kalamdb_api::models::ResponseStatus::Success {
+    if resp.status != ResponseStatus::Success {
         // Treat already-exists as success for idempotent tests
         let already_exists = resp
             .error
             .as_ref().map(|e| e.message.to_lowercase().contains("already exists"))
             .unwrap_or(false);
         if already_exists {
-            return SqlResponse {
+            return QueryResponse {
                 status: ResponseStatus::Success,
                 results: vec![QueryResult {
                     schema: vec![],
@@ -180,7 +180,7 @@ pub async fn create_messages_table(
                     row_count: 0,
                     message: Some("Table already existed".to_string()),
                 }],
-                took: 0.0,
+                took: Some(0.0),
                 error: None,
             };
         } else {
@@ -206,7 +206,7 @@ pub async fn create_user_table_with_flush(
     namespace: &str,
     table_name: &str,
     flush_rows: u32,
-) -> SqlResponse {
+) -> QueryResponse {
     let sql = format!(
         r#"CREATE TABLE IF NOT EXISTS {}.{} (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
@@ -233,7 +233,7 @@ pub async fn create_shared_table(
     server: &TestServer,
     namespace: &str,
     table_name: &str,
-) -> SqlResponse {
+) -> QueryResponse {
     let columns = if table_name == "config" {
         r#"
             name TEXT PRIMARY KEY NOT NULL,
@@ -271,7 +271,7 @@ pub async fn create_stream_table(
     namespace: &str,
     table_name: &str,
     ttl_seconds: u32,
-) -> SqlResponse {
+) -> QueryResponse {
     let sql = format!(
         r#"CREATE TABLE IF NOT EXISTS {}.{} (
             event_id TEXT NOT NULL,
@@ -285,13 +285,13 @@ pub async fn create_stream_table(
         namespace, table_name, ttl_seconds
     );
     let resp = server.execute_sql(&sql).await;
-    if resp.status != kalamdb_api::models::ResponseStatus::Success {
+    if resp.status != ResponseStatus::Success {
         let already_exists = resp
             .error
             .as_ref().map(|e| e.message.to_lowercase().contains("already exists"))
             .unwrap_or(false);
         if already_exists {
-            return SqlResponse {
+            return QueryResponse {
                 status: ResponseStatus::Success,
                 results: vec![QueryResult {
                     schema: vec![],
@@ -299,7 +299,7 @@ pub async fn create_stream_table(
                     row_count: 0,
                     message: Some("Table already existed".to_string()),
                 }],
-                took: 0.0,
+                took: Some(0.0),
                 error: None,
             };
         }
@@ -314,14 +314,14 @@ pub async fn create_stream_table(
 /// * `server` - Test server instance
 /// * `namespace` - Namespace name
 /// * `table_name` - Table name
-pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) -> SqlResponse {
+pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) -> QueryResponse {
     let lookup_sql = format!(
         "SELECT table_type FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table_name
     );
     let lookup_response = server.execute_sql(&lookup_sql).await;
 
-    let table_type = if lookup_response.status == kalamdb_api::models::ResponseStatus::Success {
+    let table_type = if lookup_response.status == ResponseStatus::Success {
         lookup_response
             .results.first()
             .and_then(|result| super::QueryResultTestExt::row_as_map(result, 0))
@@ -352,13 +352,13 @@ pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) 
 ///
 /// # Returns
 ///
-/// Vector of SqlResponse for each INSERT operation
+/// Vector of QueryResponse for each INSERT operation
 pub async fn insert_sample_messages(
     server: &TestServer,
     namespace: &str,
     user_id: &str,
     count: usize,
-) -> Vec<SqlResponse> {
+) -> Vec<QueryResponse> {
     let mut responses = Vec::new();
 
     for i in 0..count {
@@ -385,13 +385,13 @@ pub async fn insert_message(
     namespace: &str,
     user_id: &str,
     content: &str,
-) -> SqlResponse {
+) -> QueryResponse {
     let sql = format!(
         r#"INSERT INTO {}.messages (user_id, content) VALUES ('{}', '{}')"#,
         namespace, user_id, content
     );
     let resp = server.execute_sql_as_user(&sql, user_id).await;
-    if resp.status != kalamdb_api::models::ResponseStatus::Success {
+    if resp.status != ResponseStatus::Success {
         eprintln!(
             "INSERT MESSAGE failed: ns={}, user={}, error={:?}",
             namespace, user_id, resp.error
@@ -413,7 +413,7 @@ pub async fn update_message(
     namespace: &str,
     id: i64,
     new_content: &str,
-) -> SqlResponse {
+) -> QueryResponse {
     let sql = format!(
         r#"UPDATE {}.messages SET content = '{}' WHERE id = {}"#,
         namespace, new_content, id
@@ -428,7 +428,7 @@ pub async fn update_message(
 /// * `server` - Test server instance
 /// * `namespace` - Namespace name
 /// * `id` - Message ID
-pub async fn delete_message(server: &TestServer, namespace: &str, id: i64) -> SqlResponse {
+pub async fn delete_message(server: &TestServer, namespace: &str, id: i64) -> QueryResponse {
     let sql = format!(r#"DELETE FROM {}.messages WHERE id = {}"#, namespace, id);
     server.execute_sql(&sql).await
 }
@@ -444,13 +444,13 @@ pub async fn query_user_messages(
     server: &TestServer,
     namespace: &str,
     user_id: &str,
-) -> SqlResponse {
+) -> QueryResponse {
     let sql = format!(
         r#"SELECT * FROM {}.messages WHERE user_id = '{}' ORDER BY created_at DESC"#,
         namespace, user_id
     );
     let resp = server.execute_sql_as_user(&sql, user_id).await;
-    if resp.status != kalamdb_api::models::ResponseStatus::Success {
+    if resp.status != ResponseStatus::Success {
         eprintln!(
             "QUERY USER MESSAGES failed: ns={}, user={}, error={:?}",
             namespace, user_id, resp.error
@@ -522,25 +522,25 @@ pub fn generate_stream_events(count: usize) -> Vec<(String, String)> {
 pub async fn setup_complete_environment(server: &TestServer, namespace: &str) -> Result<()> {
     // Create namespace
     let resp = create_namespace(server, namespace).await;
-    if resp.status != kalamdb_api::models::ResponseStatus::Success {
+    if resp.status != ResponseStatus::Success {
         anyhow::bail!("Failed to create namespace: {:?}", resp.error);
     }
 
     // Create user table
     let resp = create_messages_table(server, namespace, Some("user123")).await;
-    if resp.status != kalamdb_api::models::ResponseStatus::Success {
+    if resp.status != ResponseStatus::Success {
         anyhow::bail!("Failed to create messages table: {:?}", resp.error);
     }
 
     // Create shared table
     let resp = create_shared_table(server, namespace, "config").await;
-    if resp.status != kalamdb_api::models::ResponseStatus::Success {
+    if resp.status != ResponseStatus::Success {
         anyhow::bail!("Failed to create shared table: {:?}", resp.error);
     }
 
     // Create stream table
     let resp = create_stream_table(server, namespace, "events", 3600).await;
-    if resp.status != kalamdb_api::models::ResponseStatus::Success {
+    if resp.status != ResponseStatus::Success {
         anyhow::bail!("Failed to create stream table: {:?}", resp.error);
     }
 
@@ -550,7 +550,6 @@ pub async fn setup_complete_environment(server: &TestServer, namespace: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::TestServer;
 
     #[actix_web::test]
     async fn test_create_namespace() {
@@ -566,7 +565,7 @@ mod tests {
         create_namespace(&server, "app").await;
 
         let response = create_messages_table(&server, "app", Some("user123")).await;
-        if response.status != kalamdb_api::models::ResponseStatus::Success {
+        if response.status != ResponseStatus::Success {
             // In shared TestServer runs, provider may already be registered; accept idempotent already-exists
             let msg = response
                 .error
@@ -592,7 +591,7 @@ mod tests {
         assert_eq!(responses.len(), 5);
 
         for (i, response) in responses.iter().enumerate() {
-            if response.status != kalamdb_api::models::ResponseStatus::Success {
+            if response.status != ResponseStatus::Success {
                 eprintln!(
                     "Response {}: status={}, error={:?}",
                     i, response.status, response.error

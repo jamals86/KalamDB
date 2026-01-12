@@ -203,9 +203,9 @@ pub async fn login_handler(
 
     // Generate JWT token
     let (token, _claims) = match create_and_sign_token(
-        user.id.as_ref(),
-        user.username.as_str(),
-        user.role.as_str(),
+        &user.id,
+        &user.username,
+        &user.role,
         user.email.as_deref(),
         Some(config.jwt_expiry_hours),
         &config.jwt_secret
@@ -281,7 +281,7 @@ pub async fn refresh_handler(
     };
 
     // Verify user still exists and is active by username (we don't have find_by_id)
-    let username = claims.username.as_deref().unwrap_or("");
+    let username = claims.username.as_ref().map(|u| u.as_str()).unwrap_or("");
     let user = match user_repo.get_user_by_username(username).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {
@@ -291,9 +291,9 @@ pub async fn refresh_handler(
 
     // Generate new token
     let (new_token, _new_claims) = match create_and_sign_token(
-        user.id.as_ref(),
-        user.username.as_str(),
-        user.role.as_str(),
+        &user.id,
+        &user.username,
+        &user.role,
         user.email.as_deref(),
         Some(config.jwt_expiry_hours),
         &config.jwt_secret
@@ -384,7 +384,7 @@ pub async fn me_handler(
     };
 
     // Get current user info
-    let username = claims.username.as_deref().unwrap_or("");
+    let username = claims.username.as_ref().map(|u| u.as_str()).unwrap_or("");
     let user = match user_repo.get_user_by_username(username).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {

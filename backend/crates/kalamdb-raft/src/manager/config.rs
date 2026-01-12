@@ -23,6 +23,9 @@ pub const DEFAULT_SHARED_DATA_SHARDS: u32 = 1;
 /// Construct this from `kalamdb_commons::config::ClusterConfig` using `From` trait.
 #[derive(Debug, Clone)]
 pub struct RaftManagerConfig {
+    /// Cluster identifier
+    pub cluster_id: String,
+    
     /// This node's ID (must be >= 1)
     pub node_id: NodeId,
     
@@ -63,6 +66,7 @@ pub struct RaftManagerConfig {
 impl Default for RaftManagerConfig {
     fn default() -> Self {
         Self {
+            cluster_id: "kalamdb".to_string(),
             node_id: NodeId::new(1),
             rpc_addr: "127.0.0.1:9100".to_string(),
             api_addr: "127.0.0.1:8080".to_string(),
@@ -91,8 +95,9 @@ impl RaftManagerConfig {
     ///
     /// This ensures the same Raft-based execution path is used in both
     /// standalone and cluster deployments, simplifying testing and maintenance.
-    pub fn for_single_node(api_addr: String) -> Self {
+    pub fn for_single_node(cluster_id: String, api_addr: String) -> Self {
         Self {
+            cluster_id,
             node_id: NodeId::new(1),
             rpc_addr: "127.0.0.1:0".to_string(), // Port 0 = OS assigns random available port
             api_addr,
@@ -113,6 +118,7 @@ impl RaftManagerConfig {
 impl From<kalamdb_commons::config::ClusterConfig> for RaftManagerConfig {
     fn from(config: kalamdb_commons::config::ClusterConfig) -> Self {
         Self {
+            cluster_id: config.cluster_id,
             node_id: NodeId::new(config.node_id),
             rpc_addr: config.rpc_addr,
             api_addr: config.api_addr,

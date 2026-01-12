@@ -7,9 +7,9 @@
 mod test_support;
 
 use futures_util::future::try_join_all;
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
+use kalamdb_commons::UserName;
 use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
-use test_support::query_result_ext::QueryResultTestExt;
 use tokio::time::Duration;
 
 async fn create_user(server: &test_support::http_server::HttpTestServer, user: &str) -> anyhow::Result<String> {
@@ -21,7 +21,7 @@ async fn create_user(server: &test_support::http_server::HttpTestServer, user: &
         ))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE USER failed: {:?}", resp.error);
-    Ok(HttpTestServer::basic_auth_header(user, password))
+    Ok(HttpTestServer::basic_auth_header(&UserName::new(user), password))
 }
 
 async fn count_rows(

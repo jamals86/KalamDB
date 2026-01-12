@@ -7,7 +7,7 @@
 mod common;
 
 use common::TestServer;
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 use kalamdb_commons::Role;
 
 /// Verify syntax errors return clear, helpful messages

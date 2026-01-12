@@ -11,7 +11,7 @@
 mod common;
 
 use common::TestServer;
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 use kalamdb_commons::{AuthType, Role, models::ConnectionInfo};
 
 #[tokio::test]

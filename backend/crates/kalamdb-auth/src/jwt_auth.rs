@@ -2,6 +2,7 @@
 
 use crate::error::{AuthError, AuthResult};
 use jsonwebtoken::{decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use kalamdb_commons::{Role, UserId, UserName};
 use serde::{Deserialize, Serialize};
 
 /// Default JWT expiration time in hours
@@ -24,11 +25,11 @@ pub struct JwtClaims {
     /// Issued at (Unix timestamp)
     pub iat: usize,
     /// Username (custom claim)
-    pub username: Option<String>,
+    pub username: Option<UserName>,
     /// Email (custom claim)
     pub email: Option<String>,
     /// Role (custom claim)
-    pub role: Option<String>,
+    pub role: Option<Role>,
 }
 
 impl JwtClaims {
@@ -41,9 +42,9 @@ impl JwtClaims {
     /// * `email` - Optional email address
     /// * `expiry_hours` - Token expiration in hours (defaults to DEFAULT_JWT_EXPIRY_HOURS)
     pub fn new(
-        user_id: &str,
-        username: &str,
-        role: &str,
+        user_id: &UserId,
+        username: &UserName,
+        role: &Role,
         email: Option<&str>,
         expiry_hours: Option<i64>,
     ) -> Self {
@@ -56,9 +57,9 @@ impl JwtClaims {
             iss: KALAMDB_ISSUER.to_string(),
             exp: exp.timestamp() as usize,
             iat: now.timestamp() as usize,
-            username: Some(username.to_string()),
+            username: Some(username.clone()),
             email: email.map(|e| e.to_string()),
-            role: Some(role.to_string()),
+            role: Some(role.clone()),
         }
     }
 }
@@ -86,9 +87,9 @@ pub fn generate_jwt_token(claims: &JwtClaims, secret: &str) -> AuthResult<String
 /// 
 /// This is the preferred way to generate tokens to ensure consistency.
 pub fn create_and_sign_token(
-    user_id: &str,
-    username: &str,
-    role: &str,
+    user_id: &UserId,
+    username: &UserName,
+    role: &Role,
     email: Option<&str>,
     expiry_hours: Option<i64>,
     secret: &str,
@@ -122,10 +123,14 @@ pub fn refresh_jwt_token(
     let trusted_issuers = vec![KALAMDB_ISSUER.to_string()];
     let old_claims = validate_jwt_token(token, secret, &trusted_issuers)?;
 
+    let user_id = UserId::new(&old_claims.sub);
+    let username = old_claims.username.as_ref().cloned().unwrap_or_else(|| UserName::new(""));
+    let role = old_claims.role.as_ref().cloned().unwrap_or(Role::User);
+
     create_and_sign_token(
-        &old_claims.sub,
-        old_claims.username.as_deref().unwrap_or(""),
-        old_claims.role.as_deref().unwrap_or("user"),
+        &user_id,
+        &username,
+        &role,
         old_claims.email.as_deref(),
         expiry_hours,
         secret,

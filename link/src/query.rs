@@ -166,18 +166,16 @@ impl QueryExecutor {
                             .await
                             .unwrap_or_else(|_| "Unknown error".to_string());
 
-                        // Try to parse as QueryResponse to extract error message
-                        let error_message = if let Ok(json_response) =
+                        // Prefer returning a structured QueryResponse if the server provided one,
+                        // even on non-2xx HTTP status codes.
+                        if let Ok(mut json_response) =
                             serde_json::from_str::<QueryResponse>(&error_text)
                         {
-                            if let Some(err) = json_response.error {
-                                err.message
-                            } else {
-                                error_text
-                            }
-                        } else {
-                            error_text
-                        };
+                            normalize_query_response(sql, &mut json_response);
+                            return Ok(json_response);
+                        }
+
+                        let error_message = error_text;
 
                         warn!(
                             "[LINK_HTTP] Server error: status={} message=\"{}\" duration_ms={}",

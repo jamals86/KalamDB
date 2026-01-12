@@ -34,14 +34,33 @@ impl IndexDefinition<UserId, User> for UserUsernameIndex {
         &self,
         filter: &datafusion::logical_expr::Expr,
     ) -> Option<Vec<u8>> {
+        use datafusion::logical_expr::Expr;
+        use datafusion::scalar::ScalarValue;
         use kalamdb_store::extract_string_equality;
 
+        // Handle equality: username = 'value'
         if let Some((col, val)) = extract_string_equality(filter) {
             if col == "username" {
                 // Convert to lowercase for case-insensitive matching
                 return Some(val.to_lowercase().into_bytes());
             }
         }
+
+        // Handle LIKE operator: username LIKE 'prefix%'
+        if let Expr::Like(like_expr) = filter {
+            if let Expr::Column(col) = like_expr.expr.as_ref() {
+                if col.name == "username" {
+                    if let Expr::Literal(ScalarValue::Utf8(Some(pattern)), _) = like_expr.pattern.as_ref() {
+                        // Check if pattern is a simple prefix match (ends with %)
+                        if pattern.ends_with('%') && !pattern[..pattern.len()-1].contains('%') && !pattern[..pattern.len()-1].contains('_') {
+                            let prefix = &pattern[..pattern.len()-1];
+                            return Some(prefix.to_lowercase().into_bytes());
+                        }
+                    }
+                }
+            }
+        }
+
         None
     }
 }

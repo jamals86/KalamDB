@@ -289,6 +289,48 @@ where
         None
     }
 
+    /// Find an index by its partition name.
+    ///
+    /// Useful to avoid hard-coding numeric index positions (0, 1, ...) in providers.
+    pub fn find_index_by_partition(&self, partition: &str) -> Option<usize> {
+        self.indexes
+            .iter()
+            .enumerate()
+            .find(|(_idx, index)| index.partition() == partition)
+            .map(|(idx, _)| idx)
+    }
+
+    /// Find the first index that covers a column (based on `indexed_columns()`).
+    ///
+    /// Note: `indexed_columns()` returns an owned Vec, so this is intended for
+    /// provider wiring / occasional lookups (not a tight loop).
+    pub fn find_index_covering_column(&self, column: &str) -> Option<usize> {
+        self.indexes
+            .iter()
+            .enumerate()
+            .find(|(_idx, index)| index.indexed_columns().iter().any(|c| *c == column))
+            .map(|(idx, _)| idx)
+    }
+
+    /// Finds the "best" index for a set of DataFusion filters.
+    ///
+    /// Strategy: pick the index that yields the longest prefix (more selective).
+    #[cfg(feature = "datafusion")]
+    pub fn find_best_index_for_filters(&self, filters: &[Expr]) -> Option<(usize, Vec<u8>)> {
+        let mut best: Option<(usize, Vec<u8>)> = None;
+
+        for filter in filters {
+            if let Some((idx, prefix)) = self.find_index_for_filter(filter) {
+                match &best {
+                    Some((_best_idx, best_prefix)) if best_prefix.len() >= prefix.len() => {}
+                    _ => best = Some((idx, prefix)),
+                }
+            }
+        }
+
+        best
+    }
+
     // ========================================================================
     // Sync Write Operations (Atomic with Indexes)
     // ========================================================================

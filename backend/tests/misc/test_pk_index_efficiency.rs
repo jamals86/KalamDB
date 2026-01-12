@@ -12,7 +12,7 @@
 mod common;
 
 use common::{fixtures, QueryResultTestExt, TestServer};
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 use std::time::Instant;
 
 /// Test: User table UPDATE by PK uses index - not full scan

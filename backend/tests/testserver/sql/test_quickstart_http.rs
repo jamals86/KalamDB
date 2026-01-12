@@ -3,9 +3,9 @@
 #[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
+use kalamdb_commons::UserName;
 use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
-use test_support::query_result_ext::QueryResultTestExt;
 use tokio::time::Duration;
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
@@ -17,7 +17,7 @@ async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<
         ))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE USER failed: {:?}", resp.error);
-    Ok(HttpTestServer::basic_auth_header(username, password))
+    Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
 }
 
 #[tokio::test]
@@ -177,6 +177,10 @@ async fn test_quickstart_workflow_over_http() {
                 let resp = server
                     .execute_sql(&format!("SELECT table_name FROM system.tables WHERE namespace_id='{}'", ns))
                     .await?;
+                eprintln!("system.tables response: {:?}", resp);
+                if resp.status != ResponseStatus::Success {
+                    eprintln!("system.tables query failed: {:?}", resp.error);
+                }
                 anyhow::ensure!(resp.status == ResponseStatus::Success);
                 anyhow::ensure!(!resp.results[0].rows_as_maps().is_empty());
             }

@@ -28,11 +28,13 @@ use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
+use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::{
     system::{Job, JobFilter, JobSortField, SortOrder},
     JobId, JobStatus,
 };
+use kalamdb_commons::StorageKey;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
@@ -660,6 +662,15 @@ impl TableProvider for JobsTableProvider {
         TableType::Base
     }
 
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        // Inexact pushdown: we may use filters for index/prefix scans,
+        // but DataFusion must still apply them for correctness.
+        Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
+    }
+
     async fn scan(
         &self,
         _state: &dyn datafusion::catalog::Session,
@@ -698,10 +709,34 @@ impl TableProvider for JobsTableProvider {
         }
 
         let schema = self.schema.clone();
-        let jobs = self
-            .store
-            .scan_all(limit, prefix.as_ref(), start_key.as_ref())
-            .map_err(|e| DataFusionError::Execution(format!("Failed to scan jobs: {}", e)))?;
+
+        // Prefer secondary index scans when possible (auto-picks from store.indexes()).
+        // Falls back to main-partition scan with (job_id) prefix/start_key.
+        let jobs: Vec<(Vec<u8>, Job)> = if let Some((index_idx, index_prefix)) =
+            self.store.find_best_index_for_filters(filters)
+        {
+            log::info!(
+                "[system.jobs] Using secondary index {} for filters: {:?}",
+                index_idx,
+                filters
+            );
+            self.store
+                .scan_by_index(index_idx, Some(&index_prefix), limit)
+                .map_err(|e| {
+                    DataFusionError::Execution(format!("Failed to scan jobs by index: {}", e))
+                })?
+                .into_iter()
+                .map(|(id, job)| (id.storage_key(), job))
+                .collect()
+        } else {
+            log::info!(
+                "[system.jobs] Full table scan (no index match) for filters: {:?}",
+                filters
+            );
+            self.store
+                .scan_all(limit, prefix.as_ref(), start_key.as_ref())
+                .map_err(|e| DataFusionError::Execution(format!("Failed to scan jobs: {}", e)))?
+        };
 
         let batch = self.create_batch(jobs).map_err(|e| {
             DataFusionError::Execution(format!("Failed to build jobs batch: {}", e))
@@ -710,7 +745,9 @@ impl TableProvider for JobsTableProvider {
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        table.scan(_state, projection, &[], limit).await
+
+        // Always pass through projection and filters to MemTable - it will handle them
+        table.scan(_state, projection, filters, limit).await
     }
 }
 

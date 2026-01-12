@@ -39,6 +39,9 @@ pub(crate) const SQL_KEYWORDS: &[&str] = &[
     "DISTINCT",
     "VALUES",
     "SET",
+    "DESCRIBE",
+    "SHOW",
+    "EXPLAIN",
     // DDL
     "CREATE",
     "DROP",

@@ -1,6 +1,6 @@
 use super::query_result_ext::QueryResultTestExt;
 use anyhow::Result;
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 use std::path::{Path, PathBuf};
 use tokio::time::{sleep, Duration, Instant};
 

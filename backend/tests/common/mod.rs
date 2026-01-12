@@ -40,7 +40,7 @@ pub mod flush_helpers;
 pub mod stress_utils;
 
 use anyhow::Result;
-use kalamdb_api::models::{QueryResult, ResponseStatus, SqlResponse};
+use kalam_link::models::{ErrorDetail, KalamDataType, QueryResult, QueryResponse, ResponseStatus, SchemaField};
 use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
 use kalamdb_commons::UserId;
 use kalamdb_core::app_context::AppContext;
@@ -452,7 +452,7 @@ impl TestServer {
     ///
     /// # Returns
     ///
-    /// `SqlResponse` containing status, results, and any errors
+    /// `QueryResponse` containing status, results, and any errors
     ///
     /// # Example
     ///
@@ -460,7 +460,7 @@ impl TestServer {
     /// let response = server.execute_sql("CREATE NAMESPACE test_ns").await;
     /// assert_eq!(response.status, "success");
     /// ```
-    pub async fn execute_sql(&self, sql: &str) -> SqlResponse {
+    pub async fn execute_sql(&self, sql: &str) -> QueryResponse {
         self.execute_sql_with_user(sql, None).await
     }
 
@@ -473,7 +473,7 @@ impl TestServer {
     ///
     /// # Returns
     ///
-    /// `SqlResponse` containing status, results, and any errors
+    /// `QueryResponse` containing status, results, and any errors
     ///
     /// # Example
     ///
@@ -483,7 +483,7 @@ impl TestServer {
     ///     "user123"
     /// ).await;
     /// ```
-    pub async fn execute_sql_as_user(&self, sql: &str, user_id: &str) -> SqlResponse {
+    pub async fn execute_sql_as_user(&self, sql: &str, user_id: &str) -> QueryResponse {
         self.execute_sql_with_user(sql, Some(user_id)).await
     }
 
@@ -496,8 +496,8 @@ impl TestServer {
     ///
     /// # Returns
     ///
-    /// `SqlResponse` containing status, results, and any errors
-    pub async fn execute_sql_with_user(&self, sql: &str, user_id: Option<&str>) -> SqlResponse {
+    /// `QueryResponse` containing status, results, and any errors
+    pub async fn execute_sql_with_user(&self, sql: &str, user_id: Option<&str>) -> QueryResponse {
         let mut user_id_obj = user_id.map(UserId::from);
 
         // Auto-escalate to 'system' for admin-only namespace DDL when no user provided
@@ -570,7 +570,7 @@ impl TestServer {
                 );
                 use kalamdb_core::sql::ExecutionResult;
                 match result {
-                    ExecutionResult::Success { message } => SqlResponse {
+                    ExecutionResult::Success { message } => QueryResponse {
                         status: ResponseStatus::Success,
                         results: vec![QueryResult {
                             schema: vec![],
@@ -578,12 +578,12 @@ impl TestServer {
                             row_count: 0,
                             message: Some(message),
                         }],
-                        took: 0.0,
+                        took: Some(0.0),
                         error: None,
                     },
                     ExecutionResult::Rows { batches, .. } => {
                         if batches.is_empty() {
-                            SqlResponse {
+                            QueryResponse {
                                 status: ResponseStatus::Success,
                                 results: vec![QueryResult {
                                     schema: vec![],
@@ -591,7 +591,7 @@ impl TestServer {
                                     row_count: 0,
                                     message: None,
                                 }],
-                                took: 0.0,
+                                took: Some(0.0),
                                 error: None,
                             }
                         } else {
@@ -599,10 +599,10 @@ impl TestServer {
                                 .iter()
                                 .map(|batch| record_batch_to_query_result(batch, mask_credentials))
                                 .collect();
-                            SqlResponse {
+                            QueryResponse {
                                 status: ResponseStatus::Success,
                                 results,
-                                took: 0.0,
+                                took: Some(0.0),
                                 error: None,
                             }
                         }
@@ -612,25 +612,23 @@ impl TestServer {
                         channel,
                         select_query: _,
                     } => {
-                        use kalamdb_commons::models::datatypes::KalamDataType;
-                        use kalamdb_commons::schemas::SchemaField;
                         let row = vec![
                             serde_json::Value::String(subscription_id),
                             serde_json::Value::String(channel),
                         ];
                         let query_result = QueryResult {
                             schema: vec![
-                                SchemaField::new("subscription_id", KalamDataType::Text, 0),
-                                SchemaField::new("channel", KalamDataType::Text, 1),
+                                SchemaField { name: "subscription_id".to_string(), data_type: KalamDataType::Text, index: 0 },
+                                SchemaField { name: "channel".to_string(), data_type: KalamDataType::Text, index: 1 },
                             ],
                             rows: Some(vec![row]),
                             row_count: 1,
                             message: None,
                         };
-                        SqlResponse {
+                        QueryResponse {
                             status: ResponseStatus::Success,
                             results: vec![query_result],
-                            took: 0.0,
+                            took: Some(0.0),
                             error: None,
                         }
                     }
@@ -641,7 +639,7 @@ impl TestServer {
                             "[DEBUG TestServer] Matched DML variant with rows_affected={}",
                             rows_affected
                         );
-                        SqlResponse {
+                        QueryResponse {
                             status: ResponseStatus::Success,
                             results: vec![QueryResult {
                                 schema: vec![],
@@ -649,7 +647,7 @@ impl TestServer {
                                 row_count: rows_affected,
                                 message: Some(format!("{} row(s) affected", rows_affected)),
                             }],
-                            took: 0.0,
+                            took: Some(0.0),
                             error: None,
                         }
                     }
@@ -657,14 +655,12 @@ impl TestServer {
                         tables,
                         bytes_written,
                     } => {
-                        use kalamdb_commons::models::datatypes::KalamDataType;
-                        use kalamdb_commons::schemas::SchemaField;
-                        SqlResponse {
+                        QueryResponse {
                             status: ResponseStatus::Success,
                             results: vec![QueryResult {
                                 schema: vec![
-                                    SchemaField::new("tables", KalamDataType::Text, 0),
-                                    SchemaField::new("bytes_written", KalamDataType::BigInt, 1),
+                                    SchemaField { name: "tables".to_string(), data_type: KalamDataType::Text, index: 0 },
+                                    SchemaField { name: "bytes_written".to_string(), data_type: KalamDataType::BigInt, index: 1 },
                                 ],
                                 rows: Some(vec![vec![
                                     serde_json::Value::String(tables.join(",")),
@@ -673,19 +669,17 @@ impl TestServer {
                                 row_count: tables.len(),
                                 message: None,
                             }],
-                            took: 0.0,
+                            took: Some(0.0),
                             error: None,
                         }
                     }
                     ExecutionResult::JobKilled { job_id, status } => {
-                        use kalamdb_commons::models::datatypes::KalamDataType;
-                        use kalamdb_commons::schemas::SchemaField;
-                        SqlResponse {
+                        QueryResponse {
                             status: ResponseStatus::Success,
                             results: vec![QueryResult {
                                 schema: vec![
-                                    SchemaField::new("job_id", KalamDataType::Text, 0),
-                                    SchemaField::new("status", KalamDataType::Text, 1),
+                                    SchemaField { name: "job_id".to_string(), data_type: KalamDataType::Text, index: 0 },
+                                    SchemaField { name: "status".to_string(), data_type: KalamDataType::Text, index: 1 },
                                 ],
                                 rows: Some(vec![vec![
                                     serde_json::Value::String(job_id),
@@ -694,7 +688,7 @@ impl TestServer {
                                 row_count: 1,
                                 message: None,
                             }],
-                            took: 0.0,
+                            took: Some(0.0),
                             error: None,
                         }
                     }
@@ -708,7 +702,7 @@ impl TestServer {
                         Ok(batches) => {
                             if batches.is_empty() {
                                 // Return empty result with 0 rows instead of empty results array
-                                SqlResponse {
+                                QueryResponse {
                                     status: ResponseStatus::Success,
                                     results: vec![QueryResult {
                                         schema: vec![],
@@ -716,7 +710,7 @@ impl TestServer {
                                         row_count: 0,
                                         message: None,
                                     }],
-                                    took: 0.0,
+                                    took: Some(0.0),
                                     error: None,
                                 }
                             } else {
@@ -726,30 +720,30 @@ impl TestServer {
                                         record_batch_to_query_result(batch, mask_credentials)
                                     })
                                     .collect();
-                                SqlResponse {
+                                QueryResponse {
                                     status: ResponseStatus::Success,
                                     results,
-                                    took: 0.0,
+                                    took: Some(0.0),
                                     error: None,
                                 }
                             }
                         }
-                        Err(e) => SqlResponse {
+                        Err(e) => QueryResponse {
                             status: ResponseStatus::Error,
                             results: vec![],
-                            took: 0.0,
-                            error: Some(kalamdb_api::models::ErrorDetail {
+                            took: Some(0.0),
+                            error: Some(ErrorDetail {
                                 code: "SQL_EXECUTION_ERROR".to_string(),
                                 message: format!("Error executing query: {}", e),
                                 details: Some(sql.to_string()),
                             }),
                         },
                     },
-                    Err(e) => SqlResponse {
+                    Err(e) => QueryResponse {
                         status: ResponseStatus::Error,
                         results: vec![],
-                        took: 0.0,
-                        error: Some(kalamdb_api::models::ErrorDetail {
+                        took: Some(0.0),
+                        error: Some(ErrorDetail {
                             code: "SQL_PARSE_ERROR".to_string(),
                             message: format!("Error parsing SQL: {}", e),
                             details: Some(sql.to_string()),
@@ -759,11 +753,11 @@ impl TestServer {
             }
             Err(e) => {
                 eprintln!("[DEBUG TestServer] execute() error: {:?}", e);
-                SqlResponse {
+                QueryResponse {
                     status: ResponseStatus::Error,
                     results: vec![],
-                    took: 0.0,
-                    error: Some(kalamdb_api::models::ErrorDetail {
+                    took: Some(0.0),
+                    error: Some(ErrorDetail {
                         code: "EXECUTION_ERROR".to_string(),
                         message: format!("{:?}", e),
                         details: None,
@@ -778,12 +772,11 @@ impl TestServer {
 fn record_batch_to_query_result(
     batch: &datafusion::arrow::record_batch::RecordBatch,
     mask_credentials: bool,
-) -> kalamdb_api::models::QueryResult {
+) -> QueryResult {
     use datafusion::arrow::array::*;
     use datafusion::arrow::datatypes::DataType;
     use kalamdb_commons::models::datatypes::arrow_conversion::FromArrowType;
-    use kalamdb_commons::models::datatypes::KalamDataType;
-    use kalamdb_commons::schemas::SchemaField;
+    use kalamdb_commons::models::datatypes::KalamDataType as CommonsKalamDataType;
 
     let arrow_schema = batch.schema();
     let num_rows = batch.num_rows();
@@ -797,10 +790,20 @@ fn record_batch_to_query_result(
             let kalam_type = field
                 .metadata()
                 .get("kalam_data_type")
-                .and_then(|s| serde_json::from_str::<KalamDataType>(s).ok())
-                .or_else(|| KalamDataType::from_arrow_type(field.data_type()).ok())
+                .and_then(|s| serde_json::from_str::<CommonsKalamDataType>(s).ok())
+                .or_else(|| CommonsKalamDataType::from_arrow_type(field.data_type()).ok())
+                .unwrap_or(CommonsKalamDataType::Text);
+
+            let data_type = serde_json::to_value(&kalam_type)
+                .ok()
+                .and_then(|v| serde_json::from_value::<KalamDataType>(v).ok())
                 .unwrap_or(KalamDataType::Text);
-            SchemaField::new(field.name().clone(), kalam_type, index)
+
+            SchemaField {
+                name: field.name().clone(),
+                data_type,
+                index,
+            }
         })
         .collect();
 
@@ -907,7 +910,7 @@ fn record_batch_to_query_result(
         rows.push(row_values);
     }
 
-    kalamdb_api::models::QueryResult {
+    QueryResult {
         schema,
         rows: Some(rows),
         row_count: num_rows,
@@ -937,7 +940,7 @@ impl TestServer {
             }
             let sql = format!("DROP NAMESPACE {} CASCADE", ns.namespace_id);
             let response = self.execute_sql(&sql).await;
-            if response.status != kalamdb_api::models::ResponseStatus::Success {
+            if response.status != ResponseStatus::Success {
                 eprintln!(
                     "Warning: Failed to drop namespace {}: {:?}",
                     ns.namespace_id, response.error
@@ -972,7 +975,7 @@ impl TestServer {
         for table in ns_tables {
             let sql = format!("DROP TABLE {}.{}", namespace, table.table_name);
             let response = self.execute_sql(&sql).await;
-            if response.status != kalamdb_api::models::ResponseStatus::Success {
+            if response.status != ResponseStatus::Success {
                 eprintln!(
                     "Warning: Failed to drop table {}.{}: {:?}",
                     namespace, table.table_name, response.error

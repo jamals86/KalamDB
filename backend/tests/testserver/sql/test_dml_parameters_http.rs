@@ -8,22 +8,22 @@
 #[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
+use kalamdb_commons::UserName;
 use serde_json::json;
 use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
-use test_support::query_result_ext::QueryResultTestExt;
-use tokio::time::Duration;
+use tokio::time::{sleep, Duration, Instant};
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
     let password = "UserPass123!";
     let resp = server
         .execute_sql(&format!(
-            "CREATE USER '{}' WITH PASSWORD '{}' ROLE 'user'",
+            "CREATE USER '{}' WITH PASSWORD '{}' ROLE 'dba'",
             username, password
         ))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE USER failed: {:?}", resp.error);
-    Ok(HttpTestServer::basic_auth_header(username, password))
+    Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
 }
 
 async fn count_rows(server: &HttpTestServer, auth: &str, ns: &str, table: &str) -> anyhow::Result<i64> {
@@ -56,22 +56,75 @@ async fn test_parameterized_dml_over_http() {
             let table = "items";
 
             let resp = server
-                .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+                .execute_sql(&format!("CREATE NAMESPACE {}", ns))
                 .await?;
             anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE NAMESPACE failed");
 
             let auth = create_user(server, &format!("user_params_{}", suffix)).await?;
 
             let resp = server
-                .execute_sql_with_auth(
-                    &format!(
-                        "CREATE TABLE {}.{} (id INT PRIMARY KEY, name TEXT, age INT) WITH (TYPE='USER', STORAGE_ID='local')",
-                        ns, table
-                    ),
-                    &auth,
-                )
+                .execute_sql(&format!(
+                    "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT, age INT) WITH (TYPE='SHARED', STORAGE_ID='local')",
+                    ns, table
+                ))
                 .await?;
             anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE TABLE failed: {:?}", resp.error);
+
+            // Near-production servers may accept DDL before it is immediately queryable
+            // (e.g. metadata propagation/registration). Wait briefly for visibility.
+            {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    let probe = server
+                        .execute_sql(&format!(
+                            "SELECT COUNT(*) AS cnt FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+                            ns, table
+                        ))
+                        .await;
+
+                    if let Ok(resp) = &probe {
+                        if resp.status == ResponseStatus::Success {
+                            let cnt = resp
+                                .results
+                                .first()
+                                .and_then(|r| r.row_as_map(0))
+                                .and_then(|m| m.get("cnt").cloned())
+                                .and_then(|v| {
+                                    v.as_i64()
+                                        .or_else(|| v.as_u64().map(|u| u as i64))
+                                        .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+                                })
+                                .unwrap_or(0);
+                            if cnt >= 1 {
+                                break;
+                            }
+                        }
+                    }
+
+                    if Instant::now() >= deadline {
+                        let listing = server
+                            .execute_sql(&format!(
+                                "SELECT namespace_id, table_name FROM system.tables WHERE table_name = '{}'",
+                                table
+                            ))
+                            .await
+                            .ok()
+                            .and_then(|r| r.results.first().map(|qr| qr.rows_as_maps()))
+                            .unwrap_or_default();
+
+                        anyhow::bail!(
+                            "Table {}.{} not visible in system.tables after CREATE TABLE (last_probe={:?}, listing={:?})",
+                            ns,
+                            table,
+                            probe
+                            ,
+                            listing
+                        );
+                    }
+
+                    sleep(Duration::from_millis(50)).await;
+                }
+            }
 
             // INSERT with parameters
             {

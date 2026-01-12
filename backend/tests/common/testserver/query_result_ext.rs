@@ -1,4 +1,4 @@
-use kalamdb_api::models::QueryResult;
+use kalam_link::models::QueryResult;
 use std::collections::HashMap;
 
 /// Extension trait for `QueryResult` to provide test-friendly row access.

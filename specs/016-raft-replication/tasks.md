@@ -385,7 +385,7 @@ Display the clusterName here and which node we are connecting to: ● KalamDB[{{
 
 35) In backend tests add testserver which runs a cluster of 3 nodes and run tests against it
 
-36) instead of adding clustername: kalamdb- 
+36) instead of adding clustername: kalamdb- use the same name from the server.toml if none specified use the machineName instead
 
 37) in manifest.json when serializing tableid serialize it with:
   "table_id": "flush_test_ns_mkav1q2g_3.metrics"
@@ -395,3 +395,13 @@ Display the clusterName here and which node we are connecting to: ● KalamDB[{{
     "namespace_id": "flush_test_ns_mkav1q2g_3",
     "table_name": "metrics"
   },
+
+38) iN ORDER TO MAKE THE TESTSERVER FASTER WE CAN LOWER THE BCRYPT CYCLES
+39) I still see places where user_id and user_name is treated as str instead of UserId or UserName objects
+40) Make sure we check sql injection inside UserId/UserName/StorageId/RowId/NamespaceId/TableName/Role/... as a lightweight check so that no body can inject anything there, maybe prevent "..","/"", "'", "."
+42) In CLI if i write a where with double quotes it fails like this:
+    * KalamDB[kalamdb-cluster] root@127.0.0.1:8080 > select * from system.users where username = "jamal";
+    ✗ Server error (400): Statement 1 failed: Execution error: Schema error: No field named jamal. Valid fields are system.users.user_id, system.users.username, system.users.password_hash, system.users.role, system.users.email, system.users.auth_type, system.users.auth_data, system.users.storage_mode, system.users.storage_id, system.users.created_at, system.users.updated_at, system.users.last_seen, system.users.deleted_at.
+
+43) For shared tables add indexes which uses the same secondary indexes we already have and also passing them to datafusion as well
+

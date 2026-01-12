@@ -9,12 +9,12 @@
 mod common;
 
 use common::{fixtures, TestServer};
-use kalamdb_api::models::SqlResponse;
+use kalam_link::models::{QueryResponse, ResponseStatus};
 
-fn assert_row_count(response: &SqlResponse, expected: usize, verbs: &[&str]) {
+fn assert_row_count(response: &QueryResponse, expected: usize, verbs: &[&str]) {
     assert_eq!(
         response.status,
-        kalamdb_api::models::ResponseStatus::Success,
+        ResponseStatus::Success,
         "DML execution failed: {:?}",
         response.error
     );
@@ -194,7 +194,7 @@ async fn test_delete_returns_correct_row_count() {
         .execute_sql_as_user("DELETE FROM test_ns_del.tasks WHERE id = 'task999'", "user1")
         .await;
 
-    if response.status == kalamdb_api::models::ResponseStatus::Success {
+    if response.status == ResponseStatus::Success {
         assert_row_count(&response, 0, &["Deleted"]);
     } else {
         let err = response
@@ -251,7 +251,7 @@ async fn test_delete_already_deleted_returns_zero() {
         .execute_sql_as_user("DELETE FROM test_ns_deldel.tasks WHERE id = 'task1'", "user1")
         .await;
 
-    if response.status == kalamdb_api::models::ResponseStatus::Success {
+    if response.status == ResponseStatus::Success {
         assert_row_count(&response, 0, &["Deleted"]);
     } else {
         let err = response
@@ -318,7 +318,7 @@ async fn test_delete_multiple_rows_count() {
         .execute_sql_as_user("DELETE FROM test_ns_multi.tasks WHERE priority = 1", "user1")
         .await;
 
-    if response.status != kalamdb_api::models::ResponseStatus::Success {
+    if response.status != ResponseStatus::Success {
         let err = response
             .error
             .as_ref()

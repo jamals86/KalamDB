@@ -12,6 +12,7 @@ use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
 use kalamdb_core::providers::flush::{FlushJobResult, SharedTableFlushJob, UserTableFlushJob};
 use kalamdb_core::providers::TableFlush;
 use kalamdb_tables::new_indexed_user_table_store;
+use kalam_link::models::ResponseStatus;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -189,7 +190,7 @@ pub async fn wait_for_flush_job_completion(
 
         let response = server.execute_sql(&query).await;
 
-        if response.status != kalamdb_api::models::ResponseStatus::Success {
+        if response.status != ResponseStatus::Success {
             // system.jobs might not be accessible in some test setups
             // Just wait the full duration and return success
             println!("  ℹ Cannot query system.jobs (not an error in test env), waiting for job to execute...");

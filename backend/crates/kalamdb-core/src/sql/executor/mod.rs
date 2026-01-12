@@ -37,6 +37,13 @@ pub struct SqlExecutor {
 }
 
 impl SqlExecutor {
+    fn is_table_not_found_error(e: &datafusion::error::DataFusionError) -> bool {
+        let msg = e.to_string().to_lowercase();
+        (msg.contains("table") && msg.contains("not found"))
+            || (msg.contains("relation") && msg.contains("does not exist"))
+            || msg.contains("unknown table")
+    }
+
     /// Construct a new executor hooked into the shared `AppContext`.
     pub fn new(
         app_context: Arc<crate::app_context::AppContext>,
@@ -210,7 +217,32 @@ impl SqlExecutor {
                                     KalamDbError::ExecutionError(e.to_string())
                                 })?
                             }
-                            Err(e) => return Err(KalamDbError::ExecutionError(e.to_string())),
+                            Err(e) => {
+                                if Self::is_table_not_found_error(&e) {
+                                    log::warn!(
+                                        target: "sql::plan",
+                                        "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
+                                        sql
+                                    );
+                                    let _ = self.load_existing_tables().await;
+                                    let retry_session = exec_ctx.create_session_with_user();
+                                    match retry_session.sql(sql).await {
+                                        Ok(df) => {
+                                            let plan = df.logical_plan().clone();
+                                            let ordered_plan = apply_default_order_by(plan, &self.app_context)?;
+                                            retry_session
+                                                .execute_logical_plan(ordered_plan)
+                                                .await
+                                                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
+                                        }
+                                        Err(e2) => {
+                                            return Err(self.log_sql_error(sql, exec_ctx, e2));
+                                        }
+                                    }
+                                } else {
+                                    return Err(self.log_sql_error(sql, exec_ctx, e));
+                                }
+                            }
                         }
                     }
                 }
@@ -232,7 +264,33 @@ impl SqlExecutor {
                         })?
                     }
                     Err(e) => {
-                        return Err(self.log_sql_error(sql, exec_ctx, e));
+                        if Self::is_table_not_found_error(&e) {
+                            log::warn!(
+                                target: "sql::plan",
+                                "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
+                                sql
+                            );
+                            let _ = self.load_existing_tables().await;
+                            let retry_session = exec_ctx.create_session_with_user();
+                            match retry_session.sql(sql).await {
+                                Ok(df) => {
+                                    let plan = df.logical_plan().clone();
+                                    let ordered_plan = apply_default_order_by(plan, &self.app_context)?;
+
+                                    self.plan_cache.insert(cache_key, ordered_plan.clone());
+
+                                    retry_session
+                                        .execute_logical_plan(ordered_plan)
+                                        .await
+                                        .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
+                                }
+                                Err(e2) => {
+                                    return Err(self.log_sql_error(sql, exec_ctx, e2));
+                                }
+                            }
+                        } else {
+                            return Err(self.log_sql_error(sql, exec_ctx, e));
+                        }
                     }
                 }
             }
@@ -242,7 +300,23 @@ impl SqlExecutor {
             let df = match session.sql(sql).await {
                 Ok(df) => df,
                 Err(e) => {
-                    return Err(self.log_sql_error(sql, exec_ctx, e));
+                    if Self::is_table_not_found_error(&e) {
+                        log::warn!(
+                            target: "sql::plan",
+                            "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
+                            sql
+                        );
+                        let _ = self.load_existing_tables().await;
+                        let retry_session = exec_ctx.create_session_with_user();
+                        match retry_session.sql(sql).await {
+                            Ok(df) => df,
+                            Err(e2) => {
+                                return Err(self.log_sql_error(sql, exec_ctx, e2));
+                            }
+                        }
+                    } else {
+                        return Err(self.log_sql_error(sql, exec_ctx, e));
+                    }
                 }
             };
 

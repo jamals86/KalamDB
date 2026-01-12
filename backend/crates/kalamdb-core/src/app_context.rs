@@ -326,8 +326,13 @@ impl AppContext {
                     kalamdb_raft::manager::RaftManagerConfig::from(cluster_config.clone())
                 } else {
                     // Single-node mode: create a Raft cluster of 1
+                    // Use machine hostname as cluster ID
+                    let cluster_id = hostname::get()
+                        .ok()
+                        .and_then(|h| h.into_string().ok())
+                        .unwrap_or_else(|| "kalamdb".to_string());
                     let api_addr = format!("{}:{}", config.server.host, config.server.port);
-                    kalamdb_raft::manager::RaftManagerConfig::for_single_node(api_addr)
+                    kalamdb_raft::manager::RaftManagerConfig::for_single_node(cluster_id, api_addr)
                 };
                 
                 log::debug!("Creating RaftManager...");
@@ -405,33 +410,7 @@ impl AppContext {
                     Arc::new(move |cache_key: &str| manifest_for_checker.is_in_hot_cache_by_string(cache_key))
                 );
 
-                // Wire up Raft appliers NOW that AppContext is fully initialized
-                // This ensures metadata and data replication work correctly
-                // (applies to both single-node and cluster mode since we always use RaftExecutor)
-                log::debug!("Wiring Raft appliers...");
-                
-                // Get the RaftManager from the executor
-                if let Some(raft_executor) = app_ctx.executor().as_any().downcast_ref::<kalamdb_raft::RaftExecutor>() {
-                    let manager = raft_executor.manager();
-                    
-                    // Wire up unified meta applier (namespaces, tables, storages, users, jobs)
-                    log::debug!("Wiring MetaApplier with AppContext for table provider registration...");
-                    let meta_applier = Arc::new(crate::applier::ProviderMetaApplier::new(Arc::clone(&app_ctx)));
-                    manager.set_meta_applier(meta_applier);
-                    
-                    // Wire up data appliers for user/shared table replication
-                    log::debug!("Wiring UserDataApplier for user table data replication...");
-                    let user_data_applier = Arc::new(crate::applier::ProviderUserDataApplier::new(Arc::clone(&app_ctx)));
-                    manager.set_user_data_applier(user_data_applier);
-                    
-                    log::debug!("Wiring SharedDataApplier for shared table data replication...");
-                    let shared_data_applier = Arc::new(crate::applier::ProviderSharedDataApplier::new(Arc::clone(&app_ctx)));
-                    manager.set_shared_data_applier(shared_data_applier);
-                    
-                    log::debug!("✓ Raft appliers wired successfully");
-                } else {
-                    log::error!("Failed to downcast executor to RaftExecutor - appliers NOT wired!");
-                }
+                app_ctx.wire_raft_appliers();
 
                 // Cleanup orphan live queries from previous server run
                 // Live queries don't persist across restarts (WebSocket connections are lost)
@@ -448,6 +427,36 @@ impl AppContext {
                 app_ctx
             })
             .clone()
+    }
+
+    /// Wire Raft appliers that apply replicated commands into local providers.
+    ///
+    /// Safe to call multiple times.
+    pub fn wire_raft_appliers(self: &Arc<Self>) {
+        log::debug!("Wiring Raft appliers...");
+
+        let executor = self.executor();
+
+        let Some(raft_executor) = executor.as_any().downcast_ref::<kalamdb_raft::RaftExecutor>() else {
+            log::error!("Failed to downcast executor to RaftExecutor - appliers NOT wired!");
+            return;
+        };
+
+        let manager = raft_executor.manager();
+
+        log::debug!("Wiring MetaApplier with AppContext for table provider registration...");
+        let meta_applier = Arc::new(crate::applier::ProviderMetaApplier::new(Arc::clone(self)));
+        manager.set_meta_applier(meta_applier);
+
+        log::debug!("Wiring UserDataApplier for user table data replication...");
+        let user_data_applier = Arc::new(crate::applier::ProviderUserDataApplier::new(Arc::clone(self)));
+        manager.set_user_data_applier(user_data_applier);
+
+        log::debug!("Wiring SharedDataApplier for shared table data replication...");
+        let shared_data_applier = Arc::new(crate::applier::ProviderSharedDataApplier::new(Arc::clone(self)));
+        manager.set_shared_data_applier(shared_data_applier);
+
+        log::debug!("✓ Raft appliers wired successfully");
     }
 
     /// Extract worker_id from node_id for Snowflake ID generation
@@ -578,6 +587,7 @@ impl AppContext {
         // Create RaftExecutor with single-node config for tests
         // This uses the same code path as production (unified Raft mode)
         let raft_config = kalamdb_raft::manager::RaftManagerConfig::for_single_node(
+            "kalamdb-test".to_string(),
             "127.0.0.1:8080".to_string(),
         );
         let manager = Arc::new(kalamdb_raft::manager::RaftManager::new(raft_config));

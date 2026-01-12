@@ -12,7 +12,7 @@
 mod common;
 
 use common::{fixtures, QueryResultTestExt, TestServer};
-use kalamdb_api::models::ResponseStatus;
+use kalam_link::models::ResponseStatus;
 
 /// T022a: ALTER TABLE ADD COLUMN
 #[actix_web::test]

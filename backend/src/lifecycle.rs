@@ -144,6 +144,11 @@ pub async fn bootstrap(
         debug!("✓ Single-node Raft initialized ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
     }
 
+    // Ensure Raft appliers are registered after Raft has started.
+    // Some Raft initialization flows may recreate state machines; re-wiring here keeps
+    // metadata/data replication applying into local providers (system tables, schema registry, etc.).
+    app_context.wire_raft_appliers();
+
     // Manifest cache uses lazy loading via get_or_load() - no pre-loading needed
     // When a manifest is needed, get_or_load() checks hot cache → RocksDB → returns None
     // This avoids loading manifests that may never be accessed
