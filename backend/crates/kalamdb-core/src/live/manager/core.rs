@@ -160,10 +160,14 @@ impl LiveQueryManager {
             .ok_or_else(|| KalamDbError::NotFound(format!("Table not found: {}", table_id)))?;
 
         // Permission check
+        // - USER tables: Accessible to any authenticated user (RLS filters data to their rows)
+        // - SYSTEM tables: Accessible only to DBA/System roles
+        // - SHARED tables: Don't support subscriptions (use direct queries)
         let is_admin = user_id.is_admin();
         match table_def.table_type {
-            kalamdb_commons::TableType::User if !is_admin && namespace != user_id.as_str() => {
-                return Err(KalamDbError::PermissionDenied("Insufficient privileges".to_string()));
+            kalamdb_commons::TableType::User => {
+                // USER tables are accessible to any authenticated user
+                // Row-level security filters data to only their rows during query execution
             }
             kalamdb_commons::TableType::System if !is_admin => {
                 return Err(KalamDbError::PermissionDenied("Insufficient privileges for system table".to_string()));

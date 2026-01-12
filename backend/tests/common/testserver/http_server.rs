@@ -29,6 +29,9 @@ pub struct HttpTestServer {
     root_auth_header: String,
     jwt_secret: String,
     link_client_cache: Mutex<HashMap<String, KalamLinkClient>>,
+    /// Cache of username -> user_id mappings for proper JWT token generation
+    /// Uses std::sync::Mutex since it's accessed from sync code (link_client)
+    user_id_cache: std::sync::Mutex<HashMap<String, String>>,
     running: kalamdb_server::lifecycle::RunningTestHttpServer,
 }
 
@@ -161,36 +164,47 @@ impl HttpTestServer {
         token
     }
 
-    /// Create a new user if it doesnt exists already
-    async fn ensure_user_exists(&self, username: &str, password: &str, role: &Role) -> Result<()> {
-        let check_sql = format!("SELECT COUNT(*) AS user_count FROM system.users WHERE username = '{}'", username);
+    /// Register a user_id in the cache for later use by link_client
+    pub fn cache_user_id(&self, username: &str, user_id: &str) {
+        let mut cache = self.user_id_cache.lock().expect("user_id_cache mutex poisoned");
+        cache.insert(username.to_string(), user_id.to_string());
+    }
+
+    /// Get cached user_id for a username, if available
+    pub fn get_cached_user_id(&self, username: &str) -> Option<String> {
+        let cache = self.user_id_cache.lock().expect("user_id_cache mutex poisoned");
+        cache.get(username).cloned()
+    }
+
+    /// Create a new user if it doesnt exists already and cache the user_id
+    async fn ensure_user_exists(&self, username: &str, password: &str, role: &Role) -> Result<String> {
+        let check_sql = format!("SELECT user_id, COUNT(*) AS user_count FROM system.users WHERE username = '{}' GROUP BY user_id", username);
         let resp = self.execute_sql(&check_sql).await?;
-        let user_count = resp
-            .results
-            .get(0)
-            .and_then(|result| {
-                let idx = result
-                    .schema
-                    .iter()
-                    .find(|f| f.name == "user_count")
-                    .map(|f| f.index)
-                    .unwrap_or(0);
-
-                let value = result.rows.as_ref()?.get(0)?.get(idx)?;
-                match value {
-                    JsonValue::Number(n) => n.as_u64(),
-                    JsonValue::String(s) => s.parse::<u64>().ok(),
-                    _ => None,
-                }
-            })
-            .unwrap_or(0);
-
-        if user_count == 0 {
-            let create_sql = format!("CREATE USER {} WITH PASSWORD '{}' ROLE '{}'", username, password, role.as_str());
-            self.execute_sql(&create_sql).await?;
+        
+        // Check if user exists and get their user_id
+        if let Some(rows) = resp.rows_as_maps().first() {
+            if let Some(user_id) = rows.get("user_id").and_then(|v| v.as_str()) {
+                self.cache_user_id(username, user_id);
+                return Ok(user_id.to_string());
+            }
         }
 
-        Ok(())
+        // User doesn't exist, create them
+        let create_sql = format!("CREATE USER {} WITH PASSWORD '{}' ROLE '{}'", username, password, role.as_str());
+        self.execute_sql(&create_sql).await?;
+        
+        // Now fetch the user_id
+        let get_id_sql = format!("SELECT user_id FROM system.users WHERE username = '{}'", username);
+        let resp = self.execute_sql(&get_id_sql).await?;
+        let user_id = resp.rows_as_maps()
+            .first()
+            .and_then(|r| r.get("user_id"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Failed to get user_id for newly created user {}", username))?
+            .to_string();
+        
+        self.cache_user_id(username, &user_id);
+        Ok(user_id)
     }
 
     /// Returns a pre-configured KalamLinkClient authenticated as specified user using JWT with explicit user_id.
@@ -217,25 +231,24 @@ impl HttpTestServer {
     }
 
     /// Returns a pre-configured KalamLinkClient authenticated as specified user using JWT.
+    /// 
+    /// **Note**: For USER tables with RLS to work correctly, the user must have been created
+    /// via `ensure_user_exists` (or `create_user_and_client` in helpers.rs) first, so that
+    /// their real user_id is cached. If the user_id is not cached, this method falls back
+    /// to using the username as user_id (which won't work for USER table RLS).
     pub fn link_client(&self, username: &str) -> KalamLinkClient {
-        let username_typed = UserName::new(username);
-        let token = self.create_jwt_token(&username_typed);
+        let role = if username == "root" { Role::System } else { Role::User };
         
-        KalamLinkClient::builder()
-            .base_url(self.base_url())
-            .auth(AuthProvider::jwt_token(token))
-            .timeouts(
-                KalamLinkTimeouts::builder()
-                    .connection_timeout_secs(5)
-                    .receive_timeout_secs(120)
-                    .send_timeout_secs(30)
-                    .subscribe_timeout_secs(15)
-                    .auth_timeout_secs(10)
-                    .initial_data_timeout(Duration::from_secs(120))
-                    .build(),
-            )
-            .build()
-            .expect("Failed to build KalamLinkClient")
+        // Try to get cached user_id, fall back to username
+        let user_id = self.get_cached_user_id(username)
+            .unwrap_or_else(|| {
+                if username != "root" {
+                    eprintln!("WARNING: link_client('{}') called without cached user_id. USER table RLS may not work correctly.", username);
+                }
+                username.to_string()
+            });
+        
+        self.link_client_with_id(&user_id, username, &role)
     }
 
     /// Execute SQL via the real HTTP API as the localhost `root` user.
@@ -549,6 +562,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
         root_auth_header: HttpTestServer::basic_auth_header(&UserName::new("root"), ""),
         jwt_secret,
         link_client_cache: Mutex::new(HashMap::new()),
+        user_id_cache: std::sync::Mutex::new(HashMap::new()),
         running,
     };
 
@@ -598,6 +612,7 @@ pub async fn start_http_test_server_with_config(
         root_auth_header: HttpTestServer::basic_auth_header(&UserName::new("root"), ""),
         jwt_secret,
         link_client_cache: Mutex::new(HashMap::new()),
+        user_id_cache: std::sync::Mutex::new(HashMap::new()),
         running,
     };
 

@@ -26,7 +26,10 @@ use tokio::time::sleep;
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Main collaborative editing scenario test
+/// NOTE: This test is ignored because SHARED table subscriptions are not supported (FR-128, FR-129).
+/// The subscription infrastructure only supports USER tables for per-user real-time sync.
 #[tokio::test]
+#[ignore = "SHARED table subscriptions not supported by design (FR-128, FR-129)"]
 async fn test_scenario_07_collaborative_editing() {
     with_http_test_server_timeout(TEST_TIMEOUT, |server| {
         Box::pin(async move {

@@ -62,21 +62,38 @@ pub async fn ensure_user_exists(server: &HttpTestServer, username: &str, passwor
     let _resp = server.execute_sql(&sql).await;
     // Ignore errors - user might already exist or command might not be supported
     
-    // Look up the user_id using the get_rows helper
+    // Look up the user_id - use rows_as_maps for easier extraction
     let lookup_sql = format!("SELECT user_id FROM system.users WHERE username = '{}'", username);
     let resp = server.execute_sql(&lookup_sql).await?;
-    let rows = get_rows(&resp);
+    
+    // Use rows_as_maps which handles Arrow type unwrapping
+    let rows = resp.rows_as_maps();
     
     if let Some(row) = rows.first() {
-        if let Some(user_id_val) = row.first() {
-            if let Some(user_id_str) = user_id_val.as_str() {
-                return Ok(user_id_str.to_string());
+        if let Some(user_id_val) = row.get("user_id") {
+            // Handle both direct strings and Arrow-wrapped strings
+            let user_id_str = match user_id_val {
+                JsonValue::String(s) => s.clone(),
+                JsonValue::Object(map) if map.contains_key("Utf8") => {
+                    map.get("Utf8").and_then(|v| v.as_str()).unwrap_or("").to_string()
+                }
+                _ => user_id_val.as_str().unwrap_or("").to_string(),
+            };
+            
+            if !user_id_str.is_empty() {
+                // Cache the user_id in the server for link_client to use
+                server.cache_user_id(username, &user_id_str);
+                return Ok(user_id_str);
             }
         }
     }
     
-    // Fallback: use username as user_id if lookup fails
-    Ok(username.to_string())
+    // If we can't find the user_id, fail loudly instead of using a fallback
+    anyhow::bail!(
+        "Failed to get user_id for user '{}'. Query returned: {:?}",
+        username,
+        resp.rows_as_maps()
+    )
 }
 
 /// Create multiple test users at once

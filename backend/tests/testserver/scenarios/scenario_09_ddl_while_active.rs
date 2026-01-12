@@ -138,7 +138,7 @@ async fn test_scenario_09_ddl_while_active() {
                     match tokio::time::timeout(Duration::from_millis(200), subscription.next()).await {
                         Ok(Some(Ok(ChangeEvent::Insert { rows, .. }))) => {
                             for row in &rows {
-                                if let Some(id) = row.get("id").and_then(|v| v.as_i64()) {
+                                if let Some(id) = row.get("id").and_then(json_to_i64) {
                                     if id == 100 {
                                         received_new_insert = true;
                                         break;

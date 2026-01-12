@@ -346,18 +346,7 @@ impl UpdateHandler {
                     assigns.push((col, assign.value.to_string()));
                 }
 
-                let where_pair = selection.and_then(|expr| match expr {
-                    SqlExpr::BinaryOp { left, op: BinaryOperator::Eq, right } => {
-                        match *left {
-                            SqlExpr::Identifier(ident) => Some((ident.value, right.to_string())),
-                            SqlExpr::CompoundIdentifier(idents) => idents
-                                .last()
-                                .map(|Ident { value, .. }| (value.clone(), right.to_string())),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                });
+                let where_pair = selection.and_then(|expr| Self::extract_pk_filter_from_expr(&expr));
 
                 (ns, tbl, assigns, where_pair)
             }
@@ -369,6 +358,32 @@ impl UpdateHandler {
         };
 
         Ok((ns, tbl, assigns, where_pair))
+    }
+
+    /// Extract primary key filter from a WHERE expression.
+    /// Handles compound expressions like "pk_col = value AND other_col = value".
+    fn extract_pk_filter_from_expr(expr: &SqlExpr) -> Option<(String, String)> {
+        match expr {
+            // Simple equality: id = value
+            SqlExpr::BinaryOp { left, op: BinaryOperator::Eq, right } => {
+                match left.as_ref() {
+                    SqlExpr::Identifier(ident) => Some((ident.value.clone(), right.to_string())),
+                    SqlExpr::CompoundIdentifier(idents) => idents
+                        .last()
+                        .map(|Ident { value, .. }| (value.clone(), right.to_string())),
+                    _ => None,
+                }
+            }
+            // Compound condition with AND: try to find PK filter in either side
+            SqlExpr::BinaryOp { left, op: BinaryOperator::And, right } => {
+                // Try left side first, then right side
+                Self::extract_pk_filter_from_expr(left)
+                    .or_else(|| Self::extract_pk_filter_from_expr(right))
+            }
+            // Parenthesized expression: unwrap and recurse
+            SqlExpr::Nested(inner) => Self::extract_pk_filter_from_expr(inner),
+            _ => None,
+        }
     }
 
     fn extract_row_id_for_column(

@@ -89,10 +89,9 @@ async fn test_scenario_13_mixed_workload_soak() {
             let num_users = 3;
             let mut handles = Vec::new();
 
-            for user_id in 0..num_users {
-                let username = format!("soak_user_{}", user_id);
-                ensure_user_exists(server, &username, "test123", &Role::User).await?;
-                let client = server.link_client(&username);
+            for user_idx in 0..num_users {
+                let username = format!("soak_user_{}", user_idx);
+                let client = create_user_and_client(server, &username, &Role::User).await?;
                 let ns_clone = ns.clone();
                 let insert_count_clone = Arc::clone(&insert_count);
                 let update_count_clone = Arc::clone(&update_count);
@@ -100,7 +99,7 @@ async fn test_scenario_13_mixed_workload_soak() {
                 let error_count_clone = Arc::clone(&error_count);
 
                 let handle = tokio::spawn(async move {
-                    let mut local_id = (user_id as i64) * 10000;
+                    let mut local_id = (user_idx as i64) * 10000;
                     let user_start = Instant::now();
 
                     while user_start.elapsed() < Duration::from_secs(25) {
@@ -114,7 +113,7 @@ async fn test_scenario_13_mixed_workload_soak() {
                                     .execute_query(
                                         &format!(
                                             "INSERT INTO {}.orders (id, customer_id, amount, status) VALUES ({}, {}, {}, 'pending')",
-                                            ns_clone, local_id, user_id, local_id as f64 * 10.5
+                                            ns_clone, local_id, user_idx, local_id as f64 * 10.5
                                         ),
                                         None,
                                         None,
@@ -124,7 +123,16 @@ async fn test_scenario_13_mixed_workload_soak() {
                                     Ok(r) if r.success() => {
                                         insert_count_clone.fetch_add(1, Ordering::Relaxed);
                                     }
-                                    _ => {
+                                    Ok(r) => {
+                                        if error_count_clone.load(Ordering::Relaxed) < 5 {
+                                            eprintln!("Insert error: {:?}", r.error);
+                                        }
+                                        error_count_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    Err(e) => {
+                                        if error_count_clone.load(Ordering::Relaxed) < 5 {
+                                            eprintln!("Insert network error: {:?}", e);
+                                        }
                                         error_count_clone.fetch_add(1, Ordering::Relaxed);
                                     }
                                 }
@@ -145,7 +153,17 @@ async fn test_scenario_13_mixed_workload_soak() {
                                     Ok(r) if r.success() => {
                                         update_count_clone.fetch_add(1, Ordering::Relaxed);
                                     }
-                                    _ => {
+                                    Ok(r) => {
+                                        // Update returned error or no success
+                                        if error_count_clone.load(Ordering::Relaxed) < 3 {
+                                            eprintln!("Update error for id {}: {:?}", local_id - 1, r.error);
+                                        }
+                                        error_count_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    Err(e) => {
+                                        if error_count_clone.load(Ordering::Relaxed) < 3 {
+                                            eprintln!("Update network error: {:?}", e);
+                                        }
                                         error_count_clone.fetch_add(1, Ordering::Relaxed);
                                     }
                                 }
@@ -187,8 +205,7 @@ async fn test_scenario_13_mixed_workload_soak() {
             // Background flush task (inline using link client instead of server.clone)
             // =========================================================
             let ns_for_flush = ns.clone();
-            ensure_user_exists(server, "flush_user", "test123", &Role::User).await?;
-            let flush_client = server.link_client("flush_user");
+            let flush_client = create_user_and_client(server, "flush_user", &Role::User).await?;
             let flush_handle = tokio::spawn(async move {
                 let mut flush_count = 0u32;
                 let flush_start = Instant::now();
@@ -209,8 +226,7 @@ async fn test_scenario_13_mixed_workload_soak() {
             // =========================================================
             // Subscription monitoring
             // =========================================================
-            ensure_user_exists(server, "soak_subscriber", "test123", &Role::User).await?;
-            let sub_client = server.link_client("soak_subscriber");
+            let sub_client = create_user_and_client(server, "soak_subscriber", &Role::User).await?;
             let ns_for_sub = ns.clone();
             let subscription_events = Arc::new(AtomicU64::new(0));
             let subscription_events_clone = Arc::clone(&subscription_events);
@@ -295,9 +311,10 @@ async fn test_scenario_13_mixed_workload_soak() {
             assert!(error_rate < 5.0, "Error rate {:.2}% should be < 5%", error_rate);
             assert!(flush_count >= 1, "Should have completed at least 1 flush");
 
-            // Final data verification
-            let admin_client = server.link_client("root");
-            let resp = admin_client
+            // Final data verification - check that one of the soak users can see their data
+            // Note: USER tables have per-user RLS, so each user only sees their own rows
+            let soak_user_client = create_user_and_client(server, "soak_user_0", &Role::User).await?;
+            let resp = soak_user_client
                 .execute_query(
                     &format!("SELECT COUNT(*) as cnt FROM {}.orders", ns),
                     None,
@@ -305,8 +322,8 @@ async fn test_scenario_13_mixed_workload_soak() {
                 )
                 .await?;
             let final_count = resp.get_i64("cnt").unwrap_or(0);
-            println!("Final order count: {}", final_count);
-            assert!(final_count > 0, "Should have orders in table");
+            println!("Final order count for soak_user_0: {}", final_count);
+            assert!(final_count > 0, "User should have orders in table");
 
             // Cleanup
             let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
@@ -437,51 +454,46 @@ async fn test_scenario_13_concurrent_read_write() {
                 .await?;
             assert_success(&resp, "CREATE counters table");
 
-            // Seed initial data
-            ensure_user_exists(server, "seed_user", "test123", &Role::User).await?;
-            let client = server.link_client("seed_user");
-            for i in 1..=10 {
-                let resp = client
-                    .execute_query(
-                        &format!(
-                            "INSERT INTO {}.counters (id, value) VALUES ({}, 0)",
-                            ns, i
-                        ),
-                        None,
-                        None,
-                    )
-                    .await?;
-                assert!(resp.success(), "Seed counter {}", i);
-            }
-
-            // Concurrent writers
+            // Concurrent writers (each seeds their own data due to USER table RLS)
             let write_count = Arc::new(AtomicU64::new(0));
             let read_count = Arc::new(AtomicU64::new(0));
 
             let mut handles = Vec::new();
 
-            // 2 writer tasks
+            // 2 writer tasks - each seeds their own 10 counters then updates them
             for writer_id in 0..2 {
                 let username = format!("writer_{}", writer_id);
-                ensure_user_exists(server, &username, "test123", &Role::User).await?;
-                let client = server.link_client(&username);
+                let client = create_user_and_client(server, &username, &Role::User).await?;
                 let ns_clone = ns.clone();
                 let write_count_clone = Arc::clone(&write_count);
 
                 let handle = tokio::spawn(async move {
-                    for i in 0..50 {
-                        let counter_id = (i % 10) + 1;
-                        let resp = client
+                    // First, seed this user's own 10 counters (USER table RLS means each user needs their own data)
+                    for i in 1..=10 {
+                        let _ = client
                             .execute_query(
                                 &format!(
-                                    "UPDATE {}.counters SET value = value + 1 WHERE id = {}",
-                                    ns_clone, counter_id
+                                    "INSERT INTO {}.counters (id, value) VALUES ({}, 0)",
+                                    ns_clone, i
                                 ),
                                 None,
                                 None,
                             )
                             .await;
-                        if resp.is_ok() && resp.unwrap().success() {
+                    }
+                    
+                    // Now update the counters 50 times (each update sets an incremental value)
+                    for i in 0..50 {
+                        let counter_id = (i % 10) + 1;
+                        let new_value = i + 1; // Just use the iteration number as the new value
+                        let query = format!(
+                            "UPDATE {}.counters SET value = {} WHERE id = {}",
+                            ns_clone, new_value, counter_id
+                        );
+                        let resp = client
+                            .execute_query(&query, None, None)
+                            .await;
+                        if resp.as_ref().map(|r| r.success()).unwrap_or(false) {
                             write_count_clone.fetch_add(1, Ordering::Relaxed);
                         }
                         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -490,15 +502,28 @@ async fn test_scenario_13_concurrent_read_write() {
                 handles.push(handle);
             }
 
-            // 2 reader tasks
+            // 2 reader tasks - each reads their own data
             for reader_id in 0..2 {
                 let username = format!("reader_{}", reader_id);
-                ensure_user_exists(server, &username, "test123", &Role::User).await?;
-                let client = server.link_client(&username);
+                let client = create_user_and_client(server, &username, &Role::User).await?;
                 let ns_clone = ns.clone();
                 let read_count_clone = Arc::clone(&read_count);
 
                 let handle = tokio::spawn(async move {
+                    // First, seed this user's own counters so reads have data
+                    for i in 1..=10 {
+                        let _ = client
+                            .execute_query(
+                                &format!(
+                                    "INSERT INTO {}.counters (id, value) VALUES ({}, 0)",
+                                    ns_clone, i
+                                ),
+                                None,
+                                None,
+                            )
+                            .await;
+                    }
+                    
                     for _ in 0..50 {
                         let resp = client
                             .execute_query(

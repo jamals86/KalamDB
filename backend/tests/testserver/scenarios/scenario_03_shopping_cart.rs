@@ -95,11 +95,19 @@ async fn test_scenario_03_shopping_cart_parallel() {
             let user_count = 10;
             let success_count = Arc::new(AtomicUsize::new(0));
 
-            let handles: Vec<_> = (0..user_count)
-                .map(|user_idx| {
+            // Pre-create all users and their clients
+            let mut clients = Vec::new();
+            for user_idx in 0..user_count {
+                let username = format!("shopper_{}", user_idx);
+                let client = create_user_and_client(server, &username, &Role::User).await?;
+                clients.push((user_idx, client));
+            }
+
+            let handles: Vec<_> = clients
+                .into_iter()
+                .map(|(user_idx, client)| {
                     let ns = ns.clone();
                     let success = Arc::clone(&success_count);
-                    let client = server.link_client(&format!("shopper_{}", user_idx));
 
                     tokio::spawn(async move {
 
@@ -227,7 +235,7 @@ async fn test_scenario_03_shopping_cart_parallel() {
             let u0_items: Vec<i64> = resp
                 .rows_as_maps()
                 .iter()
-                .filter_map(|r: &HashMap<String, JsonValue>| r.get("id").and_then(|v| v.as_i64()))
+                .filter_map(|r: &HashMap<String, JsonValue>| r.get("id").and_then(json_to_i64))
                 .collect();
 
             let resp = u1_client
@@ -236,7 +244,7 @@ async fn test_scenario_03_shopping_cart_parallel() {
             let u1_items: Vec<i64> = resp
                 .rows_as_maps()
                 .iter()
-                .filter_map(|r: &HashMap<String, JsonValue>| r.get("id").and_then(|v| v.as_i64()))
+                .filter_map(|r: &HashMap<String, JsonValue>| r.get("id").and_then(json_to_i64))
                 .collect();
 
             // Check no overlap

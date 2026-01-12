@@ -264,7 +264,7 @@ async fn test_scenario_01_chat_app_core() {
                 .execute_query(&format!("SELECT id FROM {}.messages ORDER BY id", ns), None, None)
                 .await?;
             let mut ids: Vec<i64> = resp.rows_as_maps().iter()
-                .filter_map(|r| r.get("id").and_then(|v| v.as_i64()))
+                .filter_map(|r| r.get("id").and_then(json_to_i64))
                 .collect();
             let unique_count = {
                 let mut unique = ids.clone();
@@ -407,11 +407,7 @@ async fn test_scenario_01_stream_table_ttl() {
             let resp = server
                 .execute_sql(&format!("SELECT COUNT(*) as cnt FROM {}.typing_events", ns))
                 .await?;
-            let count_before: i64 = get_rows(&resp)
-                .first()
-                .and_then(|r| r.first())
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
+            let count_before = resp.get_i64("cnt").unwrap_or(0);
             assert_eq!(count_before, 1, "Should see typing event immediately");
 
             // Wait for TTL to expire (plus buffer)
@@ -421,11 +417,7 @@ async fn test_scenario_01_stream_table_ttl() {
             let resp = server
                 .execute_sql(&format!("SELECT COUNT(*) as cnt FROM {}.typing_events", ns))
                 .await?;
-            let count_after: i64 = get_rows(&resp)
-                .first()
-                .and_then(|r| r.first())
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
+            let count_after = resp.get_i64("cnt").unwrap_or(0);
             // TTL eviction might not be immediate, so we accept 0 or 1
             assert!(count_after <= 1, "Event should be evicted after TTL");
 

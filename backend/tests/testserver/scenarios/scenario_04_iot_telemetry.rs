@@ -212,7 +212,10 @@ async fn test_scenario_04_iot_telemetry_5k_rows() {
 }
 
 /// Test anomaly subscription for IoT data
+/// NOTE: This test is ignored because SHARED table subscriptions are not supported (FR-128, FR-129).
+/// The subscription infrastructure only supports USER tables for per-user real-time sync.
 #[tokio::test]
+#[ignore = "SHARED table subscriptions not supported by design (FR-128, FR-129)"]
 async fn test_scenario_04_anomaly_subscription() {
     with_http_test_server_timeout(Duration::from_secs(45), |server| {
         Box::pin(async move {

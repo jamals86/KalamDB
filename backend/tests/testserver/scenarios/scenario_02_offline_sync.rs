@@ -132,8 +132,10 @@ async fn test_scenario_02_offline_sync_parallel() {
                                     batch_count += 1;
                                     for row in &rows {
                                         total_rows += 1;
-                                        if let Some(id) = row.get("id").and_then(|v| v.as_i64()) {
-                                            seen_ids.insert(id);
+                                        if let Some(id_val) = row.get("id") {
+                                            if let Some(id) = json_to_i64(id_val) {
+                                                seen_ids.insert(id);
+                                            }
                                         }
                                     }
                                     // Check if last batch
@@ -238,6 +240,9 @@ async fn test_scenario_02_offline_drift_resume() {
                     .await?;
                 assert!(resp.success(), "Insert initial item {}", i);
             }
+
+            // Small delay to ensure data is committed/visible
+            sleep(Duration::from_millis(500)).await;
 
             // Subscribe to get initial snapshot
             let sql = format!("SELECT * FROM {}.items ORDER BY id", ns);

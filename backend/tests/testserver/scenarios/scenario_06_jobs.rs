@@ -121,7 +121,7 @@ async fn test_scenario_06_jobs_lifecycle() {
                 )
                 .await?;
             let ids: Vec<i64> = resp.rows_as_maps().iter()
-                .filter_map(|r| r.get("id").and_then(|v| v.as_i64()))
+                .filter_map(|r| r.get("id").and_then(json_to_i64))
                 .collect();
             let unique_count = {
                 let mut unique = ids.clone();
