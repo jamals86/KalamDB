@@ -124,6 +124,15 @@ impl StatementHandler for UpdateHandler {
                     // T064: Get actual PK column name from provider instead of assuming "id"
                     let pk_column = provider.primary_key_field_name();
 
+                    // PK updates are not supported: the UPDATE fast-path targets a single row via PK filter.
+                    // Allowing the PK column to change would require row relocation and strict uniqueness checks.
+                    if updates.get(pk_column).is_some() {
+                        return Err(KalamDbError::InvalidOperation(format!(
+                            "UPDATE cannot modify primary key column '{}'",
+                            pk_column
+                        )));
+                    }
+
                     // Check if WHERE clause targets PK for fast path
                     let id_value_opt =
                         self.extract_row_id_for_column(&where_pair, pk_column, &params)?;
@@ -188,6 +197,14 @@ impl StatementHandler for UpdateHandler {
                     .downcast_ref::<crate::providers::SharedTableProvider>()
                 {
                     let pk_column = provider.primary_key_field_name();
+
+                    if updates.get(pk_column).is_some() {
+                        return Err(KalamDbError::InvalidOperation(format!(
+                            "UPDATE cannot modify primary key column '{}'",
+                            pk_column
+                        )));
+                    }
+
                     if let Some(id_value) =
                         self.extract_row_id_for_column(&where_pair, pk_column, &params)?
                     {

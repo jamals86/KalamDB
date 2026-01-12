@@ -63,7 +63,11 @@ async fn test_stress_smoke_over_http() {
             let resp = server
                 .execute_sql(&format!("CREATE NAMESPACE {}", ns))
                 .await?;
-            assert_eq!(resp.status, ResponseStatus::Success);
+            anyhow::ensure!(
+                resp.status == ResponseStatus::Success,
+                "CREATE NAMESPACE failed: {:?}",
+                resp.error
+            );
 
             let user = format!("stress_user_{}", suffix);
             let auth = create_user(server, &user).await?;
@@ -71,13 +75,17 @@ async fn test_stress_smoke_over_http() {
             let resp = server
                 .execute_sql_with_auth(
                     &format!(
-                        "CREATE TABLE {}.stress_data (id INT PRIMARY KEY, value TEXT) WITH (TYPE='USER')",
+                        "CREATE TABLE {}.stress_data (id INT PRIMARY KEY, value TEXT) WITH (TYPE='USER', STORAGE_ID='local')",
                         ns
                     ),
                     &auth,
                 )
                 .await?;
-            assert_eq!(resp.status, ResponseStatus::Success);
+            anyhow::ensure!(
+                resp.status == ResponseStatus::Success,
+                "CREATE TABLE failed: {:?}",
+                resp.error
+            );
 
             // Concurrent writers (small, deterministic).
             let writer_futures = (0..5).map(|writer| {
@@ -106,10 +114,13 @@ async fn test_stress_smoke_over_http() {
             anyhow::ensure!(cnt == 50, "expected 50 rows, got {}", cnt);
 
             // Basic cleanup: DROP TABLE should succeed.
-            let resp = server
-                .execute_sql_with_auth(&format!("DROP TABLE {}.stress_data", ns), &auth)
-                .await?;
-            assert_eq!(resp.status, ResponseStatus::Success);
+            // Note: DROP TABLE currently requires admin privileges.
+            let resp = server.execute_sql(&format!("DROP TABLE {}.stress_data", ns)).await?;
+            anyhow::ensure!(
+                resp.status == ResponseStatus::Success,
+                "DROP TABLE failed: {:?}",
+                resp.error
+            );
 
             Ok(())
         })

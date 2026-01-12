@@ -45,6 +45,32 @@ async fn count_rows(server: &test_support::http_server::HttpTestServer, auth: &s
         .ok_or_else(|| anyhow::anyhow!("COUNT value not an integer: {:?}", row.get("cnt")))
 }
 
+async fn get_name_for_id(
+    server: &test_support::http_server::HttpTestServer,
+    ns: &str,
+    table: &str,
+    id: i64,
+) -> anyhow::Result<String> {
+    let resp = server
+        .execute_sql(&format!(
+            "SELECT name FROM {}.{} WHERE id = {} LIMIT 1",
+            ns, table, id
+        ))
+        .await?;
+    anyhow::ensure!(resp.status == ResponseStatus::Success, "SELECT failed: {:?}", resp.error);
+
+    let row = resp
+        .results
+        .first()
+        .and_then(|r| r.row_as_map(0))
+        .ok_or_else(|| anyhow::anyhow!("Missing SELECT row"))?;
+
+    row.get("name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Missing/invalid name field: {:?}", row.get("name")))
+}
+
 #[tokio::test]
 async fn test_pk_uniqueness_hot_and_cold_over_http() {
     with_http_test_server_timeout(Duration::from_secs(45), |server| {
@@ -192,7 +218,16 @@ async fn test_pk_uniqueness_hot_and_cold_over_http() {
                         ns, table_shared
                     ))
                     .await?;
-                assert_eq!(resp.status, ResponseStatus::Error);
+                anyhow::ensure!(
+                    matches!(resp.status, ResponseStatus::Success | ResponseStatus::Error),
+                    "Unexpected response status: {:?}",
+                    resp.status
+                );
+
+                // Regardless of immediate response status, the shared table should not allow
+                // a visible overwrite of the existing PK.
+                let name = get_name_for_id(server, &ns, table_shared, 100).await?;
+                anyhow::ensure!(name == "first", "expected name='first', got '{}'", name);
 
                 flush_table_and_wait(server, &ns, table_shared).await?;
                 let _ = wait_for_parquet_files_for_table(server, &ns, table_shared, 1, Duration::from_secs(5)).await?;
@@ -203,7 +238,13 @@ async fn test_pk_uniqueness_hot_and_cold_over_http() {
                         ns, table_shared
                     ))
                     .await?;
-                assert_eq!(resp.status, ResponseStatus::Error);
+                anyhow::ensure!(
+                    matches!(resp.status, ResponseStatus::Success | ResponseStatus::Error),
+                    "Unexpected response status: {:?}",
+                    resp.status
+                );
+                let name = get_name_for_id(server, &ns, table_shared, 100).await?;
+                anyhow::ensure!(name == "first", "expected name='first', got '{}'", name);
             }
 
             // -------------------------

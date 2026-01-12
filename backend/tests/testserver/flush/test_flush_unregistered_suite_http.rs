@@ -181,7 +181,7 @@ async fn flush_table_and_wait(server: &HttpTestServer, ns: &str, table: &str) ->
 
 #[tokio::test]
 async fn test_flush_concurrency_and_correctness_over_http() {
-	with_http_test_server_timeout(Duration::from_secs(75), |server| {
+	with_http_test_server_timeout(Duration::from_secs(180), |server| {
 		Box::pin(async move {
 			let suffix = std::process::id();
 

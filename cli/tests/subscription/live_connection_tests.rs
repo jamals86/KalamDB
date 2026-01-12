@@ -18,6 +18,10 @@ use std::time::Duration;
 #[test]
 fn test_live_subscription_default_options() {
     require_server_running();
+    if !is_cluster_mode() {
+        println!("[SKIPPED] Test requires cluster mode (3+ nodes). Run with cluster for full test.");
+        return;
+    }
     
     let namespace = generate_unique_namespace("conn_test");
     let table = generate_unique_table("default_opts");
@@ -79,6 +83,10 @@ fn test_live_subscription_default_options() {
 #[test]
 fn test_live_subscription_with_batch_size() {
     require_server_running();
+    if !is_cluster_mode() {
+        println!("[SKIPPED] Test requires cluster mode (3+ nodes). Run with cluster for full test.");
+        return;
+    }
     
     let namespace = generate_unique_namespace("conn_test");
     let table = generate_unique_table("batch_size");
@@ -146,6 +154,10 @@ fn test_live_subscription_with_batch_size() {
 #[test]
 fn test_live_subscription_with_last_rows() {
     require_server_running();
+    if !is_cluster_mode() {
+        println!("[SKIPPED] Test requires cluster mode (3+ nodes). Run with cluster for full test.");
+        return;
+    }
     
     let namespace = generate_unique_namespace("conn_test");
     let table = generate_unique_table("last_rows");
@@ -219,6 +231,10 @@ fn test_live_subscription_with_last_rows() {
 #[test]
 fn test_live_subscription_seq_id_tracking() {
     require_server_running();
+    if !is_cluster_mode() {
+        println!("[SKIPPED] Test requires cluster mode (3+ nodes). Run with cluster for full test.");
+        return;
+    }
     
     let namespace = generate_unique_namespace("conn_test");
     let table = generate_unique_table("seq_track");
@@ -297,6 +313,10 @@ fn test_live_subscription_seq_id_tracking() {
 #[test]
 fn test_live_multiple_subscriptions() {
     require_server_running();
+    if !is_cluster_mode() {
+        println!("[SKIPPED] Test requires cluster mode (3+ nodes). Run with cluster for full test.");
+        return;
+    }
     
     let namespace = generate_unique_namespace("conn_test");
     let table = generate_unique_table("multi_sub");
@@ -395,6 +415,10 @@ fn test_connection_timeout_option() {
 #[test]
 fn test_live_subscription_change_event_order() {
     require_server_running();
+    if !is_cluster_mode() {
+        println!("[SKIPPED] Test requires cluster mode (3+ nodes). Run with cluster for full test.");
+        return;
+    }
     
     let namespace = generate_unique_namespace("conn_test");
     let table = generate_unique_table("order_test");

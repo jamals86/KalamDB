@@ -96,7 +96,10 @@ async fn test_storage_management_over_http() {
 
             // ALTER STORAGE
             let resp = server
-                .execute_sql(&format!("ALTER STORAGE {} NAME 'Archive Storage Updated'", storage_id))
+                .execute_sql(&format!(
+                    "ALTER STORAGE {} SET NAME 'Archive Storage Updated'",
+                    storage_id
+                ))
                 .await?;
             anyhow::ensure!(resp.status == ResponseStatus::Success, "ALTER STORAGE failed: {:?}", resp.error);
 

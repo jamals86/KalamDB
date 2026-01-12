@@ -22,6 +22,31 @@ async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<
     Ok(HttpTestServer::basic_auth_header(username, password))
 }
 
+async fn lookup_user_id(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
+    let resp = server
+        .execute_sql(&format!(
+            "SELECT user_id FROM system.users WHERE username='{}'",
+            username
+        ))
+        .await?;
+    anyhow::ensure!(
+        resp.status == ResponseStatus::Success,
+        "SELECT system.users failed: {:?}",
+        resp.error
+    );
+
+    let row = resp
+        .results
+        .first()
+        .and_then(|r| r.row_as_map(0))
+        .ok_or_else(|| anyhow::anyhow!("Missing system.users row for {}", username))?;
+
+    row.get("user_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Missing user_id for {}", username))
+}
+
 #[tokio::test]
 async fn test_user_tables_lifecycle_and_isolation_over_http() {
     with_http_test_server_timeout(Duration::from_secs(60), |server| {
@@ -38,6 +63,8 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() {
             let user2 = format!("user2_{}", suffix);
             let auth1 = create_user(server, &user1).await?;
             let auth2 = create_user(server, &user2).await?;
+            let user1_id = lookup_user_id(server, &user1).await?;
+            let user2_id = lookup_user_id(server, &user2).await?;
 
             // -----------------------------------------------------------------
             // Create + insert
@@ -185,10 +212,24 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() {
 
                 flush_table_and_wait(server, &ns, table).await?;
 
-                let files_user1 =
-                    wait_for_parquet_files_for_user_table(server, &ns, table, &user1, 1, Duration::from_secs(10)).await?;
-                let files_user2 =
-                    wait_for_parquet_files_for_user_table(server, &ns, table, &user2, 1, Duration::from_secs(10)).await?;
+                let files_user1 = wait_for_parquet_files_for_user_table(
+                    server,
+                    &ns,
+                    table,
+                    &user1_id,
+                    1,
+                    Duration::from_secs(10),
+                )
+                .await?;
+                let files_user2 = wait_for_parquet_files_for_user_table(
+                    server,
+                    &ns,
+                    table,
+                    &user2_id,
+                    1,
+                    Duration::from_secs(10),
+                )
+                .await?;
 
                 let dir_user1 = files_user1
                     .first()

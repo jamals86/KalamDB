@@ -354,6 +354,32 @@ impl InsertHandler {
         let value = match expr {
             Expr::Value(val_with_span) => {
                 match &val_with_span.value {
+                    sqlparser::ast::Value::Placeholder(ph) => {
+                        // Parameter placeholder: $1, $2, etc.
+                        let stripped = ph.strip_prefix('$').ok_or_else(|| {
+                            KalamDbError::InvalidOperation(format!(
+                                "Unsupported placeholder format: {}",
+                                ph
+                            ))
+                        })?;
+
+                        let param_num: usize = stripped.parse().map_err(|_| {
+                            KalamDbError::InvalidOperation(format!(
+                                "Invalid placeholder: {}",
+                                ph
+                            ))
+                        })?;
+
+                        if param_num == 0 || param_num > params.len() {
+                            return Err(KalamDbError::InvalidOperation(format!(
+                                "Parameter ${} out of range (have {} parameters)",
+                                param_num,
+                                params.len()
+                            )));
+                        }
+
+                        Ok(params[param_num - 1].clone())
+                    }
                     sqlparser::ast::Value::Number(n, _) => {
                         // Try as i64 first, then f64
                         if let Ok(i) = n.parse::<i64>() {
@@ -461,6 +487,28 @@ impl InsertHandler {
     ) -> Result<JsonValue, KalamDbError> {
         match expr {
             Expr::Value(val_with_span) => match &val_with_span.value {
+                sqlparser::ast::Value::Placeholder(ph) => {
+                    let stripped = ph.strip_prefix('$').ok_or_else(|| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Unsupported placeholder format: {}",
+                            ph
+                        ))
+                    })?;
+
+                    let param_num: usize = stripped.parse().map_err(|_| {
+                        KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", ph))
+                    })?;
+
+                    if param_num == 0 || param_num > params.len() {
+                        return Err(KalamDbError::InvalidOperation(format!(
+                            "Parameter ${} out of range (have {} parameters)",
+                            param_num,
+                            params.len()
+                        )));
+                    }
+
+                    scalar_value_to_json(&params[param_num - 1])
+                }
                 sqlparser::ast::Value::Number(n, _) => {
                     if let Ok(i) = n.parse::<i64>() {
                         Ok(JsonValue::Number(i.into()))

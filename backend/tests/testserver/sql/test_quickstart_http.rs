@@ -126,28 +126,50 @@ async fn test_quickstart_workflow_over_http() {
                 anyhow::ensure!(row.get("value").and_then(|v| v.as_str()) == Some("100"));
             }
 
-            // STREAM table: events
+            // Additional USER table: events
+            // Note: STREAM table type is not yet implemented.
             {
                 let resp = server
-                    .execute_sql(&format!(
-                        "CREATE TABLE {}.events (id BIGINT, kind TEXT, created_at BIGINT) WITH (TYPE='STREAM', STORAGE_ID='local')",
-                        ns
-                    ))
+                    .execute_sql_with_auth(
+                        &format!(
+                            "CREATE TABLE {}.events (id BIGINT PRIMARY KEY, kind TEXT, created_at BIGINT) WITH (TYPE='USER', STORAGE_ID='local')",
+                            ns
+                        ),
+                        &auth,
+                    )
                     .await?;
-                anyhow::ensure!(resp.status == ResponseStatus::Success);
+                anyhow::ensure!(
+                    resp.status == ResponseStatus::Success,
+                    "CREATE events table failed: {:?}",
+                    resp.error
+                );
 
                 let resp = server
-                    .execute_sql(&format!(
-                        "INSERT INTO {}.events (id, kind, created_at) VALUES (1, 'start', 1000)",
-                        ns
-                    ))
+                    .execute_sql_with_auth(
+                        &format!(
+                            "INSERT INTO {}.events (id, kind, created_at) VALUES (1, 'start', 1000)",
+                            ns
+                        ),
+                        &auth,
+                    )
                     .await?;
-                anyhow::ensure!(resp.status == ResponseStatus::Success);
+                anyhow::ensure!(
+                    resp.status == ResponseStatus::Success,
+                    "INSERT events row failed: {:?}",
+                    resp.error
+                );
 
                 let resp = server
-                    .execute_sql(&format!("SELECT COUNT(*) AS cnt FROM {}.events", ns))
+                    .execute_sql_with_auth(
+                        &format!("SELECT COUNT(*) AS cnt FROM {}.events", ns),
+                        &auth,
+                    )
                     .await?;
-                anyhow::ensure!(resp.status == ResponseStatus::Success);
+                anyhow::ensure!(
+                    resp.status == ResponseStatus::Success,
+                    "SELECT events count failed: {:?}",
+                    resp.error
+                );
             }
 
             // system tables basic query

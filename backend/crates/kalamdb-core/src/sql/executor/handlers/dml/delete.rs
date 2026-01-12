@@ -5,6 +5,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::providers::base::BaseTableProvider; // Phase 13.6: Bring trait methods into scope
+use crate::providers::arrow_json_conversion::scalar_value_to_json;
 use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
@@ -12,6 +13,7 @@ use async_trait::async_trait;
 use kalamdb_commons::models::{NamespaceId, TableName, TableId, UserId};
 use kalamdb_raft::{DataResponse, SharedDataCommand, UserDataCommand};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
+use serde_json::Value as JsonValue;
 
 /// Handler for DELETE statements
 ///
@@ -36,13 +38,13 @@ impl StatementHandler for DeleteHandler {
     async fn execute(
         &self,
         statement: SqlStatement,
-        _params: Vec<ScalarValue>,
+        params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         // T064: Validate parameters before write using config from AppContext
         let app_context = AppContext::get();
         let limits = ParameterLimits::from_config(&app_context.config().execution);
-        validate_parameters(&_params, &limits)?;
+        validate_parameters(&params, &limits)?;
 
         if !matches!(statement.kind(), SqlStatementKind::Delete(_)) {
             return Err(KalamDbError::InvalidOperation(
@@ -96,7 +98,7 @@ impl StatementHandler for DeleteHandler {
 
                     // Try to extract simple WHERE pk = value first (fast path)
                     let pks_to_delete = if let Some(row_id) =
-                        self.extract_row_id_for_column(&where_pair, pk_column)?
+                        self.extract_row_id_for_column(&where_pair, pk_column, &params)?
                     {
                         vec![row_id]
                     } else if has_where_clause {
@@ -165,7 +167,7 @@ impl StatementHandler for DeleteHandler {
                     let pk_column = provider.primary_key_field_name();
 
                     // Collect PKs to delete
-                    let pks_to_delete: Vec<String> = if let Some(row_id) = self.extract_row_id_for_column(&where_pair, pk_column)? {
+                    let pks_to_delete: Vec<String> = if let Some(row_id) = self.extract_row_id_for_column(&where_pair, pk_column, &params)? {
                         // Single PK from simple WHERE clause
                         vec![row_id]
                     } else if has_where_clause {
@@ -222,7 +224,7 @@ impl StatementHandler for DeleteHandler {
 
                 let pk_column = provider.primary_key_field_name();
                 let pks_to_delete = if let Some(row_id) =
-                    self.extract_row_id_for_column(&where_pair, pk_column)?
+                    self.extract_row_id_for_column(&where_pair, pk_column, &params)?
                 {
                     vec![row_id]
                 } else {
@@ -400,12 +402,44 @@ impl DeleteHandler {
         &self,
         where_pair: &Option<(String, String)>,
         pk_column: &str,
+        params: &[ScalarValue],
     ) -> Result<Option<String>, KalamDbError> {
         if let Some((col, token)) = where_pair {
             if !col.eq_ignore_ascii_case(pk_column) {
                 return Ok(None);
             }
-            let t = token.trim();
+            let t = token.trim().trim_end_matches(';').trim();
+
+            // Parameter placeholder: $1, $2, etc.
+            if let Some(stripped) = t.strip_prefix('$') {
+                let param_num: usize = stripped.parse().map_err(|_| {
+                    KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", t))
+                })?;
+
+                if param_num == 0 || param_num > params.len() {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "Parameter ${} out of range (have {} parameters)",
+                        param_num,
+                        params.len()
+                    )));
+                }
+
+                let json = scalar_value_to_json(&params[param_num - 1])?;
+                let pk = match json {
+                    JsonValue::String(s) => s,
+                    JsonValue::Number(n) => n.to_string(),
+                    JsonValue::Bool(b) => b.to_string(),
+                    JsonValue::Null => {
+                        return Err(KalamDbError::InvalidOperation(
+                            "DELETE primary key parameter cannot be NULL".into(),
+                        ))
+                    }
+                    other => other.to_string(),
+                };
+
+                return Ok(Some(pk));
+            }
+
             let unquoted = t.trim_matches('\'').trim_matches('"');
             return Ok(Some(unquoted.to_string()));
         }
