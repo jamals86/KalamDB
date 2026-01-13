@@ -46,6 +46,7 @@ async fn count_rows(server: &HttpTestServer, auth: &str, ns: &str, table: &str) 
 }
 
 #[tokio::test]
+#[ntest::timeout(90000)] // 90 seconds - parameterized DML test
 async fn test_parameterized_dml_over_http() {
     (async {
     let server = super::test_support::http_server::get_global_server().await;

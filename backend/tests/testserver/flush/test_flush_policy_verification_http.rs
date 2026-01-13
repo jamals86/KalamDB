@@ -55,6 +55,7 @@ async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<
 }
 
 #[tokio::test]
+#[ntest::timeout(180000)] // 3 minutes max for comprehensive flush policy test
 async fn test_flush_policy_and_parquet_output_over_http() {
     (async {
     let server = super::test_support::http_server::get_global_server().await;

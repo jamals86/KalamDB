@@ -123,3 +123,4 @@ hex = { workspace = true }
 rand = { workspace = true }
 once_cell = { workspace = true }
 serial_test = { workspace = true }
+ntest = { workspace = true }

@@ -7,6 +7,7 @@ use super::test_support::http_server::HttpTestServer;
 use tokio::time::Duration;
 
 #[tokio::test]
+#[ntest::timeout(60000)] // 60 seconds - namespace validation test
 async fn test_namespace_validation_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
     // CREATE TABLE should fail when namespace is missing.

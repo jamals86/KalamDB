@@ -18,6 +18,7 @@ async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<
 }
 
 #[tokio::test]
+#[ntest::timeout(60000)] // 60 seconds - comprehensive quickstart test
 async fn test_quickstart_workflow_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
     let suffix = std::process::id();

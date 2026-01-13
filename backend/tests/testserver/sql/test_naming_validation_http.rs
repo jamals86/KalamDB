@@ -4,6 +4,7 @@
 use kalam_link::models::ResponseStatus;
 
 #[tokio::test]
+#[ntest::timeout(60000)] // 60 seconds - naming validation test
 async fn test_naming_validation_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
     // Reserved namespace names

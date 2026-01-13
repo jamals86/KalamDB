@@ -19,7 +19,7 @@ async fn wait_for_flush_jobs_settled(
 	ns: &str,
 	table: &str,
 ) -> anyhow::Result<()> {
-	let deadline = Instant::now() + Duration::from_secs(10);
+	let deadline = Instant::now() + Duration::from_secs(5);
 
 	loop {
 		let resp = server
@@ -178,6 +178,7 @@ async fn flush_table_and_wait(server: &HttpTestServer, ns: &str, table: &str) ->
 }
 
 #[tokio::test]
+#[ntest::timeout(180000)] // 3 minutes max for this comprehensive test
 async fn test_flush_concurrency_and_correctness_over_http() {
 	(async {
 	let server = super::test_support::http_server::get_global_server().await;

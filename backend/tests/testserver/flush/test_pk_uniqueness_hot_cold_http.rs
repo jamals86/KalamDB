@@ -70,6 +70,7 @@ async fn get_name_for_id(
 }
 
 #[tokio::test]
+#[ntest::timeout(180000)] // 3 minutes max for comprehensive PK uniqueness test
 async fn test_pk_uniqueness_hot_and_cold_over_http() {
     (async {
     let server = super::test_support::http_server::get_global_server().await;

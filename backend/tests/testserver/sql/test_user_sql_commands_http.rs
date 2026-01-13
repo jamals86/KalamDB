@@ -8,6 +8,7 @@ use kalamdb_commons::UserName;
 // This test requires a config override: `enforce_password_complexity = true`.
 // Once we support per-test config overrides for the global server, this can be migrated.
 #[tokio::test]
+#[ntest::timeout(60000)] // 60 seconds - user SQL commands test
 async fn test_user_sql_commands_over_http() {
     super::test_support::http_server::with_http_test_server_config(
         |cfg| {
