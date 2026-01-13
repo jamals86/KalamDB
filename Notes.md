@@ -440,6 +440,17 @@ Parquet Querying Limitation: After flush, data is removed from RocksDB but queri
 │  Batched (100/batch)    │   2000  │    0.04s │   51687.4/s  │
 │  Parallel (10 threads)  │   1000  │    0.09s │   11409.2/s  │
 └────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────┐
+│                    BENCHMARK RESULTS                       │
+├────────────────────────────────────────────────────────────┤
+│  Test Type              │  Rows   │  Time    │  Rate       │
+├────────────────────────────────────────────────────────────┤
+│  Single-row inserts     │    200  │    0.30s │     675.8/s  │
+│  Batched (100/batch)    │   2000  │    0.04s │   45610.3/s  │
+│  Parallel (10 threads)  │      1  │    0.47s │       2.1/s  │
+└────────────────────────────────────────────────────────────┘
+
 14) [MEDIUM] In the cli add a command to kill a live query by its live id
 15) [LOW] for better tracking the integration tests should the names print also the folder path as well with the test name
 17) [MEDIUM] why we have 2 implementations for flushing: user_table_flush.rs and shared_table_flush.rs can we merge them into one? i believe they share a lot of code, we can reduce maintenance burden by having only one implementation, or can have a parent class with common code and have 2 child classes for each type of flush

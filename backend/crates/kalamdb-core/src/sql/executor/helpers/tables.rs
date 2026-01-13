@@ -78,6 +78,13 @@ pub fn save_table_definition(
                 .cloned()
                 .unwrap_or(ColumnDefault::None);
 
+            log::debug!(
+                "save_table_definition: Column '{}' - is_pk={}, default={:?}",
+                field.name(),
+                is_pk,
+                default_val
+            );
+
             Ok(ColumnDefinition::new(
                 (idx + 1) as u64,    // column_id is 1-indexed
                 field.name().clone(),

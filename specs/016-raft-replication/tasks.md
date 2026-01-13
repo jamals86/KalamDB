@@ -404,4 +404,4 @@ Display the clusterName here and which node we are connecting to: ● KalamDB[{{
     ✗ Server error (400): Statement 1 failed: Execution error: Schema error: No field named jamal. Valid fields are system.users.user_id, system.users.username, system.users.password_hash, system.users.role, system.users.email, system.users.auth_type, system.users.auth_data, system.users.storage_mode, system.users.storage_id, system.users.created_at, system.users.updated_at, system.users.last_seen, system.users.deleted_at.
 
 43) For shared tables add indexes which uses the same secondary indexes we already have and also passing them to datafusion as well
-
+44) Change all tests instead of using VARCHAR use TEXT

@@ -605,15 +605,13 @@ async fn test_cli_flush_table() {
     });
     let params = params.as_ref().unwrap_or(&serde_json::Value::Null);
 
+    // table_id is serialized as "namespace.table" format
+    let table_id = params["table_id"].as_str().unwrap_or("");
+    let expected_table_id = format!("{}.metrics", namespace_name);
     assert_eq!(
-        params["namespace_id"].as_str().unwrap_or(""),
-        &namespace_name,
-        "Job parameters should reference correct namespace"
-    );
-    assert_eq!(
-        params["table_name"].as_str().unwrap_or(""),
-        "metrics",
-        "Job parameters should reference correct table name"
+        table_id,
+        expected_table_id,
+        "Job parameters should reference correct table_id (namespace.table format)"
     );
 
     // Actively poll until the job leaves 'running' (avoid false positives on stuck jobs)

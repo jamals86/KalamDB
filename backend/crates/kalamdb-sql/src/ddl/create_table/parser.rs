@@ -19,7 +19,16 @@ static LEGACY_CREATE_PREFIX_RE: Lazy<Regex> =
 impl CreateTableStatement {
     /// Parse a SQL statement into a CreateTableStatement
     pub fn parse(sql: &str, default_namespace: &str) -> Result<Self, String> {
-        let (normalized_sql, legacy_table_type) = normalize_create_table_sql(sql);
+        let (mut normalized_sql, legacy_table_type) = normalize_create_table_sql(sql);
+
+        // Rewrite MySQL-style AUTO_INCREMENT into an explicit DEFAULT expression
+        // so the parser consistently assigns SNOWFLAKE_ID() as the default value.
+        // This makes AUTO_INCREMENT work even when the dialect treats it as
+        // dialect-specific tokens or splits it into separate words.
+        normalized_sql = normalized_sql.replace("AUTO_INCREMENT", "DEFAULT SNOWFLAKE_ID()");
+        normalized_sql = normalized_sql.replace("auto_increment", "DEFAULT SNOWFLAKE_ID()");
+        normalized_sql = normalized_sql.replace("AUTO INCREMENT", "DEFAULT SNOWFLAKE_ID()");
+        normalized_sql = normalized_sql.replace("auto increment", "DEFAULT SNOWFLAKE_ID()");
 
         // Use PostgreSqlDialect because GenericDialect has issues with TEXT/STRING PRIMARY KEY
         // in sqlparser 0.59.0. PostgreSqlDialect properly handles TEXT as a data type.
@@ -271,10 +280,12 @@ impl CreateTableStatement {
                     // Check column options (PRIMARY KEY, DEFAULT, NOT NULL)
                     let mut col_is_nullable = is_nullable; // Default from type mapping
 
+                    println!("DEBUG: Column '{}' - {} options:", col_name, col.options.len());
                     for option in col.options {
-                        match option.option {
+                        match &option.option {
                             ColumnOption::Unique { is_primary, .. } => {
-                                if is_primary {
+                                println!("  - UNIQUE (is_primary={})", is_primary);
+                                if *is_primary {
                                     if primary_key_column.is_some() {
                                         return Err(
                                             "Multiple PRIMARY KEY definitions found".to_string()
@@ -285,12 +296,14 @@ impl CreateTableStatement {
                                 }
                             }
                             ColumnOption::NotNull => {
+                                println!("  - NOT NULL");
                                 col_is_nullable = false;
                             }
                             ColumnOption::Null => {
-                                col_is_nullable = true;
+                                println!("  - NULL");
                             }
                             ColumnOption::Default(expr) => {
+                                println!("  - DEFAULT");
                                 let default_spec = expr_to_column_default(&expr);
                                 column_defaults.insert(col_name.clone(), default_spec);
                             }
@@ -302,8 +315,8 @@ impl CreateTableStatement {
                                     .collect::<Vec<_>>()
                                     .join(" ");
                                 println!(
-                                    "DEBUG: DialectSpecific tokens for column {}: {}",
-                                    col_name, s
+                                    "  - DIALECT SPECIFIC: {}",
+                                    s
                                 );
                                 if s.to_uppercase().contains("AUTO_INCREMENT") {
                                     println!(
@@ -317,7 +330,9 @@ impl CreateTableStatement {
                                     );
                                 }
                             }
-                            _ => {} // Ignore other options for now
+                            _ => {
+                                println!("  - OTHER");
+                            }
                         }
                     }
 

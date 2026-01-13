@@ -114,6 +114,7 @@ impl StatementHandler for InsertHandler {
         }
 
         let provided_columns: HashSet<&str> = columns.iter().map(|c| c.as_str()).collect();
+        // Get columns that need to be filled with defaults
         let default_columns: Vec<&kalamdb_commons::schemas::ColumnDefinition> = table_def
             .columns
             .iter()
@@ -122,6 +123,22 @@ impl StatementHandler for InsertHandler {
                     && !col_def.default_value.is_none()
             })
             .collect();
+        
+        // DEBUG: Log which columns need defaults
+        log::info!(
+            "InsertHandler: Table {} has {} columns total, {} provided in INSERT, {} need defaults",
+            table_id,
+            table_def.columns.len(),
+            provided_columns.len(),
+            default_columns.len()
+        );
+        for col_def in &default_columns {
+            log::info!(
+                "  - Column '{}' has default: {}",
+                col_def.column_name,
+                col_def.default_value.to_sql()
+            );
+        }
         let sys_cols = self.app_context.system_columns_service();
 
         // Create a map of column name to type for fast lookup
