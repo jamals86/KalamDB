@@ -1,7 +1,5 @@
 //! SQL-based user management commands over the real HTTP SQL API.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
@@ -11,13 +9,13 @@ use kalamdb_commons::UserName;
 // Once we support per-test config overrides for the global server, this can be migrated.
 #[tokio::test]
 async fn test_user_sql_commands_over_http() {
-    test_support::http_server::with_http_test_server_config(
+    super::test_support::http_server::with_http_test_server_config(
         |cfg| {
             cfg.auth.enforce_password_complexity = true;
         },
         |server| {
             Box::pin(async move {
-                let admin_auth = test_support::http_server::HttpTestServer::basic_auth_header(
+                let admin_auth = super::test_support::http_server::HttpTestServer::basic_auth_header(
                     &UserName::new("root"),
                     "",
                 );
@@ -68,7 +66,7 @@ async fn test_user_sql_commands_over_http() {
                     .await?;
 
                 let regular_auth =
-                    test_support::http_server::HttpTestServer::basic_auth_header(
+                    super::test_support::http_server::HttpTestServer::basic_auth_header(
                         &UserName::new("regular_user"),
                         "Pass123!A",
                     );

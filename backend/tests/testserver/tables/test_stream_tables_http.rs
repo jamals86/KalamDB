@@ -1,13 +1,11 @@
 //! Stream table DML checks over the real HTTP SQL API.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use tokio::time::Duration;
 
 async fn create_stream_table(
-    server: &test_support::http_server::HttpTestServer,
+    server: &super::test_support::http_server::HttpTestServer,
     namespace: &str,
     table_name: &str,
 ) -> anyhow::Result<()> {
@@ -33,13 +31,13 @@ async fn create_stream_table(
 }
 
 #[tokio::test]
-async fn test_stream_tables_over_http() {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_stream_tables_over_http() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     let ns = format!("test_st_{}", std::process::id());
 
-            let response = server
-                .execute_sql(&format!("CREATE NAMESPACE {}", ns))
-                .await?;
+    let response = server
+        .execute_sql(&format!("CREATE NAMESPACE {}", ns))
+        .await?;
             assert_eq!(response.status, ResponseStatus::Success);
 
             create_stream_table(server, &ns, "events").await?;
@@ -75,3 +73,5 @@ async fn test_stream_tables_over_http() {
         ))
         .await?;
     assert_eq!(response.status, ResponseStatus::Success);
+    Ok(())
+}

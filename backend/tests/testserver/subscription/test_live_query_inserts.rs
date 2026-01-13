@@ -1,7 +1,5 @@
 //! Integration test for Live Query INSERT detection via WebSocket
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use futures_util::StreamExt;
 use kalam_link::models::ChangeEvent;
@@ -10,8 +8,8 @@ use tokio::time::Duration;
 
 /// Test basic INSERT detection via live query subscription
 #[tokio::test]
-async fn test_live_query_detects_inserts() {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_live_query_detects_inserts() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     let ns = format!("test_inserts_{}", std::process::id());
     let table = "messages";
 
@@ -105,4 +103,5 @@ async fn test_live_query_detects_inserts() {
     }
 
     assert_eq!(inserts_received, 10, "Expected 10 INSERT notifications");
+    Ok(())
 }

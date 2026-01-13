@@ -22,6 +22,8 @@ use std::sync::{Arc, OnceLock};
 /// atomic field stored inside `CachedTableData`. This avoids a separate
 /// timestamps map while keeping per-access work O(1) and avoiding any deep clones.
 pub struct SchemaRegistry {
+    //TODO: Pass appcontext instead of keeping passing it in each method?
+    
     /// Cache for table data (includes provider storage)
     table_cache: TableCache,
 

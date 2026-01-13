@@ -99,7 +99,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         messages_table.table_name.clone(),
     );
     schema_registry
-        .put_table_definition(&messages_table_id, &messages_table)
+        .put_table_definition(&base_session_context, &messages_table_id, &messages_table)
         .unwrap();
 
     let notifications_table = TableDefinition::new(
@@ -139,7 +139,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         notifications_table.table_name.clone(),
     );
     schema_registry
-        .put_table_definition(&notifications_table_id, &notifications_table)
+        .put_table_definition(&base_session_context, &notifications_table_id, &notifications_table)
         .unwrap();
 
     // Create connections manager first

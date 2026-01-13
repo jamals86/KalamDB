@@ -537,7 +537,7 @@ mod tests {
 
         // Register the provider in schema_registry
         schema_registry
-            .insert_provider(table_id.clone(), provider)
+            .insert_provider(app_context, table_id.clone(), provider)
             .expect("register provider");
 
         let fetcher =
@@ -682,7 +682,7 @@ mod tests {
         );
 
         schema_registry
-            .insert_provider(table_id.clone(), provider)
+            .insert_provider(app_context, table_id.clone(), provider)
             .expect("register provider");
 
         let fetcher =
@@ -865,7 +865,7 @@ mod tests {
         );
 
         schema_registry
-            .insert_provider(table_id.clone(), provider)
+            .insert_provider(app_context, table_id.clone(), provider)
             .expect("register provider");
 
         let fetcher =

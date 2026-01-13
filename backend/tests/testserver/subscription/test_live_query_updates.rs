@@ -1,7 +1,5 @@
 //! Integration test for Live Query UPDATE detection via WebSocket
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;
@@ -9,8 +7,8 @@ use tokio::time::Duration;
 
 /// Test UPDATE detection with old/new values
 #[tokio::test]
-async fn test_live_query_detects_updates() {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_live_query_detects_updates() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     let ns = format!("test_updates_{}", std::process::id());
     let table = "tasks";
 
@@ -126,4 +124,5 @@ async fn test_live_query_detects_updates() {
                     _ = &mut timeout => panic!("Timed out waiting for update"),
         }
     }
+    Ok(())
 }

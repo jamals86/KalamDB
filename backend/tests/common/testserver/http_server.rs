@@ -765,8 +765,8 @@ impl ClusterTestServer {
     /// Execute SQL on a random node in the cluster
     pub async fn execute_sql_on_random(&self, sql: &str) -> Result<QueryResponse> {
         use rand::Rng;
-        let mut rng = rand::thread_rng();
-        let index = rng.gen_range(0..3);
+        let mut rng = rand::rng();
+        let index = rng.random_range(0..3);
         self.nodes[index].execute_sql(sql).await
     }
 

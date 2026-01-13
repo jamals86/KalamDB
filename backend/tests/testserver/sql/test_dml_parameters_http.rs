@@ -5,13 +5,11 @@
 //! - Parameter validation (max 50 params, 512KB each)
 //! - Params not allowed with multi-statement batches
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
 use serde_json::json;
-use test_support::http_server::HttpTestServer;
+use super::test_support::http_server::HttpTestServer;
 use tokio::time::{sleep, Duration, Instant};
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
@@ -50,7 +48,7 @@ async fn count_rows(server: &HttpTestServer, auth: &str, ns: &str, table: &str) 
 #[tokio::test]
 async fn test_parameterized_dml_over_http() {
     (async {
-    let server = test_support::http_server::get_global_server().await;
+    let server = super::test_support::http_server::get_global_server().await;
     let suffix = std::process::id();
     let ns = format!("params_{}", suffix);
     let table = "items";

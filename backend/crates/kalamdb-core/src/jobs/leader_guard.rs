@@ -236,7 +236,7 @@ mod tests {
             match cmd {
                 MetaCommand::ClaimJob { job_id, node_id, .. } => {
                     if self.is_leader.load(Ordering::SeqCst) {
-                        Ok(MetaResponse::JobClaimed { job_id, node_id })
+                        Ok(MetaResponse::JobClaimed { job_id, node_id, message: "Job claimed successfully".to_string() })
                     } else {
                         Ok(MetaResponse::Error {
                             message: "Not leader".to_string(),

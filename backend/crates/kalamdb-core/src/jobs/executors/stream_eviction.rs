@@ -479,7 +479,7 @@ mod tests {
         let provider_trait: Arc<dyn TableProvider> = provider.clone();
         app_ctx
             .schema_registry()
-            .insert_provider(table_id.clone(), provider_trait)
+            .insert_provider(app_ctx, table_id.clone(), provider_trait)
             .expect("register provider");
 
         StreamTestHarness {

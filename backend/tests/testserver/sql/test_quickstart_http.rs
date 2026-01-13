@@ -1,12 +1,9 @@
 //! Quickstart end-to-end smoke over the real HTTP SQL API.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use test_support::http_server::HttpTestServer;
-use tokio::time::Duration;
+use super::test_support::http_server::HttpTestServer;
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
     let password = "UserPass123!";
@@ -21,8 +18,8 @@ async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<
 }
 
 #[tokio::test]
-async fn test_quickstart_workflow_over_http() {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_quickstart_workflow_over_http() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     let suffix = std::process::id();
     let ns = format!("qs_{}", suffix);
     let user = format!("user_qs_{}", suffix);
@@ -179,4 +176,5 @@ async fn test_quickstart_workflow_over_http() {
         anyhow::ensure!(resp.status == ResponseStatus::Success);
         anyhow::ensure!(!resp.results[0].rows_as_maps().is_empty());
     }
+    Ok(())
 }

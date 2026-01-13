@@ -1,15 +1,12 @@
 //! Flush-related SQL tests over the real HTTP SQL API.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use tokio::time::{sleep, Duration, Instant};
 
 #[tokio::test]
-async fn test_flush_table_persists_job_over_http() {
-    (async {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_flush_table_persists_job_over_http() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     let ns = format!("app_flush_jobs_{}", std::process::id());
     let create_ns = format!("CREATE NAMESPACE IF NOT EXISTS {}", ns);
     let resp = server.execute_sql(&create_ns).await?;
@@ -52,7 +49,4 @@ async fn test_flush_table_persists_job_over_http() {
 
     let _ = server.execute_sql(&format!("DROP NAMESPACE {}", ns)).await;
     Ok(())
-    })
-        .await
-        .expect("test_flush_table_persists_job_over_http");
 }

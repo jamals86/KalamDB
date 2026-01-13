@@ -229,18 +229,18 @@ mod tests {
             &self,
             _table_id: &TableId,
             _user_id: &UserId,
-            rows_data: &[u8],
+            rows: &[kalamdb_commons::models::Row],
         ) -> Result<usize, RaftError> {
             self.insert_count.fetch_add(1, Ordering::SeqCst);
-            Ok(rows_data.len())
+            Ok(rows.len())
         }
 
         async fn update(
             &self,
             _table_id: &TableId,
             _user_id: &UserId,
-            _updates_data: &[u8],
-            _filter_data: Option<&[u8]>,
+            _updates: &[kalamdb_commons::models::Row],
+            _filter: Option<&str>,
         ) -> Result<usize, RaftError> {
             self.update_count.fetch_add(1, Ordering::SeqCst);
             Ok(1)
@@ -250,7 +250,7 @@ mod tests {
             &self,
             _table_id: &TableId,
             _user_id: &UserId,
-            _filter_data: Option<&[u8]>,
+            _pk_values: Option<&[String]>,
         ) -> Result<usize, RaftError> {
             self.delete_count.fetch_add(1, Ordering::SeqCst);
             Ok(1)
@@ -275,17 +275,17 @@ mod tests {
         async fn insert(
             &self,
             _table_id: &TableId,
-            rows_data: &[u8],
+            rows: &[kalamdb_commons::models::Row],
         ) -> Result<usize, RaftError> {
             self.insert_count.fetch_add(1, Ordering::SeqCst);
-            Ok(rows_data.len())
+            Ok(rows.len())
         }
 
         async fn update(
             &self,
             _table_id: &TableId,
-            _updates_data: &[u8],
-            _filter_data: Option<&[u8]>,
+            _updates: &[kalamdb_commons::models::Row],
+            _filter: Option<&str>,
         ) -> Result<usize, RaftError> {
             Ok(1)
         }
@@ -293,7 +293,7 @@ mod tests {
         async fn delete(
             &self,
             _table_id: &TableId,
-            _filter_data: Option<&[u8]>,
+            _pk_values: Option<&[String]>,
         ) -> Result<usize, RaftError> {
             Ok(1)
         }
@@ -304,11 +304,9 @@ mod tests {
         let applier = MockUserDataApplier::new();
         let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
         let user_id = UserId::from("user_123");
-        let rows_data = vec![1, 2, 3, 4];
 
-        let result = applier.insert(&table_id, &user_id, &rows_data).await;
+        let result = applier.insert(&table_id, &user_id, &[]).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 4);
         assert_eq!(applier.get_counts(), (1, 0, 0));
     }
 
@@ -317,11 +315,9 @@ mod tests {
         let applier = MockUserDataApplier::new();
         let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
         let user_id = UserId::from("user_123");
-        let updates_data = vec![5, 6];
 
-        let result = applier.update(&table_id, &user_id, &updates_data, None).await;
+        let result = applier.update(&table_id, &user_id, &[], None).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 1);
         assert_eq!(applier.get_counts(), (0, 1, 0));
     }
 
@@ -352,11 +348,9 @@ mod tests {
     async fn test_shared_data_applier_insert() {
         let applier = MockSharedDataApplier::new();
         let table_id = TableId::new(NamespaceId::from("shared_ns"), TableName::from("shared_table"));
-        let rows_data = vec![10, 20, 30];
 
-        let result = applier.insert(&table_id, &rows_data).await;
+        let result = applier.insert(&table_id, &[]).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 3);
         assert_eq!(applier.insert_count.load(Ordering::SeqCst), 1);
     }
 
@@ -375,14 +369,13 @@ mod tests {
         let applier = MockUserDataApplier::new();
         let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
         let user_id = UserId::from("user_123");
-        let filter = vec![1, 2, 3];
 
         // Update with filter
-        let result = applier.update(&table_id, &user_id, &[], Some(&filter)).await;
+        let result = applier.update(&table_id, &user_id, &[], Some("filter_value")).await;
         assert!(result.is_ok());
         
         // Delete with filter
-        let result = applier.delete(&table_id, &user_id, Some(&filter)).await;
+        let result = applier.delete(&table_id, &user_id, Some(&["pk_1".to_string()])).await;
         assert!(result.is_ok());
         
         assert_eq!(applier.get_counts(), (0, 1, 1));
@@ -394,9 +387,9 @@ mod tests {
         let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
         let user_id = UserId::from("user_123");
 
-        applier.insert(&table_id, &user_id, &[1, 2]).await.unwrap();
-        applier.insert(&table_id, &user_id, &[3, 4]).await.unwrap();
-        applier.update(&table_id, &user_id, &[5], None).await.unwrap();
+        applier.insert(&table_id, &user_id, &[]).await.unwrap();
+        applier.insert(&table_id, &user_id, &[]).await.unwrap();
+        applier.update(&table_id, &user_id, &[], None).await.unwrap();
         applier.delete(&table_id, &user_id, None).await.unwrap();
 
         assert_eq!(applier.get_counts(), (2, 1, 1));

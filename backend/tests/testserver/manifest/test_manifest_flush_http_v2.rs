@@ -1,7 +1,5 @@
 //! Manifest flush behavior over the real HTTP SQL API.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::types::Manifest;
@@ -28,7 +26,7 @@ fn find_manifest_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
 }
 
 async fn wait_for_flush_job_completed(
-    server: &test_support::http_server::HttpTestServer,
+    server: &super::test_support::http_server::HttpTestServer,
     ns: &str,
     table: &str,
 ) -> anyhow::Result<()> {
@@ -69,15 +67,15 @@ async fn wait_for_flush_job_completed(
 }
 
 #[tokio::test]
-async fn test_shared_flush_creates_manifest_json_over_http() {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_shared_flush_creates_manifest_json_over_http() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     let namespace = format!("test_manifest_flush_{}", std::process::id());
-            let table = "products";
+    let table = "products";
 
-            let resp = server
+    let resp = server
                 .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
                 .await?;
-            assert_eq!(resp.status, ResponseStatus::Success);
+    assert_eq!(resp.status, ResponseStatus::Success);
 
             let resp = server
                 .execute_sql(&format!(
@@ -140,9 +138,5 @@ async fn test_shared_flush_creates_manifest_json_over_http() {
                 .await?;
             assert_eq!(resp.status, ResponseStatus::Success);
 
-            Ok(())
-        })
-    })
-    .await
-    .unwrap();
+    Ok(())
 }

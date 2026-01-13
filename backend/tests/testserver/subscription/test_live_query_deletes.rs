@@ -1,17 +1,14 @@
 //! Integration test for Live Query DELETE detection via WebSocket
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
-use futures_util::StreamExt;
 use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;
 use tokio::time::Duration;
 
 /// Test DELETE detection
 #[tokio::test]
-async fn test_live_query_detects_deletes() {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_live_query_detects_deletes() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     let ns = format!("test_deletes_{}", std::process::id());
     let table = "records";
 
@@ -108,4 +105,5 @@ async fn test_live_query_detects_deletes() {
     }
 
     assert!(delete_received, "Should have received DELETE notification");
+    Ok(())
 }
