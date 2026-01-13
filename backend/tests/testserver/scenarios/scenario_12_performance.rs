@@ -22,9 +22,8 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// Performance baseline test for inserts
 #[tokio::test]
 async fn test_scenario_12_insert_performance() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            let ns = unique_ns("perf_insert");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("perf_insert");
 
             // Setup
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -101,22 +100,15 @@ async fn test_scenario_12_insert_performance() {
             let expected_total: i64 = batch_sizes.iter().map(|&s| s as i64).sum();
             assert_eq!(total_count, expected_total, "Total rows should match");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Insert performance test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Performance test for query time growth
 #[tokio::test]
 async fn test_scenario_12_query_time_growth() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            let ns = unique_ns("perf_query");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("perf_query");
 
             // Setup
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -195,22 +187,15 @@ async fn test_scenario_12_query_time_growth() {
                 time_growth, data_growth
             );
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Query time growth test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Performance test for subscription initial data timing
 #[tokio::test]
 async fn test_scenario_12_subscription_snapshot_timing() {
-    with_http_test_server_timeout(Duration::from_secs(90), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("perf_sub");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("perf_sub");
 
             // Setup
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -296,22 +281,15 @@ async fn test_scenario_12_subscription_snapshot_timing() {
                 );
             }
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Subscription snapshot timing test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Memory baseline test using simple operations
 #[tokio::test]
 async fn test_scenario_12_memory_baseline() {
-    with_http_test_server_timeout(Duration::from_secs(60), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("perf_memory");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("perf_memory");
 
             // Setup
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -381,12 +359,6 @@ async fn test_scenario_12_memory_baseline() {
             println!("Memory baseline test: {} rows with 1KB payload each = ~{}KB data", 
                 batch_count, batch_count);
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Memory baseline test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }

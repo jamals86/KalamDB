@@ -6,6 +6,7 @@
 use super::ManifestService;
 use crate::error::KalamDbError;
 use crate::schema_registry::PathResolver;
+use crate::schema_registry::cached_table_data::CachedTableData;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute;
 use datafusion::arrow::compute::kernels::aggregate::{max_string, min_string};
@@ -262,6 +263,7 @@ impl FlushManifestHelper {
         table_id: &TableId,
         table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
+        cached: Option<&Arc<CachedTableData>>,
         _batch_number: u64,
         batch_filename: String,
         file_path: &Path,
@@ -324,19 +326,14 @@ impl FlushManifestHelper {
             })?;
 
         // Update cache with manifest path using PathResolver
-        let app_ctx = crate::app_context::AppContext::get();
-        let manifest_path = match app_ctx.schema_registry().get(table_id) {
-            Some(cached) => PathResolver::get_manifest_relative_path(&cached, user_id, None)?,
+        let manifest_path = match cached {
+            Some(cached) => PathResolver::get_manifest_relative_path(cached, user_id, None)?,
             None => {
                 // Fallback to legacy format if table not in registry (shouldn't happen in normal flow)
                 let scope_str = user_id
                     .map(|u| u.as_str().to_string())
                     .unwrap_or_else(|| "shared".to_string());
-                format!(
-                    "{}/{}/manifest.json",
-                    table_id,  // TableId Display: "namespace:table"
-                    scope_str
-                )
+                format!("{}/{}/manifest.json", table_id, scope_str)
             }
         };
 

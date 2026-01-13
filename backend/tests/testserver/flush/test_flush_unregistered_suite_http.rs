@@ -181,10 +181,10 @@ async fn flush_table_and_wait(server: &HttpTestServer, ns: &str, table: &str) ->
 
 #[tokio::test]
 async fn test_flush_concurrency_and_correctness_over_http() {
+	(async {
 	let server = test_support::http_server::get_global_server().await;
 	let suffix = std::process::id();
-
-			let user_a = format!("user_a_{}", suffix);
+	let user_a = format!("user_a_{}", suffix);
 			let user_b = format!("user_b_{}", suffix);
 			let password = "UserPass123!";
 			let auth_a = create_user(server, &user_a, password).await?;
@@ -649,9 +649,8 @@ async fn test_flush_concurrency_and_correctness_over_http() {
 				anyhow::ensure!(rows == 0, "expected id=30 to be deleted");
 			}
 
-			Ok(())
-		})
+	Ok(())
 	})
-	.await
-	.expect("with_http_test_server_timeout");
+		.await
+		.expect("test_flush_concurrency_and_correctness_over_http");
 }

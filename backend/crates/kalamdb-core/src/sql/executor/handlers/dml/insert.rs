@@ -38,16 +38,22 @@ pub struct InsertHandler {
 }
 
 impl InsertHandler {
-    pub fn new() -> Self {
-        Self {
-            app_context: AppContext::get(),
-        }
+    pub fn new(app_context: std::sync::Arc<AppContext>) -> Self {
+        Self { app_context }
     }
 }
 
+#[cfg(test)]
 impl Default for InsertHandler {
     fn default() -> Self {
-        Self::new()
+        Self::new(AppContext::get())
+    }
+}
+
+#[cfg(not(test))]
+impl Default for InsertHandler {
+    fn default() -> Self {
+        panic!("InsertHandler::default() is for tests only; use InsertHandler::new(Arc<AppContext>)")
     }
 }
 
@@ -87,7 +93,7 @@ impl StatementHandler for InsertHandler {
         // Single lookup: get_table_definition returns None if table doesn't exist
         // This is more efficient than calling table_exists + get_table_definition
         let table_def = schema_registry
-            .get_table_definition(&table_id)?
+            .get_table_definition(self.app_context.as_ref(), &table_id)?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Table '{}' does not exist",
@@ -744,7 +750,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_insert_authorization_user() {
-        let handler = InsertHandler::new();
+        let handler = InsertHandler::new(AppContext::get());
         let ctx = test_context(Role::User);
         let stmt = SqlStatement::new(
             "INSERT INTO default.test (id) VALUES (1)".to_string(),
@@ -756,7 +762,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_insert_authorization_dba() {
-        let handler = InsertHandler::new();
+        let handler = InsertHandler::new(AppContext::get());
         let ctx = test_context(Role::Dba);
         let stmt = SqlStatement::new(
             "INSERT INTO default.test (id) VALUES (1)".to_string(),
@@ -768,7 +774,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_insert_authorization_service() {
-        let handler = InsertHandler::new();
+        let handler = InsertHandler::new(AppContext::get());
         let ctx = test_context(Role::Service);
         let stmt = SqlStatement::new(
             "INSERT INTO default.test (id) VALUES (1)".to_string(),

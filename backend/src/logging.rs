@@ -56,10 +56,7 @@ pub fn init_logging(
     }
 
     // Open log file in append mode
-    let log_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(file_path)?;
+    let log_file = OpenOptions::new().create(true).append(true).open(file_path)?;
 
     if log_to_console {
         // Setup dual logging: colored console + plain file
@@ -154,16 +151,9 @@ pub fn init_logging(
         };
 
         // Combine console and file outputs
-        base_config
-            .chain(console_config)
-            .chain(file_config)
-            .apply()?;
+        base_config.chain(console_config).chain(file_config).apply()?;
 
-        log::trace!(
-            "Logging initialized: level={}, console=yes, file={}",
-            level,
-            file_path
-        );
+        log::trace!("Logging initialized: level={}, console=yes, file={}", level, file_path);
     } else {
         // File only output - use JSON or compact format based on config
         let mut file_only = if log_format == LogFormat::Json {
@@ -299,7 +289,7 @@ mod tests {
     #[test]
     fn test_redact_sensitive_sql_passwords() {
         use kalamdb_commons::security::redact_sensitive_sql;
-        
+
         // ALTER USER with SET PASSWORD
         let sql = "ALTER USER 'alice' SET PASSWORD 'SuperSecret123!'";
         let redacted = redact_sensitive_sql(sql);
@@ -316,7 +306,7 @@ mod tests {
     #[test]
     fn test_redact_sensitive_sql_preserves_safe_queries() {
         use kalamdb_commons::security::redact_sensitive_sql;
-        
+
         let sql = "SELECT * FROM users WHERE name = 'alice'";
         let redacted = redact_sensitive_sql(sql);
         assert_eq!(sql, redacted);

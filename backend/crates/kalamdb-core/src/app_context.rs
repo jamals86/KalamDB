@@ -366,10 +366,12 @@ impl AppContext {
 
                 // Create unified manifest service (hot cache + RocksDB + cold storage)
                 let base_storage_path = config.storage.storage_dir().to_string_lossy().into_owned();
-                let manifest_service = Arc::new(crate::manifest::ManifestService::new(
+                let manifest_service = Arc::new(crate::manifest::ManifestService::new_with_registries(
                     storage_backend.clone(),
                     base_storage_path,
                     config.manifest_cache.clone(),
+                    schema_registry.clone(),
+                    storage_registry.clone(),
                 ));
 
                 // Create command executor (Phase 20 - Unified Raft Executor)
@@ -659,10 +661,12 @@ impl AppContext {
         let system_columns_service = Arc::new(crate::system_columns::SystemColumnsService::new(0));
 
         // Create unified manifest service for tests
-        let manifest_service = Arc::new(crate::manifest::ManifestService::new(
+        let manifest_service = Arc::new(crate::manifest::ManifestService::new_with_registries(
             storage_backend.clone(),
             "./data/storage".to_string(),
             config.manifest_cache.clone(),
+            schema_registry.clone(),
+            storage_registry.clone(),
         ));
 
         // Create RaftExecutor with single-node config for tests

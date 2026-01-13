@@ -153,10 +153,12 @@ impl LiveQueryManager {
             kalamdb_commons::models::TableName::from(table),
         );
 
-        // Look up table definition
+        // Look up table definition from in-memory cache.
+        // Live queries require the table to be registered in the schema registry.
         let table_def = self
             .schema_registry
-            .get_table_definition(&table_id)?
+            .get(&table_id)
+            .map(|cached| Arc::clone(&cached.table))
             .ok_or_else(|| KalamDbError::NotFound(format!("Table not found: {}", table_id)))?;
 
         // Permission check
@@ -295,7 +297,8 @@ impl LiveQueryManager {
 
         let table_def = self
             .schema_registry
-            .get_table_definition(&sub_state.table_id)?
+            .get(&sub_state.table_id)
+            .map(|cached| Arc::clone(&cached.table))
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table {} not found for batch fetch",

@@ -10,12 +10,18 @@ fn is_pending_job_status(status: &str) -> bool {
 }
 
 /// Wait until at least one matching flush job is completed and there are no pending flush jobs.
-pub async fn wait_for_flush_jobs_settled(server: &HttpTestServer, ns: &str, table: &str) -> Result<()> {
+pub async fn wait_for_flush_jobs_settled(
+    server: &HttpTestServer,
+    ns: &str,
+    table: &str,
+) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(15);
 
     loop {
         let resp = server
-            .execute_sql("SELECT job_type, status, parameters FROM system.jobs WHERE job_type = 'flush'")
+            .execute_sql(
+                "SELECT job_type, status, parameters FROM system.jobs WHERE job_type = 'flush'",
+            )
             .await?;
 
         if resp.status != ResponseStatus::Success {
@@ -26,11 +32,7 @@ pub async fn wait_for_flush_jobs_settled(server: &HttpTestServer, ns: &str, tabl
             continue;
         }
 
-        let rows = resp
-            .results
-            .first()
-            .map(|r| r.rows_as_maps())
-            .unwrap_or_default();
+        let rows = resp.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
 
         let matching: Vec<_> = rows
             .iter()

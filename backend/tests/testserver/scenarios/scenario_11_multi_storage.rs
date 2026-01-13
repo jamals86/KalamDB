@@ -20,11 +20,10 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Main multi-storage routing test
 #[tokio::test]
 async fn test_scenario_11_multi_storage_basic() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            // =========================================================
-            // Step 1: Query existing storages
-            // =========================================================
+    let server = test_support::http_server::get_global_server().await;
+    // =========================================================
+    // Step 1: Query existing storages
+    // =========================================================
             let resp = server
                 .execute_sql("SELECT * FROM system.storages ORDER BY storage_id")
                 .await?;
@@ -161,22 +160,15 @@ async fn test_scenario_11_multi_storage_basic() {
             assert_success(&resp, "Query system.tables");
             assert_eq!(get_rows(&resp).len(), 2, "Should have 2 tables");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Scenario 11 multi-storage basic test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test storage validation and constraints
 #[tokio::test]
 async fn test_scenario_11_storage_constraints() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("storage_constraints");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("storage_constraints");
 
             // Create namespace
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -233,22 +225,15 @@ async fn test_scenario_11_storage_constraints() {
                 .unwrap_or(0);
             assert_eq!(count, 50, "Should have 50 rows");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Storage constraints test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test flush behavior with different table types to different storage paths
 #[tokio::test]
 async fn test_scenario_11_table_types_storage() {
-    with_http_test_server_timeout(Duration::from_secs(60), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("types_storage");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("types_storage");
 
             // Create namespace
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -406,12 +391,6 @@ async fn test_scenario_11_table_types_storage() {
                 .unwrap_or(0);
             assert_eq!(shared_count, 10, "Shared table should have 10 rows");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Table types storage test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }

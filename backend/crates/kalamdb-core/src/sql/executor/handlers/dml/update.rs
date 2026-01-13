@@ -26,17 +26,27 @@ use sqlparser::parser::Parser;
 ///
 /// Delegates to DataFusion for UPDATE execution with parameter binding support.
 /// Returns rows_affected count (only counts rows with actual changes, not rows matched).
-pub struct UpdateHandler;
+pub struct UpdateHandler {
+    app_context: std::sync::Arc<AppContext>,
+}
 
 impl UpdateHandler {
-    pub fn new() -> Self {
-        Self
+    pub fn new(app_context: std::sync::Arc<AppContext>) -> Self {
+        Self { app_context }
     }
 }
 
+#[cfg(test)]
 impl Default for UpdateHandler {
     fn default() -> Self {
-        Self::new()
+        Self::new(AppContext::get())
+    }
+}
+
+#[cfg(not(test))]
+impl Default for UpdateHandler {
+    fn default() -> Self {
+        panic!("UpdateHandler::default() is for tests only; use UpdateHandler::new(Arc<AppContext>)")
     }
 }
 
@@ -49,8 +59,7 @@ impl StatementHandler for UpdateHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         // T063: Validate parameters before write using config from AppContext
-        let app_context = AppContext::get();
-        let limits = ParameterLimits::from_config(&app_context.config().execution);
+        let limits = ParameterLimits::from_config(&self.app_context.config().execution);
         validate_parameters(&params, &limits)?;
 
         if !matches!(statement.kind(), SqlStatementKind::Update(_)) {
@@ -65,11 +74,11 @@ impl StatementHandler for UpdateHandler {
             self.parse_update_with_sqlparser(sql, &default_namespace)?;
 
         // Get table definition early to access schema for type coercion
-        let schema_registry = app_context.schema_registry();
+        let schema_registry = self.app_context.schema_registry();
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
         let def = schema_registry
-            .get_table_definition(&table_id)?
+            .get_table_definition(self.app_context.as_ref(), &table_id)?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table {}.{} not found",
@@ -525,8 +534,7 @@ impl UpdateHandler {
         pk_value: &str,
         updates: Row,
     ) -> Result<usize, KalamDbError> {
-        let app_context = AppContext::get();
-        let executor = app_context.executor();
+        let executor = self.app_context.executor();
 
         let cmd = SharedDataCommand::Update {
             required_meta_index: 0, // Stamped by executor
@@ -556,8 +564,7 @@ impl UpdateHandler {
         pk_value: &str,
         updates: Row,
     ) -> Result<usize, KalamDbError> {
-        let app_context = AppContext::get();
-        let executor = app_context.executor();
+        let executor = self.app_context.executor();
 
         let cmd = UserDataCommand::Update {
             required_meta_index: 0, // Stamped by executor
@@ -594,7 +601,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_authorization_user() {
-        let handler = UpdateHandler::new();
+        let handler = UpdateHandler::new(AppContext::get());
         let ctx = test_context(Role::User);
         let stmt = SqlStatement::new(
             "UPDATE default.test SET x = 1 WHERE id = 1".to_string(),
@@ -606,7 +613,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_authorization_dba() {
-        let handler = UpdateHandler::new();
+        let handler = UpdateHandler::new(AppContext::get());
         let ctx = test_context(Role::Dba);
         let stmt = SqlStatement::new(
             "UPDATE default.test SET x = 1 WHERE id = 1".to_string(),
@@ -618,7 +625,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_authorization_service() {
-        let handler = UpdateHandler::new();
+        let handler = UpdateHandler::new(AppContext::get());
         let ctx = test_context(Role::Service);
         let stmt = SqlStatement::new(
             "UPDATE default.test SET x = 1 WHERE id = 1".to_string(),

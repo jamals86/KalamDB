@@ -23,10 +23,6 @@ use tokio::time::{sleep, timeout, Instant};
 #[path = "../../common/testserver/mod.rs"]
 pub mod test_support;
 
-pub use test_support::http_server::{
-    with_http_test_server, with_http_test_server_timeout, HttpTestServer,
-};
-
 // =============================================================================
 // QueryResponse Helpers (for link client)
 // =============================================================================

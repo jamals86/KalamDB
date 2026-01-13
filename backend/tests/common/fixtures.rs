@@ -29,7 +29,7 @@
 
 use super::TestServer;
 use anyhow::Result;
-use kalam_link::models::{QueryResult, QueryResponse, ResponseStatus};
+use kalam_link::models::{QueryResponse, QueryResult, ResponseStatus};
 use kalamdb_commons::models::NamespaceId;
 use serde_json::json;
 use std::time::{Duration, Instant};
@@ -73,10 +73,7 @@ pub async fn create_namespace(server: &TestServer, namespace: &str) -> QueryResp
     // Perform namespace creation as 'root' admin user for RBAC enforcement
     let resp = server.execute_sql_as_user(&sql, "root").await;
     if resp.status != ResponseStatus::Success {
-        panic!(
-            "CREATE NAMESPACE failed: ns={}, error={:?}",
-            namespace, resp.error
-        );
+        panic!("CREATE NAMESPACE failed: ns={}, error={:?}", namespace, resp.error);
     }
     // Namespaces are registered asynchronously, so poll until the system catalog observes it.
     let namespaces_provider = server.app_context.system_tables().namespaces();
@@ -85,16 +82,13 @@ pub async fn create_namespace(server: &TestServer, namespace: &str) -> QueryResp
     loop {
         match namespaces_provider.get_namespace(&namespace_id) {
             Ok(Some(_)) => break,
-            Ok(None) => {}
+            Ok(None) => {},
             Err(err) => {
                 panic!("Failed to verify namespace '{}': {:?}", namespace, err);
-            }
+            },
         }
         if Instant::now() >= deadline {
-            panic!(
-                "Namespace '{}' was not visible within 2s after creation",
-                namespace
-            );
+            panic!("Namespace '{}' was not visible within 2s after creation", namespace);
         }
         sleep(Duration::from_millis(25)).await;
     }
@@ -169,7 +163,8 @@ pub async fn create_messages_table(
         // Treat already-exists as success for idempotent tests
         let already_exists = resp
             .error
-            .as_ref().map(|e| e.message.to_lowercase().contains("already exists"))
+            .as_ref()
+            .map(|e| e.message.to_lowercase().contains("already exists"))
             .unwrap_or(false);
         if already_exists {
             return QueryResponse {
@@ -288,7 +283,8 @@ pub async fn create_stream_table(
     if resp.status != ResponseStatus::Success {
         let already_exists = resp
             .error
-            .as_ref().map(|e| e.message.to_lowercase().contains("already exists"))
+            .as_ref()
+            .map(|e| e.message.to_lowercase().contains("already exists"))
             .unwrap_or(false);
         if already_exists {
             return QueryResponse {
@@ -323,7 +319,8 @@ pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) 
 
     let table_type = if lookup_response.status == ResponseStatus::Success {
         lookup_response
-            .results.first()
+            .results
+            .first()
             .and_then(|result| super::QueryResultTestExt::row_as_map(result, 0))
             .and_then(|row| row.get("table_type").cloned())
             .and_then(|value| value.as_str().map(|s| s.to_string()))
@@ -468,13 +465,7 @@ pub async fn query_user_messages(
 /// * `count` - Number of users to generate
 pub fn generate_user_data(count: usize) -> Vec<(String, String, String)> {
     (0..count)
-        .map(|i| {
-            (
-                format!("user{}", i),
-                format!("testuser{}", i),
-                format!("user{}@example.com", i),
-            )
-        })
+        .map(|i| (format!("user{}", i), format!("testuser{}", i), format!("user{}@example.com", i)))
         .collect()
 }
 
@@ -567,11 +558,7 @@ mod tests {
         let response = create_messages_table(&server, "app", Some("user123")).await;
         if response.status != ResponseStatus::Success {
             // In shared TestServer runs, provider may already be registered; accept idempotent already-exists
-            let msg = response
-                .error
-                .as_ref()
-                .map(|e| e.message.clone())
-                .unwrap_or_default();
+            let msg = response.error.as_ref().map(|e| e.message.clone()).unwrap_or_default();
             assert!(
                 msg.contains("already exists"),
                 "CREATE TABLE failed unexpectedly: {:?}",
@@ -592,10 +579,7 @@ mod tests {
 
         for (i, response) in responses.iter().enumerate() {
             if response.status != ResponseStatus::Success {
-                eprintln!(
-                    "Response {}: status={}, error={:?}",
-                    i, response.status, response.error
-                );
+                eprintln!("Response {}: status={}, error={:?}", i, response.status, response.error);
             }
             assert_eq!(
                 response.status,

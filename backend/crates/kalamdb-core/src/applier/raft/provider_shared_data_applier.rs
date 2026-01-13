@@ -30,13 +30,17 @@ impl ProviderSharedDataApplier {
     }
 }
 
+#[cfg(test)]
 impl Default for ProviderSharedDataApplier {
     fn default() -> Self {
-        if let Ok(app_ctx) = std::panic::catch_unwind(|| AppContext::get()) {
-            Self::new(app_ctx)
-        } else {
-             panic!("ProviderSharedDataApplier::default() called but AppContext not available. Use new(Arc<AppContext>) instead.");
-        }
+        Self::new(AppContext::get())
+    }
+}
+
+#[cfg(not(test))]
+impl Default for ProviderSharedDataApplier {
+    fn default() -> Self {
+        panic!("ProviderSharedDataApplier::default() is for tests only; use new(Arc<AppContext>)")
     }
 }
 

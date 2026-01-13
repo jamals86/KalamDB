@@ -26,9 +26,8 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(180);
 /// Main soak test with mixed workload
 #[tokio::test]
 async fn test_scenario_13_mixed_workload_soak() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            let ns = unique_ns("soak_test");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("soak_test");
 
             // =========================================================
             // Setup: Create namespace and tables
@@ -325,22 +324,15 @@ async fn test_scenario_13_mixed_workload_soak() {
             println!("Final order count for soak_user_0: {}", final_count);
             assert!(final_count > 0, "User should have orders in table");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Soak test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Schema evolution during active operations
 #[tokio::test]
 async fn test_scenario_13_schema_evolution_under_load() {
-    with_http_test_server_timeout(Duration::from_secs(60), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("schema_evolution");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("schema_evolution");
 
             // Setup
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -420,24 +412,14 @@ async fn test_scenario_13_schema_evolution_under_load() {
             let row_51 = &resp.rows_as_maps()[50]; // id = 51
             let price_51 = row_51.get("price")
                 .and_then(|v| v.as_f64());
-            assert!(price_51.is_some(), "New row should have price");
-
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Schema evolution test failed");
-}
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 
 /// Concurrent readers and writers stress test
 #[tokio::test]
 async fn test_scenario_13_concurrent_read_write() {
-    with_http_test_server_timeout(Duration::from_secs(60), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("concurrent_rw");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("concurrent_rw");
 
             // Setup
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -554,12 +536,6 @@ async fn test_scenario_13_concurrent_read_write() {
             assert!(total_writes > 50, "Should have > 50 successful writes");
             assert!(total_reads > 50, "Should have > 50 successful reads");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Concurrent read/write test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }

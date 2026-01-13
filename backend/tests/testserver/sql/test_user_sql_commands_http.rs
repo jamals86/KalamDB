@@ -6,8 +6,9 @@ mod test_support;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
 
-// TODO: Migrate this test to get_global_server() pattern
-// Currently kept separate because it requires `enforce_password_complexity = true` config override
+// TODO: Cannot migrate to get_global_server() pattern yet.
+// This test requires a config override: `enforce_password_complexity = true`.
+// Once we support per-test config overrides for the global server, this can be migrated.
 #[tokio::test]
 async fn test_user_sql_commands_over_http() {
     test_support::http_server::with_http_test_server_config(

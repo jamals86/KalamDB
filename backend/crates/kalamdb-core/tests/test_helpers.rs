@@ -2,13 +2,13 @@
 //!
 //! This module provides utilities for setting up AppContext in unit tests.
 
-use kalamdb_core::app_context::AppContext;
-use kalamdb_core::jobs::executors::{
-    BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobRegistry,
-    RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
-};
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::{NamespaceId, NodeId, StorageId};
+use kalamdb_core::app_context::AppContext;
+use kalamdb_core::jobs::executors::{
+    BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobRegistry, RestoreExecutor,
+    RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
+};
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
 use once_cell::sync::OnceCell;
@@ -108,11 +108,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         // Ensure default namespace exists
         let namespaces = app_ctx.system_tables().namespaces();
         let default_namespace = NamespaceId::new("default");
-        if namespaces
-            .get_namespace_by_id(&default_namespace)
-            .unwrap()
-            .is_none()
-        {
+        if namespaces.get_namespace_by_id(&default_namespace).unwrap().is_none() {
             namespaces
                 .create_namespace(kalamdb_commons::system::Namespace {
                     namespace_id: default_namespace,
@@ -147,10 +143,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
     });
 
     // Return the test DB (guaranteed to be set by Once)
-    TEST_DB
-        .get()
-        .expect("TEST_DB should be initialized")
-        .clone()
+    TEST_DB.get().expect("TEST_DB should be initialized").clone()
 }
 
 /// Create a JobsTableProvider for testing

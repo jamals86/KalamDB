@@ -19,17 +19,27 @@ use serde_json::Value as JsonValue;
 ///
 /// Delegates to DataFusion for DELETE execution with parameter binding support.
 /// Returns rows_affected count following MySQL semantics.
-pub struct DeleteHandler;
+pub struct DeleteHandler {
+    app_context: std::sync::Arc<AppContext>,
+}
 
 impl DeleteHandler {
-    pub fn new() -> Self {
-        Self
+    pub fn new(app_context: std::sync::Arc<AppContext>) -> Self {
+        Self { app_context }
     }
 }
 
+#[cfg(test)]
 impl Default for DeleteHandler {
     fn default() -> Self {
-        Self::new()
+        Self::new(AppContext::get())
+    }
+}
+
+#[cfg(not(test))]
+impl Default for DeleteHandler {
+    fn default() -> Self {
+        panic!("DeleteHandler::default() is for tests only; use DeleteHandler::new(Arc<AppContext>)")
     }
 }
 
@@ -42,8 +52,7 @@ impl StatementHandler for DeleteHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         // T064: Validate parameters before write using config from AppContext
-        let app_context = AppContext::get();
-        let limits = ParameterLimits::from_config(&app_context.config().execution);
+        let limits = ParameterLimits::from_config(&self.app_context.config().execution);
         validate_parameters(&params, &limits)?;
 
         if !matches!(statement.kind(), SqlStatementKind::Delete(_)) {
@@ -62,11 +71,11 @@ impl StatementHandler for DeleteHandler {
         let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
 
         // Execute native delete
-        let schema_registry = app_context.schema_registry();
+        let schema_registry = self.app_context.schema_registry();
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
         let def = schema_registry
-            .get_table_definition(&table_id)?
+            .get_table_definition(self.app_context.as_ref(), &table_id)?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table {}.{} not found",
@@ -540,8 +549,7 @@ impl DeleteHandler {
         table_id: &TableId,
         pk_values: Vec<String>,
     ) -> Result<usize, KalamDbError> {
-        let app_context = AppContext::get();
-        let executor = app_context.executor();
+        let executor = self.app_context.executor();
         let pk_count = pk_values.len();
 
         // Serialize the list of PKs to delete
@@ -571,8 +579,7 @@ impl DeleteHandler {
         user_id: &UserId,
         pk_values: Vec<String>,
     ) -> Result<usize, KalamDbError> {
-        let app_context = AppContext::get();
-        let executor = app_context.executor();
+        let executor = self.app_context.executor();
         let pk_count = pk_values.len();
 
         let cmd = UserDataCommand::Delete {
@@ -609,7 +616,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_authorization_user() {
-        let handler = DeleteHandler::new();
+        let handler = DeleteHandler::new(AppContext::get());
         let ctx = test_context(Role::User);
         let stmt = SqlStatement::new(
             "DELETE FROM default.test WHERE id = 1".to_string(),
@@ -621,7 +628,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_authorization_dba() {
-        let handler = DeleteHandler::new();
+        let handler = DeleteHandler::new(AppContext::get());
         let ctx = test_context(Role::Dba);
         let stmt = SqlStatement::new(
             "DELETE FROM default.test WHERE id = 1".to_string(),
@@ -633,7 +640,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_authorization_service() {
-        let handler = DeleteHandler::new();
+        let handler = DeleteHandler::new(AppContext::get());
         let ctx = test_context(Role::Service);
         let stmt = SqlStatement::new(
             "DELETE FROM default.test WHERE id = 1".to_string(),

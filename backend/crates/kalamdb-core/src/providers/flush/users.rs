@@ -31,6 +31,7 @@ pub struct UserTableFlushJob {
     table_id: Arc<TableId>,
     schema: SchemaRef,
     unified_cache: Arc<SchemaRegistry>,
+    app_context: Arc<AppContext>,
     live_query_manager: Option<Arc<LiveQueryManager>>,
     manifest_helper: FlushManifestHelper,
     /// Bloom filter columns (PRIMARY KEY + _seq) - fetched once per job for efficiency
@@ -42,6 +43,7 @@ pub struct UserTableFlushJob {
 impl UserTableFlushJob {
     /// Create a new user table flush job
     pub fn new(
+        app_context: Arc<AppContext>,
         table_id: Arc<TableId>,
         store: Arc<UserTableIndexedStore>,
         schema: SchemaRef,
@@ -78,6 +80,7 @@ impl UserTableFlushJob {
             table_id,
             schema,
             unified_cache,
+            app_context,
             live_query_manager: None,
             manifest_helper,
             bloom_filter_columns,
@@ -94,17 +97,19 @@ impl UserTableFlushJob {
     /// Get current schema version for the table
     fn get_schema_version(&self) -> u32 {
         self.unified_cache
-            .get_table_definition(&self.table_id)
-            .ok()
-            .flatten()
-            .map(|def| def.schema_version)
+            .get(&self.table_id)
+            .map(|cached| cached.table.schema_version)
             .unwrap_or(1)
     }
 
     /// Resolve storage path for a specific user
     fn resolve_storage_path_for_user(&self, user_id: &UserId) -> Result<String, KalamDbError> {
-        self.unified_cache
-            .get_storage_path(&self.table_id, Some(user_id), None)
+        self.unified_cache.get_storage_path(
+            self.app_context.as_ref(),
+            &self.table_id,
+            Some(user_id),
+            None,
+        )
     }
 
     /// Convert JSON rows to Arrow RecordBatch
@@ -172,7 +177,6 @@ impl UserTableFlushJob {
             .to_string_lossy()
             .to_string();
 
-        let app_ctx = AppContext::get();
         let cached = self
             .unified_cache
             .get(&self.table_id)
@@ -180,7 +184,8 @@ impl UserTableFlushJob {
 
         // Get storage from registry (cached lookup)
         let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
-        let storage = app_ctx
+        let storage = self
+            .app_context
             .storage_registry()
             .get_storage(&storage_id)?
             .ok_or_else(|| {
@@ -191,7 +196,7 @@ impl UserTableFlushJob {
             })?;
 
         // Get cached ObjectStore instance (avoids rebuild overhead on each flush)
-        let object_store = cached.object_store()?;
+        let object_store = cached.object_store(self.app_context.as_ref())?;
 
         // ===== ATOMIC FLUSH PATTERN =====
         // Step 1: Mark manifest as syncing (flush in progress)
@@ -239,6 +244,7 @@ impl UserTableFlushJob {
             &self.table_id,
             kalamdb_commons::models::schemas::TableType::User,
             Some(&user_id_typed),
+            Some(&cached),
             batch_number,
             batch_filename.clone(),
             &std::path::PathBuf::from(&destination_path),

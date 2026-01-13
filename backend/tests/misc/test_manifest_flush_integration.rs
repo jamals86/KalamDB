@@ -27,26 +27,22 @@ fn create_test_service() -> (ManifestService, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     let config = ManifestCacheSettings::default();
-    let service = ManifestService::new(backend, temp_dir.path().to_string_lossy().to_string(), config);
+    let service =
+        ManifestService::new(backend, temp_dir.path().to_string_lossy().to_string(), config);
     // Initialize a test AppContext for SchemaRegistry and providers (used by ManifestService)
     test_helpers::init_test_app_context();
-    
+
     // Register "local" storage required by flush operations
     {
         use kalamdb_commons::models::StorageType;
         use kalamdb_commons::types::Storage;
         use kalamdb_commons::StorageId;
-        
+
         let app_ctx = kalamdb_core::app_context::AppContext::get();
         let storages_provider = app_ctx.system_tables().storages();
         let storage_id = StorageId::new("local");
-        
-        if storages_provider
-            .get_storage_by_id(&storage_id)
-            .ok()
-            .flatten()
-            .is_none()
-        {
+
+        if storages_provider.get_storage_by_id(&storage_id).ok().flatten().is_none() {
             let now = chrono::Utc::now().timestamp_millis();
             let base_path = temp_dir.path().to_string_lossy().to_string();
             let default_storage = Storage {
@@ -65,7 +61,7 @@ fn create_test_service() -> (ManifestService, TempDir) {
             let _ = storages_provider.insert_storage(default_storage);
         }
     }
-    
+
     // Register minimal table definitions required for these tests
     {
         use kalamdb_commons::models::schemas::TableType;
@@ -283,10 +279,7 @@ async fn test_flush_five_batches_manifest_tracking() {
 
     // Verify batch metadata is preserved
     for (idx, batch) in final_manifest.segments.iter().enumerate() {
-        assert_eq!(
-            batch.id, idx.to_string(),
-            "Batch ID should match index"
-        );
+        assert_eq!(batch.id, idx.to_string(), "Batch ID should match index");
         assert_eq!(batch.path, format!("batch-{}.parquet", idx));
 
         // Verify sequence ranges

@@ -18,13 +18,13 @@
 mod common;
 
 use common::TestServer;
+use kalam_link::models::ResponseStatus;
+use kalamdb_commons::models::{ConnectionId, UserName};
 use kalamdb_commons::system::{Job, LiveQuery, User};
 use kalamdb_commons::{
     AuthType, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, Role, StorageId,
     StorageMode, TableName, UserId,
 };
-use kalamdb_commons::models::{ConnectionId, UserName};
-use kalam_link::models::ResponseStatus;
 use std::time::Instant;
 
 /// Test: system.users uses username index for WHERE username = '...' queries
@@ -62,7 +62,7 @@ async fn test_system_users_username_index() {
             last_seen: None,
             deleted_at: None,
         };
-        
+
         server
             .app_context
             .system_tables()
@@ -72,19 +72,13 @@ async fn test_system_users_username_index() {
     }
 
     // Test 1: Query by username (should use username index)
-    let query_by_username = "SELECT COUNT(*) AS user_count FROM system.users WHERE username = 'username25'";
+    let query_by_username =
+        "SELECT COUNT(*) AS user_count FROM system.users WHERE username = 'username25'";
     let start = Instant::now();
-    let response = server
-        .execute_sql(query_by_username)
-        .await;
+    let response = server.execute_sql(query_by_username).await;
     let latency_indexed = start.elapsed();
 
-    assert_eq!(
-        response.status,
-        ResponseStatus::Success,
-        "Query failed: {:?}",
-        response.error
-    );
+    assert_eq!(response.status, ResponseStatus::Success, "Query failed: {:?}", response.error);
 
     let rows = response.results[0].rows_as_maps();
     assert_eq!(rows.len(), 1, "Expected 1 row");
@@ -94,32 +88,20 @@ async fn test_system_users_username_index() {
     println!("✓ Username index query latency: {:?}", latency_indexed);
 
     // Test 2: Query specific username and verify it returns correct user
-    let query_specific = "SELECT user_id, username, email FROM system.users WHERE username = 'username10'";
-    let response2 = server
-        .execute_sql(query_specific)
-        .await;
+    let query_specific =
+        "SELECT user_id, username, email FROM system.users WHERE username = 'username10'";
+    let response2 = server.execute_sql(query_specific).await;
 
     assert_eq!(response2.status, ResponseStatus::Success);
     let rows2 = response2.results[0].rows_as_maps();
     assert_eq!(rows2.len(), 1);
-    assert_eq!(
-        rows2[0].get("user_id").unwrap().as_str().unwrap(),
-        "user10"
-    );
-    assert_eq!(
-        rows2[0].get("username").unwrap().as_str().unwrap(),
-        "username10"
-    );
-    assert_eq!(
-        rows2[0].get("email").unwrap().as_str().unwrap(),
-        "user10@example.com"
-    );
+    assert_eq!(rows2[0].get("user_id").unwrap().as_str().unwrap(), "user10");
+    assert_eq!(rows2[0].get("username").unwrap().as_str().unwrap(), "username10");
+    assert_eq!(rows2[0].get("email").unwrap().as_str().unwrap(), "user10@example.com");
 
     // Test 3: Case-insensitive username lookup (index stores lowercase)
     let query_case_insensitive = "SELECT user_id FROM system.users WHERE username = 'USERNAME25'";
-    let response3 = server
-        .execute_sql(query_case_insensitive)
-        .await;
+    let response3 = server.execute_sql(query_case_insensitive).await;
 
     // Note: This depends on whether the filter lowercases before index lookup
     // The index stores lowercase, but the filter needs to normalize
@@ -202,9 +184,10 @@ async fn test_system_jobs_status_index() {
     let verify_rows = verify_response.results[0].rows_as_maps();
     let total_jobs = verify_rows[0].get("total").unwrap().as_i64().unwrap();
     println!("✓ Total jobs inserted: {}", total_jobs);
-    
+
     // Check what statuses actually exist
-    let status_query = "SELECT status, COUNT(*) AS count FROM system.jobs GROUP BY status ORDER BY status";
+    let status_query =
+        "SELECT status, COUNT(*) AS count FROM system.jobs GROUP BY status ORDER BY status";
     let status_response = server.execute_sql(status_query).await;
     if status_response.status == ResponseStatus::Success {
         println!("✓ Job statuses breakdown:");
@@ -214,7 +197,7 @@ async fn test_system_jobs_status_index() {
             println!("    {} = {}", status, count);
         }
     }
-    
+
     // If no jobs, skip test
     if total_jobs == 0 {
         println!("⚠ No jobs found in system.jobs, skipping status index test");
@@ -224,24 +207,17 @@ async fn test_system_jobs_status_index() {
     // Test 1: Query for Running jobs (should use status index)
     let query_running = "SELECT COUNT(*) AS job_count FROM system.jobs WHERE status = 'running'";
     let start = Instant::now();
-    let response = server
-        .execute_sql(query_running)
-        .await;
+    let response = server.execute_sql(query_running).await;
     let latency_indexed = start.elapsed();
 
-    assert_eq!(
-        response.status,
-        ResponseStatus::Success,
-        "Query failed: {:?}",
-        response.error
-    );
+    assert_eq!(response.status, ResponseStatus::Success, "Query failed: {:?}", response.error);
 
     let rows = response.results[0].rows_as_maps();
     assert_eq!(rows.len(), 1);
     let count = rows[0].get("job_count").unwrap().as_i64().unwrap();
-    
+
     println!("✓ Found {} running jobs out of {} total", count, total_jobs);
-    
+
     // We inserted 100 jobs cycling through 5 statuses, so ~20 of each
     // But if we only see the jobs that already existed, adjust expectations
     if total_jobs >= 90 {
@@ -257,28 +233,22 @@ async fn test_system_jobs_status_index() {
     println!("✓ Status index query latency: {:?}", latency_indexed);
 
     // Test 2: Query for completed jobs
-    let query_completed = "SELECT job_id, status FROM system.jobs WHERE status = 'completed' LIMIT 5";
-    let response2 = server
-        .execute_sql(query_completed)
-        .await;
+    let query_completed =
+        "SELECT job_id, status FROM system.jobs WHERE status = 'completed' LIMIT 5";
+    let response2 = server.execute_sql(query_completed).await;
 
     assert_eq!(response2.status, ResponseStatus::Success);
     let rows2 = response2.results[0].rows_as_maps();
     assert!(rows2.len() > 0, "Expected at least 1 completed job");
-    
+
     // Verify all returned rows have status='completed'
     for row in &rows2 {
-        assert_eq!(
-            row.get("status").unwrap().as_str().unwrap(),
-            "completed"
-        );
+        assert_eq!(row.get("status").unwrap().as_str().unwrap(), "completed");
     }
 
     // Test 3: Query for failed jobs
     let query_failed = "SELECT COUNT(*) AS failed_count FROM system.jobs WHERE status = 'failed'";
-    let response3 = server
-        .execute_sql(query_failed)
-        .await;
+    let response3 = server.execute_sql(query_failed).await;
 
     assert_eq!(response3.status, ResponseStatus::Success);
     let rows3 = response3.results[0].rows_as_maps();
@@ -304,14 +274,14 @@ async fn test_system_live_queries_basic() {
 
     // Insert a few live queries
     let now = chrono::Utc::now().timestamp_millis();
-    
+
     for i in 1..=10 {
         let live_id = LiveQueryId::new(
             UserId::new("test_user"),
             ConnectionId::new(&format!("conn{}", i)),
             &format!("sub{}", i),
         );
-        
+
         let live_query = LiveQuery {
             live_id: live_id.clone(),
             connection_id: format!("conn{}", i),
@@ -339,37 +309,34 @@ async fn test_system_live_queries_basic() {
 
     // Test 1: Query all live queries
     let query_all = "SELECT COUNT(*) AS lq_count FROM system.live_queries";
-    let response = server
-        .execute_sql(query_all)
-        .await;
+    let response = server.execute_sql(query_all).await;
 
     if response.status != ResponseStatus::Success {
         println!("⚠ system.live_queries query failed: {:?}", response.error);
         println!("⚠ This may be due to schema mismatch - skipping test");
         return;
     }
-    
+
     let rows = response.results[0].rows_as_maps();
     let count = rows[0].get("lq_count").unwrap().as_i64().unwrap();
     println!("✓ Found {} live queries", count);
-    
+
     if count == 0 {
         println!("⚠ No live queries found, data may not have persisted");
         return;
     }
-    
+
     assert!(count >= 10, "Expected at least 10 live queries, got {}", count);
 
     // Test 2: Query by table name (filter may not use index yet, but verify it works)
-    let query_by_table = "SELECT COUNT(*) AS table_lq_count FROM system.live_queries WHERE table_name = 'table0'";
-    let response2 = server
-        .execute_sql(query_by_table)
-        .await;
+    let query_by_table =
+        "SELECT COUNT(*) AS table_lq_count FROM system.live_queries WHERE table_name = 'table0'";
+    let response2 = server.execute_sql(query_by_table).await;
 
     assert_eq!(response2.status, ResponseStatus::Success);
     let rows2 = response2.results[0].rows_as_maps();
     let table_count = rows2[0].get("table_lq_count").unwrap().as_i64().unwrap();
-    
+
     // We inserted 10 queries cycling through 3 tables (0,1,2), so ~3-4 per table
     assert!(
         table_count >= 3 && table_count <= 4,
@@ -411,7 +378,7 @@ async fn test_index_performance_scaling() {
             last_seen: None,
             deleted_at: None,
         };
-        
+
         server
             .app_context
             .system_tables()
@@ -423,18 +390,14 @@ async fn test_index_performance_scaling() {
     // Warmup
     for _ in 0..3 {
         server
-            .execute_sql(
-                "SELECT user_id FROM system.users WHERE username = 'perf_username25'"
-            )
+            .execute_sql("SELECT user_id FROM system.users WHERE username = 'perf_username25'")
             .await;
     }
 
     // Measure with 50 users
     let start_50 = Instant::now();
     let response_50 = server
-        .execute_sql(
-            "SELECT user_id FROM system.users WHERE username = 'perf_username25'"
-        )
+        .execute_sql("SELECT user_id FROM system.users WHERE username = 'perf_username25'")
         .await;
     let latency_50 = start_50.elapsed();
 
@@ -463,7 +426,7 @@ async fn test_index_performance_scaling() {
             last_seen: None,
             deleted_at: None,
         };
-        
+
         server
             .app_context
             .system_tables()
@@ -475,9 +438,7 @@ async fn test_index_performance_scaling() {
     // Measure with 250 users
     let start_250 = Instant::now();
     let response_250 = server
-        .execute_sql(
-            "SELECT user_id FROM system.users WHERE username = 'perf_username25'"
-        )
+        .execute_sql("SELECT user_id FROM system.users WHERE username = 'perf_username25'")
         .await;
     let latency_250 = start_250.elapsed();
 
@@ -493,7 +454,7 @@ async fn test_index_performance_scaling() {
     // Without index: latency_250 would be ~5x latency_50 (O(n))
     // We allow 3x variance to account for system noise
     let ratio = latency_250.as_micros() as f64 / latency_50.as_micros().max(1) as f64;
-    
+
     assert!(
         ratio < 5.0,
         "Query time scaled too much ({}x). Expected O(1) with index, got O(n) behavior. This suggests the index is NOT being used!",

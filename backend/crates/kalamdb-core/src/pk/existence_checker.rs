@@ -230,12 +230,16 @@ impl PkExistenceChecker {
         };
 
         let object_store = cached
-            .object_store()
+            .object_store(self.app_context.as_ref())
             .into_kalamdb_error("Failed to get object store")?;
 
         // 3. Get storage path
-        let storage_path =
-            crate::schema_registry::PathResolver::get_storage_path(&cached, user_id, None)?;
+        let storage_path = crate::schema_registry::PathResolver::get_storage_path(
+            self.app_context.as_ref(),
+            &cached,
+            user_id,
+            None,
+        )?;
 
         // Check if any files exist
         let all_files = kalamdb_filestore::list_files_sync(

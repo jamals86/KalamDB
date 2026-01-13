@@ -8,11 +8,11 @@
 //! - Verifying job completion metrics
 
 use super::TestServer;
+use kalam_link::models::ResponseStatus;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
 use kalamdb_core::providers::flush::{FlushJobResult, SharedTableFlushJob, UserTableFlushJob};
 use kalamdb_core::providers::TableFlush;
 use kalamdb_tables::new_indexed_user_table_store;
-use kalam_link::models::ResponseStatus;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -51,10 +51,7 @@ pub async fn execute_flush_synchronously(
 
     // Check if table has columns
     if table_def.columns.is_empty() {
-        return Err(format!(
-            "No columns defined for table '{}.{}'",
-            namespace, table_name
-        ));
+        return Err(format!("No columns defined for table '{}.{}'", namespace, table_name));
     }
 
     // Convert to Arrow schema
@@ -91,9 +88,7 @@ pub async fn execute_flush_synchronously(
         server.app_context.manifest_service(),
     );
 
-    flush_job
-        .execute()
-        .map_err(|e| format!("Flush execution failed: {}", e))
+    flush_job.execute().map_err(|e| format!("Flush execution failed: {}", e))
 }
 
 /// Execute a shared table flush job synchronously.
@@ -114,10 +109,7 @@ pub async fn execute_shared_flush_synchronously(
         .ok_or_else(|| format!("Table {}.{} not found", namespace, table_name))?;
 
     if table_def.columns.is_empty() {
-        return Err(format!(
-            "No columns defined for table '{}.{}'",
-            namespace, table_name
-        ));
+        return Err(format!("No columns defined for table '{}.{}'", namespace, table_name));
     }
 
     // Table metadata scan not needed for flush execution
@@ -216,12 +208,9 @@ pub async fn wait_for_flush_job_completion(
                     None => {
                         sleep(check_interval).await;
                         continue;
-                    }
+                    },
                 };
-                let status = job_map
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
+                let status = job_map.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
 
                 match status {
                     // Transitional states: keep waiting
@@ -229,7 +218,7 @@ pub async fn wait_for_flush_job_completion(
                         // Continue waiting for completion
                         sleep(check_interval).await;
                         continue;
-                    }
+                    },
                     "completed" => {
                         // Verify duration_ms is calculated (not 0)
                         let started_at = job_map.get("started_at").and_then(|v| v.as_i64());
@@ -260,22 +249,22 @@ pub async fn wait_for_flush_job_completion(
                             .to_string();
 
                         return Ok(result);
-                    }
+                    },
                     "failed" => {
                         let error = job_map
                             .get("error_message")
                             .and_then(|v| v.as_str())
                             .unwrap_or("Unknown error");
                         return Err(format!("Job {} failed: {}", job_id, error));
-                    }
+                    },
                     "cancelled" => {
                         return Err(format!("Job {} was cancelled", job_id));
-                    }
+                    },
                     _ => {
                         // Unknown status: wait a bit more rather than failing fast
                         sleep(check_interval).await;
                         continue;
-                    }
+                    },
                 }
             }
         } else {
@@ -366,26 +355,19 @@ pub fn verify_parquet_files_exist(
                         file_path.display()
                     ));
                 }
-                println!(
-                    "  ✓ Parquet file valid: {} ({} bytes)",
-                    file_path.display(),
-                    file_size
-                );
-            }
+                println!("  ✓ Parquet file valid: {} ({} bytes)", file_path.display(), file_size);
+            },
             Err(e) => {
                 return Err(format!(
                     "Failed to read file metadata for {}: {}",
                     file_path.display(),
                     e
                 ));
-            }
+            },
         }
     }
 
-    println!(
-        "  ✓ All {} Parquet files verified successfully",
-        parquet_files.len()
-    );
+    println!("  ✓ All {} Parquet files verified successfully", parquet_files.len());
 
     Ok(())
 }

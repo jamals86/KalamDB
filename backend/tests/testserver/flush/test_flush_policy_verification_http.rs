@@ -16,7 +16,7 @@ use test_support::flush::{
     wait_for_parquet_files_for_user_table,
 };
 use test_support::jobs::{extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent};
-use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
+use test_support::http_server::HttpTestServer;
 use tokio::time::Duration;
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<(String, String)> {
@@ -58,20 +58,20 @@ async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<
 
 #[tokio::test]
 async fn test_flush_policy_and_parquet_output_over_http() {
-    with_http_test_server_timeout(Duration::from_secs(120), |server| {
-        Box::pin(async move {
-            let suffix = std::process::id();
-            let ns = format!("flush_policy_{}", suffix);
+    (async {
+    let server = test_support::http_server::get_global_server().await;
+    let suffix = std::process::id();
+    let ns = format!("flush_policy_{}", suffix);
 
-            let resp = server
-                .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
-                .await?;
-            anyhow::ensure!(resp.status == ResponseStatus::Success);
+    let resp = server
+        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+        .await?;
+    anyhow::ensure!(resp.status == ResponseStatus::Success);
 
-            let user_a = format!("alice_{}", suffix);
-            let user_b = format!("bob_{}", suffix);
-            let (auth_a, user_a_id) = create_user(server, &user_a).await?;
-            let (auth_b, user_b_id) = create_user(server, &user_b).await?;
+    let user_a = format!("alice_{}", suffix);
+    let user_b = format!("bob_{}", suffix);
+    let (auth_a, user_a_id) = create_user(server, &user_a).await?;
+    let (auth_b, user_b_id) = create_user(server, &user_b).await?;
 
             // -----------------------------------------------------------------
             // USER table: manual flush creates parquet + respects row threshold
@@ -271,9 +271,8 @@ async fn test_flush_policy_and_parquet_output_over_http() {
                 );
             }
 
-            Ok(())
-        })
+    Ok(())
     })
-    .await
-    .expect("with_http_test_server_timeout");
+        .await
+        .expect("test_flush_policy_and_parquet_output_over_http");
 }

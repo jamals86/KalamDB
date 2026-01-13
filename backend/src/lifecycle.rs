@@ -36,10 +36,7 @@ pub struct ApplicationComponents {
 /// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
 pub async fn bootstrap(
     config: &ServerConfig,
-) -> Result<(
-    ApplicationComponents,
-    Arc<kalamdb_core::app_context::AppContext>,
-)> {
+) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     // Initialize RocksDB
     let phase_start = std::time::Instant::now();
     let db_path = config.storage.rocksdb_dir();
@@ -69,14 +66,14 @@ pub async fn bootstrap(
     // Phase 5: AppContext now creates all dependencies internally!
     // Uses constants from kalamdb_commons for table prefixes
     let phase_start = std::time::Instant::now();
-    
+
     // Node ID: use cluster.node_id (u64) if cluster mode, otherwise default to 1 for standalone
     let node_id = if let Some(cluster) = &config.cluster {
         kalamdb_commons::NodeId::new(cluster.node_id)
     } else {
         kalamdb_commons::NodeId::new(1) // Standalone mode uses node ID 1
     };
-    
+
     let app_context = kalamdb_core::app_context::AppContext::init(
         backend.clone(),
         node_id,
@@ -94,52 +91,75 @@ pub async fn bootstrap(
     // Start the executor (always Raft - single-node or cluster)
     let phase_start = std::time::Instant::now();
     let is_cluster_mode = config.cluster.is_some();
-    
+
     if is_cluster_mode {
         // Multi-node cluster mode
         let cluster_config = config.cluster.as_ref().unwrap();
         info!("╔═══════════════════════════════════════════════════════════════════╗");
         info!("║                     Multi-Node Cluster Mode                       ║");
         info!("╚═══════════════════════════════════════════════════════════════════╝");
-        info!("Cluster: {} | Node: {} | Peers: {}", 
-            cluster_config.cluster_id, cluster_config.node_id, cluster_config.peers.len());
-        info!("Shards: {} user, {} shared", 
-            cluster_config.user_shards, cluster_config.shared_shards);
-        
+        info!(
+            "Cluster: {} | Node: {} | Peers: {}",
+            cluster_config.cluster_id,
+            cluster_config.node_id,
+            cluster_config.peers.len()
+        );
+        info!(
+            "Shards: {} user, {} shared",
+            cluster_config.user_shards, cluster_config.shared_shards
+        );
+
         debug!("RPC: {} | API: {}", cluster_config.rpc_addr, cluster_config.api_addr);
-        debug!("Heartbeat: {}ms | Election timeout: {:?}ms", 
-            cluster_config.heartbeat_interval_ms, cluster_config.election_timeout_ms);
+        debug!(
+            "Heartbeat: {}ms | Election timeout: {:?}ms",
+            cluster_config.heartbeat_interval_ms, cluster_config.election_timeout_ms
+        );
         for peer in &cluster_config.peers {
             debug!("  Peer {}: rpc={}, api={}", peer.node_id, peer.rpc_addr, peer.api_addr);
         }
-        
-        app_context.executor().start().await
+
+        app_context
+            .executor()
+            .start()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to start Raft cluster: {}", e))?;
-        
+
         // Auto-bootstrap: node_id=1 is the designated bootstrap node
         let should_bootstrap = cluster_config.peers.is_empty() || cluster_config.node_id == 1;
-        
+
         if should_bootstrap {
             if !cluster_config.peers.is_empty() {
                 info!("Node {} is bootstrap node - initializing cluster", cluster_config.node_id);
             }
-            app_context.executor().initialize_cluster().await
+            app_context
+                .executor()
+                .initialize_cluster()
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to initialize cluster: {}", e))?;
         } else {
             info!("Node {} waiting for bootstrap node (node_id=1)", cluster_config.node_id);
         }
-        
+
         info!("✓ Raft cluster started ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
     } else {
         // Single-node mode (lightweight Raft)
         debug!("Single-node mode - initializing lightweight Raft");
-        
-        app_context.executor().start().await
+
+        app_context
+            .executor()
+            .start()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to start Raft: {}", e))?;
-        app_context.executor().initialize_cluster().await
+        app_context
+            .executor()
+            .initialize_cluster()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to initialize single-node Raft: {}", e))?;
-        
-        debug!("✓ Single-node Raft initialized ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
+
+        debug!(
+            "✓ Single-node Raft initialized ({:.2}ms)",
+            phase_start.elapsed().as_secs_f64() * 1000.0
+        );
     }
 
     // Ensure Raft appliers are registered after Raft has started.
@@ -167,10 +187,7 @@ pub async fn bootstrap(
     let job_manager = app_context.job_manager();
     let max_concurrent = config.jobs.max_concurrent;
     tokio::spawn(async move {
-        debug!(
-            "Starting JobsManager run loop with max {} concurrent jobs",
-            max_concurrent
-        );
+        debug!("Starting JobsManager run loop with max {} concurrent jobs", max_concurrent);
         if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
             log::error!("JobsManager run loop failed: {}", e);
         }
@@ -217,16 +234,13 @@ pub async fn bootstrap(
 
     // Get system table providers for job executor and flush scheduler
     let users_provider = app_context.system_tables().users();
-    let user_repo: Arc<dyn kalamdb_auth::UserRepository> = Arc::new(
-        kalamdb_api::repositories::CoreUsersRepo::new(users_provider),
-    );
+    let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
+        Arc::new(kalamdb_api::repositories::CoreUsersRepo::new(users_provider));
 
     // SqlExecutor now uses AppContext directly
     let phase_start = std::time::Instant::now();
-    let sql_executor = Arc::new(SqlExecutor::new(
-        app_context.clone(),
-        config.auth.enforce_password_complexity,
-    ));
+    let sql_executor =
+        Arc::new(SqlExecutor::new(app_context.clone(), config.auth.enforce_password_complexity));
 
     app_context.set_sql_executor(sql_executor.clone());
     live_query_manager.set_sql_executor(sql_executor.clone());
@@ -264,7 +278,7 @@ pub async fn bootstrap(
     // This is CRITICAL: the same ConnectionsManager must be used by both:
     // 1. ws_handler (for registering connections and marking authentication)
     // 2. LiveQueryManager's SubscriptionService (for checking connection state during subscription)
-    // 
+    //
     // Previously, lifecycle.rs created a NEW ConnectionsManager which caused the error:
     // "Connection not found" when trying to register subscriptions because the connection
     // was registered in one manager but looked up in another.
@@ -314,7 +328,7 @@ pub async fn bootstrap(
 }
 
 /// Bootstrap the server for tests with isolated AppContext
-/// 
+///
 /// Unlike `bootstrap()`, this does NOT use the global AppContext singleton.
 /// Each call creates a completely fresh AppContext instance, which is essential
 /// for test isolation where each test needs its own independent state.
@@ -322,10 +336,7 @@ pub async fn bootstrap(
 /// **Warning**: Only use this in tests! Production code should use `bootstrap()`.
 pub async fn bootstrap_isolated(
     config: &ServerConfig,
-) -> Result<(
-    ApplicationComponents,
-    Arc<kalamdb_core::app_context::AppContext>,
-)> {
+) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     let bootstrap_start = std::time::Instant::now();
 
     // Initialize RocksDB
@@ -353,7 +364,7 @@ pub async fn bootstrap_isolated(
     } else {
         kalamdb_commons::NodeId::new(1) // Standalone mode uses node ID 1
     };
-    
+
     // Use create_isolated instead of init to bypass the global singleton
     let app_context = kalamdb_core::app_context::AppContext::create_isolated(
         backend.clone(),
@@ -363,11 +374,17 @@ pub async fn bootstrap_isolated(
     );
 
     // Start Raft (same as bootstrap)
-    app_context.executor().start().await
+    app_context
+        .executor()
+        .start()
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to start Raft: {}", e))?;
-    app_context.executor().initialize_cluster().await
+    app_context
+        .executor()
+        .initialize_cluster()
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to initialize single-node Raft: {}", e))?;
-    
+
     app_context.wire_raft_appliers();
 
     // NOTE: restore_raft_state_machines() is called LATER after system tables, storages,
@@ -411,15 +428,12 @@ pub async fn bootstrap_isolated(
     let live_query_manager = app_context.live_query_manager();
     let session_factory = app_context.session_factory();
     let users_provider = app_context.system_tables().users();
-    let user_repo: Arc<dyn kalamdb_auth::UserRepository> = Arc::new(
-        kalamdb_api::repositories::CoreUsersRepo::new(users_provider),
-    );
+    let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
+        Arc::new(kalamdb_api::repositories::CoreUsersRepo::new(users_provider));
 
     // SqlExecutor
-    let sql_executor = Arc::new(SqlExecutor::new(
-        app_context.clone(),
-        config.auth.enforce_password_complexity,
-    ));
+    let sql_executor =
+        Arc::new(SqlExecutor::new(app_context.clone(), config.auth.enforce_password_complexity));
 
     app_context.set_sql_executor(sql_executor.clone());
     live_query_manager.set_sql_executor(sql_executor.clone());
@@ -512,17 +526,17 @@ pub async fn run(
 
     // Create connection protection middleware from config
     let connection_protection = middleware::ConnectionProtection::from_server_config(config);
-    
+
     // Build CORS middleware from config (uses actix-cors)
     let cors_config = config.clone();
 
     let app_context_for_handler = app_context.clone();
     let connection_registry_for_handler = connection_registry.clone();
-    
+
     // Create auth config from server config (reads jwt_secret from server.toml)
     let auth_config = AuthConfig::from_server_config(config);
     let ui_path = config.server.ui_path.clone();
-    
+
     // Log UI serving status
     if kalamdb_api::routes::is_embedded_ui_available() {
         info!("Admin UI enabled at /ui (embedded in binary)");
@@ -531,7 +545,7 @@ pub async fn run(
     } else {
         info!("Admin UI not available (run 'npm run build' in ui/ and rebuild server)");
     }
-    
+
     let server = HttpServer::new(move || {
         let mut app = App::new()
             // Connection protection (first middleware - drops bad requests early)
@@ -563,7 +577,7 @@ pub async fn run(
     })
     // Set backlog BEFORE bind() - this affects the listen queue size
     .backlog(config.performance.backlog);
-    
+
     // Bind with HTTP/2 support if enabled, otherwise use HTTP/1.1 only
     let server = if config.server.enable_http2 {
         info!("HTTP/2 support enabled (h2c - HTTP/2 cleartext)");
@@ -573,12 +587,8 @@ pub async fn run(
         server.bind(&bind_addr)?
     };
 
-    info!(
-        "🚀 Server started in {:.2}ms",
-        main_start.elapsed().as_secs_f64() * 1000.0
-    );
+    info!("🚀 Server started in {:.2}ms", main_start.elapsed().as_secs_f64() * 1000.0);
 
-    
     let server = server
     .workers(if config.server.workers == 0 {
         num_cpus::get()
@@ -654,10 +664,10 @@ pub async fn run(
                     }
                 }
             }
-            
+
             // Ensure all file descriptors are released
             info!("Performing cleanup to release file descriptors...");
-            
+
             // Shutdown the executor (Raft cluster shutdown in cluster mode)
             if app_context.executor().is_cluster_mode() {
                 info!("Shutting down Raft cluster...");
@@ -665,10 +675,10 @@ pub async fn run(
                     log::error!("Error shutting down Raft cluster: {}", e);
                 }
             }
-            
+
             drop(components);
             drop(app_context);
-            
+
             debug!("Graceful shutdown complete");
         }
     }
@@ -696,7 +706,7 @@ impl RunningTestHttpServer {
         // Stop the HTTP server first
         self.server_handle.stop(false).await;
         let _ = self.server_task.await;
-        
+
         // Then shutdown the Raft executor to cleanly stop all Raft groups
         // This prevents "Fatal(Stopped)" errors in subsequent tests
         log::debug!("Shutting down Raft executor for test server...");
@@ -704,7 +714,7 @@ impl RunningTestHttpServer {
         if let Err(e) = self.app_context.executor().shutdown().await {
             log::warn!("Failed to shutdown Raft executor: {}", e);
         }
-        
+
         println!("Test HTTP server shutdown complete");
         // Brief delay to allow background tasks to clean up
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -841,7 +851,7 @@ async fn create_default_system_user(
                 AuthConstants::DEFAULT_SYSTEM_USERNAME
             );
             Ok(())
-        }
+        },
         Ok(None) | Err(_) => {
             // User doesn't exist, create new system user
             let user_id = UserId::root();
@@ -858,16 +868,16 @@ async fn create_default_system_user(
                     // Hash the provided password for remote access
                     bcrypt::hash(&password, bcrypt::DEFAULT_COST)
                         .map_err(|e| anyhow::anyhow!("Failed to hash root password: {}", e))?
-                }
+                },
                 _ => {
                     // T126: Create with EMPTY password hash for localhost-only access
                     // This allows passwordless authentication from localhost (127.0.0.1, ::1)
                     // For remote access, set a password using: ALTER USER root SET PASSWORD '...'
                     String::new() // Empty = localhost-only, no password required
-                }
+                },
             };
             let has_password = !password_hash.is_empty();
-            
+
             // If password is set via env var, enable remote access
             let auth_data = if has_password {
                 Some(r#"{"allow_remote":true}"#.to_string())
@@ -907,12 +917,14 @@ async fn create_default_system_user(
                     "✓ Created system user '{}' (localhost-only access, no password required)",
                     username
                 );
-                info!("  To enable remote access, set a password: ALTER USER root SET PASSWORD '...'");
+                info!(
+                    "  To enable remote access, set a password: ALTER USER root SET PASSWORD '...'"
+                );
                 info!("  Or set KALAMDB_ROOT_PASSWORD environment variable before startup");
             }
 
             Ok(())
-        }
+        },
     }
 }
 

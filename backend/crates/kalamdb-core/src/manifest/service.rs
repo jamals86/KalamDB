@@ -7,7 +7,9 @@
 //!
 //! Key type: (TableId, Option<UserId>) for type-safe cache access.
 
-use crate::error_extensions::KalamDbResultExt;
+use crate::schema_registry::PathResolver;
+use crate::schema_registry::SchemaRegistry;
+use crate::storage::storage_registry::StorageRegistry;
 use kalamdb_commons::config::ManifestCacheSettings;
 use kalamdb_commons::models::types::{Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
 use kalamdb_commons::models::StorageId;
@@ -43,6 +45,13 @@ pub struct ManifestService {
 
     /// Configuration settings
     config: ManifestCacheSettings,
+
+    /// Optional registries for path/object store resolution.
+    ///
+    /// In production these are injected via `new_with_registries()` to avoid any
+    /// global `AppContext::get()` usage. In tests we allow a fallback.
+    schema_registry: Option<Arc<SchemaRegistry>>,
+    storage_registry: Option<Arc<StorageRegistry>>,
 }
 
 /// Minimum weight for any cache entry (shared tables)
@@ -92,6 +101,46 @@ impl ManifestService {
             store: new_manifest_store(storage_backend),
             hot_cache,
             config,
+            schema_registry: None,
+            storage_registry: None,
+        }
+    }
+
+    /// Create a new ManifestService with access to SchemaRegistry + StorageRegistry.
+    ///
+    /// This is the preferred constructor for production wiring.
+    pub fn new_with_registries(
+        storage_backend: Arc<dyn StorageBackend>,
+        base_path: String,
+        config: ManifestCacheSettings,
+        schema_registry: Arc<SchemaRegistry>,
+        storage_registry: Arc<StorageRegistry>,
+    ) -> Self {
+        let mut service = Self::new(storage_backend, base_path, config);
+        service.schema_registry = Some(schema_registry);
+        service.storage_registry = Some(storage_registry);
+        service
+    }
+
+    fn registries(&self) -> Result<(Arc<SchemaRegistry>, Arc<StorageRegistry>), StorageError> {
+        if let (Some(schema_registry), Some(storage_registry)) =
+            (self.schema_registry.as_ref(), self.storage_registry.as_ref())
+        {
+            return Ok((Arc::clone(schema_registry), Arc::clone(storage_registry)));
+        }
+
+        #[cfg(test)]
+        {
+            let app_ctx = crate::app_context::AppContext::get();
+            return Ok((app_ctx.schema_registry(), app_ctx.storage_registry()));
+        }
+
+        #[cfg(not(test))]
+        {
+            Err(StorageError::Other(
+                "ManifestService missing SchemaRegistry/StorageRegistry; use new_with_registries()"
+                    .to_string(),
+            ))
         }
     }
 
@@ -674,16 +723,14 @@ impl ManifestService {
         ),
         StorageError,
     > {
-        let app_ctx = crate::app_context::AppContext::get();
-        let schema_registry = app_ctx.schema_registry();
+        let (schema_registry, storage_registry) = self.registries()?;
 
         let cached = schema_registry
             .get(table_id)
             .ok_or_else(|| StorageError::Other(format!("Table not found: {}", table_id)))?;
 
         let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
-        let storage_arc = app_ctx
-            .storage_registry()
+        let storage_arc = storage_registry
             .get_storage(&storage_id)
             .map_err(|e| StorageError::IoError(e.to_string()))?
             .ok_or_else(|| {
@@ -691,14 +738,27 @@ impl ManifestService {
             })?;
         let storage = (*storage_arc).clone();
 
-        let store = cached
-            .object_store()
-            .into_kalamdb_error("Failed to get object store")
+        let store = storage_registry
+            .get_object_store(&storage_id)
             .map_err(|e| StorageError::IoError(e.to_string()))?;
 
-        let storage_path =
-            crate::schema_registry::PathResolver::get_storage_path(&cached, user_id, None)
-                .map_err(|e| StorageError::IoError(e.to_string()))?;
+        let relative = PathResolver::get_relative_storage_path(&cached, user_id, None)
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+
+        let base_dir = {
+            let trimmed = storage.base_directory.trim();
+            if trimmed.is_empty() {
+                storage_registry.default_storage_path().to_string()
+            } else {
+                trimmed.to_string()
+            }
+        };
+
+        let storage_path = if base_dir.ends_with('/') {
+            format!("{}{}", base_dir, relative.trim_start_matches('/'))
+        } else {
+            format!("{}/{}", base_dir, relative.trim_start_matches('/'))
+        };
         let manifest_path = format!("{}/manifest.json", storage_path);
 
         Ok((store, storage, manifest_path))
@@ -709,12 +769,37 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<String, StorageError> {
-        let app_ctx = crate::app_context::AppContext::get();
-        let schema_registry = app_ctx.schema_registry();
+        let (schema_registry, storage_registry) = self.registries()?;
+        let cached = schema_registry
+            .get(table_id)
+            .ok_or_else(|| StorageError::Other(format!("Table not found: {}", table_id)))?;
 
-        schema_registry
-            .get_storage_path(table_id, user_id, None)
-            .map_err(|e| StorageError::IoError(e.to_string()))
+        let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
+        let storage_arc = storage_registry
+            .get_storage(&storage_id)
+            .map_err(|e| StorageError::IoError(e.to_string()))?
+            .ok_or_else(|| {
+                StorageError::Other(format!("Storage {} not found", storage_id.as_str()))
+            })?;
+        let storage = (*storage_arc).clone();
+
+        let relative = PathResolver::get_relative_storage_path(&cached, user_id, None)
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+
+        let base_dir = {
+            let trimmed = storage.base_directory.trim();
+            if trimmed.is_empty() {
+                storage_registry.default_storage_path().to_string()
+            } else {
+                trimmed.to_string()
+            }
+        };
+
+        Ok(if base_dir.ends_with('/') {
+            format!("{}{}", base_dir, relative.trim_start_matches('/'))
+        } else {
+            format!("{}/{}", base_dir, relative.trim_start_matches('/'))
+        })
     }
 
     fn write_manifest_via_store(

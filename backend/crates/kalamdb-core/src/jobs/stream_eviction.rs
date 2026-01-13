@@ -19,7 +19,7 @@ impl StreamEvictionScheduler {
     ) -> Result<(), KalamDbError> {
         let tables = app_context
             .schema_registry()
-            .scan_all_table_definitions()
+            .scan_all_table_definitions(app_context.as_ref())
             .map_err(|e| {
                 KalamDbError::io_message(format!("Failed to scan table definitions: {}", e))
             })?;

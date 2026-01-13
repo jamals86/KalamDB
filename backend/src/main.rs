@@ -3,8 +3,8 @@
 //! The heavy lifting (initialization, middleware wiring, graceful shutdown)
 //! lives in dedicated modules so this file remains a thin orchestrator.
 
-use kalamdb_server::config;
 use kalamdb_core::metrics::SERVER_VERSION;
+use kalamdb_server::config;
 
 mod logging;
 
@@ -16,7 +16,7 @@ use log::info;
 #[actix_web::main]
 async fn main() -> Result<()> {
     let main_start = std::time::Instant::now();
-    
+
     // Normal server startup
     // Load configuration from server.toml (fallback to config.toml for backward compatibility)
     let config_path = if std::path::Path::new("server.toml").exists() {
@@ -36,12 +36,12 @@ async fn main() -> Result<()> {
                     .display()
             );
             cfg
-        }
+        },
         Err(e) => {
             eprintln!("❌ FATAL: Failed to load {}: {}", config_path, e);
             eprintln!("❌ Server cannot start without valid configuration");
             std::process::exit(1);
-        }
+        },
     };
 
     // ========================================================================
@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
     // ========================================================================
     // Security: Validate critical configuration at startup
     // ========================================================================
-    
+
     // Check JWT secret strength
     const INSECURE_JWT_SECRETS: &[&str] = &[
         "CHANGE_ME_IN_PRODUCTION",
@@ -67,11 +67,11 @@ async fn main() -> Result<()> {
         "secret",
         "password",
     ];
-    
+
     let jwt_secret = &config.auth.jwt_secret;
     let is_insecure_secret = INSECURE_JWT_SECRETS.iter().any(|s| jwt_secret == *s);
     let is_short_secret = jwt_secret.len() < 32;
-    
+
     if is_insecure_secret || is_short_secret {
         eprintln!("╔═══════════════════════════════════════════════════════════════════╗");
         eprintln!("║               ⚠️  SECURITY WARNING: JWT SECRET ⚠️                  ║");
@@ -81,7 +81,10 @@ async fn main() -> Result<()> {
             eprintln!("║  This is INSECURE and allows token forgery!                       ║");
         }
         if is_short_secret {
-            eprintln!("║  JWT secret is too short ({} chars). Minimum 32 chars required.  ║", jwt_secret.len());
+            eprintln!(
+                "║  JWT secret is too short ({} chars). Minimum 32 chars required.  ║",
+                jwt_secret.len()
+            );
         }
         eprintln!("║                                                                   ║");
         eprintln!("║  To fix: Set a strong, unique secret in server.toml:             ║");
@@ -96,11 +99,11 @@ async fn main() -> Result<()> {
         eprintln!("║    # or                                                           ║");
         eprintln!("║    cat /dev/urandom | head -c 32 | base64                        ║");
         eprintln!("║                                                                   ║");
-        
+
         // In production mode (not localhost), refuse to start
         let host = &config.server.host;
         let is_localhost = host == "127.0.0.1" || host == "localhost" || host == "::1";
-        
+
         if !is_localhost {
             eprintln!("║  FATAL: Refusing to start with insecure JWT secret on non-local  ║");
             eprintln!("║         address. This prevents token forgery attacks.             ║");

@@ -24,9 +24,6 @@ impl QueryResultTestExt for QueryResult {
         let Some(rows) = &self.rows else {
             return vec![];
         };
-        rows.iter()
-            .enumerate()
-            .filter_map(|(i, _)| self.row_as_map(i))
-            .collect()
+        rows.iter().enumerate().filter_map(|(i, _)| self.row_as_map(i)).collect()
     }
 }

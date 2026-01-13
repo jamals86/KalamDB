@@ -1,3 +1,4 @@
+use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use datafusion::datasource::TableProvider;
@@ -190,6 +191,7 @@ impl CachedTableData {
     /// # Returns
     /// A fully initialized CachedTableData with storage fields populated
     pub fn from_table_definition(
+        app_ctx: &AppContext,
         table_id: &TableId,
         table_def: Arc<TableDefinition>,
     ) -> Result<Self, KalamDbError> {
@@ -199,7 +201,7 @@ impl CachedTableData {
         let table_type = table_def.table_type;
 
         let storage_path_template = if let Some(ref sid) = storage_id {
-            PathResolver::resolve_storage_path_template(table_id, table_type, sid).unwrap_or_else(
+            PathResolver::resolve_storage_path_template(app_ctx, table_id, table_type, sid).unwrap_or_else(
                 |e| {
                     log::warn!(
                         "Failed to resolve storage path template for {}: {}. Using empty template.",
@@ -233,6 +235,7 @@ impl CachedTableData {
     /// # Returns
     /// A CachedTableData with updated schema but preserved storage config
     pub fn from_altered_table(
+        app_ctx: &AppContext,
         table_id: &TableId,
         new_table_def: Arc<TableDefinition>,
         old_entry: Option<&CachedTableData>,
@@ -250,7 +253,7 @@ impl CachedTableData {
                 "⚠️  No existing cache entry for {} during ALTER. Resolving storage config...",
                 table_id
             );
-            Self::from_table_definition(table_id, new_table_def)
+            Self::from_table_definition(app_ctx, table_id, new_table_def)
         }
     }
 
@@ -326,7 +329,7 @@ impl CachedTableData {
     ///
     /// # Errors
     /// Returns error if no storage_id configured or storage not found
-    pub fn object_store(&self) -> Result<Arc<dyn ObjectStore>, KalamDbError> {
+    pub fn object_store(&self, app_ctx: &AppContext) -> Result<Arc<dyn ObjectStore>, KalamDbError> {
         let storage_id = self
             .storage_id
             .as_ref()
@@ -337,8 +340,6 @@ impl CachedTableData {
                     "Cannot get ObjectStore: no storage_id configured".to_string(),
                 )
             })?;
-
-        let app_ctx = crate::app_context::AppContext::get();
         app_ctx.storage_registry().get_object_store(&storage_id)
     }
 

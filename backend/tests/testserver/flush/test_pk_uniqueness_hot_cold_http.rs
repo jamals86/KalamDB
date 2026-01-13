@@ -73,10 +73,10 @@ async fn get_name_for_id(
 
 #[tokio::test]
 async fn test_pk_uniqueness_hot_and_cold_over_http() {
+    (async {
     let server = test_support::http_server::get_global_server().await;
     let suffix = std::process::id();
-
-            let ns = format!("pk_{}", suffix);
+    let ns = format!("pk_{}", suffix);
             let table_user = "items_user";
             let table_shared = "items_shared";
 
@@ -299,9 +299,8 @@ async fn test_pk_uniqueness_hot_and_cold_over_http() {
                 anyhow::ensure!(cnt == 3, "expected 3 rows in auto table, got {}", cnt);
             }
 
-            Ok(())
-        })
+    Ok(())
     })
-    .await
-    .expect("with_http_test_server_timeout");
+        .await
+        .expect("test_pk_uniqueness_hot_and_cold_over_http");
 }

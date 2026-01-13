@@ -1,5 +1,6 @@
 //! Core implementation of SchemaRegistry
 
+use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::schema_registry::cached_table_data::CachedTableData;
 use crate::schema_registry::path_resolver::PathResolver;
@@ -93,6 +94,7 @@ impl SchemaRegistry {
     /// Resolve storage path with dynamic placeholders substituted
     pub fn get_storage_path(
         &self,
+        app_ctx: &AppContext,
         table_id: &TableId,
         user_id: Option<&UserId>,
         shard: Option<u32>,
@@ -101,7 +103,7 @@ impl SchemaRegistry {
             .get(table_id)
             .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
 
-        PathResolver::get_storage_path(&data, user_id, shard)
+        PathResolver::get_storage_path(app_ctx, &data, user_id, shard)
     }
 
     /// Get cache hit rate (for metrics)
@@ -136,6 +138,7 @@ impl SchemaRegistry {
     /// Stores the provider in CachedTableData and registers with DataFusion's catalog.
     pub fn insert_provider(
         &self,
+        app_ctx: &AppContext,
         table_id: TableId,
         provider: Arc<dyn TableProvider + Send + Sync>,
     ) -> Result<(), KalamDbError> {
@@ -149,7 +152,7 @@ impl SchemaRegistry {
             cached.set_provider(provider.clone());
         } else {
             // Table not in cache - try to load from persistence first
-            if let Some(cached) = SchemaPersistence::get_table_definition(&self.table_cache, &table_id)?
+            if let Some(cached) = SchemaPersistence::get_table_definition(app_ctx, &self.table_cache, &table_id)?
                 .and_then(|_| self.get(&table_id))
             {
                 cached.set_provider(provider.clone());
@@ -321,33 +324,42 @@ impl SchemaRegistry {
     /// Get table definition from persistence layer (read-through pattern)
     pub fn get_table_definition(
         &self,
+        app_ctx: &AppContext,
         table_id: &TableId,
     ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
-        SchemaPersistence::get_table_definition(&self.table_cache, table_id)
+        SchemaPersistence::get_table_definition(app_ctx, &self.table_cache, table_id)
     }
 
     /// Store table definition to persistence layer (write-through pattern)
     pub fn put_table_definition(
         &self,
+        app_ctx: &AppContext,
         table_id: &TableId,
         table_def: &TableDefinition,
     ) -> Result<(), KalamDbError> {
-        SchemaPersistence::put_table_definition(&self.table_cache, table_id, table_def)
+        SchemaPersistence::put_table_definition(app_ctx, &self.table_cache, table_id, table_def)
     }
 
     /// Delete table definition from persistence layer (delete-through pattern)
-    pub fn delete_table_definition(&self, table_id: &TableId) -> Result<(), KalamDbError> {
-        SchemaPersistence::delete_table_definition(&self.table_cache, table_id)
+    pub fn delete_table_definition(
+        &self,
+        app_ctx: &AppContext,
+        table_id: &TableId,
+    ) -> Result<(), KalamDbError> {
+        SchemaPersistence::delete_table_definition(app_ctx, &self.table_cache, table_id)
     }
 
     /// Scan all table definitions from persistence layer
-    pub fn scan_all_table_definitions(&self) -> Result<Vec<TableDefinition>, KalamDbError> {
-        SchemaPersistence::scan_all_table_definitions()
+    pub fn scan_all_table_definitions(
+        &self,
+        app_ctx: &AppContext,
+    ) -> Result<Vec<TableDefinition>, KalamDbError> {
+        SchemaPersistence::scan_all_table_definitions(app_ctx)
     }
 
     /// Check if table exists in persistence layer
-    pub fn table_exists(&self, table_id: &TableId) -> Result<bool, KalamDbError> {
-        SchemaPersistence::table_exists(&self.table_cache, table_id)
+    pub fn table_exists(&self, app_ctx: &AppContext, table_id: &TableId) -> Result<bool, KalamDbError> {
+        SchemaPersistence::table_exists(app_ctx, &self.table_cache, table_id)
     }
 
     /// Get table definition if it exists (optimized single-call pattern)
@@ -374,9 +386,10 @@ impl SchemaRegistry {
     /// ```
     pub fn get_table_if_exists(
         &self,
+        app_ctx: &AppContext,
         table_id: &TableId,
     ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
-        SchemaPersistence::get_table_if_exists(&self.table_cache, table_id)
+        SchemaPersistence::get_table_if_exists(app_ctx, &self.table_cache, table_id)
     }
 
     /// Get Arrow schema for a table
@@ -387,6 +400,7 @@ impl SchemaRegistry {
     /// **Performance**: First call ~75μs (computation), subsequent calls ~1.5μs (cached)
     pub fn get_arrow_schema(
         &self,
+        app_ctx: &AppContext,
         table_id: &TableId,
     ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
         // Fast path: check cache
@@ -395,7 +409,7 @@ impl SchemaRegistry {
         }
 
         // Slow path: try to load from persistence (lazy loading)
-        if SchemaPersistence::get_table_definition(&self.table_cache, table_id)?.is_some() {
+        if SchemaPersistence::get_table_definition(app_ctx, &self.table_cache, table_id)?.is_some() {
             // Cache is now populated - retrieve it
             if let Some(cached) = self.get(table_id) {
                 return cached.arrow_schema();
@@ -414,6 +428,7 @@ impl SchemaRegistry {
     /// multiple Parquet files written with the same historical schema version.
     pub fn get_arrow_schema_for_version(
         &self,
+        app_ctx: &AppContext,
         table_id: &TableId,
         schema_version: u32,
     ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
@@ -425,7 +440,7 @@ impl SchemaRegistry {
         }
 
         // Slow path: load from versioned tables store and cache
-        let table_def = crate::app_context::AppContext::get()
+        let table_def = app_ctx
             .system_tables()
             .tables()
             .get_version(table_id, schema_version)

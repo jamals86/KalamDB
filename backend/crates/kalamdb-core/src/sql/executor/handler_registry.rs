@@ -490,15 +490,15 @@ impl HandlerRegistry {
         // Use dynamic handlers for DML to access original SQL text (required for parsing columns/values)
         registry.register_dynamic(
             SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
-            InsertHandler::new(),
+            InsertHandler::new(app_context.clone()),
         );
         registry.register_dynamic(
             SqlStatementKind::Update(kalamdb_sql::ddl::UpdateStatement),
-            UpdateHandler::new(),
+            UpdateHandler::new(app_context.clone()),
         );
         registry.register_dynamic(
             SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement),
-            DeleteHandler::new(),
+            DeleteHandler::new(app_context.clone()),
         );
 
         registry
@@ -548,7 +548,7 @@ impl HandlerRegistry {
     /// ```ignore
     /// registry.register_dynamic(
     ///     SqlStatementKind::Insert(InsertStatement),
-    ///     InsertHandler::new(),
+    ///     InsertHandler::new(app_context.clone()),
     /// );
     /// ```
     fn register_dynamic<H>(

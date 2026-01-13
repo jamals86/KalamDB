@@ -1,5 +1,6 @@
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use crate::app_context::AppContext;
 use crate::schema_registry::cached_table_data::CachedTableData;
 use crate::schema_registry::table_cache::TableCache;
 use kalamdb_commons::models::schemas::TableDefinition;
@@ -12,6 +13,7 @@ pub struct SchemaPersistence;
 impl SchemaPersistence {
     /// Get table definition from persistence layer (read-through pattern)
     pub fn get_table_definition(
+        app_ctx: &AppContext,
         cache: &TableCache,
         table_id: &TableId,
     ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
@@ -29,15 +31,13 @@ impl SchemaPersistence {
             }
         }
 
-        // Slow path: query persistence layer via AppContext
-        let app_ctx = crate::app_context::AppContext::get();
         let tables_provider = app_ctx.system_tables().tables();
 
         match tables_provider.get_table_by_id(table_id)? {
             Some(table_def) => {
                 // Cache the result with fully initialized storage config
                 let table_arc = Arc::new(table_def);
-                let data = CachedTableData::from_table_definition(table_id, table_arc.clone())?;
+                let data = CachedTableData::from_table_definition(app_ctx, table_id, table_arc.clone())?;
                 cache.insert(table_id.clone(), Arc::new(data));
                 Ok(Some(table_arc))
             }
@@ -47,12 +47,11 @@ impl SchemaPersistence {
 
     /// Store table definition to persistence layer (write-through pattern)
     pub fn put_table_definition(
+        app_ctx: &AppContext,
         cache: &TableCache,
         table_id: &TableId,
         table_def: &TableDefinition,
     ) -> Result<(), KalamDbError> {
-        // Get tables provider via AppContext
-        let app_ctx = crate::app_context::AppContext::get();
         let tables_provider = app_ctx.system_tables().tables();
 
         // Persist to storage
@@ -60,7 +59,7 @@ impl SchemaPersistence {
 
         // Populate cache immediately with fully initialized storage config
         let table_arc = Arc::new(table_def.clone());
-        let data = CachedTableData::from_table_definition(table_id, table_arc)?;
+        let data = CachedTableData::from_table_definition(app_ctx, table_id, table_arc)?;
         cache.insert(table_id.clone(), Arc::new(data));
 
         Ok(())
@@ -68,11 +67,10 @@ impl SchemaPersistence {
 
     /// Delete table definition from persistence layer (delete-through pattern)
     pub fn delete_table_definition(
+        app_ctx: &AppContext,
         cache: &TableCache,
         table_id: &TableId,
     ) -> Result<(), KalamDbError> {
-        // Get tables provider via AppContext
-        let app_ctx = crate::app_context::AppContext::get();
         let tables_provider = app_ctx.system_tables().tables();
 
         // Delete from storage
@@ -85,9 +83,7 @@ impl SchemaPersistence {
     }
 
     /// Scan all table definitions from persistence layer
-    pub fn scan_all_table_definitions() -> Result<Vec<TableDefinition>, KalamDbError> {
-        // Get tables provider via AppContext
-        let app_ctx = crate::app_context::AppContext::get();
+    pub fn scan_all_table_definitions(app_ctx: &AppContext) -> Result<Vec<TableDefinition>, KalamDbError> {
         let tables_provider = app_ctx.system_tables().tables();
 
         // Scan all tables from storage
@@ -97,21 +93,23 @@ impl SchemaPersistence {
     }
 
     /// Check if table exists in persistence layer
-    pub fn table_exists(cache: &TableCache, table_id: &TableId) -> Result<bool, KalamDbError> {
+    pub fn table_exists(
+        app_ctx: &AppContext,
+        cache: &TableCache,
+        table_id: &TableId,
+    ) -> Result<bool, KalamDbError> {
         // Fast path: check cache
         if cache.get(table_id).is_some() {
             return Ok(true);
         }
 
-        // Slow path: query persistence via AppContext and cache result
-        let app_ctx = crate::app_context::AppContext::get();
         let tables_provider = app_ctx.system_tables().tables();
 
         match tables_provider.get_table_by_id(table_id)? {
             Some(table_def) => {
                 // Cache with fully initialized storage config
                 let table_arc = Arc::new(table_def);
-                let data = CachedTableData::from_table_definition(table_id, table_arc)?;
+                let data = CachedTableData::from_table_definition(app_ctx, table_id, table_arc)?;
                 cache.insert(table_id.clone(), Arc::new(data));
                 Ok(true)
             }
@@ -129,6 +127,7 @@ impl SchemaPersistence {
     /// - Cache miss: Single persistence query + cache population
     /// - Prevents double fetch: table_exists() then get_table_definition()
     pub fn get_table_if_exists(
+        app_ctx: &AppContext,
         cache: &TableCache,
         table_id: &TableId,
     ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
@@ -146,18 +145,13 @@ impl SchemaPersistence {
             }
         }
 
-        // Slow path: query persistence layer via AppContext (if available)
-        // Use try_get() to support test contexts where AppContext may not be initialized
-        let Some(app_ctx) = crate::app_context::AppContext::try_get() else {
-            return Ok(None);
-        };
         let tables_provider = app_ctx.system_tables().tables();
 
         match tables_provider.get_table_by_id(table_id)? {
             Some(table_def) => {
                 // Cache the result with fully initialized storage config
                 let table_arc = Arc::new(table_def);
-                let data = CachedTableData::from_table_definition(table_id, table_arc.clone())?;
+                let data = CachedTableData::from_table_definition(app_ctx, table_id, table_arc.clone())?;
                 cache.insert(table_id.clone(), Arc::new(data));
                 Ok(Some(table_arc))
             }

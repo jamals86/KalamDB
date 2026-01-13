@@ -125,6 +125,9 @@ path = "tests/testserver/sql/test_namespace_validation_http.rs"
 # path = "tests/integration/api/test_enhanced_api_features.rs"
 
 [[test]]
+name = "test_cluster_node_recovery_and_sync"
+path = "tests/cluster/test_cluster_node_recovery_and_sync.rs"
+[[test]]
 name = "test_pk_uniqueness_hot_cold"
 path = "tests/testserver/flush/test_pk_uniqueness_hot_cold_http.rs"
 
@@ -197,6 +200,10 @@ path = "tests/misc/test_system_table_index_usage.rs"
 name = "test_explain_index_usage"
 path = "tests/misc/test_explain_index_usage.rs"
 
+[[test]]
+name = "test_cluster_basic_operations"
+path = "tests/cluster/test_cluster_basic_operations.rs"
+
 # Disabled: basic auth tests rely on legacy middleware; will be re-enabled after auth refactor
 # [[test]]
 # name = "test_basic_auth"
@@ -238,5 +245,6 @@ datafusion = { workspace = true }
 libc = { workspace = true }
 arrow = { workspace = true }
 hex = { workspace = true }
+rand = { workspace = true }
 once_cell = { workspace = true }
 serial_test = { workspace = true }

@@ -5,6 +5,7 @@
 
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use crate::app_context::AppContext;
 use arrow::datatypes::Schema;
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use kalamdb_commons::StorageId;
@@ -37,10 +38,10 @@ pub fn validate_table_name(name: &str) -> Result<(), String> {
 /// # Returns
 /// Ok(()) on success, error on failure
 pub fn save_table_definition(
+    app_ctx: &AppContext,
     stmt: &CreateTableStatement,
     original_arrow_schema: &Arc<Schema>,
 ) -> Result<(), KalamDbError> {
-    use crate::app_context::AppContext;
     use kalamdb_commons::datatypes::{FromArrowType, KalamDataType};
     use kalamdb_commons::models::TableId;
     use kalamdb_commons::schemas::{
@@ -145,7 +146,6 @@ pub fn save_table_definition(
 
     // Inject system columns via SystemColumnsService (Phase 12, US5, T022)
     // This adds _seq, _deleted to the TableDefinition (authoritative types)
-    let app_ctx = AppContext::get();
     let sys_cols = app_ctx.system_columns_service();
     sys_cols.add_system_columns(&mut table_def)?;
 
@@ -154,25 +154,28 @@ pub fn save_table_definition(
     // No need to push to schema_history anymore - TablesStore handles this.
 
     // Persist to system.tables AND cache in SchemaRegistry
-    let ctx = AppContext::get();
-    let schema_registry = ctx.schema_registry();
+    let schema_registry = app_ctx.schema_registry();
     let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
 
     // Write to system.tables for persistence
-    let tables_provider = ctx.system_tables().tables();
+    let tables_provider = app_ctx.system_tables().tables();
     tables_provider
         .create_table(&table_id, &table_def)
         .into_kalamdb_error("Failed to save table definition to system.tables")?;
 
     // Call stub method for API consistency (actual persistence handled above)
     schema_registry
-        .put_table_definition(&table_id, &table_def)
+        .put_table_definition(app_ctx, &table_id, &table_def)
         .into_kalamdb_error("Failed to update schema registry")?;
 
     // Prime unified schema cache with freshly saved definition (includes system columns)
     {
         use crate::schema_registry::CachedTableData;
-        let cached = Arc::new(CachedTableData::new(Arc::new(table_def.clone())));
+        let cached = Arc::new(CachedTableData::from_table_definition(
+            app_ctx,
+            &table_id,
+            Arc::new(table_def.clone()),
+        )?);
         schema_registry.insert(table_id.clone(), cached);
     }
 

@@ -93,7 +93,7 @@ impl UserTableProvider {
         let schema = core
             .app_context
             .schema_registry()
-            .get_arrow_schema(core.table_id())?;
+            .get_arrow_schema(core.app_context.as_ref(), core.table_id())?;
 
         log::debug!(
              "UserTableProvider: Created for {} with schema fields: {:?}",
@@ -126,7 +126,7 @@ impl UserTableProvider {
         self.core
             .app_context
             .schema_registry()
-            .get_table_definition(self.core.table_id())
+            .get_table_definition(self.core.app_context.as_ref(), self.core.table_id())
             .ok()
             .flatten()
             .and_then(|def| {

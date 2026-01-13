@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use base64::Engine;
+use kalam_link::models::{QueryResponse, ResponseStatus};
+use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
 use kalamdb_commons::{Role, UserId, UserName};
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
@@ -10,28 +12,32 @@ use std::path::PathBuf;
 use tokio::sync::Mutex;
 use tokio::sync::OnceCell;
 use tokio::time::{sleep, Duration, Instant};
-use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
-use kalam_link::models::{QueryResponse, ResponseStatus};
 
 static HTTP_TEST_SERVER_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Global singleton server instance for tests that want to reuse the same server.
-/// 
+///
 /// Use `get_global_server()` to get a reference to the shared server instance.
 /// The server is started once on first access and reused across tests.
-/// 
+///
 /// **Note**: Tests using the global server share state (tables, data), so they
 /// should use unique table names or be designed to handle shared state.
 static GLOBAL_HTTP_TEST_SERVER: OnceCell<HttpTestServer> = OnceCell::const_new();
 
+/// Global cluster server instance for tests that need a 3-node cluster.
+///
+/// Use `get_cluster_server()` to get a reference to the shared cluster.
+/// The cluster is started once on first access and reused across tests.
+static GLOBAL_CLUSTER_SERVER: OnceCell<ClusterTestServer> = OnceCell::const_new();
+
 /// Get a reference to the global shared HTTP test server.
-/// 
+///
 /// The server is started once on first access and reused across all tests.
 /// This is more efficient than starting a new server for each test.
-/// 
+///
 /// **Note**: Tests using the global server share state (tables, data), so they
 /// should use unique table names or be designed to handle shared state.
-/// 
+///
 /// # Example
 /// ```ignore
 /// #[tokio::test]
@@ -44,9 +50,30 @@ static GLOBAL_HTTP_TEST_SERVER: OnceCell<HttpTestServer> = OnceCell::const_new()
 pub async fn get_global_server() -> &'static HttpTestServer {
     GLOBAL_HTTP_TEST_SERVER
         .get_or_init(|| async {
-            start_http_test_server()
-                .await
-                .expect("Failed to start global HTTP test server")
+            start_http_test_server().await.expect("Failed to start global HTTP test server")
+        })
+        .await
+}
+
+/// Get a reference to the global 3-node cluster for testing.
+///
+/// The cluster is started once on first access and reused across tests.
+/// Access individual nodes via their indices (0, 1, 2).
+///
+/// # Example
+/// ```ignore
+/// #[tokio::test]
+/// async fn test_cluster() {
+///     let cluster = get_cluster_server().await;
+///     let node1 = cluster.get_node(0).await;
+///     let response = node1.execute_sql("CREATE NAMESPACE test").await.unwrap();
+///     assert!(response.success());
+/// }
+/// ```
+pub async fn get_cluster_server() -> &'static ClusterTestServer {
+    GLOBAL_CLUSTER_SERVER
+        .get_or_init(|| async {
+            start_cluster_server().await.expect("Failed to start global cluster server")
         })
         .await
 }
@@ -114,26 +141,21 @@ impl HttpTestServer {
             let decoded = base64::engine::general_purpose::STANDARD
                 .decode(encoded)
                 .context("Failed to decode Basic auth header")?;
-            let decoded = String::from_utf8(decoded).context("Basic auth decoded value was not valid UTF-8")?;
+            let decoded = String::from_utf8(decoded)
+                .context("Basic auth decoded value was not valid UTF-8")?;
 
             let (username, password) = decoded
                 .split_once(':')
                 .context("Basic auth decoded value missing ':' separator")?;
 
-            return Ok(AuthProvider::basic_auth(
-                username.to_string(),
-                password.to_string(),
-            ));
+            return Ok(AuthProvider::basic_auth(username.to_string(), password.to_string()));
         }
 
         if let Some(token) = auth_header.strip_prefix("Bearer ") {
             return Ok(AuthProvider::jwt_token(token.to_string()));
         }
 
-        Err(anyhow::anyhow!(
-            "Unsupported Authorization header format: {}",
-            auth_header
-        ))
+        Err(anyhow::anyhow!("Unsupported Authorization header format: {}", auth_header))
     }
 
     /// Build a Basic auth header value for localhost requests.
@@ -168,26 +190,40 @@ impl HttpTestServer {
     }
 
     /// Creates a JWT token for the specified user with explicit user_id.
-    pub fn create_jwt_token_with_id(&self, user_id: &UserId, username: &UserName, role: &Role) -> String {
+    pub fn create_jwt_token_with_id(
+        &self,
+        user_id: &UserId,
+        username: &UserName,
+        role: &Role,
+    ) -> String {
         let (token, _claims) = kalamdb_auth::jwt_auth::create_and_sign_token(
             user_id,
             username,
             role,
             None,
             Some(1), // 1 hour expiry
-            &self.jwt_secret
-        ).expect("Failed to generate JWT token");
-        
+            &self.jwt_secret,
+        )
+        .expect("Failed to generate JWT token");
+
         token
     }
 
     /// Creates a JWT token for the specified user.
     /// For test purposes, assumes role is 'system' for root, and 'user' for others.
     pub fn create_jwt_token(&self, username: &UserName) -> String {
-        let role = if username.as_str() == "root" { Role::System } else { Role::User };
+        let role = if username.as_str() == "root" {
+            Role::System
+        } else {
+            Role::User
+        };
         // Use username as user_id for non-root users in tests
         // This allows USER tables to work correctly with partitioning
-        let user_id = if username.as_str() == "root" { UserId::new("1") } else { UserId::new(username.as_str()) };
+        let user_id = if username.as_str() == "root" {
+            UserId::new("1")
+        } else {
+            UserId::new(username.as_str())
+        };
 
         let (token, _claims) = kalamdb_auth::jwt_auth::create_and_sign_token(
             &user_id,
@@ -195,9 +231,10 @@ impl HttpTestServer {
             &role,
             None,
             Some(1), // 1 hour expiry
-            &self.jwt_secret
-        ).expect("Failed to generate JWT token");
-        
+            &self.jwt_secret,
+        )
+        .expect("Failed to generate JWT token");
+
         token
     }
 
@@ -214,10 +251,15 @@ impl HttpTestServer {
     }
 
     /// Create a new user if it doesnt exists already and cache the user_id
-    async fn ensure_user_exists(&self, username: &str, password: &str, role: &Role) -> Result<String> {
+    async fn ensure_user_exists(
+        &self,
+        username: &str,
+        password: &str,
+        role: &Role,
+    ) -> Result<String> {
         let check_sql = format!("SELECT user_id, COUNT(*) AS user_count FROM system.users WHERE username = '{}' GROUP BY user_id", username);
         let resp = self.execute_sql(&check_sql).await?;
-        
+
         // Check if user exists and get their user_id
         if let Some(rows) = resp.rows_as_maps().first() {
             if let Some(user_id) = rows.get("user_id").and_then(|v| v.as_str()) {
@@ -227,28 +269,42 @@ impl HttpTestServer {
         }
 
         // User doesn't exist, create them
-        let create_sql = format!("CREATE USER {} WITH PASSWORD '{}' ROLE '{}'", username, password, role.as_str());
+        let create_sql = format!(
+            "CREATE USER {} WITH PASSWORD '{}' ROLE '{}'",
+            username,
+            password,
+            role.as_str()
+        );
         self.execute_sql(&create_sql).await?;
-        
+
         // Now fetch the user_id
-        let get_id_sql = format!("SELECT user_id FROM system.users WHERE username = '{}'", username);
+        let get_id_sql =
+            format!("SELECT user_id FROM system.users WHERE username = '{}'", username);
         let resp = self.execute_sql(&get_id_sql).await?;
-        let user_id = resp.rows_as_maps()
+        let user_id = resp
+            .rows_as_maps()
             .first()
             .and_then(|r| r.get("user_id"))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Failed to get user_id for newly created user {}", username))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("Failed to get user_id for newly created user {}", username)
+            })?
             .to_string();
-        
+
         self.cache_user_id(username, &user_id);
         Ok(user_id)
     }
 
     /// Returns a pre-configured KalamLinkClient authenticated as specified user using basic auth.
-    pub fn link_client_with_id(&self, _user_id: &str, username: &str, _role: &Role) -> KalamLinkClient {
+    pub fn link_client_with_id(
+        &self,
+        _user_id: &str,
+        username: &str,
+        _role: &Role,
+    ) -> KalamLinkClient {
         // For localhost tests, use basic auth with root (no password) or username with empty password
         let auth_username = if username == "root" { "root" } else { username };
-        
+
         KalamLinkClient::builder()
             .base_url(self.base_url())
             .auth(AuthProvider::basic_auth(auth_username.to_string(), String::new()))
@@ -267,14 +323,18 @@ impl HttpTestServer {
     }
 
     /// Returns a pre-configured KalamLinkClient authenticated as specified user using JWT.
-    /// 
+    ///
     /// **Note**: For USER tables with RLS to work correctly, the user must have been created
     /// via `ensure_user_exists` (or `create_user_and_client` in helpers.rs) first, so that
     /// their real user_id is cached. If the user_id is not cached, this method falls back
     /// to using the username as user_id (which won't work for USER table RLS).
     pub fn link_client(&self, username: &str) -> KalamLinkClient {
-        let role = if username == "root" { Role::System } else { Role::User };
-        
+        let role = if username == "root" {
+            Role::System
+        } else {
+            Role::User
+        };
+
         // Try to get cached user_id, fall back to username
         let user_id = self.get_cached_user_id(username)
             .unwrap_or_else(|| {
@@ -283,26 +343,31 @@ impl HttpTestServer {
                 }
                 username.to_string()
             });
-        
+
         self.link_client_with_id(&user_id, username, &role)
     }
 
     /// Execute SQL via the real HTTP API as the localhost `root` user.
     pub async fn execute_sql(&self, sql: &str) -> Result<QueryResponse> {
-        self.execute_sql_with_auth(sql, &self.root_auth_header)
-            .await
+        self.execute_sql_with_auth(sql, &self.root_auth_header).await
     }
 
     /// Execute a parameterized SQL query via the real HTTP API as the localhost `root` user.
-    pub async fn execute_sql_with_params(&self, sql: &str, params: Vec<JsonValue>) -> Result<QueryResponse> {
-        self.execute_sql_with_auth_and_params(sql, &self.root_auth_header, params)
-            .await
+    pub async fn execute_sql_with_params(
+        &self,
+        sql: &str,
+        params: Vec<JsonValue>,
+    ) -> Result<QueryResponse> {
+        self.execute_sql_with_auth_and_params(sql, &self.root_auth_header, params).await
     }
 
     /// Execute SQL via the real HTTP API using an explicit `Authorization` header.
-    pub async fn execute_sql_with_auth(&self, sql: &str, auth_header: &str) -> Result<QueryResponse> {
-        self.execute_sql_with_auth_and_params(sql, auth_header, Vec::new())
-            .await
+    pub async fn execute_sql_with_auth(
+        &self,
+        sql: &str,
+        auth_header: &str,
+    ) -> Result<QueryResponse> {
+        self.execute_sql_with_auth_and_params(sql, auth_header, Vec::new()).await
     }
 
     /// Execute SQL (optionally parameterized) via the real HTTP API using an explicit `Authorization` header.
@@ -321,8 +386,7 @@ impl HttpTestServer {
         // Add a short, targeted wait to prevent flaky "Table does not exist" failures.
         if resp.status == ResponseStatus::Success {
             if let Some((namespace_id, table_name)) = Self::try_parse_create_table_target(sql) {
-                self.wait_for_table_queryable(&namespace_id, &table_name, auth_header)
-                    .await?;
+                self.wait_for_table_queryable(&namespace_id, &table_name, auth_header).await?;
             }
         }
 
@@ -357,13 +421,20 @@ impl HttpTestServer {
         let resp = match client
             .execute_query(
                 sql,
-                if params.is_empty() { None } else { Some(params) },
+                if params.is_empty() {
+                    None
+                } else {
+                    Some(params)
+                },
                 None,
             )
             .await
         {
             Ok(r) => r,
-            Err(kalam_link::KalamLinkError::ServerError { status_code: _, message }) => {
+            Err(kalam_link::KalamLinkError::ServerError {
+                status_code: _,
+                message,
+            }) => {
                 // Try to parse the error message as QueryResponse JSON
                 if let Ok(error_response) = serde_json::from_str::<QueryResponse>(&message) {
                     error_response
@@ -371,7 +442,7 @@ impl HttpTestServer {
                     // If parsing fails, return the error
                     return Err(anyhow::anyhow!("Server error: {}", message));
                 }
-            }
+            },
             Err(e) => return Err(e).context("KalamLink execute_query failed"),
         };
 
@@ -390,16 +461,9 @@ impl HttpTestServer {
             return None;
         }
 
-        let after = sql
-            .trim_start()
-            .get("CREATE TABLE".len()..)?
-            .trim_start();
+        let after = sql.trim_start().get("CREATE TABLE".len()..)?.trim_start();
 
-        let ident = after
-            .split_whitespace()
-            .next()?
-            .trim_end_matches('(')
-            .trim();
+        let ident = after.split_whitespace().next()?.trim_end_matches('(').trim();
 
         let mut parts = ident.splitn(2, '.');
         let namespace_id = parts.next()?.trim().trim_matches('"').to_string();
@@ -412,7 +476,12 @@ impl HttpTestServer {
         Some((namespace_id, table_name))
     }
 
-    async fn wait_for_table_queryable(&self, namespace_id: &str, table_name: &str, auth_header: &str) -> Result<()> {
+    async fn wait_for_table_queryable(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        auth_header: &str,
+    ) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(2);
         let probe = format!("SELECT 1 AS ok FROM {}.{} LIMIT 1", namespace_id, table_name);
         let mut last_error: Option<String> = None;
@@ -464,13 +533,16 @@ impl HttpTestServer {
                                 .first()
                                 .and_then(|r| r.row_as_map(0))
                                 .and_then(|row| row.get("cnt").cloned())
-                                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())));
+                                .and_then(|v| {
+                                    v.as_u64()
+                                        .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                                });
                         }
                     }
-                }
+                },
                 Err(e) => {
                     last_error = Some(format!("{:#}", e));
-                }
+                },
             }
 
             if Instant::now() >= deadline {
@@ -523,11 +595,15 @@ impl HttpTestServer {
                             r.rows_as_maps().iter().any(|row| {
                                 let is_self = row
                                     .get("is_self")
-                                    .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
+                                    .and_then(|v| {
+                                        v.as_bool().or_else(|| v.as_str().map(|s| s == "true"))
+                                    })
                                     .unwrap_or(false);
                                 let is_leader = row
                                     .get("is_leader")
-                                    .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
+                                    .and_then(|v| {
+                                        v.as_bool().or_else(|| v.as_str().map(|s| s == "true"))
+                                    })
                                     .unwrap_or(false);
                                 is_self && is_leader
                             })
@@ -539,7 +615,7 @@ impl HttpTestServer {
                     }
 
                     last_error = Some("cluster not ready (no self leader row yet)".to_string());
-                }
+                },
                 Ok(resp) => {
                     // Fall back to a trivial read-only probe if system.cluster isn't available yet.
                     last_error = resp.error.as_ref().map(|e| e.message.clone());
@@ -550,10 +626,10 @@ impl HttpTestServer {
                     ) {
                         // SQL is up, but cluster leadership isn't confirmed yet.
                     }
-                }
+                },
                 Err(e) => {
                     last_error = Some(format!("{:#}", e));
-                }
+                },
             }
 
             if Instant::now() >= deadline {
@@ -668,7 +744,138 @@ pub async fn start_http_test_server_with_config(
     Ok(server)
 }
 
+// ============================================================================
+// CLUSTER TEST SERVER - 3-Node Cluster Support
+// ============================================================================
+
+/// A test cluster with 3 nodes for testing replication and consistency.
+pub struct ClusterTestServer {
+    /// Three independent server instances that form a cluster
+    nodes: Vec<HttpTestServer>,
+}
+
+impl ClusterTestServer {
+    /// Get a reference to a node in the cluster (0, 1, or 2)
+    pub fn get_node(&self, index: usize) -> Result<&HttpTestServer> {
+        self.nodes
+            .get(index)
+            .ok_or_else(|| anyhow::anyhow!("Node index {} out of range (0-2)", index))
+    }
+
+    /// Execute SQL on a random node in the cluster
+    pub async fn execute_sql_on_random(&self, sql: &str) -> Result<QueryResponse> {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let index = rng.gen_range(0..3);
+        self.nodes[index].execute_sql(sql).await
+    }
+
+    /// Execute SQL on all nodes and return results
+    pub async fn execute_sql_on_all(&self, sql: &str) -> Result<Vec<QueryResponse>> {
+        let mut results = Vec::new();
+        for node in &self.nodes {
+            results.push(node.execute_sql(sql).await?);
+        }
+        Ok(results)
+    }
+
+    /// Check data consistency across all nodes for a query
+    pub async fn verify_data_consistency(&self, query: &str) -> Result<bool> {
+        let results = self.execute_sql_on_all(query).await?;
+        
+        if results.is_empty() {
+            return Ok(true);
+        }
+
+        // Check if all nodes returned the same data
+        let first_result = &results[0];
+        for (i, result) in results.iter().enumerate().skip(1) {
+            if result.results.len() != first_result.results.len() {
+                eprintln!(
+                    "❌ Node consistency failed: Node 0 has {} result sets, Node {} has {}",
+                    first_result.results.len(),
+                    i,
+                    result.results.len()
+                );
+                return Ok(false);
+            }
+
+            for (j, (first_rows, result_rows)) in first_result
+                .results
+                .iter()
+                .zip(result.results.iter())
+                .enumerate()
+            {
+                let first_maps = first_rows.rows_as_maps();
+                let result_maps = result_rows.rows_as_maps();
+
+                if first_maps.len() != result_maps.len() {
+                    eprintln!(
+                        "❌ Node consistency failed: Node 0 result set {} has {} rows, Node {} has {}",
+                        j,
+                        first_maps.len(),
+                        i,
+                        result_maps.len()
+                    );
+                    return Ok(false);
+                }
+
+                // Basic row comparison (convert to strings for comparison)
+                for (k, (first_map, result_map)) in
+                    first_maps.iter().zip(result_maps.iter()).enumerate()
+                {
+                    let first_str = format!("{:?}", first_map);
+                    let result_str = format!("{:?}", result_map);
+
+                    if first_str != result_str {
+                        eprintln!(
+                            "❌ Node consistency failed: Node 0 row {} differs from Node {} row {}",
+                            k, i, k
+                        );
+                        eprintln!("   Node 0: {}", first_str);
+                        eprintln!("   Node {}: {}", i, result_str);
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+
+        Ok(true)
+    }
+}
+
+/// Start a 3-node cluster for testing
+async fn start_cluster_server() -> Result<ClusterTestServer> {
+    let _guard = HTTP_TEST_SERVER_LOCK.lock().await;
+
+    eprintln!("🚀 Starting 3-node cluster for testing...");
+
+    // Start 3 independent servers with standalone mode for now
+    // TODO: Configure them as a proper Raft cluster and add members
+    let mut nodes = Vec::new();
+
+    for i in 0..3 {
+        eprintln!("  📍 Starting node {} of 3...", i + 1);
+        let server = start_http_test_server().await
+            .map_err(|e| anyhow::anyhow!("Failed to start cluster node {}: {}", i, e))?;
+        nodes.push(server);
+    }
+
+    eprintln!("✅ 3-node cluster started successfully");
+
+    Ok(ClusterTestServer { nodes })
+}
+// ============================================================================
+// LEGACY API (DEPRECATED) - Use get_global_server() instead
+// ============================================================================
+// The following functions are kept only for test_user_sql_commands_http.rs
+// which requires a config override (enforce_password_complexity = true).
+// All other tests should use get_global_server() for better performance.
+// ============================================================================
+
 /// Run a test closure against a freshly started HTTP test server (with config override), then shut it down.
+/// 
+/// **DEPRECATED**: Only use this if you need a config override. Otherwise use `get_global_server()`.
 #[allow(dead_code)]
 pub async fn with_http_test_server_config<T, F>(
     override_config: impl FnOnce(&mut kalamdb_commons::config::ServerConfig),
@@ -683,79 +890,6 @@ where
 
     let server = start_http_test_server_with_config(override_config).await?;
     let result = f(&server).await;
-    server.shutdown().await;
-    result
-}
-
-/// Run a test closure against a freshly started HTTP test server (with config override), but fail
-/// fast if the test takes longer than `timeout`.
-///
-/// This helper still guarantees the server is shut down and the global/process locks are released.
-#[allow(dead_code)]
-pub async fn with_http_test_server_config_timeout<T, F>(
-    timeout: Duration,
-    override_config: impl FnOnce(&mut kalamdb_commons::config::ServerConfig),
-    f: F,
-) -> Result<T>
-where
-    F: for<'a> FnOnce(
-        &'a HttpTestServer,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + 'a>>,
-{
-    let _guard = HTTP_TEST_SERVER_LOCK.lock().await;
-
-    let server = start_http_test_server_with_config(override_config).await?;
-
-    let result = tokio::select! {
-        res = f(&server) => res,
-        _ = sleep(timeout) => Err(anyhow::anyhow!("HTTP test timed out after {:?}", timeout)),
-    };
-
-    server.shutdown().await;
-    result
-}
-
-/// Run a test closure against a freshly started HTTP test server, then shut it down.
-///
-/// This keeps tests concise and prevents forgetting `shutdown()`.
-#[allow(dead_code)]
-pub async fn with_http_test_server<T, F>(f: F) -> Result<T>
-where
-    F: for<'a> FnOnce(
-        &'a HttpTestServer,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + 'a>>,
-{
-    // Starting multiple near-production servers concurrently is currently unsafe
-    // because some global subsystems (e.g., Raft bootstrap) do not support
-    // parallel initialization within the same process.
-    let _guard = HTTP_TEST_SERVER_LOCK.lock().await;
-
-    let server = start_http_test_server().await?;
-    let result = f(&server).await;
-    server.shutdown().await;
-    result
-}
-
-/// Run a test closure against a freshly started HTTP test server, but fail fast if the test takes
-/// longer than `timeout`.
-///
-/// This helper still guarantees the server is shut down and the global/process locks are released.
-#[allow(dead_code)]
-pub async fn with_http_test_server_timeout<T, F>(timeout: Duration, f: F) -> Result<T>
-where
-    F: for<'a> FnOnce(
-        &'a HttpTestServer,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + 'a>>,
-{
-    let _guard = HTTP_TEST_SERVER_LOCK.lock().await;
-
-    let server = start_http_test_server().await?;
-
-    let result = tokio::select! {
-        res = f(&server) => res,
-        _ = sleep(timeout) => Err(anyhow::anyhow!("HTTP test timed out after {:?}", timeout)),
-    };
-
     server.shutdown().await;
     result
 }

@@ -143,7 +143,7 @@ impl JobExecutor for CleanupExecutor {
 
         // 4. Clean up metadata from SchemaRegistry
         let schema_registry = ctx.app_ctx.schema_registry();
-        cleanup_metadata_internal(&schema_registry, &table_id).await?;
+        cleanup_metadata_internal(ctx.app_ctx.as_ref(), &schema_registry, &table_id).await?;
 
         ctx.log_info("Removed table metadata from SchemaRegistry");
 

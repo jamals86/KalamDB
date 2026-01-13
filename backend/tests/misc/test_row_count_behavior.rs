@@ -18,10 +18,7 @@ fn assert_row_count(response: &QueryResponse, expected: usize, verbs: &[&str]) {
         "DML execution failed: {:?}",
         response.error
     );
-    let result = response
-        .results
-        .first()
-        .expect("DML response missing QueryResult entry");
+    let result = response.results.first().expect("DML response missing QueryResult entry");
     assert_eq!(
         result.row_count, expected,
         "Expected {} rows affected, got {}",
@@ -197,15 +194,8 @@ async fn test_delete_returns_correct_row_count() {
     if response.status == ResponseStatus::Success {
         assert_row_count(&response, 0, &["Deleted"]);
     } else {
-        let err = response
-            .error
-            .as_ref()
-            .expect("DELETE error missing details");
-        assert!(
-            err.message.contains("not found"),
-            "Unexpected DELETE error: {:?}",
-            err
-        );
+        let err = response.error.as_ref().expect("DELETE error missing details");
+        assert!(err.message.contains("not found"), "Unexpected DELETE error: {:?}", err);
     }
 
     println!("✅ DELETE returns correct row counts");
@@ -254,15 +244,8 @@ async fn test_delete_already_deleted_returns_zero() {
     if response.status == ResponseStatus::Success {
         assert_row_count(&response, 0, &["Deleted"]);
     } else {
-        let err = response
-            .error
-            .as_ref()
-            .expect("DELETE error missing details");
-        assert!(
-            err.message.contains("not found"),
-            "Unexpected DELETE error: {:?}",
-            err
-        );
+        let err = response.error.as_ref().expect("DELETE error missing details");
+        assert!(err.message.contains("not found"), "Unexpected DELETE error: {:?}", err);
     }
 
     println!("✅ DELETE on already-deleted row returns 0 (correct soft delete behavior)");
@@ -291,10 +274,7 @@ async fn test_delete_multiple_rows_count() {
     for i in 1..=5 {
         server
             .execute_sql_as_user(
-                &format!(
-                    "INSERT INTO test_ns_multi.tasks (id, priority) VALUES ('task{}', 1)",
-                    i
-                ),
+                &format!("INSERT INTO test_ns_multi.tasks (id, priority) VALUES ('task{}', 1)", i),
                 "user1",
             )
             .await;
@@ -304,10 +284,7 @@ async fn test_delete_multiple_rows_count() {
     for i in 6..=8 {
         server
             .execute_sql_as_user(
-                &format!(
-                    "INSERT INTO test_ns_multi.tasks (id, priority) VALUES ('task{}', 5)",
-                    i
-                ),
+                &format!("INSERT INTO test_ns_multi.tasks (id, priority) VALUES ('task{}', 5)", i),
                 "user1",
             )
             .await;
@@ -319,10 +296,7 @@ async fn test_delete_multiple_rows_count() {
         .await;
 
     if response.status != ResponseStatus::Success {
-        let err = response
-            .error
-            .as_ref()
-            .expect("Error detail missing despite error status");
+        let err = response.error.as_ref().expect("Error detail missing despite error status");
         assert!(
             err.message.contains("requires WHERE id"),
             "Unexpected multi-row delete error: {:?}",

@@ -504,7 +504,7 @@ impl SqlExecutor {
         let schema_registry = app_context.schema_registry();
 
         // Load all table definitions from the store (much cleaner than scanning Arrow batches!)
-        let all_table_defs = schema_registry.scan_all_table_definitions()?;
+        let all_table_defs = schema_registry.scan_all_table_definitions(app_context.as_ref())?;
 
         if all_table_defs.is_empty() {
             log::debug!("No existing tables to load");
@@ -531,7 +531,7 @@ impl SqlExecutor {
 
             // Get Arrow schema from cache (memoized in CachedTableData)
             // This populates cache with table definition + computes arrow schema once
-            let arrow_schema = match schema_registry.get_arrow_schema(&table_id) {
+            let arrow_schema = match schema_registry.get_arrow_schema(app_context.as_ref(), &table_id) {
                 Ok(schema) => schema,
                 Err(e) => {
                     log::error!(
@@ -671,7 +671,7 @@ impl SqlExecutor {
 
                 // Get table definition
                 let schema_registry = self.app_context.schema_registry();
-                if let Ok(Some(def)) = schema_registry.get_table_definition(&table_id) {
+                if let Ok(Some(def)) = schema_registry.get_table_definition(self.app_context.as_ref(), &table_id) {
                     if matches!(def.table_type, TableType::Shared) {
                         let access_level = if let TableOptions::Shared(opts) = &def.table_options {
                             opts.access_level.unwrap_or(TableAccess::Private)

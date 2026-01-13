@@ -37,11 +37,13 @@ use std::time::Duration;
 /// See: https://docs.rs/actix-cors/latest/actix_cors/struct.Cors.html
 pub fn build_cors_from_config(config: &ServerConfig) -> Cors {
     let cors_config = &config.security.cors;
-    
+
     let mut cors = Cors::default();
-    
+
     // Configure allowed origins
-    if cors_config.allowed_origins.is_empty() || cors_config.allowed_origins.contains(&"*".to_string()) {
+    if cors_config.allowed_origins.is_empty()
+        || cors_config.allowed_origins.contains(&"*".to_string())
+    {
         cors = cors.allow_any_origin();
         debug!("CORS: Allowing any origin");
     } else {
@@ -50,43 +52,40 @@ pub fn build_cors_from_config(config: &ServerConfig) -> Cors {
         }
         debug!("CORS: Allowed origins: {:?}", cors_config.allowed_origins);
     }
-    
+
     // Configure allowed methods
-    let methods: Vec<Method> = cors_config.allowed_methods.iter()
-        .filter_map(|m| m.parse().ok())
-        .collect();
+    let methods: Vec<Method> =
+        cors_config.allowed_methods.iter().filter_map(|m| m.parse().ok()).collect();
     if !methods.is_empty() {
         cors = cors.allowed_methods(methods);
     }
-    
+
     // Configure allowed headers
     if cors_config.allowed_headers.contains(&"*".to_string()) {
         cors = cors.allow_any_header();
     } else {
-        let headers: Vec<HeaderName> = cors_config.allowed_headers.iter()
-            .filter_map(|h| h.parse().ok())
-            .collect();
+        let headers: Vec<HeaderName> =
+            cors_config.allowed_headers.iter().filter_map(|h| h.parse().ok()).collect();
         if !headers.is_empty() {
             cors = cors.allowed_headers(headers);
         }
     }
-    
+
     // Configure exposed headers
     if !cors_config.expose_headers.is_empty() {
-        let expose_headers: Vec<HeaderName> = cors_config.expose_headers.iter()
-            .filter_map(|h| h.parse().ok())
-            .collect();
+        let expose_headers: Vec<HeaderName> =
+            cors_config.expose_headers.iter().filter_map(|h| h.parse().ok()).collect();
         cors = cors.expose_headers(expose_headers);
     }
-    
+
     // Configure credentials
     if cors_config.allow_credentials {
         cors = cors.supports_credentials();
     }
-    
+
     // Configure max age
     cors = cors.max_age(cors_config.max_age as usize);
-    
+
     cors
 }
 
@@ -213,14 +212,10 @@ where
                     let res = fut.await?;
                     Ok(res.map_into_left_body())
                 })
-            }
+            },
 
             ConnectionGuardResult::Banned { until: _ } => {
-                warn!(
-                    "[CONN_PROTECT] Rejected banned IP: {} path={}",
-                    client_ip,
-                    req.path()
-                );
+                warn!("[CONN_PROTECT] Rejected banned IP: {} path={}", client_ip, req.path());
 
                 let response = HttpResponse::build(StatusCode::TOO_MANY_REQUESTS)
                     .insert_header(("Retry-After", "300"))
@@ -231,10 +226,8 @@ where
                         "retry_after_seconds": 300
                     }));
 
-                Box::pin(async move {
-                    Ok(req.into_response(response).map_into_right_body())
-                })
-            }
+                Box::pin(async move { Ok(req.into_response(response).map_into_right_body()) })
+            },
 
             ConnectionGuardResult::TooManyConnections { current, max } => {
                 warn!(
@@ -254,17 +247,11 @@ where
                         "max": max
                     }));
 
-                Box::pin(async move {
-                    Ok(req.into_response(response).map_into_right_body())
-                })
-            }
+                Box::pin(async move { Ok(req.into_response(response).map_into_right_body()) })
+            },
 
             ConnectionGuardResult::RateLimitExceeded => {
-                warn!(
-                    "[CONN_PROTECT] Rate limit exceeded: IP={} path={}",
-                    client_ip,
-                    req.path()
-                );
+                warn!("[CONN_PROTECT] Rate limit exceeded: IP={} path={}", client_ip, req.path());
 
                 let response = HttpResponse::build(StatusCode::TOO_MANY_REQUESTS)
                     .insert_header(("Retry-After", "1"))
@@ -275,10 +262,8 @@ where
                         "retry_after_seconds": 1
                     }));
 
-                Box::pin(async move {
-                    Ok(req.into_response(response).map_into_right_body())
-                })
-            }
+                Box::pin(async move { Ok(req.into_response(response).map_into_right_body()) })
+            },
 
             ConnectionGuardResult::BodyTooLarge { size, max } => {
                 warn!(
@@ -289,24 +274,22 @@ where
                     req.path()
                 );
 
-                let response = HttpResponse::build(StatusCode::PAYLOAD_TOO_LARGE)
-                    .json(serde_json::json!({
+                let response =
+                    HttpResponse::build(StatusCode::PAYLOAD_TOO_LARGE).json(serde_json::json!({
                         "error": "BODY_TOO_LARGE",
                         "message": "Request body exceeds maximum allowed size",
                         "size_bytes": size,
                         "max_bytes": max
                     }));
 
-                Box::pin(async move {
-                    Ok(req.into_response(response).map_into_right_body())
-                })
-            }
+                Box::pin(async move { Ok(req.into_response(response).map_into_right_body()) })
+            },
         }
     }
 }
 
 /// Extract client IP from request, handling proxies
-/// 
+///
 /// Security: Rejects localhost values in proxy headers to prevent rate limit bypass.
 /// Attackers cannot spoof X-Forwarded-For: 127.0.0.1 to bypass protections.
 fn extract_client_ip(req: &ServiceRequest) -> IpAddr {
@@ -349,5 +332,8 @@ fn extract_client_ip(req: &ServiceRequest) -> IpAddr {
 /// Check if a header value is a localhost address (potential spoofing attempt)
 #[inline]
 fn is_localhost_header_value(ip: &str) -> bool {
-    ip == "127.0.0.1" || ip == "::1" || ip.starts_with("127.") || ip.eq_ignore_ascii_case("localhost")
+    ip == "127.0.0.1"
+        || ip == "::1"
+        || ip.starts_with("127.")
+        || ip.eq_ignore_ascii_case("localhost")
 }

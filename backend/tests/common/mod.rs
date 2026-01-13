@@ -40,7 +40,9 @@ pub mod flush_helpers;
 pub mod stress_utils;
 
 use anyhow::Result;
-use kalam_link::models::{ErrorDetail, KalamDataType, QueryResult, QueryResponse, ResponseStatus, SchemaField};
+use kalam_link::models::{
+    ErrorDetail, KalamDataType, QueryResponse, QueryResult, ResponseStatus, SchemaField,
+};
 use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
 use kalamdb_commons::UserId;
 use kalamdb_core::app_context::AppContext;
@@ -99,7 +101,8 @@ pub async fn start_http_test_server() -> anyhow::Result<HttpTestServer> {
 
     // Use bootstrap_isolated to ensure each test gets a fresh AppContext
     let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
-    let running = kalamdb_server::lifecycle::run_for_tests(&config, components, app_context).await?;
+    let running =
+        kalamdb_server::lifecycle::run_for_tests(&config, components, app_context).await?;
 
     Ok(HttpTestServer {
         _temp_dir: temp_dir,
@@ -115,7 +118,7 @@ pub mod websocket;
 pub trait QueryResultTestExt {
     /// Get a row as a HashMap by row index (converts array format to map)
     fn row_as_map(&self, row_idx: usize) -> Option<HashMap<String, serde_json::Value>>;
-    
+
     /// Get all rows as HashMaps (converts array format to maps)
     fn rows_as_maps(&self) -> Vec<HashMap<String, serde_json::Value>>;
 }
@@ -131,13 +134,12 @@ impl QueryResultTestExt for QueryResult {
         }
         Some(map)
     }
-    
+
     fn rows_as_maps(&self) -> Vec<HashMap<String, serde_json::Value>> {
-        let Some(rows) = &self.rows else { return vec![] };
-        rows.iter()
-            .enumerate()
-            .filter_map(|(i, _)| self.row_as_map(i))
-            .collect()
+        let Some(rows) = &self.rows else {
+            return vec![];
+        };
+        rows.iter().enumerate().filter_map(|(i, _)| self.row_as_map(i)).collect()
     }
 }
 
@@ -226,7 +228,7 @@ impl TestServer {
         #[allow(clippy::type_complexity)]
         static TEST_RESOURCES: Lazy<Mutex<Option<(Arc<TempDir>, Arc<rocksdb::DB>, String)>>> =
             Lazy::new(|| Mutex::new(None));
-        
+
         // Dedicated Tokio runtime for Raft background tasks
         // This runtime persists across all tests, preventing Raft tasks from being killed
         // when individual test runtimes are dropped
@@ -237,7 +239,7 @@ impl TestServer {
                 .build()
                 .expect("Failed to create Raft test runtime")
         });
-        
+
         // Raft cluster initialization flag (uses std::sync for cross-runtime safety)
         static RAFT_INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
@@ -250,12 +252,7 @@ impl TestServer {
                 // First test: initialize shared resources
                 let temp_dir = Arc::new(TempDir::new().expect("Failed to create temp directory"));
                 let db_path = data_dir.unwrap_or_else(|| {
-                    temp_dir
-                        .path()
-                        .join("test_db")
-                        .to_str()
-                        .unwrap()
-                        .to_string()
+                    temp_dir.path().join("test_db").to_str().unwrap().to_string()
                 });
 
                 // Prepare storage base directory for Parquet outputs
@@ -284,11 +281,12 @@ impl TestServer {
         test_config.auth.jwt_trusted_issuers = "kalamdb-test".to_string();
         // Expose to extractor via env for JWT path (non-invasive)
         std::env::set_var("KALAMDB_JWT_SECRET", &test_config.auth.jwt_secret);
-        std::env::set_var(
-            "KALAMDB_JWT_TRUSTED_ISSUERS",
-            &test_config.auth.jwt_trusted_issuers,
-        );
-        test_config.storage.data_path = PathBuf::from(&storage_base_path).parent().unwrap().to_string_lossy().to_string();
+        std::env::set_var("KALAMDB_JWT_TRUSTED_ISSUERS", &test_config.auth.jwt_trusted_issuers);
+        test_config.storage.data_path = PathBuf::from(&storage_base_path)
+            .parent()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
 
         // Initialize AppContext using singleton pattern (only once for all tests)
         // All tests in the same process will share both AppContext AND RocksDB
@@ -310,12 +308,7 @@ impl TestServer {
             let users_provider = app_context.system_tables().users();
 
             // Only create if doesn't exist
-            if users_provider
-                .get_user_by_id(&sys_id)
-                .ok()
-                .flatten()
-                .is_none()
-            {
+            if users_provider.get_user_by_id(&sys_id).ok().flatten().is_none() {
                 let now = chrono::Utc::now().timestamp_millis();
                 // Create a valid bcrypt hash for testing
                 let password_hash = bcrypt::hash("admin", bcrypt::DEFAULT_COST).unwrap_or_default();
@@ -349,12 +342,7 @@ impl TestServer {
             let storage_id = StorageId::new("local");
 
             // Only create if doesn't exist
-            if storages_provider
-                .get_storage_by_id(&storage_id)
-                .ok()
-                .flatten()
-                .is_none()
-            {
+            if storages_provider.get_storage_by_id(&storage_id).ok().flatten().is_none() {
                 let now = chrono::Utc::now().timestamp_millis();
                 let default_storage = Storage {
                     storage_id: storage_id.clone(),
@@ -384,11 +372,11 @@ impl TestServer {
             if !*raft_init {
                 let executor = app_context.executor();
                 println!("[RAFT INIT] Starting Raft initialization...");
-                
+
                 // Spawn on the dedicated runtime (this handles the nested runtime issue)
                 let handle = RAFT_RUNTIME.handle().clone();
                 let (tx, rx) = std::sync::mpsc::channel();
-                
+
                 handle.spawn(async move {
                     let result = async {
                         println!("[RAFT INIT] Calling executor.start()...");
@@ -432,12 +420,12 @@ impl TestServer {
                     }.await;
                     let _ = tx.send(result);
                 });
-                
+
                 // Wait for initialization to complete BEFORE releasing the lock
                 // This ensures other parallel tests wait for leadership to be fully established
                 let result = rx.recv().expect("Raft init channel closed unexpectedly");
                 result.expect("Failed to initialize Raft cluster for tests");
-                
+
                 println!("[RAFT INIT] Initialization flag set to true");
                 *raft_init = true;
                 // Lock is released here, AFTER leader election is complete
@@ -447,17 +435,12 @@ impl TestServer {
         }
 
         // Initialize SqlExecutor with new pattern (Phase 10: takes app_context + enforce_password_complexity)
-        let sql_executor = Arc::new(SqlExecutor::new(
-            app_context.clone(),
-            enforce_password_complexity,
-        ));
+        let sql_executor =
+            Arc::new(SqlExecutor::new(app_context.clone(), enforce_password_complexity));
 
         // Ensure all existing tables are registered with providers/DataFusion for this process
         if let Err(e) = sql_executor.load_existing_tables().await {
-            eprintln!(
-                "Warning: Failed to load existing table providers in test harness: {:?}",
-                e
-            );
+            eprintln!("Warning: Failed to load existing table providers in test harness: {:?}", e);
         }
 
         // Start background job processing loop so queued jobs (e.g., FLUSH TABLE) run in tests
@@ -559,7 +542,7 @@ impl TestServer {
             Some(id) => {
                 let lower = id.as_str().to_lowercase();
                 lower == "admin" || lower == "system"
-            }
+            },
             None => false,
         };
         let mask_credentials = !is_admin;
@@ -602,7 +585,7 @@ impl TestServer {
                     });
 
                 ExecutionContext::new(user_id.clone(), role, session.clone())
-            }
+            },
             None => ExecutionContext::new(UserId::root(), Role::System, session),
         };
 
@@ -650,7 +633,7 @@ impl TestServer {
                                 error: None,
                             }
                         }
-                    }
+                    },
                     ExecutionResult::Subscription {
                         subscription_id,
                         channel,
@@ -662,8 +645,16 @@ impl TestServer {
                         ];
                         let query_result = QueryResult {
                             schema: vec![
-                                SchemaField { name: "subscription_id".to_string(), data_type: KalamDataType::Text, index: 0 },
-                                SchemaField { name: "channel".to_string(), data_type: KalamDataType::Text, index: 1 },
+                                SchemaField {
+                                    name: "subscription_id".to_string(),
+                                    data_type: KalamDataType::Text,
+                                    index: 0,
+                                },
+                                SchemaField {
+                                    name: "channel".to_string(),
+                                    data_type: KalamDataType::Text,
+                                    index: 1,
+                                },
                             ],
                             rows: Some(vec![row]),
                             row_count: 1,
@@ -675,7 +666,7 @@ impl TestServer {
                             took: Some(0.0),
                             error: None,
                         }
-                    }
+                    },
                     ExecutionResult::Inserted { rows_affected }
                     | ExecutionResult::Updated { rows_affected }
                     | ExecutionResult::Deleted { rows_affected } => {
@@ -694,50 +685,62 @@ impl TestServer {
                             took: Some(0.0),
                             error: None,
                         }
-                    }
+                    },
                     ExecutionResult::Flushed {
                         tables,
                         bytes_written,
-                    } => {
-                        QueryResponse {
-                            status: ResponseStatus::Success,
-                            results: vec![QueryResult {
-                                schema: vec![
-                                    SchemaField { name: "tables".to_string(), data_type: KalamDataType::Text, index: 0 },
-                                    SchemaField { name: "bytes_written".to_string(), data_type: KalamDataType::BigInt, index: 1 },
-                                ],
-                                rows: Some(vec![vec![
-                                    serde_json::Value::String(tables.join(",")),
-                                    serde_json::Value::Number(bytes_written.into()),
-                                ]]),
-                                row_count: tables.len(),
-                                message: None,
-                            }],
-                            took: Some(0.0),
-                            error: None,
-                        }
-                    }
-                    ExecutionResult::JobKilled { job_id, status } => {
-                        QueryResponse {
-                            status: ResponseStatus::Success,
-                            results: vec![QueryResult {
-                                schema: vec![
-                                    SchemaField { name: "job_id".to_string(), data_type: KalamDataType::Text, index: 0 },
-                                    SchemaField { name: "status".to_string(), data_type: KalamDataType::Text, index: 1 },
-                                ],
-                                rows: Some(vec![vec![
-                                    serde_json::Value::String(job_id),
-                                    serde_json::Value::String(status),
-                                ]]),
-                                row_count: 1,
-                                message: None,
-                            }],
-                            took: Some(0.0),
-                            error: None,
-                        }
-                    }
+                    } => QueryResponse {
+                        status: ResponseStatus::Success,
+                        results: vec![QueryResult {
+                            schema: vec![
+                                SchemaField {
+                                    name: "tables".to_string(),
+                                    data_type: KalamDataType::Text,
+                                    index: 0,
+                                },
+                                SchemaField {
+                                    name: "bytes_written".to_string(),
+                                    data_type: KalamDataType::BigInt,
+                                    index: 1,
+                                },
+                            ],
+                            rows: Some(vec![vec![
+                                serde_json::Value::String(tables.join(",")),
+                                serde_json::Value::Number(bytes_written.into()),
+                            ]]),
+                            row_count: tables.len(),
+                            message: None,
+                        }],
+                        took: Some(0.0),
+                        error: None,
+                    },
+                    ExecutionResult::JobKilled { job_id, status } => QueryResponse {
+                        status: ResponseStatus::Success,
+                        results: vec![QueryResult {
+                            schema: vec![
+                                SchemaField {
+                                    name: "job_id".to_string(),
+                                    data_type: KalamDataType::Text,
+                                    index: 0,
+                                },
+                                SchemaField {
+                                    name: "status".to_string(),
+                                    data_type: KalamDataType::Text,
+                                    index: 1,
+                                },
+                            ],
+                            rows: Some(vec![vec![
+                                serde_json::Value::String(job_id),
+                                serde_json::Value::String(status),
+                            ]]),
+                            row_count: 1,
+                            message: None,
+                        }],
+                        took: Some(0.0),
+                        error: None,
+                    },
                 }
-            }
+            },
             Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
                 // Any error from custom executor: fall back to DataFusion using the shared session_context
                 // where providers are registered by SqlExecutor.
@@ -771,7 +774,7 @@ impl TestServer {
                                     error: None,
                                 }
                             }
-                        }
+                        },
                         Err(e) => QueryResponse {
                             status: ResponseStatus::Error,
                             results: vec![],
@@ -794,7 +797,7 @@ impl TestServer {
                         }),
                     },
                 }
-            }
+            },
             Err(e) => {
                 eprintln!("[DEBUG TestServer] execute() error: {:?}", e);
                 QueryResponse {
@@ -807,7 +810,7 @@ impl TestServer {
                         details: None,
                     }),
                 }
-            }
+            },
         }
     }
 }
@@ -824,7 +827,7 @@ fn record_batch_to_query_result(
 
     let arrow_schema = batch.schema();
     let num_rows = batch.num_rows();
-    
+
     // Build schema with KalamDataType
     let schema: Vec<SchemaField> = arrow_schema
         .fields()
@@ -854,7 +857,8 @@ fn record_batch_to_query_result(
     let mut rows: Vec<Vec<serde_json::Value>> = Vec::with_capacity(num_rows);
 
     for row_idx in 0..num_rows {
-        let mut row_values: Vec<serde_json::Value> = Vec::with_capacity(arrow_schema.fields().len());
+        let mut row_values: Vec<serde_json::Value> =
+            Vec::with_capacity(arrow_schema.fields().len());
 
         for (col_idx, field) in arrow_schema.fields().iter().enumerate() {
             let column = batch.column(col_idx);
@@ -866,7 +870,7 @@ fn record_batch_to_query_result(
                     } else {
                         serde_json::Value::String(array.value(row_idx).to_string())
                     }
-                }
+                },
                 DataType::Int32 => {
                     let array = column.as_any().downcast_ref::<Int32Array>().unwrap();
                     if array.is_null(row_idx) {
@@ -874,7 +878,7 @@ fn record_batch_to_query_result(
                     } else {
                         serde_json::Value::Number(array.value(row_idx).into())
                     }
-                }
+                },
                 DataType::Int64 => {
                     let array = column.as_any().downcast_ref::<Int64Array>().unwrap();
                     if array.is_null(row_idx) {
@@ -882,7 +886,7 @@ fn record_batch_to_query_result(
                     } else {
                         serde_json::Value::Number(array.value(row_idx).into())
                     }
-                }
+                },
                 DataType::Float64 => {
                     let array = column.as_any().downcast_ref::<Float64Array>().unwrap();
                     if array.is_null(row_idx) {
@@ -892,7 +896,7 @@ fn record_batch_to_query_result(
                             .map(serde_json::Value::Number)
                             .unwrap_or(serde_json::Value::Null)
                     }
-                }
+                },
                 DataType::Boolean => {
                     let array = column.as_any().downcast_ref::<BooleanArray>().unwrap();
                     if array.is_null(row_idx) {
@@ -900,7 +904,7 @@ fn record_batch_to_query_result(
                     } else {
                         serde_json::Value::Bool(array.value(row_idx))
                     }
-                }
+                },
                 DataType::Timestamp(unit, _tz) => {
                     match unit {
                         datafusion::arrow::datatypes::TimeUnit::Millisecond => {
@@ -913,7 +917,7 @@ fn record_batch_to_query_result(
                             } else {
                                 serde_json::Value::Number(array.value(row_idx).into())
                             }
-                        }
+                        },
                         datafusion::arrow::datatypes::TimeUnit::Microsecond => {
                             let array = column
                                 .as_any()
@@ -925,21 +929,19 @@ fn record_batch_to_query_result(
                                 // Preserve value in microseconds since epoch
                                 serde_json::Value::Number(array.value(row_idx).into())
                             }
-                        }
+                        },
                         datafusion::arrow::datatypes::TimeUnit::Nanosecond => {
-                            let array = column
-                                .as_any()
-                                .downcast_ref::<TimestampNanosecondArray>()
-                                .unwrap();
+                            let array =
+                                column.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
                             if array.is_null(row_idx) {
                                 serde_json::Value::Null
                             } else {
                                 serde_json::Value::Number(array.value(row_idx).into())
                             }
-                        }
+                        },
                         _ => serde_json::Value::String(format!("{:?}", column)),
                     }
-                }
+                },
                 _ => serde_json::Value::String(format!("{:?}", column)),
             };
 
@@ -1057,12 +1059,7 @@ impl TestServer {
 
     /// Get the database path.
     pub fn db_path(&self) -> String {
-        self.temp_dir
-            .path()
-            .join("test_db")
-            .to_str()
-            .unwrap()
-            .to_string()
+        self.temp_dir.path().join("test_db").to_str().unwrap().to_string()
     }
 
     /// Base directory where table storage (Parquet files) is written.
@@ -1077,9 +1074,7 @@ impl TestServer {
     /// * `namespace` - Name of the namespace to check
     pub async fn namespace_exists(&self, namespace: &str) -> bool {
         match self.app_context.system_tables().namespaces().scan_all() {
-            Ok(namespaces) => namespaces
-                .iter()
-                .any(|ns| ns.namespace_id.as_str() == namespace),
+            Ok(namespaces) => namespaces.iter().any(|ns| ns.namespace_id.as_str() == namespace),
             Err(_) => false,
         }
     }
@@ -1207,7 +1202,7 @@ pub async fn wait_for_cleanup_job_completion(
     max_wait: std::time::Duration,
 ) -> Result<String, String> {
     use tokio::time::{sleep, Duration};
-    
+
     let start = std::time::Instant::now();
     let check_interval = Duration::from_millis(200);
 
@@ -1239,30 +1234,24 @@ pub async fn wait_for_cleanup_job_completion(
             }
 
             if let Some(row) = rows.first() {
-                let status = row.first()
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
+                let status = row.first().and_then(|v| v.as_str()).unwrap_or("unknown");
 
                 match status {
                     "new" | "queued" | "retrying" | "running" => {
                         sleep(check_interval).await;
                         continue;
-                    }
+                    },
                     "completed" => {
-                        let result = row.get(1)
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("completed");
+                        let result = row.get(1).and_then(|v| v.as_str()).unwrap_or("completed");
                         return Ok(result.to_string());
-                    }
+                    },
                     "failed" | "cancelled" => {
-                        let error = row.get(2)
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown error");
+                        let error = row.get(2).and_then(|v| v.as_str()).unwrap_or("unknown error");
                         return Err(format!("Cleanup job {}: {}", status, error));
-                    }
+                    },
                     _ => {
                         return Err(format!("Unknown job status: {}", status));
-                    }
+                    },
                 }
             }
         }
@@ -1274,15 +1263,13 @@ pub async fn wait_for_cleanup_job_completion(
 /// Extract cleanup job ID from DROP TABLE response message
 pub fn extract_cleanup_job_id(message: &str) -> Option<String> {
     // Message format: "Table ns.table dropped successfully. Cleanup job: CL-xxxxxxxx"
-    message.split("Cleanup job: ")
-        .nth(1)
-        .map(|s| s.trim().to_string())
+    message.split("Cleanup job: ").nth(1).map(|s| s.trim().to_string())
 }
 
 /// Wait for a path to be removed from filesystem (for cleanup verification)
 pub async fn wait_for_path_absent(path: &std::path::Path, timeout: std::time::Duration) -> bool {
     use tokio::time::{sleep, Duration, Instant};
-    
+
     let deadline = Instant::now() + timeout;
     while path.exists() {
         if Instant::now() >= deadline {
@@ -1306,9 +1293,7 @@ mod tests {
     #[actix_web::test]
     async fn test_execute_sql() {
         let server = TestServer::new().await;
-        let response = server
-            .execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns")
-            .await;
+        let response = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_ns").await;
         assert_eq!(response.status, ResponseStatus::Success);
     }
 
@@ -1320,9 +1305,7 @@ mod tests {
         let ns = format!("cleanup_ns_{}", std::process::id());
 
         // Create namespace
-        server
-            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
-            .await;
+        server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await;
         assert!(server.namespace_exists(&ns).await);
 
         // Cleanup
@@ -1339,14 +1322,10 @@ mod tests {
 
         assert!(!server.namespace_exists("nonexistent").await);
 
-        server
-            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
-            .await;
+        server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await;
         assert!(server.namespace_exists(&ns).await);
 
         // Cleanup
-        server
-            .execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns))
-            .await;
+        server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
     }
 }

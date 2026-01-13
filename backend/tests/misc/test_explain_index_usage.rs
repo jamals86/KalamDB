@@ -14,49 +14,55 @@ use kalam_link::models::ResponseStatus;
 #[actix_web::test]
 async fn test_explain_username_equality() {
     let server: TestServer = TestServer::new().await;
-    
+
     // Run EXPLAIN VERBOSE for equality query - this should always work
     let explain_sql = "EXPLAIN VERBOSE SELECT * FROM system.users WHERE username = 'system'";
     let response = server.execute_sql(explain_sql).await;
-    
+
     assert_eq!(response.status, ResponseStatus::Success, "EXPLAIN should succeed");
     let explain_output = format!("{:?}", response.results);
     println!("=== EXPLAIN output for username = 'system' ===");
     println!("{}", explain_output);
-    
+
     // Verify the explain output has content (plan information)
     assert!(!response.results.is_empty(), "EXPLAIN should return plan information");
-    assert!(response.results[0].row_count > 0, "EXPLAIN should have rows describing the plan");
+    assert!(
+        response.results[0].row_count > 0,
+        "EXPLAIN should have rows describing the plan"
+    );
 }
 
 #[actix_web::test]
 async fn test_explain_username_like() {
     let server: TestServer = TestServer::new().await;
-    
+
     // Run EXPLAIN VERBOSE for LIKE query - this should always work
     let explain_sql = "EXPLAIN VERBOSE SELECT * FROM system.users WHERE username LIKE 'sys%'";
     let response = server.execute_sql(explain_sql).await;
-    
+
     assert_eq!(response.status, ResponseStatus::Success, "EXPLAIN should succeed");
     let explain_output = format!("{:?}", response.results);
     println!("=== EXPLAIN output for username LIKE 'sys%' ===");
     println!("{}", explain_output);
-    
+
     // Verify the explain output has content (plan information)
     assert!(!response.results.is_empty(), "EXPLAIN should return plan information");
-    assert!(response.results[0].row_count > 0, "EXPLAIN should have rows describing the plan");
+    assert!(
+        response.results[0].row_count > 0,
+        "EXPLAIN should have rows describing the plan"
+    );
 }
 
 #[actix_web::test]
 async fn test_explain_job_status() {
     let server: TestServer = TestServer::new().await;
-    
+
     // system.jobs is auto-populated by the system, so we can query it directly
-    
+
     // Run EXPLAIN VERBOSE for status query
     let explain_sql = "EXPLAIN VERBOSE SELECT * FROM system.jobs WHERE status = 'running'";
     let response = server.execute_sql(explain_sql).await;
-    
+
     assert_eq!(response.status, ResponseStatus::Success);
     let explain_output = format!("{:?}", response.results);
     println!("=== EXPLAIN output for status = 'running' ===");
@@ -66,7 +72,7 @@ async fn test_explain_job_status() {
 #[actix_web::test]
 async fn test_index_usage_log_output() {
     let server: TestServer = TestServer::new().await;
-    
+
     // Query all users first to see what exists
     println!("\n=== Querying all users ===");
     let all_users_sql = "SELECT user_id, username FROM system.users";
@@ -77,23 +83,23 @@ async fn test_index_usage_log_output() {
     for row in &all_rows {
         println!("  - username: {:?}", row.get("username"));
     }
-    
+
     // Query existing users with filter
     println!("\n=== Running query with username filter ===");
     let query_sql = "SELECT * FROM system.users WHERE username = 'system'";
     let response = server.execute_sql(query_sql).await;
-    
+
     assert_eq!(response.status, ResponseStatus::Success);
     println!("Query response has {} results", response.results.len());
     if !response.results.is_empty() {
         let rows = response.results[0].rows_as_maps();
         println!("Query returned {} rows", rows.len());
     }
-    
+
     // Check logs for index usage message
     // (Logs would show: "[system.users] Using secondary index 0 for filters...")
     println!("✓ Query executed - check server logs for index usage");
-    
+
     // Test LIKE query
     println!("\n=== Running LIKE query ===");
     let like_query = "SELECT * FROM system.users WHERE username LIKE 'sys%'";
