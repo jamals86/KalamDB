@@ -31,9 +31,8 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 #[tokio::test]
 #[ignore = "SHARED table subscriptions not supported by design (FR-128, FR-129)"]
 async fn test_scenario_07_collaborative_editing() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            let ns = unique_ns("docs");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("docs");
 
             // =========================================================
             // Step 1: Create namespace and tables
@@ -274,22 +273,15 @@ async fn test_scenario_07_collaborative_editing() {
             sub1.close().await?;
             sub2.close().await?;
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Scenario 7 test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test presence subscription with doc_id filter
 #[tokio::test]
 async fn test_scenario_07_presence_subscription() {
-    with_http_test_server_timeout(Duration::from_secs(30), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("docs_presence");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("docs_presence");
 
             // Create namespace and presence table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -351,12 +343,6 @@ async fn test_scenario_07_presence_subscription() {
 
             subscription.close().await?;
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Presence subscription test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }

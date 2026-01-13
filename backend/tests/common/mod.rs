@@ -383,23 +383,66 @@ impl TestServer {
             let mut raft_init = RAFT_INITIALIZED.lock().unwrap();
             if !*raft_init {
                 let executor = app_context.executor();
+                println!("[RAFT INIT] Starting Raft initialization...");
+                
                 // Spawn on the dedicated runtime (this handles the nested runtime issue)
                 let handle = RAFT_RUNTIME.handle().clone();
                 let (tx, rx) = std::sync::mpsc::channel();
                 
                 handle.spawn(async move {
                     let result = async {
+                        println!("[RAFT INIT] Calling executor.start()...");
                         executor.start().await?;
-                        executor.initialize_cluster().await
+                        println!("[RAFT INIT] Calling executor.initialize_cluster()...");
+                        executor.initialize_cluster().await?;
+                        println!("[RAFT INIT] Cluster initialization complete");
+                        
+                        // Wait for leader election to complete (up to 30 seconds)
+                        // Downcast to RaftExecutor to access the manager
+                        if let Some(raft_executor) = executor.as_any().downcast_ref::<kalamdb_raft::executor::RaftExecutor>() {
+                            let manager = raft_executor.manager();
+                            
+                            println!("[RAFT INIT] Waiting for leader election...");
+                            for attempt in 0..300 {  // 30 seconds total
+                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                
+                                // Check if we have a leader for the meta group
+                                let is_leader = manager.is_leader(kalamdb_raft::GroupId::Meta);
+                                if is_leader {
+                                    // Give Raft a brief moment to stabilize after becoming leader
+                                    // This helps prevent "leader is None" errors in concurrent tests
+                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                    println!("[RAFT INIT] Leader election complete after {}ms (+ 200ms stabilization)", attempt * 100);
+                                    return Ok(());
+                                }
+                                
+                                if attempt % 10 == 0 && attempt > 0 {
+                                    println!("[RAFT INIT] Still waiting for leader election... ({}s)", attempt / 10);
+                                }
+                                
+                                if attempt == 299 {
+                                    return Err(anyhow::anyhow!("Raft leader election timeout after 30 seconds"));
+                                }
+                            }
+                        } else {
+                            println!("[RAFT INIT] WARNING: Could not downcast to RaftExecutor!");
+                        }
+                        println!("[RAFT INIT] Completing without leader check (downcast failed or non-Raft executor)");
+                        Ok(())
                     }.await;
                     let _ = tx.send(result);
                 });
                 
-                // Wait for initialization to complete
+                // Wait for initialization to complete BEFORE releasing the lock
+                // This ensures other parallel tests wait for leadership to be fully established
                 let result = rx.recv().expect("Raft init channel closed unexpectedly");
                 result.expect("Failed to initialize Raft cluster for tests");
                 
+                println!("[RAFT INIT] Initialization flag set to true");
                 *raft_init = true;
+                // Lock is released here, AFTER leader election is complete
+            } else {
+                println!("[RAFT INIT] Skipping - already initialized");
             }
         }
 

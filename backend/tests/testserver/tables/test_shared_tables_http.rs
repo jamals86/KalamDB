@@ -5,15 +5,13 @@ mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_table};
-use test_support::http_server::with_http_test_server_timeout;
 use test_support::jobs::{extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent};
 use tokio::time::Duration;
 
 #[tokio::test]
 async fn test_shared_tables_lifecycle_over_http() {
-    with_http_test_server_timeout(Duration::from_secs(60), |server| {
-        Box::pin(async move {
-            let suffix = std::process::id();
+    let server = test_support::http_server::get_global_server().await;
+    let suffix = std::process::id();
             let ns = format!("st_{}", suffix);
             let table = "audit";
 
@@ -112,10 +110,4 @@ async fn test_shared_tables_lifecycle_over_http() {
                 "Parquet dir still exists after drop: {}",
                 parquet_dir.display()
             );
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("with_http_test_server_timeout");
 }

@@ -6,7 +6,7 @@ mod test_support;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
 use test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_user_table};
-use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
+use test_support::http_server::HttpTestServer;
 use test_support::jobs::{extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent};
 use tokio::time::Duration;
 
@@ -49,9 +49,8 @@ async fn lookup_user_id(server: &HttpTestServer, username: &str) -> anyhow::Resu
 
 #[tokio::test]
 async fn test_user_tables_lifecycle_and_isolation_over_http() {
-    with_http_test_server_timeout(Duration::from_secs(60), |server| {
-        Box::pin(async move {
-            let suffix = std::process::id();
+    let server = test_support::http_server::get_global_server().await;
+    let suffix = std::process::id();
             let ns = format!("ut_{}", suffix);
 
             let resp = server
@@ -267,11 +266,5 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() {
                     "User2 parquet dir still exists after drop: {}",
                     dir_user2.display()
                 );
-            }
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("with_http_test_server_timeout");
+    }
 }

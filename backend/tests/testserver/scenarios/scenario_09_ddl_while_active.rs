@@ -22,9 +22,8 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Main DDL while active scenario test
 #[tokio::test]
 async fn test_scenario_09_ddl_while_active() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            let ns = unique_ns("ddl_active");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("ddl_active");
 
             // =========================================================
             // Step 1: Create namespace and table
@@ -185,22 +184,15 @@ async fn test_scenario_09_ddl_while_active() {
 
             subscription.close().await?;
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Scenario 9 test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test DROP COLUMN behavior (if supported)
 #[tokio::test]
 async fn test_scenario_09_drop_column() {
-    with_http_test_server_timeout(Duration::from_secs(30), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("ddl_drop");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("ddl_drop");
 
             // Create namespace and table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -276,22 +268,15 @@ async fn test_scenario_09_drop_column() {
                 println!("DROP COLUMN not supported: {:?}", drop_resp.error);
             }
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("DROP COLUMN test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test concurrent reads during DDL
 #[tokio::test]
 async fn test_scenario_09_concurrent_reads_during_ddl() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("ddl_concurrent");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("ddl_concurrent");
 
             // Create namespace and table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -366,12 +351,6 @@ async fn test_scenario_09_concurrent_reads_during_ddl() {
             // All reads should succeed (DDL shouldn't break ongoing reads)
             assert!(read_count >= 8, "Most reads should succeed during DDL, got {}", read_count);
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Concurrent reads during DDL test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }

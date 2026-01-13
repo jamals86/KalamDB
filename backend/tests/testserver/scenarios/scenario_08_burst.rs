@@ -24,9 +24,8 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 /// Main burst test - high-rate writes with active subscription
 #[tokio::test]
 async fn test_scenario_08_burst_writes() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            let ns = unique_ns("burst");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("burst");
 
             // =========================================================
             // Step 1: Create namespace and table
@@ -71,12 +70,11 @@ async fn test_scenario_08_burst_writes() {
                     let ns = ns.clone();
                     let server_base = server.base_url().to_string();
                     let count = Arc::clone(&insert_count);
-                    let token = server.create_jwt_token(&UserName::new("burst_user"));
 
                     tokio::spawn(async move {
                         let client = kalam_link::KalamLinkClient::builder()
                             .base_url(&server_base)
-                            .auth(kalam_link::AuthProvider::jwt_token(token))
+                            .auth(kalam_link::AuthProvider::basic_auth("root".to_string(), String::new()))
                             .build()?;
 
                         for i in 0..writes_per_writer {
@@ -186,22 +184,15 @@ async fn test_scenario_08_burst_writes() {
                 events_received
             );
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Scenario 8 test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test subscription stability under sustained load
 #[tokio::test]
 async fn test_scenario_08_sustained_load() {
-    with_http_test_server_timeout(Duration::from_secs(60), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("sustained");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("sustained");
 
             // Create namespace and table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -278,22 +269,15 @@ async fn test_scenario_08_sustained_load() {
 
             subscription.close().await?;
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Sustained load test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test subscription recovery after reconnect
 #[tokio::test]
 async fn test_scenario_08_subscription_reconnect() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("reconnect");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("reconnect");
 
             // Create namespace and table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -354,12 +338,6 @@ async fn test_scenario_08_subscription_reconnect() {
 
             sub2.close().await?;
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Reconnect test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }

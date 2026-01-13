@@ -3644,6 +3644,7 @@ dependencies = [
  "kalamdb-auth",
  "kalamdb-commons",
  "kalamdb-core",
+ "kalamdb-raft",
  "kalamdb-sql",
  "kalamdb-store",
  "kalamdb-system",
@@ -3671,7 +3672,6 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "arrow",
- "bincode",
  "chrono",
  "dashmap",
  "kalamdb-commons",

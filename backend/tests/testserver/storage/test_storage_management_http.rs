@@ -10,14 +10,12 @@
 mod test_support;
 
 use kalam_link::models::ResponseStatus;
-use test_support::http_server::with_http_test_server_timeout;
 use tokio::time::Duration;
 
 #[tokio::test]
 async fn test_storage_management_over_http() {
-    with_http_test_server_timeout(Duration::from_secs(60), |server| {
-        Box::pin(async move {
-            let suffix = std::process::id();
+    let server = test_support::http_server::get_global_server().await;
+    let suffix = std::process::id();
 
             // Default storage exists
             let resp = server.execute_sql("SHOW STORAGES").await?;
@@ -142,14 +140,8 @@ async fn test_storage_management_over_http() {
                 .await?;
             anyhow::ensure!(resp.status == ResponseStatus::Success);
 
-            let resp = server
-                .execute_sql(&format!("DROP STORAGE {}", storage_id))
-                .await?;
-            anyhow::ensure!(resp.status == ResponseStatus::Success, "DROP STORAGE failed: {:?}", resp.error);
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("with_http_test_server_timeout");
+    let resp = server
+        .execute_sql(&format!("DROP STORAGE {}", storage_id))
+        .await?;
+    anyhow::ensure!(resp.status == ResponseStatus::Success, "DROP STORAGE failed: {:?}", resp.error);
 }

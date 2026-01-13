@@ -513,6 +513,33 @@ impl AppContext {
         log::debug!("✓ Raft appliers wired successfully");
     }
 
+    /// Restore state machines from persisted snapshots
+    ///
+    /// This should be called AFTER `wire_appliers()` to restore state machines'
+    /// internal state from persisted snapshots. This prevents duplicate log entry
+    /// application on server restart.
+    ///
+    /// The state machines need their appliers to be set first so they can properly
+    /// restore persisted state to the underlying providers.
+    pub async fn restore_raft_state_machines(&self) {
+        log::debug!("Restoring Raft state machines from snapshots...");
+
+        let executor = self.executor();
+
+        let Some(raft_executor) = executor.as_any().downcast_ref::<kalamdb_raft::RaftExecutor>() else {
+            log::error!("Failed to downcast executor to RaftExecutor - state machines NOT restored!");
+            return;
+        };
+
+        let manager = raft_executor.manager();
+
+        if let Err(e) = manager.restore_state_machines_from_snapshots().await {
+            log::error!("Failed to restore state machines from snapshots: {:?}", e);
+        } else {
+            log::debug!("✓ Raft state machines restored successfully");
+        }
+    }
+
     /// Extract worker_id from node_id for Snowflake ID generation
     ///
     /// Maps node_id string to 10-bit integer (0-1023) using CRC32 hash.
@@ -846,6 +873,7 @@ impl AppContext {
         self.system_tables
             .jobs()
             .create_job(job.clone())
+            .map(|_| ())  // Discard the message, just return ()
             .into_kalamdb_error("Failed to insert job")
     }
 

@@ -7,7 +7,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use bincode::config;
 use openraft::ServerState;
 
 use kalamdb_commons::models::{NodeId, UserId};
@@ -46,21 +45,6 @@ impl RaftExecutor {
         &self.manager
     }
     
-    /// Serialize a command to bytes using bincode with serde
-    fn serialize<T: serde::Serialize>(cmd: &T) -> Result<Vec<u8>> {
-        bincode::serde::encode_to_vec(cmd, config::standard()).map_err(|e| {
-            RaftError::Internal(format!("Failed to serialize command: {}", e))
-        })
-    }
-    
-    /// Deserialize a response from bytes using bincode with serde
-    fn deserialize<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-        let (result, _) = bincode::serde::decode_from_slice(bytes, config::standard()).map_err(|e| {
-            RaftError::Internal(format!("Failed to deserialize response: {}", e))
-        })?;
-        Ok(result)
-    }
-    
     /// Compute the shard for a user based on their ID
     fn user_shard(&self, user_id: &UserId) -> u32 {
         use std::hash::{Hash, Hasher};
@@ -76,9 +60,7 @@ impl RaftExecutor {
 #[async_trait]
 impl CommandExecutor for RaftExecutor {
     async fn execute_meta(&self, cmd: MetaCommand) -> Result<MetaResponse> {
-        let bytes = Self::serialize(&cmd)?;
-        let result = self.manager.propose_meta(bytes).await?;
-        Self::deserialize(&result)
+        self.manager.propose_meta(cmd).await
     }
 
     async fn execute_user_data(&self, user_id: &UserId, mut cmd: UserDataCommand) -> Result<DataResponse> {
@@ -87,9 +69,7 @@ impl CommandExecutor for RaftExecutor {
         cmd.set_required_meta_index(meta_index);
         
         let shard = self.user_shard(user_id);
-        let bytes = Self::serialize(&cmd)?;
-        let result = self.manager.propose_user_data(shard, bytes).await?;
-        let response: DataResponse = Self::deserialize(&result)?;
+        let response = self.manager.propose_user_data(shard, cmd).await?;
         
         // Check if the response is an error and convert to RaftError
         // Use Internal instead of Provider since the message already contains full context
@@ -105,10 +85,8 @@ impl CommandExecutor for RaftExecutor {
         let meta_index = self.manager.current_meta_index();
         cmd.set_required_meta_index(meta_index);
         
-        let bytes = Self::serialize(&cmd)?;
         // All shared data goes to shard 0
-        let result = self.manager.propose_shared_data(0, bytes).await?;
-        let response: DataResponse = Self::deserialize(&result)?;
+        let response = self.manager.propose_shared_data(0, cmd).await?;
         
         // Check if the response is an error and convert to RaftError
         // Use Internal instead of Provider since the message already contains full context

@@ -5,15 +5,14 @@ mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
+use test_support::http_server::HttpTestServer;
 use tokio::time::Duration;
 
 #[tokio::test]
 async fn test_namespace_validation_over_http() {
-    with_http_test_server_timeout(Duration::from_secs(30), |server| {
-        Box::pin(async move {
-            // CREATE TABLE should fail when namespace is missing.
-            {
+    let server = test_support::http_server::get_global_server().await;
+    // CREATE TABLE should fail when namespace is missing.
+    {
                 let response = server
                     .execute_sql(
                         r#"CREATE TABLE missing_ns.audit_log (
@@ -177,12 +176,7 @@ async fn test_namespace_validation_over_http() {
                 if table_result.status == ResponseStatus::Error {
                     let retry = server.execute_sql(table_sql).await?;
                     assert_eq!(retry.status, ResponseStatus::Success);
-                }
             }
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("with_http_test_server_timeout");
+        }
+    }
 }

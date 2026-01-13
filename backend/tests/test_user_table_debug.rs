@@ -3,15 +3,12 @@
 #[path = "common/testserver/mod.rs"]
 mod test_support;
 
-use test_support::http_server::with_http_test_server_timeout;
-use tokio::time::Duration;
 use kalamdb_commons::Role;
 
 #[tokio::test]
 async fn test_user_table_insert_select_minimal() {
-    with_http_test_server_timeout(Duration::from_secs(60), |server| {
-        Box::pin(async move {
-            println!("\n=== Starting minimal USER table test ===\n");
+    let server = test_support::http_server::get_global_server().await;
+    println!("\n=== Starting minimal USER table test ===\n");
             
             // Create namespace
             let ns = "test_ns_minimal";
@@ -69,12 +66,7 @@ async fn test_user_table_insert_select_minimal() {
                 panic!("SELECT failed: {:?}", resp.error);
             }
             
-            println!("\n=== Test completed successfully ===\n");
-            Ok(())
-        })
-    })
-    .await
-    .expect("Test failed");
+    println!("\n=== Test completed successfully ===\n");
 }
 
 #[tokio::test]
@@ -82,9 +74,8 @@ async fn test_user_table_subscription_debug() {
     use futures_util::StreamExt;
     use kalam_link::models::ChangeEvent;
     
-    with_http_test_server_timeout(Duration::from_secs(60), |server| {
-        Box::pin(async move {
-            println!("\n=== Starting USER table subscription test ===\n");
+    let server = test_support::http_server::get_global_server().await;
+    println!("\n=== Starting USER table subscription test ===\n");
             
             // Create namespace
             let ns = "test_ns_sub";
@@ -223,10 +214,5 @@ async fn test_user_table_subscription_debug() {
             println!("Total initial data rows received: {}", initial_data_rows);
             assert_eq!(initial_data_rows, 5, "Expected 5 initial data rows, got {}", initial_data_rows);
             
-            println!("\n=== Subscription test completed successfully ===\n");
-            Ok(())
-        })
-    })
-    .await
-    .expect("Subscription test failed");
+    println!("\n=== Subscription test completed successfully ===\n");
 }

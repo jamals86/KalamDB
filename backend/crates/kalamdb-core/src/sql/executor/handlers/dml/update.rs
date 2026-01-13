@@ -528,19 +528,11 @@ impl UpdateHandler {
         let app_context = AppContext::get();
         let executor = app_context.executor();
 
-        // Serialize the row updates
-        let updates_data = bincode::serde::encode_to_vec(&vec![updates], bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize updates: {}", e)))?;
-
-        // Serialize the PK value for the filter
-        let filter_data = bincode::serde::encode_to_vec(&pk_value.to_string(), bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize filter: {}", e)))?;
-
         let cmd = SharedDataCommand::Update {
             required_meta_index: 0, // Stamped by executor
             table_id: table_id.clone(),
-            updates_data,
-            filter_data: Some(filter_data),
+            updates: vec![updates],
+            filter: Some(pk_value.to_string()),
         };
 
         let response = executor
@@ -567,18 +559,12 @@ impl UpdateHandler {
         let app_context = AppContext::get();
         let executor = app_context.executor();
 
-        let updates_data = bincode::serde::encode_to_vec(&vec![updates], bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize updates: {}", e)))?;
-
-        let filter_data = bincode::serde::encode_to_vec(&pk_value.to_string(), bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize filter: {}", e)))?;
-
         let cmd = UserDataCommand::Update {
             required_meta_index: 0, // Stamped by executor
             table_id: table_id.clone(),
             user_id: user_id.clone(),
-            updates_data,
-            filter_data: Some(filter_data),
+            updates: vec![updates],
+            filter: Some(pk_value.to_string()),
         };
 
         let response = executor

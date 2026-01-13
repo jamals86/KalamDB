@@ -5,7 +5,7 @@
 //! buffer data commands until local `Meta` has applied at least that index.
 
 use chrono::{DateTime, Utc};
-use kalamdb_commons::models::{NodeId, UserId};
+use kalamdb_commons::models::{NodeId, UserId, Row};
 use kalamdb_commons::TableId;
 use serde::{Deserialize, Serialize};
 
@@ -29,8 +29,8 @@ pub enum UserDataCommand {
         required_meta_index: u64,
         table_id: TableId,
         user_id: UserId,
-        /// Serialized rows (Arrow IPC or custom format)
-        rows_data: Vec<u8>,
+        /// Rows to insert
+        rows: Vec<Row>,
     },
 
     /// Update rows in a user table
@@ -39,10 +39,10 @@ pub enum UserDataCommand {
         required_meta_index: u64,
         table_id: TableId,
         user_id: UserId,
-        /// Serialized updates
-        updates_data: Vec<u8>,
-        /// Optional filter (serialized)
-        filter_data: Option<Vec<u8>>,
+        /// Updates to apply
+        updates: Vec<Row>,
+        /// Optional filter (primary key value)
+        filter: Option<String>,
     },
 
     /// Delete rows from a user table
@@ -51,8 +51,8 @@ pub enum UserDataCommand {
         required_meta_index: u64,
         table_id: TableId,
         user_id: UserId,
-        /// Optional filter (serialized)
-        filter_data: Option<Vec<u8>>,
+        /// Primary keys to delete
+        pk_values: Option<Vec<String>>,
     },
 
     // === Live Query Subscriptions ===
@@ -153,8 +153,8 @@ pub enum SharedDataCommand {
         /// Watermark: Meta group's last_applied_index at proposal time
         required_meta_index: u64,
         table_id: TableId,
-        /// Serialized rows
-        rows_data: Vec<u8>,
+        /// Rows to insert
+        rows: Vec<Row>,
     },
 
     /// Update rows in a shared table
@@ -162,10 +162,10 @@ pub enum SharedDataCommand {
         /// Watermark: Meta group's last_applied_index at proposal time
         required_meta_index: u64,
         table_id: TableId,
-        /// Serialized updates
-        updates_data: Vec<u8>,
-        /// Optional filter (serialized)
-        filter_data: Option<Vec<u8>>,
+        /// Updates to apply
+        updates: Vec<Row>,
+        /// Optional filter (primary key value)
+        filter: Option<String>,
     },
 
     /// Delete rows from a shared table
@@ -173,8 +173,8 @@ pub enum SharedDataCommand {
         /// Watermark: Meta group's last_applied_index at proposal time
         required_meta_index: u64,
         table_id: TableId,
-        /// Optional filter (serialized)
-        filter_data: Option<Vec<u8>>,
+        /// Primary keys to delete
+        pk_values: Option<Vec<String>>,
     },
 }
 

@@ -249,33 +249,44 @@ pub enum MetaResponse {
     #[default]
     Ok,
     
+    // === Generic response (preserves original success message) ===
+    Message {
+        message: String,
+    },
+    
     // === Namespace responses ===
     NamespaceCreated {
         namespace_id: NamespaceId,
+        message: String,
     },
     
     // === Table responses ===
     TableCreated {
         table_id: TableId,
+        message: String,
     },
     
     // === User responses ===
     UserCreated {
         user_id: UserId,
+        message: String,
     },
     
     // === Job responses ===
     JobCreated {
         job_id: JobId,
+        message: String,
     },
     JobClaimed {
         job_id: JobId,
         node_id: NodeId,
+        message: String,
     },
     
     // === Live Query responses ===
     LiveQueryCreated {
         live_id: LiveQueryId,
+        message: String,
     },
     
     // === Error ===
@@ -300,6 +311,21 @@ impl MetaResponse {
         match self {
             Self::Error { message } => Some(message),
             _ => None,
+        }
+    }
+    
+    /// Get the message from any response variant
+    pub fn get_message(&self) -> String {
+        match self {
+            Self::Ok => "Operation completed successfully".to_string(),
+            Self::Message { message } => message.clone(),
+            Self::NamespaceCreated { message, .. } => message.clone(),
+            Self::TableCreated { message, .. } => message.clone(),
+            Self::UserCreated { message, .. } => message.clone(),
+            Self::JobCreated { message, .. } => message.clone(),
+            Self::JobClaimed { message, .. } => message.clone(),
+            Self::LiveQueryCreated { message, .. } => message.clone(),
+            Self::Error { message } => message.clone(),
         }
     }
 }

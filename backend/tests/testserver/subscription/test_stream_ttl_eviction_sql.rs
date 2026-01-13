@@ -7,15 +7,14 @@
 mod test_support;
 
 use kalam_link::models::ResponseStatus;
-use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
+use test_support::http_server::HttpTestServer;
 use tokio::time::{sleep, Duration};
 
 /// Test stream table TTL eviction using the SQL script approach
 #[tokio::test]
 async fn test_stream_ttl_eviction_from_sql_script() {
-    with_http_test_server_timeout(Duration::from_secs(30), |server| {
-        Box::pin(async move {
-            let ns = format!("test_stream_ttl_{}", std::process::id());
+    let server = test_support::http_server::get_global_server().await;
+    let ns = format!("test_stream_ttl_{}", std::process::id());
             let table = "events";
 
             // Create namespace
@@ -96,22 +95,15 @@ async fn test_stream_ttl_eviction_from_sql_script() {
             let rows_after = resp.results[0].rows_as_maps();
 
             // After TTL expiration, we should have fewer rows than initially
-            // (The exact count depends on eviction job timing, but it should be less than 3)
-            assert!(
-                rows_after.len() < 3,
-                "Expected some events to be evicted, but still have {} events",
-                rows_after.len()
-            );
+    // (The exact count depends on eviction job timing, but it should be less than 3)
+    assert!(
+        rows_after.len() < 3,
+        "Expected some events to be evicted, but still have {} events",
+        rows_after.len()
+    );
 
-            println!(
-                "Stream TTL eviction test: {} events before TTL, {} events after",
-                3,
-                rows_after.len()
-            );
-
-            Ok(())
-        })
-    })
-    .await
-    .unwrap();
-}
+    println!(
+        "Stream TTL eviction test: {} events before TTL, {} events after",
+        3,
+        rows_after.len()
+    );

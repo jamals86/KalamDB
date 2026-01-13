@@ -85,7 +85,7 @@ impl LeaderFailoverHandler {
     ///
     /// Scans for orphaned jobs and recovers them.
     pub async fn on_become_leader(&self) -> Result<RecoveryReport, KalamDbError> {
-        log::info!(
+        log::debug!(
             "[FailoverHandler] Node {} became leader, scanning for orphaned jobs...",
             self.node_id
         );
@@ -94,7 +94,7 @@ impl LeaderFailoverHandler {
 
         // Find all running jobs
         let running_jobs = self.find_running_jobs().await?;
-        log::info!(
+        log::debug!(
             "[FailoverHandler] Found {} running jobs to check",
             running_jobs.len()
         );
@@ -144,7 +144,7 @@ impl LeaderFailoverHandler {
             }
         }
 
-        log::info!(
+        log::debug!(
             "[FailoverHandler] Recovery complete: {} requeued, {} failed, {} continued",
             report.requeued.len(),
             report.marked_failed.len(),

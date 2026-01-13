@@ -8,11 +8,48 @@ use std::fs::OpenOptions;
 use std::path::Path;
 use std::path::PathBuf;
 use tokio::sync::Mutex;
+use tokio::sync::OnceCell;
 use tokio::time::{sleep, Duration, Instant};
 use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
 use kalam_link::models::{QueryResponse, ResponseStatus};
 
 static HTTP_TEST_SERVER_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+/// Global singleton server instance for tests that want to reuse the same server.
+/// 
+/// Use `get_global_server()` to get a reference to the shared server instance.
+/// The server is started once on first access and reused across tests.
+/// 
+/// **Note**: Tests using the global server share state (tables, data), so they
+/// should use unique table names or be designed to handle shared state.
+static GLOBAL_HTTP_TEST_SERVER: OnceCell<HttpTestServer> = OnceCell::const_new();
+
+/// Get a reference to the global shared HTTP test server.
+/// 
+/// The server is started once on first access and reused across all tests.
+/// This is more efficient than starting a new server for each test.
+/// 
+/// **Note**: Tests using the global server share state (tables, data), so they
+/// should use unique table names or be designed to handle shared state.
+/// 
+/// # Example
+/// ```ignore
+/// #[tokio::test]
+/// async fn test_something() {
+///     let server = get_global_server().await;
+///     let response = server.execute_sql("SELECT 1").await.unwrap();
+///     assert_eq!(response.status.to_string(), "success");
+/// }
+/// ```
+pub async fn get_global_server() -> &'static HttpTestServer {
+    GLOBAL_HTTP_TEST_SERVER
+        .get_or_init(|| async {
+            start_http_test_server()
+                .await
+                .expect("Failed to start global HTTP test server")
+        })
+        .await
+}
 
 /// A near-production HTTP server instance for tests.
 ///
@@ -207,15 +244,14 @@ impl HttpTestServer {
         Ok(user_id)
     }
 
-    /// Returns a pre-configured KalamLinkClient authenticated as specified user using JWT with explicit user_id.
-    pub fn link_client_with_id(&self, user_id: &str, username: &str, role: &Role) -> KalamLinkClient {
-        let user_id_typed = UserId::new(user_id);
-        let username_typed = UserName::new(username);
-        let token = self.create_jwt_token_with_id(&user_id_typed, &username_typed, role);
+    /// Returns a pre-configured KalamLinkClient authenticated as specified user using basic auth.
+    pub fn link_client_with_id(&self, _user_id: &str, username: &str, _role: &Role) -> KalamLinkClient {
+        // For localhost tests, use basic auth with root (no password) or username with empty password
+        let auth_username = if username == "root" { "root" } else { username };
         
         KalamLinkClient::builder()
             .base_url(self.base_url())
-            .auth(AuthProvider::jwt_token(token))
+            .auth(AuthProvider::basic_auth(auth_username.to_string(), String::new()))
             .timeouts(
                 KalamLinkTimeouts::builder()
                     .connection_timeout_secs(5)
@@ -318,14 +354,26 @@ impl HttpTestServer {
             }
         };
 
-        let resp = client
+        let resp = match client
             .execute_query(
                 sql,
                 if params.is_empty() { None } else { Some(params) },
                 None,
             )
             .await
-            .context("KalamLink execute_query failed")?;
+        {
+            Ok(r) => r,
+            Err(kalam_link::KalamLinkError::ServerError { status_code: _, message }) => {
+                // Try to parse the error message as QueryResponse JSON
+                if let Ok(error_response) = serde_json::from_str::<QueryResponse>(&message) {
+                    error_response
+                } else {
+                    // If parsing fails, return the error
+                    return Err(anyhow::anyhow!("Server error: {}", message));
+                }
+            }
+            Err(e) => return Err(e).context("KalamLink execute_query failed"),
+        };
 
         if resp.status == ResponseStatus::Error {
             eprintln!("HTTP SQL Error: sql={:?} error={:?}", sql, resp.error);

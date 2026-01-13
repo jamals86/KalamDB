@@ -27,9 +27,8 @@ fn file_uri(path: PathBuf) -> String {
 
 #[tokio::test]
 async fn test_storage_abstraction_over_http() {
-    test_support::http_server::with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-        // T420: StorageBackend trait interface exists (smoke via CREATE NAMESPACE + CREATE STORAGE)
+    let server = test_support::http_server::get_global_server().await;
+    // T420: StorageBackend trait interface exists (smoke via CREATE NAMESPACE + CREATE STORAGE)
         let response = server
             .execute_sql("CREATE NAMESPACE IF NOT EXISTS test_storage_trait")
             .await?;
@@ -185,15 +184,9 @@ async fn test_storage_abstraction_over_http() {
             .await?;
         assert_eq!(response.status, ResponseStatus::Error);
 
-        // Cleanup best-effort: keep the test idempotent.
-        let _ = server.execute_sql("DROP NAMESPACE test_storage_trait").await;
-        let _ = server.execute_sql("DROP NAMESPACE test_rocksdb_trait").await;
-        let _ = server.execute_sql("DROP NAMESPACE test_partition_ns").await;
-        let _ = server.execute_sql("DROP STORAGE test_local").await;
-
-        Ok(())
-        })
-    })
-    .await
-    .expect("with_http_test_server_timeout");
+    // Cleanup best-effort: keep the test idempotent.
+    let _ = server.execute_sql("DROP NAMESPACE test_storage_trait").await;
+    let _ = server.execute_sql("DROP NAMESPACE test_rocksdb_trait").await;
+    let _ = server.execute_sql("DROP NAMESPACE test_partition_ns").await;
+    let _ = server.execute_sql("DROP STORAGE test_local").await;
 }

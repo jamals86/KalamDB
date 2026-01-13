@@ -220,6 +220,7 @@ kalamdb-sql = { path = "crates/kalamdb-sql" }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
 kalamdb-tables = { path = "crates/kalamdb-tables" }
+kalamdb-raft = { path = "crates/kalamdb-raft" }
 kalam-link = { path = "../link" }
 
 # External dependencies

@@ -62,7 +62,18 @@ impl CLIError {
             KalamLinkError::ServerError {
                 status_code,
                 message,
-            } => format!("Server error ({}): {}", status_code, message),
+            } => {
+                // Try to parse JSON and extract error.message
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(message) {
+                    if let Some(error_obj) = json.get("error") {
+                        if let Some(error_msg) = error_obj.get("message").and_then(|v| v.as_str()) {
+                            return format!("Server error ({}): {}", status_code, error_msg);
+                        }
+                    }
+                }
+                // Fallback to full message if not JSON or no error.message field
+                format!("Server error ({}): {}", status_code, message)
+            }
             KalamLinkError::Cancelled => "Operation cancelled".to_string(),
         }
     }

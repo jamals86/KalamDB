@@ -139,7 +139,7 @@ impl SchemaRegistry {
         table_id: TableId,
         provider: Arc<dyn TableProvider + Send + Sync>,
     ) -> Result<(), KalamDbError> {
-        log::info!(
+        log::debug!(
             "[SchemaRegistry] Inserting provider for table {}",
             table_id
         );
@@ -229,7 +229,7 @@ impl SchemaRegistry {
             
             // Check if table already exists - if so, deregister it first
             if schema.table_exist(table_name) {
-                log::info!(
+                log::debug!(
                     "[SchemaRegistry] Table {} already registered in DataFusion; deregistering before re-registration",
                     table_id
                 );
@@ -270,7 +270,7 @@ impl SchemaRegistry {
                     ))
                 })?;
 
-            log::info!(
+            log::debug!(
                 "[SchemaRegistry] Registered table {} with DataFusion catalog",
                 table_id
             );

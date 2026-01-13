@@ -44,12 +44,8 @@ impl DmlExecutor {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        rows_data: &[u8],
+        rows: &[Row],
     ) -> Result<usize, ApplierError> {
-        let rows: Vec<Row> = bincode::serde::decode_from_slice(rows_data, bincode::config::standard())
-            .map(|(rows, _)| rows)
-            .map_err(|e| ApplierError::Serialization(format!("Failed to deserialize rows: {}", e)))?;
-
         if rows.is_empty() {
             return Ok(0);
         }
@@ -62,13 +58,13 @@ impl DmlExecutor {
         // Try UserTableProvider first, then StreamTableProvider
         if let Some(provider) = provider_arc.as_any().downcast_ref::<UserTableProvider>() {
             let row_ids = provider
-                .insert_batch(user_id, rows)
+                .insert_batch(user_id, rows.to_vec())
                 .map_err(|e| ApplierError::Execution(format!("Failed to insert batch: {}", e)))?;
             log::info!("DmlExecutor: Inserted {} rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
         } else if let Some(provider) = provider_arc.as_any().downcast_ref::<StreamTableProvider>() {
             let row_ids = provider
-                .insert_batch(user_id, rows)
+                .insert_batch(user_id, rows.to_vec())
                 .map_err(|e| ApplierError::Execution(format!("Failed to insert stream batch: {}", e)))?;
             log::info!("DmlExecutor: Inserted {} stream rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
@@ -85,23 +81,14 @@ impl DmlExecutor {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        updates_data: &[u8],
-        filter_data: Option<&[u8]>,
+        updates: &[Row],
+        filter: Option<&str>,
     ) -> Result<usize, ApplierError> {
-        let pk_value: String = filter_data
-            .ok_or_else(|| ApplierError::Validation("Update requires filter_data with PK value".to_string()))
-            .and_then(|data| {
-                bincode::serde::decode_from_slice(data, bincode::config::standard())
-                    .map(|(v, _)| v)
-                    .map_err(|e| ApplierError::Serialization(format!("Failed to deserialize PK value: {}", e)))
-            })?;
+        let pk_value = filter
+            .ok_or_else(|| ApplierError::Validation("Update requires filter with PK value".to_string()))?;
 
-        let mut rows: Vec<Row> = bincode::serde::decode_from_slice(updates_data, bincode::config::standard())
-            .map(|(rows, _)| rows)
-            .map_err(|e| ApplierError::Serialization(format!("Failed to deserialize updates: {}", e)))?;
-
-        let updates = rows
-            .pop()
+        let update_row = updates
+            .first()
             .ok_or_else(|| ApplierError::Validation("Update requires at least one update row".to_string()))?;
 
         let schema_registry = self.app_context.schema_registry();
@@ -110,9 +97,9 @@ impl DmlExecutor {
         })?;
 
         if let Some(provider) = provider_arc.as_any().downcast_ref::<UserTableProvider>() {
-            self.update_user_provider(provider, user_id, &pk_value, updates)
+            self.update_user_provider(provider, user_id, pk_value, update_row.clone())
         } else if let Some(provider) = provider_arc.as_any().downcast_ref::<StreamTableProvider>() {
-            self.update_stream_provider(provider, user_id, &pk_value, updates)
+            self.update_stream_provider(provider, user_id, pk_value, update_row.clone())
         } else {
             Err(ApplierError::Execution(format!(
                 "Provider type mismatch for user table {}",
@@ -126,15 +113,10 @@ impl DmlExecutor {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        filter_data: Option<&[u8]>,
+        pk_values: Option<&[String]>,
     ) -> Result<usize, ApplierError> {
-        let pk_values: Vec<String> = if let Some(data) = filter_data {
-            bincode::serde::decode_from_slice(data, bincode::config::standard())
-                .map(|(pks, _)| pks)
-                .map_err(|e| ApplierError::Serialization(format!("Failed to deserialize PK list: {}", e)))?
-        } else {
-            return Err(ApplierError::Validation("Delete requires filter_data with PK list".to_string()));
-        };
+        let pk_values = pk_values
+            .ok_or_else(|| ApplierError::Validation("Delete requires pk_values list".to_string()))?;
 
         if pk_values.is_empty() {
             return Ok(0);
@@ -147,7 +129,7 @@ impl DmlExecutor {
 
         if let Some(provider) = provider_arc.as_any().downcast_ref::<UserTableProvider>() {
             let mut deleted_count = 0;
-            for pk_value in &pk_values {
+            for pk_value in pk_values {
                 if provider
                     .delete_by_id_field(user_id, pk_value)
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
@@ -159,7 +141,7 @@ impl DmlExecutor {
             Ok(deleted_count)
         } else if let Some(provider) = provider_arc.as_any().downcast_ref::<StreamTableProvider>() {
             let mut deleted_count = 0;
-            for pk_value in &pk_values {
+            for pk_value in pk_values {
                 if provider
                     .delete_by_id_field(user_id, pk_value)
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
@@ -185,12 +167,8 @@ impl DmlExecutor {
     pub async fn insert_shared_data(
         &self,
         table_id: &TableId,
-        rows_data: &[u8],
+        rows: &[Row],
     ) -> Result<usize, ApplierError> {
-        let rows: Vec<Row> = bincode::serde::decode_from_slice(rows_data, bincode::config::standard())
-            .map(|(rows, _)| rows)
-            .map_err(|e| ApplierError::Serialization(format!("Failed to deserialize rows: {}", e)))?;
-
         if rows.is_empty() {
             return Ok(0);
         }
@@ -203,7 +181,7 @@ impl DmlExecutor {
         if let Some(provider) = provider_arc.as_any().downcast_ref::<SharedTableProvider>() {
             let system_user = UserId::from("system");
             let row_ids = provider
-                .insert_batch(&system_user, rows)
+                .insert_batch(&system_user, rows.to_vec())
                 .map_err(|e| ApplierError::Execution(format!("Failed to insert batch: {}", e)))?;
             log::info!("DmlExecutor: Inserted {} shared rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
@@ -219,24 +197,15 @@ impl DmlExecutor {
     pub async fn update_shared_data(
         &self,
         table_id: &TableId,
-        updates_data: &[u8],
-        filter_data: Option<&[u8]>,
+        updates: &[Row],
+        filter: Option<&str>,
     ) -> Result<usize, ApplierError> {
-        let rows: Vec<Row> = bincode::serde::decode_from_slice(updates_data, bincode::config::standard())
-            .map(|(rows, _)| rows)
-            .map_err(|e| ApplierError::Serialization(format!("Failed to deserialize updates: {}", e)))?;
-
-        if rows.is_empty() {
+        if updates.is_empty() {
             return Ok(0);
         }
 
-        let pk_value: String = filter_data
-            .ok_or_else(|| ApplierError::Validation("Update requires filter_data with PK value".to_string()))
-            .and_then(|data| {
-                bincode::serde::decode_from_slice(data, bincode::config::standard())
-                    .map(|(v, _)| v)
-                    .map_err(|e| ApplierError::Serialization(format!("Failed to deserialize PK value: {}", e)))
-            })?;
+        let pk_value = filter
+            .ok_or_else(|| ApplierError::Validation("Update requires filter with PK value".to_string()))?;
 
         let schema_registry = self.app_context.schema_registry();
         let provider_arc = schema_registry.get_provider(table_id).ok_or_else(|| {
@@ -245,10 +214,10 @@ impl DmlExecutor {
 
         if let Some(provider) = provider_arc.as_any().downcast_ref::<SharedTableProvider>() {
             let system_user = UserId::from("system");
-            let updates = rows.into_iter().next().unwrap();
+            let update_row = updates[0].clone();
 
             provider
-                .update_by_id_field(&system_user, &pk_value, updates)
+                .update_by_id_field(&system_user, pk_value, update_row)
                 .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
 
             log::info!("DmlExecutor: Updated 1 shared row in {} (pk={})", table_id, pk_value);
@@ -265,15 +234,10 @@ impl DmlExecutor {
     pub async fn delete_shared_data(
         &self,
         table_id: &TableId,
-        filter_data: Option<&[u8]>,
+        pk_values: Option<&[String]>,
     ) -> Result<usize, ApplierError> {
-        let pk_values: Vec<String> = if let Some(data) = filter_data {
-            bincode::serde::decode_from_slice(data, bincode::config::standard())
-                .map(|(pks, _)| pks)
-                .map_err(|e| ApplierError::Serialization(format!("Failed to deserialize PK list: {}", e)))?
-        } else {
-            return Err(ApplierError::Validation("Delete requires filter_data with PK list".to_string()));
-        };
+        let pk_values = pk_values
+            .ok_or_else(|| ApplierError::Validation("Delete requires pk_values list".to_string()))?;
 
         if pk_values.is_empty() {
             return Ok(0);
@@ -288,7 +252,7 @@ impl DmlExecutor {
             let system_user = UserId::from("system");
             let mut deleted_count = 0;
 
-            for pk_value in &pk_values {
+            for pk_value in pk_values {
                 if provider
                     .delete_by_id_field(&system_user, pk_value)
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?

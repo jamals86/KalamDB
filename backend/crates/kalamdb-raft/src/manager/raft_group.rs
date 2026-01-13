@@ -77,6 +77,32 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         self.storage.is_persistent()
     }
 
+    /// Restore state machine from persisted snapshot
+    ///
+    /// This should be called after the state machine's applier is configured.
+    /// It restores the state machine's internal state from the persisted snapshot
+    /// to ensure idempotency checks work correctly on restart.
+    pub async fn restore_state_machine_from_snapshot(&self) -> Result<(), RaftError> {
+        self.storage.restore_state_machine_from_snapshot().await
+    }
+
+    /// Check if there's a snapshot that can be restored
+    pub fn has_snapshot(&self) -> bool {
+        self.storage.has_snapshot()
+    }
+
+    /// Check if this group has persisted Raft state (indicating a restart)
+    ///
+    /// This is used to determine if initialize() should be skipped on restart.
+    pub fn has_persisted_state(&self) -> bool {
+        self.storage.has_persisted_state()
+    }
+
+    /// Get the last applied log ID from storage
+    pub fn get_last_applied(&self) -> Option<openraft::LogId<u64>> {
+        self.storage.get_last_applied()
+    }
+
     /// Start the Raft group with the given node ID and configuration
     ///
     /// This initializes the Raft instance and begins participating in consensus.
@@ -347,30 +373,52 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     
     /// Propose a command to this Raft group
     ///
-    /// Returns the response data after the command is committed and applied.
+    /// Returns the response after the command is committed and applied.
     /// Note: This method only works if this node is the leader.
     /// For automatic forwarding, use `propose_with_forward`.
-    pub async fn propose(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
-        let (data, _log_index) = self.propose_with_index(command).await?;
-        Ok(data)
+    pub async fn propose(&self, command: crate::RaftCommand) -> Result<crate::RaftResponse, RaftError> {
+        let (response, _log_index) = self.propose_with_index(command).await?;
+        Ok(response)
     }
     
-    /// Propose a command and return both response data and log index
+    /// Propose a command and return both response and log index
     ///
-    /// Returns (response_data, log_index) after the command is committed and applied.
+    /// Handles serialization of the command and deserialization of the response internally.
+    /// Returns (response, log_index) after the command is committed and applied.
     /// The log_index is useful for read-your-writes consistency when forwarding.
     /// Note: This method only works if this node is the leader.
-    pub async fn propose_with_index(&self, command: Vec<u8>) -> Result<(Vec<u8>, u64), RaftError> {
+    pub async fn propose_with_index(&self, command: crate::RaftCommand) -> Result<(crate::RaftResponse, u64), RaftError> {
+        // Serialize the INNER command (not the RaftCommand wrapper)
+        // The state machine expects MetaCommand, UserDataCommand, or SharedDataCommand directly
+        let command_bytes = match &command {
+            crate::RaftCommand::Meta(cmd) => crate::state_machine::serde_helpers::encode(cmd)?,
+            crate::RaftCommand::UserData(cmd) => crate::state_machine::serde_helpers::encode(cmd)?,
+            crate::RaftCommand::SharedData(cmd) => crate::state_machine::serde_helpers::encode(cmd)?,
+        };
+        
         let raft = {
             let guard = self.raft.read();
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
         
         // Submit the command and wait for commit
-        let response = raft.client_write(command).await
+        let response = raft.client_write(command_bytes).await
             .map_err(|e| RaftError::Proposal(format!("{:?}", e)))?;
         
-        Ok((response.data, response.log_id.index))
+        // Deserialize the response based on command type using centralized serde_helpers
+        // The state machine returns MetaResponse or DataResponse directly, not wrapped in RaftResponse
+        let response_obj = match command {
+            crate::RaftCommand::Meta(_) => {
+                let meta_response: crate::MetaResponse = crate::state_machine::serde_helpers::decode(&response.data)?;
+                crate::RaftResponse::Meta(meta_response)
+            }
+            crate::RaftCommand::UserData(_) | crate::RaftCommand::SharedData(_) => {
+                let data_response: crate::DataResponse = crate::state_machine::serde_helpers::decode(&response.data)?;
+                crate::RaftResponse::Data(data_response)
+            }
+        };
+        
+        Ok((response_obj, response.log_id.index))
     }
     
     /// Propose a command with automatic leader forwarding
@@ -381,11 +429,14 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// 
     /// For the Meta group, when forwarding, waits for the log entry to be applied
     /// locally to ensure read-your-writes consistency.
-    pub async fn propose_with_forward(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
+    pub async fn propose_with_forward(&self, command: crate::RaftCommand) -> Result<crate::RaftResponse, RaftError> {
         // Fast path: if we are the leader, propose locally
         if self.is_leader() {
             return self.propose(command).await;
         }
+        
+        // Serialize command once for forwarding using centralized serde_helpers
+        let command_bytes = crate::state_machine::serde_helpers::encode(&command)?;
         
         // We're not the leader - try to forward to the leader with retries
         // because the leader might not be known yet (during election)
@@ -406,8 +457,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                             );
                             
                             // Try to forward
-                            match self.forward_to_leader(&leader_node.rpc_addr, command.clone()).await {
-                                Ok((payload, log_index)) => {
+                            match self.forward_to_leader(&leader_node.rpc_addr, command_bytes.clone()).await {
+                                Ok((response_bytes, log_index)) => {
+                                    // Deserialize the response using serdes_helpers
+                                    let response = crate::state_machine::serde_helpers::decode(&response_bytes)
+                                        .map_err(|e| RaftError::Internal(format!("Failed to deserialize forwarded response: {}", e)))?;
+                                    
                                     // Wait for local apply to ensure read-your-writes consistency
                                     // This applies to ALL groups (Meta and Data shards)
                                     if log_index > 0 {
@@ -443,7 +498,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                                             tokio::time::sleep(poll_interval).await;
                                         }
                                     }
-                                    return Ok(payload);
+                                    return Ok(response);
                                 }
                                 Err(e) => {
                                     log::debug!("Forward attempt {} failed: {}", attempt + 1, e);

@@ -5,14 +5,13 @@ mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
+use test_support::http_server::HttpTestServer;
 use tokio::time::{sleep, Duration, Instant};
 
 #[tokio::test]
 async fn test_observability_system_tables_and_jobs_over_http() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-        let suffix = std::process::id();
+    let server = test_support::http_server::get_global_server().await;
+    let suffix = std::process::id();
 
         // system.tables reflects created tables
         let ns_tables = format!("app_systab_{}", suffix);
@@ -125,12 +124,6 @@ async fn test_observability_system_tables_and_jobs_over_http() {
             "system.live_queries",
         ] {
             let resp = server.execute_sql(&format!("SELECT * FROM {} LIMIT 1", table)).await?;
-            assert_eq!(resp.status, ResponseStatus::Success);
-        }
-
-        Ok(())
-        })
-    })
-    .await
-    .expect("with_http_test_server_timeout");
+        assert_eq!(resp.status, ResponseStatus::Success);
+    }
 }

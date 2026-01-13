@@ -52,17 +52,17 @@ impl UserDataApplier for ProviderUserDataApplier {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        rows_data: &[u8],
+        rows: &[kalamdb_commons::models::Row],
     ) -> Result<usize, RaftError> {
         log::debug!(
-            "ProviderUserDataApplier: Inserting into {} for user {} ({} bytes)",
+            "ProviderUserDataApplier: Inserting into {} for user {} ({} rows)",
             table_id,
             user_id,
-            rows_data.len()
+            rows.len()
         );
         
         self.executor.dml()
-            .insert_user_data(table_id, user_id, rows_data)
+            .insert_user_data(table_id, user_id, rows)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }
@@ -71,18 +71,18 @@ impl UserDataApplier for ProviderUserDataApplier {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        updates_data: &[u8],
-        filter_data: Option<&[u8]>,
+        updates: &[kalamdb_commons::models::Row],
+        filter: Option<&str>,
     ) -> Result<usize, RaftError> {
         log::debug!(
-            "ProviderUserDataApplier: Updating {} for user {} ({} bytes)",
+            "ProviderUserDataApplier: Updating {} for user {} ({} rows)",
             table_id,
             user_id,
-            updates_data.len()
+            updates.len()
         );
         
         self.executor.dml()
-            .update_user_data(table_id, user_id, updates_data, filter_data)
+            .update_user_data(table_id, user_id, updates, filter)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }
@@ -91,7 +91,7 @@ impl UserDataApplier for ProviderUserDataApplier {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        filter_data: Option<&[u8]>,
+        pk_values: Option<&[String]>,
     ) -> Result<usize, RaftError> {
         log::debug!(
             "ProviderUserDataApplier: Deleting from {} for user {}",
@@ -100,7 +100,7 @@ impl UserDataApplier for ProviderUserDataApplier {
         );
         
         self.executor.dml()
-            .delete_user_data(table_id, user_id, filter_data)
+            .delete_user_data(table_id, user_id, pk_values)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }

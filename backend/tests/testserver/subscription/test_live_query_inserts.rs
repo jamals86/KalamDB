@@ -6,15 +6,13 @@ mod test_support;
 use futures_util::StreamExt;
 use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;
-use test_support::http_server::with_http_test_server_timeout;
 use tokio::time::Duration;
 
 /// Test basic INSERT detection via live query subscription
 #[tokio::test]
 async fn test_live_query_detects_inserts() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-            let ns = format!("test_inserts_{}", std::process::id());
+    let server = test_support::http_server::get_global_server().await;
+    let ns = format!("test_inserts_{}", std::process::id());
             let table = "messages";
 
             // Create namespace and table as root
@@ -110,11 +108,5 @@ async fn test_live_query_detects_inserts() {
                 }
             }
             
-            assert_eq!(inserts_received, 10, "Expected 10 INSERT notifications");
-
-            Ok(())
-        })
-    })
-    .await
-    .unwrap();
+    assert_eq!(inserts_received, 10, "Expected 10 INSERT notifications");
 }

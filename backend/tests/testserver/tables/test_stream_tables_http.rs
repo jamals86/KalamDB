@@ -4,7 +4,6 @@
 mod test_support;
 
 use kalam_link::models::ResponseStatus;
-use test_support::http_server::with_http_test_server_timeout;
 use tokio::time::Duration;
 
 async fn create_stream_table(
@@ -35,9 +34,8 @@ async fn create_stream_table(
 
 #[tokio::test]
 async fn test_stream_tables_over_http() {
-    with_http_test_server_timeout(Duration::from_secs(30), |server| {
-        Box::pin(async move {
-            let ns = format!("test_st_{}", std::process::id());
+    let server = test_support::http_server::get_global_server().await;
+    let ns = format!("test_st_{}", std::process::id());
 
             let response = server
                 .execute_sql(&format!("CREATE NAMESPACE {}", ns))
@@ -70,17 +68,10 @@ async fn test_stream_tables_over_http() {
             }
 
             // Insert without system columns (stream tables shouldn't require them)
-            let response = server
-                .execute_sql(&format!(
-                    "INSERT INTO {}.events (id, event_type, data) VALUES (4, 'test_event', 'test_data')",
-                    ns
-                ))
-                .await?;
-            assert_eq!(response.status, ResponseStatus::Success);
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("with_http_test_server_timeout");
-}
+    let response = server
+        .execute_sql(&format!(
+            "INSERT INTO {}.events (id, event_type, data) VALUES (4, 'test_event', 'test_data')",
+            ns
+        ))
+        .await?;
+    assert_eq!(response.status, ResponseStatus::Success);

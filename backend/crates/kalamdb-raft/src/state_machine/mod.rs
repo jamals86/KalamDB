@@ -17,15 +17,17 @@
 //! - [`MetadataCoordinator`]: Broadcasts meta-advanced events to data shards
 
 mod trait_def;
-mod serde_helpers;
+pub mod serde_helpers;
 mod meta;
 mod user_data;
 mod shared_data;
 mod pending_buffer;
 mod meta_coordinator;
 
-pub use trait_def::{KalamStateMachine, StateMachineSnapshot, ApplyResult};
+// Re-export serialization helpers for convenience
 pub use serde_helpers::{encode, decode};
+
+pub use trait_def::{KalamStateMachine, StateMachineSnapshot, ApplyResult};
 
 // Unified Meta state machine
 pub use meta::MetaStateMachine;

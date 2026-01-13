@@ -5,7 +5,7 @@ mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
+use test_support::http_server::HttpTestServer;
 use test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_table};
 use tokio::time::Duration;
 
@@ -73,9 +73,8 @@ async fn get_name_for_id(
 
 #[tokio::test]
 async fn test_pk_uniqueness_hot_and_cold_over_http() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-            let suffix = std::process::id();
+    let server = test_support::http_server::get_global_server().await;
+    let suffix = std::process::id();
 
             let ns = format!("pk_{}", suffix);
             let table_user = "items_user";

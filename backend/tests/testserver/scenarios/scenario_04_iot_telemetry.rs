@@ -27,9 +27,8 @@ const ROW_COUNT: usize = 5000;
 /// Main IoT telemetry test - 5k rows with wide columns
 #[tokio::test]
 async fn test_scenario_04_iot_telemetry_5k_rows() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            let ns = unique_ns("iot");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("iot");
 
             // =========================================================
             // Step 1: Create namespace and wide-column table
@@ -201,14 +200,8 @@ async fn test_scenario_04_iot_telemetry_5k_rows() {
                 "Device count should be same after flush"
             );
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Scenario 4 test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test anomaly subscription for IoT data
@@ -217,9 +210,8 @@ async fn test_scenario_04_iot_telemetry_5k_rows() {
 #[tokio::test]
 #[ignore = "SHARED table subscriptions not supported by design (FR-128, FR-129)"]
 async fn test_scenario_04_anomaly_subscription() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("iot_anomaly");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("iot_anomaly");
 
             // Create namespace and table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -304,22 +296,15 @@ async fn test_scenario_04_anomaly_subscription() {
 
             subscription.close().await?;
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Anomaly subscription test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test wide column scanning performance
 #[tokio::test]
 async fn test_scenario_04_wide_column_scan() {
-    with_http_test_server_timeout(Duration::from_secs(60), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("iot_scan");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("iot_scan");
 
             // Create namespace and table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -387,12 +372,6 @@ async fn test_scenario_04_wide_column_scan() {
             assert!(resp.success(), "Projection scan should succeed");
             println!("Projection scan of 100 rows took {:?}", projection_time);
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Wide column scan test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }

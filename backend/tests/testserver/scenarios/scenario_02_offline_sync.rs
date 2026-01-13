@@ -32,9 +32,8 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// Main offline sync scenario - tests 10 parallel users syncing
 #[tokio::test]
 async fn test_scenario_02_offline_sync_parallel() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            let ns = unique_ns("sync");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("sync");
 
             // =========================================================
             // Step 1: Create namespace and wide-column table
@@ -194,22 +193,15 @@ async fn test_scenario_02_offline_sync_parallel() {
                 user_count
             );
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Scenario 2 test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test simulated offline drift and resume
 #[tokio::test]
 async fn test_scenario_02_offline_drift_resume() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("sync_drift");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("sync_drift");
 
             // Create namespace and table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -286,22 +278,15 @@ async fn test_scenario_02_offline_drift_resume() {
 
             subscription.close().await?;
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Offline drift test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test changes during initial snapshot loading
 #[tokio::test]
 async fn test_scenario_02_changes_during_snapshot() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("sync_concurrent");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("sync_concurrent");
 
             // Create namespace and table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -398,12 +383,6 @@ async fn test_scenario_02_changes_during_snapshot() {
 
             subscription.close().await?;
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Concurrent changes test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }

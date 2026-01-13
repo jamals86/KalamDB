@@ -21,14 +21,13 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Main multi-tenant scenario test
 #[tokio::test]
 async fn test_scenario_10_multi_tenant_isolation() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            // =========================================================
-            // Step 1: Create multiple tenant namespaces
-            // =========================================================
-            let tenant_a = unique_ns("tenant_a");
-            let tenant_b = unique_ns("tenant_b");
-            let global = unique_ns("global");
+    let server = test_support::http_server::get_global_server().await;
+    // =========================================================
+    // Step 1: Create multiple tenant namespaces
+    // =========================================================
+    let tenant_a = unique_ns("tenant_a");
+    let tenant_b = unique_ns("tenant_b");
+    let global = unique_ns("global");
 
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", tenant_a)).await?;
             assert_success(&resp, "CREATE tenant_a namespace");
@@ -229,25 +228,18 @@ async fn test_scenario_10_multi_tenant_isolation() {
                 println!("Cross-tenant access denied as expected");
             }
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", tenant_a)).await;
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", tenant_b)).await;
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", global)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Scenario 10 test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", tenant_a)).await;
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", tenant_b)).await;
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", global)).await;
 }
 
 /// Test subscription isolation across namespaces
 #[tokio::test]
 async fn test_scenario_10_subscription_namespace_isolation() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-            let ns_a = unique_ns("sub_ns_a");
-            let ns_b = unique_ns("sub_ns_b");
+    let server = test_support::http_server::get_global_server().await;
+    let ns_a = unique_ns("sub_ns_a");
+    let ns_b = unique_ns("sub_ns_b");
 
             // Create namespaces and tables
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns_a)).await?;
@@ -327,24 +319,17 @@ async fn test_scenario_10_subscription_namespace_isolation() {
             sub_a.close().await?;
             sub_b.close().await?;
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns_a)).await;
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns_b)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Subscription namespace isolation test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns_a)).await;
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns_b)).await;
 }
 
 /// Test same table name in different namespaces
 #[tokio::test]
 async fn test_scenario_10_same_table_name_different_namespaces() {
-    with_http_test_server_timeout(Duration::from_secs(30), |server| {
-        Box::pin(async move {
-            let ns1 = unique_ns("same_name_1");
-            let ns2 = unique_ns("same_name_2");
+    let server = test_support::http_server::get_global_server().await;
+    let ns1 = unique_ns("same_name_1");
+    let ns2 = unique_ns("same_name_2");
 
             // Create namespaces
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns1)).await?;
@@ -420,13 +405,7 @@ async fn test_scenario_10_same_table_name_different_namespaces() {
             let name2 = resp.get_string("name").unwrap_or_default();
             assert_eq!(name2, "NS2 User", "ns2.users should have NS2 User");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns1)).await;
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns2)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Same table name test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns1)).await;
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns2)).await;
 }

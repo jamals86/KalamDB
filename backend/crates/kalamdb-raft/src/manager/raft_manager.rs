@@ -273,21 +273,21 @@ impl RaftManager {
         // IMPORTANT:
         // - OpenRaft cluster initialization is a one-time operation.
         // - On restart, a node should NOT re-run initialize() or membership changes.
-        // We detect whether this node has already initialized the meta group by checking
-        // whether OpenRaft has applied any log entry (including membership entries).
-        // When last_applied is Some(..), the Raft state is persisted and initialization
-        // has already happened at least once.
+        // 
+        // We detect if this is a restart by checking if we have persisted Raft state
+        // in the storage layer. This is more reliable than checking OpenRaft metrics
+        // because metrics may not be immediately available after Raft::new().
+        //
+        // The storage-level check looks for: vote, last_applied, committed, or log entries.
+        // If any of these exist, the cluster was previously initialized.
+        let already_initialized = self.meta.has_persisted_state();
+        
+        // Get membership info from metrics (for peer join logic)
         let meta_metrics = self.meta.metrics();
-        let meta_last_applied = meta_metrics
-            .as_ref()
-            .and_then(|m| m.last_applied.map(|log_id| log_id.index))
-            .unwrap_or(0);
         let meta_voters: BTreeSet<u64> = meta_metrics
             .as_ref()
             .map(|m| m.membership_config.voter_ids().collect())
             .unwrap_or_default();
-
-        let already_initialized = meta_last_applied > 0;
         
         let self_node = KalamNode {
             rpc_addr: self.config.rpc_addr.clone(),
@@ -295,17 +295,12 @@ impl RaftManager {
         };
 
         if already_initialized {
+            let meta_last_applied = self.meta.get_last_applied().map(|id| id.index).unwrap_or(0);
             log::info!(
                 "Cluster already initialized (meta last_applied={}); skipping group initialization",
                 meta_last_applied
             );
         } else {
-            log::info!(
-                "Bootstrapping cluster: node {} as LEADER for {} groups",
-                self.node_id,
-                self.group_count()
-            );
-
             // Initialize unified meta group
             log::debug!("Initializing unified meta group...");
             self.meta.initialize(self.node_id.as_u64(), self_node.clone()).await?;
@@ -553,8 +548,8 @@ impl RaftManager {
     async fn propose_to_group<SM: crate::state_machine::KalamStateMachine + Send + Sync + 'static>(
         &self,
         group: &Arc<RaftGroup<SM>>,
-        command: Vec<u8>,
-    ) -> Result<Vec<u8>, RaftError> {
+        command: crate::RaftCommand,
+    ) -> Result<crate::RaftResponse, RaftError> {
         // Use standard quorum-based replication (OpenRaft default)
         group.propose_with_forward(command).await
     }
@@ -563,30 +558,45 @@ impl RaftManager {
     ///
     /// If this node is a follower, the request is automatically forwarded to the leader.
     /// Uses standard quorum-based replication.
-    pub async fn propose_meta(&self, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
-        self.propose_to_group(&self.meta, command).await
+    pub async fn propose_meta(&self, command: crate::MetaCommand) -> Result<crate::MetaResponse, RaftError> {
+        let cmd = crate::RaftCommand::Meta(command);
+        let response = self.propose_to_group(&self.meta, cmd).await?;
+        match response {
+            crate::RaftResponse::Meta(r) => Ok(r),
+            _ => Err(RaftError::Internal("Unexpected response type for Meta command".to_string())),
+        }
     }
     
     /// Propose a command to a user data shard (with leader forwarding)
     ///
     /// If this node is a follower, the request is automatically forwarded to the leader.
     /// Uses standard quorum-based replication.
-    pub async fn propose_user_data(&self, shard: u32, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
+    pub async fn propose_user_data(&self, shard: u32, command: crate::UserDataCommand) -> Result<crate::DataResponse, RaftError> {
         if shard >= self.user_shards_count {
             return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
         }
-        self.propose_to_group(&self.user_data_shards[shard as usize], command).await
+        let cmd = crate::RaftCommand::UserData(command);
+        let response = self.propose_to_group(&self.user_data_shards[shard as usize], cmd).await?;
+        match response {
+            crate::RaftResponse::Data(r) => Ok(r),
+            _ => Err(RaftError::Internal("Unexpected response type for UserData command".to_string())),
+        }
     }
     
     /// Propose a command to a shared data shard (with leader forwarding)
     ///
     /// If this node is a follower, the request is automatically forwarded to the leader.
     /// Uses standard quorum-based replication.
-    pub async fn propose_shared_data(&self, shard: u32, command: Vec<u8>) -> Result<Vec<u8>, RaftError> {
+    pub async fn propose_shared_data(&self, shard: u32, command: crate::SharedDataCommand) -> Result<crate::DataResponse, RaftError> {
         if shard >= self.shared_shards_count {
             return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
         }
-        self.propose_to_group(&self.shared_data_shards[shard as usize], command).await
+        let cmd = crate::RaftCommand::SharedData(command);
+        let response: crate::RaftResponse = self.propose_to_group(&self.shared_data_shards[shard as usize], cmd).await?;
+        match response {
+            crate::RaftResponse::Data(r) => Ok(r),
+            _ => Err(RaftError::Internal("Unexpected response type for SharedData command".to_string())),
+        }
     }
     
     /// Propose a command to any group by GroupId (for RPC server handling)
@@ -605,21 +615,32 @@ impl RaftManager {
     /// Does NOT forward - should only be called when we are the leader.
     /// Returns (response_data, log_index) for read-your-writes consistency.
     pub async fn propose_for_group_with_index(&self, group_id: GroupId, command: Vec<u8>) -> Result<(Vec<u8>, u64), RaftError> {
-        match group_id {
-            GroupId::Meta => self.meta.propose_with_index(command).await,
+        // Deserialize the command
+        let raft_cmd: crate::RaftCommand = crate::state_machine::serde_helpers::decode(&command)
+            .map_err(|e| RaftError::Internal(format!("Failed to deserialize command: {}", e)))?;
+        
+        // Route to appropriate group
+        let (response, log_index) = match group_id {
+            GroupId::Meta => self.meta.propose_with_index(raft_cmd).await?,
             GroupId::DataUserShard(shard) => {
                 if shard >= self.user_shards_count {
                     return Err(RaftError::InvalidGroup(format!("DataUserShard({})", shard)));
                 }
-                self.user_data_shards[shard as usize].propose_with_index(command).await
+                self.user_data_shards[shard as usize].propose_with_index(raft_cmd).await?
             }
             GroupId::DataSharedShard(shard) => {
                 if shard >= self.shared_shards_count {
                     return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
                 }
-                self.shared_data_shards[shard as usize].propose_with_index(command).await
+                self.shared_data_shards[shard as usize].propose_with_index(raft_cmd).await?
             }
-        }
+        };
+        
+        // Serialize the response
+        let response_bytes = crate::state_machine::serde_helpers::encode(&response)
+            .map_err(|e| RaftError::Internal(format!("Failed to serialize response: {}", e)))?;
+        
+        Ok((response_bytes, log_index))
     }
     
     /// Compute the shard ID for a table
@@ -705,7 +726,7 @@ impl RaftManager {
     pub fn set_meta_applier(&self, applier: std::sync::Arc<dyn crate::applier::MetaApplier>) {
         let sm = self.meta.storage().state_machine();
         sm.set_applier(applier);
-        log::info!("RaftManager: Meta applier registered for metadata replication");
+        log::debug!("RaftManager: Meta applier registered for metadata replication");
     }
 
     /// Set the user data applier for persisting per-user data to providers
@@ -713,10 +734,10 @@ impl RaftManager {
     /// This should be called after RaftManager creation once providers are available.
     /// The same applier is used for all user data shards.
     pub fn set_user_data_applier(&self, applier: std::sync::Arc<dyn crate::applier::UserDataApplier>) {
-        for (shard_id, shard) in self.user_data_shards.iter().enumerate() {
+        for (_shard_id, shard) in self.user_data_shards.iter().enumerate() {
             let sm = shard.storage().state_machine();
             sm.set_applier(applier.clone());
-            log::debug!("RaftManager: User data applier set for shard {}", shard_id);
+            // log::trace!("RaftManager: User data applier set for shard {}", shard_id);
         }
         log::debug!(
             "RaftManager: User data applier registered for {} shards",
@@ -729,15 +750,58 @@ impl RaftManager {
     /// This should be called after RaftManager creation once providers are available.
     /// The same applier is used for all shared data shards.
     pub fn set_shared_data_applier(&self, applier: std::sync::Arc<dyn crate::applier::SharedDataApplier>) {
-        for (shard_id, shard) in self.shared_data_shards.iter().enumerate() {
+        for (_shard_id, shard) in self.shared_data_shards.iter().enumerate() {
             let sm = shard.storage().state_machine();
             sm.set_applier(applier.clone());
-            log::debug!("RaftManager: Shared data applier set for shard {}", shard_id);
+            // log::trace!("RaftManager: Shared data applier set for shard {}", shard_id);
         }
         log::debug!(
             "RaftManager: Shared data applier registered for {} shards",
             self.shared_data_shards.len()
         );
+    }
+
+    /// Restore all state machines from their persisted snapshots
+    ///
+    /// This should be called AFTER all appliers are set. It restores the state machines'
+    /// internal state from persisted snapshots to ensure idempotency checks work correctly
+    /// on restart, preventing duplicate application of log entries.
+    ///
+    /// Without this, state machines would start with `last_applied_index = 0`, and log
+    /// entries would be re-applied even if they were already applied before the restart.
+    pub async fn restore_state_machines_from_snapshots(&self) -> Result<(), RaftError> {
+        let mut restored_count = 0;
+
+        // Restore meta state machine
+        if self.meta.has_snapshot() {
+            self.meta.restore_state_machine_from_snapshot().await?;
+            restored_count += 1;
+        }
+
+        // Restore user data state machines
+        for shard in &self.user_data_shards {
+            if shard.has_snapshot() {
+                shard.restore_state_machine_from_snapshot().await?;
+                restored_count += 1;
+            }
+        }
+
+        // Restore shared data state machines
+        for shard in &self.shared_data_shards {
+            if shard.has_snapshot() {
+                shard.restore_state_machine_from_snapshot().await?;
+                restored_count += 1;
+            }
+        }
+
+        if restored_count > 0 {
+            log::info!(
+                "RaftManager: Restored {} state machines from snapshots",
+                restored_count
+            );
+        }
+
+        Ok(())
     }
     
     // === Raft RPC Handlers (for receiving RPCs from other nodes) ===
@@ -818,9 +882,6 @@ impl RaftManager {
             return Ok(());
         }
         
-        log::info!("╔═══════════════════════════════════════════════════════════════════╗");
-        log::info!("║           Graceful Cluster Shutdown Starting                      ║");
-        log::info!("╚═══════════════════════════════════════════════════════════════════╝");
         log::info!("[CLUSTER] Node {} leaving cluster...", self.node_id);
         
         // Count how many groups we're leading
@@ -877,7 +938,7 @@ impl RaftManager {
         }
         
         // Shutdown all Raft groups (calls OpenRaft's Raft::shutdown())
-        log::info!("[CLUSTER] Shutting down all Raft groups...");
+        log::debug!("[CLUSTER] Shutting down all Raft groups...");
         
         // Shutdown Meta group
         if let Err(e) = self.meta.shutdown().await {
@@ -905,10 +966,6 @@ impl RaftManager {
             let mut started = self.started.write();
             *started = false;
         }
-        
-        log::info!("╔═══════════════════════════════════════════════════════════════════╗");
-        log::info!("║   [CLUSTER] Node {} Left Cluster Successfully                     ║", self.node_id);
-        log::info!("╚═══════════════════════════════════════════════════════════════════╝");
         
         Ok(())
     }

@@ -5,7 +5,6 @@ mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::types::Manifest;
-use test_support::http_server::with_http_test_server_timeout;
 use tokio::time::{sleep, Duration, Instant};
 
 fn find_manifest_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -71,9 +70,8 @@ async fn wait_for_flush_job_completed(
 
 #[tokio::test]
 async fn test_shared_flush_creates_manifest_json_over_http() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-            let namespace = format!("test_manifest_flush_{}", std::process::id());
+    let server = test_support::http_server::get_global_server().await;
+    let namespace = format!("test_manifest_flush_{}", std::process::id());
             let table = "products";
 
             let resp = server

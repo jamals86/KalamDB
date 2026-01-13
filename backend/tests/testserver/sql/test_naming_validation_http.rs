@@ -8,9 +8,8 @@ use tokio::time::Duration;
 
 #[tokio::test]
 async fn test_naming_validation_over_http() {
-    test_support::http_server::with_http_test_server_timeout(Duration::from_secs(30), |server| {
-        Box::pin(async move {
-        // Reserved namespace names
+    let server = test_support::http_server::get_global_server().await;
+    // Reserved namespace names
         let reserved_names = ["system", "sys", "root", "kalamdb"];
         for name in reserved_names {
             let sql = format!("CREATE NAMESPACE {}", name);
@@ -120,11 +119,5 @@ async fn test_naming_validation_over_http() {
             ResponseStatus::Success,
             "Should allow user-defined 'id' column"
         );
-        let _ = server.execute_sql("DROP NAMESPACE test_user_id").await;
-
-        Ok(())
-        })
-    })
-    .await
-    .expect("with_http_test_server_timeout");
+    let _ = server.execute_sql("DROP NAMESPACE test_user_id").await;
 }

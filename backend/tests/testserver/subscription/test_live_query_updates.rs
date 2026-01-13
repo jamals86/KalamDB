@@ -3,18 +3,15 @@
 #[path = "../../common/testserver/mod.rs"]
 mod test_support;
 
-use futures_util::StreamExt;
 use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;
-use test_support::http_server::with_http_test_server_timeout;
 use tokio::time::Duration;
 
 /// Test UPDATE detection with old/new values
 #[tokio::test]
 async fn test_live_query_detects_updates() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-            let ns = format!("test_updates_{}", std::process::id());
+    let server = test_support::http_server::get_global_server().await;
+    let ns = format!("test_updates_{}", std::process::id());
             let table = "tasks";
 
             // Setup namespace and table as root
@@ -59,8 +56,7 @@ async fn test_live_query_detects_updates() {
             let mut subscription = client.subscribe(&sql).await.expect("Failed to subscribe");
 
             // Consume Initial Data
-            let mut initial_data_received = false;
-            let mut timeout = tokio::time::sleep(Duration::from_secs(5));
+            let timeout = tokio::time::sleep(Duration::from_secs(5));
             tokio::pin!(timeout);
 
             loop {
@@ -70,12 +66,11 @@ async fn test_live_query_detects_updates() {
                             Some(Ok(ChangeEvent::InitialDataBatch { rows, batch_control, .. })) => {
                                 assert_eq!(rows.len(), 1, "Should have 1 initial row");
                                 if !batch_control.has_more {
-                                    initial_data_received = true;
                                     break;
                                 }
                             }
                             Some(Ok(ChangeEvent::Ack { .. })) => {}
-                            Some(Ok(other)) => {
+                            Some(Ok(_other)) => {
                                 // Ignore other events
                             }
                             Some(Err(e)) => panic!("Error receiving initial data: {:?}", e),
@@ -85,7 +80,6 @@ async fn test_live_query_detects_updates() {
                      _ = &mut timeout => panic!("Timed out waiting for initial data"),
                 }
             }
-            assert!(initial_data_received, "Did not receive initial data");
 
             // Update the row
             let resp = server
@@ -99,8 +93,7 @@ async fn test_live_query_detects_updates() {
             assert_eq!(resp.status, ResponseStatus::Success);
 
             // Receive update notification
-            let mut update_received = false;
-            let mut timeout = tokio::time::sleep(Duration::from_secs(5));
+            let timeout = tokio::time::sleep(Duration::from_secs(5));
             tokio::pin!(timeout);
 
             loop {
@@ -108,7 +101,6 @@ async fn test_live_query_detects_updates() {
                     event = subscription.next() => {
                         match event {
                             Some(Ok(ChangeEvent::Update { rows, old_rows, .. })) => {
-                                update_received = true;
                                 assert_eq!(rows.len(), 1);
                                 assert_eq!(old_rows.len(), 1);
                                 
@@ -138,15 +130,7 @@ async fn test_live_query_detects_updates() {
                         }
                     }
                     _ = &mut timeout => panic!("Timed out waiting for update"),
-                }
-            }
-
-            assert!(update_received, "Should have received UPDATE notification");
-            
-            Ok(())
-        })
-    })
-    .await
-    .unwrap();
+        }
+    }
 }
 

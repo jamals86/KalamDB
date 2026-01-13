@@ -124,21 +124,6 @@ impl StatementHandler for InsertHandler {
             })
             .collect();
         
-        // DEBUG: Log which columns need defaults
-        log::info!(
-            "InsertHandler: Table {} has {} columns total, {} provided in INSERT, {} need defaults",
-            table_id,
-            table_def.columns.len(),
-            provided_columns.len(),
-            default_columns.len()
-        );
-        for col_def in &default_columns {
-            log::info!(
-                "  - Column '{}' has default: {}",
-                col_def.column_name,
-                col_def.default_value.to_sql()
-            );
-        }
         let sys_cols = self.app_context.system_columns_service();
 
         // Create a map of column name to type for fast lookup
@@ -655,10 +640,6 @@ impl InsertHandler {
         
         let row_count = rows.len();
         
-        // Serialize rows to bincode
-        let rows_data = bincode::serde::encode_to_vec(&rows, bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize rows: {}", e)))?;
-
         let executor = self.app_context.executor();
 
         match table_type {
@@ -667,7 +648,7 @@ impl InsertHandler {
                     required_meta_index: 0, // Stamped by executor
                     table_id: table_id.clone(),
                     user_id: user_id.clone(),
-                    rows_data,
+                    rows,
                 };
                 
                 let response = executor.execute_user_data(&user_id, cmd)
@@ -705,7 +686,7 @@ impl InsertHandler {
                 let cmd = SharedDataCommand::Insert {
                     required_meta_index: 0, // Stamped by executor
                     table_id: table_id.clone(),
-                    rows_data,
+                    rows: rows.clone(),
                 };
                 
                 let response = executor.execute_shared_data(cmd)
@@ -724,7 +705,7 @@ impl InsertHandler {
                     required_meta_index: 0, // Stamped by executor
                     table_id: table_id.clone(),
                     user_id: user_id.clone(),
-                    rows_data,
+                    rows,
                 };
 
                 let response = executor

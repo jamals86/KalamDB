@@ -536,6 +536,10 @@ fn get_shared_runtime() -> &'static tokio::runtime::Runtime {
 /// This avoids creating new TCP connections for every query, which helps
 /// avoid macOS TCP connection limits (connections in TIME_WAIT state).
 /// 
+/// **CRITICAL PERFORMANCE FIX**: Uses JWT token authentication instead of Basic Auth.
+/// Basic Auth runs bcrypt verification (cost=12) on EVERY request (~100-300ms each).
+/// JWT authentication verifies the token signature (< 1ms) - 100-300x faster!
+/// 
 /// This version automatically uses the first available server (cluster or single-node)
 fn get_shared_root_client() -> &'static KalamLinkClient {
     use std::sync::OnceLock;
@@ -546,23 +550,92 @@ fn get_shared_root_client() -> &'static KalamLinkClient {
             .cloned()
             .unwrap_or_else(|| server_url().to_string());
         
-        KalamLinkClient::builder()
-            .base_url(&base_url)
-            .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
-            // DDL/DML can take several seconds; using `fast()` causes HTTP timeouts and
-            // kalam-link will retry on timeouts, which is unsafe for non-idempotent queries.
-            .timeouts(
-                KalamLinkTimeouts::builder()
-                    .connection_timeout_secs(5)
-                    .receive_timeout_secs(120)
-                    .send_timeout_secs(30)
-                    .subscribe_timeout_secs(10)
-                    .auth_timeout_secs(10)
-                    .initial_data_timeout(Duration::from_secs(120))
-                    .build(),
-            )
-            .build()
-            .expect("Failed to create shared root client")
+        // PERFORMANCE: Try to login once to get JWT token, then use token for all requests
+        // This avoids running bcrypt verification on every single query
+        // If login fails (e.g., no password set), fall back to Basic Auth
+        
+        let (tx, rx) = std::sync::mpsc::channel();
+        let base_url_clone = base_url.clone();
+        let password = root_password().to_string();
+        
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime for login");
+            let auth_result = rt.block_on(async {
+                // Create temporary client with Basic Auth just for login
+                let login_client = KalamLinkClient::builder()
+                    .base_url(&base_url_clone)
+                    .auth(AuthProvider::basic_auth("root".to_string(), password.clone()))
+                    .timeouts(
+                        KalamLinkTimeouts::builder()
+                            .connection_timeout_secs(5)
+                            .receive_timeout_secs(30)
+                            .send_timeout_secs(30)
+                            .subscribe_timeout_secs(10)
+                            .auth_timeout_secs(10)
+                            .initial_data_timeout(Duration::from_secs(30))
+                            .build(),
+                    )
+                    .build()
+                    .expect("Failed to create login client");
+                
+                // Try to login to get JWT token
+                match login_client.login("root", &password).await {
+                    Ok(login_response) => {
+                        eprintln!("[TEST_CLIENT] ✓ Using JWT authentication (fast - no bcrypt on every request)");
+                        Ok(login_response.access_token)
+                    }
+                    Err(e) => {
+                        // Login failed - fall back to Basic Auth
+                        // This happens when password is not set or authentication is disabled
+                        eprintln!("[TEST_CLIENT] ⚠ JWT login failed ({}), falling back to Basic Auth (slow - bcrypt on every request)", e);
+                        Err(password)
+                    }
+                }
+            });
+            let _ = tx.send(auth_result);
+        });
+        
+        let auth_result = rx.recv().expect("Failed to receive auth result from login thread");
+        
+        // Create the client with either JWT or Basic Auth
+        match auth_result {
+            Ok(jwt_token) => {
+                // JWT authentication - fast!
+                KalamLinkClient::builder()
+                    .base_url(&base_url)
+                    .auth(AuthProvider::jwt_token(jwt_token))
+                    .timeouts(
+                        KalamLinkTimeouts::builder()
+                            .connection_timeout_secs(5)
+                            .receive_timeout_secs(120)
+                            .send_timeout_secs(30)
+                            .subscribe_timeout_secs(10)
+                            .auth_timeout_secs(10)
+                            .initial_data_timeout(Duration::from_secs(120))
+                            .build(),
+                    )
+                    .build()
+                    .expect("Failed to create shared root client with JWT")
+            }
+            Err(password) => {
+                // Fall back to Basic Auth - slow but works
+                KalamLinkClient::builder()
+                    .base_url(&base_url)
+                    .auth(AuthProvider::basic_auth("root".to_string(), password))
+                    .timeouts(
+                        KalamLinkTimeouts::builder()
+                            .connection_timeout_secs(5)
+                            .receive_timeout_secs(120)
+                            .send_timeout_secs(30)
+                            .subscribe_timeout_secs(10)
+                            .auth_timeout_secs(10)
+                            .initial_data_timeout(Duration::from_secs(120))
+                            .build(),
+                    )
+                    .build()
+                    .expect("Failed to create shared root client with Basic Auth")
+            }
+        }
     })
 }
 
@@ -735,6 +808,7 @@ pub fn execute_sql_via_client_as_with_args(
                                                 other => other.to_string(),
                                             })
                                             .unwrap_or_else(|| "NULL".to_string())
+                                            
                                     })
                                     .collect();
                                 output.push_str(&row_str.join(" | "));

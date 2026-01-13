@@ -77,14 +77,16 @@ impl JobsTableProvider {
     /// Create a new job entry.
     ///
     /// Indexes are automatically maintained via `IndexedEntityStore`.
-    pub fn create_job(&self, job: Job) -> Result<(), SystemError> {
+    /// TODO: Return a string message
+    pub fn create_job(&self, job: Job) -> Result<String, SystemError> {
         self.store
             .insert(&job.job_id, &job)
-            .into_system_error("insert job error")
+            .into_system_error("insert job error")?;
+        Ok(format!("Job {} created", job.job_id))
     }
 
     /// Alias for create_job (for backward compatibility)
-    pub fn insert_job(&self, job: Job) -> Result<(), SystemError> {
+    pub fn insert_job(&self, job: Job) -> Result<String, SystemError> {
         self.create_job(job)
     }
 
@@ -715,7 +717,7 @@ impl TableProvider for JobsTableProvider {
         let jobs: Vec<(Vec<u8>, Job)> = if let Some((index_idx, index_prefix)) =
             self.store.find_best_index_for_filters(filters)
         {
-            log::info!(
+            log::trace!(
                 "[system.jobs] Using secondary index {} for filters: {:?}",
                 index_idx,
                 filters
@@ -729,7 +731,7 @@ impl TableProvider for JobsTableProvider {
                 .map(|(id, job)| (id.storage_key(), job))
                 .collect()
         } else {
-            log::info!(
+            log::debug!(
                 "[system.jobs] Full table scan (no index match) for filters: {:?}",
                 filters
             );

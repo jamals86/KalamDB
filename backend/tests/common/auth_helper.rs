@@ -75,8 +75,6 @@ pub async fn create_test_user(
         .await;
 
     if let Err(e) = &result {
-        eprintln!("Failed to create test user '{}': {:?}", username, e);
-        eprintln!("SQL: {}", create_user_sql);
         panic!("Failed to create test user: {:?}", e);
     }
 

@@ -87,7 +87,7 @@ impl JobsManager {
 
     /// Request graceful shutdown
     pub fn shutdown(&self) {
-        log::info!("Initiating job manager shutdown");
+        log::debug!("Initiating job manager shutdown");
         self.shutdown.store(true, Ordering::Release);
     }
 }

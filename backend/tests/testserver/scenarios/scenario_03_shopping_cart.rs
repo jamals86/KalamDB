@@ -35,9 +35,8 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 /// Main shopping cart parallel test
 #[tokio::test]
 async fn test_scenario_03_shopping_cart_parallel() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            let ns = unique_ns("shop");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("shop");
 
             // =========================================================
             // Step 1: Create namespace and tables
@@ -257,22 +256,15 @@ async fn test_scenario_03_shopping_cart_parallel() {
                 overlap
             );
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Scenario 3 test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test subscription with cart_id filter
 #[tokio::test]
 async fn test_scenario_03_filtered_subscription() {
-    with_http_test_server_timeout(Duration::from_secs(30), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("shop_sub");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("shop_sub");
 
             // Create namespace and tables
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -363,22 +355,15 @@ async fn test_scenario_03_filtered_subscription() {
 
             subscription.close().await?;
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Filtered subscription test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test partial flush for specific users
 #[tokio::test]
 async fn test_scenario_03_partial_flush() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("shop_flush");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("shop_flush");
 
             // Create namespace and table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -465,12 +450,6 @@ async fn test_scenario_03_partial_flush() {
             let u2_count: i64 = resp.get_i64("cnt").unwrap_or(0);
             assert_eq!(u2_count, 20, "u2 should see 20 items post-flush");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Partial flush test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }

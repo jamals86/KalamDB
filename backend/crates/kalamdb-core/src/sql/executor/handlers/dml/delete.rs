@@ -545,13 +545,10 @@ impl DeleteHandler {
         let pk_count = pk_values.len();
 
         // Serialize the list of PKs to delete
-        let filter_data = bincode::serde::encode_to_vec(&pk_values, bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize PKs: {}", e)))?;
-
         let cmd = SharedDataCommand::Delete {
             required_meta_index: 0, // Stamped by executor
             table_id: table_id.clone(),
-            filter_data: Some(filter_data),
+            pk_values: Some(pk_values),
         };
 
         let response = executor
@@ -578,14 +575,11 @@ impl DeleteHandler {
         let executor = app_context.executor();
         let pk_count = pk_values.len();
 
-        let filter_data = bincode::serde::encode_to_vec(&pk_values, bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize PKs: {}", e)))?;
-
         let cmd = UserDataCommand::Delete {
             required_meta_index: 0, // Stamped by executor
             table_id: table_id.clone(),
             user_id: user_id.clone(),
-            filter_data: Some(filter_data),
+            pk_values: Some(pk_values),
         };
 
         let response = executor

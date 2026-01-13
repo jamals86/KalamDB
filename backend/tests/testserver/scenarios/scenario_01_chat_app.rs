@@ -34,9 +34,8 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Main chat app scenario test
 #[tokio::test]
 async fn test_scenario_01_chat_app_core() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            let ns = unique_ns("chat");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("chat");
 
             // =========================================================
             // Step 1: Create namespace
@@ -289,22 +288,15 @@ async fn test_scenario_01_chat_app_core() {
             // Close subscription
             subscription.close().await?;
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Scenario 1 test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test service writes AS USER
 #[tokio::test]
 async fn test_scenario_01_service_writes_as_user() {
-    with_http_test_server_timeout(Duration::from_secs(30), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("chat_svc");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("chat_svc");
 
             // Create namespace and table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -357,22 +349,15 @@ async fn test_scenario_01_service_writes_as_user() {
             let u1_count: i64 = resp.get_i64("cnt").unwrap_or(0);
             assert!(u1_count >= 1, "u1 should see at least their own message");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Service writes test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test STREAM table with TTL
 #[tokio::test]
 async fn test_scenario_01_stream_table_ttl() {
-    with_http_test_server_timeout(Duration::from_secs(20), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("chat_stream");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("chat_stream");
 
             // Create namespace
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -421,12 +406,6 @@ async fn test_scenario_01_stream_table_ttl() {
             // TTL eviction might not be immediate, so we accept 0 or 1
             assert!(count_after <= 1, "Event should be evicted after TTL");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Stream TTL test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }

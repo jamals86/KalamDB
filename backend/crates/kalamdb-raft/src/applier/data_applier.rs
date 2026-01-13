@@ -29,7 +29,7 @@ pub trait UserDataApplier: Send + Sync {
     /// # Arguments
     /// * `table_id` - The table identifier
     /// * `user_id` - The user who owns this data
-    /// * `rows_data` - Serialized row data (bincode-encoded Vec<Row>)
+    /// * `rows` - Row data to insert
     ///
     /// # Returns
     /// Number of rows inserted
@@ -37,7 +37,7 @@ pub trait UserDataApplier: Send + Sync {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        rows_data: &[u8],
+        rows: &[kalamdb_commons::models::Row],
     ) -> Result<usize, RaftError>;
 
     /// Update rows in a user table
@@ -45,8 +45,8 @@ pub trait UserDataApplier: Send + Sync {
     /// # Arguments
     /// * `table_id` - The table identifier
     /// * `user_id` - The user who owns this data
-    /// * `updates_data` - Serialized update data
-    /// * `filter_data` - Optional serialized filter
+    /// * `updates` - Update row data
+    /// * `filter` - Optional filter string (e.g., primary key value)
     ///
     /// # Returns
     /// Number of rows updated
@@ -54,8 +54,8 @@ pub trait UserDataApplier: Send + Sync {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        updates_data: &[u8],
-        filter_data: Option<&[u8]>,
+        updates: &[kalamdb_commons::models::Row],
+        filter: Option<&str>,
     ) -> Result<usize, RaftError>;
 
     /// Delete rows from a user table
@@ -63,7 +63,7 @@ pub trait UserDataApplier: Send + Sync {
     /// # Arguments
     /// * `table_id` - The table identifier
     /// * `user_id` - The user who owns this data
-    /// * `filter_data` - Optional serialized filter
+    /// * `pk_values` - Optional list of primary key values to delete
     ///
     /// # Returns
     /// Number of rows deleted
@@ -71,7 +71,7 @@ pub trait UserDataApplier: Send + Sync {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        filter_data: Option<&[u8]>,
+        pk_values: Option<&[String]>,
     ) -> Result<usize, RaftError>;
 }
 
@@ -85,44 +85,44 @@ pub trait SharedDataApplier: Send + Sync {
     ///
     /// # Arguments
     /// * `table_id` - The table identifier
-    /// * `rows_data` - Serialized row data (bincode-encoded Vec<Row>)
+    /// * `rows` - Row data to insert
     ///
     /// # Returns
     /// Number of rows inserted
     async fn insert(
         &self,
         table_id: &TableId,
-        rows_data: &[u8],
+        rows: &[kalamdb_commons::models::Row],
     ) -> Result<usize, RaftError>;
 
     /// Update rows in a shared table
     ///
     /// # Arguments
     /// * `table_id` - The table identifier
-    /// * `updates_data` - Serialized update data
-    /// * `filter_data` - Optional serialized filter
+    /// * `updates` - Update row data
+    /// * `filter` - Optional filter string (e.g., primary key value)
     ///
     /// # Returns
     /// Number of rows updated
     async fn update(
         &self,
         table_id: &TableId,
-        updates_data: &[u8],
-        filter_data: Option<&[u8]>,
+        updates: &[kalamdb_commons::models::Row],
+        filter: Option<&str>,
     ) -> Result<usize, RaftError>;
 
     /// Delete rows from a shared table
     ///
     /// # Arguments
     /// * `table_id` - The table identifier
-    /// * `filter_data` - Optional serialized filter
+    /// * `pk_values` - Optional list of primary key values to delete
     ///
     /// # Returns
     /// Number of rows deleted
     async fn delete(
         &self,
         table_id: &TableId,
-        filter_data: Option<&[u8]>,
+        pk_values: Option<&[String]>,
     ) -> Result<usize, RaftError>;
 }
 
@@ -135,7 +135,7 @@ impl UserDataApplier for NoOpUserDataApplier {
         &self,
         _table_id: &TableId,
         _user_id: &UserId,
-        _rows_data: &[u8],
+        _rows: &[kalamdb_commons::models::Row],
     ) -> Result<usize, RaftError> {
         Ok(0)
     }
@@ -144,8 +144,8 @@ impl UserDataApplier for NoOpUserDataApplier {
         &self,
         _table_id: &TableId,
         _user_id: &UserId,
-        _updates_data: &[u8],
-        _filter_data: Option<&[u8]>,
+        _updates: &[kalamdb_commons::models::Row],
+        _filter: Option<&str>,
     ) -> Result<usize, RaftError> {
         Ok(0)
     }
@@ -154,7 +154,7 @@ impl UserDataApplier for NoOpUserDataApplier {
         &self,
         _table_id: &TableId,
         _user_id: &UserId,
-        _filter_data: Option<&[u8]>,
+        _pk_values: Option<&[String]>,
     ) -> Result<usize, RaftError> {
         Ok(0)
     }
@@ -168,7 +168,7 @@ impl SharedDataApplier for NoOpSharedDataApplier {
     async fn insert(
         &self,
         _table_id: &TableId,
-        _rows_data: &[u8],
+        _rows: &[kalamdb_commons::models::Row],
     ) -> Result<usize, RaftError> {
         Ok(0)
     }
@@ -176,8 +176,8 @@ impl SharedDataApplier for NoOpSharedDataApplier {
     async fn update(
         &self,
         _table_id: &TableId,
-        _updates_data: &[u8],
-        _filter_data: Option<&[u8]>,
+        _updates: &[kalamdb_commons::models::Row],
+        _filter: Option<&str>,
     ) -> Result<usize, RaftError> {
         Ok(0)
     }
@@ -185,7 +185,7 @@ impl SharedDataApplier for NoOpSharedDataApplier {
     async fn delete(
         &self,
         _table_id: &TableId,
-        _filter_data: Option<&[u8]>,
+        _pk_values: Option<&[String]>,
     ) -> Result<usize, RaftError> {
         Ok(0)
     }

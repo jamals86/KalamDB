@@ -9,7 +9,7 @@ mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
+use test_support::http_server::HttpTestServer;
 use tokio::time::{sleep, Duration, Instant};
 
 fn is_pending_job_status(status: &str) -> bool {
@@ -181,9 +181,8 @@ async fn flush_table_and_wait(server: &HttpTestServer, ns: &str, table: &str) ->
 
 #[tokio::test]
 async fn test_flush_concurrency_and_correctness_over_http() {
-	with_http_test_server_timeout(Duration::from_secs(180), |server| {
-		Box::pin(async move {
-			let suffix = std::process::id();
+	let server = test_support::http_server::get_global_server().await;
+	let suffix = std::process::id();
 
 			let user_a = format!("user_a_{}", suffix);
 			let user_b = format!("user_b_{}", suffix);

@@ -280,11 +280,9 @@ impl CreateTableStatement {
                     // Check column options (PRIMARY KEY, DEFAULT, NOT NULL)
                     let mut col_is_nullable = is_nullable; // Default from type mapping
 
-                    println!("DEBUG: Column '{}' - {} options:", col_name, col.options.len());
                     for option in col.options {
                         match &option.option {
                             ColumnOption::Unique { is_primary, .. } => {
-                                println!("  - UNIQUE (is_primary={})", is_primary);
                                 if *is_primary {
                                     if primary_key_column.is_some() {
                                         return Err(
@@ -296,14 +294,11 @@ impl CreateTableStatement {
                                 }
                             }
                             ColumnOption::NotNull => {
-                                println!("  - NOT NULL");
                                 col_is_nullable = false;
                             }
                             ColumnOption::Null => {
-                                println!("  - NULL");
                             }
                             ColumnOption::Default(expr) => {
-                                println!("  - DEFAULT");
                                 let default_spec = expr_to_column_default(&expr);
                                 column_defaults.insert(col_name.clone(), default_spec);
                             }
@@ -314,15 +309,7 @@ impl CreateTableStatement {
                                     .map(|t| t.to_string())
                                     .collect::<Vec<_>>()
                                     .join(" ");
-                                println!(
-                                    "  - DIALECT SPECIFIC: {}",
-                                    s
-                                );
                                 if s.to_uppercase().contains("AUTO_INCREMENT") {
-                                    println!(
-                                        "DEBUG: Detected AUTO_INCREMENT for column {}",
-                                        col_name
-                                    );
                                     // Set default to SNOWFLAKE_ID()
                                     column_defaults.insert(
                                         col_name.clone(),

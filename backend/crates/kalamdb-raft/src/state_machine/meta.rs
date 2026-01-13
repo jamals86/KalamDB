@@ -185,16 +185,18 @@ impl MetaStateMachine {
             MetaCommand::CreateNamespace { namespace_id, created_by } => {
                 log::debug!("MetaStateMachine: CreateNamespace {:?} by {:?}", namespace_id, created_by);
                 
-                if let Some(ref a) = applier {
-                    a.create_namespace(&namespace_id, created_by.as_ref()).await?;
-                }
+                let message = if let Some(ref a) = applier {
+                    a.create_namespace(&namespace_id, created_by.as_ref()).await?
+                } else {
+                    String::new()
+                };
                 
                 {
                     let mut cache = self.snapshot_cache.write();
                     cache.namespaces.push(namespace_id.clone());
                 }
                 self.approximate_size.fetch_add(100, Ordering::Relaxed);
-                Ok(MetaResponse::NamespaceCreated { namespace_id })
+                Ok(MetaResponse::NamespaceCreated { namespace_id, message })
             }
             
             MetaCommand::DeleteNamespace { namespace_id } => {
@@ -217,16 +219,18 @@ impl MetaStateMachine {
             MetaCommand::CreateTable { table_id, table_type, schema_json } => {
                 log::debug!("MetaStateMachine: CreateTable {:?} (type: {})", table_id, table_type);
                 
-                if let Some(ref a) = applier {
-                    a.create_table(&table_id, table_type, &schema_json).await?;
-                }
+                let message = if let Some(ref a) = applier {
+                    a.create_table(&table_id, table_type, &schema_json).await?
+                } else {
+                    String::new()
+                };
                 
                 {
                     let mut cache = self.snapshot_cache.write();
                     cache.tables.push((table_id.clone(), table_type, schema_json.clone()));
                 }
                 self.approximate_size.fetch_add(schema_json.len() as u64 + 200, Ordering::Relaxed);
-                Ok(MetaResponse::TableCreated { table_id })
+                Ok(MetaResponse::TableCreated { table_id, message })
             }
             
             MetaCommand::AlterTable { table_id, schema_json } => {
@@ -300,9 +304,11 @@ impl MetaStateMachine {
             MetaCommand::CreateUser { user } => {
                 log::debug!("MetaStateMachine: CreateUser {:?} ({})", user.id, user.username);
                 
-                if let Some(ref a) = applier {
-                    a.create_user(&user).await?;
-                }
+                let message = if let Some(ref a) = applier {
+                    a.create_user(&user).await?
+                } else {
+                    String::new()
+                };
                 
                 let user_id = user.id.clone();
                 {
@@ -310,7 +316,7 @@ impl MetaStateMachine {
                     cache.users.insert(user.id.as_str().to_string(), user);
                 }
                 self.approximate_size.fetch_add(200, Ordering::Relaxed);
-                Ok(MetaResponse::UserCreated { user_id })
+                Ok(MetaResponse::UserCreated { user_id, message })
             }
             
             MetaCommand::UpdateUser { user } => {
@@ -383,7 +389,7 @@ impl MetaStateMachine {
             MetaCommand::CreateJob { job_id, job_type, status, parameters_json, idempotency_key, max_retries, queue, priority, node_id, created_at } => {
                 log::debug!("MetaStateMachine: CreateJob {} (type: {})", job_id, job_type);
                 
-                if let Some(ref a) = applier {
+                let message = if let Some(ref a) = applier {
                     a.create_job(
                         &job_id,
                         job_type.clone(),
@@ -395,8 +401,10 @@ impl MetaStateMachine {
                         priority,
                         node_id.clone(),
                         created_at.timestamp_millis(),
-                    ).await?;
-                }
+                    ).await?
+                } else {
+                    String::new()
+                };
                 
                 let job_state = JobState {
                     job_id: job_id.clone(),
@@ -411,7 +419,7 @@ impl MetaStateMachine {
                     cache.jobs.insert(job_id.clone(), job_state);
                 }
                 self.approximate_size.fetch_add(200, Ordering::Relaxed);
-                Ok(MetaResponse::JobCreated { job_id })
+                Ok(MetaResponse::JobCreated { job_id, message })
             }
             
             MetaCommand::ClaimJob { job_id, node_id, claimed_at } => {
@@ -429,10 +437,11 @@ impl MetaStateMachine {
                     }
                 }
                 
-                if let Some(ref a) = applier {
-                    a.claim_job(&job_id, node_id.clone(), claimed_at.timestamp_millis()).await?;
-                }
-                
+                let message = if let Some(ref a) = applier {
+                    a.claim_job(&job_id, node_id.clone(), claimed_at.timestamp_millis()).await?
+                } else {
+                    String::new()
+                };
                 {
                     let mut cache = self.snapshot_cache.write();
                     if let Some(job) = cache.jobs.get_mut(&job_id) {
@@ -440,7 +449,7 @@ impl MetaStateMachine {
                         job.status = JobStatus::Running;
                     }
                 }
-                Ok(MetaResponse::JobClaimed { job_id, node_id })
+                Ok(MetaResponse::JobClaimed { job_id, node_id, message })
             }
             
             MetaCommand::UpdateJobStatus { job_id, status, updated_at } => {
@@ -574,7 +583,7 @@ impl MetaStateMachine {
             } => {
                 log::debug!("MetaStateMachine: CreateLiveQuery {} on node {}", live_id, node_id);
                 
-                if let Some(ref a) = applier {
+                let message = if let Some(ref a) = applier {
                     a.create_live_query(
                         &live_id,
                         &connection_id,
@@ -586,8 +595,10 @@ impl MetaStateMachine {
                         node_id.clone(),
                         &subscription_id,
                         created_at.timestamp_millis(),
-                    ).await?;
-                }
+                    ).await?
+                } else {
+                    String::new()
+                };
                 
                 let lq_state = LiveQueryState {
                     live_id: live_id.clone(),
@@ -601,7 +612,7 @@ impl MetaStateMachine {
                     cache.live_queries.insert(live_id.clone(), lq_state);
                 }
                 self.approximate_size.fetch_add(200, Ordering::Relaxed);
-                Ok(MetaResponse::LiveQueryCreated { live_id })
+                Ok(MetaResponse::LiveQueryCreated { live_id, message })
             }
 
             MetaCommand::UpdateLiveQuery { live_id, last_update, changes } => {

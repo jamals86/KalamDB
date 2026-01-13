@@ -22,9 +22,8 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Main jobs scenario test
 #[tokio::test]
 async fn test_scenario_06_jobs_lifecycle() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            let ns = unique_ns("jobs");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("jobs");
 
             // =========================================================
             // Step 1: Create namespace and table
@@ -131,22 +130,15 @@ async fn test_scenario_06_jobs_lifecycle() {
             };
             assert_eq!(ids.len(), unique_count, "No duplicate IDs should exist");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Scenario 6 test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test job idempotency - same flush shouldn't duplicate data
 #[tokio::test]
 async fn test_scenario_06_job_idempotency() {
-    with_http_test_server_timeout(Duration::from_secs(45), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("jobs_idem");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("jobs_idem");
 
             // Create namespace and table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -200,22 +192,15 @@ async fn test_scenario_06_job_idempotency() {
             let count: i64 = resp.get_i64("cnt").unwrap_or(0);
             assert_eq!(count, 10, "Should still have exactly 10 rows after multiple flushes");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Job idempotency test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test querying system.jobs table
 #[tokio::test]
 async fn test_scenario_06_system_jobs_query() {
-    with_http_test_server_timeout(Duration::from_secs(30), |server| {
-        Box::pin(async move {
-            // Query system.jobs table
+    let server = test_support::http_server::get_global_server().await;
+    // Query system.jobs table
             let resp = server
                 .execute_sql("SELECT job_id, job_type, status FROM system.jobs LIMIT 10")
                 .await?;
@@ -239,22 +224,15 @@ async fn test_scenario_06_system_jobs_query() {
                     .iter()
                     .filter_map(|r| r.first().and_then(|v| v.as_str()).map(|s| s.to_string()))
                     .collect();
-                println!("Job types: {:?}", types);
-            }
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("System jobs query test failed");
+        println!("Job types: {:?}", types);
+    }
 }
 
 /// Test job status transitions
 #[tokio::test]
 async fn test_scenario_06_job_status_transitions() {
-    with_http_test_server_timeout(Duration::from_secs(60), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("jobs_trans");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("jobs_trans");
 
             // Create namespace and table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -331,12 +309,6 @@ async fn test_scenario_06_job_status_transitions() {
                 );
             }
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Job status transitions test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }

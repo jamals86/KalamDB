@@ -1,0 +1,2 @@
+   Compiling kalamdb-core v0.2.0 (C:\Jamal\git\KalamDB\backend\crates\kalamdb-core)
+error

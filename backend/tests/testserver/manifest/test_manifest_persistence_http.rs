@@ -5,7 +5,7 @@ mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use test_support::http_server::{with_http_test_server_timeout, HttpTestServer};
+use test_support::http_server::HttpTestServer;
 use tokio::time::{sleep, Duration, Instant};
 
 fn find_manifest_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -64,10 +64,9 @@ async fn wait_for_flush_job_completed(
 
 #[tokio::test]
 async fn test_user_table_manifest_persistence_over_http() {
-    with_http_test_server_timeout(Duration::from_secs(60), |server| {
-        Box::pin(async move {
-        // Case 1: Manifest written only after flush
-        {
+    let server = test_support::http_server::get_global_server().await;
+    // Case 1: Manifest written only after flush
+    {
             let ns = format!("test_manifest_persist_{}", std::process::id());
             let table = "events";
             let user = "user1";
@@ -266,7 +265,5 @@ async fn test_user_table_manifest_persistence_over_http() {
 
         Ok(())
         })
-    })
-    .await
-    .expect("with_http_test_server_timeout");
+    }
 }

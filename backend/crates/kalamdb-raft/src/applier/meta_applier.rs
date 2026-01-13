@@ -39,10 +39,10 @@ pub trait MetaApplier: Send + Sync {
         &self,
         namespace_id: &NamespaceId,
         created_by: Option<&UserId>,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
     
     /// Delete a namespace from persistent storage
-    async fn delete_namespace(&self, namespace_id: &NamespaceId) -> Result<(), RaftError>;
+    async fn delete_namespace(&self, namespace_id: &NamespaceId) -> Result<String, RaftError>;
 
     // =========================================================================
     // Table Operations
@@ -54,22 +54,25 @@ pub trait MetaApplier: Send + Sync {
     /// * `table_id` - TableId containing namespace and table name
     /// * `table_type` - Type of table (User, Shared, Stream)
     /// * `schema_json` - JSON-serialized TableDefinition
+    ///
+    /// # Returns
+    /// Success message to be returned to the client
     async fn create_table(
         &self,
         table_id: &TableId,
         table_type: TableType,
         schema_json: &str,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
     
     /// Alter a table in persistent storage
     async fn alter_table(
         &self,
         table_id: &TableId,
         schema_json: &str,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
     
     /// Drop a table from persistent storage
-    async fn drop_table(&self, table_id: &TableId) -> Result<(), RaftError>;
+    async fn drop_table(&self, table_id: &TableId) -> Result<String, RaftError>;
 
     // =========================================================================
     // Storage Operations
@@ -80,26 +83,26 @@ pub trait MetaApplier: Send + Sync {
         &self,
         storage_id: &StorageId,
         config_json: &str,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
     
     /// Unregister storage configuration
-    async fn unregister_storage(&self, storage_id: &StorageId) -> Result<(), RaftError>;
+    async fn unregister_storage(&self, storage_id: &StorageId) -> Result<String, RaftError>;
 
     // =========================================================================
     // User Operations
     // =========================================================================
     
     /// Create a new user in persistent storage
-    async fn create_user(&self, user: &User) -> Result<(), RaftError>;
+    async fn create_user(&self, user: &User) -> Result<String, RaftError>;
     
     /// Update an existing user in persistent storage
-    async fn update_user(&self, user: &User) -> Result<(), RaftError>;
+    async fn update_user(&self, user: &User) -> Result<String, RaftError>;
     
     /// Soft-delete a user from persistent storage
-    async fn delete_user(&self, user_id: &UserId, deleted_at: i64) -> Result<(), RaftError>;
+    async fn delete_user(&self, user_id: &UserId, deleted_at: i64) -> Result<String, RaftError>;
     
     /// Record a successful login
-    async fn record_login(&self, user_id: &UserId, logged_in_at: i64) -> Result<(), RaftError>;
+    async fn record_login(&self, user_id: &UserId, logged_in_at: i64) -> Result<String, RaftError>;
     
     /// Lock or unlock a user account
     async fn set_user_locked(
@@ -107,7 +110,7 @@ pub trait MetaApplier: Send + Sync {
         user_id: &UserId,
         locked_until: Option<i64>,
         updated_at: i64,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
 
     // =========================================================================
     // Job Operations
@@ -126,7 +129,7 @@ pub trait MetaApplier: Send + Sync {
         priority: Option<i32>,
         node_id: NodeId,
         created_at: i64,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
     
     /// Claim a job for execution
     async fn claim_job(
@@ -134,7 +137,7 @@ pub trait MetaApplier: Send + Sync {
         job_id: &JobId,
         node_id: NodeId,
         claimed_at: i64,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
     
     /// Update job status
     async fn update_job_status(
@@ -142,7 +145,7 @@ pub trait MetaApplier: Send + Sync {
         job_id: &JobId,
         status: JobStatus,
         updated_at: i64,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
     
     /// Complete a job successfully
     async fn complete_job(
@@ -150,7 +153,7 @@ pub trait MetaApplier: Send + Sync {
         job_id: &JobId,
         result_json: Option<&str>,
         completed_at: i64,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
     
     /// Fail a job
     async fn fail_job(
@@ -158,7 +161,7 @@ pub trait MetaApplier: Send + Sync {
         job_id: &JobId,
         error_message: &str,
         failed_at: i64,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
     
     /// Release a claimed job
     async fn release_job(
@@ -166,7 +169,7 @@ pub trait MetaApplier: Send + Sync {
         job_id: &JobId,
         reason: &str,
         released_at: i64,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
     
     /// Cancel a job
     async fn cancel_job(
@@ -174,7 +177,7 @@ pub trait MetaApplier: Send + Sync {
         job_id: &JobId,
         reason: &str,
         cancelled_at: i64,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
     
     /// Create a schedule
     async fn create_schedule(
@@ -184,10 +187,10 @@ pub trait MetaApplier: Send + Sync {
         cron_expression: &str,
         config_json: Option<&str>,
         created_at: i64,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
     
     /// Delete a schedule
-    async fn delete_schedule(&self, schedule_id: &str) -> Result<(), RaftError>;
+    async fn delete_schedule(&self, schedule_id: &str) -> Result<String, RaftError>;
 
     // =========================================================================
     // Live Query Operations
@@ -206,7 +209,7 @@ pub trait MetaApplier: Send + Sync {
         node_id: NodeId,
         subscription_id: &str,
         created_at: i64,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
 
     /// Update a live query (last_update, changes count)
     async fn update_live_query(
@@ -214,21 +217,21 @@ pub trait MetaApplier: Send + Sync {
         live_id: &LiveQueryId,
         last_update: i64,
         changes: i64,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
 
     /// Delete a live query subscription
     async fn delete_live_query(
         &self,
         live_id: &LiveQueryId,
         deleted_at: i64,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
 
     /// Delete all live queries for a connection
     async fn delete_live_queries_by_connection(
         &self,
         connection_id: &str,
         deleted_at: i64,
-    ) -> Result<(), RaftError>;
+    ) -> Result<String, RaftError>;
 }
 
 /// No-op applier for testing or standalone scenarios
@@ -239,47 +242,47 @@ pub struct NoOpMetaApplier;
 #[async_trait]
 impl MetaApplier for NoOpMetaApplier {
     // Namespace operations
-    async fn create_namespace(&self, _: &NamespaceId, _: Option<&UserId>) -> Result<(), RaftError> {
-        Ok(())
+    async fn create_namespace(&self, _: &NamespaceId, _: Option<&UserId>) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn delete_namespace(&self, _: &NamespaceId) -> Result<(), RaftError> {
-        Ok(())
+    async fn delete_namespace(&self, _: &NamespaceId) -> Result<String, RaftError> {
+        Ok(String::new())
     }
 
     // Table operations
-    async fn create_table(&self, _: &TableId, _: TableType, _: &str) -> Result<(), RaftError> {
-        Ok(())
+    async fn create_table(&self, _: &TableId, _: TableType, _: &str) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn alter_table(&self, _: &TableId, _: &str) -> Result<(), RaftError> {
-        Ok(())
+    async fn alter_table(&self, _: &TableId, _: &str) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn drop_table(&self, _: &TableId) -> Result<(), RaftError> {
-        Ok(())
+    async fn drop_table(&self, _: &TableId) -> Result<String, RaftError> {
+        Ok(String::new())
     }
 
     // Storage operations
-    async fn register_storage(&self, _: &StorageId, _: &str) -> Result<(), RaftError> {
-        Ok(())
+    async fn register_storage(&self, _: &StorageId, _: &str) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn unregister_storage(&self, _: &StorageId) -> Result<(), RaftError> {
-        Ok(())
+    async fn unregister_storage(&self, _: &StorageId) -> Result<String, RaftError> {
+        Ok(String::new())
     }
 
     // User operations
-    async fn create_user(&self, _: &User) -> Result<(), RaftError> {
-        Ok(())
+    async fn create_user(&self, _: &User) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn update_user(&self, _: &User) -> Result<(), RaftError> {
-        Ok(())
+    async fn update_user(&self, _: &User) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn delete_user(&self, _: &UserId, _: i64) -> Result<(), RaftError> {
-        Ok(())
+    async fn delete_user(&self, _: &UserId, _: i64) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn record_login(&self, _: &UserId, _: i64) -> Result<(), RaftError> {
-        Ok(())
+    async fn record_login(&self, _: &UserId, _: i64) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn set_user_locked(&self, _: &UserId, _: Option<i64>, _: i64) -> Result<(), RaftError> {
-        Ok(())
+    async fn set_user_locked(&self, _: &UserId, _: Option<i64>, _: i64) -> Result<String, RaftError> {
+        Ok(String::new())
     }
 
     // Job operations
@@ -295,32 +298,32 @@ impl MetaApplier for NoOpMetaApplier {
         _: Option<i32>,
         _: NodeId,
         _: i64,
-    ) -> Result<(), RaftError> {
-        Ok(())
+    ) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn claim_job(&self, _: &JobId, _: NodeId, _: i64) -> Result<(), RaftError> {
-        Ok(())
+    async fn claim_job(&self, _: &JobId, _: NodeId, _: i64) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn update_job_status(&self, _: &JobId, _: JobStatus, _: i64) -> Result<(), RaftError> {
-        Ok(())
+    async fn update_job_status(&self, _: &JobId, _: JobStatus, _: i64) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn complete_job(&self, _: &JobId, _: Option<&str>, _: i64) -> Result<(), RaftError> {
-        Ok(())
+    async fn complete_job(&self, _: &JobId, _: Option<&str>, _: i64) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn fail_job(&self, _: &JobId, _: &str, _: i64) -> Result<(), RaftError> {
-        Ok(())
+    async fn fail_job(&self, _: &JobId, _: &str, _: i64) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn release_job(&self, _: &JobId, _: &str, _: i64) -> Result<(), RaftError> {
-        Ok(())
+    async fn release_job(&self, _: &JobId, _: &str, _: i64) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn cancel_job(&self, _: &JobId, _: &str, _: i64) -> Result<(), RaftError> {
-        Ok(())
+    async fn cancel_job(&self, _: &JobId, _: &str, _: i64) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn create_schedule(&self, _: &str, _: JobType, _: &str, _: Option<&str>, _: i64) -> Result<(), RaftError> {
-        Ok(())
+    async fn create_schedule(&self, _: &str, _: JobType, _: &str, _: Option<&str>, _: i64) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn delete_schedule(&self, _: &str) -> Result<(), RaftError> {
-        Ok(())
+    async fn delete_schedule(&self, _: &str) -> Result<String, RaftError> {
+        Ok(String::new())
     }
 
     // Live query operations
@@ -336,17 +339,17 @@ impl MetaApplier for NoOpMetaApplier {
         _: NodeId,
         _: &str,
         _: i64,
-    ) -> Result<(), RaftError> {
-        Ok(())
+    ) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn update_live_query(&self, _: &LiveQueryId, _: i64, _: i64) -> Result<(), RaftError> {
-        Ok(())
+    async fn update_live_query(&self, _: &LiveQueryId, _: i64, _: i64) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn delete_live_query(&self, _: &LiveQueryId, _: i64) -> Result<(), RaftError> {
-        Ok(())
+    async fn delete_live_query(&self, _: &LiveQueryId, _: i64) -> Result<String, RaftError> {
+        Ok(String::new())
     }
-    async fn delete_live_queries_by_connection(&self, _: &str, _: i64) -> Result<(), RaftError> {
-        Ok(())
+    async fn delete_live_queries_by_connection(&self, _: &str, _: i64) -> Result<String, RaftError> {
+        Ok(String::new())
     }
 }
 
@@ -391,102 +394,102 @@ mod tests {
 
     #[async_trait]
     impl MetaApplier for MockMetaApplier {
-        async fn create_namespace(&self, _: &NamespaceId, _: Option<&UserId>) -> Result<(), RaftError> {
+        async fn create_namespace(&self, _: &NamespaceId, _: Option<&UserId>) -> Result<String, RaftError> {
             self.namespace_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn delete_namespace(&self, _: &NamespaceId) -> Result<(), RaftError> {
+        async fn delete_namespace(&self, _: &NamespaceId) -> Result<String, RaftError> {
             self.namespace_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn create_table(&self, _: &TableId, _: TableType, _: &str) -> Result<(), RaftError> {
+        async fn create_table(&self, _: &TableId, _: TableType, _: &str) -> Result<String, RaftError> {
             self.table_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn alter_table(&self, _: &TableId, _: &str) -> Result<(), RaftError> {
+        async fn alter_table(&self, _: &TableId, _: &str) -> Result<String, RaftError> {
             self.table_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn drop_table(&self, _: &TableId) -> Result<(), RaftError> {
+        async fn drop_table(&self, _: &TableId) -> Result<String, RaftError> {
             self.table_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn register_storage(&self, _: &StorageId, _: &str) -> Result<(), RaftError> {
+        async fn register_storage(&self, _: &StorageId, _: &str) -> Result<String, RaftError> {
             self.storage_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn unregister_storage(&self, _: &StorageId) -> Result<(), RaftError> {
+        async fn unregister_storage(&self, _: &StorageId) -> Result<String, RaftError> {
             self.storage_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn create_user(&self, _: &User) -> Result<(), RaftError> {
+        async fn create_user(&self, _: &User) -> Result<String, RaftError> {
             self.user_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn update_user(&self, _: &User) -> Result<(), RaftError> {
+        async fn update_user(&self, _: &User) -> Result<String, RaftError> {
             self.user_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn delete_user(&self, _: &UserId, _: i64) -> Result<(), RaftError> {
+        async fn delete_user(&self, _: &UserId, _: i64) -> Result<String, RaftError> {
             self.user_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn record_login(&self, _: &UserId, _: i64) -> Result<(), RaftError> {
+        async fn record_login(&self, _: &UserId, _: i64) -> Result<String, RaftError> {
             self.user_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn set_user_locked(&self, _: &UserId, _: Option<i64>, _: i64) -> Result<(), RaftError> {
+        async fn set_user_locked(&self, _: &UserId, _: Option<i64>, _: i64) -> Result<String, RaftError> {
             self.user_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn create_job(&self, _: &JobId, _: JobType, _: JobStatus, _: Option<&str>, _: Option<&str>, _: u8, _: Option<&str>, _: Option<i32>, _: NodeId, _: i64) -> Result<(), RaftError> {
+        async fn create_job(&self, _: &JobId, _: JobType, _: JobStatus, _: Option<&str>, _: Option<&str>, _: u8, _: Option<&str>, _: Option<i32>, _: NodeId, _: i64) -> Result<String, RaftError> {
             self.job_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn claim_job(&self, _: &JobId, _: NodeId, _: i64) -> Result<(), RaftError> {
+        async fn claim_job(&self, _: &JobId, _: NodeId, _: i64) -> Result<String, RaftError> {
             self.job_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn update_job_status(&self, _: &JobId, _: JobStatus, _: i64) -> Result<(), RaftError> {
+        async fn update_job_status(&self, _: &JobId, _: JobStatus, _: i64) -> Result<String, RaftError> {
             self.job_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn complete_job(&self, _: &JobId, _: Option<&str>, _: i64) -> Result<(), RaftError> {
+        async fn complete_job(&self, _: &JobId, _: Option<&str>, _: i64) -> Result<String, RaftError> {
             self.job_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn fail_job(&self, _: &JobId, _: &str, _: i64) -> Result<(), RaftError> {
+        async fn fail_job(&self, _: &JobId, _: &str, _: i64) -> Result<String, RaftError> {
             self.job_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn release_job(&self, _: &JobId, _: &str, _: i64) -> Result<(), RaftError> {
+        async fn release_job(&self, _: &JobId, _: &str, _: i64) -> Result<String, RaftError> {
             self.job_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn cancel_job(&self, _: &JobId, _: &str, _: i64) -> Result<(), RaftError> {
+        async fn cancel_job(&self, _: &JobId, _: &str, _: i64) -> Result<String, RaftError> {
             self.job_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn create_schedule(&self, _: &str, _: JobType, _: &str, _: Option<&str>, _: i64) -> Result<(), RaftError> {
+        async fn create_schedule(&self, _: &str, _: JobType, _: &str, _: Option<&str>, _: i64) -> Result<String, RaftError> {
             self.job_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
-        async fn delete_schedule(&self, _: &str) -> Result<(), RaftError> {
+        async fn delete_schedule(&self, _: &str) -> Result<String, RaftError> {
             self.job_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         }
         // Live query operations
-        async fn create_live_query(&self, _: &LiveQueryId, _: &str, _: &NamespaceId, _: &TableName, _: &UserId, _: &str, _: Option<&str>, _: NodeId, _: &str, _: i64) -> Result<(), RaftError> {
-            Ok(())
+        async fn create_live_query(&self, _: &LiveQueryId, _: &str, _: &NamespaceId, _: &TableName, _: &UserId, _: &str, _: Option<&str>, _: NodeId, _: &str, _: i64) -> Result<String, RaftError> {
+            Ok(String::new())
         }
-        async fn update_live_query(&self, _: &LiveQueryId, _: i64, _: i64) -> Result<(), RaftError> {
-            Ok(())
+        async fn update_live_query(&self, _: &LiveQueryId, _: i64, _: i64) -> Result<String, RaftError> {
+            Ok(String::new())
         }
-        async fn delete_live_query(&self, _: &LiveQueryId, _: i64) -> Result<(), RaftError> {
-            Ok(())
+        async fn delete_live_query(&self, _: &LiveQueryId, _: i64) -> Result<String, RaftError> {
+            Ok(String::new())
         }
-        async fn delete_live_queries_by_connection(&self, _: &str, _: i64) -> Result<(), RaftError> {
-            Ok(())
+        async fn delete_live_queries_by_connection(&self, _: &str, _: i64) -> Result<String, RaftError> {
+            Ok(String::new())
         }
     }
 

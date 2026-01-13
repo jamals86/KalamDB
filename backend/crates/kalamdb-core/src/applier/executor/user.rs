@@ -62,7 +62,7 @@ impl UserExecutor {
     }
     
     /// Record user login timestamp
-    pub async fn record_login(&self, user_id: &UserId, logged_in_at: i64) -> Result<(), ApplierError> {
+    pub async fn record_login(&self, user_id: &UserId, logged_in_at: i64) -> Result<String, ApplierError> {
         log::debug!("CommandExecutorImpl: Recording login for user {}", user_id);
         
         if let Some(mut user) = self.app_context
@@ -77,9 +77,11 @@ impl UserExecutor {
                 .users()
                 .update_user(user)
                 .map_err(|e| ApplierError::Execution(format!("Failed to update user login: {}", e)))?;
+            
+            return Ok(format!("Login recorded for user {}", user_id));
         }
         
-        Ok(())
+        Ok(format!("User {} not found for login recording", user_id))
     }
     
     /// Set user lock status
@@ -87,7 +89,7 @@ impl UserExecutor {
         &self,
         user_id: &UserId,
         locked_until: Option<i64>,
-    ) -> Result<(), ApplierError> {
+    ) -> Result<String, ApplierError> {
         log::debug!("CommandExecutorImpl: Setting user {} locked until {:?}", user_id, locked_until);
         
         if let Some(mut user) = self.app_context
@@ -102,8 +104,14 @@ impl UserExecutor {
                 .users()
                 .update_user(user)
                 .map_err(|e| ApplierError::Execution(format!("Failed to update user lock: {}", e)))?;
+            
+            if let Some(until) = locked_until {
+                return Ok(format!("User {} locked until {}", user_id, until));
+            } else {
+                return Ok(format!("User {} unlocked", user_id));
+            }
         }
         
-        Ok(())
+        Ok(format!("User {} not found for lock update", user_id))
     }
 }

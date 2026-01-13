@@ -62,7 +62,7 @@ impl CreateNamespaceHandler {
                 ))
             })?;
 
-        log::info!(
+        log::debug!(
             "Registered DataFusion schema for namespace '{}'",
             namespace_id.as_str()
         );

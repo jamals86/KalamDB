@@ -40,8 +40,6 @@ pub async fn bootstrap(
     ApplicationComponents,
     Arc<kalamdb_core::app_context::AppContext>,
 )> {
-    let bootstrap_start = std::time::Instant::now();
-
     // Initialize RocksDB
     let phase_start = std::time::Instant::now();
     let db_path = config.storage.rocksdb_dir();
@@ -149,6 +147,10 @@ pub async fn bootstrap(
     // metadata/data replication applying into local providers (system tables, schema registry, etc.).
     app_context.wire_raft_appliers();
 
+    // NOTE: restore_raft_state_machines() is called LATER after system tables, storages,
+    // and user/shared tables are initialized. The state machine restoration may need to
+    // apply commands that interact with these providers.
+
     // Manifest cache uses lazy loading via get_or_load() - no pre-loading needed
     // When a manifest is needed, get_or_load() checks hot cache → RocksDB → returns None
     // This avoids loading manifests that may never be accessed
@@ -231,15 +233,17 @@ pub async fn bootstrap(
     // Set AppContext on LiveQueryManager for Raft command execution
     live_query_manager.set_app_context(app_context.clone());
 
-    debug!(
-        "SqlExecutor initialized with DROP TABLE support, storage registry, job manager, and table registration"
-    );
-
     sql_executor.load_existing_tables().await?;
     debug!(
         "Existing tables loaded and registered with DataFusion ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
+
+    // Now that all infrastructure is ready (system tables, storages, user/shared tables),
+    // restore state machines from persisted snapshots. This sets the state machine's
+    // internal last_applied_index to prevent duplicate application of log entries.
+    // The state machine idempotency checks use this index to skip already-applied entries.
+    app_context.restore_raft_state_machines().await;
 
     // Rate limiter
     let rate_limit_config = RateLimitConfig {
@@ -290,8 +294,8 @@ pub async fn bootstrap(
     // T125-T127: Create default system user on first startup
     create_default_system_user(users_provider_for_init.clone()).await?;
 
-    // Security warning: Check if remote access is enabled with empty root password
-    check_remote_access_security(config, users_provider_for_init).await?;
+    // // Security warning: Check if remote access is enabled with empty root password
+    // check_remote_access_security(config, users_provider_for_init).await?;
     debug!(
         "User initialization completed ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
@@ -305,11 +309,6 @@ pub async fn bootstrap(
         user_repo,
         connection_registry,
     };
-
-    info!(
-        "🚀 Server bootstrap completed in {:.2}ms",
-        bootstrap_start.elapsed().as_secs_f64() * 1000.0
-    );
 
     Ok((components, app_context))
 }
@@ -371,6 +370,10 @@ pub async fn bootstrap_isolated(
     
     app_context.wire_raft_appliers();
 
+    // NOTE: restore_raft_state_machines() is called LATER after system tables, storages,
+    // and user/shared tables are initialized. The state machine restoration may need to
+    // apply commands that interact with these providers.
+
     // Initialize system tables
     kalamdb_system::initialize_system_tables(backend.clone()).await?;
 
@@ -424,6 +427,9 @@ pub async fn bootstrap_isolated(
 
     sql_executor.load_existing_tables().await?;
 
+    // Now that all infrastructure is ready, restore state machines from snapshots
+    app_context.restore_raft_state_machines().await;
+
     // Rate limiter
     let rate_limit_config = RateLimitConfig {
         max_queries_per_user: config.rate_limit.max_queries_per_sec,
@@ -438,7 +444,7 @@ pub async fn bootstrap_isolated(
     // Create default system user
     let users_provider_for_init = app_context.system_tables().users();
     create_default_system_user(users_provider_for_init.clone()).await?;
-    check_remote_access_security(config, users_provider_for_init).await?;
+    // check_remote_access_security(config, users_provider_for_init).await?;
 
     let components = ApplicationComponents {
         session_factory,
@@ -462,6 +468,7 @@ pub async fn run(
     config: &ServerConfig,
     components: ApplicationComponents,
     app_context: Arc<kalamdb_core::app_context::AppContext>,
+    main_start: std::time::Instant,
 ) -> Result<()> {
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting HTTP server on {}", bind_addr);
@@ -565,6 +572,12 @@ pub async fn run(
         debug!("HTTP/1.1 only mode");
         server.bind(&bind_addr)?
     };
+
+    info!(
+        "🚀 Server started in {:.2}ms",
+        main_start.elapsed().as_secs_f64() * 1000.0
+    );
+
     
     let server = server
     .workers(if config.server.workers == 0 {
@@ -656,7 +669,7 @@ pub async fn run(
             drop(components);
             drop(app_context);
             
-            info!("Graceful shutdown complete");
+            debug!("Graceful shutdown complete");
         }
     }
 
@@ -903,50 +916,50 @@ async fn create_default_system_user(
     }
 }
 
-/// Check for security issues with remote access configuration
-///
-/// Informs users about password requirements for remote access
-async fn check_remote_access_security(
-    config: &ServerConfig,
-    users_provider: Arc<kalamdb_system::UsersTableProvider>,
-) -> Result<()> {
-    use kalamdb_commons::constants::AuthConstants;
+// /// Check for security issues with remote access configuration
+// ///
+// /// Informs users about password requirements for remote access
+// async fn check_remote_access_security(
+//     config: &ServerConfig,
+//     users_provider: Arc<kalamdb_system::UsersTableProvider>,
+// ) -> Result<()> {
+//     use kalamdb_commons::constants::AuthConstants;
 
-    // Check if root user exists and has empty password
-    // Always show this info if root has no password, regardless of allow_remote_access setting
-    if let Ok(Some(user)) =
-        users_provider.get_user_by_username(AuthConstants::DEFAULT_SYSTEM_USERNAME)
-    {
-        if user.password_hash.is_empty() {
-            // Root user has no password - this is secure for localhost-only but warn about limitations
-            warn!("╔═══════════════════════════════════════════════════════════════════╗");
-            warn!("║                    ⚠️  SECURITY NOTICE ⚠️                           ║");
-            warn!("╠═══════════════════════════════════════════════════════════════════╣");
-            warn!("║                                                                   ║");
-            warn!("║  Root user has NO PASSWORD (localhost-only access enabled)       ║");
-            warn!("║                                                                   ║");
-            warn!("║  SECURITY ENFORCEMENT:                                           ║");
-            warn!("║  • Remote authentication is BLOCKED for users with no password   ║");
-            warn!("║  • Root can only connect from localhost (127.0.0.1)              ║");
-            warn!("║  • This configuration is secure by design                        ║");
-            warn!("║                                                                   ║");
-            warn!("║  TO ENABLE REMOTE ACCESS:                                        ║");
-            warn!("║  Set a strong password for the root user:                        ║");
-            warn!("║     ALTER USER root SET PASSWORD 'strong-password-here';         ║");
-            warn!("║                                                                   ║");
-            warn!(
-                "║  Note: allow_remote_access config is currently: {}               ║",
-                if config.auth.allow_remote_access {
-                    "ENABLED "
-                } else {
-                    "DISABLED"
-                }
-            );
-            warn!("║  (Remote access still requires password for system users)        ║");
-            warn!("║                                                                   ║");
-            warn!("╚═══════════════════════════════════════════════════════════════════╝");
-        }
-    }
+//     // Check if root user exists and has empty password
+//     // Always show this info if root has no password, regardless of allow_remote_access setting
+//     if let Ok(Some(user)) =
+//         users_provider.get_user_by_username(AuthConstants::DEFAULT_SYSTEM_USERNAME)
+//     {
+//         if user.password_hash.is_empty() {
+//             // Root user has no password - this is secure for localhost-only but warn about limitations
+//             warn!("╔═══════════════════════════════════════════════════════════════════╗");
+//             warn!("║                    ⚠️  SECURITY NOTICE ⚠️                           ║");
+//             warn!("╠═══════════════════════════════════════════════════════════════════╣");
+//             warn!("║                                                                   ║");
+//             warn!("║  Root user has NO PASSWORD (localhost-only access enabled)       ║");
+//             warn!("║                                                                   ║");
+//             warn!("║  SECURITY ENFORCEMENT:                                           ║");
+//             warn!("║  • Remote authentication is BLOCKED for users with no password   ║");
+//             warn!("║  • Root can only connect from localhost (127.0.0.1)              ║");
+//             warn!("║  • This configuration is secure by design                        ║");
+//             warn!("║                                                                   ║");
+//             warn!("║  TO ENABLE REMOTE ACCESS:                                        ║");
+//             warn!("║  Set a strong password for the root user:                        ║");
+//             warn!("║     ALTER USER root SET PASSWORD 'strong-password-here';         ║");
+//             warn!("║                                                                   ║");
+//             warn!(
+//                 "║  Note: allow_remote_access config is currently: {}               ║",
+//                 if config.auth.allow_remote_access {
+//                     "ENABLED "
+//                 } else {
+//                     "DISABLED"
+//                 }
+//             );
+//             warn!("║  (Remote access still requires password for system users)        ║");
+//             warn!("║                                                                   ║");
+//             warn!("╚═══════════════════════════════════════════════════════════════════╝");
+//         }
+//     }
 
-    Ok(())
-}
+//     Ok(())
+// }

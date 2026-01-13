@@ -26,9 +26,8 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Main dashboards scenario test
 #[tokio::test]
 async fn test_scenario_05_dashboards_shared_reference() {
-    with_http_test_server_timeout(TEST_TIMEOUT, |server| {
-        Box::pin(async move {
-            let ns = unique_ns("app");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("app");
 
             // =========================================================
             // Step 1: Create namespace
@@ -253,22 +252,15 @@ async fn test_scenario_05_dashboards_shared_reference() {
             let post_flush_count: i64 = resp.get_i64("cnt").unwrap_or(0);
             assert!(post_flush_count >= 5, "User1 should still see activities post-flush");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Scenario 5 test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test RBAC restrictions
 #[tokio::test]
 async fn test_scenario_05_rbac_restrictions() {
-    with_http_test_server_timeout(Duration::from_secs(30), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("app_rbac");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("app_rbac");
 
             // Create namespace
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -313,22 +305,15 @@ async fn test_scenario_05_rbac_restrictions() {
             assert!(resp.success(), "User should read shared table");
             assert!(!resp.rows().is_empty(), "Should see config data");
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("RBAC test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
 
 /// Test schema evolution scenarios
 #[tokio::test]
 async fn test_scenario_05_schema_evolution() {
-    with_http_test_server_timeout(Duration::from_secs(30), |server| {
-        Box::pin(async move {
-            let ns = unique_ns("app_schema");
+    let server = test_support::http_server::get_global_server().await;
+    let ns = unique_ns("app_schema");
 
             // Create namespace and table
             let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
@@ -410,12 +395,6 @@ async fn test_scenario_05_schema_evolution() {
                 println!("ALTER TABLE not fully supported, skipping schema evolution test");
             }
 
-            // Cleanup
-            let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
-
-            Ok(())
-        })
-    })
-    .await
-    .expect("Schema evolution test failed");
+    // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
 }
