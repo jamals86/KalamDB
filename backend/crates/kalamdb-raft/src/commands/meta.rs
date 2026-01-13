@@ -10,7 +10,10 @@
 //! for data groups.
 
 use chrono::{DateTime, Utc};
-use kalamdb_commons::models::{JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableName, UserId};
+use kalamdb_commons::models::{
+    ConnectionId, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, StorageId,
+    TableName, UserId,
+};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::TableId;
 use kalamdb_commons::types::User;
@@ -193,7 +196,7 @@ pub enum MetaCommand {
     /// Register a live query subscription (replicated across cluster)
     CreateLiveQuery {
         live_id: LiveQueryId,
-        connection_id: String,
+        connection_id: ConnectionId,
         namespace_id: NamespaceId,
         table_name: TableName,
         user_id: UserId,
@@ -219,7 +222,7 @@ pub enum MetaCommand {
 
     /// Delete all live queries for a connection (when connection closes)
     DeleteLiveQueriesByConnection {
-        connection_id: String,
+        connection_id: ConnectionId,
         deleted_at: DateTime<Utc>,
     },
 }

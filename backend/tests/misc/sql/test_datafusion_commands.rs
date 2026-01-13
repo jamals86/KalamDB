@@ -6,36 +6,10 @@
 
 use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
+use kalamdb_commons::models::{Role, UserId};
 
 async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId {
-    let user_id = UserId::new(username);
-    let now = chrono::Utc::now().timestamp_millis();
-    let user = kalamdb_commons::system::User {
-        id: user_id.clone(),
-        username: UserName::new(username),
-        password_hash: "".to_string(),
-        role,
-        email: Some(format!("{}@test.local", username)),
-        auth_type: AuthType::Password,
-        auth_data: None,
-        storage_mode: StorageMode::Table,
-        storage_id: None,
-        failed_login_attempts: 0,
-        locked_until: None,
-        last_login_at: None,
-        created_at: now,
-        updated_at: now,
-        last_seen: None,
-        deleted_at: None,
-    };
-    server
-        .app_context
-        .system_tables()
-        .users()
-        .create_user(user)
-        .expect("insert user");
-    user_id
+    server.create_user(username, "TestPass123!", role).await
 }
 
 #[actix_web::test]

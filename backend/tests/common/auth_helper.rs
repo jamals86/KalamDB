@@ -62,17 +62,27 @@ pub async fn create_test_user(
     let session = server.app_context.base_session_context();
     let exec_ctx = ExecutionContext::new(system_user_id, Role::System, session);
 
-    // Drop user if exists to ensure clean state (idempotent for tests)
-    let drop_user_sql = format!("DROP USER IF EXISTS '{}'", username);
-    let _ = server.sql_executor.execute(drop_user_sql.as_str(), &exec_ctx, Vec::new()).await;
+    let users_provider = server.app_context.system_tables().users();
+    if let Ok(Some(mut existing)) = users_provider.get_user_by_username(username) {
+        existing.password_hash =
+            bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
+        existing.role = role;
+        existing.email = Some(format!("{}@example.com", username));
+        existing.auth_type = AuthType::Password;
+        existing.auth_data = None;
+        existing.updated_at = chrono::Utc::now().timestamp_millis();
+        users_provider
+            .update_user(existing)
+            .expect("Failed to update test user");
+    } else {
+        let result = server
+            .sql_executor
+            .execute(create_user_sql.as_str(), &exec_ctx, Vec::new())
+            .await;
 
-    let result = server
-        .sql_executor
-        .execute(create_user_sql.as_str(), &exec_ctx, Vec::new())
-        .await;
-
-    if let Err(e) = &result {
-        panic!("Failed to create test user: {:?}", e);
+        if let Err(e) = &result {
+            panic!("Failed to create test user: {:?}", e);
+        }
     }
 
     eprintln!("✓ Created test user: {}", username);

@@ -1116,6 +1116,18 @@ impl TestServer {
         let user_id = UserId::new(username);
         let password_hash =
             bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
+        let users_provider = self.app_context.system_tables().users();
+
+        if let Ok(Some(mut existing)) = users_provider.get_user_by_id(&user_id) {
+            existing.password_hash = password_hash.clone();
+            existing.role = role;
+            existing.email = Some(format!("{}@test.com", username));
+            existing.auth_type = AuthType::Password;
+            existing.auth_data = None;
+            existing.updated_at = chrono::Utc::now().timestamp_millis();
+            let _ = users_provider.update_user(existing);
+            return user_id;
+        }
 
         let user = kalamdb_commons::system::User {
             id: user_id.clone(),
@@ -1137,7 +1149,7 @@ impl TestServer {
         };
 
         // Ignore error if user already exists (idempotent)
-        let _ = self.app_context.system_tables().users().create_user(user);
+        let _ = users_provider.create_user(user);
 
         user_id
     }

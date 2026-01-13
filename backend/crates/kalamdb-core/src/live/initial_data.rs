@@ -373,9 +373,15 @@ impl InitialDataFetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::base::TableProviderCore;
     use crate::providers::arrow_json_conversion::json_to_row;
+    use crate::providers::UserTableProvider;
+    use crate::schema_registry::CachedTableData;
     use crate::sql::executor::SqlExecutor;
     use kalamdb_commons::ids::{SeqId, UserTableRowId};
+    use kalamdb_commons::models::datatypes::KalamDataType;
+    use kalamdb_commons::models::schemas::column_default::ColumnDefault;
+    use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
     use kalamdb_commons::models::{ConnectionId as ConnId, LiveQueryId as CommonsLiveQueryId};
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_commons::UserId;
@@ -475,11 +481,6 @@ mod tests {
         store.insert(&row_id, &row).expect("insert row");
 
         // Register table definition so get_arrow_schema works
-        use crate::schema_registry::CachedTableData;
-        use kalamdb_commons::models::datatypes::KalamDataType;
-        use kalamdb_commons::models::schemas::column_default::ColumnDefault;
-        use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
-
         let columns = vec![
             ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Int),
             ColumnDefinition::simple(2, "name", 2, KalamDataType::Text),
@@ -523,8 +524,6 @@ mod tests {
         );
 
         // Create a mock provider with the store
-        use crate::providers::base::TableProviderCore;
-        use crate::providers::UserTableProvider;
         let core = Arc::new(TableProviderCore::from_app_context(
             &app_context,
             table_id.clone(),
@@ -537,7 +536,7 @@ mod tests {
 
         // Register the provider in schema_registry
         schema_registry
-            .insert_provider(app_context, table_id.clone(), provider)
+            .insert_provider(app_context.as_ref(), table_id.clone(), provider)
             .expect("register provider");
 
         let fetcher =
@@ -622,11 +621,6 @@ mod tests {
         }
 
         // Register table definition
-        use crate::schema_registry::CachedTableData;
-        use kalamdb_commons::models::datatypes::KalamDataType;
-        use kalamdb_commons::models::schemas::column_default::ColumnDefault;
-        use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
-
         let columns = vec![
             ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Int),
             ColumnDefinition::simple(2, "val", 2, KalamDataType::Text),
@@ -669,8 +663,6 @@ mod tests {
         );
 
         // Create and register provider
-        use crate::providers::base::TableProviderCore;
-        use crate::providers::UserTableProvider;
         let core = Arc::new(TableProviderCore::from_app_context(
             &app_context,
             table_id.clone(),
@@ -682,7 +674,7 @@ mod tests {
         );
 
         schema_registry
-            .insert_provider(app_context, table_id.clone(), provider)
+            .insert_provider(app_context.as_ref(), table_id.clone(), provider)
             .expect("register provider");
 
         let fetcher =
@@ -805,11 +797,6 @@ mod tests {
         }
 
         // Register table definition
-        use crate::schema_registry::CachedTableData;
-        use kalamdb_commons::models::datatypes::KalamDataType;
-        use kalamdb_commons::models::schemas::column_default::ColumnDefault;
-        use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
-
         let columns = vec![
             ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Int),
             ColumnDefinition::simple(2, "val", 2, KalamDataType::Text),
@@ -852,8 +839,6 @@ mod tests {
         );
 
         // Create and register provider
-        use crate::providers::base::TableProviderCore;
-        use crate::providers::UserTableProvider;
         let core = Arc::new(TableProviderCore::from_app_context(
             &app_context,
             table_id.clone(),
@@ -865,7 +850,7 @@ mod tests {
         );
 
         schema_registry
-            .insert_provider(app_context, table_id.clone(), provider)
+            .insert_provider(app_context.as_ref(), table_id.clone(), provider)
             .expect("register provider");
 
         let fetcher =

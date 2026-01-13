@@ -172,10 +172,16 @@ impl LiveQueryManager {
                 // Row-level security filters data to only their rows during query execution
             }
             kalamdb_commons::TableType::System if !is_admin => {
-                return Err(KalamDbError::PermissionDenied("Insufficient privileges for system table".to_string()));
+                return Err(KalamDbError::PermissionDenied(
+                    format!("Cannot subscribe to system table '{}': insufficient privileges. Only DBA and system roles can subscribe to system tables.",
+                    table_id)
+                ));
             }
             kalamdb_commons::TableType::Shared => {
-                return Err(KalamDbError::InvalidOperation("Shared tables don't support subscriptions".to_string()));
+                return Err(KalamDbError::InvalidOperation(
+                    format!("Cannot subscribe to shared table '{}': shared tables do not support live subscriptions. Use direct SELECT queries instead.",
+                    table_id)
+                ));
             }
             _ => {}
         }

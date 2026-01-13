@@ -77,7 +77,7 @@ fn query_count_on_url(base_url: &str, sql: &str) -> i64 {
 #[ntest::timeout(60_000)]
 #[test]
 fn smoke_test_cluster_system_table_counts_consistent() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     // Skip if not in cluster mode
     if !is_cluster_mode() {
@@ -126,7 +126,7 @@ fn smoke_test_cluster_system_table_counts_consistent() {
 #[ntest::timeout(60_000)]
 #[test]
 fn smoke_test_cluster_namespace_consistency() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     // Skip if not in cluster mode
     if !is_cluster_mode() {
@@ -186,7 +186,7 @@ fn smoke_test_cluster_namespace_consistency() {
 #[ntest::timeout(90_000)]
 #[test]
 fn smoke_test_cluster_table_type_consistency() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     println!("\n=== TEST: Table Type Command Consistency ===\n");
 
@@ -258,7 +258,7 @@ fn smoke_test_cluster_table_type_consistency() {
 #[ntest::timeout(60_000)]
 #[test]
 fn smoke_test_cluster_user_operations() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     println!("\n=== TEST: User Command Consistency ===\n");
 
@@ -308,7 +308,7 @@ fn smoke_test_cluster_user_operations() {
 #[ntest::timeout(120_000)]
 #[test]
 fn smoke_test_cluster_user_data_partitioning() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     println!("\n=== TEST: User Data Partitioning ===\n");
 
@@ -409,7 +409,7 @@ fn smoke_test_cluster_user_data_partitioning() {
 #[ntest::timeout(90_000)]
 #[test]
 fn smoke_test_cluster_shared_table_consistency() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     println!("\n=== TEST: Shared Table Consistency ===\n");
 
@@ -473,7 +473,7 @@ fn smoke_test_cluster_shared_table_consistency() {
 #[ntest::timeout(120_000)]
 #[test]
 fn smoke_test_cluster_concurrent_operations() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     println!("\n=== TEST: Concurrent Operations Consistency ===\n");
 
@@ -542,7 +542,7 @@ fn smoke_test_cluster_concurrent_operations() {
 #[ntest::timeout(120_000)]
 #[test]
 fn smoke_test_cluster_batch_insert_consistency() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     println!("\n=== TEST: Batch Insert Consistency ===\n");
 
@@ -620,7 +620,7 @@ fn smoke_test_cluster_batch_insert_consistency() {
 #[ntest::timeout(180_000)]
 #[test]
 fn smoke_test_cluster_job_tracking() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     println!("\n=== TEST: Job Tracking Consistency ===\n");
 
@@ -690,7 +690,7 @@ fn smoke_test_cluster_job_tracking() {
 #[ntest::timeout(60_000)]
 #[test]
 fn smoke_test_cluster_storage_operations() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     println!("\n=== TEST: Storage Operations Consistency ===\n");
 
@@ -753,7 +753,7 @@ fn smoke_test_cluster_storage_operations() {
 #[ntest::timeout(90_000)]
 #[test]
 fn smoke_test_cluster_live_query_tracking() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     println!("\n=== TEST: Live Query Tracking ===\n");
 
@@ -778,7 +778,7 @@ fn smoke_test_cluster_live_query_tracking() {
 #[ntest::timeout(600_000)]
 #[test]
 fn smoke_test_cluster_all() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     println!("\n");
     println!("╔═══════════════════════════════════════════════════════════════════╗");

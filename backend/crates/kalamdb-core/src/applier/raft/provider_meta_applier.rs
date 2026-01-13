@@ -8,7 +8,10 @@
 
 use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableDefinition;
-use kalamdb_commons::models::{JobId, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableId, TableName, UserId};
+use kalamdb_commons::models::{
+    ConnectionId, JobId, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableId, TableName,
+    UserId,
+};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::system::{Job, LiveQuery, Storage};
 use kalamdb_commons::types::{LiveQueryStatus, User};
@@ -447,7 +450,7 @@ impl MetaApplier for ProviderMetaApplier {
     async fn create_live_query(
         &self,
         live_id: &LiveQueryId,
-        connection_id: &str,
+        connection_id: &ConnectionId,
         namespace_id: &NamespaceId,
         table_name: &TableName,
         user_id: &UserId,
@@ -526,7 +529,7 @@ impl MetaApplier for ProviderMetaApplier {
 
     async fn delete_live_queries_by_connection(
         &self,
-        connection_id: &str,
+        connection_id: &ConnectionId,
         _deleted_at: i64,
     ) -> Result<String, RaftError> {
         log::info!("ProviderMetaApplier: Deleting live queries for connection {}", connection_id);
@@ -539,7 +542,7 @@ impl MetaApplier for ProviderMetaApplier {
         
         let mut deleted_count = 0;
         for lq in live_queries {
-            if lq.connection_id == connection_id {
+            if lq.connection_id == connection_id.as_str() {
                 self.app_context.system_tables()
                     .live_queries()
                     .delete_live_query(&lq.live_id)

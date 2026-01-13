@@ -3,12 +3,21 @@ use super::test_support::TestServer;
 use kalamdb_commons::websocket::{SubscriptionRequest, SubscriptionOptions};
 use kalamdb_commons::models::{ConnectionId, UserId, ConnectionInfo};
 use kalam_link::models::ResponseStatus;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static UNIQUE_NS_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn unique_namespace(prefix: &str) -> String {
+    let id = UNIQUE_NS_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{}_{}", prefix, id)
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_live_queries_metadata() {
     let server = TestServer::new().await;
     let manager = server.app_context.live_query_manager();
     let registry = manager.registry();
+    let ns = unique_namespace("live_queries_meta");
 
     // 1. Register Connection
     let user_id = UserId::new("root");
@@ -22,10 +31,21 @@ async fn test_live_queries_metadata() {
     connection_state.write().mark_authenticated(user_id.clone());
     registry.on_authenticated(&conn_id, user_id.clone());
 
+    let create_ns = format!("CREATE NAMESPACE IF NOT EXISTS {}", ns);
+    let ns_resp = server.execute_sql_as_user(&create_ns, "root").await;
+    assert_eq!(ns_resp.status, ResponseStatus::Success, "namespace create failed: {:?}", ns_resp.error);
+
+    let create_table = format!(
+        "CREATE TABLE {}.events (id INT PRIMARY KEY, value TEXT) WITH (TYPE = 'USER')",
+        ns
+    );
+    let table_resp = server.execute_sql_as_user(&create_table, "root").await;
+    assert_eq!(table_resp.status, ResponseStatus::Success, "table create failed: {:?}", table_resp.error);
+
     // 2. Subscribe using SubscriptionRequest
     let subscription1 = SubscriptionRequest {
         id: "sub_meta_test".to_string(),
-        sql: "SELECT * FROM system.users".to_string(),
+        sql: format!("SELECT * FROM {}.events", ns),
         options: SubscriptionOptions::default(),
     };
     
@@ -64,7 +84,7 @@ async fn test_live_queries_metadata() {
     // Re-subscribe
     let subscription2 = SubscriptionRequest {
         id: "sub_meta_test2".to_string(),
-        sql: "SELECT * FROM system.users".to_string(),
+        sql: format!("SELECT * FROM {}.events", ns),
         options: SubscriptionOptions::default(),
     };
     let result2 = manager.register_subscription_with_initial_data(

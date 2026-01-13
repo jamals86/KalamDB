@@ -9,6 +9,7 @@
 //! with `#[serial]` to avoid race conditions.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
 use kalamdb_commons::models::{NamespaceId, UserId, Row};

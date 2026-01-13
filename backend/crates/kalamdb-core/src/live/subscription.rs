@@ -141,7 +141,7 @@ impl SubscriptionService {
         if let Some(app_ctx) = self.get_app_context() {
             let cmd = MetaCommand::CreateLiveQuery {
                 live_id: live_id.clone(),
-                connection_id: connection_id.to_string(),
+                connection_id: connection_id.clone(),
                 namespace_id: table_id.namespace_id().clone(),
                 table_name: table_id.table_name().clone(),
                 user_id: user_id.clone(),
@@ -303,7 +303,7 @@ impl SubscriptionService {
         // Delete from system.live_queries through Raft for cluster-wide replication
         if let Some(app_ctx) = self.get_app_context() {
             let cmd = MetaCommand::DeleteLiveQueriesByConnection {
-                connection_id: connection_id.to_string(),
+                connection_id: connection_id.clone(),
                 deleted_at: Utc::now(),
             };
             

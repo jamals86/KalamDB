@@ -16,8 +16,9 @@ use kalamdb_commons::config::ManifestCacheSettings;
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::types::{Manifest, SegmentMetadata};
 use kalamdb_commons::UserId;
-use kalamdb_commons::{NamespaceId, TableId, TableName};
+use kalamdb_commons::{NamespaceId, StorageId, TableId, TableName};
 use kalamdb_core::manifest::ManifestService;
+use kalamdb_core::schema_registry::PathResolver;
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -82,7 +83,7 @@ fn create_test_service() -> (ManifestService, TempDir) {
         let schema_registry = app_ctx.schema_registry();
         let tables_provider = app_ctx.system_tables().tables();
 
-        let base_dir = temp_dir.path().to_string_lossy().to_string();
+        let storage_id = StorageId::new("local");
         let register = |ns: &str, name: &str, ttype: TableType| {
             let namespace = kalamdb_commons::NamespaceId::new(ns);
             let table_name = kalamdb_commons::TableName::new(name);
@@ -115,9 +116,15 @@ fn create_test_service() -> (ManifestService, TempDir) {
             let _ = schema_registry.put_table_definition(&app_ctx, &table_id, &table_def);
             // Build cached table data and set storage path template to a temp directory for tests
             let mut cached = CachedTableData::new(StdArc::new(table_def.clone()));
-            let storage_template = format!("{}/{}/{}", base_dir, ns, name);
+            let storage_template = PathResolver::resolve_storage_path_template(
+                app_ctx.as_ref(),
+                &table_id,
+                ttype,
+                &storage_id,
+            )
+            .unwrap_or_else(|_| format!("shared/{}/{}", ns, name));
             cached.storage_path_template = storage_template.clone();
-            cached.storage_id = Some(kalamdb_commons::StorageId::new("local"));
+            cached.storage_id = Some(storage_id.clone());
             // Ensure directories exist
             let _ = std::fs::create_dir_all(&storage_template);
             schema_registry.insert(table_id, StdArc::new(cached));

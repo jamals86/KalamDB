@@ -11,6 +11,14 @@
 use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::{AuthType, Role, models::ConnectionInfo};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static UNIQUE_USER_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn unique_username(prefix: &str) -> String {
+    let id = UNIQUE_USER_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{}_{}", prefix, id)
+}
 
 #[tokio::test]
 async fn test_oauth_google_success() {
@@ -22,13 +30,16 @@ async fn test_oauth_google_success() {
         .await;
     let admin_id_str = admin_id.as_str();
 
-    // Create OAuth user with Google provider
-    let create_sql = r#"
-        CREATE USER alice WITH OAUTH '{"provider": "google", "subject": "google_123456"}'
-        ROLE user EMAIL 'alice@gmail.com'
-    "#;
+    let oauth_username = unique_username("oauth_alice");
 
-    let result = server.execute_sql_as_user(create_sql, admin_id_str).await;
+    // Create OAuth user with Google provider
+    let create_sql = format!(
+        "CREATE USER {} WITH OAUTH '{{\"provider\": \"google\", \"subject\": \"google_123456\"}}' ROLE user EMAIL '{}@gmail.com'",
+        oauth_username,
+        oauth_username
+    );
+
+    let result = server.execute_sql_as_user(&create_sql, admin_id_str).await;
     assert_eq!(
         result.status,
         ResponseStatus::Success,
@@ -39,11 +50,11 @@ async fn test_oauth_google_success() {
     // Verify user was created with correct auth_type and auth_data
     let users_provider = server.app_context.system_tables().users();
     let user = users_provider
-        .get_user_by_username("alice")
+        .get_user_by_username(oauth_username.as_str())
         .expect("Failed to get user")
         .unwrap();
     assert_eq!(user.auth_type, AuthType::OAuth);
-    assert_eq!(user.email, Some("alice@gmail.com".to_string()));
+    assert_eq!(user.email, Some(format!("{}@gmail.com", oauth_username)));
 
     // Verify auth_data contains provider and subject
     assert!(user.auth_data.is_some(), "auth_data should be set");
@@ -65,12 +76,14 @@ async fn test_oauth_user_password_rejected() {
         .await;
     let admin_id_str = admin_id.as_str();
 
+    let oauth_username = unique_username("oauth_bob");
+
     // Create OAuth user
-    let create_sql = r#"
-        CREATE USER bob WITH OAUTH '{"provider": "github", "subject": "github_789"}'
-        ROLE user
-    "#;
-    let res = server.execute_sql_as_user(create_sql, admin_id_str).await;
+    let create_sql = format!(
+        "CREATE USER {} WITH OAUTH '{{\"provider\": \"github\", \"subject\": \"github_789\"}}' ROLE user",
+        oauth_username
+    );
+    let res = server.execute_sql_as_user(&create_sql, admin_id_str).await;
     assert_eq!(
         res.status,
         ResponseStatus::Success,
@@ -85,7 +98,7 @@ async fn test_oauth_user_password_rejected() {
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
 
     // Create Basic Auth header
-    let credentials = format!("{}:{}", "bob", "somepassword");
+    let credentials = format!("{}:{}", oauth_username, "somepassword");
     let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
     let auth_header = format!("Basic {}", encoded);
     let auth_request = AuthRequest::Header(auth_header);
@@ -113,30 +126,33 @@ async fn test_oauth_subject_matching() {
         .await;
     let admin_id_str = admin_id.as_str();
 
-    // Create two OAuth users with different subjects
-    let create_sql1 = r#"
-        CREATE USER user1 WITH OAUTH '{"provider": "google", "subject": "google_111"}'
-        ROLE user
-    "#;
-    let create_sql2 = r#"
-        CREATE USER user2 WITH OAUTH '{"provider": "google", "subject": "google_222"}'
-        ROLE user
-    "#;
+    let user1_name = unique_username("oauth_user1");
+    let user2_name = unique_username("oauth_user2");
 
-    let res1 = server.execute_sql_as_user(create_sql1, admin_id_str).await;
+    // Create two OAuth users with different subjects
+    let create_sql1 = format!(
+        "CREATE USER {} WITH OAUTH '{{\"provider\": \"google\", \"subject\": \"google_111\"}}' ROLE user",
+        user1_name
+    );
+    let create_sql2 = format!(
+        "CREATE USER {} WITH OAUTH '{{\"provider\": \"google\", \"subject\": \"google_222\"}}' ROLE user",
+        user2_name
+    );
+
+    let res1 = server.execute_sql_as_user(&create_sql1, admin_id_str).await;
     assert_eq!(res1.status, ResponseStatus::Success);
 
-    let res2 = server.execute_sql_as_user(create_sql2, admin_id_str).await;
+    let res2 = server.execute_sql_as_user(&create_sql2, admin_id_str).await;
     assert_eq!(res2.status, ResponseStatus::Success);
 
     // Verify both users exist with different subjects
     let users_provider = server.app_context.system_tables().users();
     let user1 = users_provider
-        .get_user_by_username("user1")
+        .get_user_by_username(user1_name.as_str())
         .unwrap()
         .unwrap();
     let user2 = users_provider
-        .get_user_by_username("user2")
+        .get_user_by_username(user2_name.as_str())
         .unwrap()
         .unwrap();
 
@@ -216,13 +232,16 @@ async fn test_oauth_azure_provider() {
         .await;
     let admin_id_str = admin_id.as_str();
 
-    // Create OAuth user with Azure provider
-    let create_sql = r#"
-        CREATE USER charlie WITH OAUTH '{"provider": "azure", "subject": "azure_tenant_user"}'
-        ROLE service EMAIL 'charlie@microsoft.com'
-    "#;
+    let oauth_username = unique_username("oauth_charlie");
 
-    let result = server.execute_sql_as_user(create_sql, admin_id_str).await;
+    // Create OAuth user with Azure provider
+    let create_sql = format!(
+        "CREATE USER {} WITH OAUTH '{{\"provider\": \"azure\", \"subject\": \"azure_tenant_user\"}}' ROLE service EMAIL '{}@microsoft.com'",
+        oauth_username,
+        oauth_username
+    );
+
+    let result = server.execute_sql_as_user(&create_sql, admin_id_str).await;
     assert_eq!(
         result.status,
         ResponseStatus::Success,
@@ -233,7 +252,7 @@ async fn test_oauth_azure_provider() {
     // Verify user was created with Azure provider
     let users_provider = server.app_context.system_tables().users();
     let user = users_provider
-        .get_user_by_username("charlie")
+        .get_user_by_username(oauth_username.as_str())
         .unwrap()
         .unwrap();
     let auth_data: serde_json::Value =

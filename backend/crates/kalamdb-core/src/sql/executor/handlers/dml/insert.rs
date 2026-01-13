@@ -18,6 +18,7 @@ use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::{NamespaceId, Row, TableName};
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
@@ -189,6 +190,21 @@ impl StatementHandler for InsertHandler {
                     Some(sys_cols.clone()),
                 )?;
                 values.insert(col_def.column_name.clone(), default_value);
+            }
+
+            // Validate missing NOT NULL columns without defaults
+            for col_def in &table_def.columns {
+                if SystemColumnNames::is_system_column(col_def.column_name.as_str()) {
+                    continue;
+                }
+                if !col_def.is_nullable && !values.contains_key(&col_def.column_name) {
+                    if col_def.default_value.is_none() {
+                        return Err(KalamDbError::ConstraintViolation(format!(
+                            "Column '{}' cannot be null",
+                            col_def.column_name
+                        )));
+                    }
+                }
             }
 
             rows.push(Row::new(values));

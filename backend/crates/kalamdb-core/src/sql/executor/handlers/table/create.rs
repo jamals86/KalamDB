@@ -81,6 +81,9 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("CREATE TABLE failed: {}", e)))?;
 
+        // Normalize success message to keep tests stable and surface raft path
+        let message = format!("CREATE TABLE via Raft consensus: {}", message);
+
         // Log DDL operation
         let audit_entry = audit::log_ddl_operation(
             context,

@@ -11,7 +11,10 @@
 
 use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableType;
-use kalamdb_commons::models::{JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableId, TableName, UserId};
+use kalamdb_commons::models::{
+    ConnectionId, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableId,
+    TableName, UserId,
+};
 use kalamdb_commons::types::User;
 
 use crate::RaftError;
@@ -200,7 +203,7 @@ pub trait MetaApplier: Send + Sync {
     async fn create_live_query(
         &self,
         live_id: &LiveQueryId,
-        connection_id: &str,
+        connection_id: &ConnectionId,
         namespace_id: &NamespaceId,
         table_name: &TableName,
         user_id: &UserId,
@@ -229,7 +232,7 @@ pub trait MetaApplier: Send + Sync {
     /// Delete all live queries for a connection
     async fn delete_live_queries_by_connection(
         &self,
-        connection_id: &str,
+        connection_id: &ConnectionId,
         deleted_at: i64,
     ) -> Result<String, RaftError>;
 }
@@ -330,7 +333,7 @@ impl MetaApplier for NoOpMetaApplier {
     async fn create_live_query(
         &self,
         _: &LiveQueryId,
-        _: &str,
+        _: &ConnectionId,
         _: &NamespaceId,
         _: &TableName,
         _: &UserId,
@@ -348,7 +351,7 @@ impl MetaApplier for NoOpMetaApplier {
     async fn delete_live_query(&self, _: &LiveQueryId, _: i64) -> Result<String, RaftError> {
         Ok(String::new())
     }
-    async fn delete_live_queries_by_connection(&self, _: &str, _: i64) -> Result<String, RaftError> {
+    async fn delete_live_queries_by_connection(&self, _: &ConnectionId, _: i64) -> Result<String, RaftError> {
         Ok(String::new())
     }
 }
@@ -479,7 +482,7 @@ mod tests {
             Ok(String::new())
         }
         // Live query operations
-        async fn create_live_query(&self, _: &LiveQueryId, _: &str, _: &NamespaceId, _: &TableName, _: &UserId, _: &str, _: Option<&str>, _: NodeId, _: &str, _: i64) -> Result<String, RaftError> {
+        async fn create_live_query(&self, _: &LiveQueryId, _: &ConnectionId, _: &NamespaceId, _: &TableName, _: &UserId, _: &str, _: Option<&str>, _: NodeId, _: &str, _: i64) -> Result<String, RaftError> {
             Ok(String::new())
         }
         async fn update_live_query(&self, _: &LiveQueryId, _: i64, _: i64) -> Result<String, RaftError> {
@@ -488,7 +491,7 @@ mod tests {
         async fn delete_live_query(&self, _: &LiveQueryId, _: i64) -> Result<String, RaftError> {
             Ok(String::new())
         }
-        async fn delete_live_queries_by_connection(&self, _: &str, _: i64) -> Result<String, RaftError> {
+        async fn delete_live_queries_by_connection(&self, _: &ConnectionId, _: i64) -> Result<String, RaftError> {
             Ok(String::new())
         }
     }

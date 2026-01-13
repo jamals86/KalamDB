@@ -11,7 +11,9 @@
 //! Runs in the unified Meta Raft group (replaces MetaSystem + MetaUsers + MetaJobs).
 
 use async_trait::async_trait;
-use kalamdb_commons::models::{JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableId};
+use kalamdb_commons::models::{
+    ConnectionId, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableId,
+};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::types::User;
 use parking_lot::RwLock;
@@ -71,7 +73,7 @@ struct MetaSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LiveQueryState {
     live_id: LiveQueryId,
-    connection_id: String,
+    connection_id: ConnectionId,
     node_id: NodeId,
     created_at: i64,
 }

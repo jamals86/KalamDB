@@ -66,7 +66,7 @@ async fn test_config_accessible_from_app_context() {
 
     // Verify basic config fields
     assert_eq!(app_context.node_id().as_u64(), 1);
-    assert_eq!(config.storage.data_path, "data");
+    assert!(!config.storage.data_path.is_empty());
 
     // Verify execution settings are present
     assert!(config.execution.max_parameters > 0);

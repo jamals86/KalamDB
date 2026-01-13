@@ -23,6 +23,7 @@ use std::sync::Arc;
 use crate::sql::executor::handlers::dml::{DeleteHandler, InsertHandler, UpdateHandler};
 use crate::sql::executor::handlers::flush::{FlushAllTablesHandler, FlushTableHandler};
 use crate::sql::executor::handlers::jobs::{KillJobHandler, KillLiveQueryHandler};
+use crate::sql::executor::handlers::cluster::{ClusterFlushHandler, ClusterClearHandler, ClusterListHandler};
 use crate::sql::executor::handlers::namespace::{
     AlterNamespaceHandler, CreateNamespaceHandler, DropNamespaceHandler, ShowNamespacesHandler,
     UseNamespaceHandler,
@@ -384,6 +385,24 @@ impl HandlerRegistry {
                 SqlStatementKind::FlushAllTables(s) => Some(s.clone()),
                 _ => None,
             },
+        );
+
+        // ============================================================================
+        // CLUSTER HANDLERS
+        // ============================================================================
+        registry.register_dynamic(
+            SqlStatementKind::ClusterFlush,
+            ClusterFlushHandler::new(app_context.clone()),
+        );
+
+        registry.register_dynamic(
+            SqlStatementKind::ClusterClear,
+            ClusterClearHandler::new(app_context.clone()),
+        );
+
+        registry.register_dynamic(
+            SqlStatementKind::ClusterList,
+            ClusterListHandler::new(app_context.clone()),
         );
 
         // ============================================================================

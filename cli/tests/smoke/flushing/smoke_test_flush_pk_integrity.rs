@@ -17,7 +17,7 @@ const JOB_TIMEOUT: Duration = Duration::from_secs(30);
 #[ntest::timeout(180_000)]
 #[test]
 fn smoke_test_flush_pk_integrity_user_table() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     let namespace = generate_unique_namespace("smoke_pk");
     let table_name = generate_unique_table("pk_integrity");
@@ -224,7 +224,7 @@ fn smoke_test_flush_pk_integrity_user_table() {
 #[ntest::timeout(180_000)]
 #[test]
 fn smoke_test_flush_pk_integrity_shared_table() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     let namespace = generate_unique_namespace("smoke_pk");
     let table_name = generate_unique_table("pk_shared");

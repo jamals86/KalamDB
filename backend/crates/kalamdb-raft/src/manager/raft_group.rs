@@ -204,7 +204,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         
         // Create initial membership with just this node
         let mut members = std::collections::BTreeMap::new();
-        members.insert(node_id, node);
+        members.insert(node_id.into(), node);
         
         match raft.initialize(members).await {
             Ok(_) => {
@@ -229,7 +229,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
         
-        raft.add_learner(node_id, node, true).await
+        raft.add_learner(node_id.into(), node, true).await
             .map_err(|e| RaftError::Internal(format!("Failed to add learner: {:?}", e)))?;
         
         Ok(())
@@ -289,7 +289,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     }
     
     /// Change membership to include the given voters
-    pub async fn change_membership(&self, members: Vec<u64>) -> Result<(), RaftError> {
+        pub async fn change_membership(&self, members: Vec<u64>) -> Result<(), RaftError> {
         let raft = {
             let guard = self.raft.read();
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
@@ -304,10 +304,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
 
     /// Promote a learner to a voter using the current membership configuration
     pub async fn promote_learner(&self, node_id: u64) -> Result<(), RaftError> {
-        let raft = {
-            let guard = self.raft.read();
-            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
-        };
+            let raft = {
+                let guard = self.raft.read();
+                guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
+            };
 
         let metrics = raft.metrics().borrow().clone();
         if metrics.current_leader != Some(metrics.id) {
@@ -319,7 +319,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
 
         let mut voters: std::collections::BTreeSet<u64> =
             metrics.membership_config.voter_ids().collect();
-        if voters.contains(&node_id) {
+            if voters.contains(&node_id) {
             return Ok(());
         }
 

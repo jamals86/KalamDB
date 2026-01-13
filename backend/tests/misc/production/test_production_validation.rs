@@ -172,11 +172,11 @@ async fn flush_on_stream_table_rejected() {
 
     // Create a STREAM table
     let create_table = r#"
-        CREATE TABLE app_stream.events (
+        CREATE STREAM TABLE app_stream.events (
             event_id TEXT PRIMARY KEY,
             data TEXT
         )
-        WITH (TYPE = 'STREAM')
+        WITH (TTL_SECONDS = 60)
     "#;
     let resp = server.execute_sql_as_user(create_table, "root").await;
     assert_eq!(resp.status, ResponseStatus::Success, "CREATE TABLE failed: {:?}", resp.error);

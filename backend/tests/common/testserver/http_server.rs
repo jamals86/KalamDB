@@ -97,6 +97,7 @@ pub struct HttpTestServer {
     /// Uses std::sync::Mutex since it's accessed from sync code (link_client)
     user_id_cache: std::sync::Mutex<HashMap<String, String>>,
     running: kalamdb_server::lifecycle::RunningTestHttpServer,
+    skip_raft_leader_check: bool,
 }
 
 fn acquire_global_http_test_server_lock() -> Result<Option<std::fs::File>> {
@@ -583,6 +584,29 @@ impl HttpTestServer {
         let mut last_error: Option<String> = None;
 
         loop {
+            if self.skip_raft_leader_check {
+                let select_probe = self.execute_sql("SELECT 1 AS ok").await;
+                if matches!(
+                    select_probe,
+                    Ok(ref r) if r.status == kalam_link::models::ResponseStatus::Success
+                ) {
+                    return Ok(());
+                }
+                last_error = select_probe
+                    .err()
+                    .map(|e| format!("{:#}", e))
+                    .or_else(|| last_error.take());
+                if Instant::now() >= deadline {
+                    return Err(anyhow::anyhow!(
+                        "HTTP test server did not become ready in time (last_error={:?})",
+                        last_error
+                    ));
+                }
+
+                sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+
             // Prefer a probe that confirms Raft leadership is established.
             // system.cluster is registered during AppContext init.
             let cluster_probe = "SELECT is_self, is_leader FROM system.cluster";
@@ -663,6 +687,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
     // Increase rate limits for tests (default is 100/sec which is too low for insert loops)
     config.rate_limit.max_queries_per_sec = 100000;
     config.rate_limit.max_messages_per_sec = 10000;
+    let skip_raft_leader_check = config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
 
     // Match production behavior: set env var early so auth uses the same secret.
     if std::env::var("KALAMDB_JWT_SECRET").is_err() {
@@ -688,6 +713,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
         link_client_cache: Mutex::new(HashMap::new()),
         user_id_cache: std::sync::Mutex::new(HashMap::new()),
         running,
+        skip_raft_leader_check,
     };
 
     server.wait_until_ready().await?;
@@ -713,8 +739,8 @@ pub async fn start_http_test_server_with_config(
     // Increase rate limits for tests (default is 100/sec which is too low for insert loops)
     config.rate_limit.max_queries_per_sec = 100000;
     config.rate_limit.max_messages_per_sec = 10000;
-
     override_config(&mut config);
+    let skip_raft_leader_check = config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
 
     if std::env::var("KALAMDB_JWT_SECRET").is_err() {
         std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
@@ -738,6 +764,7 @@ pub async fn start_http_test_server_with_config(
         link_client_cache: Mutex::new(HashMap::new()),
         user_id_cache: std::sync::Mutex::new(HashMap::new()),
         running,
+        skip_raft_leader_check,
     };
 
     server.wait_until_ready().await?;

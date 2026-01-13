@@ -71,6 +71,12 @@ pub enum ExtensionStatement {
     DropUser(DropUserStatement),
     /// SHOW MANIFEST CACHE command
     ShowManifest(ShowManifestStatement),
+    /// CLUSTER FLUSH command
+    ClusterFlush,
+    /// CLUSTER CLEAR command
+    ClusterClear,
+    /// CLUSTER LIST command
+    ClusterList,
 }
 
 impl ExtensionStatement {
@@ -170,6 +176,19 @@ impl ExtensionStatement {
             return ShowManifestStatement::parse(sql)
                 .map(ExtensionStatement::ShowManifest)
                 .map_err(|e| format!("SHOW MANIFEST parsing failed: {}", e));
+        }
+
+        // Try CLUSTER commands
+        if sql_upper.starts_with("CLUSTER") {
+            let parts: Vec<&str> = sql_upper.split_whitespace().collect();
+            if parts.len() >= 2 {
+                match parts[1] {
+                    "FLUSH" => return Ok(ExtensionStatement::ClusterFlush),
+                    "CLEAR" => return Ok(ExtensionStatement::ClusterClear),
+                    "LIST" | "LS" => return Ok(ExtensionStatement::ClusterList),
+                    _ => return Err("Unknown CLUSTER subcommand. Supported: FLUSH, CLEAR, LIST".to_string()),
+                }
+            }
         }
 
         Err("Unknown KalamDB extension command. Supported commands: CREATE/ALTER/DROP/SHOW STORAGE, FLUSH TABLE, FLUSH ALL TABLES, KILL JOB, SUBSCRIBE TO, CREATE/ALTER/DROP USER, SHOW MANIFEST".to_string())
