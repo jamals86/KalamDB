@@ -113,7 +113,7 @@ impl UsersTableSchema {
                 7,
                 "auth_data",
                 7,
-                KalamDataType::Text,
+                KalamDataType::Json,
                 true,
                 false,
                 false,

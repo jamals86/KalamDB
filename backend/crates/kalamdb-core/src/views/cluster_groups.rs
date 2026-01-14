@@ -2,13 +2,13 @@
 //!
 //! **Type**: Virtual View (not backed by persistent storage)
 //!
-//! Provides per-Raft-group membership and replication status.
-//! Pattern mirrors `system.cluster` (see `views/cluster.rs`).
+//! Provides per-Raft-group OpenRaft metrics directly from RaftMetrics.
+//! Each row represents one Raft group's current state on this node.
 
 use super::view_base::{ViewTableProvider, VirtualView};
 use crate::schema_registry::RegistryError;
 use datafusion::arrow::array::{
-    ArrayRef, BooleanArray, StringArray, UInt64Array,
+    ArrayRef, Int64Array, StringArray,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -18,25 +18,7 @@ use kalamdb_commons::schemas::{
 };
 use kalamdb_commons::{NamespaceId, SystemTable, TableName};
 use kalamdb_raft::{CommandExecutor, GroupId};
-use serde_json::json;
 use std::sync::{Arc, OnceLock};
-
-#[derive(Debug, Clone, Copy)]
-enum ClusterGroupType {
-    Meta,
-    UserData,
-    SharedData,
-}
-
-impl ClusterGroupType {
-    fn as_str(&self) -> &'static str {
-        match self {
-            ClusterGroupType::Meta => "meta",
-            ClusterGroupType::UserData => "user_data",
-            ClusterGroupType::SharedData => "shared_data",
-        }
-    }
-}
 
 fn cluster_groups_schema() -> SchemaRef {
     static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
@@ -59,19 +41,8 @@ impl ClusterGroupsView {
         let columns = vec![
             ColumnDefinition::new(
                 1,
-                "cluster_id",
-                1,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Cluster identifier".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
                 "group_id",
-                2,
+                1,
                 KalamDataType::BigInt,
                 false,
                 false,
@@ -80,59 +51,70 @@ impl ClusterGroupsView {
                 Some("Raft group numeric ID".to_string()),
             ),
             ColumnDefinition::new(
-                3,
-                "group_type",
-                3,
+                2,
+                "cluster_id",
+                2,
                 KalamDataType::Text,
                 false,
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Group type (meta, user_data, shared_data)".to_string()),
+                Some("Cluster identifier".to_string()),
             ),
             ColumnDefinition::new(
-                4,
+                3,
                 "node_id",
-                4,
+                3,
                 KalamDataType::BigInt,
                 false,
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Node ID".to_string()),
+                Some("Raft node ID (this node's ID for the group)".to_string()),
             ),
             ColumnDefinition::new(
-                5,
-                "role",
-                5,
+                4,
+                "group_type",
+                4,
                 KalamDataType::Text,
                 false,
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Node role for this group (leader, follower, learner, candidate, shutdown)".to_string()),
+                Some("Group type: meta, user_data, shared_data".to_string()),
             ),
             ColumnDefinition::new(
-                6,
-                "is_leader",
-                6,
-                KalamDataType::Boolean,
-                false,
+                5,
+                "current_term",
+                5,
+                KalamDataType::BigInt,
+                true,
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Whether this node is leader for this group".to_string()),
+                Some("Current Raft term".to_string()),
+            ),
+            ColumnDefinition::new(
+                6,
+                "vote",
+                6,
+                KalamDataType::Json,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Last accepted vote (JSON format)".to_string()),
             ),
             ColumnDefinition::new(
                 7,
-                "term",
+                "last_log_index",
                 7,
                 KalamDataType::BigInt,
                 true,
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Current Raft term (nullable if metrics unavailable)".to_string()),
+                Some("Last log index appended to this node's log".to_string()),
             ),
             ColumnDefinition::new(
                 8,
@@ -143,62 +125,73 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Last applied log index (nullable if metrics unavailable)".to_string()),
+                Some("Last log index applied to state machine".to_string()),
             ),
             ColumnDefinition::new(
                 9,
-                "leader_node_id",
+                "snapshot",
                 9,
                 KalamDataType::BigInt,
                 true,
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Leader node id for this group (nullable if unknown)".to_string()),
+                Some("Last log index included in snapshot".to_string()),
             ),
             ColumnDefinition::new(
                 10,
-                "membership",
+                "purged",
                 10,
-                KalamDataType::Text,
+                KalamDataType::BigInt,
                 true,
                 false,
                 false,
                 ColumnDefault::None,
-                Some("JSON membership: voters + learners".to_string()),
+                Some("Last log index purged from storage (inclusive)".to_string()),
             ),
             ColumnDefinition::new(
                 11,
-                "replication_lag",
+                "committed",
                 11,
                 KalamDataType::BigInt,
                 true,
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Replication lag (entries behind leader), NULL on leader/unknown".to_string()),
+                Some("Last log index committed by the cluster".to_string()),
             ),
             ColumnDefinition::new(
                 12,
-                "snapshot_state",
+                "state",
                 12,
                 KalamDataType::Text,
-                false,
+                true,
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Snapshot state: none | streaming | installing".to_string()),
+                Some("Server state: Leader, Follower, Candidate, Learner, Shutdown".to_string()),
             ),
             ColumnDefinition::new(
                 13,
-                "status",
+                "current_leader",
                 13,
-                KalamDataType::Text,
-                false,
+                KalamDataType::BigInt,
+                true,
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Group status: active | initializing | removed".to_string()),
+                Some("Current cluster leader node ID".to_string()),
+            ),
+            ColumnDefinition::new(
+                14,
+                "millis_since_quorum_ack",
+                14,
+                KalamDataType::BigInt,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Milliseconds since most recent quorum acknowledgment (leader only)".to_string()),
             ),
         ];
 
@@ -216,19 +209,6 @@ impl ClusterGroupsView {
     pub fn new(executor: Arc<dyn CommandExecutor>) -> Self {
         Self { executor }
     }
-
-    fn group_status_str(metrics_available: bool) -> &'static str {
-        if metrics_available {
-            "active"
-        } else {
-            "initializing"
-        }
-    }
-
-    fn snapshot_state_str(_metrics_available: bool) -> &'static str {
-        // KalamDB doesn't currently expose streaming/installing state.
-        "none"
-    }
 }
 
 impl VirtualView for ClusterGroupsView {
@@ -244,177 +224,121 @@ impl VirtualView for ClusterGroupsView {
         let info = self.executor.get_cluster_info();
 
         // Try to downcast to RaftExecutor so we can read per-group OpenRaft metrics.
-        // If downcast fails, we still emit rows but with NULL metrics.
         let raft_exec = self.executor.as_any().downcast_ref::<kalamdb_raft::RaftExecutor>();
 
-        let group_ids = if let Some(re) = raft_exec {
-            re.manager().all_group_ids()
-        } else {
-            let mut ids = Vec::with_capacity(info.total_groups as usize);
-            ids.push(GroupId::Meta);
-            for shard in 0..info.user_shards {
-                ids.push(GroupId::DataUserShard(shard));
-            }
-            for shard in 0..info.shared_shards {
-                ids.push(GroupId::DataSharedShard(shard));
-            }
-            ids
-        };
+        // Build ALL expected group IDs from configuration (source of truth)
+        let mut group_ids = Vec::with_capacity(info.total_groups as usize);
+        group_ids.push(GroupId::Meta);
+        for shard in 0..info.user_shards {
+            group_ids.push(GroupId::DataUserShard(shard));
+        }
+        for shard in 0..info.shared_shards {
+            group_ids.push(GroupId::DataSharedShard(shard));
+        }
+        
+        // log::info!(
+        //     "cluster_groups: Building view with {} user_shards, {} shared_shards = {} total groups",
+        //     info.user_shards, info.shared_shards, group_ids.len()
+        // );
 
-        // Pre-allocate with an estimate: groups * nodes
-        let estimated_rows = (group_ids.len().max(1)) * (info.nodes.len().max(1));
-
+        // Pre-allocate vectors for each column
+        let estimated_rows = group_ids.len();
         let mut cluster_ids: Vec<&str> = Vec::with_capacity(estimated_rows);
-        let mut group_id_nums: Vec<u64> = Vec::with_capacity(estimated_rows);
+        let mut node_ids: Vec<i64> = Vec::with_capacity(estimated_rows);
+        let mut group_id_nums: Vec<i64> = Vec::with_capacity(estimated_rows);
         let mut group_types: Vec<&str> = Vec::with_capacity(estimated_rows);
-        let mut node_ids: Vec<u64> = Vec::with_capacity(estimated_rows);
-        let mut roles: Vec<&str> = Vec::with_capacity(estimated_rows);
-        let mut is_leaders: Vec<bool> = Vec::with_capacity(estimated_rows);
+        let mut current_terms: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
+        let mut votes: Vec<Option<String>> = Vec::with_capacity(estimated_rows);
+        let mut last_log_indexes: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
+        let mut last_applieds: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
+        let mut snapshots: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
+        let mut purgeds: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
+        let mut committeds: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
+        let mut states: Vec<Option<String>> = Vec::with_capacity(estimated_rows);
+        let mut current_leaders: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
+        let mut millis_since_quorum_acks: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
 
-        let mut terms: Vec<Option<u64>> = Vec::with_capacity(estimated_rows);
-        let mut last_applieds: Vec<Option<u64>> = Vec::with_capacity(estimated_rows);
-        let mut leader_node_ids: Vec<Option<u64>> = Vec::with_capacity(estimated_rows);
-        let mut memberships_json: Vec<Option<String>> = Vec::with_capacity(estimated_rows);
-        let mut replication_lags: Vec<Option<u64>> = Vec::with_capacity(estimated_rows);
-
-        let mut snapshot_states: Vec<&str> = Vec::with_capacity(estimated_rows);
-        let mut statuses: Vec<&str> = Vec::with_capacity(estimated_rows);
-
-        for gid in group_ids {
-            let group_type = match gid {
-                GroupId::Meta => ClusterGroupType::Meta,
-                GroupId::DataUserShard(_) => ClusterGroupType::UserData,
-                GroupId::DataSharedShard(_) => ClusterGroupType::SharedData,
+        for gid in &group_ids {
+            // New order: group_id, cluster_id, node_id, group_type, ...
+            group_id_nums.push(gid.as_u64() as i64);
+            cluster_ids.push(info.cluster_id.as_str());
+            
+            // Determine group type
+            let group_type_str = match gid {
+                GroupId::Meta => "meta",
+                GroupId::DataUserShard(_) => "user_data",
+                GroupId::DataSharedShard(_) => "shared_data",
             };
+            group_types.push(group_type_str);
 
-            let metrics_opt = raft_exec.and_then(|re| re.manager().group_metrics(gid));
+            // Try to get metrics for this group
+            let metrics_opt = raft_exec.and_then(|re| re.manager().group_metrics(*gid));
 
             if let Some(metrics) = metrics_opt {
-                let leader_id = metrics.current_leader;
-                let is_self_leader = leader_id == Some(metrics.id);
-                let voters: std::collections::BTreeSet<u64> =
-                    metrics.membership_config.voter_ids().collect();
-
-                let mut all_node_ids: Vec<u64> = Vec::new();
-                for (node_id, _node) in metrics.membership_config.nodes() {
-                    all_node_ids.push(*node_id);
-                }
-
-                let learners: Vec<u64> = all_node_ids
-                    .iter()
-                    .copied()
-                    .filter(|id| !voters.contains(id))
-                    .collect();
-                let voters_vec: Vec<u64> = voters.iter().copied().collect();
-                let membership = json!({
-                    "voters": voters_vec,
-                    "learners": learners,
-                })
-                .to_string();
-
-                for node_id in all_node_ids {
-                    cluster_ids.push(info.cluster_id.as_str());
-                    group_id_nums.push(gid.as_u64());
-                    group_types.push(group_type.as_str());
-                    node_ids.push(node_id);
-
-                    let is_leader = leader_id == Some(node_id);
-                    is_leaders.push(is_leader);
-
-                    // Keep role values aligned with the requested set: leader | follower | learner
-                    let role = if is_leader {
-                        "leader"
-                    } else if voters.contains(&node_id) {
-                        "follower"
-                    } else {
-                        "learner"
-                    };
-                    roles.push(role);
-
-                    terms.push(Some(metrics.current_term));
-                    leader_node_ids.push(leader_id);
-
-                    // last_applied: for self use metrics.last_applied; for others use replication match (leader only)
-                    if node_id == metrics.id {
-                        last_applieds.push(metrics.last_applied.map(|l| l.index));
-                    } else if is_self_leader {
-                        let applied = metrics
-                            .replication
-                            .as_ref()
-                            .and_then(|rep| rep.get(&node_id))
-                            .and_then(|matched| matched.map(|l| l.index));
-                        last_applieds.push(applied);
-                    } else {
-                        last_applieds.push(None);
-                    }
-
-                    memberships_json.push(Some(membership.clone()));
-
-                    // replication_lag: only available on leader; NULL on leader row by requirement
-                    if is_leader {
-                        replication_lags.push(None);
-                    } else if is_self_leader {
-                        if let (Some(rep), Some(last_log_idx)) = (metrics.replication.as_ref(), metrics.last_log_index) {
-                            let matched_idx = rep
-                                .get(&node_id)
-                                .and_then(|matched| matched.map(|l| l.index))
-                                .unwrap_or(0);
-                            replication_lags.push(Some(last_log_idx.saturating_sub(matched_idx)));
-                        } else {
-                            replication_lags.push(None);
-                        }
-                    } else {
-                        replication_lags.push(None);
-                    }
-
-                    snapshot_states.push(Self::snapshot_state_str(true));
-                    statuses.push(Self::group_status_str(true));
-                }
+                // Metrics available - populate from RaftMetrics
+                node_ids.push(metrics.id as i64);
+                current_terms.push(Some(metrics.current_term as i64));
+                votes.push(Some(format!("{:?}", metrics.vote)));
+                last_log_indexes.push(metrics.last_log_index.map(|idx| idx as i64));
+                last_applieds.push(metrics.last_applied.map(|log_id| log_id.index as i64));
+                snapshots.push(metrics.snapshot.map(|log_id| log_id.index as i64));
+                purgeds.push(metrics.purged.map(|log_id| log_id.index as i64));
+                // Note: RaftMetrics doesn't directly expose committed; we'd need to get it from storage/log
+                // For now, use None
+                committeds.push(None);
+                states.push(Some(format!("{:?}", metrics.state)));
+                current_leaders.push(metrics.current_leader.map(|id| id as i64));
+                millis_since_quorum_acks.push(metrics.millis_since_quorum_ack.map(|ms| ms as i64));
             } else {
-                // Fallback: emit one row per known node with unknown per-group metrics.
-                for node in &info.nodes {
-                    cluster_ids.push(info.cluster_id.as_str());
-                    group_id_nums.push(gid.as_u64());
-                    group_types.push(group_type.as_str());
-                    node_ids.push(node.node_id.as_u64());
-
-                    is_leaders.push(false);
-                    roles.push("follower");
-
-                    terms.push(None);
-                    last_applieds.push(None);
-                    leader_node_ids.push(None);
-                    memberships_json.push(None);
-                    replication_lags.push(None);
-
-                    snapshot_states.push(Self::snapshot_state_str(false));
-                    statuses.push(Self::group_status_str(false));
-                }
+                // No metrics available - use defaults/NULLs
+                node_ids.push(info.current_node_id.as_u64() as i64);
+                current_terms.push(None);
+                votes.push(None);
+                last_log_indexes.push(None);
+                last_applieds.push(None);
+                snapshots.push(None);
+                purgeds.push(None);
+                committeds.push(None);
+                states.push(None);
+                current_leaders.push(None);
+                millis_since_quorum_acks.push(None);
             }
         }
+
+        // log::info!(
+        //     "cluster_groups: Created {} rows from {} groups",
+        //     cluster_ids.len(), group_ids.len()
+        // );
 
         RecordBatch::try_new(
             self.schema(),
             vec![
+                Arc::new(Int64Array::from(group_id_nums)) as ArrayRef,
                 Arc::new(StringArray::from(cluster_ids)) as ArrayRef,
-                Arc::new(UInt64Array::from(group_id_nums)) as ArrayRef,
+                Arc::new(Int64Array::from(node_ids)) as ArrayRef,
                 Arc::new(StringArray::from(group_types)) as ArrayRef,
-                Arc::new(UInt64Array::from(node_ids)) as ArrayRef,
-                Arc::new(StringArray::from(roles)) as ArrayRef,
-                Arc::new(BooleanArray::from(is_leaders)) as ArrayRef,
-                Arc::new(UInt64Array::from(terms)) as ArrayRef,
-                Arc::new(UInt64Array::from(last_applieds)) as ArrayRef,
-                Arc::new(UInt64Array::from(leader_node_ids)) as ArrayRef,
+                Arc::new(Int64Array::from(current_terms)) as ArrayRef,
                 {
-                    let refs: Vec<Option<&str>> = memberships_json
+                    let refs: Vec<Option<&str>> = votes
                         .iter()
                         .map(|s| s.as_deref())
                         .collect();
                     Arc::new(StringArray::from(refs)) as ArrayRef
                 },
-                Arc::new(UInt64Array::from(replication_lags)) as ArrayRef,
-                Arc::new(StringArray::from(snapshot_states)) as ArrayRef,
-                Arc::new(StringArray::from(statuses)) as ArrayRef,
+                Arc::new(Int64Array::from(last_log_indexes)) as ArrayRef,
+                Arc::new(Int64Array::from(last_applieds)) as ArrayRef,
+                Arc::new(Int64Array::from(snapshots)) as ArrayRef,
+                Arc::new(Int64Array::from(purgeds)) as ArrayRef,
+                Arc::new(Int64Array::from(committeds)) as ArrayRef,
+                {
+                    let refs: Vec<Option<&str>> = states
+                        .iter()
+                        .map(|s| s.as_deref())
+                        .collect();
+                    Arc::new(StringArray::from(refs)) as ArrayRef
+                },
+                Arc::new(Int64Array::from(current_leaders)) as ArrayRef,
+                Arc::new(Int64Array::from(millis_since_quorum_acks)) as ArrayRef,
             ],
         )
         .map_err(|e| RegistryError::Other(format!("Failed to build cluster_groups batch: {}", e)))
@@ -436,11 +360,20 @@ mod tests {
     #[test]
     fn test_schema() {
         let schema = cluster_groups_schema();
-        assert_eq!(schema.fields().len(), 13);
-        assert_eq!(schema.field(0).name(), "cluster_id");
-        assert_eq!(schema.field(1).name(), "group_id");
-        assert_eq!(schema.field(2).name(), "group_type");
-        assert_eq!(schema.field(3).name(), "node_id");
-        assert_eq!(schema.field(4).name(), "role");
+        assert_eq!(schema.fields().len(), 14);
+        assert_eq!(schema.field(0).name(), "group_id");
+        assert_eq!(schema.field(1).name(), "cluster_id");
+        assert_eq!(schema.field(2).name(), "node_id");
+        assert_eq!(schema.field(3).name(), "group_type");
+        assert_eq!(schema.field(4).name(), "current_term");
+        assert_eq!(schema.field(5).name(), "vote");
+        assert_eq!(schema.field(6).name(), "last_log_index");
+        assert_eq!(schema.field(7).name(), "last_applied");
+        assert_eq!(schema.field(8).name(), "snapshot");
+        assert_eq!(schema.field(9).name(), "purged");
+        assert_eq!(schema.field(10).name(), "committed");
+        assert_eq!(schema.field(11).name(), "state");
+        assert_eq!(schema.field(12).name(), "current_leader");
+        assert_eq!(schema.field(13).name(), "millis_since_quorum_ack");
     }
 }

@@ -111,7 +111,7 @@ impl StoragesTableSchema {
                 7,
                 "config_json",
                 7,
-                KalamDataType::Text,
+                KalamDataType::Json,
                 true,
                 false,
                 false,

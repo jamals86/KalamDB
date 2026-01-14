@@ -310,13 +310,13 @@ max_parameter_size_bytes = 524288
 #   - List all OTHER nodes in peers
 #   - Node with node_id=1 automatically bootstraps the cluster
 
-# [cluster]
+[cluster]
 # # Unique identifier for this cluster
 # cluster_id = "prd-cluster"
 # 
 # # This node's unique ID (must be >= 1)
 # # Node with node_id=1 is the designated bootstrap node
-# node_id = 1
+node_id = 1
 # 
 # # RPC address for Raft inter-node communication
 # rpc_addr = "0.0.0.0:9100"
@@ -325,7 +325,7 @@ max_parameter_size_bytes = 524288
 # api_addr = "0.0.0.0:8080"
 # 
 # # Number of user data shards (default: 32)
-# user_shards = 32
+user_shards = 32
 # 
 # # Number of shared data shards (default: 1)
 # shared_shards = 1

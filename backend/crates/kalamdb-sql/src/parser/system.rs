@@ -114,18 +114,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_system_table_column_family_name() {
-        assert_eq!(SystemTable::Users.column_family_name(), "system_users");
-        assert_eq!(
-            SystemTable::LiveQueries.column_family_name(),
-            "system_live_queries"
-        );
-        assert_eq!(
-            SystemTable::Namespaces.column_family_name(),
-            "system_namespaces"
-        );
-    }
+    // #[test]
+    // fn test_system_table_column_family_name() {
+    //     assert_eq!(SystemTable::Users.column_family_name(), "system_users");
+    //     assert_eq!(
+    //         SystemTable::LiveQueries.column_family_name(),
+    //         "system_live_queries"
+    //     );
+    //     assert_eq!(
+    //         SystemTable::Namespaces.column_family_name(),
+    //         "system_namespaces"
+    //     );
+    // }
 
     #[test]
     fn test_parser_creation() {

@@ -323,7 +323,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
             .and_then(|s| s.meta.snapshot_id.split('-').last()?.parse().ok())
             .unwrap_or(0);
 
-        log::info!(
+        log::debug!(
             "KalamRaftStorage[{}]: Recovered state - last_applied={:?}, last_purged={:?}, committed={:?}, vote={:?}",
             group_id,
             last_applied.map(|id| id.index),

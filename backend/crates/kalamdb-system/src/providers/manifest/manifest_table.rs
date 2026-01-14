@@ -155,7 +155,7 @@ impl ManifestTableSchema {
                 11,
                 "manifest_json",
                 11,
-                KalamDataType::Text,
+                KalamDataType::Json,
                 false,
                 false,
                 false,
