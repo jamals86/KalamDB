@@ -20,7 +20,7 @@ use crate::sql::executor::SqlExecutor;
 use crate::storage::storage_registry::StorageRegistry;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{constants::ColumnFamilyNames, NodeId, ServerConfig};
+use kalamdb_commons::{constants::ColumnFamilyNames, NodeId, ServerConfig, SystemTable};
 use kalamdb_raft::CommandExecutor;
 use kalamdb_store::StorageBackend;
 use kalamdb_system::SystemTablesRegistry;
@@ -287,19 +287,8 @@ impl AppContext {
                     .register_schema("system", system_schema.clone())
                     .expect("Failed to register system schema");
 
-                // Register all system tables in the system schema
-                for (table_name, provider) in system_tables.all_system_providers() {
-                    system_schema
-                        .register_table(table_name.to_string(), provider)
-                        .expect("Failed to register system table");
-                }
-
-                // Register system.datatypes virtual view (Arrow → KalamDB type mappings)
-                let datatypes_view = Arc::new(DatatypesView::new());
-                let datatypes_provider = Arc::new(DatatypesTableProvider::new(datatypes_view));
-                system_schema
-                    .register_table("datatypes".to_string(), datatypes_provider)
-                    .expect("Failed to register system.datatypes");
+                // Register all system tables and views in the system schema
+                Self::register_system_tables(&system_schema, &system_tables);
 
                 // Register existing namespaces as DataFusion schemas
                 // This ensures all namespaces persisted in RocksDB are available for SQL queries
@@ -413,12 +402,18 @@ impl AppContext {
                 // Wire up ClusterTableProvider with the executor (cluster mode only)
                 let cluster_provider = Arc::new(crate::views::create_cluster_provider(executor.clone()));
                 system_tables.set_cluster_provider(cluster_provider.clone());
+
+                // Wire up ClusterGroupsTableProvider with the executor (per-group view)
+                let cluster_groups_provider =
+                    Arc::new(crate::views::create_cluster_groups_provider(executor.clone()));
+                system_tables.set_cluster_groups_provider(cluster_groups_provider.clone());
                 
-                // Register cluster with DataFusion system schema
+                // Register cluster view with DataFusion system schema
                 // This must happen after executor is created since ClusterTableProvider needs it
-                system_schema
-                    .register_table("cluster".to_string(), cluster_provider)
-                    .expect("Failed to register system.cluster");
+                Self::register_cluster_view(&system_schema, cluster_provider);
+
+                // Register cluster_groups view with DataFusion system schema
+                Self::register_cluster_groups_view(&system_schema, cluster_groups_provider);
 
                 // Create unified applier (lazy initialization)
                 // All commands flow through Raft (even single-node mode)
@@ -915,5 +910,67 @@ impl AppContext {
     pub fn log_runtime_metrics(&self) {
         let runtime = collect_runtime_metrics(self.server_start_time);
         log::info!("Runtime metrics: {}", runtime.to_log_string());
+    }
+
+    /// Register all system tables and views with the DataFusion schema provider
+    ///
+    /// This function encapsulates all system table registration logic:
+    /// - Persisted system tables (users, jobs, namespaces, storages, live_queries, tables, audit_logs, manifest)
+    /// - Virtual views (stats, settings, server_logs, datatypes)
+    ///
+    /// Note: The `cluster` view is registered separately because it requires the CommandExecutor
+    /// which is only available after Raft initialization.
+    ///
+    /// # Arguments
+    /// * `system_schema` - The DataFusion MemorySchemaProvider for the "system" schema
+    /// * `system_tables` - The SystemTablesRegistry containing all system table providers
+    pub fn register_system_tables(
+        system_schema: &Arc<datafusion::catalog::memory::MemorySchemaProvider>,
+        system_tables: &Arc<SystemTablesRegistry>,
+    ) {
+        // Collect all providers (tables + views) from the registry
+        let mut providers = system_tables.all_system_providers();
+
+        // Add system.datatypes virtual view (Arrow → KalamDB type mappings)
+        let datatypes_view = Arc::new(DatatypesView::new());
+        let datatypes_provider = Arc::new(DatatypesTableProvider::new(datatypes_view));
+        providers.push((SystemTable::Datatypes, datatypes_provider));
+
+        for (table, provider) in providers {
+            let name = table.table_name().to_string();
+            system_schema
+                .register_table(name.clone(), provider)
+                .unwrap_or_else(|e| panic!("Failed to register system.{}: {}", name, e));
+        }
+    }
+
+    /// Register the cluster view with the system schema
+    ///
+    /// This is called separately from `register_system_tables()` because the cluster view
+    /// requires the CommandExecutor which is only available after Raft initialization.
+    ///
+    /// # Arguments
+    /// * `system_schema` - The DataFusion MemorySchemaProvider for the "system" schema
+    /// * `cluster_provider` - The cluster view provider (created with CommandExecutor)
+    pub fn register_cluster_view(
+        system_schema: &Arc<datafusion::catalog::memory::MemorySchemaProvider>,
+        cluster_provider: Arc<dyn datafusion::datasource::TableProvider>,
+    ) {
+        system_schema
+            .register_table(SystemTable::Cluster.table_name().to_string(), cluster_provider)
+            .expect("Failed to register system.cluster");
+    }
+
+    /// Register the cluster_groups view with the system schema
+    pub fn register_cluster_groups_view(
+        system_schema: &Arc<datafusion::catalog::memory::MemorySchemaProvider>,
+        cluster_groups_provider: Arc<dyn datafusion::datasource::TableProvider>,
+    ) {
+        system_schema
+            .register_table(
+                SystemTable::ClusterGroups.table_name().to_string(),
+                cluster_groups_provider,
+            )
+            .expect("Failed to register system.cluster_groups");
     }
 }

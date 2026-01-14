@@ -366,7 +366,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
 
         // RBAC: authorize based on actual table type if exists
         let registry = self.app_context.schema_registry();
-        let actual_type = match registry.get_table_definition(self.app_context.as_ref(), &table_id)? {
+        let actual_type = match registry.get_table_if_exists(self.app_context.as_ref(), &table_id)? {
             Some(def) => def.table_type,
             None => TableType::from(statement.table_type),
         };

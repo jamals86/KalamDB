@@ -9,30 +9,31 @@
 //! - Reads log files dynamically on each query (no cached state)
 //! - Only used in development environments
 //! - No memory consumption when idle
+//!
+//! **Schema Caching**: Memoized via `OnceLock`
+//! **Schema**: TableDefinition provides consistent metadata for views
 
-use super::view_base::{VirtualView, ViewTableProvider};
+use super::view_base::{ViewTableProvider, VirtualView};
 use crate::schema_registry::RegistryError;
 use datafusion::arrow::array::{ArrayRef, Int64Builder, StringBuilder};
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
+use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::schemas::{
+    ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
+};
+use kalamdb_commons::{NamespaceId, SystemTable, TableName};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-/// Static schema for system.server_logs
-static SERVER_LOGS_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-
-/// Get or initialize the server_logs schema
+/// Get or initialize the server_logs schema (memoized)
 fn server_logs_schema() -> SchemaRef {
-    SERVER_LOGS_SCHEMA
+    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+    SCHEMA
         .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("timestamp", DataType::Utf8, false),
-                Field::new("level", DataType::Utf8, false),
-                Field::new("thread", DataType::Utf8, true),
-                Field::new("target", DataType::Utf8, true),
-                Field::new("line", DataType::Int64, true),
-                Field::new("message", DataType::Utf8, false),
-            ]))
+            ServerLogsView::definition()
+                .to_arrow_schema()
+                .expect("Failed to convert server_logs TableDefinition to Arrow schema")
         })
         .clone()
 }
@@ -55,6 +56,96 @@ pub struct ServerLogsView {
 }
 
 impl ServerLogsView {
+    /// Get the TableDefinition for system.server_logs view
+    ///
+    /// Schema:
+    /// - timestamp TEXT NOT NULL (log timestamp)
+    /// - level TEXT NOT NULL (log level: DEBUG, INFO, WARN, ERROR)
+    /// - thread TEXT (nullable - thread name)
+    /// - target TEXT (nullable - module/target name)
+    /// - line BIGINT (nullable - source line number)
+    /// - message TEXT NOT NULL (log message content)
+    pub fn definition() -> TableDefinition {
+        let columns = vec![
+            ColumnDefinition::new(
+                1,
+                "timestamp",
+                1,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Log entry timestamp (ISO 8601 format)".to_string()),
+            ),
+            ColumnDefinition::new(
+                2,
+                "level",
+                2,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Log level (DEBUG, INFO, WARN, ERROR)".to_string()),
+            ),
+            ColumnDefinition::new(
+                3,
+                "thread",
+                3,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Thread name that generated the log".to_string()),
+            ),
+            ColumnDefinition::new(
+                4,
+                "target",
+                4,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Module or target that generated the log".to_string()),
+            ),
+            ColumnDefinition::new(
+                5,
+                "line",
+                5,
+                KalamDataType::BigInt,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Source code line number".to_string()),
+            ),
+            ColumnDefinition::new(
+                6,
+                "message",
+                6,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Log message content".to_string()),
+            ),
+        ];
+
+        TableDefinition::new(
+            NamespaceId::system(),
+            TableName::new(SystemTable::ServerLogs.table_name()),
+            TableType::System,
+            columns,
+            TableOptions::system(),
+            Some("Server log entries from JSON log files (read-only view)".to_string()),
+        )
+        .expect("Failed to create system.server_logs view definition")
+    }
+
     /// Create a new server logs view
     pub fn new(logs_path: impl Into<PathBuf>) -> Self {
         Self {
@@ -108,6 +199,10 @@ impl ServerLogsView {
 }
 
 impl VirtualView for ServerLogsView {
+    fn system_table(&self) -> SystemTable {
+        SystemTable::ServerLogs
+    }
+
     fn schema(&self) -> SchemaRef {
         server_logs_schema()
     }
@@ -159,10 +254,6 @@ impl VirtualView for ServerLogsView {
             ],
         )
         .map_err(|e| RegistryError::Other(format!("Failed to build server_logs batch: {}", e)))
-    }
-
-    fn view_name(&self) -> &str {
-        "system.server_logs"
     }
 }
 

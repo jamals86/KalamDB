@@ -23,7 +23,6 @@ use std::sync::Arc;
 /// System.tables table provider using consolidated store with versioning
 pub struct TablesTableProvider {
     store: TablesStore,
-    schema: SchemaRef,
 }
 
 impl std::fmt::Debug for TablesTableProvider {
@@ -43,7 +42,6 @@ impl TablesTableProvider {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         Self {
             store: new_tables_store(backend),
-            schema: TablesTableSchema::schema(),
         }
     }
 
@@ -326,7 +324,7 @@ impl TablesTableProvider {
         }
 
         // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        let mut builder = RecordBatchBuilder::new(TablesTableSchema::schema());
         builder
             .add_string_column_owned(table_ids)
             .add_string_column_owned(table_names)
@@ -356,7 +354,7 @@ impl TableProvider for TablesTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        TablesTableSchema::schema()
     }
 
     fn table_type(&self) -> TableType {
@@ -371,7 +369,7 @@ impl TableProvider for TablesTableProvider {
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::datasource::MemTable;
-        let schema = self.schema.clone();
+        let schema = TablesTableSchema::schema();
         let batch = self.scan_all_tables().map_err(|e| {
             DataFusionError::Execution(format!("Failed to build tables batch: {}", e))
         })?;
@@ -388,7 +386,7 @@ impl SystemTableProviderExt for TablesTableProvider {
     }
 
     fn schema_ref(&self) -> SchemaRef {
-        self.schema.clone()
+        TablesTableSchema::schema()
     }
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {

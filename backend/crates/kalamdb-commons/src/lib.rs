@@ -60,7 +60,7 @@ pub mod websocket;
 // Re-export commonly used types at crate root
 pub use arrow_utils::{empty_batch, RecordBatchBuilder};
 pub use config::ServerConfig;
-pub use constants::{ANONYMOUS_USER_ID, COLUMN_FAMILIES, MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES, SYSTEM_TABLES};
+pub use constants::{ANONYMOUS_USER_ID, MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES};
 pub use errors::{CommonError, Result};
 pub use models::{
     // Phase 15 (008-schema-consolidation): Re-export schema types

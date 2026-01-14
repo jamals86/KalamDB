@@ -93,9 +93,9 @@ impl JobExecutor for FlushExecutor {
         let schema_registry = app_ctx.schema_registry();
         let live_query_manager = app_ctx.live_query_manager();
 
-        // // Get table definition and schema
+        // // Get table definition (optional)
         // let table_def = schema_registry
-        //     .get_table_definition(&table_id)?
+        //     .get_table_if_exists(app_ctx.as_ref(), &table_id)?
         //     .ok_or_else(|| KalamDbError::NotFound(format!("Table {} not found", table_id)))?;
         
         // Get current Arrow schema from the registry (already includes system columns)

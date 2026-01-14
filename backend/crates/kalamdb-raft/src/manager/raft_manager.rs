@@ -203,6 +203,20 @@ impl RaftManager {
     pub fn meta_metrics(&self) -> Option<RaftMetrics<u64, KalamNode>> {
         self.meta.metrics()
     }
+
+    /// Get OpenRaft metrics for a specific Raft group (if started)
+    pub fn group_metrics(&self, group_id: crate::GroupId) -> Option<RaftMetrics<u64, KalamNode>> {
+        match group_id {
+            crate::GroupId::Meta => self.meta.metrics(),
+            crate::GroupId::DataUserShard(shard) if shard < self.user_shards_count => {
+                self.user_data_shards[shard as usize].metrics()
+            }
+            crate::GroupId::DataSharedShard(shard) if shard < self.shared_shards_count => {
+                self.shared_data_shards[shard as usize].metrics()
+            }
+            _ => None,
+        }
+    }
     
     /// Check if the manager has been started
     pub fn is_started(&self) -> bool {

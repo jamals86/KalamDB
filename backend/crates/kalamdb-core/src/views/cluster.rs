@@ -15,44 +15,35 @@
 //!
 //! **Performance Optimizations**:
 //! - Pre-allocated vectors with known capacity
-//! - Single schema lookup via OnceLock (zero-cost after first call)
+//! - Schema cached via `OnceLock` (zero-cost after first call)
 //! - Direct Arrow array construction without intermediate allocations
 //! - Minimal copies using references where possible
+//!
+//! **Schema**: TableDefinition provides consistent metadata for views
 
-use super::view_base::{VirtualView, ViewTableProvider};
+use super::view_base::{ViewTableProvider, VirtualView};
 use crate::schema_registry::RegistryError;
-use datafusion::arrow::array::{ArrayRef, BooleanArray, StringArray, UInt32Array, UInt64Array, UInt8Array};
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use datafusion::arrow::array::{
+    ArrayRef, BooleanArray, StringArray, UInt32Array, UInt64Array, UInt8Array,
+};
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
+use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::schemas::{
+    ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
+};
+use kalamdb_commons::{NamespaceId, SystemTable, TableName};
 use kalamdb_raft::{ClusterInfo, CommandExecutor, ServerStateExt};
 use std::sync::{Arc, OnceLock};
 
-/// Static schema for system.cluster (computed once, reused forever)
-static CLUSTER_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-
-/// Get or initialize the cluster schema (zero-cost after first call)
+/// Get the cluster schema (memoized)
 fn cluster_schema() -> SchemaRef {
-    CLUSTER_SCHEMA
+    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+    SCHEMA
         .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("cluster_id", DataType::Utf8, false),
-                Field::new("node_id", DataType::UInt64, false),
-                Field::new("role", DataType::Utf8, false),
-                Field::new("status", DataType::Utf8, false),
-                Field::new("rpc_addr", DataType::Utf8, false),
-                Field::new("api_addr", DataType::Utf8, false),
-                Field::new("is_self", DataType::Boolean, false),
-                Field::new("is_leader", DataType::Boolean, false),
-                Field::new("groups_leading", DataType::UInt32, false),
-                Field::new("total_groups", DataType::UInt32, false),
-                // OpenRaft metrics (nullable - may not be available for all nodes)
-                Field::new("current_term", DataType::UInt64, true),
-                Field::new("last_applied_log", DataType::UInt64, true),
-                Field::new("leader_last_log_index", DataType::UInt64, true),
-                Field::new("snapshot_index", DataType::UInt64, true),
-                Field::new("catchup_progress_pct", DataType::UInt8, true),
-                Field::new("replication_lag", DataType::UInt64, true),
-            ]))
+            ClusterView::definition()
+                .to_arrow_schema()
+                .expect("Failed to convert cluster TableDefinition to Arrow schema")
         })
         .clone()
 }
@@ -62,7 +53,7 @@ fn cluster_schema() -> SchemaRef {
 /// **Memory Efficiency**:
 /// - No cached state (data fetched on-demand from OpenRaft)
 /// - Only stores Arc to CommandExecutor (8 bytes pointer)
-/// - Schema is static and shared across all instances
+/// - Schema is memoized via `OnceLock`
 ///
 /// **Query Performance**:
 /// - O(N) where N = number of cluster nodes (typically 3-7)
@@ -77,6 +68,217 @@ pub struct ClusterView {
 }
 
 impl ClusterView {
+    /// Get the TableDefinition for system.cluster view
+    ///
+    /// Schema (16 columns):
+    /// - cluster_id TEXT NOT NULL
+    /// - node_id BIGINT NOT NULL
+    /// - role TEXT NOT NULL
+    /// - status TEXT NOT NULL
+    /// - rpc_addr TEXT NOT NULL
+    /// - api_addr TEXT NOT NULL
+    /// - is_self BOOLEAN NOT NULL
+    /// - is_leader BOOLEAN NOT NULL
+    /// - groups_leading INT NOT NULL
+    /// - total_groups INT NOT NULL
+    /// - current_term BIGINT (nullable - OpenRaft metrics)
+    /// - last_applied_log BIGINT (nullable)
+    /// - leader_last_log_index BIGINT (nullable)
+    /// - snapshot_index BIGINT (nullable)
+    /// - catchup_progress_pct TINYINT (nullable)
+    /// - replication_lag BIGINT (nullable)
+    pub fn definition() -> TableDefinition {
+        let columns = vec![
+            ColumnDefinition::new(
+                1,
+                "cluster_id",
+                1,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Cluster identifier".to_string()),
+            ),
+            ColumnDefinition::new(
+                2,
+                "node_id",
+                2,
+                KalamDataType::BigInt,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Node ID within the cluster".to_string()),
+            ),
+            ColumnDefinition::new(
+                3,
+                "role",
+                3,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Node role (leader, follower, learner, candidate)".to_string()),
+            ),
+            ColumnDefinition::new(
+                4,
+                "status",
+                4,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Node status".to_string()),
+            ),
+            ColumnDefinition::new(
+                5,
+                "rpc_addr",
+                5,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("RPC address for Raft communication".to_string()),
+            ),
+            ColumnDefinition::new(
+                6,
+                "api_addr",
+                6,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("API address for client requests".to_string()),
+            ),
+            ColumnDefinition::new(
+                7,
+                "is_self",
+                7,
+                KalamDataType::Boolean,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Whether this is the current node".to_string()),
+            ),
+            ColumnDefinition::new(
+                8,
+                "is_leader",
+                8,
+                KalamDataType::Boolean,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Whether this node is the leader".to_string()),
+            ),
+            ColumnDefinition::new(
+                9,
+                "groups_leading",
+                9,
+                KalamDataType::Int,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Number of Raft groups this node leads".to_string()),
+            ),
+            ColumnDefinition::new(
+                10,
+                "total_groups",
+                10,
+                KalamDataType::Int,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Total number of Raft groups".to_string()),
+            ),
+            // OpenRaft metrics (nullable - may not be available for all nodes)
+            ColumnDefinition::new(
+                11,
+                "current_term",
+                11,
+                KalamDataType::BigInt,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Current Raft term".to_string()),
+            ),
+            ColumnDefinition::new(
+                12,
+                "last_applied_log",
+                12,
+                KalamDataType::BigInt,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Last applied log index".to_string()),
+            ),
+            ColumnDefinition::new(
+                13,
+                "leader_last_log_index",
+                13,
+                KalamDataType::BigInt,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Leader's last log index".to_string()),
+            ),
+            ColumnDefinition::new(
+                14,
+                "snapshot_index",
+                14,
+                KalamDataType::BigInt,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Last snapshot index".to_string()),
+            ),
+            ColumnDefinition::new(
+                15,
+                "catchup_progress_pct",
+                15,
+                KalamDataType::SmallInt,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Catchup progress percentage (0-100)".to_string()),
+            ),
+            ColumnDefinition::new(
+                16,
+                "replication_lag",
+                16,
+                KalamDataType::BigInt,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Replication lag (entries behind leader)".to_string()),
+            ),
+        ];
+
+        TableDefinition::new(
+            NamespaceId::system(),
+            TableName::new(SystemTable::Cluster.table_name()),
+            TableType::System,
+            columns,
+            TableOptions::system(),
+            Some("Live OpenRaft cluster status and metrics (read-only view)".to_string()),
+        )
+        .expect("Failed to create system.cluster view definition")
+    }
+
     /// Create a new cluster view
     ///
     /// **Cost**: O(1) - just stores an Arc pointer
@@ -93,6 +295,10 @@ impl ClusterView {
 }
 
 impl VirtualView for ClusterView {
+    fn system_table(&self) -> SystemTable {
+        SystemTable::Cluster
+    }
+
     fn schema(&self) -> SchemaRef {
         cluster_schema()
     }
@@ -169,10 +375,6 @@ impl VirtualView for ClusterView {
             ],
         )
         .map_err(|e| RegistryError::Other(format!("Failed to build cluster batch: {}", e)))
-    }
-
-    fn view_name(&self) -> &str {
-        "system.cluster"
     }
 }
 

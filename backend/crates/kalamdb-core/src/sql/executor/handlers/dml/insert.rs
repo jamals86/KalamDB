@@ -91,10 +91,10 @@ impl StatementHandler for InsertHandler {
         let table_id = TableId::new(namespace_owned.clone(), table_name_owned.clone());
         let schema_registry = self.app_context.schema_registry();
         
-        // Single lookup: get_table_definition returns None if table doesn't exist
-        // This is more efficient than calling table_exists + get_table_definition
+        // Single lookup: get_table_if_exists returns None if table doesn't exist
+        // This is more efficient than calling table_exists + get_table_if_exists
         let table_def = schema_registry
-            .get_table_definition(self.app_context.as_ref(), &table_id)?
+            .get_table_if_exists(self.app_context.as_ref(), &table_id)?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Table '{}' does not exist",

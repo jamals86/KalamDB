@@ -8,29 +8,33 @@
 //! **DataFusion Pattern**: Implements VirtualView trait for consistent view behavior
 //! - Computes metrics dynamically on each query
 //! - No persistent state in RocksDB
-//! - Uses MemTable for efficient DataFusion integration
+//! - Memoizes schema via `OnceLock`
+//!
+//! **Schema**: TableDefinition provides consistent metadata for views
 
 use super::view_base::VirtualView;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
+use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::schemas::{
+    ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
+};
+use kalamdb_commons::{NamespaceId, SystemTable, TableName};
 use std::sync::{Arc, OnceLock, RwLock};
 
 /// Metrics provider callback type
 /// Returns a vector of (metric_name, metric_value) tuples
 pub type MetricsCallback = Arc<dyn Fn() -> Vec<(String, String)> + Send + Sync>;
 
-/// Static schema for system.stats
-static STATS_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-
-/// Get or initialize the stats schema
+/// Get the stats schema (memoized)
 fn stats_schema() -> SchemaRef {
-    STATS_SCHEMA
+    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+    SCHEMA
         .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("metric_name", DataType::Utf8, false),
-                Field::new("metric_value", DataType::Utf8, false),
-            ]))
+            StatsView::definition()
+                .to_arrow_schema()
+                .expect("Failed to convert stats TableDefinition to Arrow schema")
         })
         .clone()
 }
@@ -56,6 +60,52 @@ impl std::fmt::Debug for StatsView {
 }
 
 impl StatsView {
+    /// Get the TableDefinition for system.stats view
+    ///
+    /// This is the single source of truth for:
+    /// - Column definitions (names, types, nullability)
+    /// - Column comments/descriptions
+    ///
+    /// Schema:
+    /// - metric_name TEXT NOT NULL
+    /// - metric_value TEXT NOT NULL
+    pub fn definition() -> TableDefinition {
+        let columns = vec![
+            ColumnDefinition::new(
+                1,
+                "metric_name",
+                1,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Name of the runtime metric".to_string()),
+            ),
+            ColumnDefinition::new(
+                2,
+                "metric_value",
+                2,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Current value of the metric".to_string()),
+            ),
+        ];
+
+        TableDefinition::new(
+            NamespaceId::system(),
+            TableName::new(SystemTable::Stats.table_name()),
+            TableType::System, // Views are system-level objects
+            columns,
+            TableOptions::system(),
+            Some("Runtime metrics and statistics (computed on each query)".to_string()),
+        )
+        .expect("Failed to create system.stats view definition")
+    }
+
     /// Create a new stats view without a callback (placeholder mode)
     pub fn new() -> Self {
         Self {
@@ -83,6 +133,10 @@ impl Default for StatsView {
 }
 
 impl VirtualView for StatsView {
+    fn system_table(&self) -> SystemTable {
+        SystemTable::Stats
+    }
+
     fn schema(&self) -> SchemaRef {
         stats_schema()
     }
@@ -125,10 +179,6 @@ impl VirtualView for StatsView {
         .map_err(|e| {
             crate::schema_registry::RegistryError::Other(format!("Failed to build stats batch: {}", e))
         })
-    }
-
-    fn view_name(&self) -> &str {
-        "system.stats"
     }
 }
 

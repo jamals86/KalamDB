@@ -25,7 +25,6 @@ pub type InMemoryChecker = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 /// System.manifest table provider using EntityStore architecture
 pub struct ManifestTableProvider {
     store: ManifestStore,
-    schema: SchemaRef,
     /// Optional callback to check if a cache key is in hot memory (injected from kalamdb-core)
     in_memory_checker: RwLock<Option<InMemoryChecker>>,
 }
@@ -47,7 +46,6 @@ impl ManifestTableProvider {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         Self {
             store: new_manifest_store(backend),
-            schema: ManifestTableSchema::schema(),
             in_memory_checker: RwLock::new(None),
         }
     }
@@ -125,7 +123,7 @@ impl ManifestTableProvider {
         }
 
         // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        let mut builder = RecordBatchBuilder::new(ManifestTableSchema::schema());
         builder
             .add_string_column_owned(cache_keys)
             .add_string_column_owned(namespace_ids)
@@ -150,7 +148,7 @@ impl TableProvider for ManifestTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        ManifestTableSchema::schema()
     }
 
     fn table_type(&self) -> TableType {
@@ -165,7 +163,7 @@ impl TableProvider for ManifestTableProvider {
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::datasource::MemTable;
-        let schema = self.schema.clone();
+        let schema = ManifestTableSchema::schema();
         let batch = self.scan_to_record_batch().map_err(|e| {
             DataFusionError::Execution(format!("Failed to build manifest batch: {}", e))
         })?;
@@ -182,7 +180,7 @@ impl SystemTableProviderExt for ManifestTableProvider {
     }
 
     fn schema_ref(&self) -> SchemaRef {
-        self.schema.clone()
+        ManifestTableSchema::schema()
     }
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {

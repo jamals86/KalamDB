@@ -26,7 +26,6 @@ use std::sync::Arc;
 /// System.live_queries table provider using EntityStore architecture
 pub struct LiveQueriesTableProvider {
     store: LiveQueriesStore,
-    schema: SchemaRef,
 }
 
 impl std::fmt::Debug for LiveQueriesTableProvider {
@@ -46,7 +45,6 @@ impl LiveQueriesTableProvider {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         Self {
             store: new_live_queries_store(backend),
-            schema: LiveQueriesTableSchema::schema(),
         }
     }
 
@@ -400,7 +398,7 @@ impl LiveQueriesTableProvider {
         // 12: changes (Int64)
         // 13: node_id (Int64)
         // 14: last_ping_at (Timestamp)
-        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        let mut builder = RecordBatchBuilder::new(LiveQueriesTableSchema::schema());
         builder
             .add_string_column_owned(live_ids)
             .add_string_column_owned(connection_ids)
@@ -480,7 +478,7 @@ impl TableProvider for LiveQueriesTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        LiveQueriesTableSchema::schema()
     }
 
     fn table_type(&self) -> TableType {
@@ -505,7 +503,7 @@ impl TableProvider for LiveQueriesTableProvider {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::datasource::MemTable;
 
-        let schema = self.schema.clone();
+        let schema = LiveQueriesTableSchema::schema();
 
         // Prefer secondary index scans when possible (auto-picks from store.indexes()).
         // Falls back to scan_all if no index matches.
@@ -559,7 +557,7 @@ impl SystemTableProviderExt for LiveQueriesTableProvider {
     }
 
     fn schema_ref(&self) -> SchemaRef {
-        self.schema.clone()
+        LiveQueriesTableSchema::schema()
     }
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {

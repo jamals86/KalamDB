@@ -25,7 +25,6 @@ use std::sync::Arc;
 /// System.audit_log table provider using EntityStore architecture
 pub struct AuditLogsTableProvider {
     store: AuditLogsStore,
-    schema: SchemaRef,
 }
 
 impl std::fmt::Debug for AuditLogsTableProvider {
@@ -45,7 +44,6 @@ impl AuditLogsTableProvider {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         Self {
             store: new_audit_logs_store(backend),
-            schema: AuditLogsTableSchema::schema(),
         }
     }
 
@@ -123,7 +121,7 @@ impl AuditLogsTableProvider {
         }
 
         // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        let mut builder = RecordBatchBuilder::new(AuditLogsTableSchema::schema());
         builder
             .add_string_column_owned(audit_ids)
             .add_timestamp_millis_column(timestamps)
@@ -194,7 +192,7 @@ impl SystemTableProviderExt for AuditLogsTableProvider {
     }
 
     fn schema_ref(&self) -> SchemaRef {
-        self.schema.clone()
+        AuditLogsTableSchema::schema()
     }
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {
@@ -209,7 +207,7 @@ impl TableProvider for AuditLogsTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        AuditLogsTableSchema::schema()
     }
 
     fn table_type(&self) -> TableType {
@@ -258,7 +256,7 @@ impl TableProvider for AuditLogsTableProvider {
             }
         }
 
-        let schema = self.schema.clone();
+        let schema = AuditLogsTableSchema::schema();
         let entries = self
             .store
             .scan_all(limit, prefix.as_ref(), start_key.as_ref())

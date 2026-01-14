@@ -3726,6 +3726,7 @@ dependencies = [
  "kalamdb-raft",
  "kalamdb-store",
  "log",
+ "once_cell",
  "serde",
  "serde_json",
  "tempfile",

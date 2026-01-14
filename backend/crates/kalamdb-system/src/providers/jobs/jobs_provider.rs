@@ -34,7 +34,7 @@ use kalamdb_commons::{
     system::{Job, JobFilter, JobSortField, SortOrder},
     JobId, JobStatus,
 };
-use kalamdb_commons::StorageKey;
+use kalamdb_commons::{StorageKey, SystemTable};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
@@ -49,7 +49,6 @@ pub type JobsStore = IndexedEntityStore<JobId, Job>;
 /// using RocksDB's atomic WriteBatch - no manual index management needed.
 pub struct JobsTableProvider {
     store: JobsStore,
-    schema: SchemaRef,
 }
 
 impl std::fmt::Debug for JobsTableProvider {
@@ -67,11 +66,14 @@ impl JobsTableProvider {
     /// # Returns
     /// A new JobsTableProvider instance with indexes configured
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
-        let store = IndexedEntityStore::new(backend, "system_jobs", create_jobs_indexes());
-        Self {
-            store,
-            schema: JobsTableSchema::schema(),
-        }
+        let store = IndexedEntityStore::new(
+            backend,
+            SystemTable::Jobs
+                .column_family_name()
+                .expect("Jobs is a table, not a view"),
+            create_jobs_indexes(),
+        );
+        Self { store }
     }
 
     /// Create a new job entry.
@@ -548,7 +550,7 @@ impl JobsTableProvider {
         }
 
         // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        let mut builder = RecordBatchBuilder::new(JobsTableSchema::schema());
         builder
             .add_string_column_owned(job_ids)
             .add_string_column_owned(job_types)
@@ -657,7 +659,7 @@ impl TableProvider for JobsTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        JobsTableSchema::schema()
     }
 
     fn table_type(&self) -> TableType {
@@ -719,7 +721,7 @@ impl TableProvider for JobsTableProvider {
             }
         }
 
-        let schema = self.schema.clone();
+        let schema = JobsTableSchema::schema();
 
         // Prefer secondary index scans when possible (auto-picks from store.indexes()).
         // Falls back to main-partition scan with (job_id) prefix/start_key.
@@ -768,7 +770,7 @@ impl SystemTableProviderExt for JobsTableProvider {
     }
 
     fn schema_ref(&self) -> SchemaRef {
-        self.schema.clone()
+        JobsTableSchema::schema()
     }
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {

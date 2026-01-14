@@ -127,7 +127,7 @@ impl UserTableProvider {
         self.core
             .app_context
             .schema_registry()
-            .get_table_definition(self.core.app_context.as_ref(), self.core.table_id())
+            .get_table_if_exists(self.core.app_context.as_ref(), self.core.table_id())
             .ok()
             .flatten()
             .and_then(|def| {

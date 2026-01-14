@@ -10,26 +10,29 @@
 //! - Static mapping computed once at startup
 //! - No persistent state in RocksDB
 //! - Uses MemTable for efficient DataFusion integration
+//!
+//! **Schema Caching**: Memoized via `OnceLock`
+//! **Schema**: TableDefinition provides consistent metadata for views
 
 use super::view_base::VirtualView;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
+use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::schemas::{
+    ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
+};
+use kalamdb_commons::{NamespaceId, SystemTable, TableName};
 use std::sync::{Arc, OnceLock};
 
-/// Static schema for system.datatypes
-static DATATYPES_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-
-/// Get or initialize the datatypes schema
+/// Get or initialize the datatypes schema (memoized)
 fn datatypes_schema() -> SchemaRef {
-    DATATYPES_SCHEMA
+    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+    SCHEMA
         .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("arrow_type", DataType::Utf8, false),
-                Field::new("kalam_type", DataType::Utf8, false),
-                Field::new("sql_name", DataType::Utf8, false),
-                Field::new("description", DataType::Utf8, false),
-            ]))
+            DatatypesView::definition()
+                .to_arrow_schema()
+                .expect("Failed to convert datatypes TableDefinition to Arrow schema")
         })
         .clone()
 }
@@ -44,6 +47,72 @@ fn datatypes_schema() -> SchemaRef {
 pub struct DatatypesView;
 
 impl DatatypesView {
+    /// Get the TableDefinition for system.datatypes view
+    ///
+    /// Schema:
+    /// - arrow_type TEXT NOT NULL (Arrow internal type name)
+    /// - kalam_type TEXT NOT NULL (KalamDB type name)
+    /// - sql_name TEXT NOT NULL (SQL type name for display)
+    /// - description TEXT NOT NULL (Human-readable description)
+    pub fn definition() -> TableDefinition {
+        let columns = vec![
+            ColumnDefinition::new(
+                1,
+                "arrow_type",
+                1,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Arrow internal type name (e.g., Utf8, Int64)".to_string()),
+            ),
+            ColumnDefinition::new(
+                2,
+                "kalam_type",
+                2,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("KalamDB type name (e.g., Text, BigInt)".to_string()),
+            ),
+            ColumnDefinition::new(
+                3,
+                "sql_name",
+                3,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("SQL type name for display (e.g., TEXT, BIGINT)".to_string()),
+            ),
+            ColumnDefinition::new(
+                4,
+                "description",
+                4,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Human-readable description of the data type".to_string()),
+            ),
+        ];
+
+        TableDefinition::new(
+            NamespaceId::system(),
+            TableName::new(SystemTable::Datatypes.table_name()),
+            TableType::System,
+            columns,
+            TableOptions::system(),
+            Some("Arrow to KalamDB SQL type mappings (read-only view)".to_string()),
+        )
+        .expect("Failed to create system.datatypes view definition")
+    }
+
     /// Create a new datatypes view
     pub fn new() -> Self {
         Self
@@ -106,6 +175,10 @@ impl Default for DatatypesView {
 }
 
 impl VirtualView for DatatypesView {
+    fn system_table(&self) -> SystemTable {
+        SystemTable::Datatypes
+    }
+
     fn schema(&self) -> SchemaRef {
         datatypes_schema()
     }
@@ -138,10 +211,6 @@ impl VirtualView for DatatypesView {
                 e
             ))
         })
-    }
-
-    fn view_name(&self) -> &str {
-        "system.datatypes"
     }
 }
 

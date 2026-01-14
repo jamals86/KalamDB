@@ -41,7 +41,7 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
         // Provide placeholder zero metrics plus schema version.
         let registry = self.app_context.schema_registry();
         let def = registry
-            .get_table_definition(self.app_context.as_ref(), &table_id)?
+            .get_table_if_exists(self.app_context.as_ref(), &table_id)?
             .ok_or_else(|| {
             KalamDbError::NotFound(format!(
                 "Table '{}' not found in namespace '{}'",

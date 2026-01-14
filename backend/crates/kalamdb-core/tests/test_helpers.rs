@@ -4,6 +4,7 @@
 
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::{NamespaceId, NodeId, StorageId};
+use kalamdb_commons::{StoragePartition, SystemTable};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobRegistry, RestoreExecutor,
@@ -39,21 +40,15 @@ pub fn init_test_app_context() -> Arc<TestDb> {
     // Use Once to ensure we only initialize once across all tests
     INIT.call_once(|| {
         // Create test database with all required column families
-        let test_db = Arc::new(
-            TestDb::new(&[
-                "system_tables",
-                "system_audit_log",
-                "system_namespaces",
-                "system_storages",
-                "system_users",
-                "system_jobs",
-                "system_live_queries",
-                "information_schema_tables",
-                "shared_table:app:config",
-                "stream_table:app:events",
-            ])
-            .unwrap(),
-        );
+        let mut column_families: Vec<&'static str> = SystemTable::all_tables()
+            .iter()
+            .filter_map(|t| t.column_family_name())
+            .collect();
+        column_families.push(StoragePartition::InformationSchemaTables.name());
+        column_families.push("shared_table:app:config");
+        column_families.push("stream_table:app:events");
+
+        let test_db = Arc::new(TestDb::new(&column_families).unwrap());
 
         // Store in static for reuse
         TEST_DB.set(test_db.clone()).ok();

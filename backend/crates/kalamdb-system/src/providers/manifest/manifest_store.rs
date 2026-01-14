@@ -71,7 +71,7 @@ pub type ManifestStore = SystemTableStore<ManifestCacheKey, ManifestCacheEntry>;
 /// # Returns
 /// A new SystemTableStore for manifest cache entries
 pub fn new_manifest_store(backend: Arc<dyn StorageBackend>) -> ManifestStore {
-    SystemTableStore::new(backend, SystemTable::Manifest.column_family_name())
+    SystemTableStore::new(backend, SystemTable::Manifest)
 }
 
 #[cfg(test)]

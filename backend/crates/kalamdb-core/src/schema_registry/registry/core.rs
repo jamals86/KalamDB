@@ -154,7 +154,7 @@ impl SchemaRegistry {
             cached.set_provider(provider.clone());
         } else {
             // Table not in cache - try to load from persistence first
-            if let Some(cached) = SchemaPersistence::get_table_definition(app_ctx, &self.table_cache, &table_id)?
+            if let Some(cached) = SchemaPersistence::get_table_if_exists(app_ctx, &self.table_cache, &table_id)?
                 .and_then(|_| self.get(&table_id))
             {
                 cached.set_provider(provider.clone());
@@ -323,15 +323,6 @@ impl SchemaRegistry {
 
     // ===== Persistence Methods (Phase 5: SchemaRegistry Consolidation) =====
 
-    /// Get table definition from persistence layer (read-through pattern)
-    pub fn get_table_definition(
-        &self,
-        app_ctx: &AppContext,
-        table_id: &TableId,
-    ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
-        SchemaPersistence::get_table_definition(app_ctx, &self.table_cache, table_id)
-    }
-
     /// Store table definition to persistence layer (write-through pattern)
     pub fn put_table_definition(
         &self,
@@ -367,18 +358,18 @@ impl SchemaRegistry {
     /// Get table definition if it exists (optimized single-call pattern)
     ///
     /// Combines table existence check + definition fetch in one operation.
-    /// Use this instead of calling `table_exists()` followed by `get_table_definition()`.
+    /// Use this instead of calling `table_exists()` followed by `get_table_if_exists()`.
     ///
     /// # Performance
     /// - Cache hit: Returns immediately (no duplicate lookups)
     /// - Cache miss: Single persistence query + cache population
-    /// - Prevents double fetch: table_exists() then get_table_definition()
+    /// - Prevents double fetch: table_exists() then get_table_if_exists()
     ///
     /// # Example
     /// ```no_run
     /// // ❌ OLD: Two lookups (inefficient)
     /// if schema_registry.table_exists(&table_id)? {
-    ///     let def = schema_registry.get_table_definition(&table_id)?;
+    ///     let def = schema_registry.get_table_if_exists(&table_id)?;
     /// }
     ///
     /// // ✅ NEW: Single lookup (efficient)
@@ -411,7 +402,7 @@ impl SchemaRegistry {
         }
 
         // Slow path: try to load from persistence (lazy loading)
-        if SchemaPersistence::get_table_definition(app_ctx, &self.table_cache, table_id)?.is_some() {
+        if SchemaPersistence::get_table_if_exists(app_ctx, &self.table_cache, table_id)?.is_some() {
             // Cache is now populated - retrieve it
             if let Some(cached) = self.get(table_id) {
                 return cached.arrow_schema();

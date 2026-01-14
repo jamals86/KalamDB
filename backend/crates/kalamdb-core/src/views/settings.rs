@@ -9,27 +9,30 @@
 //! - category: Setting category (e.g., "server", "storage", "limits")
 //!
 //! **DataFusion Pattern**: Implements VirtualView trait for consistent view behavior
+//! Memoizes schema via `OnceLock`.
+//!
+//! **Schema**: TableDefinition provides consistent metadata for views
 
 use super::view_base::VirtualView;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::config::ServerConfig;
+use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::schemas::{
+    ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
+};
+use kalamdb_commons::{NamespaceId, SystemTable, TableName};
 use std::sync::{Arc, OnceLock, RwLock};
 
-/// Static schema for system.settings
-static SETTINGS_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-
-/// Get or initialize the settings schema
+/// Get the settings schema (memoized)
 fn settings_schema() -> SchemaRef {
-    SETTINGS_SCHEMA
+    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+    SCHEMA
         .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("name", DataType::Utf8, false),
-                Field::new("value", DataType::Utf8, false),
-                Field::new("description", DataType::Utf8, false),
-                Field::new("category", DataType::Utf8, false),
-            ]))
+            SettingsView::definition()
+                .to_arrow_schema()
+                .expect("Failed to convert settings TableDefinition to Arrow schema")
         })
         .clone()
 }
@@ -59,6 +62,72 @@ pub struct SettingsView {
 }
 
 impl SettingsView {
+    /// Get the TableDefinition for system.settings view
+    ///
+    /// Schema:
+    /// - name TEXT NOT NULL (setting name)
+    /// - value TEXT NOT NULL (current value)
+    /// - description TEXT NOT NULL (human-readable description)
+    /// - category TEXT NOT NULL (setting category)
+    pub fn definition() -> TableDefinition {
+        let columns = vec![
+            ColumnDefinition::new(
+                1,
+                "name",
+                1,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Setting name (e.g., server.host, storage.data_path)".to_string()),
+            ),
+            ColumnDefinition::new(
+                2,
+                "value",
+                2,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Current setting value".to_string()),
+            ),
+            ColumnDefinition::new(
+                3,
+                "description",
+                3,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Human-readable description of the setting".to_string()),
+            ),
+            ColumnDefinition::new(
+                4,
+                "category",
+                4,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Setting category (server, storage, limits, etc.)".to_string()),
+            ),
+        ];
+
+        TableDefinition::new(
+            NamespaceId::system(),
+            TableName::new(SystemTable::Settings.table_name()),
+            TableType::System,
+            columns,
+            TableOptions::system(),
+            Some("Server configuration settings (read-only view)".to_string()),
+        )
+        .expect("Failed to create system.settings view definition")
+    }
+
     /// Create a new settings view
     pub fn new() -> Self {
         Self {
@@ -86,6 +155,10 @@ impl Default for SettingsView {
 }
 
 impl VirtualView for SettingsView {
+    fn system_table(&self) -> SystemTable {
+        SystemTable::Settings
+    }
+
     fn schema(&self) -> SchemaRef {
         settings_schema()
     }
@@ -233,10 +306,6 @@ impl VirtualView for SettingsView {
                 e
             ))
         })
-    }
-
-    fn view_name(&self) -> &str {
-        "system.settings"
     }
 }
 

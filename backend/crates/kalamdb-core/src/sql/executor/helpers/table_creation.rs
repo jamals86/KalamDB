@@ -363,7 +363,7 @@ fn persist_table_and_prime_cache(
 
     // Retrieve the saved table definition
     let table_def = schema_registry
-        .get_table_definition(app_context.as_ref(), table_id)?
+        .get_table_if_exists(app_context.as_ref(), table_id)?
         .ok_or_else(|| {
             KalamDbError::Other(format!(
                 "Failed to retrieve table definition for {} after save",

@@ -4,6 +4,7 @@
 
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;
+use kalamdb_commons::StoragePartition;
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ pub struct UserUsernameIndex;
 
 impl IndexDefinition<UserId, User> for UserUsernameIndex {
     fn partition(&self) -> &str {
-        "system_users_username_idx"
+        StoragePartition::SystemUsersUsernameIdx.name()
     }
 
     fn indexed_columns(&self) -> Vec<&str> {
@@ -76,7 +77,7 @@ pub struct UserRoleIndex;
 
 impl IndexDefinition<UserId, User> for UserRoleIndex {
     fn partition(&self) -> &str {
-        "system_users_role_idx"
+        StoragePartition::SystemUsersRoleIdx.name()
     }
 
     fn indexed_columns(&self) -> Vec<&str> {
@@ -167,7 +168,10 @@ use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
     fn test_create_users_indexes() {
         let indexes = create_users_indexes();
         assert_eq!(indexes.len(), 2);
-        assert_eq!(indexes[0].partition(), "system_users_username_idx");
-        assert_eq!(indexes[1].partition(), "system_users_role_idx");
+        assert_eq!(
+            indexes[0].partition(),
+            StoragePartition::SystemUsersUsernameIdx.name()
+        );
+        assert_eq!(indexes[1].partition(), StoragePartition::SystemUsersRoleIdx.name());
     }
 }

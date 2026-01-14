@@ -68,7 +68,3 @@ pub use storage::Storage;
 pub use user::{User, DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS};
 pub use user_table_counter::UserTableCounter;
 
-// Re-export for backward compatibility (legacy imports from `system` module)
-// Users can now import from either:
-// - `kalamdb_commons::types::User` (new)
-// - `kalamdb_commons::system::User` (legacy, via crate root re-export)

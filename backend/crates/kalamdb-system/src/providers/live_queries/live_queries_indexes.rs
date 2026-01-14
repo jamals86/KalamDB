@@ -19,6 +19,7 @@
 
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::{LiveQueryId, TableId};
+use kalamdb_commons::StoragePartition;
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
 
@@ -36,7 +37,7 @@ pub struct TableIdIndex;
 
 impl IndexDefinition<LiveQueryId, LiveQuery> for TableIdIndex {
     fn partition(&self) -> &str {
-        "system_live_queries_table_idx"
+        StoragePartition::SystemLiveQueriesTableIdx.name()
     }
 
     fn indexed_columns(&self) -> Vec<&str> {

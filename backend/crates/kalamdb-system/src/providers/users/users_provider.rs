@@ -29,7 +29,7 @@ use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::User;
-use kalamdb_commons::{StorageKey, UserId};
+use kalamdb_commons::{StorageKey, StoragePartition, SystemTable, UserId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
@@ -44,7 +44,6 @@ pub type UsersStore = IndexedEntityStore<UserId, User>;
 /// using RocksDB's atomic WriteBatch - no manual index management needed.
 pub struct UsersTableProvider {
     store: UsersStore,
-    schema: SchemaRef,
 }
 
 impl std::fmt::Debug for UsersTableProvider {
@@ -62,11 +61,14 @@ impl UsersTableProvider {
     /// # Returns
     /// A new UsersTableProvider instance with indexes configured
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
-        let store = IndexedEntityStore::new(backend, "system_users", create_users_indexes());
-        Self {
-            store,
-            schema: UsersTableSchema::schema(),
-        }
+        let store = IndexedEntityStore::new(
+            backend,
+            SystemTable::Users
+                .column_family_name()
+                .expect("Users is a table, not a view"),
+            create_users_indexes(),
+        );
+        Self { store }
     }
 
     /// Create a new user.
@@ -83,10 +85,13 @@ impl UsersTableProvider {
         // Username index key is lowercase username
         let username_index_idx = self
             .store
-            .find_index_by_partition("system_users_username_idx")
+            .find_index_by_partition(StoragePartition::SystemUsersUsernameIdx.name())
             .ok_or_else(|| {
                 SystemError::Other(
-                    "Missing expected index partition: system_users_username_idx".to_string(),
+                    format!(
+                        "Missing expected index partition: {}",
+                        StoragePartition::SystemUsersUsernameIdx.name()
+                    ),
                 )
             })?;
         let username_key = user.username.as_str().to_lowercase();
@@ -134,10 +139,13 @@ impl UsersTableProvider {
         if existing_user.username != user.username {
             let username_index_idx = self
                 .store
-                .find_index_by_partition("system_users_username_idx")
+                .find_index_by_partition(StoragePartition::SystemUsersUsernameIdx.name())
                 .ok_or_else(|| {
                     SystemError::Other(
-                        "Missing expected index partition: system_users_username_idx".to_string(),
+                        format!(
+                            "Missing expected index partition: {}",
+                            StoragePartition::SystemUsersUsernameIdx.name()
+                        ),
                     )
                 })?;
             let username_key = user.username.as_str().to_lowercase();
@@ -206,10 +214,13 @@ impl UsersTableProvider {
     pub fn get_user_by_username(&self, username: &str) -> Result<Option<User>, SystemError> {
         let username_index_idx = self
             .store
-            .find_index_by_partition("system_users_username_idx")
+            .find_index_by_partition(StoragePartition::SystemUsersUsernameIdx.name())
             .ok_or_else(|| {
                 SystemError::Other(
-                    "Missing expected index partition: system_users_username_idx".to_string(),
+                    format!(
+                        "Missing expected index partition: {}",
+                        StoragePartition::SystemUsersUsernameIdx.name()
+                    ),
                 )
             })?;
 
@@ -257,7 +268,7 @@ impl UsersTableProvider {
         }
 
         // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        let mut builder = RecordBatchBuilder::new(UsersTableSchema::schema());
         builder
             .add_string_column_owned(user_ids)
             .add_string_column_owned(usernames)
@@ -296,7 +307,7 @@ impl SystemTableProviderExt for UsersTableProvider {
     }
 
     fn schema_ref(&self) -> SchemaRef {
-        self.schema.clone()
+        UsersTableSchema::schema()
     }
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {
@@ -311,7 +322,7 @@ impl TableProvider for UsersTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        UsersTableSchema::schema()
     }
 
     fn table_type(&self) -> TableType {
@@ -365,7 +376,7 @@ impl TableProvider for UsersTableProvider {
             }
         }
 
-        let schema = self.schema.clone();
+        let schema = UsersTableSchema::schema();
 
         // Prefer secondary index scans when possible (auto-picks from store.indexes()).
         // Falls back to main-partition scan with (user_id) prefix/start_key.

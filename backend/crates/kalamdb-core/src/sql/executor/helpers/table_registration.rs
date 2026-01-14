@@ -39,7 +39,7 @@ pub fn register_user_table_provider(
     // (needed for creating indexed store with PK index)
     let table_def = app_context
         .schema_registry()
-        .get_table_definition(app_context.as_ref(), table_id)?
+        .get_table_if_exists(app_context.as_ref(), table_id)?
         .ok_or_else(|| {
             KalamDbError::InvalidOperation(format!(
                 "Table definition not found for {}.{}",
@@ -117,7 +117,7 @@ pub fn register_shared_table_provider(
     // Determine primary key field name first (needed for indexed store)
     let table_def = app_context
         .schema_registry()
-        .get_table_definition(app_context.as_ref(), table_id)?
+        .get_table_if_exists(app_context.as_ref(), table_id)?
         .ok_or_else(|| {
             KalamDbError::InvalidOperation(format!(
                 "Table definition not found for {}",
@@ -210,7 +210,7 @@ pub fn register_stream_table_provider(
     // Determine primary key field name from TableDefinition
     let table_def = app_context
         .schema_registry()
-        .get_table_definition(app_context.as_ref(), table_id)?
+        .get_table_if_exists(app_context.as_ref(), table_id)?
         .ok_or_else(|| {
             KalamDbError::InvalidOperation(format!(
                 "Table definition not found for {}.{}",

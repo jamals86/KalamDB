@@ -671,7 +671,7 @@ impl SqlExecutor {
 
                 // Get table definition
                 let schema_registry = self.app_context.schema_registry();
-                if let Ok(Some(def)) = schema_registry.get_table_definition(self.app_context.as_ref(), &table_id) {
+                if let Ok(Some(def)) = schema_registry.get_table_if_exists(self.app_context.as_ref(), &table_id) {
                     if matches!(def.table_type, TableType::Shared) {
                         let access_level = if let TableOptions::Shared(opts) = &def.table_options {
                             opts.access_level.unwrap_or(TableAccess::Private)

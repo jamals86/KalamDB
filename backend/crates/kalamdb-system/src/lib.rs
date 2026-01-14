@@ -43,7 +43,6 @@ pub mod error;
 pub mod initialization;
 pub mod providers;
 pub mod registry;
-pub mod system_table_definitions;
 pub mod system_table_store;
 pub mod system_table_trait;
 

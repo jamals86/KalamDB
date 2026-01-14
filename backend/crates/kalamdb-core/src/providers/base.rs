@@ -1125,7 +1125,7 @@ where
     if let Some(table_def) = provider
         .app_context()
         .schema_registry()
-        .get_table_definition(provider.app_context().as_ref(), table_id)?
+        .get_table_if_exists(provider.app_context().as_ref(), table_id)?
     {
         // Fast path: Skip uniqueness check if PK is auto-increment
         if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
@@ -1231,7 +1231,7 @@ where
     if let Some(table_def) = provider
         .app_context()
         .schema_registry()
-        .get_table_definition(provider.app_context().as_ref(), table_id)?
+        .get_table_if_exists(provider.app_context().as_ref(), table_id)?
     {
         if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
             return Err(KalamDbError::InvalidOperation(format!(

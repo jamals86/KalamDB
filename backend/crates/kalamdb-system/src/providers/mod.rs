@@ -2,6 +2,11 @@
 //!
 //! This module contains all system table provider implementations.
 //! Each provider implements the DataFusion TableProvider trait.
+//!
+//! **Architecture**:
+//! - `*TableSchema` structs: Contain the `TableDefinition` (source of truth)
+//! - `*TableProvider` structs: Implement DataFusion's `TableProvider` trait
+//! - Each `*TableSchema` memoizes its Arrow schema (OnceLock)
 
 pub mod audit_logs;
 pub mod jobs;
@@ -21,4 +26,14 @@ pub use namespaces::NamespacesTableProvider;
 pub use storages::StoragesTableProvider;
 pub use tables::TablesTableProvider;
 pub use users::UsersTableProvider;
+
+// Re-export all schema definitions (source of truth for TableDefinition)
+pub use audit_logs::AuditLogsTableSchema;
+pub use jobs::JobsTableSchema;
+pub use live_queries::LiveQueriesTableSchema;
+pub use manifest::ManifestTableSchema;
+pub use namespaces::NamespacesTableSchema;
+pub use storages::StoragesTableSchema;
+pub use tables::TablesTableSchema;
+pub use users::UsersTableSchema;
 

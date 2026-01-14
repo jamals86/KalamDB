@@ -941,3 +941,6 @@ TODOS:
 51) no need to wroite total rows here:
 [21:14:33.419] ✓ SUBSCRIBED [sub_1768331673410754000] 0 total rows, batch 1 (ready), 7 columns
 [21:14:33.419] BATCH 1 [sub_1768331673410754000] 2 rows (complete)
+
+
+52) prepare the code to have CLUSTER JOIN/CLUSTER LEAVE

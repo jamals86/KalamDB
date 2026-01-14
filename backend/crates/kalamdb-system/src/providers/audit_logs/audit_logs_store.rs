@@ -4,6 +4,7 @@
 
 use kalamdb_commons::models::AuditLogId;
 use kalamdb_commons::system::AuditLogEntry;
+use kalamdb_commons::SystemTable;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
@@ -20,12 +21,13 @@ pub type AuditLogsStore = SystemTableStore<AuditLogId, AuditLogEntry>;
 /// # Returns
 /// A new SystemTableStore instance configured for the audit_log table
 pub fn new_audit_logs_store(backend: Arc<dyn StorageBackend>) -> AuditLogsStore {
-    SystemTableStore::new(backend, "system_audit_log")
+    SystemTableStore::new(backend, SystemTable::AuditLog)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::SystemTable;
     use kalamdb_commons::{UserId, UserName};
     use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;
@@ -54,7 +56,12 @@ mod tests {
     #[test]
     fn test_create_store() {
         let store = create_test_store();
-        assert_eq!(store.partition(), "system_audit_log");
+        assert_eq!(
+            store.partition(),
+            SystemTable::AuditLog
+                .column_family_name()
+                .expect("AuditLog is a table, not a view")
+        );
     }
 
     #[test]
