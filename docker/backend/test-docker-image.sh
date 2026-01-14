@@ -84,13 +84,13 @@ main() {
         exit 1
     fi
     
-    # Test 2: Version endpoint
-    log_info "Test 2: Version endpoint..."
-    VERSION_RESPONSE=$(curl -sf "http://localhost:$TEST_PORT/version" || echo "FAILED")
+    # Test 2: Version info (healthcheck)
+    log_info "Test 2: Version info (healthcheck)..."
+    VERSION_RESPONSE=$(curl -sf "http://localhost:$TEST_PORT/v1/api/healthcheck" || echo "FAILED")
     if [ "$VERSION_RESPONSE" != "FAILED" ]; then
-        log_info "✓ Version endpoint passed: $VERSION_RESPONSE"
+        log_info "✓ Version info passed: $VERSION_RESPONSE"
     else
-        log_error "✗ Version endpoint failed"
+        log_error "✗ Version info failed"
         exit 1
     fi
     
@@ -124,36 +124,32 @@ main() {
         exit 1
     fi
     
-    # Test 5: Test simple SQL query (requires creating test user first)
-    log_info "Test 5: Testing SQL query..."
-    
-    # Create test user
-    CREATE_USER_RESPONSE=$(curl -sf -X POST \
-        "http://localhost:$TEST_PORT/admin/users" \
-        -H "Content-Type: application/json" \
-        -d '{
-            "username": "testuser",
-            "password": "testpass123",
-            "role": "user"
-        }' 2>&1 || echo "")
-    
-    if [ -n "$CREATE_USER_RESPONSE" ]; then
-        log_info "Test user created"
-        
-        # Test SQL query
+    # Test 5: Set root password inside container, then test SQL with new password
+    log_info "Test 5: Setting root password inside container..."
+
+    ROOT_PASSWORD="testpass123"
+    docker exec "$CONTAINER_NAME" /usr/local/bin/kalam \
+        --url "http://localhost:8080" \
+        --username root \
+        --password "" \
+        --command "ALTER USER root SET PASSWORD '$ROOT_PASSWORD'" &>/dev/null
+
+    if [ $? -ne 0 ]; then
+        log_warn "⚠ Failed to set root password inside container; skipping SQL auth test"
+    else
+        log_info "Root password updated"
+
         QUERY_RESPONSE=$(curl -sf -X POST \
-            "http://localhost:$TEST_PORT/sql" \
-            -u "testuser:testpass123" \
-            -H "Content-Type: text/plain" \
-            -d "SELECT 1 as test" 2>&1 || echo "FAILED")
-        
+            "http://localhost:$TEST_PORT/v1/api/sql" \
+            -u "root:$ROOT_PASSWORD" \
+            -H "Content-Type: application/json" \
+            -d '{"sql":"SELECT 1 as test"}' 2>&1 || echo "FAILED")
+
         if [ "$QUERY_RESPONSE" != "FAILED" ]; then
             log_info "✓ SQL query execution passed"
         else
-            log_warn "⚠ SQL query test skipped (requires authentication setup)"
+            log_warn "⚠ SQL query test failed after password update"
         fi
-    else
-        log_warn "⚠ SQL query test skipped (could not create test user)"
     fi
     
     # Test 6: Check container resource usage

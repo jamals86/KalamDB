@@ -24,7 +24,7 @@
 use super::view_base::{ViewTableProvider, VirtualView};
 use crate::schema_registry::RegistryError;
 use datafusion::arrow::array::{
-    ArrayRef, BooleanArray, StringArray, UInt32Array, UInt64Array, UInt8Array,
+    ArrayRef, BooleanArray, Int16Array, Int32Array, Int64Array, StringArray,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -335,21 +335,21 @@ impl VirtualView for ClusterView {
         // Single pass through nodes - collect all data
         for node in &info.nodes {
             cluster_ids.push(info.cluster_id.as_str());
-            node_ids.push(node.node_id.as_u64());
+            node_ids.push(node.node_id.as_u64() as i64);
             roles.push(node.role.as_str());
             statuses.push(node.status.as_str());
             rpc_addrs.push(node.rpc_addr.as_str());
             api_addrs.push(node.api_addr.as_str());
             is_selfs.push(node.is_self);
             is_leaders.push(node.is_leader);
-            groups_leading.push(node.groups_leading);
-            total_groups.push(node.total_groups);
-            current_terms.push(node.current_term);
-            last_applied_logs.push(node.last_applied_log);
-            leader_last_log_indexes.push(node.leader_last_log_index);
-            snapshot_indexes.push(node.snapshot_index);
-            catchup_progress_pcts.push(node.catchup_progress_pct);
-            replication_lags.push(node.replication_lag);
+            groups_leading.push(node.groups_leading as i32);
+            total_groups.push(node.total_groups as i32);
+            current_terms.push(node.current_term.map(|v| v as i64));
+            last_applied_logs.push(node.last_applied_log.map(|v| v as i64));
+            leader_last_log_indexes.push(node.leader_last_log_index.map(|v| v as i64));
+            snapshot_indexes.push(node.snapshot_index.map(|v| v as i64));
+            catchup_progress_pcts.push(node.catchup_progress_pct.map(|v| v as i16));
+            replication_lags.push(node.replication_lag.map(|v| v as i64));
         }
 
         // Build RecordBatch with direct Arrow array construction
@@ -357,21 +357,21 @@ impl VirtualView for ClusterView {
             self.schema(),
             vec![
                 Arc::new(StringArray::from(cluster_ids)) as ArrayRef,
-                Arc::new(UInt64Array::from(node_ids)) as ArrayRef,
+                Arc::new(Int64Array::from(node_ids)) as ArrayRef,
                 Arc::new(StringArray::from(roles)) as ArrayRef,
                 Arc::new(StringArray::from(statuses)) as ArrayRef,
                 Arc::new(StringArray::from(rpc_addrs)) as ArrayRef,
                 Arc::new(StringArray::from(api_addrs)) as ArrayRef,
                 Arc::new(BooleanArray::from(is_selfs)) as ArrayRef,
                 Arc::new(BooleanArray::from(is_leaders)) as ArrayRef,
-                Arc::new(UInt32Array::from(groups_leading)) as ArrayRef,
-                Arc::new(UInt32Array::from(total_groups)) as ArrayRef,
-                Arc::new(UInt64Array::from(current_terms)) as ArrayRef,
-                Arc::new(UInt64Array::from(last_applied_logs)) as ArrayRef,
-                Arc::new(UInt64Array::from(leader_last_log_indexes)) as ArrayRef,
-                Arc::new(UInt64Array::from(snapshot_indexes)) as ArrayRef,
-                Arc::new(UInt8Array::from(catchup_progress_pcts)) as ArrayRef,
-                Arc::new(UInt64Array::from(replication_lags)) as ArrayRef,
+                Arc::new(Int32Array::from(groups_leading)) as ArrayRef,
+                Arc::new(Int32Array::from(total_groups)) as ArrayRef,
+                Arc::new(Int64Array::from(current_terms)) as ArrayRef,
+                Arc::new(Int64Array::from(last_applied_logs)) as ArrayRef,
+                Arc::new(Int64Array::from(leader_last_log_indexes)) as ArrayRef,
+                Arc::new(Int64Array::from(snapshot_indexes)) as ArrayRef,
+                Arc::new(Int16Array::from(catchup_progress_pcts)) as ArrayRef,
+                Arc::new(Int64Array::from(replication_lags)) as ArrayRef,
             ],
         )
         .map_err(|e| RegistryError::Other(format!("Failed to build cluster batch: {}", e)))

@@ -835,6 +835,45 @@ jobs:
             --target aarch64-apple-darwin \
             --bin kalamdb-server
 
+      - name: Smoke test macOS ARM server
+        if: ${{ steps.vars.outputs.build_macos == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp backend/server.example.toml server.toml
+
+          sed -i '' 's|rocksdb_path = "./data/rocksdb"|rocksdb_path = "./test-data/rocksdb"|g' server.toml
+          sed -i '' 's|default_storage_path = "./data/storage"|default_storage_path = "./test-data/storage"|g' server.toml
+          sed -i '' 's|logs_path = "./logs"|logs_path = "./test-data/logs"|g' server.toml
+          sed -i '' 's|jwt_secret = ".*"|jwt_secret = "smoke-test-secret-key-minimum-32-characters-long-for-ci"|g' server.toml
+
+          mkdir -p test-data/rocksdb test-data/storage test-data/logs
+
+          ./target/aarch64-apple-darwin/release-dist/kalamdb-server &
+          SERVER_PID=$!
+
+          echo "Waiting for server to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:8080/v1/api/healthcheck > /dev/null 2>&1; then
+              echo "Server is ready!"
+              break
+            fi
+            if ! kill -0 $SERVER_PID 2>/dev/null; then
+              echo "Server process died"
+              exit 1
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 1
+          done
+
+          if ! curl -s http://localhost:8080/v1/api/healthcheck > /dev/null 2>&1; then
+            echo "Server failed to start within 30 seconds"
+            kill $SERVER_PID 2>/dev/null || true
+            exit 1
+          fi
+
+          kill $SERVER_PID 2>/dev/null || true
+
       - name: Package macOS artifacts
         if: ${{ steps.vars.outputs.build_macos == 'true' }}
         shell: bash
@@ -1009,7 +1048,7 @@ jobs:
           
           # Run smoke tests and capture result
           # Using --test-threads=1 for sequential execution
-          if cargo test --test smoke -- --test-threads=1 2>&1 | tee ../smoke-test-output.txt; then
+          if cargo test --features e2e-tests --test smoke -- --test-threads=1 2>&1 | tee ../smoke-test-output.txt; then
             echo "smoke_tests_passed=true" >> "$GITHUB_OUTPUT"
             echo "✅ All smoke tests passed!"
           else
@@ -1084,6 +1123,28 @@ jobs:
             echo "tag=$TAG"
             echo "version=$VERSION"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Update README latest release
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+
+          git fetch origin main
+          git checkout main
+
+          sed -i "s/^\*\*Latest release:\*\* .*/**Latest release:** ${TAG}/" README.md
+
+          if git diff --quiet; then
+            echo "README already up to date"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "docs: update latest release"
+          git push origin main
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
