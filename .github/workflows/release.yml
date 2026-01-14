@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: "Version tag for release (e.g. v0.1.2)"
+        description: "Version tag for release (e.g. v0.2.0)"
         required: true
-        default: "v0.1.2"
+        default: "v0.2.0"
 
       platforms:
         description: "Comma-separated platforms (like --platforms). Ignored if all_platforms=true"
