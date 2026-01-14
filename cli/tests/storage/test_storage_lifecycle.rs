@@ -78,8 +78,17 @@ fn test_storage_drop_requires_detached_tables() {
         namespace, user_table
     ));
     // Flush to force Parquet file creation (directories are created on flush, not on insert)
-    let _ = execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}.{}", namespace, user_table));
-    std::thread::sleep(std::time::Duration::from_millis(500)); // Wait for async flush job
+    let flush_output = execute_sql_as_root_via_cli(&format!(
+        "FLUSH TABLE {}.{}",
+        namespace, user_table
+    ))
+    .expect("flush user table");
+    if let Ok(job_id) = parse_job_id_from_flush_output(&flush_output) {
+        verify_job_completed(&job_id, std::time::Duration::from_secs(10))
+            .expect("user table flush job should complete");
+    } else {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 
     // For user tables we only require the table directory itself to exist eagerly; the per-user
     // subdirectory may be created lazily on first write depending on backend semantics.
@@ -88,7 +97,7 @@ fn test_storage_drop_requires_detached_tables() {
         .join(format!("user_{}", user_table));
     if local_fs_checks {
         assert!(
-            user_table_base_path.exists(),
+            wait_for_path_exists(&user_table_base_path, std::time::Duration::from_secs(5)),
             "user table base path should be created eagerly: {}",
             user_table_base_path.display()
         );
@@ -105,15 +114,24 @@ fn test_storage_drop_requires_detached_tables() {
         namespace, shared_table
     ));
     // Flush to force Parquet file creation (directories are created on flush, not on insert)
-    let _ = execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}.{}", namespace, shared_table));
-    std::thread::sleep(std::time::Duration::from_millis(500)); // Wait for async flush job
+    let flush_output = execute_sql_as_root_via_cli(&format!(
+        "FLUSH TABLE {}.{}",
+        namespace, shared_table
+    ))
+    .expect("flush shared table");
+    if let Ok(job_id) = parse_job_id_from_flush_output(&flush_output) {
+        verify_job_completed(&job_id, std::time::Duration::from_secs(10))
+            .expect("shared table flush job should complete");
+    } else {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 
     let shared_table_path = base_dir
         .join(format!("ns_{}", namespace))
         .join(format!("shared_{}", shared_table));
     if local_fs_checks {
         assert!(
-            shared_table_path.exists(),
+            wait_for_path_exists(&shared_table_path, std::time::Duration::from_secs(5)),
             "shared table path should be created eagerly: {}",
             shared_table_path.display()
         );

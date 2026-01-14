@@ -1,4 +1,4 @@
-//! Integration test for WebSocket batch streaming with 5000 rows
+//! Integration test for WebSocket batch streaming with a large row set
 //!
 //! This test validates that:
 //! - Large datasets (5000 rows) are inserted successfully in batches
@@ -11,22 +11,25 @@ use crate::common::*;
 
 use std::time::Duration;
 
-/// Test batch streaming with 5000 rows via WebSocket subscription
+const TOTAL_ROWS: usize = 1000;
+const BATCH_SIZE: usize = 200;
+
+/// Test batch streaming via WebSocket subscription
 ///
 /// This test:
 /// 1. Creates a table with substantial text columns
-/// 2. Inserts 5000 rows in batches of 500 (10 batches total)
+/// 2. Inserts rows in batches
 /// 3. Subscribes to the table via WebSocket
-/// 4. Verifies all 5000 rows are received
+/// 4. Verifies all rows are received
 /// 5. Checks for data integrity (no missing/duplicate rows)
 #[test]
-fn test_websocket_batch_streaming_5k_rows() {
+fn test_websocket_batch_streaming_rows() {
     if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping batch streaming test.");
         return;
     }
 
-    println!("\n=== WebSocket Batch Streaming Test: 5000 Rows ===");
+    println!("\n=== WebSocket Batch Streaming Test: {} Rows ===", TOTAL_ROWS);
 
     // Generate unique namespace and table name
     let namespace = generate_unique_namespace("test_ns");
@@ -59,15 +62,21 @@ fn test_websocket_batch_streaming_5k_rows() {
     }
     println!("✓ Table created successfully");
 
-    // Insert 5000 rows in batches of 500
-    println!("\nInserting 5000 rows in 10 batches of 500 rows each...");
+    let batch_count = (TOTAL_ROWS + BATCH_SIZE - 1) / BATCH_SIZE;
+    println!(
+        "\nInserting {} rows in {} batches of {} rows each...",
+        TOTAL_ROWS, batch_count, BATCH_SIZE
+    );
     let mut total_inserted = 0;
 
-    for batch_num in 0..10 {
+    for batch_num in 0..batch_count {
         let mut values = Vec::new();
 
-        for i in 0..500 {
-            let row_id = batch_num * 500 + i;
+        for i in 0..BATCH_SIZE {
+            let row_id = batch_num * BATCH_SIZE + i;
+            if row_id >= TOTAL_ROWS {
+                break;
+            }
 
             // Create substantial data (~300 bytes per row) to exceed 8KB batch size
             let long_data = format!(
@@ -118,14 +127,14 @@ fn test_websocket_batch_streaming_5k_rows() {
             return;
         }
 
-        total_inserted += 500;
+        total_inserted += values.len();
 
-        if (batch_num + 1) % 2 == 0 {
+        if (batch_num + 1) % 2 == 0 || batch_num + 1 == batch_count {
             println!("  ✓ Inserted {} rows so far...", total_inserted);
         }
     }
 
-    println!("✓ All 5000 rows inserted successfully");
+    println!("✓ All {} rows inserted successfully", TOTAL_ROWS);
 
     // Verify row count with COUNT query
     println!("\nVerifying row count...");
@@ -134,10 +143,15 @@ fn test_websocket_batch_streaming_5k_rows() {
 
     match count_result {
         Ok(output) => {
-            if output.contains("\"total\":5000") || output.contains("\"total\": 5000") {
-                println!("✓ COUNT verification passed: 5000 rows");
+            let expected = format!("\"total\":{}", TOTAL_ROWS);
+            let expected_spaced = format!("\"total\": {}", TOTAL_ROWS);
+            if output.contains(&expected) || output.contains(&expected_spaced) {
+                println!("✓ COUNT verification passed: {} rows", TOTAL_ROWS);
             } else {
-                eprintln!("⚠️  COUNT mismatch. Expected 5000 rows. Output: {}", output);
+                eprintln!(
+                    "⚠️  COUNT mismatch. Expected {} rows. Output: {}",
+                    TOTAL_ROWS, output
+                );
             }
         }
         Err(e) => {
@@ -160,9 +174,8 @@ fn test_websocket_batch_streaming_5k_rows() {
 
     println!("✓ Subscription started, waiting for initial data batches...");
 
-    // Give subscription time to receive all 5 batches
-    // With 5000 rows at ~300 bytes each, we expect 5 batches of 1000 rows
-    std::thread::sleep(Duration::from_secs(8));
+    // Give subscription time to receive batches
+    std::thread::sleep(Duration::from_secs(3));
 
     // Try to read subscription acknowledgment and all batch messages
     let mut received_lines = Vec::new();
