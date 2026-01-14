@@ -23,7 +23,7 @@ use kalamdb_commons::{
     AuthType, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, Role, StorageId,
     StorageMode, TableName, UserId,
 };
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Test: system.users uses username index for WHERE username = '...' queries
 ///
@@ -124,6 +124,11 @@ async fn test_system_users_username_index() {
 #[actix_web::test]
 async fn test_system_jobs_status_index() {
     let server = TestServer::new().await;
+    let run_id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("System time before UNIX_EPOCH")
+        .as_nanos();
+    let job_prefix = format!("statusidx{}", run_id);
 
     // Insert 100 jobs with different statuses
     let statuses = vec![
@@ -139,13 +144,13 @@ async fn test_system_jobs_status_index() {
     for i in 1..=100 {
         let status = statuses[i % statuses.len()].clone();
         let job = Job {
-            job_id: JobId::new(&format!("job_{}", i)),
+            job_id: JobId::new(&format!("{}_{}", job_prefix, i)),
             job_type: JobType::Flush,
             status,
             parameters: Some(format!(r#"{{"table":"test_{}", "iteration":{}}}"#, i, i)),
             message: None,
             exception_trace: None,
-            idempotency_key: Some(format!("idem_key_{}", i)),
+            idempotency_key: Some(format!("idem_key_{}_{}", job_prefix, i)),
             retry_count: 0,
             max_retries: 3,
             memory_used: None,
@@ -176,17 +181,22 @@ async fn test_system_jobs_status_index() {
     }
 
     // First verify we have data
-    let verify_query = "SELECT COUNT(*) AS total FROM system.jobs";
-    let verify_response = server.execute_sql(verify_query).await;
+    let verify_query = format!(
+        "SELECT COUNT(*) AS total FROM system.jobs WHERE job_id LIKE '{}%'",
+        job_prefix
+    );
+    let verify_response = server.execute_sql(&verify_query).await;
     assert_eq!(verify_response.status, ResponseStatus::Success);
     let verify_rows = verify_response.results[0].rows_as_maps();
     let total_jobs = verify_rows[0].get("total").unwrap().as_i64().unwrap();
     println!("✓ Total jobs inserted: {}", total_jobs);
 
     // Check what statuses actually exist
-    let status_query =
-        "SELECT status, COUNT(*) AS count FROM system.jobs GROUP BY status ORDER BY status";
-    let status_response = server.execute_sql(status_query).await;
+    let status_query = format!(
+        "SELECT status, COUNT(*) AS count FROM system.jobs WHERE job_id LIKE '{}%' GROUP BY status ORDER BY status",
+        job_prefix
+    );
+    let status_response = server.execute_sql(&status_query).await;
     if status_response.status == ResponseStatus::Success {
         println!("✓ Job statuses breakdown:");
         for row in status_response.results[0].rows_as_maps() {
@@ -203,9 +213,12 @@ async fn test_system_jobs_status_index() {
     }
 
     // Test 1: Query for Running jobs (should use status index)
-    let query_running = "SELECT COUNT(*) AS job_count FROM system.jobs WHERE status = 'running'";
+    let query_running = format!(
+        "SELECT COUNT(*) AS job_count FROM system.jobs WHERE status = 'running' AND job_id LIKE '{}%'",
+        job_prefix
+    );
     let start = Instant::now();
-    let response = server.execute_sql(query_running).await;
+    let response = server.execute_sql(&query_running).await;
     let latency_indexed = start.elapsed();
 
     assert_eq!(response.status, ResponseStatus::Success, "Query failed: {:?}", response.error);
@@ -231,9 +244,11 @@ async fn test_system_jobs_status_index() {
     println!("✓ Status index query latency: {:?}", latency_indexed);
 
     // Test 2: Query for completed jobs
-    let query_completed =
-        "SELECT job_id, status FROM system.jobs WHERE status = 'completed' LIMIT 5";
-    let response2 = server.execute_sql(query_completed).await;
+    let query_completed = format!(
+        "SELECT job_id, status FROM system.jobs WHERE status = 'completed' AND job_id LIKE '{}%' LIMIT 5",
+        job_prefix
+    );
+    let response2 = server.execute_sql(&query_completed).await;
 
     assert_eq!(response2.status, ResponseStatus::Success);
     let rows2 = response2.results[0].rows_as_maps();
@@ -245,8 +260,11 @@ async fn test_system_jobs_status_index() {
     }
 
     // Test 3: Query for failed jobs
-    let query_failed = "SELECT COUNT(*) AS failed_count FROM system.jobs WHERE status = 'failed'";
-    let response3 = server.execute_sql(query_failed).await;
+    let query_failed = format!(
+        "SELECT COUNT(*) AS failed_count FROM system.jobs WHERE status = 'failed' AND job_id LIKE '{}%'",
+        job_prefix
+    );
+    let response3 = server.execute_sql(&query_failed).await;
 
     assert_eq!(response3.status, ResponseStatus::Success);
     let rows3 = response3.results[0].rows_as_maps();

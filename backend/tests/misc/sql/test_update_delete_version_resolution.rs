@@ -602,18 +602,27 @@ async fn test_nanosecond_collision_handling() {
 #[actix_web::test]
 async fn test_query_performance_with_multiple_versions() {
     let server = TestServer::new().await;
+    let run_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("System time before UNIX_EPOCH")
+        .as_nanos();
+    let namespace = format!("test_uv_perf_{}", run_id);
+    let table = format!("perf_test_{}", run_id);
 
     // Setup
-    fixtures::create_namespace(&server, "test_uv_perf").await;
+    fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_uv_perf.perf_test (
-                id TEXT PRIMARY KEY,
-                version INT
-            ) WITH (
-                TYPE = 'USER',
-                STORAGE_ID = 'local'
-            )"#,
+            &format!(
+                r#"CREATE TABLE {}.{} (
+                    id TEXT PRIMARY KEY,
+                    version INT
+                ) WITH (
+                    TYPE = 'USER',
+                    STORAGE_ID = 'local'
+                )"#,
+                namespace, table
+            ),
             "user1",
         )
         .await;
@@ -621,7 +630,10 @@ async fn test_query_performance_with_multiple_versions() {
     // Insert initial version
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_uv_perf.perf_test (id, version) VALUES ('rec1', 0)"#,
+            &format!(
+                "INSERT INTO {}.{} (id, version) VALUES ('rec1', 0)",
+                namespace, table
+            ),
             "user1",
         )
         .await;
@@ -630,7 +642,10 @@ async fn test_query_performance_with_multiple_versions() {
     let start = std::time::Instant::now();
     server
         .execute_sql_as_user(
-            "SELECT id, version FROM test_uv_perf.perf_test WHERE id = 'rec1'",
+            &format!(
+                "SELECT id, version FROM {}.{} WHERE id = 'rec1'",
+                namespace, table
+            ),
             "user1",
         )
         .await;
@@ -641,13 +656,13 @@ async fn test_query_performance_with_multiple_versions() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "UPDATE test_uv_perf.perf_test SET version = {} WHERE id = 'rec1'",
-                    i
+                    "UPDATE {}.{} SET version = {} WHERE id = 'rec1'",
+                    namespace, table, i
                 ),
                 "user1",
             )
             .await;
-        flush_helpers::execute_flush_synchronously(&server, "test_uv_perf", "perf_test")
+        flush_helpers::execute_flush_synchronously(&server, &namespace, &table)
             .await
             .expect("Flush should succeed");
     }
@@ -656,7 +671,10 @@ async fn test_query_performance_with_multiple_versions() {
     let start = std::time::Instant::now();
     server
         .execute_sql_as_user(
-            "SELECT id, version FROM test_uv_perf.perf_test WHERE id = 'rec1'",
+            &format!(
+                "SELECT id, version FROM {}.{} WHERE id = 'rec1'",
+                namespace, table
+            ),
             "user1",
         )
         .await;
@@ -667,13 +685,13 @@ async fn test_query_performance_with_multiple_versions() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "UPDATE test_uv_perf.perf_test SET version = {} WHERE id = 'rec1'",
-                    i
+                    "UPDATE {}.{} SET version = {} WHERE id = 'rec1'",
+                    namespace, table, i
                 ),
                 "user1",
             )
             .await;
-        flush_helpers::execute_flush_synchronously(&server, "test_uv_perf", "perf_test")
+        flush_helpers::execute_flush_synchronously(&server, &namespace, &table)
             .await
             .expect("Flush should succeed");
     }
@@ -682,7 +700,10 @@ async fn test_query_performance_with_multiple_versions() {
     let start = std::time::Instant::now();
     server
         .execute_sql_as_user(
-            "SELECT id, version FROM test_uv_perf.perf_test WHERE id = 'rec1'",
+            &format!(
+                "SELECT id, version FROM {}.{} WHERE id = 'rec1'",
+                namespace, table
+            ),
             "user1",
         )
         .await;

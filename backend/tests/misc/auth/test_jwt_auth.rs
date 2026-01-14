@@ -18,28 +18,28 @@ use actix_web::{test, web, App};
 use super::test_support::{auth_helper, TestServer};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use kalamdb_api::repositories::user_repo::CoreUsersRepo;
+use kalamdb_auth::jwt_auth::{JwtClaims as AuthJwtClaims, KALAMDB_ISSUER};
 use kalamdb_auth::UserRepository;
-use kalamdb_commons::Role;
-use serde::{Deserialize, Serialize};
+use kalamdb_commons::{Role, UserId, UserName};
+use serde::Serialize;
 use std::sync::Arc;
 
-/// JWT Claims structure for testing
-#[derive(Debug, Serialize, Deserialize)]
-struct JwtClaims {
-    /// Subject (user ID)
-    pub sub: String,
-    /// Issuer
-    pub iss: String,
-    /// Expiration time (Unix timestamp)
-    pub exp: usize,
-    /// Issued at (Unix timestamp)
-    pub iat: usize,
-    /// Username (custom claim)
-    pub username: Option<String>,
-    /// Email (custom claim)
-    pub email: Option<String>,
-    /// Role (custom claim)
-    pub role: Option<String>,
+fn jwt_secret_for_tests() -> String {
+    std::env::var("KALAMDB_JWT_SECRET")
+        .unwrap_or_else(|_| kalamdb_commons::config::defaults::default_auth_jwt_secret())
+}
+
+fn trusted_issuer_for_tests() -> String {
+    std::env::var("KALAMDB_JWT_TRUSTED_ISSUERS")
+        .ok()
+        .and_then(|issuers| {
+            issuers
+                .split(',')
+                .map(|s| s.trim())
+                .find(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| KALAMDB_ISSUER.to_string())
 }
 
 /// Create a test JWT token
@@ -56,14 +56,14 @@ fn create_test_jwt_token(
     exp_offset_secs: i64,
 ) -> String {
     let now = chrono::Utc::now().timestamp() as usize;
-    let claims = JwtClaims {
-        sub: format!("test_{}", username),
+    let claims = AuthJwtClaims {
+        sub: UserId::new(username).to_string(),
         iss: issuer.to_string(),
         exp: ((now as i64) + exp_offset_secs) as usize,
         iat: now,
-        username: Some(username.to_string()),
+        username: Some(UserName::new(username)),
         email: Some(format!("{}@example.com", username)),
-        role: Some("user".to_string()),
+        role: Some(Role::User),
     };
 
     let header = Header::new(Algorithm::HS256);
@@ -82,9 +82,9 @@ async fn test_jwt_auth_success() {
     auth_helper::create_test_user(&server, username, password, Role::User).await;
 
     // Create valid JWT token
-    let secret = "test-secret-key-for-jwt-authentication";
-    let issuer = "kalamdb-test";
-    let token = create_test_jwt_token(secret, username, issuer, 3600); // Expires in 1 hour
+    let secret = jwt_secret_for_tests();
+    let issuer = trusted_issuer_for_tests();
+    let token = create_test_jwt_token(&secret, username, &issuer, 3600); // Expires in 1 hour
     let auth_header = format!("Bearer {}", token);
 
     // Create test request with JWT authentication
@@ -142,9 +142,9 @@ async fn test_jwt_auth_expired_token() {
     auth_helper::create_test_user(&server, username, password, Role::User).await;
 
     // Create expired JWT token
-    let secret = "test-secret-key-for-jwt-authentication";
-    let issuer = "kalamdb-test";
-    let token = create_test_jwt_token(secret, username, issuer, -3600); // Expired 1 hour ago
+    let secret = jwt_secret_for_tests();
+    let issuer = trusted_issuer_for_tests();
+    let token = create_test_jwt_token(&secret, username, &issuer, -3600); // Expired 1 hour ago
     let auth_header = format!("Bearer {}", token);
 
     // Create test request
@@ -197,8 +197,8 @@ async fn test_jwt_auth_invalid_signature() {
 
     // Create JWT token with WRONG secret (invalid signature)
     let wrong_secret = "wrong-secret-key-this-should-fail";
-    let issuer = "kalamdb-test";
-    let token = create_test_jwt_token(wrong_secret, username, issuer, 3600);
+    let issuer = trusted_issuer_for_tests();
+    let token = create_test_jwt_token(wrong_secret, username, &issuer, 3600);
     let auth_header = format!("Bearer {}", token);
 
     // Create test request
@@ -250,9 +250,9 @@ async fn test_jwt_auth_untrusted_issuer() {
     auth_helper::create_test_user(&server, username, password, Role::User).await;
 
     // Create JWT token with UNTRUSTED issuer
-    let secret = "test-secret-key-for-jwt-authentication";
+    let secret = jwt_secret_for_tests();
     let untrusted_issuer = "evil.com"; // Not in trusted list
-    let token = create_test_jwt_token(secret, username, untrusted_issuer, 3600);
+    let token = create_test_jwt_token(&secret, username, untrusted_issuer, 3600);
     let auth_header = format!("Bearer {}", token);
 
     // Create test request
@@ -299,8 +299,8 @@ async fn test_jwt_auth_missing_sub_claim() {
     let server = TestServer::new().await;
 
     // Create JWT token WITHOUT 'sub' claim (malformed)
-    let secret = "test-secret-key-for-jwt-authentication";
-    let issuer = "kalamdb-test";
+    let secret = jwt_secret_for_tests();
+    let issuer = trusted_issuer_for_tests();
 
     // Create claims WITHOUT sub field
     #[derive(Debug, Serialize)]

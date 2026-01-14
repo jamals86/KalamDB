@@ -2,6 +2,7 @@
 
 use crate::error::{AuthError, AuthResult};
 use jsonwebtoken::{decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::errors::ErrorKind;
 use kalamdb_commons::{Role, UserId, UserName};
 use serde::{Deserialize, Serialize};
 
@@ -174,12 +175,10 @@ pub fn validate_jwt_token(
 
     let decoding_key = DecodingKey::from_secret(secret.as_bytes());
     let token_data = decode::<JwtClaims>(token, &decoding_key, &validation).map_err(|e| {
-        if e.to_string().contains("ExpiredSignature") {
-            AuthError::TokenExpired
-        } else if e.to_string().contains("InvalidSignature") {
-            AuthError::InvalidSignature
-        } else {
-            AuthError::MalformedAuthorization(format!("JWT decode error: {}", e))
+        match e.kind() {
+            ErrorKind::ExpiredSignature => AuthError::TokenExpired,
+            ErrorKind::InvalidSignature => AuthError::InvalidSignature,
+            _ => AuthError::MalformedAuthorization(format!("JWT decode error: {}", e)),
         }
     })?;
 

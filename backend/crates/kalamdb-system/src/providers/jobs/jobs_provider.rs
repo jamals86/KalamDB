@@ -668,9 +668,18 @@ impl TableProvider for JobsTableProvider {
         &self,
         filters: &[&Expr],
     ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
-        // Inexact pushdown: we may use filters for index/prefix scans,
-        // but DataFusion must still apply them for correctness.
-        Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
+        // Only push down exact equality filters we can leverage for indexes.
+        Ok(filters
+            .iter()
+            .map(|filter| {
+                if let Some((col, _val)) = kalamdb_store::extract_string_equality(filter) {
+                    if matches!(col, "status" | "job_id" | "idempotency_key") {
+                        return TableProviderFilterPushDown::Inexact;
+                    }
+                }
+                TableProviderFilterPushDown::Unsupported
+            })
+            .collect())
     }
 
     async fn scan(

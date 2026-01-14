@@ -14,6 +14,7 @@ use base64::{engine::general_purpose, Engine as _};
 use super::test_support::TestServer;
 use kalamdb_auth::{authenticate, AuthRequest};
 use kalamdb_commons::{Role, UserId, models::ConnectionInfo};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// T143A: Test authentication with empty credentials returns error
 #[tokio::test]
@@ -67,10 +68,17 @@ async fn test_malformed_basic_auth_400() {
 #[tokio::test]
 async fn test_concurrent_auth_no_race_conditions() {
     let server = TestServer::new().await;
+    let username = format!(
+        "concurrent_user_{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("System time before UNIX_EPOCH")
+            .as_nanos()
+    );
 
     // Create test user
     server
-        .create_user("concurrent_user", "TestPass123", Role::User)
+        .create_user(&username, "TestPass123", Role::User)
         .await;
 
     let user_repo = server.users_repo();
@@ -79,10 +87,12 @@ async fn test_concurrent_auth_no_race_conditions() {
     let mut handles = vec![];
     for i in 0..10 {
         let user_repo = user_repo.clone();
+        let username = username.clone();
 
         let handle = tokio::spawn(async move {
             let connection_info = ConnectionInfo::new(Some(format!("127.0.0.1:{}", 8080 + i)));
-            let credentials = general_purpose::STANDARD.encode("concurrent_user:TestPass123");
+            let credentials =
+                general_purpose::STANDARD.encode(format!("{}:TestPass123", username));
             let auth_header = format!("Basic {}", credentials);
             let auth_request = AuthRequest::Header(auth_header);
             authenticate(auth_request, &connection_info, &user_repo).await

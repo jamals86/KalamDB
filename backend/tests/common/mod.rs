@@ -44,7 +44,7 @@ use kalam_link::models::{
     ErrorDetail, KalamDataType, QueryResponse, QueryResult, ResponseStatus, SchemaField,
 };
 use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
-use kalamdb_commons::UserId;
+use kalamdb_commons::{AuthType, StorageMode, UserId};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
@@ -1111,8 +1111,6 @@ impl TestServer {
         password: &str,
         role: kalamdb_commons::Role,
     ) -> kalamdb_commons::UserId {
-        use kalamdb_commons::{AuthType, StorageMode, UserId};
-
         let user_id = UserId::new(username);
         let password_hash =
             bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
@@ -1124,6 +1122,9 @@ impl TestServer {
             existing.email = Some(format!("{}@test.com", username));
             existing.auth_type = AuthType::Password;
             existing.auth_data = None;
+            existing.failed_login_attempts = 0;
+            existing.locked_until = None;
+            existing.deleted_at = None;
             existing.updated_at = chrono::Utc::now().timestamp_millis();
             let _ = users_provider.update_user(existing);
             return user_id;
