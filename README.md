@@ -86,28 +86,6 @@ data/
   └── batch-<index>.parquet
 ```
 
-High level crate graph today:
-
-```text
-        +----------------+
-        |  kalamdb-api   |   HTTP + WebSocket server
-        +--------+-------+
-           |
-           v
-        +----------------+
-        |  kalamdb-core  |   SQL handlers, jobs, tables
-        +--------+-------+
-           |
-    +------------+-------------+
-    v                          v
-  +---------------+          +-----------------+
-  | kalamdb-store |          | kalamdb-filestore|  (Parquet + manifests)
-  +-------+-------+          +---------+-------+
-    |                             |
-    v                             v
-   RocksDB column families         Filesystem / object storage
-```
-
 `kalamdb-core` orchestrates everything and never talks to RocksDB or the filesystem directly; it goes through `kalamdb-store` (key/value hot path) and `kalamdb-filestore` (Parquet + `manifest.json` and batch indexes).
 
 ## 🌟 **KalamDB Core Features & Roadmap**
@@ -121,27 +99,27 @@ High level crate graph today:
 - Unified schema system with 16 data types (incl. EMBEDDING)
 - Role-based access control and authentication
 - `kalam` CLI tool
+- High-Availability with Raft consensus and multi-raft groups with sharding
+- Cluster management (snapshotting, backups)
+- Admin UI with SQL Studio
+- SDK for TypeScript using WASM
+- Support for more storage backends (Azure, GCS, S3-compatible) using ObjectStore 
 
 ---
 
 ### 🚧 **In Progress**
 - Indexes for both cold/hot storages
 - Backup/restore and system catalog tables
-- SDK for TypeScript using WASM
-- Performance tuning and metrics
 - Stronger WebSocket auth and rate limiting
 - Cleanup and simplification of docs and examples
-- Support for more storage backends (Azure, GCS, S3-compatible) using ObjectStore 
+- Query caching and more indexes
 
 ---
 
 ### 📋 **Planned / Future**
-- Admin UI and dashboard
 - Run workflows on data changes (triggers)
 - File storage and BLOB support
-- High-availability and replication using Raft
 - Richer search (full-text, vector embeddings as DataType)
-- Query caching and more indexes
 - Connectors to external data sources (Flink, Kafka, etc)
 - Transactions and constraints
 ---
