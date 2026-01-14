@@ -36,6 +36,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 /// 3. Verify results are correct
 /// 4. Compare query latency with and without index-friendly filters
 #[actix_web::test]
+#[ntest::timeout(60000)]
 async fn test_system_users_username_index() {
     let server = TestServer::new().await;
 
@@ -122,6 +123,7 @@ async fn test_system_users_username_index() {
 /// 3. Verify correct results
 /// 4. Ensure query performance is consistent regardless of total job count
 #[actix_web::test]
+#[ntest::timeout(60000)]
 async fn test_system_jobs_status_index() {
     let server = TestServer::new().await;
     let run_id = SystemTime::now()
@@ -285,6 +287,7 @@ async fn test_system_jobs_status_index() {
 /// This test verifies that the live_queries table can be queried
 /// and has the table_id index available (even if filter_to_prefix returns None currently).
 #[actix_web::test]
+#[ntest::timeout(60000)]
 async fn test_system_live_queries_basic() {
     let server = TestServer::new().await;
 
@@ -370,6 +373,7 @@ async fn test_system_live_queries_basic() {
 /// This test verifies that indexed queries don't scale with table size.
 /// We measure query time with different dataset sizes to confirm O(1) behavior.
 #[actix_web::test]
+#[ntest::timeout(120000)]
 async fn test_index_performance_scaling() {
     let server = TestServer::new().await;
 

@@ -16,6 +16,7 @@ mod manifest;
 mod subscription;
 mod observability;
 mod stress;
+mod cluster;
 
 // Include standalone smoke test
 mod test_http_test_server_smoke;

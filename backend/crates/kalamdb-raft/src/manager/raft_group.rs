@@ -631,6 +631,24 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             let guard = self.raft.read();
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
+
+        let metrics = raft.metrics().borrow().clone();
+        let snapshot_index = metrics.snapshot.map(|log_id| log_id.index);
+        let last_log_index = metrics.last_log_index.unwrap_or(0);
+        let last_applied_index = metrics.last_applied.map(|log_id| log_id.index).unwrap_or(0);
+        let target_index = last_log_index.max(last_applied_index);
+
+        if let Some(snapshot_index) = snapshot_index {
+            if snapshot_index >= target_index {
+                log::debug!(
+                    "Skipping snapshot for Raft group {} (snapshot_index={}, target_index={})",
+                    self.group_id,
+                    snapshot_index,
+                    target_index
+                );
+                return Ok(());
+            }
+        }
         
         raft.trigger().snapshot().await
             .map_err(|e| RaftError::Internal(format!("Failed to trigger snapshot for group {}: {:?}", self.group_id, e)))?;
