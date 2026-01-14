@@ -70,5 +70,5 @@ pub use group_id::{GroupId, ShardRouter};
 pub use state_machine::{KalamStateMachine, StateMachineSnapshot, ApplyResult, serde_helpers};
 pub use storage::{KalamRaftStorage, KalamTypeConfig, KalamNode};
 pub use network::{RaftNetwork, RaftNetworkFactory, RaftService, start_rpc_server};
-pub use manager::{RaftManager, RaftGroup, RaftManagerConfig, PeerNode, DEFAULT_USER_DATA_SHARDS, DEFAULT_SHARED_DATA_SHARDS};
+pub use manager::{RaftManager, RaftGroup, RaftManagerConfig, PeerNode, SnapshotInfo, SnapshotsSummary, DEFAULT_USER_DATA_SHARDS, DEFAULT_SHARED_DATA_SHARDS};
 

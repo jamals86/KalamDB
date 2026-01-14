@@ -622,6 +622,28 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         Ok(())
     }
     
+    /// Trigger a snapshot for this Raft group
+    ///
+    /// Forces OpenRaft to create a snapshot of the current state.
+    /// This is useful for CLUSTER FLUSH operations to ensure durability.
+    pub async fn trigger_snapshot(&self) -> Result<(), RaftError> {
+        let raft = {
+            let guard = self.raft.read();
+            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
+        };
+        
+        raft.trigger().snapshot().await
+            .map_err(|e| RaftError::Internal(format!("Failed to trigger snapshot for group {}: {:?}", self.group_id, e)))?;
+        
+        log::debug!("Triggered snapshot for Raft group {}", self.group_id);
+        Ok(())
+    }
+    
+    /// Get the snapshot index for this group (if a snapshot exists)
+    pub fn snapshot_index(&self) -> Option<u64> {
+        self.metrics().and_then(|m| m.snapshot.map(|log_id| log_id.index))
+    }
+    
     /// Shutdown this Raft group
     ///
     /// Calls OpenRaft's Raft::shutdown() to cleanly terminate the internal tasks.

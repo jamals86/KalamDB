@@ -23,7 +23,7 @@ use std::sync::Arc;
 use crate::sql::executor::handlers::dml::{DeleteHandler, InsertHandler, UpdateHandler};
 use crate::sql::executor::handlers::flush::{FlushAllTablesHandler, FlushTableHandler};
 use crate::sql::executor::handlers::jobs::{KillJobHandler, KillLiveQueryHandler};
-use crate::sql::executor::handlers::cluster::{ClusterFlushHandler, ClusterClearHandler, ClusterListHandler};
+use crate::sql::executor::handlers::cluster::{ClusterFlushHandler, ClusterClearHandler, ClusterListHandler, ClusterJoinHandler, ClusterLeaveHandler};
 use crate::sql::executor::handlers::namespace::{
     AlterNamespaceHandler, CreateNamespaceHandler, DropNamespaceHandler, ShowNamespacesHandler,
     UseNamespaceHandler,
@@ -403,6 +403,18 @@ impl HandlerRegistry {
         registry.register_dynamic(
             SqlStatementKind::ClusterList,
             ClusterListHandler::new(app_context.clone()),
+        );
+
+        // ClusterJoin carries the address in the variant - use dynamic registration
+        // since the handler extracts the address from the statement
+        registry.register_dynamic(
+            SqlStatementKind::ClusterJoin(String::new()),
+            ClusterJoinHandler::new(app_context.clone()),
+        );
+
+        registry.register_dynamic(
+            SqlStatementKind::ClusterLeave,
+            ClusterLeaveHandler::new(app_context.clone()),
         );
 
         // ============================================================================

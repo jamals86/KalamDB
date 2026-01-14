@@ -924,9 +924,11 @@ TODOS:
 - misc                        - and split into sub-folder
 - backend\tests\testserver    - 
 49) Add new commands:
-- CLUSTER FLUSH   - Which force snapshotting the current logs
+- CLUSTER FLUSH   - Which force snapshotting the current logs and output a message where the snapshot been stored in, and show any other informations we have
 - CLUSTER CLEAR   - Clear the old snapshots
-- CLUSTER LIST    - It lists sall the nodes in the cluster same as select * from system.cluster
+- CLUSTER LIST    - It lists all the nodes in the cluster, with each node under it its groups from the select * from system.cluster_Groups in a nice display for debugging and over view of the cluster health with colors
+- CLUSTER JOIN    - Prepare the command but return a warning that its not implemented yet
+- CLUSTER LEAVE   - Prepare the command but return a warning that its not implemented yet
 
 50) things like this should be less parameters since appcontext have them already, find other places where we pass things like this and only keep the app_ctx
     let flush_job = UserTableFlushJob::new(
@@ -944,3 +946,4 @@ TODOS:
 
 
 52) prepare the code to have CLUSTER JOIN/CLUSTER LEAVE
+53) CLUSTER LIST (read-only, all users) - change this to only dba and admins

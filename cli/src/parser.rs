@@ -20,6 +20,8 @@ pub enum Command {
         ClusterFlush,
         ClusterClear,
         ClusterList,
+        ClusterJoin(String),  // node address to join
+        ClusterLeave,
     Health,
     Pause,
     Continue,
@@ -86,13 +88,23 @@ impl CommandParser {
             "\\cluster" => {
                 if args.is_empty() {
                     Err(CLIError::ParseError(
-                        "\\cluster requires: flush, clear, or list".into(),
+                        "\\cluster requires: flush, clear, list, join, or leave".into(),
                     ))
                 } else {
                     match args[0] {
                         "flush" => Ok(Command::ClusterFlush),
                         "clear" => Ok(Command::ClusterClear),
                         "list" | "ls" => Ok(Command::ClusterList),
+                        "join" => {
+                            if args.len() < 2 {
+                                Err(CLIError::ParseError(
+                                    "\\cluster join requires a node address".into(),
+                                ))
+                            } else {
+                                Ok(Command::ClusterJoin(args[1].to_string()))
+                            }
+                        }
+                        "leave" => Ok(Command::ClusterLeave),
                         _ => Err(CLIError::ParseError(
                             format!("Unknown cluster subcommand: {}", args[0]),
                         )),

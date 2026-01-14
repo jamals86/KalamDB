@@ -60,13 +60,13 @@ impl DmlExecutor {
             let row_ids = provider
                 .insert_batch(user_id, rows.to_vec())
                 .map_err(|e| ApplierError::Execution(format!("Failed to insert batch: {}", e)))?;
-            log::info!("DmlExecutor: Inserted {} rows into {}", row_ids.len(), table_id);
+            log::debug!("DmlExecutor: Inserted {} rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
         } else if let Some(provider) = provider_arc.as_any().downcast_ref::<StreamTableProvider>() {
             let row_ids = provider
                 .insert_batch(user_id, rows.to_vec())
                 .map_err(|e| ApplierError::Execution(format!("Failed to insert stream batch: {}", e)))?;
-            log::info!("DmlExecutor: Inserted {} stream rows into {}", row_ids.len(), table_id);
+            log::debug!("DmlExecutor: Inserted {} stream rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
         } else {
             Err(ApplierError::Execution(format!(
@@ -137,7 +137,7 @@ impl DmlExecutor {
                     deleted_count += 1;
                 }
             }
-            log::info!("DmlExecutor: Deleted {} rows from {}", deleted_count, table_id);
+            log::debug!("DmlExecutor: Deleted {} rows from {}", deleted_count, table_id);
             Ok(deleted_count)
         } else if let Some(provider) = provider_arc.as_any().downcast_ref::<StreamTableProvider>() {
             let mut deleted_count = 0;
@@ -149,7 +149,7 @@ impl DmlExecutor {
                     deleted_count += 1;
                 }
             }
-            log::info!("DmlExecutor: Deleted {} stream rows from {}", deleted_count, table_id);
+            log::debug!("DmlExecutor: Deleted {} stream rows from {}", deleted_count, table_id);
             Ok(deleted_count)
         } else {
             Err(ApplierError::Execution(format!(
@@ -183,7 +183,7 @@ impl DmlExecutor {
             let row_ids = provider
                 .insert_batch(&system_user, rows.to_vec())
                 .map_err(|e| ApplierError::Execution(format!("Failed to insert batch: {}", e)))?;
-            log::info!("DmlExecutor: Inserted {} shared rows into {}", row_ids.len(), table_id);
+            log::debug!("DmlExecutor: Inserted {} shared rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
         } else {
             Err(ApplierError::Execution(format!(
@@ -220,7 +220,7 @@ impl DmlExecutor {
                 .update_by_id_field(&system_user, pk_value, update_row)
                 .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
 
-            log::info!("DmlExecutor: Updated 1 shared row in {} (pk={})", table_id, pk_value);
+            log::debug!("DmlExecutor: Updated 1 shared row in {} (pk={})", table_id, pk_value);
             Ok(1)
         } else {
             Err(ApplierError::Execution(format!(
@@ -261,7 +261,7 @@ impl DmlExecutor {
                 }
             }
 
-            log::info!("DmlExecutor: Deleted {} shared rows from {}", deleted_count, table_id);
+            log::debug!("DmlExecutor: Deleted {} shared rows from {}", deleted_count, table_id);
             Ok(deleted_count)
         } else {
             Err(ApplierError::Execution(format!(

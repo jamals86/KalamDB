@@ -5,6 +5,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::{ExecutionContext, ExecutionResult, ScalarValue, StatementHandler};
+use kalamdb_raft::RaftExecutor;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::sync::Arc;
 
@@ -26,9 +27,6 @@ impl StatementHandler for ClusterFlushHandler {
         _params: Vec<ScalarValue>,
         ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // Touch context for future use (cluster manager wiring coming later)
-        let _ = &self.app_context;
-
         if !matches!(statement.kind(), SqlStatementKind::ClusterFlush) {
             return Err(KalamDbError::InvalidOperation(format!(
                 "CLUSTER FLUSH handler received wrong statement type: {}",
@@ -36,13 +34,68 @@ impl StatementHandler for ClusterFlushHandler {
             )));
         }
 
-        // Log the operation
         log::info!("CLUSTER FLUSH initiated by user: {}", ctx.user_id);
 
-        // TODO: Implement actual cluster flush
-        // For now, return a success message
-        Ok(ExecutionResult::Success {
-            message: "Cluster flush initiated (snapshots will be created)".to_string(),
-        })
+        // Get the RaftExecutor to trigger snapshots
+        let executor = self.app_context.executor();
+        let Some(raft_executor) = executor.as_any().downcast_ref::<RaftExecutor>() else {
+            return Err(KalamDbError::InvalidOperation(
+                "CLUSTER FLUSH requires cluster mode (Raft executor not available)".to_string()
+            ));
+        };
+
+        let manager = raft_executor.manager();
+        
+        // Trigger snapshots for all groups
+        let results = manager.trigger_all_snapshots().await.map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to trigger snapshots: {}", e))
+        })?;
+        
+        // Build response message
+        let success_count = results.iter().filter(|r| r.success).count();
+        let total_count = results.len();
+        let failed_count = total_count - success_count;
+        
+        // Get snapshot directory from config
+        let config = self.app_context.config();
+        let snapshots_dir = config.storage.resolved_snapshots_dir();
+        
+        // Build detailed message
+        let mut message = format!(
+            "Cluster flush completed: {}/{} snapshots triggered successfully\n\
+             Snapshots directory: {}",
+            success_count, total_count,
+            snapshots_dir.display()
+        );
+        
+        if failed_count > 0 {
+            message.push_str("\n\nFailed groups:");
+            for result in results.iter().filter(|r| !r.success) {
+                if let Some(ref err) = result.error {
+                    message.push_str(&format!("\n  - {:?}: {}", result.group_id, err));
+                }
+            }
+        }
+        
+        // Add snapshot index info for successfully triggered groups
+        let snapshots_with_idx: Vec<_> = results.iter()
+            .filter(|r| r.success && r.snapshot_index.is_some())
+            .collect();
+        
+        if !snapshots_with_idx.is_empty() {
+            message.push_str("\n\nSnapshot indices:");
+            for result in snapshots_with_idx.iter().take(5) {
+                if let Some(idx) = result.snapshot_index {
+                    message.push_str(&format!("\n  - {:?}: index {}", result.group_id, idx));
+                }
+            }
+            if snapshots_with_idx.len() > 5 {
+                message.push_str(&format!("\n  ... and {} more groups", snapshots_with_idx.len() - 5));
+            }
+        }
+
+        log::info!("CLUSTER FLUSH completed: {}/{} snapshots", success_count, total_count);
+        
+        Ok(ExecutionResult::Success { message })
     }
 }

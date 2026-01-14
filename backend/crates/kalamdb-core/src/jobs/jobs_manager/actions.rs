@@ -6,6 +6,7 @@ use chrono::Utc;
 use kalamdb_commons::system::{Job, JobOptions};
 use kalamdb_commons::{JobId, JobStatus, JobType};
 use kalamdb_raft::commands::MetaCommand;
+use log::Level;
 
 impl JobsManager {
     /// Insert a job in the database asynchronously via Raft or direct write
@@ -108,7 +109,7 @@ impl JobsManager {
         // Log job creation
         self.log_job_event(
             &job_id,
-            "info",
+            &Level::Info,
             &format!("Job created: type={:?}", job_type),
         );
 
@@ -212,7 +213,7 @@ impl JobsManager {
             .map_err(|e| KalamDbError::Other(format!("Failed to cancel job via Raft: {}", e)))?;
 
         // Log cancellation
-        self.log_job_event(job_id, "warn", "Job cancelled by user");
+        self.log_job_event(job_id, &Level::Warn, "Job cancelled by user");
 
         Ok(())
     }
@@ -243,7 +244,7 @@ impl JobsManager {
         app_ctx.executor().execute_meta(cmd).await
             .map_err(|e| KalamDbError::Other(format!("Failed to complete job via Raft: {}", e)))?;
 
-        self.log_job_event(job_id, "info", &success_message);
+        self.log_job_event(job_id, &Level::Info, &success_message);
         Ok(())
     }
 
@@ -271,7 +272,7 @@ impl JobsManager {
         app_ctx.executor().execute_meta(cmd).await
             .map_err(|e| KalamDbError::Other(format!("Failed to mark job as failed via Raft: {}", e)))?;
 
-        self.log_job_event(job_id, "error", &format!("Job failed: {}", error_message));
+        self.log_job_event(job_id, &Level::Error, &format!("Job failed: {}", error_message));
         Ok(())
     }
 }

@@ -24,6 +24,32 @@ use crate::state_machine::KalamStateMachine;
 use crate::storage::KalamNode;
 use crate::{GroupId, RaftError};
 
+/// Information about a snapshot operation result
+#[derive(Debug, Clone)]
+pub struct SnapshotInfo {
+    /// The Raft group ID
+    pub group_id: GroupId,
+    /// The snapshot index (if available)
+    pub snapshot_index: Option<u64>,
+    /// Whether the snapshot was triggered successfully
+    pub success: bool,
+    /// Error message if the snapshot failed
+    pub error: Option<String>,
+}
+
+/// Summary of all snapshots in the cluster
+#[derive(Debug, Clone)]
+pub struct SnapshotsSummary {
+    /// Total number of Raft groups
+    pub total_groups: usize,
+    /// Number of groups with snapshots
+    pub groups_with_snapshots: usize,
+    /// Directory where snapshots are stored
+    pub snapshots_dir: String,
+    /// Details for each group
+    pub group_details: Vec<(GroupId, Option<u64>)>,
+}
+
 /// Central manager for all Raft groups
 ///
 /// Orchestrates:
@@ -882,6 +908,155 @@ impl RaftManager {
             .map_err(|e| RaftError::Internal(format!("InstallSnapshot RPC failed: {:?}", e)))?;
         
         encode(&response)
+    }
+    
+    /// Trigger snapshots for all Raft groups
+    ///
+    /// Forces OpenRaft to create snapshots for Meta, all User shards, and all Shared shards.
+    /// Returns information about the snapshots created.
+    pub async fn trigger_all_snapshots(&self) -> Result<Vec<SnapshotInfo>, RaftError> {
+        if !self.is_started() {
+            return Err(RaftError::NotStarted("RaftManager not started".to_string()));
+        }
+        
+        let mut results = Vec::new();
+        let mut errors = Vec::new();
+        
+        // Trigger Meta group snapshot
+        log::info!("[SNAPSHOT] Triggering snapshot for Meta group...");
+        match self.meta.trigger_snapshot().await {
+            Ok(()) => {
+                let snapshot_idx = self.meta.snapshot_index();
+                results.push(SnapshotInfo {
+                    group_id: GroupId::Meta,
+                    snapshot_index: snapshot_idx,
+                    success: true,
+                    error: None,
+                });
+                log::info!("[SNAPSHOT] ✓ Meta snapshot triggered (index: {:?})", snapshot_idx);
+            }
+            Err(e) => {
+                errors.push(format!("Meta: {}", e));
+                results.push(SnapshotInfo {
+                    group_id: GroupId::Meta,
+                    snapshot_index: None,
+                    success: false,
+                    error: Some(e.to_string()),
+                });
+            }
+        }
+        
+        // Trigger User data shard snapshots
+        for (i, shard) in self.user_data_shards.iter().enumerate() {
+            let group_id = GroupId::DataUserShard(i as u32);
+            match shard.trigger_snapshot().await {
+                Ok(()) => {
+                    let snapshot_idx = shard.snapshot_index();
+                    results.push(SnapshotInfo {
+                        group_id,
+                        snapshot_index: snapshot_idx,
+                        success: true,
+                        error: None,
+                    });
+                    log::debug!("[SNAPSHOT] ✓ UserShard[{}] snapshot triggered (index: {:?})", i, snapshot_idx);
+                }
+                Err(e) => {
+                    errors.push(format!("UserShard[{}]: {}", i, e));
+                    results.push(SnapshotInfo {
+                        group_id,
+                        snapshot_index: None,
+                        success: false,
+                        error: Some(e.to_string()),
+                    });
+                }
+            }
+        }
+        
+        // Trigger Shared data shard snapshots
+        for (i, shard) in self.shared_data_shards.iter().enumerate() {
+            let group_id = GroupId::DataSharedShard(i as u32);
+            match shard.trigger_snapshot().await {
+                Ok(()) => {
+                    let snapshot_idx = shard.snapshot_index();
+                    results.push(SnapshotInfo {
+                        group_id,
+                        snapshot_index: snapshot_idx,
+                        success: true,
+                        error: None,
+                    });
+                    log::debug!("[SNAPSHOT] ✓ SharedShard[{}] snapshot triggered (index: {:?})", i, snapshot_idx);
+                }
+                Err(e) => {
+                    errors.push(format!("SharedShard[{}]: {}", i, e));
+                    results.push(SnapshotInfo {
+                        group_id,
+                        snapshot_index: None,
+                        success: false,
+                        error: Some(e.to_string()),
+                    });
+                }
+            }
+        }
+        
+        let success_count = results.iter().filter(|r| r.success).count();
+        let total = results.len();
+        
+        if errors.is_empty() {
+            log::info!("[SNAPSHOT] All {} snapshots triggered successfully", total);
+        } else {
+            log::warn!("[SNAPSHOT] Triggered {}/{} snapshots, {} errors: {:?}", 
+                success_count, total, errors.len(), errors);
+        }
+        
+        Ok(results)
+    }
+    
+    /// Get summary information about existing snapshots
+    pub fn get_snapshots_summary(&self) -> SnapshotsSummary {
+        let mut total_groups = 0;
+        let mut groups_with_snapshots = 0;
+        let mut group_details = Vec::new();
+        
+        // Check Meta group
+        total_groups += 1;
+        if let Some(snapshot_idx) = self.meta.snapshot_index() {
+            groups_with_snapshots += 1;
+            group_details.push((GroupId::Meta, Some(snapshot_idx)));
+        } else {
+            group_details.push((GroupId::Meta, None));
+        }
+        
+        // Check User data shards
+        for (i, shard) in self.user_data_shards.iter().enumerate() {
+            total_groups += 1;
+            let group_id = GroupId::DataUserShard(i as u32);
+            if let Some(snapshot_idx) = shard.snapshot_index() {
+                groups_with_snapshots += 1;
+                group_details.push((group_id, Some(snapshot_idx)));
+            } else {
+                group_details.push((group_id, None));
+            }
+        }
+        
+        // Check Shared data shards
+        for (i, shard) in self.shared_data_shards.iter().enumerate() {
+            total_groups += 1;
+            let group_id = GroupId::DataSharedShard(i as u32);
+            if let Some(snapshot_idx) = shard.snapshot_index() {
+                groups_with_snapshots += 1;
+                group_details.push((group_id, Some(snapshot_idx)));
+            } else {
+                group_details.push((group_id, None));
+            }
+        }
+        
+        SnapshotsSummary {
+            total_groups,
+            groups_with_snapshots,
+            snapshots_dir: self.config.peers.is_empty().then(|| "data/snapshots".to_string())
+                .unwrap_or_else(|| "data/snapshots".to_string()),
+            group_details,
+        }
     }
     
     /// Gracefully shutdown the Raft manager

@@ -481,6 +481,48 @@ impl SqlStatement {
                 }))
             }
 
+            // Cluster operations - require admin (except CLUSTER LIST which is read-only)
+            ["CLUSTER", "FLUSH", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for cluster operations"
+                            .to_string(),
+                    ));
+                }
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterFlush))
+            }
+            ["CLUSTER", "CLEAR", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for cluster operations"
+                            .to_string(),
+                    ));
+                }
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterClear))
+            }
+            ["CLUSTER", "LIST", ..] => {
+                // Read-only, allowed for all users
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterList))
+            }
+            ["CLUSTER", "JOIN", addr, ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for cluster operations"
+                            .to_string(),
+                    ));
+                }
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterJoin(addr.to_string())))
+            }
+            ["CLUSTER", "LEAVE", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for cluster operations"
+                            .to_string(),
+                    ));
+                }
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterLeave))
+            }
+
             // Transaction control (no parsing needed - just markers)
             ["BEGIN", ..] | ["START", "TRANSACTION", ..] => Ok(Self::new(
                 sql.to_string(),
@@ -658,8 +700,10 @@ impl SqlStatement {
             | SqlStatementKind::DropStorage(_)
             | SqlStatementKind::KillJob(_)
             | SqlStatementKind::ClusterFlush
-            | SqlStatementKind::ClusterClear => Err(
-                "Admin privileges (DBA or System role) required for storage and job operations"
+            | SqlStatementKind::ClusterClear
+            | SqlStatementKind::ClusterJoin(_)
+            | SqlStatementKind::ClusterLeave => Err(
+                "Admin privileges (DBA or System role) required for storage and cluster operations"
                     .to_string(),
             ),
 

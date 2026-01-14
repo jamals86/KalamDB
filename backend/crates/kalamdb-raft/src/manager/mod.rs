@@ -8,11 +8,13 @@
 //! - [`RaftGroup`]: A single Raft consensus group
 //! - [`RaftManagerConfig`]: Configuration for the Raft manager
 //! - [`PeerNode`]: Configuration for a peer node
+//! - [`SnapshotInfo`]: Information about a snapshot operation
+//! - [`SnapshotsSummary`]: Summary of all snapshots
 
 mod config;
 mod raft_manager;
 mod raft_group;
 
 pub use config::{RaftManagerConfig, PeerNode, DEFAULT_USER_DATA_SHARDS, DEFAULT_SHARED_DATA_SHARDS};
-pub use raft_manager::RaftManager;
+pub use raft_manager::{RaftManager, SnapshotInfo, SnapshotsSummary};
 pub use raft_group::RaftGroup;

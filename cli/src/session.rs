@@ -1105,23 +1105,31 @@ impl CLISession {
             Command::ClusterFlush => {
                 println!("Flushing cluster logs to snapshots...");
                 match self.execute("CLUSTER FLUSH").await {
-                    Ok(_) => println!("Cluster flush completed successfully"),
+                    Ok(_) => {},
                     Err(e) => eprintln!("Cluster flush failed: {}", e),
                 }
             }
             Command::ClusterClear => {
                 println!("Clearing old cluster snapshots...");
                 match self.execute("CLUSTER CLEAR").await {
-                    Ok(_) => println!("Cluster clear completed successfully"),
+                    Ok(_) => {},
                     Err(e) => eprintln!("Cluster clear failed: {}", e),
                 }
             }
             Command::ClusterList => {
-                println!("Cluster nodes:");
-                match self.execute("SELECT node_id, state, address, api_address FROM system.cluster ORDER BY node_id").await {
+                match self.execute("CLUSTER LIST").await {
                     Ok(_) => {},
                     Err(e) => eprintln!("Cluster list failed: {}", e),
                 }
+            }
+            Command::ClusterJoin(addr) => {
+                println!("{}", "⚠️  CLUSTER JOIN is not implemented yet".yellow());
+                println!("Would join node at: {}", addr);
+                println!("\nTo add a node to the cluster, configure it in server.toml and restart.");
+            }
+            Command::ClusterLeave => {
+                println!("{}", "⚠️  CLUSTER LEAVE is not implemented yet".yellow());
+                println!("\nTo remove this node from the cluster, gracefully shut down the server.");
             }
             Command::Health => match self.health_check().await {
                 Ok(_) => {}

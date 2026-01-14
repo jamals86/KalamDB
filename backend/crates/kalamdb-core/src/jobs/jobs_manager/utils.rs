@@ -3,6 +3,7 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use kalamdb_commons::system::JobFilter;
 use kalamdb_commons::{JobId, JobStatus, JobType};
+use log::Level;
 
 impl JobsManager {
     /// Generate typed JobId with prefix
@@ -32,14 +33,15 @@ impl JobsManager {
     /// * `job_id` - Job ID for log prefix
     /// * `level` - Log level (info, warn, error)
     /// * `message` - Log message
-    pub(crate) fn log_job_event(&self, job_id: &JobId, level: &str, message: &str) {
+    pub(crate) fn log_job_event(&self, job_id: &JobId, level: &Level, message: &str) {
         // TODO: Implement dedicated jobs.log file appender (T137)
         // For now, use standard logging with [JobId] prefix
         match level {
-            "info" => log::info!("[{}] {}", job_id, message),
-            "warn" => log::warn!("[{}] {}", job_id, message),
-            "error" => log::error!("[{}] {}", job_id, message),
-            _ => log::debug!("[{}] {}", job_id, message),
+            Level::Error => log::error!("[{}] {}", job_id.as_str(), message),
+            Level::Warn => log::warn!("[{}] {}", job_id.as_str(), message),
+            Level::Info => log::info!("[{}] {}", job_id.as_str(), message),
+            Level::Debug => log::debug!("[{}] {}", job_id.as_str(), message),
+            Level::Trace => log::trace!("[{}] {}", job_id.as_str(), message),
         }
     }
 
@@ -81,7 +83,7 @@ impl JobsManager {
                 .await
                 .into_kalamdb_error("Failed to recover job")?;
 
-            self.log_job_event(&job_id, "error", "Job marked as failed (server restart)");
+            self.log_job_event(&job_id, &Level::Error, "Job marked as failed (server restart)");
         }
 
         Ok(())

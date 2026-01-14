@@ -77,6 +77,10 @@ pub enum ExtensionStatement {
     ClusterClear,
     /// CLUSTER LIST command
     ClusterList,
+    /// CLUSTER JOIN command (not implemented yet)
+    ClusterJoin(String),
+    /// CLUSTER LEAVE command (not implemented yet)
+    ClusterLeave,
 }
 
 impl ExtensionStatement {
@@ -186,7 +190,17 @@ impl ExtensionStatement {
                     "FLUSH" => return Ok(ExtensionStatement::ClusterFlush),
                     "CLEAR" => return Ok(ExtensionStatement::ClusterClear),
                     "LIST" | "LS" => return Ok(ExtensionStatement::ClusterList),
-                    _ => return Err("Unknown CLUSTER subcommand. Supported: FLUSH, CLEAR, LIST".to_string()),
+                    "JOIN" => {
+                        // Get the address from the original SQL to preserve case
+                        let original_parts: Vec<&str> = sql.trim().split_whitespace().collect();
+                        if original_parts.len() >= 3 {
+                            return Ok(ExtensionStatement::ClusterJoin(original_parts[2].to_string()));
+                        } else {
+                            return Err("CLUSTER JOIN requires a node address".to_string());
+                        }
+                    }
+                    "LEAVE" => return Ok(ExtensionStatement::ClusterLeave),
+                    _ => return Err("Unknown CLUSTER subcommand. Supported: FLUSH, CLEAR, LIST, JOIN, LEAVE".to_string()),
                 }
             }
         }
