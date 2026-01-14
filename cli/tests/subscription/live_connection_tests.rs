@@ -17,7 +17,7 @@ use std::time::Duration;
 #[ntest::timeout(60000)]
 #[test]
 fn test_live_subscription_default_options() {
-    require_server_running();
+    if !require_server_running() { return; }
     if !is_cluster_mode() {
         println!("[SKIPPED] Test requires cluster mode (3+ nodes). Run with cluster for full test.");
         return;
@@ -82,7 +82,7 @@ fn test_live_subscription_default_options() {
 #[ntest::timeout(60000)]
 #[test]
 fn test_live_subscription_with_batch_size() {
-    require_server_running();
+    if !require_server_running() { return; }
     if !is_cluster_mode() {
         println!("[SKIPPED] Test requires cluster mode (3+ nodes). Run with cluster for full test.");
         return;
@@ -153,7 +153,7 @@ fn test_live_subscription_with_batch_size() {
 #[ntest::timeout(60000)]
 #[test]
 fn test_live_subscription_with_last_rows() {
-    require_server_running();
+    if !require_server_running() { return; }
     if !is_cluster_mode() {
         println!("[SKIPPED] Test requires cluster mode (3+ nodes). Run with cluster for full test.");
         return;
@@ -230,7 +230,7 @@ fn test_live_subscription_with_last_rows() {
 #[ntest::timeout(60000)]
 #[test]
 fn test_live_subscription_seq_id_tracking() {
-    require_server_running();
+    if !require_server_running() { return; }
     if !is_cluster_mode() {
         println!("[SKIPPED] Test requires cluster mode (3+ nodes). Run with cluster for full test.");
         return;
@@ -312,7 +312,7 @@ fn test_live_subscription_seq_id_tracking() {
 #[ntest::timeout(90000)]
 #[test]
 fn test_live_multiple_subscriptions() {
-    require_server_running();
+    if !require_server_running() { return; }
     if !is_cluster_mode() {
         println!("[SKIPPED] Test requires cluster mode (3+ nodes). Run with cluster for full test.");
         return;
@@ -414,7 +414,7 @@ fn test_connection_timeout_option() {
 #[ntest::timeout(60000)]
 #[test]
 fn test_live_subscription_change_event_order() {
-    require_server_running();
+    if !require_server_running() { return; }
     if !is_cluster_mode() {
         println!("[SKIPPED] Test requires cluster mode (3+ nodes). Run with cluster for full test.");
         return;

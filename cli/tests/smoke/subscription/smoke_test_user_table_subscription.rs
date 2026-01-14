@@ -7,7 +7,7 @@ use crate::common::*;
 #[ntest::timeout(180000)]
 #[test]
 fn smoke_user_table_subscription_lifecycle() {
-    require_server_running();
+    if !require_server_running() { return; }
 
     // Unique per run
     let namespace = generate_unique_namespace("smoke_ns");

@@ -1,15 +1,13 @@
 //! Primary key uniqueness checks in hot storage and after flush (cold Parquet), over HTTP.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use test_support::http_server::HttpTestServer;
-use test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_table};
+use super::test_support::http_server::HttpTestServer;
+use super::test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_table};
 use tokio::time::Duration;
 
-async fn create_user(server: &test_support::http_server::HttpTestServer, username: &str) -> anyhow::Result<String> {
+async fn create_user(server: &super::test_support::http_server::HttpTestServer, username: &str) -> anyhow::Result<String> {
     let password = "UserPass123!";
     let resp = server
         .execute_sql(&format!(
@@ -21,7 +19,7 @@ async fn create_user(server: &test_support::http_server::HttpTestServer, usernam
     Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
 }
 
-async fn count_rows(server: &test_support::http_server::HttpTestServer, auth: &str, ns: &str, table: &str) -> anyhow::Result<i64> {
+async fn count_rows(server: &super::test_support::http_server::HttpTestServer, auth: &str, ns: &str, table: &str) -> anyhow::Result<i64> {
     let resp = server
         .execute_sql_with_auth(
             &format!("SELECT COUNT(*) AS cnt FROM {}.{}", ns, table),
@@ -46,7 +44,7 @@ async fn count_rows(server: &test_support::http_server::HttpTestServer, auth: &s
 }
 
 async fn get_name_for_id(
-    server: &test_support::http_server::HttpTestServer,
+    server: &super::test_support::http_server::HttpTestServer,
     ns: &str,
     table: &str,
     id: i64,
@@ -72,9 +70,10 @@ async fn get_name_for_id(
 }
 
 #[tokio::test]
+#[ntest::timeout(180000)] // 3 minutes max for comprehensive PK uniqueness test
 async fn test_pk_uniqueness_hot_and_cold_over_http() {
     (async {
-    let server = test_support::http_server::get_global_server().await;
+    let server = super::test_support::http_server::get_global_server().await;
     let suffix = std::process::id();
     let ns = format!("pk_{}", suffix);
             let table_user = "items_user";

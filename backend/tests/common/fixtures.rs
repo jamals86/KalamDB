@@ -32,8 +32,17 @@ use anyhow::Result;
 use kalam_link::models::{QueryResponse, QueryResult, ResponseStatus};
 use kalamdb_commons::models::NamespaceId;
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
+
+static UNIQUE_NS_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn unique_namespace(prefix: &str) -> String {
+    let id = UNIQUE_NS_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let module_tag = module_path!().replace("::", "_");
+    format!("{}_{}_{}", prefix, module_tag, id)
+}
 
 /// Execute SQL with a specific user context.
 ///
@@ -604,20 +613,20 @@ mod tests {
     async fn test_setup_complete_environment() {
         let server = TestServer::new().await;
         // Use a unique namespace to avoid collision with parallel cleanup tests
-        let ns = "unique_setup_env";
-        let result = setup_complete_environment(&server, ns).await;
+        let ns = unique_namespace("unique_setup_env");
+        let result = setup_complete_environment(&server, ns.as_str()).await;
         if let Err(e) = &result {
             eprintln!("Setup failed with error: {}", e);
         }
         assert!(result.is_ok(), "Setup failed: {:?}", result.err());
 
         // Verify all components exist
-        assert!(server.namespace_exists(ns).await);
-        assert!(server.table_exists(ns, "messages").await);
-        assert!(server.table_exists(ns, "config").await);
-        assert!(server.table_exists(ns, "events").await);
+        assert!(server.namespace_exists(ns.as_str()).await);
+        assert!(server.table_exists(ns.as_str(), "messages").await);
+        assert!(server.table_exists(ns.as_str(), "config").await);
+        assert!(server.table_exists(ns.as_str(), "events").await);
 
         // Manual cleanup
-        let _ = drop_namespace(&server, ns).await;
+        let _ = drop_namespace(&server, ns.as_str()).await;
     }
 }

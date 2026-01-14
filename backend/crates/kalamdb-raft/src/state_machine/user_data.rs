@@ -534,7 +534,7 @@ mod tests {
         let cmd = UserDataCommand::Insert {
             table_id: TableId::new(NamespaceId::new("default"), "users".into()),
             user_id: UserId::new("user123"),
-            rows_data: vec![1, 2, 3, 4],
+            rows: vec![],
             required_meta_index: 0,
         };
         

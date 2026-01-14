@@ -1,16 +1,15 @@
 //! Namespace validation tests over the real HTTP SQL API.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use test_support::http_server::HttpTestServer;
+use super::test_support::http_server::HttpTestServer;
 use tokio::time::Duration;
 
 #[tokio::test]
-async fn test_namespace_validation_over_http() {
-    let server = test_support::http_server::get_global_server().await;
+#[ntest::timeout(60000)] // 60 seconds - namespace validation test
+async fn test_namespace_validation_over_http() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     // CREATE TABLE should fail when namespace is missing.
     {
                 let response = server
@@ -176,7 +175,7 @@ async fn test_namespace_validation_over_http() {
                 if table_result.status == ResponseStatus::Error {
                     let retry = server.execute_sql(table_sql).await?;
                     assert_eq!(retry.status, ResponseStatus::Success);
+                }
             }
-        }
-    }
+    Ok(())
 }

@@ -61,6 +61,8 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
     ));
     let _stream_table_store = Arc::new(new_stream_table_store(&table_id));
 
+    let app_ctx = AppContext::get();
+
     // Create test table definitions via SchemaRegistry
     let messages_table = TableDefinition::new(
         NamespaceId::new("user1"),
@@ -99,7 +101,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         messages_table.table_name.clone(),
     );
     schema_registry
-        .put_table_definition(&messages_table_id, &messages_table)
+        .put_table_definition(app_ctx.as_ref(), &messages_table_id, &messages_table)
         .unwrap();
 
     let notifications_table = TableDefinition::new(
@@ -139,7 +141,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         notifications_table.table_name.clone(),
     );
     schema_registry
-        .put_table_definition(&notifications_table_id, &notifications_table)
+        .put_table_definition(app_ctx.as_ref(), &notifications_table_id, &notifications_table)
         .unwrap();
 
     // Create connections manager first
@@ -156,7 +158,6 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         connection_registry.clone(),
         base_session_context,
     );
-    let app_ctx = AppContext::get();
     let sql_executor = Arc::new(SqlExecutor::new(app_ctx, false));
     manager.set_sql_executor(sql_executor);
     (connection_registry, manager, temp_dir)

@@ -245,31 +245,31 @@ fn test_authorization_check() {
 fn test_extract_as_user() {
     // Test INSERT with AS USER
     let sql = "INSERT INTO users (id) VALUES (1) AS USER 'user_123'";
-    let (cleaned, user_id) = SqlStatement::extract_as_user(sql);
-    assert_eq!(cleaned, "INSERT INTO users (id) VALUES (1)");
-    assert_eq!(user_id.unwrap().as_str(), "user_123");
+    let stmt = SqlStatement::classify(sql);
+    assert_eq!(stmt.as_str(), "INSERT INTO users (id) VALUES (1)");
+    assert_eq!(stmt.as_user_id().unwrap().as_str(), "user_123");
 
     // Test DELETE with AS USER
     let sql = "DELETE FROM users WHERE id=1 AS USER \"user_456\"";
-    let (cleaned, user_id) = SqlStatement::extract_as_user(sql);
-    assert_eq!(cleaned, "DELETE FROM users WHERE id=1");
-    assert_eq!(user_id.unwrap().as_str(), "user_456");
+    let stmt = SqlStatement::classify(sql);
+    assert_eq!(stmt.as_str(), "DELETE FROM users WHERE id=1");
+    assert_eq!(stmt.as_user_id().unwrap().as_str(), "user_456");
 
     // Test UPDATE with AS USER
     let sql = "UPDATE users SET name='Alice' WHERE id=1 AS USER 'user_789'";
-    let (cleaned, user_id) = SqlStatement::extract_as_user(sql);
-    assert_eq!(cleaned, "UPDATE users SET name='Alice' WHERE id=1");
-    assert_eq!(user_id.unwrap().as_str(), "user_789");
+    let stmt = SqlStatement::classify(sql);
+    assert_eq!(stmt.as_str(), "UPDATE users SET name='Alice' WHERE id=1");
+    assert_eq!(stmt.as_user_id().unwrap().as_str(), "user_789");
 
     // Test without AS USER
     let sql = "SELECT * FROM users";
-    let (cleaned, user_id) = SqlStatement::extract_as_user(sql);
-    assert_eq!(cleaned, "SELECT * FROM users");
-    assert!(user_id.is_none());
+    let stmt = SqlStatement::classify(sql);
+    assert_eq!(stmt.as_str(), "SELECT * FROM users");
+    assert!(stmt.as_user_id().is_none());
 
     // Test with AS USER in middle (should still work but might be weird SQL)
     let sql = "INSERT INTO users AS USER 'user_123' (id) VALUES (1)";
-    let (cleaned, user_id) = SqlStatement::extract_as_user(sql);
-    assert_eq!(cleaned, "INSERT INTO users (id) VALUES (1)");
-    assert_eq!(user_id.unwrap().as_str(), "user_123");
+    let stmt = SqlStatement::classify(sql);
+    assert_eq!(stmt.as_str(), "INSERT INTO users (id) VALUES (1)");
+    assert_eq!(stmt.as_user_id().unwrap().as_str(), "user_123");
 }

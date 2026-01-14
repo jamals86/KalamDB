@@ -71,7 +71,7 @@ impl ClusterTestServer {
     pub async fn execute_sql_on_random(&self, sql: &str) -> Result<QueryResponse> {
         use rand::Rng;
         let states = self.node_states.lock().await;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // Find all online nodes
         let online_indices: Vec<usize> = states
@@ -86,7 +86,7 @@ impl ClusterTestServer {
             return Err(anyhow::anyhow!("No online nodes available in cluster"));
         }
 
-        let index = online_indices[rng.gen_range(0..online_indices.len())];
+        let index = online_indices[rng.random_range(0..online_indices.len())];
         eprintln!("   📍 Executing on random node {}", index);
         self.nodes[index].execute_sql(sql).await
     }

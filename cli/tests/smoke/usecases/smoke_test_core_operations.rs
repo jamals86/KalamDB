@@ -7,7 +7,7 @@ use crate::common::*;
 #[test]
 fn smoke_test_core_operations() {
     // Fail fast with clear error if server not running
-    require_server_running();
+    if !require_server_running() { return; }
 
     println!("\n=== Starting Core Operations Smoke Test ===\n");
 

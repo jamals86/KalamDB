@@ -128,7 +128,7 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         let inner = response.into_inner();
         if !inner.error.is_empty() {
             return Err(RPCError::RemoteError(RemoteError::new(
-                self.target,
+                self.target.into(),
                 RaftError::Fatal(openraft::error::Fatal::Panicked),
             )));
         }

@@ -656,7 +656,9 @@ impl SqlStatement {
             SqlStatementKind::CreateStorage(_)
             | SqlStatementKind::AlterStorage(_)
             | SqlStatementKind::DropStorage(_)
-            | SqlStatementKind::KillJob(_) => Err(
+            | SqlStatementKind::KillJob(_)
+            | SqlStatementKind::ClusterFlush
+            | SqlStatementKind::ClusterClear => Err(
                 "Admin privileges (DBA or System role) required for storage and job operations"
                     .to_string(),
             ),
@@ -717,6 +719,7 @@ impl SqlStatement {
             | SqlStatementKind::BeginTransaction
             | SqlStatementKind::CommitTransaction
             | SqlStatementKind::RollbackTransaction => Ok(()),
+            | SqlStatementKind::ClusterList => Ok(()),
 
             // DataFusion meta commands are already admin-checked in classify_from_tokens
             // This branch should only be reached by admin users (DBA/System)

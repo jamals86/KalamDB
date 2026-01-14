@@ -1,16 +1,15 @@
 //! Production-readiness observability checks over the real HTTP SQL API.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use test_support::http_server::HttpTestServer;
+use super::test_support::http_server::HttpTestServer;
 use tokio::time::{sleep, Duration, Instant};
 
 #[tokio::test]
-async fn test_observability_system_tables_and_jobs_over_http() {
-    let server = test_support::http_server::get_global_server().await;
+#[ntest::timeout(60000)] // 60 seconds - observability test with job polling
+async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     let suffix = std::process::id();
 
     // system.tables reflects created tables
@@ -120,4 +119,5 @@ async fn test_observability_system_tables_and_jobs_over_http() {
         let resp = server.execute_sql(&format!("SELECT * FROM {} LIMIT 1", table)).await?;
         assert_eq!(resp.status, ResponseStatus::Success);
     }
+    Ok(())
 }

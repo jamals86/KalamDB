@@ -1,16 +1,14 @@
 //! Shared table lifecycle tests over the real HTTP SQL API.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
-use test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_table};
-use test_support::jobs::{extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent};
+use super::test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_table};
+use super::test_support::jobs::{extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent};
 use tokio::time::Duration;
 
 #[tokio::test]
-async fn test_shared_tables_lifecycle_over_http() {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_shared_tables_lifecycle_over_http() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     let suffix = std::process::id();
     let ns = format!("st_{}", suffix);
     let table = "audit";
@@ -104,4 +102,5 @@ async fn test_shared_tables_lifecycle_over_http() {
         "Parquet dir still exists after drop: {}",
         parquet_dir.display()
     );
+    Ok(())
 }

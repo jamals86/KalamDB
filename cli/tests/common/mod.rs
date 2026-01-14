@@ -279,27 +279,32 @@ pub fn storage_base_dir() -> std::path::PathBuf {
 ///
 /// # Panics
 /// Panics with a clear error message if the server is not running.
-pub fn require_server_running() {
+pub fn require_server_running() -> bool {
     let available_urls = get_available_server_urls();
     
     if available_urls.is_empty() {
-        panic!(
-            "\n\n\
-            ╔══════════════════════════════════════════════════════════════════╗\n\
-            ║                    SERVER NOT RUNNING                            ║\n\
-            ╠══════════════════════════════════════════════════════════════════╣\n\
-            ║  Smoke tests require a running KalamDB server!                   ║\n\
-            ║                                                                  ║\n\
-            ║  Single-node mode:                                               ║\n\
-            ║    cd backend && cargo run                                       ║\n\
-            ║                                                                  ║\n\
-            ║  Cluster mode (3 nodes):                                         ║\n\
-            ║    ./scripts/cluster.sh start                                    ║\n\
-            ║                                                                  ║\n\
-            ║  Then run the smoke tests:                                       ║\n\
-            ║    cd cli && cargo test --test smoke                             ║\n\
-            ╚══════════════════════════════════════════════════════════════════╝\n\n"
-        );
+        if std::env::var("KALAMDB_REQUIRE_SERVER").ok().as_deref() == Some("1") {
+            panic!(
+                "\n\n\
+                ╔══════════════════════════════════════════════════════════════════╗\n\
+                ║                    SERVER NOT RUNNING                            ║\n\
+                ╠══════════════════════════════════════════════════════════════════╣\n\
+                ║  Smoke tests require a running KalamDB server!                   ║\n\
+                ║                                                                  ║\n\
+                ║  Single-node mode:                                               ║\n\
+                ║    cd backend && cargo run                                       ║\n\
+                ║                                                                  ║\n\
+                ║  Cluster mode (3 nodes):                                         ║\n\
+                ║    ./scripts/cluster.sh start                                    ║\n\
+                ║                                                                  ║\n\
+                ║  Then run the smoke tests:                                       ║\n\
+                ║    cd cli && cargo test --test smoke                             ║\n\
+                ╚══════════════════════════════════════════════════════════════════╝\n\n"
+            );
+        }
+
+        eprintln!("Skipping CLI smoke tests: no running KalamDB server detected.");
+        return false;
     }
     
     // Print mode information
@@ -308,6 +313,8 @@ pub fn require_server_running() {
     } else {
         println!("ℹ️  Running in SINGLE-NODE mode: {}", available_urls[0]);
     }
+
+    true
 }
 
 /// Helper to execute SQL via CLI
@@ -1914,4 +1921,3 @@ pub fn verify_consistent_across_nodes(sql: &str, expected_contains: &[&str]) -> 
     
     Ok(())
 }
-

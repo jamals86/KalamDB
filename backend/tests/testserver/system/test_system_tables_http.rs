@@ -1,13 +1,10 @@
 //! System tables smoke coverage over the real HTTP SQL API.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use test_support::flush::flush_table_and_wait;
-use test_support::http_server::HttpTestServer;
-use tokio::time::Duration;
+use super::test_support::flush::flush_table_and_wait;
+use super::test_support::http_server::HttpTestServer;
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
     let password = "UserPass123!";
@@ -22,8 +19,8 @@ async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<
 }
 
 #[tokio::test]
-async fn test_system_tables_queryable_over_http() {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_system_tables_queryable_over_http() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     let suffix = std::process::id();
     let ns = format!("sys_{}", suffix);
     let table_user = "ut";
@@ -116,4 +113,5 @@ async fn test_system_tables_queryable_over_http() {
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
     anyhow::ensure!(!resp.results[0].rows_as_maps().is_empty());
+    Ok(())
 }

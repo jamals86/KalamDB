@@ -38,7 +38,6 @@ config.toml
 # Node.js (for examples)
 **/node_modules/
 **/dist/
-**/build/
 **/.next/
 **/.nuxt/
 **/out/

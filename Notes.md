@@ -927,3 +927,17 @@ TODOS:
 - CLUSTER FLUSH   - Which force snapshotting the current logs
 - CLUSTER CLEAR   - Clear the old snapshots
 - CLUSTER LIST    - It lists sall the nodes in the cluster same as select * from system.cluster
+
+50) things like this should be less parameters since appcontext have them already, find other places where we pass things like this and only keep the app_ctx
+    let flush_job = UserTableFlushJob::new(
+        server.app_context.clone(),
+        table_id_arc,
+        user_table_store,
+        arrow_schema.clone(),
+        unified_cache,
+        server.app_context.manifest_service(),
+    );
+
+51) no need to wroite total rows here:
+[21:14:33.419] ✓ SUBSCRIBED [sub_1768331673410754000] 0 total rows, batch 1 (ready), 7 columns
+[21:14:33.419] BATCH 1 [sub_1768331673410754000] 2 rows (complete)

@@ -3,12 +3,9 @@
 //! These tests intentionally go through the real HTTP API (`/v1/api/sql`) using the
 //! near-production server wiring from `tests/testserver/commons`.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use std::path::PathBuf;
-use tokio::time::Duration;
 
 fn file_uri(path: PathBuf) -> String {
     #[cfg(unix)]
@@ -26,8 +23,8 @@ fn file_uri(path: PathBuf) -> String {
 }
 
 #[tokio::test]
-async fn test_storage_abstraction_over_http() {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_storage_abstraction_over_http() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     // T420: StorageBackend trait interface exists (smoke via CREATE NAMESPACE + CREATE STORAGE)
     let response = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_storage_trait").await?;
     assert_eq!(
@@ -167,4 +164,5 @@ async fn test_storage_abstraction_over_http() {
     let _ = server.execute_sql("DROP NAMESPACE test_rocksdb_trait").await;
     let _ = server.execute_sql("DROP NAMESPACE test_partition_ns").await;
     let _ = server.execute_sql("DROP STORAGE test_local").await;
+    Ok(())
 }

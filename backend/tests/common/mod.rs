@@ -44,7 +44,7 @@ use kalam_link::models::{
     ErrorDetail, KalamDataType, QueryResponse, QueryResult, ResponseStatus, SchemaField,
 };
 use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
-use kalamdb_commons::UserId;
+use kalamdb_commons::{AuthType, StorageMode, UserId};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
@@ -241,7 +241,7 @@ impl TestServer {
         });
 
         // Raft cluster initialization flag (uses std::sync for cross-runtime safety)
-        static RAFT_INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
+        // static RAFT_INITIALIZED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
         // Get or create shared test resources
         let (temp_dir, db, storage_base_path) = {
@@ -364,14 +364,18 @@ impl TestServer {
             }
         }
 
-        // Initialize Raft cluster (single-node mode for tests) - ONCE for all tests
+        // Initialize Raft cluster (single-node mode for tests)
         // CRITICAL: Spawn Raft tasks on the dedicated RAFT_RUNTIME to prevent them from being killed
         // when individual test runtimes are dropped (each #[actix_web::test] has its own runtime)
         {
-            let mut raft_init = RAFT_INITIALIZED.lock().unwrap();
-            if !*raft_init {
+            // Use a lock to serialize initialization attempts, but always check/ensure start
+            // This handles both shared AppContext (idempotent start) and new AppContext (needs start)
+            static RAFT_INIT_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+            let _guard = RAFT_INIT_LOCK.lock().unwrap();
+
+            {
                 let executor = app_context.executor();
-                println!("[RAFT INIT] Starting Raft initialization...");
+                println!("[RAFT INIT] ensuring Raft is started...");
 
                 // Spawn on the dedicated runtime (this handles the nested runtime issue)
                 let handle = RAFT_RUNTIME.handle().clone();
@@ -379,16 +383,20 @@ impl TestServer {
 
                 handle.spawn(async move {
                     let result = async {
-                        println!("[RAFT INIT] Calling executor.start()...");
+                        // start() is idempotent (checks internal started flag)
                         executor.start().await?;
-                        println!("[RAFT INIT] Calling executor.initialize_cluster()...");
+                        // initialize_cluster() is idempotent (checks persistent state)
                         executor.initialize_cluster().await?;
-                        println!("[RAFT INIT] Cluster initialization complete");
                         
                         // Wait for leader election to complete (up to 30 seconds)
                         // Downcast to RaftExecutor to access the manager
                         if let Some(raft_executor) = executor.as_any().downcast_ref::<kalamdb_raft::executor::RaftExecutor>() {
                             let manager = raft_executor.manager();
+                            
+                            // Check if already leader (fast path)
+                            if manager.is_leader(kalamdb_raft::GroupId::Meta) {
+                                return Ok(());
+                            }
                             
                             println!("[RAFT INIT] Waiting for leader election...");
                             for attempt in 0..300 {  // 30 seconds total
@@ -425,12 +433,6 @@ impl TestServer {
                 // This ensures other parallel tests wait for leadership to be fully established
                 let result = rx.recv().expect("Raft init channel closed unexpectedly");
                 result.expect("Failed to initialize Raft cluster for tests");
-
-                println!("[RAFT INIT] Initialization flag set to true");
-                *raft_init = true;
-                // Lock is released here, AFTER leader election is complete
-            } else {
-                println!("[RAFT INIT] Skipping - already initialized");
             }
         }
 
@@ -1109,11 +1111,24 @@ impl TestServer {
         password: &str,
         role: kalamdb_commons::Role,
     ) -> kalamdb_commons::UserId {
-        use kalamdb_commons::{AuthType, StorageMode, UserId};
-
         let user_id = UserId::new(username);
         let password_hash =
             bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
+        let users_provider = self.app_context.system_tables().users();
+
+        if let Ok(Some(mut existing)) = users_provider.get_user_by_id(&user_id) {
+            existing.password_hash = password_hash.clone();
+            existing.role = role;
+            existing.email = Some(format!("{}@test.com", username));
+            existing.auth_type = AuthType::Password;
+            existing.auth_data = None;
+            existing.failed_login_attempts = 0;
+            existing.locked_until = None;
+            existing.deleted_at = None;
+            existing.updated_at = chrono::Utc::now().timestamp_millis();
+            let _ = users_provider.update_user(existing);
+            return user_id;
+        }
 
         let user = kalamdb_commons::system::User {
             id: user_id.clone(),
@@ -1135,7 +1150,7 @@ impl TestServer {
         };
 
         // Ignore error if user already exists (idempotent)
-        let _ = self.app_context.system_tables().users().create_user(user);
+        let _ = users_provider.create_user(user);
 
         user_id
     }

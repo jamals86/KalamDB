@@ -3,19 +3,17 @@
 //! This test executes the SQL script from test_stream_ttl.sql to validate
 //! that stream tables with TTL properly evict old events.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
-use test_support::http_server::HttpTestServer;
+use super::test_support::http_server::HttpTestServer;
 use tokio::time::{sleep, Duration};
 
 /// Test stream table TTL eviction using the SQL script approach
 #[tokio::test]
-async fn test_stream_ttl_eviction_from_sql_script() {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_stream_ttl_eviction_from_sql_script() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     let ns = format!("test_stream_ttl_{}", std::process::id());
-            let table = "events";
+    let table = "events";
 
             // Create namespace
             let resp = server
@@ -107,3 +105,5 @@ async fn test_stream_ttl_eviction_from_sql_script() {
         3,
         rows_after.len()
     );
+    Ok(())
+}

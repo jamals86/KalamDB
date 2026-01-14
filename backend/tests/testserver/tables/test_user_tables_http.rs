@@ -1,13 +1,11 @@
 //! User table lifecycle + isolation tests over the real HTTP SQL API.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_user_table};
-use test_support::http_server::HttpTestServer;
-use test_support::jobs::{extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent};
+use super::test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_user_table};
+use super::test_support::http_server::HttpTestServer;
+use super::test_support::jobs::{extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent};
 use tokio::time::Duration;
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
@@ -45,8 +43,8 @@ async fn lookup_user_id(server: &HttpTestServer, username: &str) -> anyhow::Resu
 }
 
 #[tokio::test]
-async fn test_user_tables_lifecycle_and_isolation_over_http() {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_user_tables_lifecycle_and_isolation_over_http() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     let suffix = std::process::id();
     let ns = format!("ut_{}", suffix);
 
@@ -255,4 +253,5 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() {
             dir_user2.display()
         );
     }
+    Ok(())
 }

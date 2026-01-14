@@ -1,11 +1,9 @@
 //! Manifest persistence behavior over the real HTTP SQL API.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use test_support::http_server::HttpTestServer;
+use super::test_support::http_server::HttpTestServer;
 use tokio::time::{sleep, Duration, Instant};
 
 fn find_manifest_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -63,8 +61,8 @@ async fn wait_for_flush_job_completed(
 }
 
 #[tokio::test]
-async fn test_user_table_manifest_persistence_over_http() {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     // Case 1: Manifest written only after flush
     {
             let ns = format!("test_manifest_persist_{}", std::process::id());
@@ -263,7 +261,5 @@ async fn test_user_table_manifest_persistence_over_http() {
             );
         }
 
-        Ok(())
-        })
-    }
+    Ok(())
 }

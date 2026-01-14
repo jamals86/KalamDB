@@ -72,147 +72,22 @@ name = "kalamdb-server"
 path = "src/main.rs"
 
 [[test]]
-name = "test_shared_tables"
-path = "tests/testserver/tables/test_shared_tables_http.rs"
-
-[[test]]
-name = "test_user_tables"
-path = "tests/testserver/tables/test_user_tables_http.rs"
-
-[[test]]
-name = "test_stream_tables"
-path = "tests/testserver/tables/test_stream_tables_http.rs"
-
-[[test]]
-name = "test_quickstart"
-path = "tests/testserver/sql/test_quickstart_http.rs"
-
-[[test]]
-name = "test_system_tables"
-path = "tests/testserver/system/test_system_tables_http.rs"
-
-[[test]]
-name = "test_flush_operations"
-path = "tests/testserver/flush/test_flush_policy_verification_http.rs"
-
-[[test]]
-name = "test_storage_management"
-path = "tests/testserver/storage/test_storage_management_http.rs"
-
-[[test]]
-name = "test_dml_parameters"
-path = "tests/testserver/sql/test_dml_parameters_http.rs"
-
-# Live Query WebSocket tests (split into separate files for proper test isolation)
-[[test]]
-name = "test_live_query_inserts"
-path = "tests/testserver/subscription/test_live_query_inserts.rs"
-
-[[test]]
-name = "test_live_query_updates"
-path = "tests/testserver/subscription/test_live_query_updates.rs"
-
-[[test]]
-name = "test_live_query_deletes"
-path = "tests/testserver/subscription/test_live_query_deletes.rs"
-
-[[test]]
-name = "test_namespace_validation"
-path = "tests/testserver/sql/test_namespace_validation_http.rs"
-
-# [[test]]
-# name = "test_enhanced_api_features"
-# path = "tests/integration/api/test_enhanced_api_features.rs"
-
-[[test]]
-name = "test_cluster_node_recovery_and_sync"
-path = "tests/cluster/test_cluster_node_recovery_and_sync.rs"
-[[test]]
-name = "test_pk_uniqueness_hot_cold"
-path = "tests/testserver/flush/test_pk_uniqueness_hot_cold_http.rs"
-
-[[test]]
-name = "test_manifest_flush"
-path = "tests/misc/test_manifest_flush_integration.rs"
-harness = true
-
-# [[test]]
-# name = "test_schema_integrity"
-# path = "tests/integration/combined/test_schema_integrity.rs"
-
-[[test]]
-name = "test_stress_and_memory"
-path = "tests/testserver/stress/test_stress_and_memory_http.rs"
-
-[[test]]
-name = "test_row_count_behavior"
-path = "tests/misc/test_row_count_behavior.rs"
-
-[[test]]
-name = "test_http_test_server_smoke"
-path = "tests/testserver/test_http_test_server_smoke.rs"
-
-[[test]]
-name = "test_storage_abstraction_http"
-path = "tests/testserver/storage/test_storage_abstraction_http.rs"
-
-[[test]]
-name = "test_naming_validation_http"
-path = "tests/testserver/sql/test_naming_validation_http.rs"
-
-[[test]]
-name = "test_user_sql_commands_http"
-path = "tests/testserver/sql/test_user_sql_commands_http.rs"
-
-[[test]]
-name = "test_flush_jobs_http"
-path = "tests/testserver/flush/test_flush_jobs_http.rs"
-
-[[test]]
-name = "test_flush_unregistered_suite_http"
-path = "tests/testserver/flush/test_flush_unregistered_suite_http.rs"
-
-[[test]]
-name = "test_manifest_flush_http"
-path = "tests/testserver/manifest/test_manifest_flush_http_v2.rs"
-
-[[test]]
-name = "test_manifest_persistence_http"
-path = "tests/testserver/manifest/test_manifest_persistence_http.rs"
-
-[[test]]
-name = "test_production_observability_http"
-path = "tests/testserver/observability/test_production_observability_http.rs"
-
-[[test]]
-name = "test_stream_ttl_eviction_sql"
-path = "tests/testserver/subscription/test_stream_ttl_eviction_sql.rs"
+name = "test_testserver"
+path = "tests/testserver/test_testserver.rs"
 
 [[test]]
 name = "test_scenarios"
-path = "tests/testserver/test_scenarios.rs"
+path = "tests/scenarios/test_scenarios.rs"
 
-[[test]]
-name = "test_system_table_index_usage"
-path = "tests/misc/test_system_table_index_usage.rs"
 
-[[test]]
-name = "test_explain_index_usage"
-path = "tests/misc/test_explain_index_usage.rs"
-
-[[test]]
-name = "test_cluster_basic_operations"
-path = "tests/cluster/test_cluster_basic_operations.rs"
-
-# Disabled: basic auth tests rely on legacy middleware; will be re-enabled after auth refactor
 # [[test]]
-# name = "test_basic_auth"
-# path = "tests/misc/test_basic_auth.rs"
+# name = "test_cluster"
+# path = "tests/cluster/test_cluster.rs"
 
-# Disabled: relies on deprecated TestServer/AuthService patterns, file removed during migration
-# [[test]]
-# name = "test_edge_cases"
-# path = "tests/misc/test_edge_cases.rs"
+[[test]]
+name = "test_misc"
+path = "tests/misc/test_misc.rs"
+
 
 [build-dependencies]
 chrono = { workspace = true }
@@ -248,3 +123,4 @@ hex = { workspace = true }
 rand = { workspace = true }
 once_cell = { workspace = true }
 serial_test = { workspace = true }
+ntest = { workspace = true }

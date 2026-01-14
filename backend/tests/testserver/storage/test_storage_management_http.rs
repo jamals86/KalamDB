@@ -6,15 +6,13 @@
 //! - Template validation
 //! - Prevent dropping in-use storage
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use kalam_link::models::ResponseStatus;
 use tokio::time::Duration;
 
 #[tokio::test]
-async fn test_storage_management_over_http() {
-    let server = test_support::http_server::get_global_server().await;
+async fn test_storage_management_over_http() -> anyhow::Result<()> {
+    let server = super::test_support::http_server::get_global_server().await;
     let suffix = std::process::id();
 
     // Default storage exists
@@ -152,4 +150,5 @@ async fn test_storage_management_over_http() {
         "DROP STORAGE failed: {:?}",
         resp.error
     );
+    Ok(())
 }

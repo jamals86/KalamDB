@@ -3,15 +3,13 @@
 //! These are intentionally short (seconds, not minutes) and run through the real
 //! HTTP surface to cover business logic without flaking CI.
 
-#[path = "../../common/testserver/mod.rs"]
-mod test_support;
 
 use futures_util::future::try_join_all;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use test_support::http_server::HttpTestServer;
+use super::test_support::http_server::HttpTestServer;
 
-async fn create_user(server: &test_support::http_server::HttpTestServer, user: &str) -> anyhow::Result<String> {
+async fn create_user(server: &super::test_support::http_server::HttpTestServer, user: &str) -> anyhow::Result<String> {
     let password = "UserPass123!";
     let resp = server
         .execute_sql(&format!(
@@ -24,7 +22,7 @@ async fn create_user(server: &test_support::http_server::HttpTestServer, user: &
 }
 
 async fn count_rows(
-    server: &test_support::http_server::HttpTestServer,
+    server: &super::test_support::http_server::HttpTestServer,
     auth: &str,
     ns: &str,
     table: &str,
@@ -55,7 +53,7 @@ async fn count_rows(
 #[tokio::test]
 async fn test_stress_smoke_over_http() {
     (async {
-    let server = test_support::http_server::get_global_server().await;
+    let server = super::test_support::http_server::get_global_server().await;
     let suffix = std::process::id();
     let ns = format!("stress_{}", suffix);
 

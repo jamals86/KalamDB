@@ -17,6 +17,9 @@ pub enum Command {
     Help,
     Config,
     Flush,
+        ClusterFlush,
+        ClusterClear,
+        ClusterList,
     Health,
     Pause,
     Continue,
@@ -80,6 +83,22 @@ impl CommandParser {
             "\\stats" | "\\metrics" => Ok(Command::Stats),
             "\\config" => Ok(Command::Config),
             "\\flush" => Ok(Command::Flush),
+            "\\cluster" => {
+                if args.is_empty() {
+                    Err(CLIError::ParseError(
+                        "\\cluster requires: flush, clear, or list".into(),
+                    ))
+                } else {
+                    match args[0] {
+                        "flush" => Ok(Command::ClusterFlush),
+                        "clear" => Ok(Command::ClusterClear),
+                        "list" | "ls" => Ok(Command::ClusterList),
+                        _ => Err(CLIError::ParseError(
+                            format!("Unknown cluster subcommand: {}", args[0]),
+                        )),
+                    }
+                }
+            }
             "\\health" => Ok(Command::Health),
             "\\pause" => Ok(Command::Pause),
             "\\continue" => Ok(Command::Continue),

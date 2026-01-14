@@ -45,7 +45,7 @@ pub async fn execute_flush_synchronously(
     let table_def = server
         .app_context
         .schema_registry()
-        .get_table_definition(&table_id)
+        .get_table_definition(&server.app_context, &table_id)
         .map_err(|e| format!("Failed to get table definition: {}", e))?
         .ok_or_else(|| format!("Table {}.{} not found", namespace, table_name))?;
 
@@ -81,6 +81,7 @@ pub async fn execute_flush_synchronously(
     ));
 
     let flush_job = UserTableFlushJob::new(
+        server.app_context.clone(),
         table_id_arc,
         user_table_store,
         arrow_schema.clone(),
@@ -104,7 +105,7 @@ pub async fn execute_shared_flush_synchronously(
     let table_def = server
         .app_context
         .schema_registry()
-        .get_table_definition(&table_id)
+        .get_table_definition(&server.app_context, &table_id)
         .map_err(|e| format!("Failed to get table definition: {}", e))?
         .ok_or_else(|| format!("Table {}.{} not found", namespace, table_name))?;
 
@@ -136,6 +137,7 @@ pub async fn execute_shared_flush_synchronously(
     ));
 
     let flush_job = SharedTableFlushJob::new(
+        server.app_context.clone(),
         Arc::new(table_id.clone()),
         shared_table_store,
         arrow_schema.clone(),

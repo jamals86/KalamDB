@@ -15,7 +15,7 @@ pub async fn wait_for_flush_jobs_settled(
     ns: &str,
     table: &str,
 ) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(8);
 
     loop {
         let resp = server

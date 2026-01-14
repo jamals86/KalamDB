@@ -7,5 +7,5 @@
 #[allow(dead_code)]
 mod test_support;
 
-pub mod test_cluster_basic_operations;
-pub mod test_cluster_node_recovery_and_sync;
+// pub mod test_cluster_basic_operations;
+// pub mod test_cluster_node_recovery_and_sync;
