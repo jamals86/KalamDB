@@ -1,8 +1,8 @@
 //! Cluster test server for testing multiple node scenarios
+use super::http_server::HttpTestServer;
 use anyhow::Result;
 use kalam_link::models::QueryResponse;
 use tokio::sync::Mutex;
-use super::http_server::HttpTestServer;
 
 /// A test cluster with 3 nodes for testing replication and consistency.
 pub struct ClusterTestServer {
@@ -40,10 +40,7 @@ impl ClusterTestServer {
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
-        Err(anyhow::anyhow!(
-            "Node {} did not come online after 10 seconds",
-            index
-        ))
+        Err(anyhow::anyhow!("Node {} did not come online after 10 seconds", index))
     }
 
     /// Take a node offline (simulates network failure/shutdown)
@@ -108,7 +105,10 @@ impl ClusterTestServer {
     }
 
     /// Execute SQL on all online nodes and return results with node indices
-    pub async fn execute_sql_on_all_with_indices(&self, sql: &str) -> Result<Vec<(usize, QueryResponse)>> {
+    pub async fn execute_sql_on_all_with_indices(
+        &self,
+        sql: &str,
+    ) -> Result<Vec<(usize, QueryResponse)>> {
         let states = self.node_states.lock().await;
         let mut results = Vec::new();
         for (i, node) in self.nodes.iter().enumerate() {
@@ -141,11 +141,8 @@ impl ClusterTestServer {
                 return Ok(false);
             }
 
-            for (j, (first_rows, result_rows)) in first_result
-                .results
-                .iter()
-                .zip(result.results.iter())
-                .enumerate()
+            for (j, (first_rows, result_rows)) in
+                first_result.results.iter().zip(result.results.iter()).enumerate()
             {
                 let first_maps = first_rows.rows_as_maps();
                 let result_maps = result_rows.rows_as_maps();
