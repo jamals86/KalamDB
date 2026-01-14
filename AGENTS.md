@@ -35,14 +35,15 @@ use kalamdb_commons::models::UserId;
 8. Instead of passing both Namespaceid and TableName pass TableId which contains both
 9. Don't import use inside methods always add them to the top of the rust file instead
 10. EntityStore is used instead of using the EntityStorev2 alias
+11. Always use type-safe enums and types instead of raw strings (e.g., `JobStatus`, `Role`, `TableType`, `NamespaceId`, `TableId`)
 
-11. Filesystem vs RocksDB separation of concerns
+12. Filesystem vs RocksDB separation of concerns
    - Filesystem/file storage logic (cold storage, Parquet files, directory management, file size accounting) must live in `backend/crates/kalamdb-filestore`
    - Key-value storage engines and partition/column family logic must live in `backend/crates/kalamdb-store`
    - Orchestration layers in `kalamdb-core` (DDL/DML handlers, job executors) should delegate to these crates and avoid embedding filesystem or RocksDB specifics directly
    - When adding cleanup/compaction/file lifecycle functionality, implement it in `kalamdb-filestore` and call it from `kalamdb-core`
 
-12. **Smoke Tests Priority**: Always ensure smoke tests are passing before committing changes. If smoke tests fail, fix them or the underlying backend issue immediately. Run `cargo test --test smoke` in the `cli` directory to verify.
+13. **Smoke Tests Priority**: Always ensure smoke tests are passing before committing changes. If smoke tests fail, fix them or the underlying backend issue immediately. Run `cargo test --test smoke` in the `cli` directory to verify.
 
 > **⚠️ IMPORTANT**: Smoke tests require a running KalamDB server! Start the server first with `cargo run` in the `backend` directory before running smoke tests. The tests will fail if no server is running.
 
@@ -140,6 +141,14 @@ specs/010-core-architecture-v2/ # CURRENT: Arrow memoization, views
   - Example: `cargo check > batch_compile_output.txt 2>&1`
   - Parse and address all errors/warnings in one pass; avoid running `cargo check` repeatedly after each tiny edit.
 - Re-run `cargo check` only after a meaningful batch of fixes. This keeps feedback fast and focused, and prevents thrashing CI and local builds.
+
+## Testing (MUST)
+
+- Use `cargo nextest run` for all test executions unless explicitly told otherwise.
+- When running server tests and fixing issues, always include `--no-fail-fast` so all failures are collected in one run.
+- Always add `#[ntest::timeout(time)]` to every async test where `time` is the **actual observed runtime** × 1.5 (to cover slower machines).
+   - Example: if a test took 40s, set `#[ntest::timeout(60000)]`.
+   - Recalculate and update timeouts after significant changes to test behavior or data size.
 
 **Authentication Patterns**:
 - **Password Security**: ALWAYS use `bcrypt::hash()` for password storage, NEVER store plaintext

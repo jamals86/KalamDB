@@ -80,20 +80,22 @@ fn test_hot_cold_storage_data_integrity() {
     assert!(result.contains("150"), "Alice's value should be updated to 150 in hot storage");
 
     // === Phase 5: FLUSH to cold storage ===
-    execute_sql(&format!(
-        "FLUSH TABLE {}",
-        full_table_name
-    ))
-    .expect("FLUSH TABLE failed");
-
-    // Wait a moment for flush to complete
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    let flush_output = execute_sql(&format!("FLUSH TABLE {}", full_table_name))
+        .expect("FLUSH TABLE failed");
+    if let Ok(job_id) = parse_job_id_from_flush_output(&flush_output) {
+        verify_job_completed(&job_id, std::time::Duration::from_secs(10))
+            .expect("flush job should complete");
+    } else {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 
     // === Phase 6: SELECT from cold storage and verify all data persisted ===
-    let result = execute_sql(&format!(
-        "SELECT * FROM {} ORDER BY id",
-        full_table_name
-    ))
+    let result = wait_for_query_contains_with(
+        &format!("SELECT * FROM {} ORDER BY id", full_table_name),
+        "Alice",
+        std::time::Duration::from_secs(5),
+        execute_sql,
+    )
     .expect("SELECT from cold storage failed");
     
     assert!(result.contains("Alice"), "Alice should exist in cold storage after flush");

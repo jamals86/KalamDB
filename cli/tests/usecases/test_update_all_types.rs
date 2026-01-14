@@ -195,7 +195,13 @@ fn test_update_all_types_user_table() {
     }
 
     // Verify initial data is still readable after flush
-    let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
+    let output = wait_for_query_contains_with(
+        &query_sql,
+        "initial text",
+        Duration::from_secs(5),
+        execute_sql_as_root_via_cli_json,
+    )
+    .unwrap();
     assert!(
         output.contains("initial text"),
         "Initial data not found after flush: {}",
@@ -265,7 +271,13 @@ fn test_update_all_types_user_table() {
     }
 
     // Verify updated data (after flush)
-    let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
+    let output = wait_for_query_contains_with(
+        &query_sql,
+        "updated text",
+        Duration::from_secs(5),
+        execute_sql_as_root_via_cli_json,
+    )
+    .unwrap();
     assert!(
         output.contains("updated text"),
         "Updated text not found after flush: {}",

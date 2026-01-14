@@ -7,6 +7,7 @@ use std::sync::mpsc as std_mpsc;
 use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 
 // Re-export commonly used types for credential tests
 pub use kalam_cli::FileCredentialStore;
@@ -266,10 +267,60 @@ pub fn storage_base_dir() -> std::path::PathBuf {
         return std::path::PathBuf::from(path);
     }
 
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(workspace_root) = manifest_dir.parent() {
+        let backend_storage = workspace_root.join("backend").join("data").join("storage");
+        if backend_storage.exists() {
+            return backend_storage;
+        }
+    }
+
     std::env::current_dir()
         .expect("current dir")
         .join("data")
         .join("storage")
+}
+
+pub fn wait_for_query_contains_with<F>(
+    sql: &str,
+    expected: &str,
+    timeout: Duration,
+    execute: F,
+) -> Result<String, Box<dyn std::error::Error>>
+where
+    F: Fn(&str) -> Result<String, Box<dyn std::error::Error>>,
+{
+    let start = Instant::now();
+    let poll_interval = Duration::from_millis(200);
+
+    loop {
+        let output = execute(sql)?;
+        if output.contains(expected) {
+            return Ok(output);
+        }
+        if start.elapsed() > timeout {
+            return Err(format!(
+                "Timeout waiting for query to contain '{}'. Last output: {}",
+                expected, output
+            )
+            .into());
+        }
+        thread::sleep(poll_interval);
+    }
+}
+
+pub fn wait_for_path_exists(path: &std::path::Path, timeout: Duration) -> bool {
+    let start = Instant::now();
+    let poll_interval = Duration::from_millis(100);
+
+    while start.elapsed() <= timeout {
+        if path.exists() {
+            return true;
+        }
+        thread::sleep(poll_interval);
+    }
+
+    path.exists()
 }
 
 /// Require the KalamDB server to be running, panic if not.

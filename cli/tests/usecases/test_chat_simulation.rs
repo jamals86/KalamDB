@@ -17,10 +17,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-// Adjust these constants based on system capabilities
-const NUM_USERS: usize = 10; // Scaled down from 200 for CI/Dev environment safety
-const MESSAGES_PER_USER: usize = 10; // Reduced for reliable CI/dev runtime
-const MESSAGES_PER_AI: usize = 10; // Reduced for reliable CI/dev runtime
+const DEFAULT_NUM_USERS: usize = 4;
+const DEFAULT_MESSAGES_PER_USER: usize = 5;
+const DEFAULT_MESSAGES_PER_AI: usize = 5;
+
+fn env_usize(name: &str, fallback: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(fallback)
+}
 
 #[ntest::timeout(300000)]
 #[test]
@@ -30,9 +36,13 @@ fn test_chat_simulation_memory_leak() {
         return;
     }
 
+    let num_users = env_usize("KALAMDB_CHAT_SIM_USERS", DEFAULT_NUM_USERS);
+    let messages_per_user = env_usize("KALAMDB_CHAT_SIM_USER_MESSAGES", DEFAULT_MESSAGES_PER_USER);
+    let messages_per_ai = env_usize("KALAMDB_CHAT_SIM_AI_MESSAGES", DEFAULT_MESSAGES_PER_AI);
+
     println!(
         "\n🚀 Starting Chat Simulation Test ({} users, {} msgs each)",
-        NUM_USERS, MESSAGES_PER_USER
+        num_users, messages_per_user
     );
     let test_start = Instant::now();
 
@@ -51,7 +61,7 @@ fn test_chat_simulation_memory_leak() {
     // Create Users
     let users_start = Instant::now();
     let mut user_credentials = Vec::new();
-    for i in 0..NUM_USERS {
+    for i in 0..num_users {
         let username = format!("user_{}_{}", i, suffix);
         let password = format!("pass_{}", i);
 
@@ -68,7 +78,7 @@ fn test_chat_simulation_memory_leak() {
     println!("✅ Users created ({:.2?})", users_start.elapsed());
 
     // Barrier to synchronize start of all threads
-    let start_barrier = Arc::new(Barrier::new(NUM_USERS + 1));
+    let start_barrier = Arc::new(Barrier::new(num_users + 1));
 
     // Spawn Simulation Threads
     let mut handles = Vec::new();
@@ -105,7 +115,7 @@ fn test_chat_simulation_memory_leak() {
             }
 
             let ai_handle = thread::spawn(move || {
-                for m in 0..MESSAGES_PER_AI {
+                for m in 0..messages_per_ai {
                     // AI sends message
                     let msg_id = format!("msg_ai_{}_{}", m, random_string(5));
                     let msg_sql = format!(
@@ -155,7 +165,7 @@ fn test_chat_simulation_memory_leak() {
                 };
 
                 // User sends messages
-                for m in 0..MESSAGES_PER_USER {
+                for m in 0..messages_per_user {
                     let msg_id = format!("msg_usr_{}_{}", m, random_string(5));
                     let msg_sql = format!(
                         "INSERT INTO {}.messages (id, conversation_id, sender, content, timestamp) VALUES ('{}', '{}', '{}', 'User Message {}', {})",

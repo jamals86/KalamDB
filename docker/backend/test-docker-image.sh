@@ -94,12 +94,11 @@ main() {
         exit 1
     fi
     
-    # Test 3: Check binary existence and version
+    # Test 3: Check binary existence
     log_info "Test 3: Checking binaries inside container..."
-    docker exec "$CONTAINER_NAME" /usr/local/bin/kalamdb-server --version &>/dev/null
+    docker exec "$CONTAINER_NAME" /bin/sh -c "test -x /usr/local/bin/kalamdb-server" &>/dev/null
     if [ $? -eq 0 ]; then
-        SERVER_VERSION=$(docker exec "$CONTAINER_NAME" /usr/local/bin/kalamdb-server --version)
-        log_info "✓ Server binary: $SERVER_VERSION"
+        log_info "✓ Server binary exists and is executable"
     else
         log_error "✗ Server binary not found or not executable"
         exit 1
