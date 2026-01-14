@@ -7,13 +7,18 @@
 //! a single struct for cleaner AppContext API.
 
 use super::providers::{
-    AuditLogsTableProvider, ClusterTableProvider, JobsTableProvider, LiveQueriesTableProvider, ManifestTableProvider,
-    NamespacesTableProvider, ServerLogsTableProvider, StatsTableProvider, StoragesTableProvider,
-    TablesTableProvider, UsersTableProvider,
+    AuditLogsTableProvider, AuditLogsTableSchema, JobsTableProvider, JobsTableSchema,
+    LiveQueriesTableProvider, LiveQueriesTableSchema, ManifestTableProvider, ManifestTableSchema,
+    NamespacesTableProvider, NamespacesTableSchema, StoragesTableProvider, StoragesTableSchema,
+    TablesTableProvider, TablesTableSchema, UsersTableProvider, UsersTableSchema,
 };
 // SchemaRegistry will be passed as Arc parameter from kalamdb-core
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::TableProvider;
+use kalamdb_commons::{models::TableId, schemas::TableDefinition, SystemTable};
 use kalamdb_store::StorageBackend;
+use once_cell::sync::OnceCell;
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 /// Registry of all system table providers
@@ -37,10 +42,17 @@ pub struct SystemTablesRegistry {
     manifest: Arc<ManifestTableProvider>,
 
     // ===== Virtual tables =====
-    stats: RwLock<Arc<dyn TableProvider + Send + Sync>>,
-    settings: RwLock<Arc<dyn TableProvider + Send + Sync>>,
-    server_logs: RwLock<Option<Arc<ServerLogsTableProvider>>>,
-    cluster: RwLock<Option<Arc<ClusterTableProvider>>>,
+    stats: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    settings: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    server_logs: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    cluster: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    cluster_groups: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+
+    // Cached persisted system table definitions
+    system_definitions: OnceCell<HashMap<TableId, Arc<TableDefinition>>>,
+
+    // Cached Arrow schemas for persisted system tables
+    system_schemas: OnceCell<HashMap<TableId, SchemaRef>>,
 }
 
 impl SystemTablesRegistry {
@@ -77,11 +89,64 @@ impl SystemTablesRegistry {
             manifest: Arc::new(ManifestTableProvider::new(storage_backend)),
 
             // Virtual tables
-            stats: RwLock::new(Arc::new(StatsTableProvider::new(None))), // Will be wired with cache later
-            settings: RwLock::new(Arc::new(StatsTableProvider::new(None))), // Placeholder, will be replaced from kalamdb-core
-            server_logs: RwLock::new(None), // Initialized via set_server_logs_provider()
+            stats: RwLock::new(None), // Will be wired by kalamdb-core
+            settings: RwLock::new(None), // Will be wired by kalamdb-core
+            server_logs: RwLock::new(None), // Will be wired by kalamdb-core (dev only)
             cluster: RwLock::new(None), // Initialized via set_cluster_provider()
+            cluster_groups: RwLock::new(None), // Initialized via set_cluster_groups_provider()
+
+            system_definitions: OnceCell::new(),
+            system_schemas: OnceCell::new(),
         }
+    }
+
+    fn definitions_map(&self) -> &HashMap<TableId, Arc<TableDefinition>> {
+        self.system_definitions.get_or_init(|| {
+            let defs: Vec<(SystemTable, TableDefinition)> = vec![
+                (SystemTable::Users, UsersTableSchema::definition()),
+                (SystemTable::Namespaces, NamespacesTableSchema::definition()),
+                (SystemTable::Tables, TablesTableSchema::definition()),
+                (SystemTable::Storages, StoragesTableSchema::definition()),
+                (SystemTable::LiveQueries, LiveQueriesTableSchema::definition()),
+                (SystemTable::Jobs, JobsTableSchema::definition()),
+                (SystemTable::AuditLog, AuditLogsTableSchema::definition()),
+                (SystemTable::Manifest, ManifestTableSchema::definition()),
+            ];
+
+            defs.into_iter()
+                .map(|(table, definition)| (table.table_id(), Arc::new(definition)))
+                .collect()
+        })
+    }
+
+    pub fn get_system_definition(&self, table_id: &TableId) -> Option<Arc<TableDefinition>> {
+        self.definitions_map().get(table_id).cloned()
+    }
+
+    pub fn all_system_table_definitions_cached(&self) -> Vec<Arc<TableDefinition>> {
+        self.definitions_map().values().cloned().collect()
+    }
+
+    fn schemas_map(&self) -> &HashMap<TableId, SchemaRef> {
+        self.system_schemas.get_or_init(|| {
+            vec![
+                (SystemTable::Users, UsersTableSchema::schema()),
+                (SystemTable::Namespaces, NamespacesTableSchema::schema()),
+                (SystemTable::Tables, TablesTableSchema::schema()),
+                (SystemTable::Storages, StoragesTableSchema::schema()),
+                (SystemTable::LiveQueries, LiveQueriesTableSchema::schema()),
+                (SystemTable::Jobs, JobsTableSchema::schema()),
+                (SystemTable::AuditLog, AuditLogsTableSchema::schema()),
+                (SystemTable::Manifest, ManifestTableSchema::schema()),
+            ]
+            .into_iter()
+            .map(|(table, schema)| (table.table_id(), schema))
+            .collect()
+        })
+    }
+
+    pub fn get_system_schema(&self, table_id: &TableId) -> Option<SchemaRef> {
+        self.schemas_map().get(table_id).cloned()
     }
 
     // ===== Getter Methods =====
@@ -122,34 +187,34 @@ impl SystemTablesRegistry {
     }
 
     /// Get the system.stats provider (virtual table)
-    pub fn stats(&self) -> Arc<dyn TableProvider + Send + Sync> {
+    pub fn stats(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.stats.read().unwrap().clone()
     }
 
     /// Set the system.stats provider (called from kalamdb-core)
     pub fn set_stats_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         log::debug!("SystemTablesRegistry: Setting stats provider");
-        *self.stats.write().unwrap() = provider;
+        *self.stats.write().unwrap() = Some(provider);
     }
 
     /// Get the system.settings provider (virtual table)
-    pub fn settings(&self) -> Arc<dyn TableProvider + Send + Sync> {
+    pub fn settings(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.settings.read().unwrap().clone()
     }
 
     /// Set the system.settings provider (called from kalamdb-core)
     pub fn set_settings_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         log::debug!("SystemTablesRegistry: Setting settings provider");
-        *self.settings.write().unwrap() = provider;
+        *self.settings.write().unwrap() = Some(provider);
     }
 
     /// Get the system.server_logs provider (virtual table reading JSON logs)
-    pub fn server_logs(&self) -> Option<Arc<ServerLogsTableProvider>> {
+    pub fn server_logs(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.server_logs.read().unwrap().clone()
     }
 
     /// Set the system.server_logs provider (called from kalamdb-core with logs path)
-    pub fn set_server_logs_provider(&self, provider: Arc<ServerLogsTableProvider>) {
+    pub fn set_server_logs_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         log::debug!("SystemTablesRegistry: Setting server_logs provider");
         *self.server_logs.write().unwrap() = Some(provider);
     }
@@ -160,14 +225,25 @@ impl SystemTablesRegistry {
     }
 
     /// Get the system.cluster provider (virtual table showing cluster status)
-    pub fn cluster(&self) -> Option<Arc<ClusterTableProvider>> {
+    pub fn cluster(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.cluster.read().unwrap().clone()
     }
 
     /// Set the system.cluster provider (called from kalamdb-core with executor)
-    pub fn set_cluster_provider(&self, provider: Arc<ClusterTableProvider>) {
+    pub fn set_cluster_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         log::debug!("SystemTablesRegistry: Setting cluster provider");
         *self.cluster.write().unwrap() = Some(provider);
+    }
+
+    /// Get the system.cluster_groups provider (virtual table showing per-group status)
+    pub fn cluster_groups(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
+        self.cluster_groups.read().unwrap().clone()
+    }
+
+    /// Set the system.cluster_groups provider (called from kalamdb-core with executor)
+    pub fn set_cluster_groups_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
+        log::debug!("SystemTablesRegistry: Setting cluster_groups provider");
+        *self.cluster_groups.write().unwrap() = Some(provider);
     }
 
     // ===== Convenience Methods =====
@@ -175,67 +251,79 @@ impl SystemTablesRegistry {
     /// Get all system.* providers as a vector for bulk registration
     ///
     /// Returns tuples of (table_name, provider) for DataFusion schema registration.
-    pub fn all_system_providers(
-        &self,
-    ) -> Vec<(&'static str, Arc<dyn datafusion::datasource::TableProvider>)> {
+    pub fn all_system_providers(&self) -> Vec<(SystemTable, Arc<dyn TableProvider>)> {
         let mut providers = vec![
             (
-                "users",
-                self.users.clone() as Arc<dyn datafusion::datasource::TableProvider>,
+                SystemTable::Users,
+                self.users.clone() as Arc<dyn TableProvider>,
             ),
             (
-                "jobs",
-                self.jobs.clone() as Arc<dyn datafusion::datasource::TableProvider>,
+                SystemTable::Jobs,
+                self.jobs.clone() as Arc<dyn TableProvider>,
             ),
             (
-                "namespaces",
-                self.namespaces.clone() as Arc<dyn datafusion::datasource::TableProvider>,
+                SystemTable::Namespaces,
+                self.namespaces.clone() as Arc<dyn TableProvider>,
             ),
             (
-                "storages",
-                self.storages.clone() as Arc<dyn datafusion::datasource::TableProvider>,
+                SystemTable::Storages,
+                self.storages.clone() as Arc<dyn TableProvider>,
             ),
             (
-                "live_queries",
-                self.live_queries.clone() as Arc<dyn datafusion::datasource::TableProvider>,
+                SystemTable::LiveQueries,
+                self.live_queries.clone() as Arc<dyn TableProvider>,
             ),
             (
-                "tables",
-                self.tables.clone() as Arc<dyn datafusion::datasource::TableProvider>,
+                SystemTable::Tables,
+                self.tables.clone() as Arc<dyn TableProvider>,
             ),
             (
-                "audit_logs",
-                self.audit_logs.clone() as Arc<dyn datafusion::datasource::TableProvider>,
+                SystemTable::AuditLog,
+                self.audit_logs.clone() as Arc<dyn TableProvider>,
             ),
             (
-                "stats",
-                self.stats.read().unwrap().clone()
-                    as Arc<dyn datafusion::datasource::TableProvider>,
-            ),
-            (
-                "settings",
-                self.settings.read().unwrap().clone()
-                    as Arc<dyn datafusion::datasource::TableProvider>,
-            ),
-            (
-                "manifest",
-                self.manifest.clone() as Arc<dyn datafusion::datasource::TableProvider>,
+                SystemTable::Manifest,
+                self.manifest.clone() as Arc<dyn TableProvider>,
             ),
         ];
+
+        // Add stats if initialized (virtual view from kalamdb-core)
+        if let Some(stats) = self.stats.read().unwrap().clone() {
+            providers.push((
+                SystemTable::Stats,
+                stats as Arc<dyn TableProvider>,
+            ));
+        }
+
+        // Add settings if initialized (virtual view from kalamdb-core)
+        if let Some(settings) = self.settings.read().unwrap().clone() {
+            providers.push((
+                SystemTable::Settings,
+                settings as Arc<dyn TableProvider>,
+            ));
+        }
 
         // Add server_logs if initialized
         if let Some(server_logs) = self.server_logs.read().unwrap().clone() {
             providers.push((
-                "server_logs",
-                server_logs as Arc<dyn datafusion::datasource::TableProvider>,
+                SystemTable::ServerLogs,
+                server_logs as Arc<dyn TableProvider>,
             ));
         }
 
         // Add cluster if initialized (virtual table showing OpenRaft metrics)
         if let Some(cluster) = self.cluster.read().unwrap().clone() {
             providers.push((
-                "cluster",
-                cluster as Arc<dyn datafusion::datasource::TableProvider>,
+                SystemTable::Cluster,
+                cluster as Arc<dyn TableProvider>,
+            ));
+        }
+
+        // Add cluster_groups if initialized (virtual table showing per-group OpenRaft metrics)
+        if let Some(cluster_groups) = self.cluster_groups.read().unwrap().clone() {
+            providers.push((
+                SystemTable::ClusterGroups,
+                cluster_groups as Arc<dyn TableProvider>,
             ));
         }
 

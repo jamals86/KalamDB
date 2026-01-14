@@ -29,6 +29,7 @@ pub struct SharedTableFlushJob {
     table_id: Arc<TableId>,
     schema: SchemaRef,
     unified_cache: Arc<SchemaRegistry>,
+    app_context: Arc<AppContext>,
     live_query_manager: Option<Arc<LiveQueryManager>>,
     manifest_helper: FlushManifestHelper,
     /// Bloom filter columns (PRIMARY KEY + _seq) - fetched once per job for efficiency
@@ -40,6 +41,7 @@ pub struct SharedTableFlushJob {
 impl SharedTableFlushJob {
     /// Create a new shared table flush job
     pub fn new(
+        app_context: Arc<AppContext>,
         table_id: Arc<TableId>,
         store: Arc<SharedTableIndexedStore>,
         schema: SchemaRef,
@@ -77,6 +79,7 @@ impl SharedTableFlushJob {
             table_id,
             schema,
             unified_cache,
+            app_context,
             live_query_manager: None,
             manifest_helper,
             bloom_filter_columns,
@@ -93,10 +96,8 @@ impl SharedTableFlushJob {
     /// Get current schema version for the table
     fn get_schema_version(&self) -> u32 {
         self.unified_cache
-            .get_table_definition(&self.table_id)
-            .ok()
-            .flatten()
-            .map(|def| def.schema_version)
+            .get(&self.table_id)
+            .map(|cached| cached.table.schema_version)
             .unwrap_or(1)
     }
 
@@ -292,7 +293,7 @@ impl TableFlush for SharedTableFlushJob {
         let temp_filename = FlushManifestHelper::generate_temp_filename(batch_number);
         let full_dir = self
             .unified_cache
-            .get_storage_path(&self.table_id, None, None)?;
+            .get_storage_path(self.app_context.as_ref(), &self.table_id, None, None)?;
         
         // Use PathBuf for proper cross-platform path handling (avoids mixed slashes)
         let temp_path = std::path::Path::new(&full_dir)
@@ -304,7 +305,6 @@ impl TableFlush for SharedTableFlushJob {
             .to_string_lossy()
             .to_string();
 
-        let app_ctx = AppContext::get();
         let cached = self
             .unified_cache
             .get(&self.table_id)
@@ -312,7 +312,8 @@ impl TableFlush for SharedTableFlushJob {
 
         // Get storage from registry (cached lookup)
         let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
-        let storage = app_ctx
+        let storage = self
+            .app_context
             .storage_registry()
             .get_storage(&storage_id)?
             .ok_or_else(|| {
@@ -323,7 +324,7 @@ impl TableFlush for SharedTableFlushJob {
             })?;
 
         // Get cached ObjectStore instance (avoids rebuild overhead on each flush)
-        let object_store = cached.object_store()?;
+        let object_store = cached.object_store(self.app_context.as_ref())?;
 
         // Use cached bloom_filter_columns and indexed_columns (fetched once at job construction)
         // This avoids per-flush lookups and matches UserTableFlushJob optimization pattern
@@ -389,6 +390,7 @@ impl TableFlush for SharedTableFlushJob {
             &self.table_id,
             kalamdb_commons::models::schemas::TableType::Shared,
             None,
+            Some(&cached),
             batch_number,
             batch_filename.clone(),
             &std::path::PathBuf::from(&destination_path),

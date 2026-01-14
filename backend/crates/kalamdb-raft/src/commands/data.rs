@@ -5,7 +5,7 @@
 //! buffer data commands until local `Meta` has applied at least that index.
 
 use chrono::{DateTime, Utc};
-use kalamdb_commons::models::{NodeId, UserId};
+use kalamdb_commons::models::{NodeId, UserId, Row};
 use kalamdb_commons::TableId;
 use serde::{Deserialize, Serialize};
 
@@ -29,8 +29,8 @@ pub enum UserDataCommand {
         required_meta_index: u64,
         table_id: TableId,
         user_id: UserId,
-        /// Serialized rows (Arrow IPC or custom format)
-        rows_data: Vec<u8>,
+        /// Rows to insert
+        rows: Vec<Row>,
     },
 
     /// Update rows in a user table
@@ -39,10 +39,10 @@ pub enum UserDataCommand {
         required_meta_index: u64,
         table_id: TableId,
         user_id: UserId,
-        /// Serialized updates
-        updates_data: Vec<u8>,
-        /// Optional filter (serialized)
-        filter_data: Option<Vec<u8>>,
+        /// Updates to apply
+        updates: Vec<Row>,
+        /// Optional filter (primary key value)
+        filter: Option<String>,
     },
 
     /// Delete rows from a user table
@@ -51,8 +51,8 @@ pub enum UserDataCommand {
         required_meta_index: u64,
         table_id: TableId,
         user_id: UserId,
-        /// Optional filter (serialized)
-        filter_data: Option<Vec<u8>>,
+        /// Primary keys to delete
+        pk_values: Option<Vec<String>>,
     },
 
     // === Live Query Subscriptions ===
@@ -153,8 +153,8 @@ pub enum SharedDataCommand {
         /// Watermark: Meta group's last_applied_index at proposal time
         required_meta_index: u64,
         table_id: TableId,
-        /// Serialized rows
-        rows_data: Vec<u8>,
+        /// Rows to insert
+        rows: Vec<Row>,
     },
 
     /// Update rows in a shared table
@@ -162,10 +162,10 @@ pub enum SharedDataCommand {
         /// Watermark: Meta group's last_applied_index at proposal time
         required_meta_index: u64,
         table_id: TableId,
-        /// Serialized updates
-        updates_data: Vec<u8>,
-        /// Optional filter (serialized)
-        filter_data: Option<Vec<u8>>,
+        /// Updates to apply
+        updates: Vec<Row>,
+        /// Optional filter (primary key value)
+        filter: Option<String>,
     },
 
     /// Delete rows from a shared table
@@ -173,8 +173,8 @@ pub enum SharedDataCommand {
         /// Watermark: Meta group's last_applied_index at proposal time
         required_meta_index: u64,
         table_id: TableId,
-        /// Optional filter (serialized)
-        filter_data: Option<Vec<u8>>,
+        /// Primary keys to delete
+        pk_values: Option<Vec<String>>,
     },
 }
 
@@ -258,7 +258,7 @@ mod tests {
             required_meta_index: 100,
             table_id: TableId::new(NamespaceId::from("ns"), TableName::from("table")),
             user_id: UserId::from("user_1"),
-            rows_data: vec![1, 2, 3],
+            rows: vec![],
         };
 
         assert_eq!(cmd.required_meta_index(), 100);
@@ -273,7 +273,7 @@ mod tests {
             required_meta_index: 50,
             table_id: TableId::new(NamespaceId::from("ns"), TableName::from("table")),
             user_id: user_id.clone(),
-            filter_data: None,
+            pk_values: None,
         };
 
         assert_eq!(cmd.user_id(), &user_id);
@@ -284,8 +284,8 @@ mod tests {
         let mut cmd = SharedDataCommand::Update {
             required_meta_index: 300,
             table_id: TableId::new(NamespaceId::from("ns"), TableName::from("shared_table")),
-            updates_data: vec![],
-            filter_data: None,
+            updates: vec![],
+            filter: None,
         };
 
         assert_eq!(cmd.required_meta_index(), 300);
@@ -299,7 +299,7 @@ mod tests {
         let cmd = SharedDataCommand::Insert {
             required_meta_index: 10,
             table_id: table_id.clone(),
-            rows_data: vec![],
+            rows: vec![],
         };
 
         assert_eq!(cmd.table_id(), &table_id);
@@ -336,7 +336,7 @@ mod tests {
             required_meta_index: 123,
             table_id: TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table")),
             user_id: UserId::from("user_456"),
-            rows_data: vec![1, 2, 3, 4],
+            rows: vec![],
         };
 
         assert_eq!(cmd.required_meta_index(), 123);
@@ -348,7 +348,7 @@ mod tests {
         let cmd = SharedDataCommand::Delete {
             required_meta_index: 999,
             table_id: TableId::new(NamespaceId::from("shared"), TableName::from("data")),
-            filter_data: Some(vec![10, 20]),
+            pk_values: None,
         };
 
         assert_eq!(cmd.required_meta_index(), 999);
@@ -378,9 +378,9 @@ mod tests {
         let user_id = UserId::from("u");
 
         let commands = vec![
-            UserDataCommand::Insert { required_meta_index: 1, table_id: table_id.clone(), user_id: user_id.clone(), rows_data: vec![] },
-            UserDataCommand::Update { required_meta_index: 2, table_id: table_id.clone(), user_id: user_id.clone(), updates_data: vec![], filter_data: None },
-            UserDataCommand::Delete { required_meta_index: 3, table_id: table_id.clone(), user_id: user_id.clone(), filter_data: None },
+            UserDataCommand::Insert { required_meta_index: 1, table_id: table_id.clone(), user_id: user_id.clone(), rows: vec![] },
+            UserDataCommand::Update { required_meta_index: 2, table_id: table_id.clone(), user_id: user_id.clone(), updates: vec![], filter: None },
+            UserDataCommand::Delete { required_meta_index: 3, table_id: table_id.clone(), user_id: user_id.clone(), pk_values: None },
             UserDataCommand::RegisterLiveQuery { 
                 required_meta_index: 4, subscription_id: "s".to_string(), user_id: user_id.clone(), 
                 query_hash: "h".to_string(), table_id: table_id.clone(), filter_json: None, 
@@ -401,9 +401,9 @@ mod tests {
         let table_id = TableId::new(NamespaceId::from("n"), TableName::from("t"));
 
         let commands = vec![
-            SharedDataCommand::Insert { required_meta_index: 10, table_id: table_id.clone(), rows_data: vec![] },
-            SharedDataCommand::Update { required_meta_index: 20, table_id: table_id.clone(), updates_data: vec![], filter_data: None },
-            SharedDataCommand::Delete { required_meta_index: 30, table_id: table_id.clone(), filter_data: None },
+            SharedDataCommand::Insert { required_meta_index: 10, table_id: table_id.clone(), rows: vec![] },
+            SharedDataCommand::Update { required_meta_index: 20, table_id: table_id.clone(), updates: vec![], filter: None },
+            SharedDataCommand::Delete { required_meta_index: 30, table_id: table_id.clone(), pk_values: None },
         ];
 
         assert_eq!(commands[0].required_meta_index(), 10);

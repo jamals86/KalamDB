@@ -41,7 +41,6 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlushParams {
     /// Table identifier (required)
-    #[serde(flatten)]
     pub table_id: TableId,
     /// Table type (required)
     pub table_type: TableType,
@@ -94,13 +93,13 @@ impl JobExecutor for FlushExecutor {
         let schema_registry = app_ctx.schema_registry();
         let live_query_manager = app_ctx.live_query_manager();
 
-        // // Get table definition and schema
+        // // Get table definition (optional)
         // let table_def = schema_registry
-        //     .get_table_definition(&table_id)?
+        //     .get_table_if_exists(app_ctx.as_ref(), &table_id)?
         //     .ok_or_else(|| KalamDbError::NotFound(format!("Table {} not found", table_id)))?;
         
         // Get current Arrow schema from the registry (already includes system columns)
-        let schema = schema_registry.get_arrow_schema(&table_id)
+        let schema = schema_registry.get_arrow_schema(app_ctx.as_ref(), &table_id)
             .into_kalamdb_error(&format!("Arrow schema not found for {}", table_id))?;
 
         // Get current schema version for manifest recording
@@ -140,6 +139,7 @@ impl JobExecutor for FlushExecutor {
                 let store = provider.store.clone();
 
                 let flush_job = UserTableFlushJob::new(
+                    app_ctx.clone(),
                     table_id.clone(),
                     store,
                     schema.clone(),
@@ -178,6 +178,7 @@ impl JobExecutor for FlushExecutor {
                 let store = provider.store.clone();
 
                 let flush_job = SharedTableFlushJob::new(
+                    app_ctx.clone(),
                     table_id.clone(),
                     store,
                     schema.clone(),

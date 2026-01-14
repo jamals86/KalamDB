@@ -26,9 +26,10 @@ use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
+use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::User;
-use kalamdb_commons::{StorageKey, UserId};
+use kalamdb_commons::{StorageKey, StoragePartition, SystemTable, UserId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
@@ -43,7 +44,6 @@ pub type UsersStore = IndexedEntityStore<UserId, User>;
 /// using RocksDB's atomic WriteBatch - no manual index management needed.
 pub struct UsersTableProvider {
     store: UsersStore,
-    schema: SchemaRef,
 }
 
 impl std::fmt::Debug for UsersTableProvider {
@@ -61,11 +61,14 @@ impl UsersTableProvider {
     /// # Returns
     /// A new UsersTableProvider instance with indexes configured
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
-        let store = IndexedEntityStore::new(backend, "system_users", create_users_indexes());
-        Self {
-            store,
-            schema: UsersTableSchema::schema(),
-        }
+        let store = IndexedEntityStore::new(
+            backend,
+            SystemTable::Users
+                .column_family_name()
+                .expect("Users is a table, not a view"),
+            create_users_indexes(),
+        );
+        Self { store }
     }
 
     /// Create a new user.
@@ -79,11 +82,22 @@ impl UsersTableProvider {
     /// Result indicating success or failure
     pub fn create_user(&self, user: User) -> Result<(), SystemError> {
         // Check if username already exists (lookup by index)
-        // Username index is index 0, key is lowercase username
+        // Username index key is lowercase username
+        let username_index_idx = self
+            .store
+            .find_index_by_partition(StoragePartition::SystemUsersUsernameIdx.name())
+            .ok_or_else(|| {
+                SystemError::Other(
+                    format!(
+                        "Missing expected index partition: {}",
+                        StoragePartition::SystemUsersUsernameIdx.name()
+                    ),
+                )
+            })?;
         let username_key = user.username.as_str().to_lowercase();
         let existing = self
             .store
-            .scan_by_index(0, Some(username_key.as_bytes()), Some(1))
+            .scan_by_index(username_index_idx, Some(username_key.as_bytes()), Some(1))
             .into_system_error("scan_by_index error")?;
 
         if !existing.is_empty() {
@@ -123,10 +137,21 @@ impl UsersTableProvider {
 
         // If username changed, check for conflicts
         if existing_user.username != user.username {
+            let username_index_idx = self
+                .store
+                .find_index_by_partition(StoragePartition::SystemUsersUsernameIdx.name())
+                .ok_or_else(|| {
+                    SystemError::Other(
+                        format!(
+                            "Missing expected index partition: {}",
+                            StoragePartition::SystemUsersUsernameIdx.name()
+                        ),
+                    )
+                })?;
             let username_key = user.username.as_str().to_lowercase();
             let conflicts = self
                 .store
-                .scan_by_index(0, Some(username_key.as_bytes()), Some(1))
+                .scan_by_index(username_index_idx, Some(username_key.as_bytes()), Some(1))
                 .into_system_error("scan_by_index error")?;
 
             if !conflicts.is_empty() && conflicts[0].0 != user.id {
@@ -187,11 +212,23 @@ impl UsersTableProvider {
     /// # Returns
     /// Option<User> if found, None otherwise
     pub fn get_user_by_username(&self, username: &str) -> Result<Option<User>, SystemError> {
-        // Username index is index 0, key is lowercase username
+        let username_index_idx = self
+            .store
+            .find_index_by_partition(StoragePartition::SystemUsersUsernameIdx.name())
+            .ok_or_else(|| {
+                SystemError::Other(
+                    format!(
+                        "Missing expected index partition: {}",
+                        StoragePartition::SystemUsersUsernameIdx.name()
+                    ),
+                )
+            })?;
+
+        // Username index key is lowercase username
         let username_key = username.to_lowercase();
         let results = self
             .store
-            .scan_by_index(0, Some(username_key.as_bytes()), Some(1))
+            .scan_by_index(username_index_idx, Some(username_key.as_bytes()), Some(1))
             .into_system_error("scan_by_index error")?;
 
         Ok(results.into_iter().next().map(|(_, user)| user))
@@ -231,7 +268,7 @@ impl UsersTableProvider {
         }
 
         // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        let mut builder = RecordBatchBuilder::new(UsersTableSchema::schema());
         builder
             .add_string_column_owned(user_ids)
             .add_string_column_owned(usernames)
@@ -270,7 +307,7 @@ impl SystemTableProviderExt for UsersTableProvider {
     }
 
     fn schema_ref(&self) -> SchemaRef {
-        self.schema.clone()
+        UsersTableSchema::schema()
     }
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {
@@ -285,12 +322,22 @@ impl TableProvider for UsersTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        UsersTableSchema::schema()
     }
 
     fn table_type(&self) -> TableType {
         TableType::Base
     }
+
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        // Inexact pushdown: we may use filters for index/prefix scans,
+        // but DataFusion must still apply them for correctness.
+        Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
+    }
+    
 
     async fn scan(
         &self,
@@ -329,11 +376,37 @@ impl TableProvider for UsersTableProvider {
             }
         }
 
-        let schema = self.schema.clone();
-        let users = self
-            .store
-            .scan_all(limit, prefix.as_ref(), start_key.as_ref())
-            .map_err(|e| DataFusionError::Execution(format!("Failed to scan users: {}", e)))?;
+        let schema = UsersTableSchema::schema();
+
+        // Prefer secondary index scans when possible (auto-picks from store.indexes()).
+        // Falls back to main-partition scan with (user_id) prefix/start_key.
+        let users: Vec<(Vec<u8>, User)> = if let Some((index_idx, index_prefix)) =
+            self.store.find_best_index_for_filters(filters)
+        {
+            log::info!(
+                "[system.users] Using secondary index {} for filters: {:?}",
+                index_idx,
+                filters
+            );
+            self.store
+                .scan_by_index(index_idx, Some(&index_prefix), limit)
+                .map_err(|e| {
+                    DataFusionError::Execution(format!("Failed to scan users by index: {}", e))
+                })?
+                .into_iter()
+                .map(|(id, user)| (id.storage_key(), user))
+                .collect()
+        } else {
+            log::info!(
+                "[system.users] Full table scan (no index match) for filters: {:?}",
+                filters
+            );
+            self.store
+                .scan_all(limit, prefix.as_ref(), start_key.as_ref())
+                .map_err(|e| {
+                    DataFusionError::Execution(format!("Failed to scan users: {}", e))
+                })?
+        };
 
         let batch = self.create_batch(users).map_err(|e| {
             DataFusionError::Execution(format!("Failed to build users batch: {}", e))
@@ -342,7 +415,9 @@ impl TableProvider for UsersTableProvider {
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        table.scan(_state, projection, &[], limit).await
+
+        // Always pass through projection and filters to MemTable - it will handle them
+        table.scan(_state, projection, filters, limit).await
     }
 }
 

@@ -166,18 +166,32 @@ impl QueryExecutor {
                             .await
                             .unwrap_or_else(|_| "Unknown error".to_string());
 
-                        // Try to parse as QueryResponse to extract error message
-                        let error_message = if let Ok(json_response) =
+                        // SECURITY: Authentication/Authorization errors (4xx) must return an error,
+                        // not Ok with error status. This prevents CLI from exiting with success code
+                        // when auth fails, which could mask security issues in scripts/automation.
+                        if status.is_client_error() {
+                            // 401 Unauthorized, 403 Forbidden - always return error
+                            let status_code = status.as_u16();
+                            warn!(
+                                "[LINK_HTTP] Authentication/client error: status={} message=\"{}\" duration_ms={}",
+                                status, error_text, http_duration_ms
+                            );
+                            return Err(KalamLinkError::ServerError {
+                                status_code,
+                                message: error_text,
+                            });
+                        }
+
+                        // For 5xx errors, prefer returning a structured QueryResponse if available,
+                        // so SQL execution errors can be distinguished from transport errors.
+                        if let Ok(mut json_response) =
                             serde_json::from_str::<QueryResponse>(&error_text)
                         {
-                            if let Some(err) = json_response.error {
-                                err.message
-                            } else {
-                                error_text
-                            }
-                        } else {
-                            error_text
-                        };
+                            normalize_query_response(sql, &mut json_response);
+                            return Ok(json_response);
+                        }
+
+                        let error_message = error_text;
 
                         warn!(
                             "[LINK_HTTP] Server error: status={} message=\"{}\" duration_ms={}",

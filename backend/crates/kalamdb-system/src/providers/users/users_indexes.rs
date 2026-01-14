@@ -4,6 +4,7 @@
 
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;
+use kalamdb_commons::StoragePartition;
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ pub struct UserUsernameIndex;
 
 impl IndexDefinition<UserId, User> for UserUsernameIndex {
     fn partition(&self) -> &str {
-        "system_users_username_idx"
+        StoragePartition::SystemUsersUsernameIdx.name()
     }
 
     fn indexed_columns(&self) -> Vec<&str> {
@@ -34,14 +35,33 @@ impl IndexDefinition<UserId, User> for UserUsernameIndex {
         &self,
         filter: &datafusion::logical_expr::Expr,
     ) -> Option<Vec<u8>> {
+        use datafusion::logical_expr::Expr;
+        use datafusion::scalar::ScalarValue;
         use kalamdb_store::extract_string_equality;
 
+        // Handle equality: username = 'value'
         if let Some((col, val)) = extract_string_equality(filter) {
             if col == "username" {
                 // Convert to lowercase for case-insensitive matching
                 return Some(val.to_lowercase().into_bytes());
             }
         }
+
+        // Handle LIKE operator: username LIKE 'prefix%'
+        if let Expr::Like(like_expr) = filter {
+            if let Expr::Column(col) = like_expr.expr.as_ref() {
+                if col.name == "username" {
+                    if let Expr::Literal(ScalarValue::Utf8(Some(pattern)), _) = like_expr.pattern.as_ref() {
+                        // Check if pattern is a simple prefix match (ends with %)
+                        if pattern.ends_with('%') && !pattern[..pattern.len()-1].contains('%') && !pattern[..pattern.len()-1].contains('_') {
+                            let prefix = &pattern[..pattern.len()-1];
+                            return Some(prefix.to_lowercase().into_bytes());
+                        }
+                    }
+                }
+            }
+        }
+
         None
     }
 }
@@ -57,7 +77,7 @@ pub struct UserRoleIndex;
 
 impl IndexDefinition<UserId, User> for UserRoleIndex {
     fn partition(&self) -> &str {
-        "system_users_role_idx"
+        StoragePartition::SystemUsersRoleIdx.name()
     }
 
     fn indexed_columns(&self) -> Vec<&str> {
@@ -148,7 +168,10 @@ use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
     fn test_create_users_indexes() {
         let indexes = create_users_indexes();
         assert_eq!(indexes.len(), 2);
-        assert_eq!(indexes[0].partition(), "system_users_username_idx");
-        assert_eq!(indexes[1].partition(), "system_users_role_idx");
+        assert_eq!(
+            indexes[0].partition(),
+            StoragePartition::SystemUsersUsernameIdx.name()
+        );
+        assert_eq!(indexes[1].partition(), StoragePartition::SystemUsersRoleIdx.name());
     }
 }

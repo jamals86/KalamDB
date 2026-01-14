@@ -10,9 +10,9 @@ workers = 0
 enable_http2 = true
 
 [storage]
-# Data paths inside the container
-rocksdb_path = "/data/rocksdb"
-default_storage_path = "/data/storage"
+# Base data directory inside the container
+# Subdirectories automatically created: /data/rocksdb, /data/storage, /data/snapshots
+data_path = "/data"
 
 [storage.rocksdb]
 write_buffer_size = 67108864

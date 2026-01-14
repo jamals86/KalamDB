@@ -2,17 +2,24 @@
 //!
 //! Provides runtime metrics as key-value pairs for observability.
 //! Uses a callback pattern to fetch metrics from AppContext to avoid circular dependencies.
+//! **Schema**: TableDefinition provides consistent metadata for views
 
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::schemas::{
+    ColumnDefault, ColumnDefinition, TableDefinition, TableOptions,
+    TableType as KalamTableType,
+};
+use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_system::{SystemError, SystemTableProviderExt};
 use std::any::Any;
 use std::sync::{Arc, OnceLock, RwLock};
@@ -22,19 +29,60 @@ use std::sync::{Arc, OnceLock, RwLock};
 pub type MetricsCallback = Arc<dyn Fn() -> Vec<(String, String)> + Send + Sync>;
 
 /// Static schema for system.stats
-static STATS_SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
+static STATS_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
 
 /// Schema helper for system.stats
 pub struct StatsTableSchema;
 
 impl StatsTableSchema {
+    /// Get the TableDefinition for system.stats view
+    ///
+    /// Schema:
+    /// - metric_name TEXT NOT NULL (metric identifier)
+    /// - metric_value TEXT NOT NULL (metric value as string)
+    pub fn definition() -> TableDefinition {
+        let columns = vec![
+            ColumnDefinition::new(
+                1,
+                "metric_name",
+                1,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Metric identifier (e.g., server_uptime_seconds, total_users)".to_string()),
+            ),
+            ColumnDefinition::new(
+                2,
+                "metric_value",
+                2,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Metric value as string".to_string()),
+            ),
+        ];
+
+        TableDefinition::new(
+            NamespaceId::system(),
+            TableName::new("stats"),
+            KalamTableType::System,
+            columns,
+            TableOptions::system(),
+            Some("Runtime server metrics as key-value pairs (read-only view)".to_string()),
+        )
+        .expect("Failed to create system.stats view definition")
+    }
+
     pub fn schema() -> SchemaRef {
         STATS_SCHEMA
             .get_or_init(|| {
-                Arc::new(Schema::new(vec![
-                    Field::new("metric_name", DataType::Utf8, false),
-                    Field::new("metric_value", DataType::Utf8, false),
-                ]))
+                Self::definition()
+                    .to_arrow_schema()
+                    .expect("Failed to convert stats TableDefinition to Arrow schema")
             })
             .clone()
     }

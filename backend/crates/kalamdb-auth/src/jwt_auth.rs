@@ -2,6 +2,8 @@
 
 use crate::error::{AuthError, AuthResult};
 use jsonwebtoken::{decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::errors::ErrorKind;
+use kalamdb_commons::{Role, UserId, UserName};
 use serde::{Deserialize, Serialize};
 
 /// Default JWT expiration time in hours
@@ -24,11 +26,11 @@ pub struct JwtClaims {
     /// Issued at (Unix timestamp)
     pub iat: usize,
     /// Username (custom claim)
-    pub username: Option<String>,
+    pub username: Option<UserName>,
     /// Email (custom claim)
     pub email: Option<String>,
     /// Role (custom claim)
-    pub role: Option<String>,
+    pub role: Option<Role>,
 }
 
 impl JwtClaims {
@@ -41,9 +43,9 @@ impl JwtClaims {
     /// * `email` - Optional email address
     /// * `expiry_hours` - Token expiration in hours (defaults to DEFAULT_JWT_EXPIRY_HOURS)
     pub fn new(
-        user_id: &str,
-        username: &str,
-        role: &str,
+        user_id: &UserId,
+        username: &UserName,
+        role: &Role,
         email: Option<&str>,
         expiry_hours: Option<i64>,
     ) -> Self {
@@ -56,9 +58,9 @@ impl JwtClaims {
             iss: KALAMDB_ISSUER.to_string(),
             exp: exp.timestamp() as usize,
             iat: now.timestamp() as usize,
-            username: Some(username.to_string()),
+            username: Some(username.clone()),
             email: email.map(|e| e.to_string()),
-            role: Some(role.to_string()),
+            role: Some(role.clone()),
         }
     }
 }
@@ -80,6 +82,22 @@ pub fn generate_jwt_token(claims: &JwtClaims, secret: &str) -> AuthResult<String
 
     encode(&header, claims, &encoding_key)
         .map_err(|e| AuthError::HashingError(format!("JWT encoding error: {}", e)))
+}
+
+/// Create and sign a new JWT token in one step.
+/// 
+/// This is the preferred way to generate tokens to ensure consistency.
+pub fn create_and_sign_token(
+    user_id: &UserId,
+    username: &UserName,
+    role: &Role,
+    email: Option<&str>,
+    expiry_hours: Option<i64>,
+    secret: &str,
+) -> AuthResult<(String, JwtClaims)> {
+    let claims = JwtClaims::new(user_id, username, role, email, expiry_hours);
+    let token = generate_jwt_token(&claims, secret)?;
+    Ok((token, claims))
 }
 
 /// Refresh a JWT token by generating a new token with extended expiration.
@@ -106,17 +124,18 @@ pub fn refresh_jwt_token(
     let trusted_issuers = vec![KALAMDB_ISSUER.to_string()];
     let old_claims = validate_jwt_token(token, secret, &trusted_issuers)?;
 
-    // Create new claims with same user info but new expiration
-    let new_claims = JwtClaims::new(
-        &old_claims.sub,
-        old_claims.username.as_deref().unwrap_or(""),
-        old_claims.role.as_deref().unwrap_or("user"),
+    let user_id = UserId::new(&old_claims.sub);
+    let username = old_claims.username.as_ref().cloned().unwrap_or_else(|| UserName::new(""));
+    let role = old_claims.role.as_ref().cloned().unwrap_or(Role::User);
+
+    create_and_sign_token(
+        &user_id,
+        &username,
+        &role,
         old_claims.email.as_deref(),
         expiry_hours,
-    );
-
-    let new_token = generate_jwt_token(&new_claims, secret)?;
-    Ok((new_token, new_claims))
+        secret,
+    )
 }
 
 /// Validate a JWT token and extract claims.
@@ -156,12 +175,10 @@ pub fn validate_jwt_token(
 
     let decoding_key = DecodingKey::from_secret(secret.as_bytes());
     let token_data = decode::<JwtClaims>(token, &decoding_key, &validation).map_err(|e| {
-        if e.to_string().contains("ExpiredSignature") {
-            AuthError::TokenExpired
-        } else if e.to_string().contains("InvalidSignature") {
-            AuthError::InvalidSignature
-        } else {
-            AuthError::MalformedAuthorization(format!("JWT decode error: {}", e))
+        match e.kind() {
+            ErrorKind::ExpiredSignature => AuthError::TokenExpired,
+            ErrorKind::InvalidSignature => AuthError::InvalidSignature,
+            _ => AuthError::MalformedAuthorization(format!("JWT decode error: {}", e)),
         }
     })?;
 
@@ -248,9 +265,9 @@ mod tests {
             iss: "kalamdb-test".to_string(),
             exp: ((now as i64) + exp_offset_secs) as usize,
             iat: now,
-            username: Some("testuser".to_string()),
+            username: Some(UserName::new("testuser")),
             email: Some("test@example.com".to_string()),
-            role: Some("user".to_string()),
+            role: Some(Role::User),
         };
 
         let header = Header::new(Algorithm::HS256);
@@ -270,7 +287,7 @@ mod tests {
         let claims = result.unwrap();
         assert_eq!(claims.sub, "user_123");
         assert_eq!(claims.iss, "kalamdb-test");
-        assert_eq!(claims.username, Some("testuser".to_string()));
+        assert_eq!(claims.username, Some(UserName::new("testuser")));
     }
 
     #[test]

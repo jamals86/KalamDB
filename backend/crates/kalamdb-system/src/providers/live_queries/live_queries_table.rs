@@ -1,63 +1,247 @@
 //! System.live_queries table schema
 //!
-//! Defines the Arrow schema for the system.live_queries table.
-//!
-//! Phase 4 (Column Ordering): Uses live_queries_table_definition().to_arrow_schema()
-//! to ensure consistent column ordering via ordinal_position field.
+//! This module defines the schema for the system.live_queries table.
+//! - TableDefinition: Source of truth for columns, types, comments
+//! - Arrow schema: Derived from TableDefinition, memoized via OnceLock
 
-use crate::system_table_definitions::live_queries_table_definition;
 use datafusion::arrow::datatypes::SchemaRef;
+use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::schemas::{
+    ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
+};
+use kalamdb_commons::{NamespaceId, SystemTable, TableName};
 use std::sync::OnceLock;
 
-/// Cached schema for system.live_queries table
-static LIVE_QUERIES_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-
 /// Schema provider for system.live_queries table
+///
+/// Provides typed access to the table definition and Arrow schema.
+/// Contains the full TableDefinition as the single source of truth.
+#[derive(Debug, Clone, Copy)]
 pub struct LiveQueriesTableSchema;
 
 impl LiveQueriesTableSchema {
-    /// Get the Arrow schema for system.live_queries table
+    /// Get the TableDefinition for system.live_queries
     ///
-    /// Schema includes (in ordinal_position order):
-    /// - live_id: Utf8 (PK) - Format: {user_id}-{unique_conn_id}-{table_name}-{query_id}
-    /// - connection_id: Utf8
-    /// - subscription_id: Utf8
-    /// - namespace_id: Utf8
-    /// - table_name: Utf8
-    /// - query_id: Utf8
-    /// - user_id: Utf8
-    /// - query: Utf8
-    /// - options: Utf8 (nullable) - JSON
-    /// - status: Utf8
-    /// - created_at: TimestampMillisecond
-    /// - last_update: TimestampMillisecond
-    /// - changes: Int64
-    /// - node_id: Int64 (server node ID)
-    /// - last_ping_at: TimestampMillisecond (for stale detection)
+    /// This is the single source of truth for:
+    /// - Column definitions (names, types, nullability)
+    /// - Column ordering (ordinal_position)
+    /// - Column comments/descriptions
+    ///
+    /// Schema:
+    /// - live_id TEXT PRIMARY KEY
+    /// - connection_id TEXT NOT NULL
+    /// - subscription_id TEXT NOT NULL
+    /// - namespace_id TEXT NOT NULL
+    /// - table_name TEXT NOT NULL
+    /// - user_id TEXT NOT NULL
+    /// - query TEXT NOT NULL
+    /// - options TEXT (nullable, JSON)
+    /// - status TEXT NOT NULL
+    /// - created_at TIMESTAMP NOT NULL
+    /// - last_update TIMESTAMP NOT NULL
+    /// - changes BIGINT NOT NULL
+    /// - node_id BIGINT NOT NULL (node identifier)
+    /// - last_ping_at TIMESTAMP NOT NULL (for stale detection)
     ///
     /// Note: last_seq_id is tracked in-memory only (WebSocketSession), not persisted
+    pub fn definition() -> TableDefinition {
+        let columns = vec![
+            ColumnDefinition::new(
+                1,
+                "live_id",
+                1,
+                KalamDataType::Text,
+                false,
+                true,
+                false,
+                ColumnDefault::None,
+                Some(
+                    "Live query identifier (format: {user_id}-{conn_id}-{table}-{subscription_id})"
+                        .to_string(),
+                ),
+            ),
+            ColumnDefinition::new(
+                2,
+                "connection_id",
+                2,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("WebSocket connection identifier".to_string()),
+            ),
+            ColumnDefinition::new(
+                3,
+                "subscription_id",
+                3,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Client-provided subscription identifier".to_string()),
+            ),
+            ColumnDefinition::new(
+                4,
+                "namespace_id",
+                4,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Namespace containing the table".to_string()),
+            ),
+            ColumnDefinition::new(
+                5,
+                "table_name",
+                5,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Table being queried".to_string()),
+            ),
+            ColumnDefinition::new(
+                6,
+                "user_id",
+                6,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("User who created the live query".to_string()),
+            ),
+            ColumnDefinition::new(
+                7,
+                "query",
+                7,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("SQL query for real-time subscription".to_string()),
+            ),
+            ColumnDefinition::new(
+                8,
+                "options",
+                8,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Query options (JSON)".to_string()),
+            ),
+            ColumnDefinition::new(
+                9,
+                "status",
+                9,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Current status (active, paused, etc.)".to_string()),
+            ),
+            ColumnDefinition::new(
+                10,
+                "created_at",
+                10,
+                KalamDataType::Timestamp,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Live query creation timestamp".to_string()),
+            ),
+            ColumnDefinition::new(
+                11,
+                "last_update",
+                11,
+                KalamDataType::Timestamp,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Last update sent to client".to_string()),
+            ),
+            ColumnDefinition::new(
+                12,
+                "changes",
+                12,
+                KalamDataType::BigInt,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Number of changes pushed to client".to_string()),
+            ),
+            ColumnDefinition::new(
+                13,
+                "node_id",
+                13,
+                KalamDataType::BigInt,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Server node ID handling this live query".to_string()),
+            ),
+            ColumnDefinition::new(
+                14,
+                "last_ping_at",
+                14,
+                KalamDataType::Timestamp,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Last ping timestamp for stale detection".to_string()),
+            ),
+        ];
+
+        TableDefinition::new(
+            NamespaceId::system(),
+            TableName::new(SystemTable::LiveQueries.table_name()),
+            TableType::System,
+            columns,
+            TableOptions::system(),
+            Some("Active WebSocket live query subscriptions".to_string()),
+        )
+        .expect("Failed to create system.live_queries table definition")
+    }
+
+    /// Get the cached Arrow schema for system.live_queries table
     pub fn schema() -> SchemaRef {
-        LIVE_QUERIES_SCHEMA
-            .get_or_init(|| {
-                live_queries_table_definition()
-                    .to_arrow_schema()
-                    .expect("Failed to convert live_queries TableDefinition to Arrow schema")
-            })
-            .clone()
+            static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+            SCHEMA
+                .get_or_init(|| {
+                    Self::definition()
+                        .to_arrow_schema()
+                        .expect("Failed to convert live_queries TableDefinition to Arrow schema")
+                })
+                .clone()
     }
 
     /// Get the table name
     pub fn table_name() -> &'static str {
-        kalamdb_commons::SystemTable::LiveQueries.table_name()
+        SystemTable::LiveQueries.table_name()
     }
 
     /// Get the column family name in RocksDB
     pub fn column_family_name() -> &'static str {
-        kalamdb_commons::SystemTable::LiveQueries.column_family_name()
+        SystemTable::LiveQueries
+            .column_family_name()
+            .expect("LiveQueries is a table, not a view")
     }
 
     /// Get the partition key for storage
     pub fn partition() -> &'static str {
-        kalamdb_commons::SystemTable::LiveQueries.column_family_name()
+        Self::column_family_name()
     }
 }

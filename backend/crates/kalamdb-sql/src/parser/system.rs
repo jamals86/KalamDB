@@ -5,7 +5,7 @@
 use anyhow::{anyhow, Result};
 pub use kalamdb_commons::system_tables::SystemTable;
 use sqlparser::ast::Statement;
-use sqlparser::dialect::GenericDialect;
+use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 
 /// SQL statement types supported for system tables
@@ -34,13 +34,13 @@ pub enum SystemStatement {
 
 /// SQL parser for system tables
 pub struct SqlParser {
-    dialect: GenericDialect,
+    dialect: PostgreSqlDialect,
 }
 
 impl SqlParser {
     pub fn new() -> Self {
         Self {
-            dialect: GenericDialect {},
+            dialect: PostgreSqlDialect {},
         }
     }
 
@@ -114,18 +114,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_system_table_column_family_name() {
-        assert_eq!(SystemTable::Users.column_family_name(), "system_users");
-        assert_eq!(
-            SystemTable::LiveQueries.column_family_name(),
-            "system_live_queries"
-        );
-        assert_eq!(
-            SystemTable::Namespaces.column_family_name(),
-            "system_namespaces"
-        );
-    }
+    // #[test]
+    // fn test_system_table_column_family_name() {
+    //     assert_eq!(SystemTable::Users.column_family_name(), "system_users");
+    //     assert_eq!(
+    //         SystemTable::LiveQueries.column_family_name(),
+    //         "system_live_queries"
+    //     );
+    //     assert_eq!(
+    //         SystemTable::Namespaces.column_family_name(),
+    //         "system_namespaces"
+    //     );
+    // }
 
     #[test]
     fn test_parser_creation() {

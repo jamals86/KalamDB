@@ -10,9 +10,29 @@ description = "Interactive command-line client for KalamDB"
 keywords = ["kalamdb", "database", "cli", "terminal"]
 categories = ["database", "command-line-utilities"]
 
+[features]
+# End-to-end tests require a running KalamDB server/cluster.
+# Enable with: cargo test -p kalam-cli --features e2e-tests --test smoke
+e2e-tests = []
+
 [[bin]]
 name = "kalam"
 path = "src/main.rs"
+
+[[test]]
+name = "cluster"
+path = "tests/cluster.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "connection"
+path = "tests/connection.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "smoke"
+path = "tests/smoke.rs"
+required-features = ["e2e-tests"]
 
 [dependencies]
 # KalamDB connectivity
@@ -38,6 +58,7 @@ rpassword = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
+libc = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

@@ -255,7 +255,7 @@ impl ManifestAccessPlanner {
         // Get cached arrow schema for the historical version (uses version cache)
         let old_schema = app_context
             .schema_registry()
-            .get_arrow_schema_for_version(table_id, old_schema_version)?;
+            .get_arrow_schema_for_version(app_context.as_ref(), table_id, old_schema_version)?;
 
         // If schemas are identical, no projection needed
         if old_schema.fields() == current_schema.fields() {

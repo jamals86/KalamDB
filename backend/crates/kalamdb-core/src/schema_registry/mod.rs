@@ -14,7 +14,6 @@ pub mod stats;
 pub mod system_columns_service;
 pub mod table_cache;
 pub mod traits;
-pub mod views;
 
 pub use arrow_schema::ArrowSchemaWithOptions;
 pub use cached_table_data::CachedTableData;
@@ -26,8 +25,6 @@ pub use projection::{project_batch, schemas_compatible};
 pub use registry::SchemaRegistry;
 pub use stats::StatsTableProvider;
 pub use system_columns_service::SystemColumnsService;
-pub use views::settings;
-pub use views::settings::{SettingsTableProvider, SettingsView};
 pub use table_cache::TableCache;
 
 // Re-export common types from kalamdb_commons for convenience

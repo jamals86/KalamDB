@@ -40,6 +40,9 @@ tokio-util = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# System
+hostname = { workspace = true }
 bincode = { workspace = true } # For system table serialization (faster than JSON)
 
 # Error handling

@@ -64,11 +64,6 @@ impl GroupId {
         matches!(self, GroupId::Meta)
     }
 
-    /// Returns true if this is the unified Meta group
-    pub fn is_unified_meta(&self) -> bool {
-        matches!(self, GroupId::Meta)
-    }
-
     /// Returns true if this is a data group
     pub fn is_data(&self) -> bool {
         matches!(self, GroupId::DataUserShard(_) | GroupId::DataSharedShard(_))
@@ -281,7 +276,6 @@ mod tests {
     #[test]
     fn test_meta_group() {
         assert!(GroupId::Meta.is_metadata());
-        assert!(GroupId::Meta.is_unified_meta());
         assert!(!GroupId::Meta.is_data());
     }
 

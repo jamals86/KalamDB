@@ -14,6 +14,7 @@
 use super::live_queries_indexes::create_live_queries_indexes;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::LiveQueryId;
+use kalamdb_commons::SystemTable;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::sync::Arc;
 
@@ -28,7 +29,13 @@ pub type LiveQueriesStore = IndexedEntityStore<LiveQueryId, LiveQuery>;
 /// # Returns
 /// A new IndexedEntityStore for live queries with automatic index management
 pub fn new_live_queries_store(backend: Arc<dyn StorageBackend>) -> LiveQueriesStore {
-    IndexedEntityStore::new(backend, "system_live_queries", create_live_queries_indexes())
+    IndexedEntityStore::new(
+        backend,
+        SystemTable::LiveQueries
+            .column_family_name()
+            .expect("LiveQueries is a table, not a view"),
+        create_live_queries_indexes(),
+    )
 }
 
 #[cfg(test)]

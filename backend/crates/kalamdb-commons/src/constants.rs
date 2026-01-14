@@ -1,50 +1,8 @@
 //! System-wide constants for KalamDB.
 //!
 //! This module centralizes constant definitions used across all crates, including:
-//! - System table names
-//! - Column family names
+//! - Column family names (non-system)
 //! - Reserved identifiers
-//!
-//! ## Example Usage
-//!
-//! ```rust
-//! use kalamdb_commons::constants::SystemTableNames;
-//!
-//! assert_eq!(SystemTableNames::USERS, "system.users");
-//! assert_eq!(SystemTableNames::NAMESPACES, "system.namespaces");
-//! ```
-
-/// System table names used throughout KalamDB.
-///
-/// All system tables are prefixed with "system." to distinguish them from user tables.
-pub struct SystemTableNames;
-
-#[allow(non_upper_case_globals)]
-impl SystemTableNames {
-    /// System users table: `system.users`
-    pub const USERS: &'static str = "system.users";
-
-    /// System namespaces table: `system.namespaces`
-    pub const NAMESPACES: &'static str = "system.namespaces";
-
-    /// System tables catalog: `system.tables`
-    pub const TABLES: &'static str = "system.tables";
-
-    /// Table schema history: `system.table_schemas`
-    pub const TABLE_SCHEMAS: &'static str = "system.table_schemas";
-
-    /// Storage locations configuration: `system.storages`
-    pub const STORAGES: &'static str = "system.storages";
-
-    /// Active live query subscriptions: `system.live_queries`
-    pub const LIVE_QUERIES: &'static str = "system.live_queries";
-
-    /// Background job tracking: `system.jobs`
-    pub const JOBS: &'static str = "system.jobs";
-}
-
-/// Global instance of system table names.
-pub const SYSTEM_TABLES: SystemTableNames = SystemTableNames;
 
 /// RocksDB column family names.
 ///
@@ -54,31 +12,10 @@ pub struct ColumnFamilyNames;
 #[allow(non_upper_case_globals)]
 impl ColumnFamilyNames {
     /// Default column family (RocksDB built-in)
-    pub const DEFAULT: &'static str = "default";
-
-    /// System users column family
-    pub const SYSTEM_USERS: &'static str = "system_users";
-
-    /// System namespaces column family
-    pub const SYSTEM_NAMESPACES: &'static str = "system_namespaces";
-
-    /// System tables column family
-    pub const SYSTEM_TABLES: &'static str = "system_tables";
-
-    /// System storages column family
-    pub const SYSTEM_STORAGES: &'static str = "system_storages";
-
-    /// System live queries column family
-    pub const SYSTEM_LIVE_QUERIES: &'static str = "system_live_queries";
-
-    /// System jobs column family
-    pub const SYSTEM_JOBS: &'static str = "system_jobs";
+    // pub const DEFAULT: &'static str = "default";
 
     /// Unified information_schema tables (replaces system_table_schemas + system_columns)
     pub const INFORMATION_SCHEMA_TABLES: &'static str = "information_schema_tables";
-
-    /// User table flush counters
-    pub const USER_TABLE_COUNTERS: &'static str = "user_table_counters";
 
     /// Prefix for user table column families (appended with table name)
     pub const USER_TABLE_PREFIX: &'static str = "user_";
@@ -89,9 +26,6 @@ impl ColumnFamilyNames {
     /// Prefix for stream table column families (appended with table name)
     pub const STREAM_TABLE_PREFIX: &'static str = "stream_";
 }
-
-/// Global instance of column family names.
-pub const COLUMN_FAMILIES: ColumnFamilyNames = ColumnFamilyNames;
 
 /// System column names added automatically to all tables.
 pub struct SystemColumnNames;
@@ -114,14 +48,14 @@ impl SystemColumnNames {
     }
 }
 
-/// Global instance of system column names.
-pub const SYSTEM_COLUMNS: SystemColumnNames = SystemColumnNames;
+// /// Global instance of system column names.
+// pub const SYSTEM_COLUMNS: SystemColumnNames = SystemColumnNames;
 
-/// Reserved namespace name for system tables.
-pub const SYSTEM_NAMESPACE: &str = "system";
+// /// Reserved namespace name for system tables.
+// pub const SYSTEM_NAMESPACE: &str = "system";
 
-/// Default namespace name for user tables when not specified.
-pub const DEFAULT_NAMESPACE: &str = "default";
+// /// Default namespace name for user tables when not specified.
+// pub const DEFAULT_NAMESPACE: &str = "default";
 
 /// Maximum SQL query length in bytes (1MB)
 ///

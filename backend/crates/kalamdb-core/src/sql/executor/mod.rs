@@ -37,6 +37,13 @@ pub struct SqlExecutor {
 }
 
 impl SqlExecutor {
+    fn is_table_not_found_error(e: &datafusion::error::DataFusionError) -> bool {
+        let msg = e.to_string().to_lowercase();
+        (msg.contains("table") && msg.contains("not found"))
+            || (msg.contains("relation") && msg.contains("does not exist"))
+            || msg.contains("unknown table")
+    }
+
     /// Construct a new executor hooked into the shared `AppContext`.
     pub fn new(
         app_context: Arc<crate::app_context::AppContext>,
@@ -210,7 +217,32 @@ impl SqlExecutor {
                                     KalamDbError::ExecutionError(e.to_string())
                                 })?
                             }
-                            Err(e) => return Err(KalamDbError::ExecutionError(e.to_string())),
+                            Err(e) => {
+                                if Self::is_table_not_found_error(&e) {
+                                    log::warn!(
+                                        target: "sql::plan",
+                                        "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
+                                        sql
+                                    );
+                                    let _ = self.load_existing_tables().await;
+                                    let retry_session = exec_ctx.create_session_with_user();
+                                    match retry_session.sql(sql).await {
+                                        Ok(df) => {
+                                            let plan = df.logical_plan().clone();
+                                            let ordered_plan = apply_default_order_by(plan, &self.app_context)?;
+                                            retry_session
+                                                .execute_logical_plan(ordered_plan)
+                                                .await
+                                                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
+                                        }
+                                        Err(e2) => {
+                                            return Err(self.log_sql_error(sql, exec_ctx, e2));
+                                        }
+                                    }
+                                } else {
+                                    return Err(self.log_sql_error(sql, exec_ctx, e));
+                                }
+                            }
                         }
                     }
                 }
@@ -232,7 +264,33 @@ impl SqlExecutor {
                         })?
                     }
                     Err(e) => {
-                        return Err(self.log_sql_error(sql, exec_ctx, e));
+                        if Self::is_table_not_found_error(&e) {
+                            log::warn!(
+                                target: "sql::plan",
+                                "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
+                                sql
+                            );
+                            let _ = self.load_existing_tables().await;
+                            let retry_session = exec_ctx.create_session_with_user();
+                            match retry_session.sql(sql).await {
+                                Ok(df) => {
+                                    let plan = df.logical_plan().clone();
+                                    let ordered_plan = apply_default_order_by(plan, &self.app_context)?;
+
+                                    self.plan_cache.insert(cache_key, ordered_plan.clone());
+
+                                    retry_session
+                                        .execute_logical_plan(ordered_plan)
+                                        .await
+                                        .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
+                                }
+                                Err(e2) => {
+                                    return Err(self.log_sql_error(sql, exec_ctx, e2));
+                                }
+                            }
+                        } else {
+                            return Err(self.log_sql_error(sql, exec_ctx, e));
+                        }
                     }
                 }
             }
@@ -242,7 +300,23 @@ impl SqlExecutor {
             let df = match session.sql(sql).await {
                 Ok(df) => df,
                 Err(e) => {
-                    return Err(self.log_sql_error(sql, exec_ctx, e));
+                    if Self::is_table_not_found_error(&e) {
+                        log::warn!(
+                            target: "sql::plan",
+                            "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
+                            sql
+                        );
+                        let _ = self.load_existing_tables().await;
+                        let retry_session = exec_ctx.create_session_with_user();
+                        match retry_session.sql(sql).await {
+                            Ok(df) => df,
+                            Err(e2) => {
+                                return Err(self.log_sql_error(sql, exec_ctx, e2));
+                            }
+                        }
+                    } else {
+                        return Err(self.log_sql_error(sql, exec_ctx, e));
+                    }
                 }
             };
 
@@ -422,11 +496,15 @@ impl SqlExecutor {
         };
         use kalamdb_commons::schemas::TableType;
 
+        let is_already_registered = |e: &KalamDbError| -> bool {
+            matches!(e, KalamDbError::InvalidOperation(msg) if msg.to_lowercase().contains("already exists"))
+        };
+
         let app_context = &self.app_context;
         let schema_registry = app_context.schema_registry();
 
         // Load all table definitions from the store (much cleaner than scanning Arrow batches!)
-        let all_table_defs = schema_registry.scan_all_table_definitions()?;
+        let all_table_defs = schema_registry.scan_all_table_definitions(app_context.as_ref())?;
 
         if all_table_defs.is_empty() {
             log::debug!("No existing tables to load");
@@ -453,7 +531,7 @@ impl SqlExecutor {
 
             // Get Arrow schema from cache (memoized in CachedTableData)
             // This populates cache with table definition + computes arrow schema once
-            let arrow_schema = match schema_registry.get_arrow_schema(&table_id) {
+            let arrow_schema = match schema_registry.get_arrow_schema(app_context.as_ref(), &table_id) {
                 Ok(schema) => schema,
                 Err(e) => {
                     log::error!(
@@ -469,11 +547,34 @@ impl SqlExecutor {
             // Register provider based on type
             match table_def.table_type {
                 TableType::User => {
-                    register_user_table_provider(app_context, &table_id, arrow_schema)?;
+                    if let Err(e) = register_user_table_provider(app_context, &table_id, arrow_schema)
+                    {
+                        if is_already_registered(&e) {
+                            log::debug!(
+                                "Skipping already-registered USER table provider for {}: {}",
+                                table_id,
+                                e
+                            );
+                            continue;
+                        }
+                        return Err(e);
+                    }
                     user_count += 1;
                 }
                 TableType::Shared => {
-                    register_shared_table_provider(app_context, &table_id, arrow_schema)?;
+                    if let Err(e) =
+                        register_shared_table_provider(app_context, &table_id, arrow_schema)
+                    {
+                        if is_already_registered(&e) {
+                            log::debug!(
+                                "Skipping already-registered SHARED table provider for {}: {}",
+                                table_id,
+                                e
+                            );
+                            continue;
+                        }
+                        return Err(e);
+                    }
                     shared_count += 1;
                 }
                 TableType::Stream => {
@@ -486,12 +587,22 @@ impl SqlExecutor {
                         } else {
                             None
                         };
-                    register_stream_table_provider(
+                    if let Err(e) = register_stream_table_provider(
                         app_context,
                         &table_id,
                         arrow_schema,
                         ttl_seconds,
-                    )?;
+                    ) {
+                        if is_already_registered(&e) {
+                            log::debug!(
+                                "Skipping already-registered STREAM table provider for {}: {}",
+                                table_id,
+                                e
+                            );
+                            continue;
+                        }
+                        return Err(e);
+                    }
                     stream_count += 1;
                 }
                 TableType::System => {
@@ -560,7 +671,7 @@ impl SqlExecutor {
 
                 // Get table definition
                 let schema_registry = self.app_context.schema_registry();
-                if let Ok(Some(def)) = schema_registry.get_table_definition(&table_id) {
+                if let Ok(Some(def)) = schema_registry.get_table_if_exists(self.app_context.as_ref(), &table_id) {
                     if matches!(def.table_type, TableType::Shared) {
                         let access_level = if let TableOptions::Shared(opts) = &def.table_options {
                             opts.access_level.unwrap_or(TableAccess::Private)

@@ -9,6 +9,7 @@
 
 use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
+use kalamdb_commons::SystemTable;
 use kalamdb_store::{
     entity_store::{CrossUserTableStore, EntityStore, KSerializable},
     StorageBackend, StorageKey,
@@ -26,7 +27,8 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct SystemTableStore<K, V> {
     backend: Arc<dyn StorageBackend>,
-    partition: String,
+    system_table: SystemTable,
+    partition: &'static str,
     _phantom: std::marker::PhantomData<(K, V)>,
 }
 
@@ -35,11 +37,15 @@ impl<K, V> SystemTableStore<K, V> {
     ///
     /// # Arguments
     /// * `backend` - Storage backend (RocksDB or mock)
-    /// * `partition` - Partition name (e.g., "system_users")
-    pub fn new(backend: Arc<dyn StorageBackend>, partition: impl Into<String>) -> Self {
+    /// * `system_table` - Which system table this store manages
+    pub fn new(backend: Arc<dyn StorageBackend>, system_table: SystemTable) -> Self {
+        let partition = system_table
+            .column_family_name()
+            .expect("SystemTableStore requires a persisted system table (not a view)");
         Self {
             backend,
-            partition: partition.into(),
+            system_table,
+            partition,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -63,9 +69,7 @@ where
 /// Implement SystemTableProviderExt for integration with table providers
 impl<K: Send + Sync, V: Send + Sync> SystemTableProviderExt for SystemTableStore<K, V> {
     fn table_name(&self) -> &str {
-        self.partition
-            .strip_prefix("system_")
-            .unwrap_or(&self.partition)
+        self.system_table.table_name()
     }
 
     fn schema_ref(&self) -> arrow::datatypes::SchemaRef {

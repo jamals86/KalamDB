@@ -5,6 +5,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::providers::base::BaseTableProvider; // Phase 13.6: Bring trait methods into scope
+use crate::providers::arrow_json_conversion::scalar_value_to_json;
 use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
@@ -12,22 +13,33 @@ use async_trait::async_trait;
 use kalamdb_commons::models::{NamespaceId, TableName, TableId, UserId};
 use kalamdb_raft::{DataResponse, SharedDataCommand, UserDataCommand};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
+use serde_json::Value as JsonValue;
 
 /// Handler for DELETE statements
 ///
 /// Delegates to DataFusion for DELETE execution with parameter binding support.
 /// Returns rows_affected count following MySQL semantics.
-pub struct DeleteHandler;
+pub struct DeleteHandler {
+    app_context: std::sync::Arc<AppContext>,
+}
 
 impl DeleteHandler {
-    pub fn new() -> Self {
-        Self
+    pub fn new(app_context: std::sync::Arc<AppContext>) -> Self {
+        Self { app_context }
     }
 }
 
+#[cfg(test)]
 impl Default for DeleteHandler {
     fn default() -> Self {
-        Self::new()
+        Self::new(AppContext::get())
+    }
+}
+
+#[cfg(not(test))]
+impl Default for DeleteHandler {
+    fn default() -> Self {
+        panic!("DeleteHandler::default() is for tests only; use DeleteHandler::new(Arc<AppContext>)")
     }
 }
 
@@ -36,13 +48,12 @@ impl StatementHandler for DeleteHandler {
     async fn execute(
         &self,
         statement: SqlStatement,
-        _params: Vec<ScalarValue>,
+        params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         // T064: Validate parameters before write using config from AppContext
-        let app_context = AppContext::get();
-        let limits = ParameterLimits::from_config(&app_context.config().execution);
-        validate_parameters(&_params, &limits)?;
+        let limits = ParameterLimits::from_config(&self.app_context.config().execution);
+        validate_parameters(&params, &limits)?;
 
         if !matches!(statement.kind(), SqlStatementKind::Delete(_)) {
             return Err(KalamDbError::InvalidOperation(
@@ -60,11 +71,11 @@ impl StatementHandler for DeleteHandler {
         let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
 
         // Execute native delete
-        let schema_registry = app_context.schema_registry();
+        let schema_registry = self.app_context.schema_registry();
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
         let def = schema_registry
-            .get_table_definition(&table_id)?
+            .get_table_if_exists(self.app_context.as_ref(), &table_id)?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table {}.{} not found",
@@ -96,7 +107,7 @@ impl StatementHandler for DeleteHandler {
 
                     // Try to extract simple WHERE pk = value first (fast path)
                     let pks_to_delete = if let Some(row_id) =
-                        self.extract_row_id_for_column(&where_pair, pk_column)?
+                        self.extract_row_id_for_column(&where_pair, pk_column, &params)?
                     {
                         vec![row_id]
                     } else if has_where_clause {
@@ -165,7 +176,7 @@ impl StatementHandler for DeleteHandler {
                     let pk_column = provider.primary_key_field_name();
 
                     // Collect PKs to delete
-                    let pks_to_delete: Vec<String> = if let Some(row_id) = self.extract_row_id_for_column(&where_pair, pk_column)? {
+                    let pks_to_delete: Vec<String> = if let Some(row_id) = self.extract_row_id_for_column(&where_pair, pk_column, &params)? {
                         // Single PK from simple WHERE clause
                         vec![row_id]
                     } else if has_where_clause {
@@ -222,7 +233,7 @@ impl StatementHandler for DeleteHandler {
 
                 let pk_column = provider.primary_key_field_name();
                 let pks_to_delete = if let Some(row_id) =
-                    self.extract_row_id_for_column(&where_pair, pk_column)?
+                    self.extract_row_id_for_column(&where_pair, pk_column, &params)?
                 {
                     vec![row_id]
                 } else {
@@ -400,12 +411,44 @@ impl DeleteHandler {
         &self,
         where_pair: &Option<(String, String)>,
         pk_column: &str,
+        params: &[ScalarValue],
     ) -> Result<Option<String>, KalamDbError> {
         if let Some((col, token)) = where_pair {
             if !col.eq_ignore_ascii_case(pk_column) {
                 return Ok(None);
             }
-            let t = token.trim();
+            let t = token.trim().trim_end_matches(';').trim();
+
+            // Parameter placeholder: $1, $2, etc.
+            if let Some(stripped) = t.strip_prefix('$') {
+                let param_num: usize = stripped.parse().map_err(|_| {
+                    KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", t))
+                })?;
+
+                if param_num == 0 || param_num > params.len() {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "Parameter ${} out of range (have {} parameters)",
+                        param_num,
+                        params.len()
+                    )));
+                }
+
+                let json = scalar_value_to_json(&params[param_num - 1])?;
+                let pk = match json {
+                    JsonValue::String(s) => s,
+                    JsonValue::Number(n) => n.to_string(),
+                    JsonValue::Bool(b) => b.to_string(),
+                    JsonValue::Null => {
+                        return Err(KalamDbError::InvalidOperation(
+                            "DELETE primary key parameter cannot be NULL".into(),
+                        ))
+                    }
+                    other => other.to_string(),
+                };
+
+                return Ok(Some(pk));
+            }
+
             let unquoted = t.trim_matches('\'').trim_matches('"');
             return Ok(Some(unquoted.to_string()));
         }
@@ -506,18 +549,14 @@ impl DeleteHandler {
         table_id: &TableId,
         pk_values: Vec<String>,
     ) -> Result<usize, KalamDbError> {
-        let app_context = AppContext::get();
-        let executor = app_context.executor();
+        let executor = self.app_context.executor();
         let pk_count = pk_values.len();
 
         // Serialize the list of PKs to delete
-        let filter_data = bincode::serde::encode_to_vec(&pk_values, bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize PKs: {}", e)))?;
-
         let cmd = SharedDataCommand::Delete {
             required_meta_index: 0, // Stamped by executor
             table_id: table_id.clone(),
-            filter_data: Some(filter_data),
+            pk_values: Some(pk_values),
         };
 
         let response = executor
@@ -540,18 +579,14 @@ impl DeleteHandler {
         user_id: &UserId,
         pk_values: Vec<String>,
     ) -> Result<usize, KalamDbError> {
-        let app_context = AppContext::get();
-        let executor = app_context.executor();
+        let executor = self.app_context.executor();
         let pk_count = pk_values.len();
-
-        let filter_data = bincode::serde::encode_to_vec(&pk_values, bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize PKs: {}", e)))?;
 
         let cmd = UserDataCommand::Delete {
             required_meta_index: 0, // Stamped by executor
             table_id: table_id.clone(),
             user_id: user_id.clone(),
-            filter_data: Some(filter_data),
+            pk_values: Some(pk_values),
         };
 
         let response = executor
@@ -581,7 +616,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_authorization_user() {
-        let handler = DeleteHandler::new();
+        let handler = DeleteHandler::new(AppContext::get());
         let ctx = test_context(Role::User);
         let stmt = SqlStatement::new(
             "DELETE FROM default.test WHERE id = 1".to_string(),
@@ -593,7 +628,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_authorization_dba() {
-        let handler = DeleteHandler::new();
+        let handler = DeleteHandler::new(AppContext::get());
         let ctx = test_context(Role::Dba);
         let stmt = SqlStatement::new(
             "DELETE FROM default.test WHERE id = 1".to_string(),
@@ -605,7 +640,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_authorization_service() {
-        let handler = DeleteHandler::new();
+        let handler = DeleteHandler::new(AppContext::get());
         let ctx = test_context(Role::Service);
         let stmt = SqlStatement::new(
             "DELETE FROM default.test WHERE id = 1".to_string(),

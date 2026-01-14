@@ -1,0 +1,922 @@
+use anyhow::{Context, Result};
+use base64::Engine;
+use kalam_link::models::{QueryResponse, ResponseStatus};
+use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
+use kalamdb_commons::{Role, UserId, UserName};
+use once_cell::sync::Lazy;
+use serde_json::Value as JsonValue;
+use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::path::Path;
+use std::path::PathBuf;
+use tokio::sync::Mutex;
+use tokio::sync::OnceCell;
+use tokio::time::{sleep, Duration, Instant};
+
+static HTTP_TEST_SERVER_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+/// Global singleton server instance for tests that want to reuse the same server.
+///
+/// Use `get_global_server()` to get a reference to the shared server instance.
+/// The server is started once on first access and reused across tests.
+///
+/// **Note**: Tests using the global server share state (tables, data), so they
+/// should use unique table names or be designed to handle shared state.
+static GLOBAL_HTTP_TEST_SERVER: OnceCell<HttpTestServer> = OnceCell::const_new();
+
+/// Global cluster server instance for tests that need a 3-node cluster.
+///
+/// Use `get_cluster_server()` to get a reference to the shared cluster.
+/// The cluster is started once on first access and reused across tests.
+static GLOBAL_CLUSTER_SERVER: OnceCell<ClusterTestServer> = OnceCell::const_new();
+
+/// Get a reference to the global shared HTTP test server.
+///
+/// The server is started once on first access and reused across all tests.
+/// This is more efficient than starting a new server for each test.
+///
+/// **Note**: Tests using the global server share state (tables, data), so they
+/// should use unique table names or be designed to handle shared state.
+///
+/// # Example
+/// ```ignore
+/// #[tokio::test]
+/// async fn test_something() {
+///     let server = get_global_server().await;
+///     let response = server.execute_sql("SELECT 1").await.unwrap();
+///     assert_eq!(response.status.to_string(), "success");
+/// }
+/// ```
+pub async fn get_global_server() -> &'static HttpTestServer {
+    GLOBAL_HTTP_TEST_SERVER
+        .get_or_init(|| async {
+            start_http_test_server().await.expect("Failed to start global HTTP test server")
+        })
+        .await
+}
+
+/// Get a reference to the global 3-node cluster for testing.
+///
+/// The cluster is started once on first access and reused across tests.
+/// Access individual nodes via their indices (0, 1, 2).
+///
+/// # Example
+/// ```ignore
+/// #[tokio::test]
+/// async fn test_cluster() {
+///     let cluster = get_cluster_server().await;
+///     let node1 = cluster.get_node(0).await;
+///     let response = node1.execute_sql("CREATE NAMESPACE test").await.unwrap();
+///     assert!(response.success());
+/// }
+/// ```
+pub async fn get_cluster_server() -> &'static ClusterTestServer {
+    GLOBAL_CLUSTER_SERVER
+        .get_or_init(|| async {
+            start_cluster_server().await.expect("Failed to start global cluster server")
+        })
+        .await
+}
+
+/// A near-production HTTP server instance for tests.
+///
+/// Uses the real `kalamdb_server::lifecycle::bootstrap()` and `run_for_tests()` wiring.
+pub struct HttpTestServer {
+    _temp_dir: tempfile::TempDir,
+    // Cross-process lock to avoid running multiple near-production servers concurrently.
+    // Some subsystems (notably Raft/bootstrap) are not safe to initialize concurrently
+    // across integration test binaries.
+    _global_lock: Option<std::fs::File>,
+    pub base_url: String,
+    #[allow(dead_code)]
+    data_path: PathBuf,
+    root_auth_header: String,
+    jwt_secret: String,
+    link_client_cache: Mutex<HashMap<String, KalamLinkClient>>,
+    /// Cache of username -> user_id mappings for proper JWT token generation
+    /// Uses std::sync::Mutex since it's accessed from sync code (link_client)
+    user_id_cache: std::sync::Mutex<HashMap<String, String>>,
+    running: kalamdb_server::lifecycle::RunningTestHttpServer,
+    skip_raft_leader_check: bool,
+}
+
+fn acquire_global_http_test_server_lock() -> Result<Option<std::fs::File>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+
+        let lock_path = std::env::temp_dir().join("kalamdb-http-test-server.lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .with_context(|| format!("Failed to open global lock file: {}", lock_path.display()))?;
+
+        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+        if rc != 0 {
+            return Err(anyhow::anyhow!(
+                "Failed to acquire global lock (flock) on {}",
+                lock_path.display()
+            ));
+        }
+
+        Ok(Some(file))
+    }
+
+    #[cfg(not(unix))]
+    {
+        Ok(None)
+    }
+}
+
+impl HttpTestServer {
+    fn auth_provider_from_header(auth_header: &str) -> Result<AuthProvider> {
+        let auth_header = auth_header.trim();
+
+        if auth_header.is_empty() {
+            return Ok(AuthProvider::none());
+        }
+
+        if let Some(encoded) = auth_header.strip_prefix("Basic ") {
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .context("Failed to decode Basic auth header")?;
+            let decoded = String::from_utf8(decoded)
+                .context("Basic auth decoded value was not valid UTF-8")?;
+
+            let (username, password) = decoded
+                .split_once(':')
+                .context("Basic auth decoded value missing ':' separator")?;
+
+            return Ok(AuthProvider::basic_auth(username.to_string(), password.to_string()));
+        }
+
+        if let Some(token) = auth_header.strip_prefix("Bearer ") {
+            return Ok(AuthProvider::jwt_token(token.to_string()));
+        }
+
+        Err(anyhow::anyhow!("Unsupported Authorization header format: {}", auth_header))
+    }
+
+    /// Build a Basic auth header value for localhost requests.
+    ///
+    /// Example: `Authorization: Basic <base64(username:password)>`
+    pub fn basic_auth_header(username: &UserName, password: &str) -> String {
+        let raw = format!("{}:{}", username, password);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(raw);
+        format!("Basic {}", b64)
+    }
+
+    /// Returns the server's isolated data directory for this test instance.
+    #[allow(dead_code)]
+    pub fn data_path(&self) -> &Path {
+        &self.data_path
+    }
+
+    /// Returns the storage root directory (e.g. `<data_path>/storage`).
+    #[allow(dead_code)]
+    pub fn storage_root(&self) -> PathBuf {
+        self.data_path.join("storage")
+    }
+
+    /// Returns the WebSocket URL for this server (ws://localhost:port/v1/ws)
+    pub fn websocket_url(&self) -> String {
+        self.base_url.replace("http://", "ws://") + "/v1/ws"
+    }
+
+    /// Returns the base URL without trailing slash
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Creates a JWT token for the specified user with explicit user_id.
+    pub fn create_jwt_token_with_id(
+        &self,
+        user_id: &UserId,
+        username: &UserName,
+        role: &Role,
+    ) -> String {
+        let (token, _claims) = kalamdb_auth::jwt_auth::create_and_sign_token(
+            user_id,
+            username,
+            role,
+            None,
+            Some(1), // 1 hour expiry
+            &self.jwt_secret,
+        )
+        .expect("Failed to generate JWT token");
+
+        token
+    }
+
+    /// Creates a JWT token for the specified user.
+    /// For test purposes, assumes role is 'system' for root, and 'user' for others.
+    pub fn create_jwt_token(&self, username: &UserName) -> String {
+        let role = if username.as_str() == "root" {
+            Role::System
+        } else {
+            Role::User
+        };
+        // Use username as user_id for non-root users in tests
+        // This allows USER tables to work correctly with partitioning
+        let user_id = if username.as_str() == "root" {
+            UserId::new("1")
+        } else {
+            UserId::new(username.as_str())
+        };
+
+        let (token, _claims) = kalamdb_auth::jwt_auth::create_and_sign_token(
+            &user_id,
+            username,
+            &role,
+            None,
+            Some(1), // 1 hour expiry
+            &self.jwt_secret,
+        )
+        .expect("Failed to generate JWT token");
+
+        token
+    }
+
+    /// Register a user_id in the cache for later use by link_client
+    pub fn cache_user_id(&self, username: &str, user_id: &str) {
+        let mut cache = self.user_id_cache.lock().expect("user_id_cache mutex poisoned");
+        cache.insert(username.to_string(), user_id.to_string());
+    }
+
+    /// Get cached user_id for a username, if available
+    pub fn get_cached_user_id(&self, username: &str) -> Option<String> {
+        let cache = self.user_id_cache.lock().expect("user_id_cache mutex poisoned");
+        cache.get(username).cloned()
+    }
+
+    /// Create a new user if it doesnt exists already and cache the user_id
+    async fn ensure_user_exists(
+        &self,
+        username: &str,
+        password: &str,
+        role: &Role,
+    ) -> Result<String> {
+        let check_sql = format!("SELECT user_id, COUNT(*) AS user_count FROM system.users WHERE username = '{}' GROUP BY user_id", username);
+        let resp = self.execute_sql(&check_sql).await?;
+
+        // Check if user exists and get their user_id
+        if let Some(rows) = resp.rows_as_maps().first() {
+            if let Some(user_id) = rows.get("user_id").and_then(|v| v.as_str()) {
+                self.cache_user_id(username, user_id);
+                return Ok(user_id.to_string());
+            }
+        }
+
+        // User doesn't exist, create them
+        let create_sql = format!(
+            "CREATE USER {} WITH PASSWORD '{}' ROLE '{}'",
+            username,
+            password,
+            role.as_str()
+        );
+        self.execute_sql(&create_sql).await?;
+
+        // Now fetch the user_id
+        let get_id_sql =
+            format!("SELECT user_id FROM system.users WHERE username = '{}'", username);
+        let resp = self.execute_sql(&get_id_sql).await?;
+        let user_id = resp
+            .rows_as_maps()
+            .first()
+            .and_then(|r| r.get("user_id"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Failed to get user_id for newly created user {}", username)
+            })?
+            .to_string();
+
+        self.cache_user_id(username, &user_id);
+        Ok(user_id)
+    }
+
+    /// Returns a pre-configured KalamLinkClient authenticated as specified user using basic auth.
+    pub fn link_client_with_id(
+        &self,
+        _user_id: &str,
+        username: &str,
+        _role: &Role,
+    ) -> KalamLinkClient {
+        // For localhost tests, use basic auth with root (no password) or username with empty password
+        let auth_username = if username == "root" { "root" } else { username };
+
+        KalamLinkClient::builder()
+            .base_url(self.base_url())
+            .auth(AuthProvider::basic_auth(auth_username.to_string(), String::new()))
+            .timeouts(
+                KalamLinkTimeouts::builder()
+                    .connection_timeout_secs(5)
+                    .receive_timeout_secs(120)
+                    .send_timeout_secs(30)
+                    .subscribe_timeout_secs(15)
+                    .auth_timeout_secs(10)
+                    .initial_data_timeout(Duration::from_secs(120))
+                    .build(),
+            )
+            .build()
+            .expect("Failed to build KalamLinkClient")
+    }
+
+    /// Returns a pre-configured KalamLinkClient authenticated as specified user using JWT.
+    ///
+    /// **Note**: For USER tables with RLS to work correctly, the user must have been created
+    /// via `ensure_user_exists` (or `create_user_and_client` in helpers.rs) first, so that
+    /// their real user_id is cached. If the user_id is not cached, this method falls back
+    /// to using the username as user_id (which won't work for USER table RLS).
+    pub fn link_client(&self, username: &str) -> KalamLinkClient {
+        let role = if username == "root" {
+            Role::System
+        } else {
+            Role::User
+        };
+
+        // Try to get cached user_id, fall back to username
+        let user_id = self.get_cached_user_id(username)
+            .unwrap_or_else(|| {
+                if username != "root" {
+                    eprintln!("WARNING: link_client('{}') called without cached user_id. USER table RLS may not work correctly.", username);
+                }
+                username.to_string()
+            });
+
+        self.link_client_with_id(&user_id, username, &role)
+    }
+
+    /// Execute SQL via the real HTTP API as the localhost `root` user.
+    pub async fn execute_sql(&self, sql: &str) -> Result<QueryResponse> {
+        self.execute_sql_with_auth(sql, &self.root_auth_header).await
+    }
+
+    /// Execute a parameterized SQL query via the real HTTP API as the localhost `root` user.
+    pub async fn execute_sql_with_params(
+        &self,
+        sql: &str,
+        params: Vec<JsonValue>,
+    ) -> Result<QueryResponse> {
+        self.execute_sql_with_auth_and_params(sql, &self.root_auth_header, params).await
+    }
+
+    /// Execute SQL via the real HTTP API using an explicit `Authorization` header.
+    pub async fn execute_sql_with_auth(
+        &self,
+        sql: &str,
+        auth_header: &str,
+    ) -> Result<QueryResponse> {
+        self.execute_sql_with_auth_and_params(sql, auth_header, Vec::new()).await
+    }
+
+    /// Execute SQL (optionally parameterized) via the real HTTP API using an explicit `Authorization` header.
+    pub async fn execute_sql_with_auth_and_params(
+        &self,
+        sql: &str,
+        auth_header: &str,
+        params: Vec<JsonValue>,
+    ) -> Result<QueryResponse> {
+        let resp = self
+            .execute_sql_raw_with_auth_and_params_no_wait(sql, auth_header, params)
+            .await?;
+
+        // Tests frequently issue DDL immediately followed by DML. In near-production mode
+        // (Raft + multi-worker HTTP server), table registration can lag very slightly.
+        // Add a short, targeted wait to prevent flaky "Table does not exist" failures.
+        if resp.status == ResponseStatus::Success {
+            if let Some((namespace_id, table_name)) = Self::try_parse_create_table_target(sql) {
+                self.wait_for_table_queryable(&namespace_id, &table_name, auth_header).await?;
+            }
+        }
+
+        Ok(resp)
+    }
+
+    async fn execute_sql_raw_with_auth_and_params_no_wait(
+        &self,
+        sql: &str,
+        auth_header: &str,
+        params: Vec<JsonValue>,
+    ) -> Result<QueryResponse> {
+        // Important: reuse HTTP connections across calls.
+        // Actix selects a worker per TCP connection; creating a fresh client per
+        // query can hit different workers and expose worker-local state.
+        let client = {
+            let mut cache = self.link_client_cache.lock().await;
+            if let Some(existing) = cache.get(auth_header) {
+                existing.clone()
+            } else {
+                let auth = Self::auth_provider_from_header(auth_header)?;
+                let built = KalamLinkClient::builder()
+                    .base_url(self.base_url())
+                    .auth(auth)
+                    .build()
+                    .context("Failed to build KalamLinkClient")?;
+                cache.insert(auth_header.to_string(), built.clone());
+                built
+            }
+        };
+
+        let resp = match client
+            .execute_query(
+                sql,
+                if params.is_empty() {
+                    None
+                } else {
+                    Some(params)
+                },
+                None,
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(kalam_link::KalamLinkError::ServerError {
+                status_code: _,
+                message,
+            }) => {
+                // Try to parse the error message as QueryResponse JSON
+                if let Ok(error_response) = serde_json::from_str::<QueryResponse>(&message) {
+                    error_response
+                } else {
+                    // If parsing fails, return the error
+                    return Err(anyhow::anyhow!("Server error: {}", message));
+                }
+            },
+            Err(e) => return Err(e).context("KalamLink execute_query failed"),
+        };
+
+        if resp.status == ResponseStatus::Error {
+            eprintln!("HTTP SQL Error: sql={:?} error={:?}", sql, resp.error);
+        }
+
+        Ok(resp)
+    }
+    fn try_parse_create_table_target(sql: &str) -> Option<(String, String)> {
+        // Best-effort parse for statements like:
+        //   CREATE TABLE ns.table ( ... ) WITH (...)
+        // We keep this intentionally simple for tests; if parsing fails we just skip the wait.
+        let upper = sql.trim_start().to_ascii_uppercase();
+        if !upper.starts_with("CREATE TABLE") {
+            return None;
+        }
+
+        let after = sql.trim_start().get("CREATE TABLE".len()..)?.trim_start();
+
+        let ident = after.split_whitespace().next()?.trim_end_matches('(').trim();
+
+        let mut parts = ident.splitn(2, '.');
+        let namespace_id = parts.next()?.trim().trim_matches('"').to_string();
+        let table_name = parts.next()?.trim().trim_matches('"').to_string();
+
+        if namespace_id.is_empty() || table_name.is_empty() {
+            return None;
+        }
+
+        Some((namespace_id, table_name))
+    }
+
+    async fn wait_for_table_queryable(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        auth_header: &str,
+    ) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let probe = format!("SELECT 1 AS ok FROM {}.{} LIMIT 1", namespace_id, table_name);
+        let mut last_error: Option<String> = None;
+        let system_probe = format!(
+            "SELECT COUNT(*) AS cnt FROM system.tables WHERE namespace_id='{}' AND table_name='{}'",
+            namespace_id, table_name
+        );
+        let mut last_system_cnt: Option<u64> = None;
+
+        loop {
+            match self
+                .execute_sql_raw_with_auth_and_params_no_wait(&probe, auth_header, Vec::new())
+                .await
+            {
+                Ok(resp) if resp.status == ResponseStatus::Success => return Ok(()),
+                Ok(resp) => {
+                    last_error = resp.error.as_ref().map(|e| e.message.clone());
+
+                    let is_missing = resp
+                        .error
+                        .as_ref()
+                        .map(|e| {
+                            let m = e.message.to_lowercase();
+                            m.contains("does not exist") || m.contains("not found")
+                        })
+                        .unwrap_or(false);
+
+                    if !is_missing {
+                        return Err(anyhow::anyhow!(
+                            "CREATE TABLE probe failed with non-missing error ({}.{}): {:?}",
+                            namespace_id,
+                            table_name,
+                            resp.error
+                        ));
+                    }
+
+                    // Check if the table definition is visible in system.tables yet.
+                    if let Ok(sys_resp) = self
+                        .execute_sql_raw_with_auth_and_params_no_wait(
+                            &system_probe,
+                            &self.root_auth_header,
+                            Vec::new(),
+                        )
+                        .await
+                    {
+                        if sys_resp.status == ResponseStatus::Success {
+                            last_system_cnt = sys_resp
+                                .results
+                                .first()
+                                .and_then(|r| r.row_as_map(0))
+                                .and_then(|row| row.get("cnt").cloned())
+                                .and_then(|v| {
+                                    v.as_u64()
+                                        .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                                });
+                        }
+                    }
+                },
+                Err(e) => {
+                    last_error = Some(format!("{:#}", e));
+                },
+            }
+
+            if Instant::now() >= deadline {
+                return Err(anyhow::anyhow!(
+                    "CREATE TABLE did not become queryable in time ({}.{}): last_error={:?} system.tables_cnt={:?}",
+                    namespace_id,
+                    table_name,
+                    last_error,
+                    last_system_cnt
+                ));
+            }
+
+            sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    pub async fn shutdown(self) {
+        // Actix `stop(true)` is graceful: it waits for existing keep-alive connections.
+        let HttpTestServer {
+            _temp_dir,
+            _global_lock,
+            running,
+            ..
+        } = self;
+        running.shutdown().await;
+        drop(_global_lock);
+        drop(_temp_dir);
+    }
+
+    async fn wait_until_ready(&self) -> Result<()> {
+        // The server may bind before subsystems (notably Raft/bootstrap) are fully ready.
+        // For tests, "ready" means:
+        // - SQL HTTP API is accepting requests
+        // - Raft single-node cluster has completed initialization and elected a leader
+        //
+        // Avoid DDL-based probes here.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut last_error: Option<String> = None;
+
+        loop {
+            if self.skip_raft_leader_check {
+                let select_probe = self.execute_sql("SELECT 1 AS ok").await;
+                if matches!(
+                    select_probe,
+                    Ok(ref r) if r.status == kalam_link::models::ResponseStatus::Success
+                ) {
+                    return Ok(());
+                }
+                last_error = select_probe
+                    .err()
+                    .map(|e| format!("{:#}", e))
+                    .or_else(|| last_error.take());
+                if Instant::now() >= deadline {
+                    return Err(anyhow::anyhow!(
+                        "HTTP test server did not become ready in time (last_error={:?})",
+                        last_error
+                    ));
+                }
+
+                sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+
+            // Prefer a probe that confirms Raft leadership is established.
+            // system.cluster is registered during AppContext init.
+            let cluster_probe = "SELECT is_self, is_leader FROM system.cluster";
+            match self.execute_sql(cluster_probe).await {
+                Ok(resp) if resp.status == kalam_link::models::ResponseStatus::Success => {
+                    let is_ready = resp
+                        .results
+                        .first()
+                        .map(|r| {
+                            r.rows_as_maps().iter().any(|row| {
+                                let is_self = row
+                                    .get("is_self")
+                                    .and_then(|v| {
+                                        v.as_bool().or_else(|| v.as_str().map(|s| s == "true"))
+                                    })
+                                    .unwrap_or(false);
+                                let is_leader = row
+                                    .get("is_leader")
+                                    .and_then(|v| {
+                                        v.as_bool().or_else(|| v.as_str().map(|s| s == "true"))
+                                    })
+                                    .unwrap_or(false);
+                                is_self && is_leader
+                            })
+                        })
+                        .unwrap_or(false);
+
+                    if is_ready {
+                        return Ok(());
+                    }
+
+                    last_error = Some("cluster not ready (no self leader row yet)".to_string());
+                },
+                Ok(resp) => {
+                    // Fall back to a trivial read-only probe if system.cluster isn't available yet.
+                    last_error = resp.error.as_ref().map(|e| e.message.clone());
+                    let select_probe = self.execute_sql("SELECT 1 AS ok").await;
+                    if matches!(
+                        select_probe,
+                        Ok(ref r) if r.status == kalam_link::models::ResponseStatus::Success
+                    ) {
+                        // SQL is up, but cluster leadership isn't confirmed yet.
+                    }
+                },
+                Err(e) => {
+                    last_error = Some(format!("{:#}", e));
+                },
+            }
+
+            if Instant::now() >= deadline {
+                return Err(anyhow::anyhow!(
+                    "HTTP test server did not become ready in time (last_error={:?})",
+                    last_error
+                ));
+            }
+
+            sleep(Duration::from_millis(50)).await;
+        }
+    }
+}
+
+/// Start a near-production HTTP server on a random available port.
+///
+/// This is intended for integration tests that want to use `reqwest`/WebSocket
+/// clients against a real server instance.
+#[allow(dead_code)]
+pub async fn start_http_test_server() -> Result<HttpTestServer> {
+    let global_lock = acquire_global_http_test_server_lock()?;
+
+    let temp_dir = tempfile::TempDir::new()?;
+    let data_path = temp_dir.path().to_path_buf();
+
+    let mut config = kalamdb_commons::config::ServerConfig::default();
+    config.server.host = "127.0.0.1".to_string();
+    config.server.port = 0;
+    config.server.ui_path = None;
+    config.storage.data_path = data_path.to_string_lossy().into_owned();
+    // Increase rate limits for tests (default is 100/sec which is too low for insert loops)
+    config.rate_limit.max_queries_per_sec = 100000;
+    config.rate_limit.max_messages_per_sec = 10000;
+    let skip_raft_leader_check = config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
+
+    // Match production behavior: set env var early so auth uses the same secret.
+    if std::env::var("KALAMDB_JWT_SECRET").is_err() {
+        std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
+    }
+
+    // Use bootstrap_isolated to ensure each test gets a fresh AppContext
+    // This prevents state leakage between tests (Raft logs, system tables, etc.)
+    let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
+    let running =
+        kalamdb_server::lifecycle::run_for_tests(&config, components, app_context).await?;
+
+    let base_url = running.base_url.clone();
+    let jwt_secret = config.auth.jwt_secret.clone();
+
+    let server = HttpTestServer {
+        _temp_dir: temp_dir,
+        _global_lock: global_lock,
+        base_url,
+        data_path,
+        root_auth_header: HttpTestServer::basic_auth_header(&UserName::new("root"), ""),
+        jwt_secret,
+        link_client_cache: Mutex::new(HashMap::new()),
+        user_id_cache: std::sync::Mutex::new(HashMap::new()),
+        running,
+        skip_raft_leader_check,
+    };
+
+    server.wait_until_ready().await?;
+
+    Ok(server)
+}
+
+/// Start a near-production HTTP server with a config override.
+#[allow(dead_code)]
+pub async fn start_http_test_server_with_config(
+    override_config: impl FnOnce(&mut kalamdb_commons::config::ServerConfig),
+) -> Result<HttpTestServer> {
+    let global_lock = acquire_global_http_test_server_lock()?;
+
+    let temp_dir = tempfile::TempDir::new()?;
+    let data_path = temp_dir.path().to_path_buf();
+
+    let mut config = kalamdb_commons::config::ServerConfig::default();
+    config.server.host = "127.0.0.1".to_string();
+    config.server.port = 0;
+    config.server.ui_path = None;
+    config.storage.data_path = data_path.to_string_lossy().into_owned();
+    // Increase rate limits for tests (default is 100/sec which is too low for insert loops)
+    config.rate_limit.max_queries_per_sec = 100000;
+    config.rate_limit.max_messages_per_sec = 10000;
+    override_config(&mut config);
+    let skip_raft_leader_check = config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
+
+    if std::env::var("KALAMDB_JWT_SECRET").is_err() {
+        std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
+    }
+
+    // Use bootstrap_isolated to ensure each test gets a fresh AppContext
+    let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
+    let running =
+        kalamdb_server::lifecycle::run_for_tests(&config, components, app_context).await?;
+
+    let base_url = running.base_url.clone();
+    let jwt_secret = config.auth.jwt_secret.clone();
+
+    let server = HttpTestServer {
+        _temp_dir: temp_dir,
+        _global_lock: global_lock,
+        base_url,
+        data_path,
+        root_auth_header: HttpTestServer::basic_auth_header(&UserName::new("root"), ""),
+        jwt_secret,
+        link_client_cache: Mutex::new(HashMap::new()),
+        user_id_cache: std::sync::Mutex::new(HashMap::new()),
+        running,
+        skip_raft_leader_check,
+    };
+
+    server.wait_until_ready().await?;
+    Ok(server)
+}
+
+// ============================================================================
+// CLUSTER TEST SERVER - 3-Node Cluster Support
+// ============================================================================
+
+/// A test cluster with 3 nodes for testing replication and consistency.
+pub struct ClusterTestServer {
+    /// Three independent server instances that form a cluster
+    nodes: Vec<HttpTestServer>,
+}
+
+impl ClusterTestServer {
+    /// Get a reference to a node in the cluster (0, 1, or 2)
+    pub fn get_node(&self, index: usize) -> Result<&HttpTestServer> {
+        self.nodes
+            .get(index)
+            .ok_or_else(|| anyhow::anyhow!("Node index {} out of range (0-2)", index))
+    }
+
+    /// Execute SQL on a random node in the cluster
+    pub async fn execute_sql_on_random(&self, sql: &str) -> Result<QueryResponse> {
+        use rand::Rng;
+        let mut rng = rand::rng();
+        let index = rng.random_range(0..3);
+        self.nodes[index].execute_sql(sql).await
+    }
+
+    /// Execute SQL on all nodes and return results
+    pub async fn execute_sql_on_all(&self, sql: &str) -> Result<Vec<QueryResponse>> {
+        let mut results = Vec::new();
+        for node in &self.nodes {
+            results.push(node.execute_sql(sql).await?);
+        }
+        Ok(results)
+    }
+
+    /// Check data consistency across all nodes for a query
+    pub async fn verify_data_consistency(&self, query: &str) -> Result<bool> {
+        let results = self.execute_sql_on_all(query).await?;
+        
+        if results.is_empty() {
+            return Ok(true);
+        }
+
+        // Check if all nodes returned the same data
+        let first_result = &results[0];
+        for (i, result) in results.iter().enumerate().skip(1) {
+            if result.results.len() != first_result.results.len() {
+                eprintln!(
+                    "❌ Node consistency failed: Node 0 has {} result sets, Node {} has {}",
+                    first_result.results.len(),
+                    i,
+                    result.results.len()
+                );
+                return Ok(false);
+            }
+
+            for (j, (first_rows, result_rows)) in first_result
+                .results
+                .iter()
+                .zip(result.results.iter())
+                .enumerate()
+            {
+                let first_maps = first_rows.rows_as_maps();
+                let result_maps = result_rows.rows_as_maps();
+
+                if first_maps.len() != result_maps.len() {
+                    eprintln!(
+                        "❌ Node consistency failed: Node 0 result set {} has {} rows, Node {} has {}",
+                        j,
+                        first_maps.len(),
+                        i,
+                        result_maps.len()
+                    );
+                    return Ok(false);
+                }
+
+                // Basic row comparison (convert to strings for comparison)
+                for (k, (first_map, result_map)) in
+                    first_maps.iter().zip(result_maps.iter()).enumerate()
+                {
+                    let first_str = format!("{:?}", first_map);
+                    let result_str = format!("{:?}", result_map);
+
+                    if first_str != result_str {
+                        eprintln!(
+                            "❌ Node consistency failed: Node 0 row {} differs from Node {} row {}",
+                            k, i, k
+                        );
+                        eprintln!("   Node 0: {}", first_str);
+                        eprintln!("   Node {}: {}", i, result_str);
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+
+        Ok(true)
+    }
+}
+
+/// Start a 3-node cluster for testing
+async fn start_cluster_server() -> Result<ClusterTestServer> {
+    let _guard = HTTP_TEST_SERVER_LOCK.lock().await;
+
+    eprintln!("🚀 Starting 3-node cluster for testing...");
+
+    // Start 3 independent servers with standalone mode for now
+    // TODO: Configure them as a proper Raft cluster and add members
+    let mut nodes = Vec::new();
+
+    for i in 0..3 {
+        eprintln!("  📍 Starting node {} of 3...", i + 1);
+        let server = start_http_test_server().await
+            .map_err(|e| anyhow::anyhow!("Failed to start cluster node {}: {}", i, e))?;
+        nodes.push(server);
+    }
+
+    eprintln!("✅ 3-node cluster started successfully");
+
+    Ok(ClusterTestServer { nodes })
+}
+// ============================================================================
+// LEGACY API (DEPRECATED) - Use get_global_server() instead
+// ============================================================================
+// The following functions are kept only for test_user_sql_commands_http.rs
+// which requires a config override (enforce_password_complexity = true).
+// All other tests should use get_global_server() for better performance.
+// ============================================================================
+
+/// Run a test closure against a freshly started HTTP test server (with config override), then shut it down.
+/// 
+/// **DEPRECATED**: Only use this if you need a config override. Otherwise use `get_global_server()`.
+#[allow(dead_code)]
+pub async fn with_http_test_server_config<T, F>(
+    override_config: impl FnOnce(&mut kalamdb_commons::config::ServerConfig),
+    f: F,
+) -> Result<T>
+where
+    F: for<'a> FnOnce(
+        &'a HttpTestServer,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + 'a>>,
+{
+    let _guard = HTTP_TEST_SERVER_LOCK.lock().await;
+
+    let server = start_http_test_server_with_config(override_config).await?;
+    let result = f(&server).await;
+    server.shutdown().await;
+    result
+}

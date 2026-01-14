@@ -12,7 +12,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::logical_expr::Expr;
+use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::ConnectionId;
 use kalamdb_commons::system::LiveQuery;
@@ -26,7 +26,6 @@ use std::sync::Arc;
 /// System.live_queries table provider using EntityStore architecture
 pub struct LiveQueriesTableProvider {
     store: LiveQueriesStore,
-    schema: SchemaRef,
 }
 
 impl std::fmt::Debug for LiveQueriesTableProvider {
@@ -46,7 +45,6 @@ impl LiveQueriesTableProvider {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         Self {
             store: new_live_queries_store(backend),
-            schema: LiveQueriesTableSchema::schema(),
         }
     }
 
@@ -354,7 +352,11 @@ impl LiveQueriesTableProvider {
     /// Scan all live queries and return as RecordBatch
     pub fn scan_all_live_queries(&self) -> Result<RecordBatch, SystemError> {
         let live_queries = self.store.scan_all(None, None, None)?;
+        self.create_batch(live_queries)
+    }
 
+    /// Helper to create RecordBatch from live queries
+    fn create_batch(&self, live_queries: Vec<(Vec<u8>, LiveQuery)>) -> Result<RecordBatch, SystemError> {
         // Extract data into vectors
         let mut live_ids = Vec::with_capacity(live_queries.len());
         let mut connection_ids = Vec::with_capacity(live_queries.len());
@@ -396,7 +398,7 @@ impl LiveQueriesTableProvider {
         // 12: changes (Int64)
         // 13: node_id (Int64)
         // 14: last_ping_at (Timestamp)
-        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        let mut builder = RecordBatchBuilder::new(LiveQueriesTableSchema::schema());
         builder
             .add_string_column_owned(live_ids)
             .add_string_column_owned(connection_ids)
@@ -476,29 +478,76 @@ impl TableProvider for LiveQueriesTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        LiveQueriesTableSchema::schema()
     }
 
     fn table_type(&self) -> TableType {
         TableType::Base
     }
 
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        // Inexact pushdown: we may use filters for index/prefix scans,
+        // but DataFusion must still apply them for correctness.
+        Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
+    }
+
     async fn scan(
         &self,
         _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
-        _limit: Option<usize>,
+        filters: &[Expr],
+        limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::datasource::MemTable;
-        let schema = self.schema.clone();
-        let batch = self.scan_all_live_queries().map_err(|e| {
+
+        let schema = LiveQueriesTableSchema::schema();
+
+        // Prefer secondary index scans when possible (auto-picks from store.indexes()).
+        // Falls back to scan_all if no index matches.
+        let live_queries: Vec<(Vec<u8>, LiveQuery)> = if let Some((index_idx, index_prefix)) =
+            self.store.find_best_index_for_filters(filters)
+        {
+            log::info!(
+                "[system.live_queries] Using secondary index {} for filters: {:?}",
+                index_idx,
+                filters
+            );
+            self.store
+                .scan_by_index(index_idx, Some(&index_prefix), limit)
+                .map_err(|e| {
+                    DataFusionError::Execution(format!(
+                        "Failed to scan live_queries by index: {}",
+                        e
+                    ))
+                })?
+                .into_iter()
+                .map(|(id, lq)| (id.storage_key(), lq))
+                .collect()
+        } else {
+            log::info!(
+                "[system.live_queries] Full table scan (no index match) for filters: {:?}",
+                filters
+            );
+            self.store
+                .scan_all(limit, None, None)
+                .map_err(|e| {
+                    DataFusionError::Execution(format!("Failed to scan live_queries: {}", e))
+                })?
+        };
+
+        let batch = self.create_batch(live_queries).map_err(|e| {
             DataFusionError::Execution(format!("Failed to build live_queries batch: {}", e))
         })?;
+
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        table.scan(_state, projection, &[], _limit).await
+
+        // Always pass through projection and filters to MemTable - it will handle them
+        table.scan(_state, projection, filters, limit).await
     }
 }
 
@@ -508,7 +557,7 @@ impl SystemTableProviderExt for LiveQueriesTableProvider {
     }
 
     fn schema_ref(&self) -> SchemaRef {
-        self.schema.clone()
+        LiveQueriesTableSchema::schema()
     }
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {

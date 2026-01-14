@@ -59,13 +59,13 @@ pub async fn handle_subscribe(
 
     let subscription_id = subscription.id.clone();
 
-    info!(
-        "Processing subscription request: id={}, sql='{}', user_id={}, options={:?}",
-        subscription_id,
-        subscription.sql,
-        user_id.as_str(),
-        subscription.options
-    );
+    // info!(
+    //     "Processing subscription request: id={}, sql='{}', user_id={}, options={:?}",
+    //     subscription_id,
+    //     subscription.sql,
+    //     user_id.as_str(),
+    //     subscription.options
+    // );
 
     // Determine batch size for initial data options
     let batch_size = subscription.options.batch_size.unwrap_or(MAX_ROWS_PER_BATCH);
@@ -76,15 +76,15 @@ pub async fn handle_subscribe(
     // - batch_size: Hint for server-side batch sizing
     let initial_opts = if let Some(from_seq) = subscription.options.from_seq_id {
         // Resume from specific sequence ID - use since_seq for filtering
-        info!("Using from_seq_id={} for initial data (resuming)", from_seq.as_i64());
+        // info!("Using from_seq_id={} for initial data (resuming)", from_seq.as_i64());
         InitialDataOptions::batch(Some(from_seq), None, batch_size)
     } else if let Some(n) = subscription.options.last_rows {
         // Fetch last N rows
-        info!("Using last_rows={} for initial data", n);
+        // info!("Using last_rows={} for initial data", n);
         InitialDataOptions::last(n as usize)
     } else {
         // Default batch fetch
-        info!("Using default batch size={} for initial data", batch_size);
+        // info!("Using default batch size={} for initial data", batch_size);
         InitialDataOptions::batch(None, None, batch_size)
     };
 
@@ -128,15 +128,15 @@ pub async fn handle_subscribe(
 
             let ack =
                 WebSocketMessage::subscription_ack(subscription_id.clone(), 0, batch_control.clone(), result.schema.clone());
-            info!("Sending subscription_ack for {} with {} schema fields", subscription_id, result.schema.len());
+            // info!("Sending subscription_ack for {} with {} schema fields", subscription_id, result.schema.len());
             let _ = send_json(session, &ack).await;
 
             if let Some(initial) = result.initial_data {
-                info!(
-                    "Sending initial_data_batch for {} with {} rows",
-                    subscription_id,
-                    initial.rows.len()
-                );
+                // info!(
+                //     "Sending initial_data_batch for {} with {} rows",
+                //     subscription_id,
+                //     initial.rows.len()
+                // );
                 
                 // Convert Row objects to HashMap (always using simple JSON format)
                 let mut rows_json = Vec::with_capacity(initial.rows.len());

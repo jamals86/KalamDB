@@ -23,6 +23,7 @@ use std::sync::Arc;
 use crate::sql::executor::handlers::dml::{DeleteHandler, InsertHandler, UpdateHandler};
 use crate::sql::executor::handlers::flush::{FlushAllTablesHandler, FlushTableHandler};
 use crate::sql::executor::handlers::jobs::{KillJobHandler, KillLiveQueryHandler};
+use crate::sql::executor::handlers::cluster::{ClusterFlushHandler, ClusterClearHandler, ClusterListHandler, ClusterJoinHandler, ClusterLeaveHandler};
 use crate::sql::executor::handlers::namespace::{
     AlterNamespaceHandler, CreateNamespaceHandler, DropNamespaceHandler, ShowNamespacesHandler,
     UseNamespaceHandler,
@@ -387,6 +388,36 @@ impl HandlerRegistry {
         );
 
         // ============================================================================
+        // CLUSTER HANDLERS
+        // ============================================================================
+        registry.register_dynamic(
+            SqlStatementKind::ClusterFlush,
+            ClusterFlushHandler::new(app_context.clone()),
+        );
+
+        registry.register_dynamic(
+            SqlStatementKind::ClusterClear,
+            ClusterClearHandler::new(app_context.clone()),
+        );
+
+        registry.register_dynamic(
+            SqlStatementKind::ClusterList,
+            ClusterListHandler::new(app_context.clone()),
+        );
+
+        // ClusterJoin carries the address in the variant - use dynamic registration
+        // since the handler extracts the address from the statement
+        registry.register_dynamic(
+            SqlStatementKind::ClusterJoin(String::new()),
+            ClusterJoinHandler::new(app_context.clone()),
+        );
+
+        registry.register_dynamic(
+            SqlStatementKind::ClusterLeave,
+            ClusterLeaveHandler::new(app_context.clone()),
+        );
+
+        // ============================================================================
         // JOB HANDLERS
         // ============================================================================
         registry.register_typed(
@@ -490,15 +521,15 @@ impl HandlerRegistry {
         // Use dynamic handlers for DML to access original SQL text (required for parsing columns/values)
         registry.register_dynamic(
             SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
-            InsertHandler::new(),
+            InsertHandler::new(app_context.clone()),
         );
         registry.register_dynamic(
             SqlStatementKind::Update(kalamdb_sql::ddl::UpdateStatement),
-            UpdateHandler::new(),
+            UpdateHandler::new(app_context.clone()),
         );
         registry.register_dynamic(
             SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement),
-            DeleteHandler::new(),
+            DeleteHandler::new(app_context.clone()),
         );
 
         registry
@@ -548,7 +579,7 @@ impl HandlerRegistry {
     /// ```ignore
     /// registry.register_dynamic(
     ///     SqlStatementKind::Insert(InsertStatement),
-    ///     InsertHandler::new(),
+    ///     InsertHandler::new(app_context.clone()),
     /// );
     /// ```
     fn register_dynamic<H>(

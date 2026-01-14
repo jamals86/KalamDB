@@ -43,7 +43,6 @@ pub mod error;
 pub mod initialization;
 pub mod providers;
 pub mod registry;
-pub mod system_table_definitions;
 pub mod system_table_store;
 pub mod system_table_trait;
 
@@ -55,7 +54,7 @@ pub use system_table_trait::SystemTableProviderExt;
 
 // Re-export all providers
 pub use providers::{
-    AuditLogsTableProvider, ClusterTableProvider, InMemoryChecker, JobsTableProvider, 
-    LiveQueriesTableProvider, ManifestTableProvider, NamespacesTableProvider, ServerLogsTableProvider, 
-    StatsTableProvider, StoragesTableProvider, TablesTableProvider, UsersTableProvider,
+    AuditLogsTableProvider, InMemoryChecker, JobsTableProvider, 
+    LiveQueriesTableProvider, ManifestTableProvider, NamespacesTableProvider, 
+    StoragesTableProvider, TablesTableProvider, UsersTableProvider,
 };

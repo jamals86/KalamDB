@@ -28,6 +28,7 @@ pub mod subscription;
 pub mod system;
 pub mod table;
 pub mod typed;
+pub mod cluster;
 pub mod user;
 pub mod view;
 

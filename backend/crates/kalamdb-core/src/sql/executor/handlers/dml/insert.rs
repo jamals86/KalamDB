@@ -18,6 +18,7 @@ use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::{NamespaceId, Row, TableName};
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
@@ -38,16 +39,22 @@ pub struct InsertHandler {
 }
 
 impl InsertHandler {
-    pub fn new() -> Self {
-        Self {
-            app_context: AppContext::get(),
-        }
+    pub fn new(app_context: std::sync::Arc<AppContext>) -> Self {
+        Self { app_context }
     }
 }
 
+#[cfg(test)]
 impl Default for InsertHandler {
     fn default() -> Self {
-        Self::new()
+        Self::new(AppContext::get())
+    }
+}
+
+#[cfg(not(test))]
+impl Default for InsertHandler {
+    fn default() -> Self {
+        panic!("InsertHandler::default() is for tests only; use InsertHandler::new(Arc<AppContext>)")
     }
 }
 
@@ -84,10 +91,10 @@ impl StatementHandler for InsertHandler {
         let table_id = TableId::new(namespace_owned.clone(), table_name_owned.clone());
         let schema_registry = self.app_context.schema_registry();
         
-        // Single lookup: get_table_definition returns None if table doesn't exist
-        // This is more efficient than calling table_exists + get_table_definition
+        // Single lookup: get_table_if_exists returns None if table doesn't exist
+        // This is more efficient than calling table_exists + get_table_if_exists
         let table_def = schema_registry
-            .get_table_definition(&table_id)?
+            .get_table_if_exists(self.app_context.as_ref(), &table_id)?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Table '{}' does not exist",
@@ -114,6 +121,7 @@ impl StatementHandler for InsertHandler {
         }
 
         let provided_columns: HashSet<&str> = columns.iter().map(|c| c.as_str()).collect();
+        // Get columns that need to be filled with defaults
         let default_columns: Vec<&kalamdb_commons::schemas::ColumnDefinition> = table_def
             .columns
             .iter()
@@ -122,6 +130,7 @@ impl StatementHandler for InsertHandler {
                     && !col_def.default_value.is_none()
             })
             .collect();
+        
         let sys_cols = self.app_context.system_columns_service();
 
         // Create a map of column name to type for fast lookup
@@ -181,6 +190,21 @@ impl StatementHandler for InsertHandler {
                     Some(sys_cols.clone()),
                 )?;
                 values.insert(col_def.column_name.clone(), default_value);
+            }
+
+            // Validate missing NOT NULL columns without defaults
+            for col_def in &table_def.columns {
+                if SystemColumnNames::is_system_column(col_def.column_name.as_str()) {
+                    continue;
+                }
+                if !col_def.is_nullable && !values.contains_key(&col_def.column_name) {
+                    if col_def.default_value.is_none() {
+                        return Err(KalamDbError::ConstraintViolation(format!(
+                            "Column '{}' cannot be null",
+                            col_def.column_name
+                        )));
+                    }
+                }
             }
 
             rows.push(Row::new(values));
@@ -354,6 +378,32 @@ impl InsertHandler {
         let value = match expr {
             Expr::Value(val_with_span) => {
                 match &val_with_span.value {
+                    sqlparser::ast::Value::Placeholder(ph) => {
+                        // Parameter placeholder: $1, $2, etc.
+                        let stripped = ph.strip_prefix('$').ok_or_else(|| {
+                            KalamDbError::InvalidOperation(format!(
+                                "Unsupported placeholder format: {}",
+                                ph
+                            ))
+                        })?;
+
+                        let param_num: usize = stripped.parse().map_err(|_| {
+                            KalamDbError::InvalidOperation(format!(
+                                "Invalid placeholder: {}",
+                                ph
+                            ))
+                        })?;
+
+                        if param_num == 0 || param_num > params.len() {
+                            return Err(KalamDbError::InvalidOperation(format!(
+                                "Parameter ${} out of range (have {} parameters)",
+                                param_num,
+                                params.len()
+                            )));
+                        }
+
+                        Ok(params[param_num - 1].clone())
+                    }
                     sqlparser::ast::Value::Number(n, _) => {
                         // Try as i64 first, then f64
                         if let Ok(i) = n.parse::<i64>() {
@@ -461,6 +511,28 @@ impl InsertHandler {
     ) -> Result<JsonValue, KalamDbError> {
         match expr {
             Expr::Value(val_with_span) => match &val_with_span.value {
+                sqlparser::ast::Value::Placeholder(ph) => {
+                    let stripped = ph.strip_prefix('$').ok_or_else(|| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Unsupported placeholder format: {}",
+                            ph
+                        ))
+                    })?;
+
+                    let param_num: usize = stripped.parse().map_err(|_| {
+                        KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", ph))
+                    })?;
+
+                    if param_num == 0 || param_num > params.len() {
+                        return Err(KalamDbError::InvalidOperation(format!(
+                            "Parameter ${} out of range (have {} parameters)",
+                            param_num,
+                            params.len()
+                        )));
+                    }
+
+                    scalar_value_to_json(&params[param_num - 1])
+                }
                 sqlparser::ast::Value::Number(n, _) => {
                     if let Ok(i) = n.parse::<i64>() {
                         Ok(JsonValue::Number(i.into()))
@@ -590,10 +662,6 @@ impl InsertHandler {
         
         let row_count = rows.len();
         
-        // Serialize rows to bincode
-        let rows_data = bincode::serde::encode_to_vec(&rows, bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize rows: {}", e)))?;
-
         let executor = self.app_context.executor();
 
         match table_type {
@@ -602,7 +670,7 @@ impl InsertHandler {
                     required_meta_index: 0, // Stamped by executor
                     table_id: table_id.clone(),
                     user_id: user_id.clone(),
-                    rows_data,
+                    rows,
                 };
                 
                 let response = executor.execute_user_data(&user_id, cmd)
@@ -640,7 +708,7 @@ impl InsertHandler {
                 let cmd = SharedDataCommand::Insert {
                     required_meta_index: 0, // Stamped by executor
                     table_id: table_id.clone(),
-                    rows_data,
+                    rows: rows.clone(),
                 };
                 
                 let response = executor.execute_shared_data(cmd)
@@ -659,7 +727,7 @@ impl InsertHandler {
                     required_meta_index: 0, // Stamped by executor
                     table_id: table_id.clone(),
                     user_id: user_id.clone(),
-                    rows_data,
+                    rows,
                 };
 
                 let response = executor
@@ -698,7 +766,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_insert_authorization_user() {
-        let handler = InsertHandler::new();
+        let handler = InsertHandler::new(AppContext::get());
         let ctx = test_context(Role::User);
         let stmt = SqlStatement::new(
             "INSERT INTO default.test (id) VALUES (1)".to_string(),
@@ -710,7 +778,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_insert_authorization_dba() {
-        let handler = InsertHandler::new();
+        let handler = InsertHandler::new(AppContext::get());
         let ctx = test_context(Role::Dba);
         let stmt = SqlStatement::new(
             "INSERT INTO default.test (id) VALUES (1)".to_string(),
@@ -722,7 +790,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_insert_authorization_service() {
-        let handler = InsertHandler::new();
+        let handler = InsertHandler::new(AppContext::get());
         let ctx = test_context(Role::Service);
         let stmt = SqlStatement::new(
             "INSERT INTO default.test (id) VALUES (1)".to_string(),

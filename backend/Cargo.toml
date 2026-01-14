@@ -72,100 +72,26 @@ name = "kalamdb-server"
 path = "src/main.rs"
 
 [[test]]
-name = "test_shared_tables"
-path = "tests/integration/tables/shared/test_shared_tables.rs"
+name = "test_testserver"
+path = "tests/testserver/test_testserver.rs"
 
 [[test]]
-name = "test_user_tables"
-path = "tests/integration/tables/user/test_user_tables.rs"
+name = "test_scenarios"
+path = "tests/scenarios/test_scenarios.rs"
 
-[[test]]
-name = "test_user_drop_cleanup"
-path = "tests/integration/tables/user/test_user_drop_cleanup.rs"
-
-[[test]]
-name = "test_shared_drop_cleanup"
-path = "tests/integration/tables/shared/test_shared_drop_cleanup.rs"
-
-[[test]]
-name = "test_stream_tables"
-path = "tests/integration/tables/stream/test_stream_tables.rs"
-
-[[test]]
-name = "test_quickstart"
-path = "tests/integration/combined/test_quickstart.rs"
-
-[[test]]
-name = "test_system_tables"
-path = "tests/integration/tables/system/test_system_tables.rs"
-
-[[test]]
-name = "test_flush_operations"
-path = "tests/integration/flush/test_flush_operations.rs"
-
-[[test]]
-name = "test_storage_management"
-path = "tests/integration/storage_management/test_storage_management.rs"
-
-# Disabled: WebSocket test infrastructure incomplete
-# Needs: receive_notifications(), get_notifications(), HTTP server setup
-# [[test]]
-# name = "test_live_query_changes"
-# path = "tests/integration/combined/test_live_query_changes.rs"
-
-[[test]]
-name = "test_manual_flush_verification"
-path = "tests/integration/flush/test_manual_flush_verification.rs"
-
-[[test]]
-name = "test_namespace_validation"
-path = "tests/integration/combined/test_namespace_validation.rs"
 
 # [[test]]
-# name = "test_enhanced_api_features"
-# path = "tests/integration/api/test_enhanced_api_features.rs"
+# name = "test_cluster"
+# path = "tests/cluster/test_cluster.rs"
 
 [[test]]
-name = "test_automatic_flushing"
-path = "tests/integration/flush/test_automatic_flushing.rs"
+name = "test_misc"
+path = "tests/misc/test_misc.rs"
 
-[[test]]
-name = "test_automatic_flushing_comprehensive"
-path = "tests/integration/flush/test_automatic_flushing_comprehensive.rs"
-
-[[test]]
-name = "test_pk_uniqueness_hot_cold"
-path = "tests/integration/flush/test_pk_uniqueness_hot_cold.rs"
-
-[[test]]
-name = "test_manifest_flush"
-path = "tests/test_manifest_flush_integration.rs"
-harness = true
-
-# [[test]]
-# name = "test_schema_integrity"
-# path = "tests/integration/combined/test_schema_integrity.rs"
-
-[[test]]
-name = "test_stress_and_memory"
-path = "tests/integration/combined/test_stress_and_memory.rs"
-
-[[test]]
-name = "test_row_count_behavior"
-path = "tests/test_row_count_behavior.rs"
-
-# Disabled: basic auth tests rely on legacy middleware; will be re-enabled after auth refactor
-# [[test]]
-# name = "test_basic_auth"
-# path = "tests/test_basic_auth.rs"
-
-# Disabled: relies on deprecated TestServer/AuthService patterns, file removed during migration
-# [[test]]
-# name = "test_edge_cases"
-# path = "tests/test_edge_cases.rs"
 
 [build-dependencies]
 chrono = { workspace = true }
+cc = { workspace = true }
 
 [dev-dependencies]
 # Internal crates (needed for tests)
@@ -176,10 +102,13 @@ kalamdb-sql = { path = "crates/kalamdb-sql" }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
 kalamdb-tables = { path = "crates/kalamdb-tables" }
+kalamdb-raft = { path = "crates/kalamdb-raft" }
+kalam-link = { path = "../link" }
 
 # External dependencies
 tempfile = { workspace = true }
 serde_json = { workspace = true }
+reqwest = { workspace = true }
 actix-web = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
@@ -191,5 +120,7 @@ datafusion = { workspace = true }
 libc = { workspace = true }
 arrow = { workspace = true }
 hex = { workspace = true }
+rand = { workspace = true }
 once_cell = { workspace = true }
 serial_test = { workspace = true }
+ntest = { workspace = true }

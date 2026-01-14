@@ -25,8 +25,8 @@ pub fn default_true() -> bool {
     true
 }
 
-pub fn default_storage_path() -> String {
-    "./data/storage".to_string() // Default dev path; normalized to absolute at runtime
+pub fn default_data_path() -> String {
+    "./data".to_string() // Default dev path; normalized to absolute at runtime
 }
 
 pub fn default_shared_tables_template() -> String {

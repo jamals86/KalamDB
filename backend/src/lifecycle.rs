@@ -4,9 +4,8 @@
 //! in `main.rs`: bootstrapping databases and services, wiring the HTTP
 //! server, and coordinating graceful shutdown.
 
-use crate::middleware;
-use crate::routes;
-use crate::ServerConfig;
+use crate::config::ServerConfig;
+use crate::{middleware, routes};
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
 use kalamdb_api::handlers::AuthConfig;
@@ -20,6 +19,7 @@ use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
 use log::debug;
 use log::{info, warn};
+use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
 
 /// Aggregated application components that need to be shared across the
@@ -36,15 +36,10 @@ pub struct ApplicationComponents {
 /// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
 pub async fn bootstrap(
     config: &ServerConfig,
-) -> Result<(
-    ApplicationComponents,
-    Arc<kalamdb_core::app_context::AppContext>,
-)> {
-    let bootstrap_start = std::time::Instant::now();
-
+) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     // Initialize RocksDB
     let phase_start = std::time::Instant::now();
-    let db_path = std::path::PathBuf::from(&config.storage.rocksdb_path);
+    let db_path = config.storage.rocksdb_dir();
     std::fs::create_dir_all(&db_path)?;
 
     let db_init = RocksDbInit::new(db_path.to_str().unwrap(), config.storage.rocksdb.clone());
@@ -71,18 +66,18 @@ pub async fn bootstrap(
     // Phase 5: AppContext now creates all dependencies internally!
     // Uses constants from kalamdb_commons for table prefixes
     let phase_start = std::time::Instant::now();
-    
+
     // Node ID: use cluster.node_id (u64) if cluster mode, otherwise default to 1 for standalone
     let node_id = if let Some(cluster) = &config.cluster {
         kalamdb_commons::NodeId::new(cluster.node_id)
     } else {
         kalamdb_commons::NodeId::new(1) // Standalone mode uses node ID 1
     };
-    
+
     let app_context = kalamdb_core::app_context::AppContext::init(
         backend.clone(),
         node_id,
-        config.storage.default_storage_path.clone(),
+        config.storage.storage_dir().to_string_lossy().into_owned(),
         config.clone(), // ServerConfig needs to be cloned for Arc storage in AppContext
     );
     debug!(
@@ -96,53 +91,85 @@ pub async fn bootstrap(
     // Start the executor (always Raft - single-node or cluster)
     let phase_start = std::time::Instant::now();
     let is_cluster_mode = config.cluster.is_some();
-    
+
     if is_cluster_mode {
         // Multi-node cluster mode
         let cluster_config = config.cluster.as_ref().unwrap();
         info!("╔═══════════════════════════════════════════════════════════════════╗");
         info!("║                     Multi-Node Cluster Mode                       ║");
         info!("╚═══════════════════════════════════════════════════════════════════╝");
-        info!("Cluster: {} | Node: {} | Peers: {}", 
-            cluster_config.cluster_id, cluster_config.node_id, cluster_config.peers.len());
-        info!("Shards: {} user, {} shared", 
-            cluster_config.user_shards, cluster_config.shared_shards);
-        
+        info!(
+            "Cluster: {} | Node: {} | Peers: {}",
+            cluster_config.cluster_id,
+            cluster_config.node_id,
+            cluster_config.peers.len()
+        );
+        info!(
+            "Shards: {} user, {} shared",
+            cluster_config.user_shards, cluster_config.shared_shards
+        );
+
         debug!("RPC: {} | API: {}", cluster_config.rpc_addr, cluster_config.api_addr);
-        debug!("Heartbeat: {}ms | Election timeout: {:?}ms", 
-            cluster_config.heartbeat_interval_ms, cluster_config.election_timeout_ms);
+        debug!(
+            "Heartbeat: {}ms | Election timeout: {:?}ms",
+            cluster_config.heartbeat_interval_ms, cluster_config.election_timeout_ms
+        );
         for peer in &cluster_config.peers {
             debug!("  Peer {}: rpc={}, api={}", peer.node_id, peer.rpc_addr, peer.api_addr);
         }
-        
-        app_context.executor().start().await
+
+        app_context
+            .executor()
+            .start()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to start Raft cluster: {}", e))?;
-        
+
         // Auto-bootstrap: node_id=1 is the designated bootstrap node
         let should_bootstrap = cluster_config.peers.is_empty() || cluster_config.node_id == 1;
-        
+
         if should_bootstrap {
             if !cluster_config.peers.is_empty() {
                 info!("Node {} is bootstrap node - initializing cluster", cluster_config.node_id);
             }
-            app_context.executor().initialize_cluster().await
+            app_context
+                .executor()
+                .initialize_cluster()
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to initialize cluster: {}", e))?;
         } else {
             info!("Node {} waiting for bootstrap node (node_id=1)", cluster_config.node_id);
         }
-        
+
         info!("✓ Raft cluster started ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
     } else {
         // Single-node mode (lightweight Raft)
         debug!("Single-node mode - initializing lightweight Raft");
-        
-        app_context.executor().start().await
+
+        app_context
+            .executor()
+            .start()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to start Raft: {}", e))?;
-        app_context.executor().initialize_cluster().await
+        app_context
+            .executor()
+            .initialize_cluster()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to initialize single-node Raft: {}", e))?;
-        
-        debug!("✓ Single-node Raft initialized ({:.2}ms)", phase_start.elapsed().as_secs_f64() * 1000.0);
+
+        debug!(
+            "✓ Single-node Raft initialized ({:.2}ms)",
+            phase_start.elapsed().as_secs_f64() * 1000.0
+        );
     }
+
+    // Ensure Raft appliers are registered after Raft has started.
+    // Some Raft initialization flows may recreate state machines; re-wiring here keeps
+    // metadata/data replication applying into local providers (system tables, schema registry, etc.).
+    app_context.wire_raft_appliers();
+
+    // NOTE: restore_raft_state_machines() is called LATER after system tables, storages,
+    // and user/shared tables are initialized. The state machine restoration may need to
+    // apply commands that interact with these providers.
 
     // Manifest cache uses lazy loading via get_or_load() - no pre-loading needed
     // When a manifest is needed, get_or_load() checks hot cache → RocksDB → returns None
@@ -160,10 +187,7 @@ pub async fn bootstrap(
     let job_manager = app_context.job_manager();
     let max_concurrent = config.jobs.max_concurrent;
     tokio::spawn(async move {
-        debug!(
-            "Starting JobsManager run loop with max {} concurrent jobs",
-            max_concurrent
-        );
+        debug!("Starting JobsManager run loop with max {} concurrent jobs", max_concurrent);
         if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
             log::error!("JobsManager run loop failed: {}", e);
         }
@@ -185,7 +209,7 @@ pub async fn bootstrap(
             storage_name: "Local Filesystem".to_string(),
             description: Some("Default local filesystem storage".to_string()),
             storage_type: kalamdb_commons::models::StorageType::Filesystem,
-            base_directory: config.storage.default_storage_path.clone(), // Need clone for Storage struct
+            base_directory: config.storage.storage_dir().to_string_lossy().into_owned(),
             credentials: None,
             config_json: None,
             shared_tables_template: config.storage.shared_tables_template.clone(), // Need clone for Storage struct
@@ -210,29 +234,30 @@ pub async fn bootstrap(
 
     // Get system table providers for job executor and flush scheduler
     let users_provider = app_context.system_tables().users();
-    let user_repo: Arc<dyn kalamdb_auth::UserRepository> = Arc::new(
-        kalamdb_api::repositories::CoreUsersRepo::new(users_provider),
-    );
+    let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
+        Arc::new(kalamdb_api::repositories::CoreUsersRepo::new(users_provider));
 
     // SqlExecutor now uses AppContext directly
     let phase_start = std::time::Instant::now();
-    let sql_executor = Arc::new(SqlExecutor::new(
-        app_context.clone(),
-        config.auth.enforce_password_complexity,
-    ));
+    let sql_executor =
+        Arc::new(SqlExecutor::new(app_context.clone(), config.auth.enforce_password_complexity));
 
     app_context.set_sql_executor(sql_executor.clone());
     live_query_manager.set_sql_executor(sql_executor.clone());
-
-    debug!(
-        "SqlExecutor initialized with DROP TABLE support, storage registry, job manager, and table registration"
-    );
+    // Set AppContext on LiveQueryManager for Raft command execution
+    live_query_manager.set_app_context(app_context.clone());
 
     sql_executor.load_existing_tables().await?;
     debug!(
         "Existing tables loaded and registered with DataFusion ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
+
+    // Now that all infrastructure is ready (system tables, storages, user/shared tables),
+    // restore state machines from persisted snapshots. This sets the state machine's
+    // internal last_applied_index to prevent duplicate application of log entries.
+    // The state machine idempotency checks use this index to skip already-applied entries.
+    app_context.restore_raft_state_machines().await;
 
     // Rate limiter
     let rate_limit_config = RateLimitConfig {
@@ -253,7 +278,7 @@ pub async fn bootstrap(
     // This is CRITICAL: the same ConnectionsManager must be used by both:
     // 1. ws_handler (for registering connections and marking authentication)
     // 2. LiveQueryManager's SubscriptionService (for checking connection state during subscription)
-    // 
+    //
     // Previously, lifecycle.rs created a NEW ConnectionsManager which caused the error:
     // "Connection not found" when trying to register subscriptions because the connection
     // was registered in one manager but looked up in another.
@@ -283,8 +308,8 @@ pub async fn bootstrap(
     // T125-T127: Create default system user on first startup
     create_default_system_user(users_provider_for_init.clone()).await?;
 
-    // Security warning: Check if remote access is enabled with empty root password
-    check_remote_access_security(config, users_provider_for_init).await?;
+    // // Security warning: Check if remote access is enabled with empty root password
+    // check_remote_access_security(config, users_provider_for_init).await?;
     debug!(
         "User initialization completed ({:.2}ms)",
         phase_start.elapsed().as_secs_f64() * 1000.0
@@ -299,8 +324,153 @@ pub async fn bootstrap(
         connection_registry,
     };
 
-    info!(
-        "🚀 Server bootstrap completed in {:.2}ms",
+    Ok((components, app_context))
+}
+
+/// Bootstrap the server for tests with isolated AppContext
+///
+/// Unlike `bootstrap()`, this does NOT use the global AppContext singleton.
+/// Each call creates a completely fresh AppContext instance, which is essential
+/// for test isolation where each test needs its own independent state.
+///
+/// **Warning**: Only use this in tests! Production code should use `bootstrap()`.
+pub async fn bootstrap_isolated(
+    config: &ServerConfig,
+) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
+    let bootstrap_start = std::time::Instant::now();
+
+    // Initialize RocksDB
+    let phase_start = std::time::Instant::now();
+    let db_path = config.storage.rocksdb_dir();
+    std::fs::create_dir_all(&db_path)?;
+
+    let db_init = RocksDbInit::new(db_path.to_str().unwrap(), config.storage.rocksdb.clone());
+    let db = db_init.open()?;
+    debug!(
+        "RocksDB initialized at {} ({:.2}ms)",
+        db_path.display(),
+        phase_start.elapsed().as_secs_f64() * 1000.0
+    );
+
+    let backend = Arc::new(RocksDBBackend::with_options(
+        db,
+        config.storage.rocksdb.sync_writes,
+        config.storage.rocksdb.disable_wal,
+    ));
+
+    // Node ID: use cluster.node_id (u64) if cluster mode, otherwise default to 1 for standalone
+    let node_id = if let Some(cluster) = &config.cluster {
+        kalamdb_commons::NodeId::new(cluster.node_id)
+    } else {
+        kalamdb_commons::NodeId::new(1) // Standalone mode uses node ID 1
+    };
+
+    // Use create_isolated instead of init to bypass the global singleton
+    let app_context = kalamdb_core::app_context::AppContext::create_isolated(
+        backend.clone(),
+        node_id,
+        config.storage.storage_dir().to_string_lossy().into_owned(),
+        config.clone(),
+    );
+
+    // Start Raft (same as bootstrap)
+    app_context
+        .executor()
+        .start()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to start Raft: {}", e))?;
+    app_context
+        .executor()
+        .initialize_cluster()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to initialize single-node Raft: {}", e))?;
+
+    app_context.wire_raft_appliers();
+
+    // NOTE: restore_raft_state_machines() is called LATER after system tables, storages,
+    // and user/shared tables are initialized. The state machine restoration may need to
+    // apply commands that interact with these providers.
+
+    // Initialize system tables
+    kalamdb_system::initialize_system_tables(backend.clone()).await?;
+
+    // Start JobsManager run loop
+    let job_manager = app_context.job_manager();
+    let max_concurrent = config.jobs.max_concurrent;
+    tokio::spawn(async move {
+        if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
+            log::error!("JobsManager run loop failed: {}", e);
+        }
+    });
+
+    // Seed default storage if necessary
+    let storages_provider = app_context.system_tables().storages();
+    let existing_storages = storages_provider.scan_all_storages()?;
+    if existing_storages.num_rows() == 0 {
+        let now = chrono::Utc::now().timestamp_millis();
+        let default_storage = kalamdb_commons::system::Storage {
+            storage_id: StorageId::from("local"),
+            storage_name: "Local Filesystem".to_string(),
+            description: Some("Default local filesystem storage".to_string()),
+            storage_type: kalamdb_commons::models::StorageType::Filesystem,
+            base_directory: config.storage.storage_dir().to_string_lossy().into_owned(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template: config.storage.shared_tables_template.clone(),
+            user_tables_template: config.storage.user_tables_template.clone(),
+            created_at: now,
+            updated_at: now,
+        };
+        storages_provider.insert_storage(default_storage)?;
+    }
+
+    // Get references from AppContext
+    let live_query_manager = app_context.live_query_manager();
+    let session_factory = app_context.session_factory();
+    let users_provider = app_context.system_tables().users();
+    let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
+        Arc::new(kalamdb_api::repositories::CoreUsersRepo::new(users_provider));
+
+    // SqlExecutor
+    let sql_executor =
+        Arc::new(SqlExecutor::new(app_context.clone(), config.auth.enforce_password_complexity));
+
+    app_context.set_sql_executor(sql_executor.clone());
+    live_query_manager.set_sql_executor(sql_executor.clone());
+    live_query_manager.set_app_context(app_context.clone());
+
+    sql_executor.load_existing_tables().await?;
+
+    // Now that all infrastructure is ready, restore state machines from snapshots
+    app_context.restore_raft_state_machines().await;
+
+    // Rate limiter
+    let rate_limit_config = RateLimitConfig {
+        max_queries_per_user: config.rate_limit.max_queries_per_sec,
+        max_subscriptions_per_user: config.rate_limit.max_subscriptions_per_user,
+        max_messages_per_connection: config.rate_limit.max_messages_per_sec,
+        window: std::time::Duration::from_secs(1),
+    };
+    let rate_limiter = Arc::new(RateLimiter::with_config(rate_limit_config));
+
+    let connection_registry = app_context.connection_registry();
+
+    // Create default system user
+    let users_provider_for_init = app_context.system_tables().users();
+    create_default_system_user(users_provider_for_init.clone()).await?;
+    // check_remote_access_security(config, users_provider_for_init).await?;
+
+    let components = ApplicationComponents {
+        session_factory,
+        sql_executor,
+        rate_limiter,
+        live_query_manager,
+        user_repo,
+        connection_registry,
+    };
+
+    debug!(
+        "🚀 Server bootstrap (isolated) completed in {:.2}ms",
         bootstrap_start.elapsed().as_secs_f64() * 1000.0
     );
 
@@ -312,6 +482,7 @@ pub async fn run(
     config: &ServerConfig,
     components: ApplicationComponents,
     app_context: Arc<kalamdb_core::app_context::AppContext>,
+    main_start: std::time::Instant,
 ) -> Result<()> {
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting HTTP server on {}", bind_addr);
@@ -355,17 +526,17 @@ pub async fn run(
 
     // Create connection protection middleware from config
     let connection_protection = middleware::ConnectionProtection::from_server_config(config);
-    
+
     // Build CORS middleware from config (uses actix-cors)
     let cors_config = config.clone();
 
     let app_context_for_handler = app_context.clone();
     let connection_registry_for_handler = connection_registry.clone();
-    
+
     // Create auth config from server config (reads jwt_secret from server.toml)
     let auth_config = AuthConfig::from_server_config(config);
     let ui_path = config.server.ui_path.clone();
-    
+
     // Log UI serving status
     if kalamdb_api::routes::is_embedded_ui_available() {
         info!("Admin UI enabled at /ui (embedded in binary)");
@@ -374,7 +545,7 @@ pub async fn run(
     } else {
         info!("Admin UI not available (run 'npm run build' in ui/ and rebuild server)");
     }
-    
+
     let server = HttpServer::new(move || {
         let mut app = App::new()
             // Connection protection (first middleware - drops bad requests early)
@@ -406,7 +577,7 @@ pub async fn run(
     })
     // Set backlog BEFORE bind() - this affects the listen queue size
     .backlog(config.performance.backlog);
-    
+
     // Bind with HTTP/2 support if enabled, otherwise use HTTP/1.1 only
     let server = if config.server.enable_http2 {
         info!("HTTP/2 support enabled (h2c - HTTP/2 cleartext)");
@@ -415,7 +586,9 @@ pub async fn run(
         debug!("HTTP/1.1 only mode");
         server.bind(&bind_addr)?
     };
-    
+
+    info!("🚀 Server started in {:.2}ms", main_start.elapsed().as_secs_f64() * 1000.0);
+
     let server = server
     .workers(if config.server.workers == 0 {
         num_cpus::get()
@@ -491,10 +664,10 @@ pub async fn run(
                     }
                 }
             }
-            
+
             // Ensure all file descriptors are released
             info!("Performing cleanup to release file descriptors...");
-            
+
             // Shutdown the executor (Raft cluster shutdown in cluster mode)
             if app_context.executor().is_cluster_mode() {
                 info!("Shutting down Raft cluster...");
@@ -502,16 +675,144 @@ pub async fn run(
                     log::error!("Error shutting down Raft cluster: {}", e);
                 }
             }
-            
+
             drop(components);
             drop(app_context);
-            
-            info!("Graceful shutdown complete");
+
+            debug!("Graceful shutdown complete");
         }
     }
 
     info!("Server shutdown complete");
     Ok(())
+}
+
+/// A running HTTP server instance intended for integration tests.
+///
+/// This starts the same Actix app wiring as the production server (middleware stack,
+/// route registration, app_data wiring, auth config, rate limiting, etc.) but binds
+/// to an ephemeral port and provides an explicit shutdown handle.
+pub struct RunningTestHttpServer {
+    pub base_url: String,
+    pub bind_addr: SocketAddr,
+    pub app_context: Arc<kalamdb_core::app_context::AppContext>,
+    server_handle: actix_web::dev::ServerHandle,
+    server_task: tokio::task::JoinHandle<std::io::Result<()>>,
+}
+
+impl RunningTestHttpServer {
+    pub async fn shutdown(self) {
+        println!("Shutting down test HTTP server at {}", self.base_url);
+        // Stop the HTTP server first
+        self.server_handle.stop(false).await;
+        let _ = self.server_task.await;
+
+        // Then shutdown the Raft executor to cleanly stop all Raft groups
+        // This prevents "Fatal(Stopped)" errors in subsequent tests
+        log::debug!("Shutting down Raft executor for test server...");
+        println!("Shutting down Raft executor for test server...");
+        if let Err(e) = self.app_context.executor().shutdown().await {
+            log::warn!("Failed to shutdown Raft executor: {}", e);
+        }
+
+        println!("Test HTTP server shutdown complete");
+        // Brief delay to allow background tasks to clean up
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// Start the HTTP server for integration tests on a random available port.
+///
+/// Notes:
+/// - Does not install Ctrl+C handling.
+/// - Caller must invoke `shutdown()` to stop the server.
+pub async fn run_for_tests(
+    config: &ServerConfig,
+    components: ApplicationComponents,
+    app_context: Arc<kalamdb_core::app_context::AppContext>,
+) -> Result<RunningTestHttpServer> {
+    let bind_ip = if config.server.host.is_empty() {
+        "127.0.0.1"
+    } else {
+        config.server.host.as_str()
+    };
+
+    let listener = TcpListener::bind((bind_ip, 0))?;
+    let bind_addr = listener.local_addr()?;
+
+    let session_factory = components.session_factory.clone();
+    let sql_executor = components.sql_executor.clone();
+    let rate_limiter = components.rate_limiter.clone();
+    let live_query_manager = components.live_query_manager.clone();
+    let user_repo = components.user_repo.clone();
+    let connection_registry = components.connection_registry.clone();
+
+    let connection_protection = middleware::ConnectionProtection::from_server_config(config);
+    let cors_config = config.clone();
+
+    let app_context_for_handler = app_context.clone();
+    let connection_registry_for_handler = connection_registry.clone();
+
+    let auth_config = AuthConfig::from_server_config(config);
+    let ui_path = config.server.ui_path.clone();
+
+    let server = HttpServer::new(move || {
+        let mut app = App::new()
+            .wrap(connection_protection.clone())
+            .wrap(middleware::request_logger())
+            .wrap(middleware::build_cors_from_config(&cors_config))
+            .app_data(web::Data::new(app_context_for_handler.clone()))
+            .app_data(web::Data::new(session_factory.clone()))
+            .app_data(web::Data::new(sql_executor.clone()))
+            .app_data(web::Data::new(rate_limiter.clone()))
+            .app_data(web::Data::new(live_query_manager.clone()))
+            .app_data(web::Data::new(user_repo.clone()))
+            .app_data(web::Data::new(connection_registry_for_handler.clone()))
+            .app_data(web::Data::new(auth_config.clone()))
+            .configure(routes::configure);
+
+        if kalamdb_api::routes::is_embedded_ui_available() {
+            app = app.configure(kalamdb_api::routes::configure_embedded_ui_routes);
+        } else if let Some(ref path) = ui_path {
+            let path = path.clone();
+            app = app.configure(move |cfg| {
+                kalamdb_api::routes::configure_ui_routes(cfg, &path);
+            });
+        }
+
+        app
+    })
+    .backlog(config.performance.backlog);
+
+    let server = server
+        .listen(listener)?
+        .workers(if config.server.workers == 0 {
+            num_cpus::get()
+        } else {
+            config.server.workers
+        })
+        .max_connections(config.performance.max_connections)
+        .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
+        .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
+        .client_request_timeout(std::time::Duration::from_secs(
+            config.performance.client_request_timeout,
+        ))
+        .client_disconnect_timeout(std::time::Duration::from_secs(
+            config.performance.client_disconnect_timeout,
+        ))
+        .run();
+
+    let server_handle = server.handle();
+    let server_task = tokio::spawn(server);
+    let base_url = format!("http://{}", bind_addr);
+
+    Ok(RunningTestHttpServer {
+        base_url,
+        bind_addr,
+        app_context,
+        server_handle,
+        server_task,
+    })
 }
 
 /// T125-T127: Create default system user on database initialization
@@ -550,7 +851,7 @@ async fn create_default_system_user(
                 AuthConstants::DEFAULT_SYSTEM_USERNAME
             );
             Ok(())
-        }
+        },
         Ok(None) | Err(_) => {
             // User doesn't exist, create new system user
             let user_id = UserId::root();
@@ -567,16 +868,16 @@ async fn create_default_system_user(
                     // Hash the provided password for remote access
                     bcrypt::hash(&password, bcrypt::DEFAULT_COST)
                         .map_err(|e| anyhow::anyhow!("Failed to hash root password: {}", e))?
-                }
+                },
                 _ => {
                     // T126: Create with EMPTY password hash for localhost-only access
                     // This allows passwordless authentication from localhost (127.0.0.1, ::1)
                     // For remote access, set a password using: ALTER USER root SET PASSWORD '...'
                     String::new() // Empty = localhost-only, no password required
-                }
+                },
             };
             let has_password = !password_hash.is_empty();
-            
+
             // If password is set via env var, enable remote access
             let auth_data = if has_password {
                 Some(r#"{"allow_remote":true}"#.to_string())
@@ -616,59 +917,61 @@ async fn create_default_system_user(
                     "✓ Created system user '{}' (localhost-only access, no password required)",
                     username
                 );
-                info!("  To enable remote access, set a password: ALTER USER root SET PASSWORD '...'");
+                info!(
+                    "  To enable remote access, set a password: ALTER USER root SET PASSWORD '...'"
+                );
                 info!("  Or set KALAMDB_ROOT_PASSWORD environment variable before startup");
             }
 
             Ok(())
-        }
+        },
     }
 }
 
-/// Check for security issues with remote access configuration
-///
-/// Informs users about password requirements for remote access
-async fn check_remote_access_security(
-    config: &ServerConfig,
-    users_provider: Arc<kalamdb_system::UsersTableProvider>,
-) -> Result<()> {
-    use kalamdb_commons::constants::AuthConstants;
+// /// Check for security issues with remote access configuration
+// ///
+// /// Informs users about password requirements for remote access
+// async fn check_remote_access_security(
+//     config: &ServerConfig,
+//     users_provider: Arc<kalamdb_system::UsersTableProvider>,
+// ) -> Result<()> {
+//     use kalamdb_commons::constants::AuthConstants;
 
-    // Check if root user exists and has empty password
-    // Always show this info if root has no password, regardless of allow_remote_access setting
-    if let Ok(Some(user)) =
-        users_provider.get_user_by_username(AuthConstants::DEFAULT_SYSTEM_USERNAME)
-    {
-        if user.password_hash.is_empty() {
-            // Root user has no password - this is secure for localhost-only but warn about limitations
-            warn!("╔═══════════════════════════════════════════════════════════════════╗");
-            warn!("║                    ⚠️  SECURITY NOTICE ⚠️                           ║");
-            warn!("╠═══════════════════════════════════════════════════════════════════╣");
-            warn!("║                                                                   ║");
-            warn!("║  Root user has NO PASSWORD (localhost-only access enabled)       ║");
-            warn!("║                                                                   ║");
-            warn!("║  SECURITY ENFORCEMENT:                                           ║");
-            warn!("║  • Remote authentication is BLOCKED for users with no password   ║");
-            warn!("║  • Root can only connect from localhost (127.0.0.1)              ║");
-            warn!("║  • This configuration is secure by design                        ║");
-            warn!("║                                                                   ║");
-            warn!("║  TO ENABLE REMOTE ACCESS:                                        ║");
-            warn!("║  Set a strong password for the root user:                        ║");
-            warn!("║     ALTER USER root SET PASSWORD 'strong-password-here';         ║");
-            warn!("║                                                                   ║");
-            warn!(
-                "║  Note: allow_remote_access config is currently: {}               ║",
-                if config.auth.allow_remote_access {
-                    "ENABLED "
-                } else {
-                    "DISABLED"
-                }
-            );
-            warn!("║  (Remote access still requires password for system users)        ║");
-            warn!("║                                                                   ║");
-            warn!("╚═══════════════════════════════════════════════════════════════════╝");
-        }
-    }
+//     // Check if root user exists and has empty password
+//     // Always show this info if root has no password, regardless of allow_remote_access setting
+//     if let Ok(Some(user)) =
+//         users_provider.get_user_by_username(AuthConstants::DEFAULT_SYSTEM_USERNAME)
+//     {
+//         if user.password_hash.is_empty() {
+//             // Root user has no password - this is secure for localhost-only but warn about limitations
+//             warn!("╔═══════════════════════════════════════════════════════════════════╗");
+//             warn!("║                    ⚠️  SECURITY NOTICE ⚠️                           ║");
+//             warn!("╠═══════════════════════════════════════════════════════════════════╣");
+//             warn!("║                                                                   ║");
+//             warn!("║  Root user has NO PASSWORD (localhost-only access enabled)       ║");
+//             warn!("║                                                                   ║");
+//             warn!("║  SECURITY ENFORCEMENT:                                           ║");
+//             warn!("║  • Remote authentication is BLOCKED for users with no password   ║");
+//             warn!("║  • Root can only connect from localhost (127.0.0.1)              ║");
+//             warn!("║  • This configuration is secure by design                        ║");
+//             warn!("║                                                                   ║");
+//             warn!("║  TO ENABLE REMOTE ACCESS:                                        ║");
+//             warn!("║  Set a strong password for the root user:                        ║");
+//             warn!("║     ALTER USER root SET PASSWORD 'strong-password-here';         ║");
+//             warn!("║                                                                   ║");
+//             warn!(
+//                 "║  Note: allow_remote_access config is currently: {}               ║",
+//                 if config.auth.allow_remote_access {
+//                     "ENABLED "
+//                 } else {
+//                     "DISABLED"
+//                 }
+//             );
+//             warn!("║  (Remote access still requires password for system users)        ║");
+//             warn!("║                                                                   ║");
+//             warn!("╚═══════════════════════════════════════════════════════════════════╝");
+//         }
+//     }
 
-    Ok(())
-}
+//     Ok(())
+// }

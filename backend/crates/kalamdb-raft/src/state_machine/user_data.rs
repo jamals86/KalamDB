@@ -202,19 +202,19 @@ impl UserDataStateMachine {
             UserDataCommand::Insert {
                 table_id,
                 user_id,
-                rows_data,
+                rows,
                 ..
             } => {
                 log::debug!(
-                    "UserDataStateMachine[{}]: Insert into {:?} ({} bytes)",
+                    "UserDataStateMachine[{}]: Insert into {:?} ({} rows)",
                     self.shard,
                     table_id,
-                    rows_data.len()
+                    rows.len()
                 );
 
                 // Persist data via applier if available
                 let rows_affected = if let Some(ref a) = applier {
-                    match a.insert(&table_id, &user_id, &rows_data).await {
+                    match a.insert(&table_id, &user_id, &rows).await {
                         Ok(count) => count,
                         Err(e) => {
                             // Convert applier errors to DataResponse::Error
@@ -237,7 +237,7 @@ impl UserDataStateMachine {
 
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
                 self.approximate_size
-                    .fetch_add(rows_data.len() as u64, Ordering::Relaxed);
+                    .fetch_add(rows.len() as u64, Ordering::Relaxed);
 
                 Ok(DataResponse::RowsAffected(rows_affected))
             }
@@ -245,8 +245,8 @@ impl UserDataStateMachine {
             UserDataCommand::Update {
                 table_id,
                 user_id,
-                updates_data,
-                filter_data,
+                updates,
+                filter,
                 ..
             } => {
                 log::debug!(
@@ -259,8 +259,8 @@ impl UserDataStateMachine {
                     match a.update(
                         &table_id,
                         &user_id,
-                        &updates_data,
-                        filter_data.as_deref(),
+                        &updates,
+                        filter.as_deref(),
                     )
                     .await {
                         Ok(count) => count,
@@ -288,7 +288,7 @@ impl UserDataStateMachine {
             UserDataCommand::Delete {
                 table_id,
                 user_id,
-                filter_data,
+                pk_values,
                 ..
             } => {
                 log::debug!(
@@ -298,7 +298,7 @@ impl UserDataStateMachine {
                 );
 
                 let rows_affected = if let Some(ref a) = applier {
-                    match a.delete(&table_id, &user_id, filter_data.as_deref()).await {
+                    match a.delete(&table_id, &user_id, pk_values.as_deref()).await {
                         Ok(count) => count,
                         Err(e) => {
                             log::warn!(
@@ -534,7 +534,7 @@ mod tests {
         let cmd = UserDataCommand::Insert {
             table_id: TableId::new(NamespaceId::new("default"), "users".into()),
             user_id: UserId::new("user123"),
-            rows_data: vec![1, 2, 3, 4],
+            rows: vec![],
             required_meta_index: 0,
         };
         

@@ -16,11 +16,65 @@ use crate::StorageKey;
 #[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub struct StorageId(String);
 
+/// Error type for StorageId validation failures
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageIdValidationError(pub String);
+
+impl std::fmt::Display for StorageIdValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for StorageIdValidationError {}
+
 impl StorageId {
-    /// Creates a new StorageId from a string.
+    /// Validates a storage ID for security issues.
+    fn validate(id: &str) -> Result<(), StorageIdValidationError> {
+        if id.is_empty() {
+            return Err(StorageIdValidationError(
+                "Storage ID cannot be empty".to_string(),
+            ));
+        }
+        
+        // Check for path traversal
+        if id.contains("..") || id.contains('/') || id.contains('\\') {
+            return Err(StorageIdValidationError(
+                "Storage ID cannot contain path traversal characters".to_string(),
+            ));
+        }
+        
+        // Check for null bytes
+        if id.contains('\0') {
+            return Err(StorageIdValidationError(
+                "Storage ID cannot contain null bytes".to_string(),
+            ));
+        }
+        
+        // Check for SQL injection characters
+        if id.contains('\'') || id.contains('"') || id.contains(';') {
+            return Err(StorageIdValidationError(
+                "Storage ID cannot contain quotes or semicolons".to_string(),
+            ));
+        }
+        
+        Ok(())
+    }
+
+    /// Creates a new StorageId from a string with validation.
+    ///
+    /// # Panics
+    /// Panics if the ID contains invalid characters.
     #[inline]
     pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
+        Self::try_new(id).expect("StorageId contains invalid characters")
+    }
+    
+    /// Creates a new StorageId from a string, returning an error if validation fails.
+    pub fn try_new(id: impl Into<String>) -> Result<Self, StorageIdValidationError> {
+        let id = id.into();
+        Self::validate(&id)?;
+        Ok(Self(id))
     }
 
     /// Returns the storage ID as a string slice.

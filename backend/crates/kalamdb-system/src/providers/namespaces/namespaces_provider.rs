@@ -24,7 +24,6 @@ use std::sync::Arc;
 /// System.namespaces table provider using EntityStore architecture
 pub struct NamespacesTableProvider {
     store: NamespacesStore,
-    schema: SchemaRef,
 }
 
 impl std::fmt::Debug for NamespacesTableProvider {
@@ -44,7 +43,6 @@ impl NamespacesTableProvider {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         Self {
             store: new_namespaces_store(backend),
-            schema: NamespacesTableSchema::schema(),
         }
     }
 
@@ -215,7 +213,7 @@ impl NamespacesTableProvider {
         }
 
         // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        let mut builder = RecordBatchBuilder::new(NamespacesTableSchema::schema());
         builder
             .add_string_column_owned(namespace_ids)
             .add_string_column_owned(names)
@@ -236,7 +234,7 @@ impl TableProvider for NamespacesTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        NamespacesTableSchema::schema()
     }
 
     fn table_type(&self) -> TableType {
@@ -251,7 +249,7 @@ impl TableProvider for NamespacesTableProvider {
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::datasource::MemTable;
-        let schema = self.schema.clone();
+        let schema = NamespacesTableSchema::schema();
         let batch = self.scan_all_namespaces().map_err(|e| {
             DataFusionError::Execution(format!("Failed to build namespaces batch: {}", e))
         })?;
@@ -268,7 +266,7 @@ impl SystemTableProviderExt for NamespacesTableProvider {
     }
 
     fn schema_ref(&self) -> SchemaRef {
-        self.schema.clone()
+        NamespacesTableSchema::schema()
     }
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {

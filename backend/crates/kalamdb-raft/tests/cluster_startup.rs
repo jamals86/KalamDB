@@ -32,7 +32,10 @@ async fn test_single_node_cluster_startup() {
     // Verify initial state
     assert!(!manager.is_started());
     assert_eq!(manager.node_id(), NodeId::new(1));
-    assert_eq!(manager.group_count(), 36); // 3 meta + 32 user + 1 shared (defaults)
+    assert_eq!(
+        manager.group_count(),
+        GroupId::all_groups(manager.user_shards(), manager.shared_shards()).len()
+    );
     
     // Start all Raft groups
     manager.start().await.expect("Failed to start RaftManager");
@@ -141,7 +144,10 @@ async fn test_configurable_shards() {
     // Verify shard counts
     assert_eq!(manager.user_shards(), 8);
     assert_eq!(manager.shared_shards(), 2);
-    assert_eq!(manager.group_count(), 3 + 8 + 2); // 3 meta + 8 user + 2 shared = 13
+    assert_eq!(
+        manager.group_count(),
+        GroupId::all_groups(manager.user_shards(), manager.shared_shards()).len()
+    );
     
     println!("✅ Configurable shards validated");
     println!("   - User shards: {}", manager.user_shards());

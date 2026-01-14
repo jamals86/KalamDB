@@ -6,7 +6,7 @@ use crate::jobs::executors::flush::FlushParams;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::TableId;
-use kalamdb_commons::{JobId, JobType};
+use kalamdb_commons::{JobId, JobType, TableType};
 use kalamdb_sql::ddl::FlushTableStatement;
 use std::sync::Arc;
 
@@ -33,7 +33,7 @@ impl TypedStatementHandler<FlushTableStatement> for FlushTableHandler {
         let registry = self.app_context.schema_registry();
         let table_id = TableId::new(statement.namespace.clone(), statement.table_name.clone());
         let table_def = registry
-            .get_table_definition(&table_id)?
+            .get_table_if_exists(self.app_context.as_ref(), &table_id)?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table {}.{} not found",
@@ -41,6 +41,12 @@ impl TypedStatementHandler<FlushTableStatement> for FlushTableHandler {
                     statement.table_name.as_str()
                 ))
             })?;
+
+        if table_def.table_type == TableType::Stream {
+            return Err(KalamDbError::InvalidOperation(
+                "FLUSH TABLE is not supported for STREAM tables".to_string(),
+            ));
+        }
 
         // Create FlushParams with typed parameters
         let params = FlushParams {

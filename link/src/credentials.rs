@@ -185,8 +185,7 @@ pub trait CredentialStore {
 /// let mut store = MemoryCredentialStore::new();
 /// let creds = Credentials::new(
 ///     "local".to_string(),
-///     "alice".to_string(),
-///     "secret123".to_string(),
+///     "jwt.token.value".to_string(),
 /// );
 ///
 /// store.set_credentials(&creds).unwrap();

@@ -568,11 +568,16 @@ pub fn pk_exists_in_cold(
     };
 
     let object_store = cached
-        .object_store()
+        .object_store(core.app_context.as_ref())
         .into_kalamdb_error("Failed to get object store")?;
 
     // 3. Get storage path (relative to storage base)
-    let storage_path = crate::schema_registry::PathResolver::get_storage_path(&cached, user_id, None)?;
+    let storage_path = crate::schema_registry::PathResolver::get_storage_path(
+        core.app_context.as_ref(),
+        &cached,
+        user_id,
+        None,
+    )?;
 
     // Check if any files exist at this path using object_store
     let files = kalamdb_filestore::list_files_sync(
@@ -764,11 +769,16 @@ pub fn pk_exists_batch_in_cold(
     };
 
     let object_store = cached
-        .object_store()
+        .object_store(core.app_context.as_ref())
         .into_kalamdb_error("Failed to get object store")?;
 
     // 3. Get storage path (relative to storage base)
-    let storage_path = crate::schema_registry::PathResolver::get_storage_path(&cached, user_id, None)?;
+    let storage_path = crate::schema_registry::PathResolver::get_storage_path(
+        core.app_context.as_ref(),
+        &cached,
+        user_id,
+        None,
+    )?;
 
     // Check if any files exist at this path using object_store
     let files = kalamdb_filestore::list_files_sync(
@@ -1112,7 +1122,11 @@ where
     let table_id = provider.table_id();
     
     // Get table definition to check if PK is auto-increment
-    if let Some(table_def) = provider.app_context().schema_registry().get_table_definition(table_id)? {
+    if let Some(table_def) = provider
+        .app_context()
+        .schema_registry()
+        .get_table_if_exists(provider.app_context().as_ref(), table_id)?
+    {
         // Fast path: Skip uniqueness check if PK is auto-increment
         if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
             log::trace!(
@@ -1214,7 +1228,11 @@ where
     }
 
     // Get table definition to check if PK is auto-increment
-    if let Some(table_def) = provider.app_context().schema_registry().get_table_definition(table_id)? {
+    if let Some(table_def) = provider
+        .app_context()
+        .schema_registry()
+        .get_table_if_exists(provider.app_context().as_ref(), table_id)?
+    {
         if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Cannot modify auto-increment primary key column '{}' in table {}",

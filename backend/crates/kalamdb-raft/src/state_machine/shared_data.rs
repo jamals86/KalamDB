@@ -174,17 +174,17 @@ impl SharedDataStateMachine {
         };
 
         match cmd {
-            SharedDataCommand::Insert { table_id, rows_data, .. } => {
+            SharedDataCommand::Insert { table_id, rows, .. } => {
                 log::debug!(
-                    "SharedDataStateMachine[{}]: Insert into {:?} ({} bytes)",
+                    "SharedDataStateMachine[{}]: Insert into {:?} ({} rows)",
                     self.shard,
                     table_id,
-                    rows_data.len()
+                    rows.len()
                 );
 
                 // Persist data via applier if available
                 let rows_affected = if let Some(ref a) = applier {
-                    match a.insert(&table_id, &rows_data).await {
+                    match a.insert(&table_id, &rows).await {
                         Ok(count) => count,
                         Err(e) => {
                             log::warn!(
@@ -222,15 +222,15 @@ impl SharedDataStateMachine {
                 
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
                 self.approximate_size
-                    .fetch_add(rows_data.len() as u64, Ordering::Relaxed);
+                    .fetch_add(rows.len() as u64, Ordering::Relaxed);
 
                 Ok(DataResponse::RowsAffected(rows_affected))
             }
 
             SharedDataCommand::Update {
                 table_id,
-                updates_data,
-                filter_data,
+                updates,
+                filter,
                 ..
             } => {
                 log::debug!(
@@ -240,7 +240,7 @@ impl SharedDataStateMachine {
                 );
 
                 let rows_affected = if let Some(ref a) = applier {
-                    match a.update(&table_id, &updates_data, filter_data.as_deref())
+                    match a.update(&table_id, &updates, filter.as_deref())
                         .await {
                         Ok(count) => count,
                         Err(e) => {
@@ -281,7 +281,7 @@ impl SharedDataStateMachine {
 
             SharedDataCommand::Delete {
                 table_id,
-                filter_data,
+                pk_values,
                 ..
             } => {
                 log::debug!(
@@ -291,7 +291,7 @@ impl SharedDataStateMachine {
                 );
 
                 let rows_affected = if let Some(ref a) = applier {
-                    match a.delete(&table_id, filter_data.as_deref()).await {
+                    match a.delete(&table_id, pk_values.as_deref()).await {
                         Ok(count) => count,
                         Err(e) => {
                             log::warn!(
@@ -467,7 +467,7 @@ mod tests {
         
         let cmd = SharedDataCommand::Insert {
             table_id: TableId::new(NamespaceId::new("default"), "config".into()),
-            rows_data: vec![1, 2, 3, 4, 5],
+            rows: vec![],
             required_meta_index: 0,
         };
         let cmd_bytes = encode(&cmd).unwrap();
@@ -485,7 +485,7 @@ mod tests {
         // Insert
         let insert = SharedDataCommand::Insert {
             table_id: TableId::new(NamespaceId::new("default"), "settings".into()),
-            rows_data: vec![1, 2, 3],
+            rows: vec![],
             required_meta_index: 0,
         };
         sm.apply(1, 1, &encode(&insert).unwrap()).await.unwrap();
@@ -493,8 +493,8 @@ mod tests {
         // Update
         let update = SharedDataCommand::Update {
             table_id: TableId::new(NamespaceId::new("default"), "settings".into()),
-            updates_data: vec![4, 5, 6],
-            filter_data: None,
+            updates: vec![],
+            filter: None,
             required_meta_index: 0,
         };
         sm.apply(2, 1, &encode(&update).unwrap()).await.unwrap();
@@ -502,7 +502,7 @@ mod tests {
         // Delete
         let delete = SharedDataCommand::Delete {
             table_id: TableId::new(NamespaceId::new("default"), "settings".into()),
-            filter_data: None,
+            pk_values: None,
             required_meta_index: 0,
         };
         sm.apply(3, 1, &encode(&delete).unwrap()).await.unwrap();

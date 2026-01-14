@@ -49,7 +49,7 @@ pub mod schema_registry;
 pub mod slow_query_logger;
 pub mod sql;
 pub mod storage;
-pub mod test_helpers;
+pub mod views;
 
 // Re-export commonly used items
 pub use error_extensions::KalamDbResultExt;
@@ -67,3 +67,8 @@ pub mod live_query {
 pub mod system_columns {
     pub use crate::schema_registry::SystemColumnsService;
 }
+
+// Test helpers module for unit tests inside this crate.
+// Integration tests should include their own helpers or use path-based modules.
+#[cfg(test)]
+pub mod test_helpers;

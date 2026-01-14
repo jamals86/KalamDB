@@ -3,6 +3,3 @@
 pub mod core;
 
 pub use core::SchemaRegistry;
-
-#[cfg(test)]
-mod tests;

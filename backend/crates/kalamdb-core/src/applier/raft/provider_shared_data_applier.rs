@@ -30,13 +30,17 @@ impl ProviderSharedDataApplier {
     }
 }
 
+#[cfg(test)]
 impl Default for ProviderSharedDataApplier {
     fn default() -> Self {
-        if let Ok(app_ctx) = std::panic::catch_unwind(|| AppContext::get()) {
-            Self::new(app_ctx)
-        } else {
-             panic!("ProviderSharedDataApplier::default() called but AppContext not available. Use new(Arc<AppContext>) instead.");
-        }
+        Self::new(AppContext::get())
+    }
+}
+
+#[cfg(not(test))]
+impl Default for ProviderSharedDataApplier {
+    fn default() -> Self {
+        panic!("ProviderSharedDataApplier::default() is for tests only; use new(Arc<AppContext>)")
     }
 }
 
@@ -45,16 +49,16 @@ impl SharedDataApplier for ProviderSharedDataApplier {
     async fn insert(
         &self,
         table_id: &TableId,
-        rows_data: &[u8],
+        rows: &[kalamdb_commons::models::Row],
     ) -> Result<usize, RaftError> {
         log::debug!(
-            "ProviderSharedDataApplier: Inserting into {} ({} bytes)",
+            "ProviderSharedDataApplier: Inserting into {} ({} rows)",
             table_id,
-            rows_data.len()
+            rows.len()
         );
 
         self.executor.dml()
-            .insert_shared_data(table_id, rows_data)
+            .insert_shared_data(table_id, rows)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }
@@ -62,17 +66,17 @@ impl SharedDataApplier for ProviderSharedDataApplier {
     async fn update(
         &self,
         table_id: &TableId,
-        updates_data: &[u8],
-        filter_data: Option<&[u8]>,
+        updates: &[kalamdb_commons::models::Row],
+        filter: Option<&str>,
     ) -> Result<usize, RaftError> {
         log::debug!(
-            "ProviderSharedDataApplier: Updating {} ({} bytes)",
+            "ProviderSharedDataApplier: Updating {} ({} rows)",
             table_id,
-            updates_data.len()
+            updates.len()
         );
 
         self.executor.dml()
-            .update_shared_data(table_id, updates_data, filter_data)
+            .update_shared_data(table_id, updates, filter)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }
@@ -80,7 +84,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
     async fn delete(
         &self,
         table_id: &TableId,
-        filter_data: Option<&[u8]>,
+        pk_values: Option<&[String]>,
     ) -> Result<usize, RaftError> {
         log::debug!(
             "ProviderSharedDataApplier: Deleting from {}",
@@ -88,7 +92,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
         );
 
         self.executor.dml()
-            .delete_shared_data(table_id, filter_data)
+            .delete_shared_data(table_id, pk_values)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }

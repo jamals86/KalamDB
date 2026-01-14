@@ -12,6 +12,8 @@ fn main() {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default());
     let repo_root = find_repo_root(&manifest_dir).unwrap_or_else(|| manifest_dir.clone());
 
+    build_isoc23_glibc_shim_if_needed(&repo_root);
+
     // Build UI for release builds FIRST (before rust-embed macro runs).
     // Run for the top-level server crate (project-level) and kalamdb-api when applicable.
     if package_name == "kalamdb-api" {
@@ -38,9 +40,7 @@ fn main() {
         .unwrap_or_else(|| fallback.0.clone());
 
     // Capture build date/time in ISO 8601 format
-    let build_date = chrono::Utc::now()
-        .format("%Y-%m-%d %H:%M:%S UTC")
-        .to_string();
+    let build_date = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
     // Capture Git branch name
     let branch = Command::new("git")
@@ -76,6 +76,27 @@ fn main() {
     if version_toml.exists() {
         println!("cargo:rerun-if-changed={}", version_toml.display());
     }
+}
+
+fn build_isoc23_glibc_shim_if_needed(repo_root: &Path) {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+
+    // Only relevant for linux-gnu builds.
+    if target_os != "linux" || target_env != "gnu" {
+        return;
+    }
+
+    // This build script is shared across crates (e.g. kalamdb-api uses ../../build.rs),
+    // so resolve the shim from the repository root.
+    let shim_path = repo_root.join("backend").join("build").join("isoc23_shim.c");
+    if !shim_path.exists() {
+        panic!("Expected glibc shim file at {} but it was not found", shim_path.display());
+    }
+
+    println!("cargo:rerun-if-changed={}", shim_path.display());
+
+    cc::Build::new().file(&shim_path).compile("kalamdb_isoc23_shim");
 }
 
 fn find_repo_root(start: &Path) -> Option<PathBuf> {
@@ -116,7 +137,10 @@ fn build_ui_if_release(repo_root: &Path) {
 
     let ui_dir = repo_root.join("ui");
     if !ui_dir.exists() {
-        panic!("UI directory not found at {}/ui - UI is required for release builds!", repo_root.display());
+        panic!(
+            "UI directory not found at {}/ui - UI is required for release builds!",
+            repo_root.display()
+        );
     }
 
     // Check if npm is available
@@ -157,19 +181,19 @@ fn build_ui_if_release(repo_root: &Path) {
         };
 
         match install_status {
-            Ok(status) if status.success() => {}
+            Ok(status) if status.success() => {},
             Ok(status) => {
                 panic!(
                     "npm install failed with status: {} - UI dependencies are required for release builds!",
                     status
                 );
-            }
+            },
             Err(e) => {
                 panic!(
                     "Failed to run npm install: {} - UI dependencies are required for release builds!",
                     e
                 );
-            }
+            },
         }
     }
 
@@ -196,13 +220,13 @@ fn build_ui_if_release(repo_root: &Path) {
     match build_status {
         Ok(status) if status.success() => {
             println!("cargo:warning=UI build completed successfully");
-        }
+        },
         Ok(status) => {
             panic!("UI build failed with status: {}\n\nUI is required for release builds!", status);
-        }
+        },
         Err(e) => {
             panic!("Failed to run npm build: {} - UI is required for release builds!", e);
-        }
+        },
     }
 
     // Verify dist was created
@@ -216,17 +240,19 @@ fn build_ui_if_release(repo_root: &Path) {
     // NOTE: do NOT watch link/sdks/typescript/src. The SDK build creates/removes src/wasm and
     // can self-trigger rebuild loops.
     println!("cargo:rerun-if-changed={}", repo_root.join("ui").join("src").display());
-    println!(
-        "cargo:rerun-if-changed={}",
-        repo_root.join("ui").join("package.json").display()
-    );
+    println!("cargo:rerun-if-changed={}", repo_root.join("ui").join("package.json").display());
     println!(
         "cargo:rerun-if-changed={}",
         repo_root.join("ui").join("vite.config.ts").display()
     );
     println!(
         "cargo:rerun-if-changed={}",
-        repo_root.join("link").join("sdks").join("typescript").join("package.json").display()
+        repo_root
+            .join("link")
+            .join("sdks")
+            .join("typescript")
+            .join("package.json")
+            .display()
     );
 }
 
@@ -258,11 +284,7 @@ fn ensure_ui_dist_exists(repo_root: &Path) {
 /// Read fallback values from version.toml
 /// Returns (commit_hash, branch, build_date) with defaults if file doesn't exist
 fn read_version_toml(path: &Path) -> (String, String, String) {
-    let default = (
-        "unknown".to_string(),
-        "unknown".to_string(),
-        "unknown".to_string(),
-    );
+    let default = ("unknown".to_string(), "unknown".to_string(), "unknown".to_string());
 
     let content = match fs::read_to_string(path) {
         Ok(c) => c,

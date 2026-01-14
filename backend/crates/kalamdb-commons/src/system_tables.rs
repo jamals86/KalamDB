@@ -1,31 +1,53 @@
-//! System table enumeration
+//! System table and view enumeration
 //!
-//! Defines all system tables available in KalamDB.
+//! Defines all system tables and views available in KalamDB.
+//! This is the authoritative list of all `system.*` objects.
 
-/// System table enumeration
+/// System table and view enumeration
 ///
-/// All system tables in KalamDB. This enum ensures type-safe table registration
-/// and prevents typos in table names.
+/// All system tables and views in KalamDB. This enum ensures type-safe registration
+/// and prevents typos in table/view names.
+///
+/// ## Tables vs Views
+/// - **Tables**: Persisted in RocksDB, have a column family
+/// - **Views**: Computed on-demand, no storage backing
+use crate::models::TableId;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SystemTable {
-    /// system.users - User accounts
+    // ==================== PERSISTED TABLES ====================
+    /// system.users - User accounts (persisted)
     Users,
-    /// system.namespaces - Database namespaces
+    /// system.namespaces - Database namespaces (persisted)
     Namespaces,
-    /// system.tables - User and shared tables metadata
+    /// system.tables - User and shared tables metadata (persisted)
     Tables,
-    /// system.table_schemas - Table schema versions
+    /// system.table_schemas - Table schema versions (persisted)
     TableSchemas,
-    /// system.storages - Storage configurations
+    /// system.storages - Storage configurations (persisted)
     Storages,
-    /// system.live_queries - Active live query subscriptions
+    /// system.live_queries - Active live query subscriptions (persisted)
     LiveQueries,
-    /// system.jobs - Background job tracking
+    /// system.jobs - Background job tracking (persisted)
     Jobs,
-    /// system.audit_log - Administrative audit trail
+    /// system.audit_log - Administrative audit trail (persisted)
     AuditLog,
-    /// system.manifest - Manifest cache entries for query optimization
+    /// system.manifest - Manifest cache entries for query optimization (persisted)
     Manifest,
+
+    // ==================== VIRTUAL VIEWS ====================
+    /// system.stats - Runtime metrics (computed on-demand)
+    Stats,
+    /// system.settings - Server configuration settings (computed on-demand)
+    Settings,
+    /// system.server_logs - Server log entries (computed from log files)
+    ServerLogs,
+    /// system.cluster - Raft cluster status and metrics (computed on-demand)
+    Cluster,
+    /// system.cluster_groups - Per-Raft-group membership and replication status (computed on-demand)
+    ClusterGroups,
+    /// system.datatypes - Supported data type mappings (computed on-demand)
+    Datatypes,
 }
 
 impl SystemTable {
@@ -41,21 +63,54 @@ impl SystemTable {
             SystemTable::Jobs => "jobs",
             SystemTable::AuditLog => "audit_log",
             SystemTable::Manifest => "manifest",
+            // Views
+            SystemTable::Stats => "stats",
+            SystemTable::Settings => "settings",
+            SystemTable::ServerLogs => "server_logs",
+            SystemTable::Cluster => "cluster",
+            SystemTable::ClusterGroups => "cluster_groups",
+            SystemTable::Datatypes => "datatypes",
         }
     }
 
+    /// Get the fully-qualified TableId for this system table/view
+    pub fn table_id(&self) -> TableId {
+        TableId::from_strings("system", self.table_name())
+    }
+
+    /// Returns true if this is a virtual view (computed on-demand, not persisted)
+    pub fn is_view(&self) -> bool {
+        matches!(
+            self,
+            SystemTable::Stats
+                | SystemTable::Settings
+                | SystemTable::ServerLogs
+                | SystemTable::Cluster
+                | SystemTable::ClusterGroups
+                | SystemTable::Datatypes
+        )
+    }
+
     /// Get the column family name in RocksDB (e.g., "system_users")
-    pub fn column_family_name(&self) -> &'static str {
+    /// Returns None for views (they have no storage backing)
+    pub fn column_family_name(&self) -> Option<&'static str> {
         match self {
-            SystemTable::Users => "system_users",
-            SystemTable::Namespaces => "system_namespaces",
-            SystemTable::Tables => "system_tables",
-            SystemTable::TableSchemas => "system_table_schemas",
-            SystemTable::Storages => "system_storages",
-            SystemTable::LiveQueries => "system_live_queries",
-            SystemTable::Jobs => "system_jobs",
-            SystemTable::AuditLog => "system_audit_log",
-            SystemTable::Manifest => "manifest_cache",
+            SystemTable::Users => Some("system_users"),
+            SystemTable::Namespaces => Some("system_namespaces"),
+            SystemTable::Tables => Some("system_tables"),
+            SystemTable::TableSchemas => Some("system_table_schemas"),
+            SystemTable::Storages => Some("system_storages"),
+            SystemTable::LiveQueries => Some("system_live_queries"),
+            SystemTable::Jobs => Some("system_jobs"),
+            SystemTable::AuditLog => Some("system_audit_log"),
+            SystemTable::Manifest => Some("manifest_cache"),
+            // Views have no column family
+            SystemTable::Stats
+            | SystemTable::Settings
+            | SystemTable::ServerLogs
+            | SystemTable::Cluster
+            | SystemTable::ClusterGroups
+            | SystemTable::Datatypes => None,
         }
     }
 
@@ -65,6 +120,7 @@ impl SystemTable {
         let name = name.strip_prefix("system.").unwrap_or(name);
 
         match name {
+            // Tables
             "users" | "system_users" => Ok(SystemTable::Users),
             "namespaces" | "system_namespaces" => Ok(SystemTable::Namespaces),
             "tables" | "system_tables" => Ok(SystemTable::Tables),
@@ -74,12 +130,19 @@ impl SystemTable {
             "jobs" | "system_jobs" => Ok(SystemTable::Jobs),
             "audit_log" | "system_audit_log" => Ok(SystemTable::AuditLog),
             "manifest" | "manifest_cache" => Ok(SystemTable::Manifest),
-            _ => Err(format!("Unknown system table: {}", name)),
+            // Views
+            "stats" => Ok(SystemTable::Stats),
+            "settings" => Ok(SystemTable::Settings),
+            "server_logs" => Ok(SystemTable::ServerLogs),
+            "cluster" => Ok(SystemTable::Cluster),
+            "cluster_groups" => Ok(SystemTable::ClusterGroups),
+            "datatypes" => Ok(SystemTable::Datatypes),
+            _ => Err(format!("Unknown system table or view: {}", name)),
         }
     }
 
-    /// Get all system tables
-    pub fn all() -> &'static [SystemTable] {
+    /// Get all system tables (persisted only, excludes views)
+    pub fn all_tables() -> &'static [SystemTable] {
         &[
             SystemTable::Users,
             SystemTable::Namespaces,
@@ -93,48 +156,91 @@ impl SystemTable {
         ]
     }
 
-    /// Check if a table name is a system table
+    /// Get all system views (computed on-demand)
+    pub fn all_views() -> &'static [SystemTable] {
+        &[
+            SystemTable::Stats,
+            SystemTable::Settings,
+            SystemTable::ServerLogs,
+            SystemTable::Cluster,
+            SystemTable::ClusterGroups,
+            SystemTable::Datatypes,
+        ]
+    }
+
+    /// Get all system tables and views
+    pub fn all() -> &'static [SystemTable] {
+        &[
+            // Tables
+            SystemTable::Users,
+            SystemTable::Namespaces,
+            SystemTable::Tables,
+            SystemTable::TableSchemas,
+            SystemTable::Storages,
+            SystemTable::LiveQueries,
+            SystemTable::Jobs,
+            SystemTable::AuditLog,
+            SystemTable::Manifest,
+            // Views
+            SystemTable::Stats,
+            SystemTable::Settings,
+            SystemTable::ServerLogs,
+            SystemTable::Cluster,
+            SystemTable::ClusterGroups,
+            SystemTable::Datatypes,
+        ]
+    }
+
+    /// Check if a table name is a system table or view
     pub fn is_system_table(name: &str) -> bool {
         Self::from_name(name).is_ok()
     }
 
     /// Returns a shared Partition for this system table's column family.
+    /// Returns None for views (they have no storage backing).
     ///
     /// Allocates each Partition once and returns a reference,
     /// avoiding repeated String allocations across the codebase.
-    pub fn partition(&self) -> &'static crate::storage::Partition {
+    pub fn partition(&self) -> Option<&'static crate::storage::Partition> {
         use crate::storage::Partition;
         use once_cell::sync::Lazy;
 
         static USERS: Lazy<Partition> =
-            Lazy::new(|| Partition::new(SystemTable::Users.column_family_name()));
+            Lazy::new(|| Partition::new("system_users"));
         static NAMESPACES: Lazy<Partition> =
-            Lazy::new(|| Partition::new(SystemTable::Namespaces.column_family_name()));
+            Lazy::new(|| Partition::new("system_namespaces"));
         static TABLES: Lazy<Partition> =
-            Lazy::new(|| Partition::new(SystemTable::Tables.column_family_name()));
+            Lazy::new(|| Partition::new("system_tables"));
         static TABLE_SCHEMAS: Lazy<Partition> =
-            Lazy::new(|| Partition::new(SystemTable::TableSchemas.column_family_name()));
+            Lazy::new(|| Partition::new("system_table_schemas"));
         static STORAGES: Lazy<Partition> =
-            Lazy::new(|| Partition::new(SystemTable::Storages.column_family_name()));
+            Lazy::new(|| Partition::new("system_storages"));
         static LIVE_QUERIES: Lazy<Partition> =
-            Lazy::new(|| Partition::new(SystemTable::LiveQueries.column_family_name()));
+            Lazy::new(|| Partition::new("system_live_queries"));
         static JOBS: Lazy<Partition> =
-            Lazy::new(|| Partition::new(SystemTable::Jobs.column_family_name()));
+            Lazy::new(|| Partition::new("system_jobs"));
         static AUDIT_LOG: Lazy<Partition> =
-            Lazy::new(|| Partition::new(SystemTable::AuditLog.column_family_name()));
+            Lazy::new(|| Partition::new("system_audit_log"));
         static MANIFEST: Lazy<Partition> =
-            Lazy::new(|| Partition::new(SystemTable::Manifest.column_family_name()));
+            Lazy::new(|| Partition::new("manifest_cache"));
 
         match self {
-            SystemTable::Users => &USERS,
-            SystemTable::Namespaces => &NAMESPACES,
-            SystemTable::Tables => &TABLES,
-            SystemTable::TableSchemas => &TABLE_SCHEMAS,
-            SystemTable::Storages => &STORAGES,
-            SystemTable::LiveQueries => &LIVE_QUERIES,
-            SystemTable::Jobs => &JOBS,
-            SystemTable::AuditLog => &AUDIT_LOG,
-            SystemTable::Manifest => &MANIFEST,
+            SystemTable::Users => Some(&USERS),
+            SystemTable::Namespaces => Some(&NAMESPACES),
+            SystemTable::Tables => Some(&TABLES),
+            SystemTable::TableSchemas => Some(&TABLE_SCHEMAS),
+            SystemTable::Storages => Some(&STORAGES),
+            SystemTable::LiveQueries => Some(&LIVE_QUERIES),
+            SystemTable::Jobs => Some(&JOBS),
+            SystemTable::AuditLog => Some(&AUDIT_LOG),
+            SystemTable::Manifest => Some(&MANIFEST),
+            // Views have no partition
+            SystemTable::Stats
+            | SystemTable::Settings
+            | SystemTable::ServerLogs
+            | SystemTable::Cluster
+            | SystemTable::ClusterGroups
+            | SystemTable::Datatypes => None,
         }
     }
 }
@@ -159,6 +265,10 @@ pub enum StoragePartition {
     ManifestCache,
     /// Status + CreatedAt index for system.jobs (non-unique index)
     SystemJobsStatusIdx,
+    /// Idempotency key index for system.jobs (unique-ish)
+    SystemJobsIdempotencyIdx,
+    /// TableId index for system.live_queries (non-unique index)
+    SystemLiveQueriesTableIdx,
 }
 
 impl StoragePartition {
@@ -173,6 +283,8 @@ impl StoragePartition {
             StoragePartition::SystemUsersDeletedAtIdx => "system_users_deleted_at_idx",
             StoragePartition::ManifestCache => "manifest_cache",
             StoragePartition::SystemJobsStatusIdx => "system_jobs_status_idx",
+            StoragePartition::SystemJobsIdempotencyIdx => "system_jobs_idempotency_idx",
+            StoragePartition::SystemLiveQueriesTableIdx => "system_live_queries_table_idx",
         }
     }
 
@@ -197,6 +309,10 @@ impl StoragePartition {
             Lazy::new(|| Partition::new(StoragePartition::ManifestCache.name()));
         static JOBS_STATUS_IDX: Lazy<Partition> =
             Lazy::new(|| Partition::new(StoragePartition::SystemJobsStatusIdx.name()));
+        static JOBS_IDEMPOTENCY_IDX: Lazy<Partition> =
+            Lazy::new(|| Partition::new(StoragePartition::SystemJobsIdempotencyIdx.name()));
+        static LIVE_QUERIES_TABLE_IDX: Lazy<Partition> =
+            Lazy::new(|| Partition::new(StoragePartition::SystemLiveQueriesTableIdx.name()));
 
         match self {
             StoragePartition::InformationSchemaTables => &INFO,
@@ -207,6 +323,8 @@ impl StoragePartition {
             StoragePartition::SystemUsersDeletedAtIdx => &DELETED_AT_IDX,
             StoragePartition::ManifestCache => &MANIFEST_CACHE,
             StoragePartition::SystemJobsStatusIdx => &JOBS_STATUS_IDX,
+            StoragePartition::SystemJobsIdempotencyIdx => &JOBS_IDEMPOTENCY_IDX,
+            StoragePartition::SystemLiveQueriesTableIdx => &LIVE_QUERIES_TABLE_IDX,
         }
     }
 }
@@ -227,24 +345,48 @@ mod tests {
         assert_eq!(SystemTable::Namespaces.table_name(), "namespaces");
         assert_eq!(SystemTable::Jobs.table_name(), "jobs");
         assert_eq!(SystemTable::AuditLog.table_name(), "audit_log");
+        // Views
+        assert_eq!(SystemTable::Stats.table_name(), "stats");
+        assert_eq!(SystemTable::Cluster.table_name(), "cluster");
+        assert_eq!(SystemTable::ClusterGroups.table_name(), "cluster_groups");
+    }
+
+    #[test]
+    fn test_is_view() {
+        // Tables are not views
+        assert!(!SystemTable::Users.is_view());
+        assert!(!SystemTable::Jobs.is_view());
+        assert!(!SystemTable::Manifest.is_view());
+        // Views are views
+        assert!(SystemTable::Stats.is_view());
+        assert!(SystemTable::Settings.is_view());
+        assert!(SystemTable::ServerLogs.is_view());
+        assert!(SystemTable::Cluster.is_view());
+        assert!(SystemTable::ClusterGroups.is_view());
+        assert!(SystemTable::Datatypes.is_view());
     }
 
     #[test]
     fn test_column_family_name() {
-        assert_eq!(SystemTable::Users.column_family_name(), "system_users");
+        // Tables have column families
+        assert_eq!(SystemTable::Users.column_family_name(), Some("system_users"));
         assert_eq!(
             SystemTable::Namespaces.column_family_name(),
-            "system_namespaces"
+            Some("system_namespaces")
         );
-        assert_eq!(SystemTable::Jobs.column_family_name(), "system_jobs");
+        assert_eq!(SystemTable::Jobs.column_family_name(), Some("system_jobs"));
         assert_eq!(
             SystemTable::AuditLog.column_family_name(),
-            "system_audit_log"
+            Some("system_audit_log")
         );
+        // Views have no column family
+        assert_eq!(SystemTable::Stats.column_family_name(), None);
+        assert_eq!(SystemTable::Cluster.column_family_name(), None);
     }
 
     #[test]
     fn test_from_name() {
+        // Tables
         assert_eq!(SystemTable::from_name("users").unwrap(), SystemTable::Users);
         assert_eq!(
             SystemTable::from_name("system.users").unwrap(),
@@ -258,6 +400,17 @@ mod tests {
             SystemTable::from_name("storages").unwrap(),
             SystemTable::Storages
         );
+        // Views
+        assert_eq!(SystemTable::from_name("stats").unwrap(), SystemTable::Stats);
+        assert_eq!(
+            SystemTable::from_name("system.cluster").unwrap(),
+            SystemTable::Cluster
+        );
+        assert_eq!(
+            SystemTable::from_name("system.cluster_groups").unwrap(),
+            SystemTable::ClusterGroups
+        );
+        // Invalid
         assert!(SystemTable::from_name("invalid_table").is_err());
     }
 
@@ -266,6 +419,9 @@ mod tests {
         assert!(SystemTable::is_system_table("users"));
         assert!(SystemTable::is_system_table("system.users"));
         assert!(SystemTable::is_system_table("storages"));
+        assert!(SystemTable::is_system_table("stats"));
+        assert!(SystemTable::is_system_table("system.cluster"));
+        assert!(SystemTable::is_system_table("system.cluster_groups"));
         assert!(!SystemTable::is_system_table("my_custom_table"));
     }
 
@@ -273,14 +429,43 @@ mod tests {
     fn test_display() {
         assert_eq!(SystemTable::Users.to_string(), "system.users");
         assert_eq!(SystemTable::Jobs.to_string(), "system.jobs");
+        assert_eq!(SystemTable::Stats.to_string(), "system.stats");
     }
 
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 9);
+        assert_eq!(all.len(), 15); // 9 tables + 6 views
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
         assert!(all.contains(&SystemTable::AuditLog));
+        assert!(all.contains(&SystemTable::Stats));
+        assert!(all.contains(&SystemTable::Cluster));
+        assert!(all.contains(&SystemTable::ClusterGroups));
+    }
+
+    #[test]
+    fn test_all_tables() {
+        let tables = SystemTable::all_tables();
+        assert_eq!(tables.len(), 9);
+        assert!(tables.iter().all(|t| !t.is_view()));
+    }
+
+    #[test]
+    fn test_all_views() {
+        let views = SystemTable::all_views();
+        assert_eq!(views.len(), 6);
+        assert!(views.iter().all(|v| v.is_view()));
+    }
+
+    #[test]
+    fn test_partition() {
+        // Tables have partitions
+        assert!(SystemTable::Users.partition().is_some());
+        assert!(SystemTable::Jobs.partition().is_some());
+        // Views have no partitions
+        assert!(SystemTable::Stats.partition().is_none());
+        assert!(SystemTable::Cluster.partition().is_none());
+        assert!(SystemTable::ClusterGroups.partition().is_none());
     }
 }

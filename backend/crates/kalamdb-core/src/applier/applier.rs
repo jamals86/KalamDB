@@ -103,7 +103,7 @@ pub trait UnifiedApplier: Send + Sync {
         &self,
         table_id: TableId,
         user_id: UserId,
-        rows_data: Vec<u8>,
+        rows: Vec<kalamdb_commons::models::Row>,
     ) -> Result<DataResponse, ApplierError>;
 
     /// Update rows in a user table
@@ -111,8 +111,8 @@ pub trait UnifiedApplier: Send + Sync {
         &self,
         table_id: TableId,
         user_id: UserId,
-        updates_data: Vec<u8>,
-        filter_data: Option<Vec<u8>>,
+        updates: Vec<kalamdb_commons::models::Row>,
+        filter: Option<String>,
     ) -> Result<DataResponse, ApplierError>;
 
     /// Delete rows from a user table
@@ -120,7 +120,7 @@ pub trait UnifiedApplier: Send + Sync {
         &self,
         table_id: TableId,
         user_id: UserId,
-        filter_data: Option<Vec<u8>>,
+        pk_values: Option<Vec<String>>,
     ) -> Result<DataResponse, ApplierError>;
 
     // =========================================================================
@@ -131,22 +131,22 @@ pub trait UnifiedApplier: Send + Sync {
     async fn insert_shared_data(
         &self,
         table_id: TableId,
-        rows_data: Vec<u8>,
+        rows: Vec<kalamdb_commons::models::Row>,
     ) -> Result<DataResponse, ApplierError>;
 
     /// Update rows in a shared table
     async fn update_shared_data(
         &self,
         table_id: TableId,
-        updates_data: Vec<u8>,
-        filter_data: Option<Vec<u8>>,
+        updates: Vec<kalamdb_commons::models::Row>,
+        filter: Option<String>,
     ) -> Result<DataResponse, ApplierError>;
 
     /// Delete rows from a shared table
     async fn delete_shared_data(
         &self,
         table_id: TableId,
-        filter_data: Option<Vec<u8>>,
+        pk_values: Option<Vec<String>>,
     ) -> Result<DataResponse, ApplierError>;
 
     // =========================================================================
@@ -227,9 +227,6 @@ impl RaftApplier {
         command: MetaCommand,
         cmd_type: &str,
     ) -> Result<String, ApplierError> {
-        let command_bytes = bincode::serde::encode_to_vec(&command, bincode::config::standard())
-            .map_err(|e| ApplierError::Serialization(e.to_string()))?;
-
         let app_ctx = self.executor().app_context();
         let executor = app_ctx.executor();
         let raft_exec = executor
@@ -248,12 +245,12 @@ impl RaftApplier {
             raft_mgr.is_leader(GroupId::Meta)
         );
 
-        raft_mgr
-            .propose_meta(command_bytes)
+        let response = raft_mgr
+            .propose_meta(command)
             .await
             .map_err(|e| ApplierError::Raft(e.to_string()))?;
 
-        Ok(format!("{} completed via Raft consensus", cmd_type))
+        Ok(response.get_message())
     }
 
     /// Execute a user data command through the appropriate shard
@@ -400,13 +397,13 @@ impl UnifiedApplier for RaftApplier {
         &self,
         table_id: TableId,
         user_id: UserId,
-        rows_data: Vec<u8>,
+        rows: Vec<kalamdb_commons::models::Row>,
     ) -> Result<DataResponse, ApplierError> {
         let raft_cmd = UserDataCommand::Insert {
             required_meta_index: 0, // Will be set by RaftExecutor
             table_id,
             user_id,
-            rows_data,
+            rows,
         };
         self.execute_user_data_cmd(raft_cmd).await
     }
@@ -415,15 +412,15 @@ impl UnifiedApplier for RaftApplier {
         &self,
         table_id: TableId,
         user_id: UserId,
-        updates_data: Vec<u8>,
-        filter_data: Option<Vec<u8>>,
+        updates: Vec<kalamdb_commons::models::Row>,
+        filter: Option<String>,
     ) -> Result<DataResponse, ApplierError> {
         let raft_cmd = UserDataCommand::Update {
             required_meta_index: 0, // Will be set by RaftExecutor
             table_id,
             user_id,
-            updates_data,
-            filter_data,
+            updates,
+            filter,
         };
         self.execute_user_data_cmd(raft_cmd).await
     }
@@ -432,13 +429,13 @@ impl UnifiedApplier for RaftApplier {
         &self,
         table_id: TableId,
         user_id: UserId,
-        filter_data: Option<Vec<u8>>,
+        pk_values: Option<Vec<String>>,
     ) -> Result<DataResponse, ApplierError> {
         let raft_cmd = UserDataCommand::Delete {
             required_meta_index: 0, // Will be set by RaftExecutor
             table_id,
             user_id,
-            filter_data,
+            pk_values,
         };
         self.execute_user_data_cmd(raft_cmd).await
     }
@@ -450,12 +447,12 @@ impl UnifiedApplier for RaftApplier {
     async fn insert_shared_data(
         &self,
         table_id: TableId,
-        rows_data: Vec<u8>,
+        rows: Vec<kalamdb_commons::models::Row>,
     ) -> Result<DataResponse, ApplierError> {
         let raft_cmd = SharedDataCommand::Insert {
             required_meta_index: 0, // Will be set by RaftExecutor
             table_id,
-            rows_data,
+            rows,
         };
         self.execute_shared_data_cmd(raft_cmd).await
     }
@@ -463,14 +460,14 @@ impl UnifiedApplier for RaftApplier {
     async fn update_shared_data(
         &self,
         table_id: TableId,
-        updates_data: Vec<u8>,
-        filter_data: Option<Vec<u8>>,
+        updates: Vec<kalamdb_commons::models::Row>,
+        filter: Option<String>,
     ) -> Result<DataResponse, ApplierError> {
         let raft_cmd = SharedDataCommand::Update {
             required_meta_index: 0, // Will be set by RaftExecutor
             table_id,
-            updates_data,
-            filter_data,
+            updates,
+            filter,
         };
         self.execute_shared_data_cmd(raft_cmd).await
     }
@@ -478,12 +475,12 @@ impl UnifiedApplier for RaftApplier {
     async fn delete_shared_data(
         &self,
         table_id: TableId,
-        filter_data: Option<Vec<u8>>,
+        pk_values: Option<Vec<String>>,
     ) -> Result<DataResponse, ApplierError> {
         let raft_cmd = SharedDataCommand::Delete {
             required_meta_index: 0, // Will be set by RaftExecutor
             table_id,
-            filter_data,
+            pk_values,
         };
         self.execute_shared_data_cmd(raft_cmd).await
     }

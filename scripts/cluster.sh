@@ -382,7 +382,7 @@ max_subscriptions_per_user = 1000
 
 [cluster]
 enabled = true
-cluster_id = "kalamdb-local-cluster"
+cluster_id = "local-cluster"
 node_id = $node_id
 rpc_addr = "127.0.0.1:$rpc_port"
 api_addr = "http://127.0.0.1:$http_port"

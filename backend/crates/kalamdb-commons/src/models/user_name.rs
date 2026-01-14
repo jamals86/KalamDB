@@ -15,10 +15,65 @@ use crate::StorageKey;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
 pub struct UserName(String);
 
+/// Error type for UserName validation failures
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserNameValidationError(pub String);
+
+impl std::fmt::Display for UserNameValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for UserNameValidationError {}
+
 impl UserName {
-    /// Creates a new UserName from a string.
+    /// Validates a username for security issues.
+    fn validate(name: &str) -> Result<(), UserNameValidationError> {
+        // Check for empty name
+        if name.is_empty() {
+            return Err(UserNameValidationError(
+                "Username cannot be empty".to_string(),
+            ));
+        }
+        
+        // Check for SQL injection characters
+        if name.contains('\'') || name.contains('"') || name.contains(';') {
+            return Err(UserNameValidationError(
+                "Username cannot contain quotes or semicolons".to_string(),
+            ));
+        }
+        
+        // Check for path traversal
+        if name.contains("..") || name.contains('/') || name.contains('\\') {
+            return Err(UserNameValidationError(
+                "Username cannot contain path traversal characters".to_string(),
+            ));
+        }
+        
+        // Check for null bytes
+        if name.contains('\0') {
+            return Err(UserNameValidationError(
+                "Username cannot contain null bytes".to_string(),
+            ));
+        }
+        
+        Ok(())
+    }
+
+    /// Creates a new UserName from a string with validation.
+    ///
+    /// # Panics
+    /// Panics if the name contains SQL injection or path traversal characters.
     pub fn new(name: impl Into<String>) -> Self {
-        Self(name.into())
+        Self::try_new(name).expect("UserName contains invalid characters")
+    }
+    
+    /// Creates a new UserName from a string, returning an error if validation fails.
+    pub fn try_new(name: impl Into<String>) -> Result<Self, UserNameValidationError> {
+        let name = name.into();
+        Self::validate(&name)?;
+        Ok(Self(name))
     }
 
     /// Returns the username as a string slice.

@@ -3,6 +3,7 @@
 //! This module provides a SystemTableStore<NamespaceId, Namespace> wrapper for the system.namespaces table.
 
 use crate::system_table_store::SystemTableStore;
+use kalamdb_commons::SystemTable;
 use kalamdb_commons::system::Namespace;
 use kalamdb_commons::NamespaceId;
 use kalamdb_store::StorageBackend;
@@ -19,12 +20,13 @@ pub type NamespacesStore = SystemTableStore<NamespaceId, Namespace>;
 /// # Returns
 /// A new SystemTableStore instance configured for the namespaces table
 pub fn new_namespaces_store(backend: Arc<dyn StorageBackend>) -> NamespacesStore {
-    SystemTableStore::new(backend, "system_namespaces")
+    SystemTableStore::new(backend, SystemTable::Namespaces)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::SystemTable;
     use kalamdb_commons::Role;
     use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;
@@ -48,7 +50,12 @@ mod tests {
     #[test]
     fn test_create_store() {
         let store = create_test_store();
-        assert_eq!(store.partition(), "system_namespaces");
+        assert_eq!(
+            store.partition(),
+            SystemTable::Namespaces
+                .column_family_name()
+                .expect("Namespaces is a table, not a view")
+        );
     }
 
     #[test]

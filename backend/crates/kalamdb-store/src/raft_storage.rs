@@ -205,6 +205,14 @@ impl RaftPartitionStore {
         self.make_key("snap:data")
     }
 
+    fn last_applied_key(&self) -> Vec<u8> {
+        self.make_key("meta:last_applied")
+    }
+
+    fn last_membership_key(&self) -> Vec<u8> {
+        self.make_key("meta:membership")
+    }
+
     // ------------------------------------------------------------------------
     // Log operations
     // ------------------------------------------------------------------------
@@ -418,6 +426,50 @@ impl RaftPartitionStore {
             Some(bytes) => Ok(Some(RaftLogId::decode(&bytes)?)),
             None => Ok(None),
         }
+    }
+
+    // ------------------------------------------------------------------------
+    // State Machine State operations
+    // ------------------------------------------------------------------------
+
+    /// Saves the last applied log ID.
+    ///
+    /// This is critical for crash recovery - OpenRaft uses this to determine
+    /// which log entries have already been applied to the state machine and
+    /// should not be replayed.
+    pub fn save_last_applied(&self, last_applied: Option<RaftLogId>) -> Result<()> {
+        let key = self.last_applied_key();
+        match last_applied {
+            Some(log_id) => {
+                let value = log_id.encode()?;
+                self.backend.put(&self.partition, &key, &value)
+            }
+            None => self.backend.delete(&self.partition, &key),
+        }
+    }
+
+    /// Reads the last applied log ID.
+    pub fn read_last_applied(&self) -> Result<Option<RaftLogId>> {
+        let key = self.last_applied_key();
+        match self.backend.get(&self.partition, &key)? {
+            Some(bytes) => Ok(Some(RaftLogId::decode(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Saves the last membership configuration.
+    ///
+    /// Membership changes are persisted separately from snapshots to ensure
+    /// consistent cluster configuration across restarts.
+    pub fn save_last_membership(&self, membership: &[u8]) -> Result<()> {
+        let key = self.last_membership_key();
+        self.backend.put(&self.partition, &key, membership)
+    }
+
+    /// Reads the last membership configuration.
+    pub fn read_last_membership(&self) -> Result<Option<Vec<u8>>> {
+        let key = self.last_membership_key();
+        self.backend.get(&self.partition, &key)
     }
 
     // ------------------------------------------------------------------------
@@ -729,7 +781,7 @@ mod tests {
             .unwrap();
 
         let store1 = RaftPartitionStore::new(backend.clone(), RaftGroupId::Meta);
-        let store2 = RaftPartitionStore::new(backend.clone(), RaftGroupId::Meta);
+        let store2 = RaftPartitionStore::new(backend.clone(), RaftGroupId::DataUserShard(0));
 
         // Add entries to store1
         store1
@@ -740,7 +792,7 @@ mod tests {
             }])
             .unwrap();
 
-        // Add entries to store2
+        // Add entries to store2 (different group)
         store2
             .append_logs(&[RaftLogEntry {
                 index: 1,

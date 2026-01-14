@@ -8,10 +8,11 @@
 //! NOTE: Tests that use the global MetadataCoordinator singleton are marked
 //! with `#[serial]` to avoid race conditions.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
-use kalamdb_commons::models::{NamespaceId, UserId};
+use kalamdb_commons::models::{NamespaceId, UserId, Row};
 use kalamdb_commons::TableId;
 use kalamdb_raft::state_machine::{
     encode, get_coordinator, init_coordinator, MetadataCoordinator, PendingBuffer, PendingCommand,
@@ -222,7 +223,7 @@ async fn test_user_data_buffering_when_meta_behind() {
     let cmd = UserDataCommand::Insert {
         table_id: TableId::new(NamespaceId::new("default"), "users".into()),
         user_id: UserId::new("user1"),
-        rows_data: vec![1, 2, 3],
+        rows: vec![Row { values: BTreeMap::new() }],
         required_meta_index: current_meta + 100, // Well above current, so must buffer
     };
     
@@ -241,7 +242,7 @@ async fn test_user_data_buffering_when_meta_behind() {
     let cmd2 = UserDataCommand::Insert {
         table_id: TableId::new(NamespaceId::new("default"), "users".into()),
         user_id: UserId::new("user2"),
-        rows_data: vec![4, 5, 6],
+        rows: vec![Row { values: BTreeMap::new() }],
         required_meta_index: 0, // Can apply immediately, also triggers drain
     };
     
@@ -265,7 +266,7 @@ async fn test_user_data_immediate_apply_when_meta_caught_up() {
     let cmd = UserDataCommand::Insert {
         table_id: TableId::new(NamespaceId::new("default"), "orders".into()),
         user_id: UserId::new("user2"),
-        rows_data: vec![4, 5, 6],
+        rows: vec![Row { values: BTreeMap::new() }],
         required_meta_index: 500, // Meta is at 1000, so this applies immediately
     };
     
@@ -296,7 +297,7 @@ async fn test_user_data_snapshot_includes_pending_commands() {
     let cmd = UserDataCommand::Insert {
         table_id: TableId::new(NamespaceId::new("ns"), "table".into()),
         user_id: UserId::new("user"),
-        rows_data: vec![1, 2, 3],
+        rows: vec![Row { values: BTreeMap::new() }],
         required_meta_index: current_meta + 1000, // Will be buffered
     };
     
@@ -333,7 +334,7 @@ async fn test_shared_data_buffering() {
     // Create a command with required_meta_index well above current
     let cmd = SharedDataCommand::Insert {
         table_id: TableId::new(NamespaceId::new("system"), "shared_table".into()),
-        rows_data: vec![7, 8, 9],
+        rows: vec![Row { values: BTreeMap::new() }],
         required_meta_index: current_meta + 500,
     };
     
@@ -350,7 +351,7 @@ async fn test_shared_data_buffering() {
     // Apply another command to trigger drain
     let cmd2 = SharedDataCommand::Insert {
         table_id: TableId::new(NamespaceId::new("system"), "other".into()),
-        rows_data: vec![10, 11, 12],
+        rows: vec![Row { values: BTreeMap::new() }],
         required_meta_index: 0,
     };
     let cmd2_bytes = encode(&cmd2).unwrap();
@@ -371,7 +372,7 @@ async fn test_shared_data_snapshot_roundtrip() {
     
     let cmd = SharedDataCommand::Insert {
         table_id: TableId::new(NamespaceId::new("system"), "config".into()),
-        rows_data: vec![1],
+        rows: vec![Row { values: BTreeMap::new() }],
         required_meta_index: current_meta + 2000, // Will be buffered
     };
     
@@ -425,7 +426,7 @@ async fn test_rejoin_ordering_scenario() {
         let cmd = UserDataCommand::Insert {
             table_id: TableId::new(NamespaceId::new("default"), "test".into()),
             user_id: UserId::new("user"),
-            rows_data: vec![*log_index as u8],
+            rows: vec![Row { values: BTreeMap::new() }],
             required_meta_index: *required_meta,
         };
         
@@ -443,7 +444,7 @@ async fn test_rejoin_ordering_scenario() {
     let trigger_cmd = UserDataCommand::Insert {
         table_id: TableId::new(NamespaceId::new("default"), "trigger".into()),
         user_id: UserId::new("trigger"),
-        rows_data: vec![0],
+        rows: vec![Row { values: BTreeMap::new() }],
         required_meta_index: 0, // Immediate
     };
     let trigger_bytes = encode(&trigger_cmd).unwrap();
@@ -459,7 +460,7 @@ async fn test_rejoin_ordering_scenario() {
     let trigger_cmd2 = UserDataCommand::Insert {
         table_id: TableId::new(NamespaceId::new("default"), "trigger2".into()),
         user_id: UserId::new("trigger2"),
-        rows_data: vec![0],
+        rows: vec![Row { values: BTreeMap::new() }],
         required_meta_index: 0,
     };
     let trigger2_bytes = encode(&trigger_cmd2).unwrap();

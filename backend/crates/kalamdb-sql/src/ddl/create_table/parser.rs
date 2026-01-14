@@ -19,9 +19,20 @@ static LEGACY_CREATE_PREFIX_RE: Lazy<Regex> =
 impl CreateTableStatement {
     /// Parse a SQL statement into a CreateTableStatement
     pub fn parse(sql: &str, default_namespace: &str) -> Result<Self, String> {
-        let (normalized_sql, legacy_table_type) = normalize_create_table_sql(sql);
+        let (mut normalized_sql, legacy_table_type) = normalize_create_table_sql(sql);
 
-        let dialect = sqlparser::dialect::GenericDialect {};
+        // Rewrite MySQL-style AUTO_INCREMENT into an explicit DEFAULT expression
+        // so the parser consistently assigns SNOWFLAKE_ID() as the default value.
+        // This makes AUTO_INCREMENT work even when the dialect treats it as
+        // dialect-specific tokens or splits it into separate words.
+        normalized_sql = normalized_sql.replace("AUTO_INCREMENT", "DEFAULT SNOWFLAKE_ID()");
+        normalized_sql = normalized_sql.replace("auto_increment", "DEFAULT SNOWFLAKE_ID()");
+        normalized_sql = normalized_sql.replace("AUTO INCREMENT", "DEFAULT SNOWFLAKE_ID()");
+        normalized_sql = normalized_sql.replace("auto increment", "DEFAULT SNOWFLAKE_ID()");
+
+        // Use PostgreSqlDialect because GenericDialect has issues with TEXT/STRING PRIMARY KEY
+        // in sqlparser 0.59.0. PostgreSqlDialect properly handles TEXT as a data type.
+        let dialect = sqlparser::dialect::PostgreSqlDialect {};
         let mut statements = sqlparser::parser::Parser::parse_sql(&dialect, &normalized_sql)
             .map_err(|e| e.to_string())?;
         if statements.len() != 1 {
@@ -270,9 +281,9 @@ impl CreateTableStatement {
                     let mut col_is_nullable = is_nullable; // Default from type mapping
 
                     for option in col.options {
-                        match option.option {
+                        match &option.option {
                             ColumnOption::Unique { is_primary, .. } => {
-                                if is_primary {
+                                if *is_primary {
                                     if primary_key_column.is_some() {
                                         return Err(
                                             "Multiple PRIMARY KEY definitions found".to_string()
@@ -286,7 +297,6 @@ impl CreateTableStatement {
                                 col_is_nullable = false;
                             }
                             ColumnOption::Null => {
-                                col_is_nullable = true;
                             }
                             ColumnOption::Default(expr) => {
                                 let default_spec = expr_to_column_default(&expr);
@@ -299,15 +309,7 @@ impl CreateTableStatement {
                                     .map(|t| t.to_string())
                                     .collect::<Vec<_>>()
                                     .join(" ");
-                                println!(
-                                    "DEBUG: DialectSpecific tokens for column {}: {}",
-                                    col_name, s
-                                );
                                 if s.to_uppercase().contains("AUTO_INCREMENT") {
-                                    println!(
-                                        "DEBUG: Detected AUTO_INCREMENT for column {}",
-                                        col_name
-                                    );
                                     // Set default to SNOWFLAKE_ID()
                                     column_defaults.insert(
                                         col_name.clone(),
@@ -315,7 +317,9 @@ impl CreateTableStatement {
                                     );
                                 }
                             }
-                            _ => {} // Ignore other options for now
+                            _ => {
+                                println!("  - OTHER");
+                            }
                         }
                     }
 
@@ -548,6 +552,35 @@ CREATE TABLE sales.activity (
 
         let err = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap_err();
         assert!(err.contains("STREAM tables must specify"));
+    }
+
+    #[test]
+    fn test_text_primary_key_shared() {
+        // Test STRING PRIMARY KEY
+        let sql_string = r#"
+CREATE TABLE sales.system_config (
+    key STRING PRIMARY KEY,
+    value STRING
+) WITH (
+    TYPE = 'SHARED'
+)
+"#;
+        let stmt = CreateTableStatement::parse(sql_string, DEFAULT_NS).unwrap();
+        assert_eq!(stmt.primary_key_column.as_deref(), Some("key"));
+        assert_eq!(stmt.table_type, TableType::Shared);
+        
+        // Test TEXT PRIMARY KEY (common in tests and docs)
+        let sql_text = r#"
+CREATE TABLE sales.config2 (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+) WITH (
+    TYPE = 'SHARED'
+)
+"#;
+        let stmt = CreateTableStatement::parse(sql_text, DEFAULT_NS).unwrap();
+        assert_eq!(stmt.primary_key_column.as_deref(), Some("key"));
+        assert_eq!(stmt.table_type, TableType::Shared);
     }
 
     #[test]

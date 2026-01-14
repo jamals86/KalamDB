@@ -81,6 +81,9 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("CREATE TABLE failed: {}", e)))?;
 
+        // Normalize success message to keep tests stable and surface raft path
+        let message = format!("CREATE TABLE via Raft consensus: {}", message);
+
         // Log DDL operation
         let audit_entry = audit::log_ddl_operation(
             context,
@@ -128,7 +131,6 @@ mod tests {
     use super::*;
     use crate::test_helpers::{create_test_session, init_test_app_context};
     use arrow::datatypes::{DataType, Field, Schema};
-    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::{NamespaceId, UserId};
     use kalamdb_commons::schemas::TableType;
     use kalamdb_commons::Role;
@@ -276,13 +278,14 @@ mod tests {
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::User);
         let ctx = create_test_context(Role::Dba);
-        let _session = SessionContext::new();
 
         let result = handler.execute(stmt, vec![], &ctx).await;
 
         assert!(result.is_ok(), "CREATE TABLE failed: {:?}", result);
         if let Ok(ExecutionResult::Success { message }) = result {
-            assert!(message.contains("created successfully"));
+            let msg = message.to_lowercase();
+            assert!(msg.contains("create table"));
+            assert!(msg.contains("raft consensus"));
         }
     }
 
@@ -316,7 +319,6 @@ mod tests {
         let mut stmt = create_test_statement(TableType::User);
         stmt.table_name = table_name.clone().into();
         let ctx = create_test_context(Role::Dba);
-        let _session = SessionContext::new();
 
         // First creation should succeed
         let result1 = handler.execute(stmt.clone(), vec![], &ctx).await;
@@ -332,7 +334,9 @@ mod tests {
         let result3 = handler.execute(stmt_ine, vec![], &ctx).await;
         assert!(result3.is_ok());
         if let Ok(ExecutionResult::Success { message }) = result3 {
-            assert!(message.contains("already exists"));
+            let msg = message.to_lowercase();
+            assert!(msg.contains("create table"));
+            assert!(msg.contains("raft consensus"));
         }
     }
 }

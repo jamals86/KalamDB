@@ -244,12 +244,13 @@ pub async fn cleanup_parquet_files_internal(
 /// # Returns
 /// Ok(()) on success
 pub async fn cleanup_metadata_internal(
+    app_ctx: &AppContext,
     schema_registry: &Arc<SchemaRegistry>,
     table_id: &TableId,
 ) -> Result<(), KalamDbError> {
     log::info!("[CleanupHelper] Cleaning up metadata for {:?}", table_id);
 
-    if !schema_registry.table_exists(table_id)? {
+    if !schema_registry.table_exists(app_ctx, table_id)? {
         log::info!(
             "[CleanupHelper] Metadata already removed for {:?}, skipping",
             table_id
@@ -259,7 +260,7 @@ pub async fn cleanup_metadata_internal(
 
     // Delete table definition from SchemaRegistry
     // This removes from both cache and persistent store (delete-through pattern)
-    schema_registry.delete_table_definition(table_id)?;
+    schema_registry.delete_table_definition(app_ctx, table_id)?;
 
     log::info!("[CleanupHelper] Metadata cleanup complete");
     Ok(())
@@ -295,7 +296,12 @@ impl DropTableHandler {
 
         let relative_template = if cached.storage_path_template.is_empty() {
             use crate::schema_registry::PathResolver;
-            PathResolver::resolve_storage_path_template(table_id, table_type, &storage_id)?
+            PathResolver::resolve_storage_path_template(
+                self.app_context.as_ref(),
+                table_id,
+                table_type,
+                &storage_id,
+            )?
         } else {
             cached.storage_path_template.clone()
         };
@@ -360,7 +366,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
 
         // RBAC: authorize based on actual table type if exists
         let registry = self.app_context.schema_registry();
-        let actual_type = match registry.get_table_definition(&table_id)? {
+        let actual_type = match registry.get_table_if_exists(self.app_context.as_ref(), &table_id)? {
             Some(def) => def.table_type,
             None => TableType::from(statement.table_type),
         };
@@ -498,7 +504,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         unregister_table_provider(&self.app_context, &table_id)?;
 
         // Mark table as deleted in SchemaRegistry (soft delete)
-        registry.delete_table_definition(&table_id)?;
+        registry.delete_table_definition(self.app_context.as_ref(), &table_id)?;
 
         // Delegate to unified applier (handles standalone vs cluster internally)
         self.app_context

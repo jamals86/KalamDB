@@ -91,6 +91,16 @@ pub enum SqlStatementKind {
     FlushAllTables(FlushAllTablesStatement),
     /// SHOW MANIFEST
     ShowManifest(ShowManifestStatement),
+    /// CLUSTER FLUSH - Force snapshots
+    ClusterFlush,
+    /// CLUSTER CLEAR - Clear old snapshots
+    ClusterClear,
+    /// CLUSTER LIST - List cluster nodes
+    ClusterList,
+    /// CLUSTER JOIN - Join a node to the cluster (not implemented)
+    ClusterJoin(String),
+    /// CLUSTER LEAVE - Remove this node from the cluster (not implemented)
+    ClusterLeave,
 
     // ===== Job Management =====
     /// KILL JOB <job_id>
@@ -250,7 +260,14 @@ impl SqlStatement {
             | SqlStatementKind::DropUser(_)
             | SqlStatementKind::BeginTransaction
             | SqlStatementKind::CommitTransaction
-            | SqlStatementKind::RollbackTransaction => true,
+            | SqlStatementKind::RollbackTransaction
+            | SqlStatementKind::ClusterFlush
+            | SqlStatementKind::ClusterClear
+            | SqlStatementKind::ClusterJoin(_)
+            | SqlStatementKind::ClusterLeave => true,
+
+            // Read-only cluster inspection can run on any node
+            SqlStatementKind::ClusterList => false,
         }
     }
 
@@ -276,6 +293,11 @@ impl SqlStatement {
             SqlStatementKind::FlushTable(_) => "FLUSH TABLE",
             SqlStatementKind::FlushAllTables(_) => "FLUSH ALL TABLES",
             SqlStatementKind::ShowManifest(_) => "SHOW MANIFEST",
+            SqlStatementKind::ClusterFlush => "CLUSTER FLUSH",
+            SqlStatementKind::ClusterClear => "CLUSTER CLEAR",
+            SqlStatementKind::ClusterList => "CLUSTER LIST",
+            SqlStatementKind::ClusterJoin(_) => "CLUSTER JOIN",
+            SqlStatementKind::ClusterLeave => "CLUSTER LEAVE",
             SqlStatementKind::KillJob(_) => "KILL JOB",
             SqlStatementKind::KillLiveQuery(_) => "KILL LIVE QUERY",
             SqlStatementKind::BeginTransaction => "BEGIN",

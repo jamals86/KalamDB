@@ -10,8 +10,9 @@ enable_http2 = true
 api_version = "v1"
 
 [storage]
-rocksdb_path = "/data/rocksdb"
-default_storage_path = "/data/storage"
+# Base data directory inside the container
+# Subdirectories automatically created: /data/rocksdb, /data/storage, /data/snapshots
+data_path = "/data"
 shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
@@ -109,7 +110,7 @@ max_parameter_size_bytes = 524288
 # Uses flat structure matching ClusterSettings in kalamdb-commons
 # Node with node_id=1 automatically bootstraps the cluster
 [cluster]
-cluster_id = "kalamdb-docker-cluster"
+cluster_id = "docker-cluster"
 node_id = 1
 rpc_addr = "kalamdb-node1:9090"
 api_addr = "http://kalamdb-node1:8080"

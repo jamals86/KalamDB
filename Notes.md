@@ -440,6 +440,17 @@ Parquet Querying Limitation: After flush, data is removed from RocksDB but queri
 │  Batched (100/batch)    │   2000  │    0.04s │   51687.4/s  │
 │  Parallel (10 threads)  │   1000  │    0.09s │   11409.2/s  │
 └────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────┐
+│                    BENCHMARK RESULTS                       │
+├────────────────────────────────────────────────────────────┤
+│  Test Type              │  Rows   │  Time    │  Rate       │
+├────────────────────────────────────────────────────────────┤
+│  Single-row inserts     │    200  │    0.30s │     675.8/s  │
+│  Batched (100/batch)    │   2000  │    0.04s │   45610.3/s  │
+│  Parallel (10 threads)  │      1  │    0.47s │       2.1/s  │
+└────────────────────────────────────────────────────────────┘
+
 14) [MEDIUM] In the cli add a command to kill a live query by its live id
 15) [LOW] for better tracking the integration tests should the names print also the folder path as well with the test name
 17) [MEDIUM] why we have 2 implementations for flushing: user_table_flush.rs and shared_table_flush.rs can we merge them into one? i believe they share a lot of code, we can reduce maintenance burden by having only one implementation, or can have a parent class with common code and have 2 child classes for each type of flush
@@ -874,3 +885,65 @@ UI Changes:
 11) [LOW] currently when stoping subscription the live checkbox is turned off automatically, it should stay on
 12) [LOW] The table cells should be selectable when clicking on them, and on each cell you can right mouse click -> view data if it has more data there
 13) [LOW] when subscribing the first column which is the type should indicate its not an actual column which the user can query its only indication what event type is this, also add to it's left side a timestamp column to indicate when this event came, and whenever a new change is added the newly added row should splash
+
+
+
+
+
+TODOS:
+11) backend\crates\kalamdb-raft\src\applier\system_applier.rs need to be type-safe, keep checking to find other str's which can be type-safe using the same types we already have, also struct SystemSnapshot can store the type-safe StorageId/TableId
+
+23) WHEN BUILDING ON WINDOWS OR MAYBE LINUX ADD TO THE BINARY properties details like verison and other things
+33) Add test where we flush a table in a cluster and verify the data
+34) isnt struct MetaSnapshot - a waste of resources? or memory? since why having them here as a hashmap in memory?
+35) In backend tests add testserver which runs a cluster of 3 nodes and run tests against it
+
+7) Make sure we also replicate the manifest files as well, so we have them in all replicates
+8) Make sure we first replicate the system changes and then the data after that when a node joins the cluster
+9) instead of using u64 use NodeId, like in target: u64,
+
+10) change job_id: &str to JobId, namespace_id: &str to NamespaceId, table_id: &str to TableId, storage_id: &str to StorageId, table_type: &str to TableType, user_id: &str to UserId everywhere in kalamdb-raft crate, node_id: u64 to NodeId
+
+11) make sure we are not parsing the sql statement multiple time to know where to forward it to, even when forwarding we need to create another grpc endpoint which takes the parsed one already when forwarded so we dont parse it multiple times
+
+17) Moniotor node health using our own health endpoint: https://deepwiki.com/databendlabs/openraft/6.4-metrics-and-monitoring which should return the nodes as well, only if he has a valid tokens or from localhost or same machine
+
+18) Make sure kalamdb-raft crate doesnt use rocksdb at all, only rely on kalamdb-store crate for storage
+
+19) remove all deprecated meta raft groups and also use the GroupId instead of using a strings everywhere also created_by: Option<String>, use UserId or maybe UserName
+
+39) I still see places where user_id and user_name is treated as str instead of UserId or UserName objects
+43) For shared tables add indexes which uses the same secondary indexes we already have and also passing them to datafusion as well
+44) Change all tests instead of using VARCHAR use TEXT
+45) fix the paths its better to have them all rewritten and used using this filehelper code we created: RocksDB initialized at C:\Jamal\git\KalamDB\backend\./data\rocksdb
+45) Add to stats base_dir/rocksdb dir/namespaces in memory/tables in memory/cluster info (snapshots/changes/...) everything we can display for the cluster
+46) prevent subscribing to system/shared tables with a proper error message, current message:
+[2026-01-13 14:55:01.206] [ERROR] - actix-rt|system:0|arbiter:12 - kalamdb_api::handlers::events::subscription:182 - Failed to register subscription sub-80ba1de3481d280d: Not found: Table not found: system:cluster (sql: 'SELECT * FROM system.cluster LIMIT 100')
+47) Improve the performance of the server startup/bootstrap time currently its about 500ms
+48) There is many backend/tests/misc which are ignored i prefer adding a module which starts all of them, similar to the scnearios: backend\tests\testserver\scenarios\mod.rs
+- misc                        - and split into sub-folder
+- backend\tests\testserver    - 
+49) Add new commands:
+- CLUSTER FLUSH   - Which force snapshotting the current logs and output a message where the snapshot been stored in, and show any other informations we have
+- CLUSTER CLEAR   - Clear the old snapshots
+- CLUSTER LIST    - It lists all the nodes in the cluster, with each node under it its groups from the select * from system.cluster_Groups in a nice display for debugging and over view of the cluster health with colors
+- CLUSTER JOIN    - Prepare the command but return a warning that its not implemented yet
+- CLUSTER LEAVE   - Prepare the command but return a warning that its not implemented yet
+
+50) things like this should be less parameters since appcontext have them already, find other places where we pass things like this and only keep the app_ctx
+    let flush_job = UserTableFlushJob::new(
+        server.app_context.clone(),
+        table_id_arc,
+        user_table_store,
+        arrow_schema.clone(),
+        unified_cache,
+        server.app_context.manifest_service(),
+    );
+
+51) no need to wroite total rows here:
+[21:14:33.419] ✓ SUBSCRIBED [sub_1768331673410754000] 0 total rows, batch 1 (ready), 7 columns
+[21:14:33.419] BATCH 1 [sub_1768331673410754000] 2 rows (complete)
+
+
+52) prepare the code to have CLUSTER JOIN/CLUSTER LEAVE
+53) CLUSTER LIST (read-only, all users) - change this to only dba and admins

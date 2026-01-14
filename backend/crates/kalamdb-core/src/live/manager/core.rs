@@ -86,6 +86,12 @@ impl LiveQueryManager {
         &self.node_id
     }
 
+    /// Set the AppContext for Raft command execution.
+    /// Called after AppContext is fully constructed.
+    pub fn set_app_context(&self, app_ctx: Arc<crate::app_context::AppContext>) {
+        self.subscription_service.set_app_context(app_ctx);
+    }
+
     /// Provide shared SqlExecutor so initial data fetches reuse common execution path
     pub fn set_sql_executor(&self, executor: Arc<SqlExecutor>) {
         self.initial_data_fetcher.set_sql_executor(executor);
@@ -147,23 +153,35 @@ impl LiveQueryManager {
             kalamdb_commons::models::TableName::from(table),
         );
 
-        // Look up table definition
+        // Look up table definition from in-memory cache.
+        // Live queries require the table to be registered in the schema registry.
         let table_def = self
             .schema_registry
-            .get_table_definition(&table_id)?
+            .get(&table_id)
+            .map(|cached| Arc::clone(&cached.table))
             .ok_or_else(|| KalamDbError::NotFound(format!("Table not found: {}", table_id)))?;
 
         // Permission check
+        // - USER tables: Accessible to any authenticated user (RLS filters data to their rows)
+        // - SYSTEM tables: Accessible only to DBA/System roles
+        // - SHARED tables: Don't support subscriptions (use direct queries)
         let is_admin = user_id.is_admin();
         match table_def.table_type {
-            kalamdb_commons::TableType::User if !is_admin && namespace != user_id.as_str() => {
-                return Err(KalamDbError::PermissionDenied("Insufficient privileges".to_string()));
+            kalamdb_commons::TableType::User => {
+                // USER tables are accessible to any authenticated user
+                // Row-level security filters data to only their rows during query execution
             }
             kalamdb_commons::TableType::System if !is_admin => {
-                return Err(KalamDbError::PermissionDenied("Insufficient privileges for system table".to_string()));
+                return Err(KalamDbError::PermissionDenied(
+                    format!("Cannot subscribe to system table '{}': insufficient privileges. Only DBA and system roles can subscribe to system tables.",
+                    table_id)
+                ));
             }
             kalamdb_commons::TableType::Shared => {
-                return Err(KalamDbError::InvalidOperation("Shared tables don't support subscriptions".to_string()));
+                return Err(KalamDbError::InvalidOperation(
+                    format!("Cannot subscribe to shared table '{}': shared tables do not support live subscriptions. Use direct SELECT queries instead.",
+                    table_id)
+                ));
             }
             _ => {}
         }
@@ -285,7 +303,8 @@ impl LiveQueryManager {
 
         let table_def = self
             .schema_registry
-            .get_table_definition(&sub_state.table_id)?
+            .get(&sub_state.table_id)
+            .map(|cached| Arc::clone(&cached.table))
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table {} not found for batch fetch",

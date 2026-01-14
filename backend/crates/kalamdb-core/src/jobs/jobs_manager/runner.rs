@@ -7,6 +7,7 @@ use crate::jobs::leader_guard::LeaderOnlyJobGuard;
 use kalamdb_commons::system::{Job, JobFilter, JobSortField, SortOrder};
 use kalamdb_commons::JobStatus;
 use kalamdb_raft::GroupId;
+use log::Level;
 use tokio::time::{sleep, Duration, Instant};
 
 impl JobsManager {
@@ -191,7 +192,7 @@ impl JobsManager {
 
         self.update_job_async(job.clone()).await?;
 
-        self.log_job_event(&job_id, "info", "Job started");
+        self.log_job_event(&job_id, &Level::Debug, "Job started");
 
         // Execute job using registry (handles deserialization and validation)
         let app_ctx = self.get_attached_app_context();
@@ -217,7 +218,7 @@ impl JobsManager {
 
                 self.log_job_event(
                     &job_id,
-                    "error",
+                    &Level::Error,
                     &format!("Job failed with executor error: {}", e),
                 );
 
@@ -250,7 +251,7 @@ impl JobsManager {
 
                 self.log_job_event(
                     &job_id,
-                    "info",
+                    &Level::Debug,
                     &format!("Job completed: {}", message.unwrap_or_default()),
                 );
             }
@@ -271,7 +272,7 @@ impl JobsManager {
 
                     self.log_job_event(
                         &job_id,
-                        "warn",
+                        &Level::Warn,
                         &format!(
                             "Job retry {}/{}, waiting {}ms: {}",
                             job.retry_count, job.max_retries, backoff_ms, message
@@ -292,7 +293,7 @@ impl JobsManager {
                     self.update_job_async(job.clone()).await
                         .into_kalamdb_error("Failed to fail job")?;
 
-                    self.log_job_event(&job_id, "error", "Job failed: max retries exceeded");
+                    self.log_job_event(&job_id, &Level::Error, "Job failed: max retries exceeded");
                 }
             }
             JobDecision::Failed {
@@ -310,7 +311,7 @@ impl JobsManager {
                 self.update_job_async(job.clone()).await
                     .into_kalamdb_error("Failed to fail job")?;
 
-                self.log_job_event(&job_id, "error", &format!("Job failed: {}", message));
+                self.log_job_event(&job_id, &Level::Error, &format!("Job failed: {}", message));
             }
         }
 

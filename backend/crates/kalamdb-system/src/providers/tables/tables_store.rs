@@ -11,6 +11,7 @@
 //! - Single storage partition for simplicity
 
 use crate::system_table_store::SystemTableStore;
+use kalamdb_commons::SystemTable;
 use kalamdb_commons::models::{NamespaceId, TableId, TableVersionId};
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_store::entity_store::EntityStore;
@@ -30,7 +31,7 @@ pub type TablesStore = SystemTableStore<TableVersionId, TableDefinition>;
 /// # Returns
 /// A new SystemTableStore instance configured for the tables table
 pub fn new_tables_store(backend: Arc<dyn StorageBackend>) -> TablesStore {
-    SystemTableStore::new(backend, "system_tables")
+    SystemTableStore::new(backend, SystemTable::Tables)
 }
 
 /// Helper methods for TablesStore specific operations
@@ -275,7 +276,12 @@ mod tests {
     #[test]
     fn test_create_store() {
         let store = create_test_store();
-        assert_eq!(store.partition(), "system_tables");
+        assert_eq!(
+            store.partition(),
+            SystemTable::Tables
+                .column_family_name()
+                .expect("Tables is a table, not a view")
+        );
     }
 
     #[test]

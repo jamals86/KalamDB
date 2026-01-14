@@ -28,11 +28,13 @@ use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
+use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::{
     system::{Job, JobFilter, JobSortField, SortOrder},
     JobId, JobStatus,
 };
+use kalamdb_commons::{StorageKey, SystemTable};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
@@ -47,7 +49,6 @@ pub type JobsStore = IndexedEntityStore<JobId, Job>;
 /// using RocksDB's atomic WriteBatch - no manual index management needed.
 pub struct JobsTableProvider {
     store: JobsStore,
-    schema: SchemaRef,
 }
 
 impl std::fmt::Debug for JobsTableProvider {
@@ -65,24 +66,29 @@ impl JobsTableProvider {
     /// # Returns
     /// A new JobsTableProvider instance with indexes configured
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
-        let store = IndexedEntityStore::new(backend, "system_jobs", create_jobs_indexes());
-        Self {
-            store,
-            schema: JobsTableSchema::schema(),
-        }
+        let store = IndexedEntityStore::new(
+            backend,
+            SystemTable::Jobs
+                .column_family_name()
+                .expect("Jobs is a table, not a view"),
+            create_jobs_indexes(),
+        );
+        Self { store }
     }
 
     /// Create a new job entry.
     ///
     /// Indexes are automatically maintained via `IndexedEntityStore`.
-    pub fn create_job(&self, job: Job) -> Result<(), SystemError> {
+    /// TODO: Return a string message
+    pub fn create_job(&self, job: Job) -> Result<String, SystemError> {
         self.store
             .insert(&job.job_id, &job)
-            .into_system_error("insert job error")
+            .into_system_error("insert job error")?;
+        Ok(format!("Job {} created", job.job_id))
     }
 
     /// Alias for create_job (for backward compatibility)
-    pub fn insert_job(&self, job: Job) -> Result<(), SystemError> {
+    pub fn insert_job(&self, job: Job) -> Result<String, SystemError> {
         self.create_job(job)
     }
 
@@ -544,7 +550,7 @@ impl JobsTableProvider {
         }
 
         // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(self.schema.clone());
+        let mut builder = RecordBatchBuilder::new(JobsTableSchema::schema());
         builder
             .add_string_column_owned(job_ids)
             .add_string_column_owned(job_types)
@@ -653,11 +659,29 @@ impl TableProvider for JobsTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        JobsTableSchema::schema()
     }
 
     fn table_type(&self) -> TableType {
         TableType::Base
+    }
+
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        // Only push down exact equality filters we can leverage for indexes.
+        Ok(filters
+            .iter()
+            .map(|filter| {
+                if let Some((col, _val)) = kalamdb_store::extract_string_equality(filter) {
+                    if matches!(col, "status" | "job_id" | "idempotency_key") {
+                        return TableProviderFilterPushDown::Inexact;
+                    }
+                }
+                TableProviderFilterPushDown::Unsupported
+            })
+            .collect())
     }
 
     async fn scan(
@@ -697,11 +721,35 @@ impl TableProvider for JobsTableProvider {
             }
         }
 
-        let schema = self.schema.clone();
-        let jobs = self
-            .store
-            .scan_all(limit, prefix.as_ref(), start_key.as_ref())
-            .map_err(|e| DataFusionError::Execution(format!("Failed to scan jobs: {}", e)))?;
+        let schema = JobsTableSchema::schema();
+
+        // Prefer secondary index scans when possible (auto-picks from store.indexes()).
+        // Falls back to main-partition scan with (job_id) prefix/start_key.
+        let jobs: Vec<(Vec<u8>, Job)> = if let Some((index_idx, index_prefix)) =
+            self.store.find_best_index_for_filters(filters)
+        {
+            log::trace!(
+                "[system.jobs] Using secondary index {} for filters: {:?}",
+                index_idx,
+                filters
+            );
+            self.store
+                .scan_by_index(index_idx, Some(&index_prefix), limit)
+                .map_err(|e| {
+                    DataFusionError::Execution(format!("Failed to scan jobs by index: {}", e))
+                })?
+                .into_iter()
+                .map(|(id, job)| (id.storage_key(), job))
+                .collect()
+        } else {
+            log::debug!(
+                "[system.jobs] Full table scan (no index match) for filters: {:?}",
+                filters
+            );
+            self.store
+                .scan_all(limit, prefix.as_ref(), start_key.as_ref())
+                .map_err(|e| DataFusionError::Execution(format!("Failed to scan jobs: {}", e)))?
+        };
 
         let batch = self.create_batch(jobs).map_err(|e| {
             DataFusionError::Execution(format!("Failed to build jobs batch: {}", e))
@@ -710,7 +758,9 @@ impl TableProvider for JobsTableProvider {
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        table.scan(_state, projection, &[], limit).await
+
+        // Always pass through projection and filters to MemTable - it will handle them
+        table.scan(_state, projection, filters, limit).await
     }
 }
 
@@ -720,7 +770,7 @@ impl SystemTableProviderExt for JobsTableProvider {
     }
 
     fn schema_ref(&self) -> SchemaRef {
-        self.schema.clone()
+        JobsTableSchema::schema()
     }
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {

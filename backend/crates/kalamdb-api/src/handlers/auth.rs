@@ -7,8 +7,8 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{Duration, Utc};
 use kalamdb_auth::{
     cookie::{extract_auth_token, CookieConfig},
-    create_auth_cookie, create_logout_cookie, generate_jwt_token,
-    jwt_auth::{validate_jwt_token, JwtClaims, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER},
+    create_auth_cookie, create_logout_cookie,
+    jwt_auth::{validate_jwt_token, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER, create_and_sign_token},
     password::verify_password,
     UserRepository,
 };
@@ -202,15 +202,14 @@ pub async fn login_handler(
     }
 
     // Generate JWT token
-    let claims = JwtClaims::new(
-        user.id.as_ref(),
-        user.username.as_str(),
-        user.role.as_str(),
+    let (token, _claims) = match create_and_sign_token(
+        &user.id,
+        &user.username,
+        &user.role,
         user.email.as_deref(),
         Some(config.jwt_expiry_hours),
-    );
-
-    let token = match generate_jwt_token(&claims, &config.jwt_secret) {
+        &config.jwt_secret
+    ) {
         Ok(t) => t,
         Err(e) => {
             log::error!("Error generating JWT: {}", e);
@@ -282,7 +281,7 @@ pub async fn refresh_handler(
     };
 
     // Verify user still exists and is active by username (we don't have find_by_id)
-    let username = claims.username.as_deref().unwrap_or("");
+    let username = claims.username.as_ref().map(|u| u.as_str()).unwrap_or("");
     let user = match user_repo.get_user_by_username(username).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {
@@ -291,15 +290,14 @@ pub async fn refresh_handler(
     };
 
     // Generate new token
-    let new_claims = JwtClaims::new(
-        user.id.as_ref(),
-        user.username.as_str(),
-        user.role.as_str(),
+    let (new_token, _new_claims) = match create_and_sign_token(
+        &user.id,
+        &user.username,
+        &user.role,
         user.email.as_deref(),
         Some(config.jwt_expiry_hours),
-    );
-
-    let new_token = match generate_jwt_token(&new_claims, &config.jwt_secret) {
+        &config.jwt_secret
+    ) {
         Ok(t) => t,
         Err(e) => {
             log::error!("Error generating JWT: {}", e);
@@ -386,7 +384,7 @@ pub async fn me_handler(
     };
 
     // Get current user info
-    let username = claims.username.as_deref().unwrap_or("");
+    let username = claims.username.as_ref().map(|u| u.as_str()).unwrap_or("");
     let user = match user_repo.get_user_by_username(username).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {

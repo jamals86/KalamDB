@@ -177,19 +177,23 @@ impl DdlExecutor {
             TableOptions::User(opts) => {
                 let storage_id = opts.storage_id.clone();
                 let template = PathResolver::resolve_storage_path_template(
+                    self.app_context.as_ref(),
                     table_id,
                     table_type,
                     &storage_id,
-                ).map_err(|e| ApplierError::Execution(format!("Failed to resolve path: {}", e)))?;
+                )
+                .map_err(|e| ApplierError::Execution(format!("Failed to resolve path: {}", e)))?;
                 (Some(storage_id), template)
             }
             TableOptions::Shared(opts) => {
                 let storage_id = opts.storage_id.clone();
                 let template = PathResolver::resolve_storage_path_template(
+                    self.app_context.as_ref(),
                     table_id,
                     table_type,
                     &storage_id,
-                ).map_err(|e| ApplierError::Execution(format!("Failed to resolve path: {}", e)))?;
+                )
+                .map_err(|e| ApplierError::Execution(format!("Failed to resolve path: {}", e)))?;
                 (Some(storage_id), template)
             }
             TableOptions::Stream(_) => (None, String::new()),
@@ -215,7 +219,7 @@ impl DdlExecutor {
     ) -> Result<(), ApplierError> {
         let arrow_schema = self.app_context
             .schema_registry()
-            .get_arrow_schema(table_id)
+            .get_arrow_schema(self.app_context.as_ref(), table_id)
             .map_err(|e| ApplierError::Execution(format!("Failed to get Arrow schema: {}", e)))?;
         
         match table_type {

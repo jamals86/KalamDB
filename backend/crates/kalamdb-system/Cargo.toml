@@ -47,6 +47,9 @@ log = { workspace = true }
 # UUID generation
 uuid = { workspace = true }
 
+# OnceCell for lazy caches
+once_cell = { workspace = true }
+
 [lib]
 name = "kalamdb_system"
 path = "src/lib.rs"

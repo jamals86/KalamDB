@@ -26,17 +26,27 @@ use sqlparser::parser::Parser;
 ///
 /// Delegates to DataFusion for UPDATE execution with parameter binding support.
 /// Returns rows_affected count (only counts rows with actual changes, not rows matched).
-pub struct UpdateHandler;
+pub struct UpdateHandler {
+    app_context: std::sync::Arc<AppContext>,
+}
 
 impl UpdateHandler {
-    pub fn new() -> Self {
-        Self
+    pub fn new(app_context: std::sync::Arc<AppContext>) -> Self {
+        Self { app_context }
     }
 }
 
+#[cfg(test)]
 impl Default for UpdateHandler {
     fn default() -> Self {
-        Self::new()
+        Self::new(AppContext::get())
+    }
+}
+
+#[cfg(not(test))]
+impl Default for UpdateHandler {
+    fn default() -> Self {
+        panic!("UpdateHandler::default() is for tests only; use UpdateHandler::new(Arc<AppContext>)")
     }
 }
 
@@ -49,8 +59,7 @@ impl StatementHandler for UpdateHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         // T063: Validate parameters before write using config from AppContext
-        let app_context = AppContext::get();
-        let limits = ParameterLimits::from_config(&app_context.config().execution);
+        let limits = ParameterLimits::from_config(&self.app_context.config().execution);
         validate_parameters(&params, &limits)?;
 
         if !matches!(statement.kind(), SqlStatementKind::Update(_)) {
@@ -65,11 +74,11 @@ impl StatementHandler for UpdateHandler {
             self.parse_update_with_sqlparser(sql, &default_namespace)?;
 
         // Get table definition early to access schema for type coercion
-        let schema_registry = app_context.schema_registry();
+        let schema_registry = self.app_context.schema_registry();
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
         let def = schema_registry
-            .get_table_definition(&table_id)?
+            .get_table_if_exists(self.app_context.as_ref(), &table_id)?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table {}.{} not found",
@@ -123,6 +132,15 @@ impl StatementHandler for UpdateHandler {
                 {
                     // T064: Get actual PK column name from provider instead of assuming "id"
                     let pk_column = provider.primary_key_field_name();
+
+                    // PK updates are not supported: the UPDATE fast-path targets a single row via PK filter.
+                    // Allowing the PK column to change would require row relocation and strict uniqueness checks.
+                    if updates.get(pk_column).is_some() {
+                        return Err(KalamDbError::InvalidOperation(format!(
+                            "UPDATE cannot modify primary key column '{}'",
+                            pk_column
+                        )));
+                    }
 
                     // Check if WHERE clause targets PK for fast path
                     let id_value_opt =
@@ -188,6 +206,14 @@ impl StatementHandler for UpdateHandler {
                     .downcast_ref::<crate::providers::SharedTableProvider>()
                 {
                     let pk_column = provider.primary_key_field_name();
+
+                    if updates.get(pk_column).is_some() {
+                        return Err(KalamDbError::InvalidOperation(format!(
+                            "UPDATE cannot modify primary key column '{}'",
+                            pk_column
+                        )));
+                    }
+
                     if let Some(id_value) =
                         self.extract_row_id_for_column(&where_pair, pk_column, &params)?
                     {
@@ -329,18 +355,7 @@ impl UpdateHandler {
                     assigns.push((col, assign.value.to_string()));
                 }
 
-                let where_pair = selection.and_then(|expr| match expr {
-                    SqlExpr::BinaryOp { left, op: BinaryOperator::Eq, right } => {
-                        match *left {
-                            SqlExpr::Identifier(ident) => Some((ident.value, right.to_string())),
-                            SqlExpr::CompoundIdentifier(idents) => idents
-                                .last()
-                                .map(|Ident { value, .. }| (value.clone(), right.to_string())),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                });
+                let where_pair = selection.and_then(|expr| Self::extract_pk_filter_from_expr(&expr));
 
                 (ns, tbl, assigns, where_pair)
             }
@@ -352,6 +367,32 @@ impl UpdateHandler {
         };
 
         Ok((ns, tbl, assigns, where_pair))
+    }
+
+    /// Extract primary key filter from a WHERE expression.
+    /// Handles compound expressions like "pk_col = value AND other_col = value".
+    fn extract_pk_filter_from_expr(expr: &SqlExpr) -> Option<(String, String)> {
+        match expr {
+            // Simple equality: id = value
+            SqlExpr::BinaryOp { left, op: BinaryOperator::Eq, right } => {
+                match left.as_ref() {
+                    SqlExpr::Identifier(ident) => Some((ident.value.clone(), right.to_string())),
+                    SqlExpr::CompoundIdentifier(idents) => idents
+                        .last()
+                        .map(|Ident { value, .. }| (value.clone(), right.to_string())),
+                    _ => None,
+                }
+            }
+            // Compound condition with AND: try to find PK filter in either side
+            SqlExpr::BinaryOp { left, op: BinaryOperator::And, right } => {
+                // Try left side first, then right side
+                Self::extract_pk_filter_from_expr(left)
+                    .or_else(|| Self::extract_pk_filter_from_expr(right))
+            }
+            // Parenthesized expression: unwrap and recurse
+            SqlExpr::Nested(inner) => Self::extract_pk_filter_from_expr(inner),
+            _ => None,
+        }
     }
 
     fn extract_row_id_for_column(
@@ -493,22 +534,13 @@ impl UpdateHandler {
         pk_value: &str,
         updates: Row,
     ) -> Result<usize, KalamDbError> {
-        let app_context = AppContext::get();
-        let executor = app_context.executor();
-
-        // Serialize the row updates
-        let updates_data = bincode::serde::encode_to_vec(&vec![updates], bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize updates: {}", e)))?;
-
-        // Serialize the PK value for the filter
-        let filter_data = bincode::serde::encode_to_vec(&pk_value.to_string(), bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize filter: {}", e)))?;
+        let executor = self.app_context.executor();
 
         let cmd = SharedDataCommand::Update {
             required_meta_index: 0, // Stamped by executor
             table_id: table_id.clone(),
-            updates_data,
-            filter_data: Some(filter_data),
+            updates: vec![updates],
+            filter: Some(pk_value.to_string()),
         };
 
         let response = executor
@@ -532,21 +564,14 @@ impl UpdateHandler {
         pk_value: &str,
         updates: Row,
     ) -> Result<usize, KalamDbError> {
-        let app_context = AppContext::get();
-        let executor = app_context.executor();
-
-        let updates_data = bincode::serde::encode_to_vec(&vec![updates], bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize updates: {}", e)))?;
-
-        let filter_data = bincode::serde::encode_to_vec(&pk_value.to_string(), bincode::config::standard())
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to serialize filter: {}", e)))?;
+        let executor = self.app_context.executor();
 
         let cmd = UserDataCommand::Update {
             required_meta_index: 0, // Stamped by executor
             table_id: table_id.clone(),
             user_id: user_id.clone(),
-            updates_data,
-            filter_data: Some(filter_data),
+            updates: vec![updates],
+            filter: Some(pk_value.to_string()),
         };
 
         let response = executor
@@ -576,7 +601,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_authorization_user() {
-        let handler = UpdateHandler::new();
+        let handler = UpdateHandler::new(AppContext::get());
         let ctx = test_context(Role::User);
         let stmt = SqlStatement::new(
             "UPDATE default.test SET x = 1 WHERE id = 1".to_string(),
@@ -588,7 +613,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_authorization_dba() {
-        let handler = UpdateHandler::new();
+        let handler = UpdateHandler::new(AppContext::get());
         let ctx = test_context(Role::Dba);
         let stmt = SqlStatement::new(
             "UPDATE default.test SET x = 1 WHERE id = 1".to_string(),
@@ -600,7 +625,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_authorization_service() {
-        let handler = UpdateHandler::new();
+        let handler = UpdateHandler::new(AppContext::get());
         let ctx = test_context(Role::Service);
         let stmt = SqlStatement::new(
             "UPDATE default.test SET x = 1 WHERE id = 1".to_string(),

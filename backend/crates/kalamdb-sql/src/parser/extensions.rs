@@ -71,6 +71,16 @@ pub enum ExtensionStatement {
     DropUser(DropUserStatement),
     /// SHOW MANIFEST CACHE command
     ShowManifest(ShowManifestStatement),
+    /// CLUSTER FLUSH command
+    ClusterFlush,
+    /// CLUSTER CLEAR command
+    ClusterClear,
+    /// CLUSTER LIST command
+    ClusterList,
+    /// CLUSTER JOIN command (not implemented yet)
+    ClusterJoin(String),
+    /// CLUSTER LEAVE command (not implemented yet)
+    ClusterLeave,
 }
 
 impl ExtensionStatement {
@@ -170,6 +180,29 @@ impl ExtensionStatement {
             return ShowManifestStatement::parse(sql)
                 .map(ExtensionStatement::ShowManifest)
                 .map_err(|e| format!("SHOW MANIFEST parsing failed: {}", e));
+        }
+
+        // Try CLUSTER commands
+        if sql_upper.starts_with("CLUSTER") {
+            let parts: Vec<&str> = sql_upper.split_whitespace().collect();
+            if parts.len() >= 2 {
+                match parts[1] {
+                    "FLUSH" => return Ok(ExtensionStatement::ClusterFlush),
+                    "CLEAR" => return Ok(ExtensionStatement::ClusterClear),
+                    "LIST" | "LS" => return Ok(ExtensionStatement::ClusterList),
+                    "JOIN" => {
+                        // Get the address from the original SQL to preserve case
+                        let original_parts: Vec<&str> = sql.trim().split_whitespace().collect();
+                        if original_parts.len() >= 3 {
+                            return Ok(ExtensionStatement::ClusterJoin(original_parts[2].to_string()));
+                        } else {
+                            return Err("CLUSTER JOIN requires a node address".to_string());
+                        }
+                    }
+                    "LEAVE" => return Ok(ExtensionStatement::ClusterLeave),
+                    _ => return Err("Unknown CLUSTER subcommand. Supported: FLUSH, CLEAR, LIST, JOIN, LEAVE".to_string()),
+                }
+            }
         }
 
         Err("Unknown KalamDB extension command. Supported commands: CREATE/ALTER/DROP/SHOW STORAGE, FLUSH TABLE, FLUSH ALL TABLES, KILL JOB, SUBSCRIBE TO, CREATE/ALTER/DROP USER, SHOW MANIFEST".to_string())

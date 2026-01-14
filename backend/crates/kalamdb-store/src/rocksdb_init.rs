@@ -55,11 +55,12 @@ impl RocksDbInit {
         };
 
         // Ensure system CFs using single source of truth (SystemTable + StoragePartition)
-        // 1) All system tables' CFs
-        for table in SystemTable::all().iter() {
-            let name = table.column_family_name();
-            if !existing.iter().any(|n| n == name) {
-                existing.push(name.to_string());
+        // 1) All system tables' CFs (skip views which have no column family)
+        for table in SystemTable::all_tables().iter() {
+            if let Some(name) = table.column_family_name() {
+                if !existing.iter().any(|n| n == name) {
+                    existing.push(name.to_string());
+                }
             }
         }
 

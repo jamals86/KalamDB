@@ -112,7 +112,7 @@ pub fn build_table_definition(
         stmt.table_name.as_str()
     );
 
-    log::info!(
+    log::debug!(
         "🔨 BUILD TABLE DEFINITION: {} (type: {:?}, user: {}, role: {:?})",
         table_id_str,
         stmt.table_type,
@@ -200,7 +200,7 @@ pub fn build_table_definition(
     let schema_registry = app_context.schema_registry();
     let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
     let existing_def = schema_registry
-        .get_table_if_exists(&table_id)
+        .get_table_if_exists(app_context.as_ref(), &table_id)
         .into_kalamdb_error("Failed to check table existence")?;
 
     if existing_def.is_some() {
@@ -359,11 +359,11 @@ fn persist_table_and_prime_cache(
     let schema_registry = app_context.schema_registry();
 
     // Save complete table definition to information_schema.tables
-    save_table_definition(stmt, schema)?;
+    save_table_definition(app_context.as_ref(), stmt, schema)?;
 
     // Retrieve the saved table definition
     let table_def = schema_registry
-        .get_table_definition(table_id)?
+        .get_table_if_exists(app_context.as_ref(), table_id)?
         .ok_or_else(|| {
             KalamDbError::Other(format!(
                 "Failed to retrieve table definition for {} after save",
@@ -385,6 +385,7 @@ fn persist_table_and_prime_cache(
     // Prime cache entry with storage path template + storage id
     use crate::schema_registry::PathResolver;
     let template = PathResolver::resolve_storage_path_template(
+        app_context.as_ref(),
         table_id,
         table_type,
         storage_id,
@@ -474,7 +475,7 @@ pub fn create_user_table(
     let schema_registry = app_context.schema_registry();
     let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
     let existing_def = schema_registry
-        .get_table_if_exists(&table_id)
+        .get_table_if_exists(app_context.as_ref(), &table_id)
         .into_kalamdb_error("Failed to check table existence")?;
 
     if existing_def.is_some() {
@@ -490,7 +491,7 @@ pub fn create_user_table(
                 );
 
                 // Use cached Arrow schema (memoized in CachedTableData) instead of to_arrow_schema()
-                let arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
+                let arrow_schema = schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
                 register_user_table_provider(&app_context, &table_id, arrow_schema)?;
             }
 
@@ -543,7 +544,7 @@ pub fn create_user_table(
 
     // Register UserTableProvider for INSERT/UPDATE/DELETE/SELECT operations
     // Use cached Arrow schema from SchemaRegistry (memoized in CachedTableData)
-    let provider_arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
+    let provider_arrow_schema = schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
     register_user_table_provider(&app_context, &table_id, provider_arrow_schema)?;
 
     // Log detailed success with table options
@@ -635,7 +636,7 @@ pub fn create_shared_table(
     let schema_registry = app_context.schema_registry();
     let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
     let existing_def = schema_registry
-        .get_table_if_exists(&table_id)
+        .get_table_if_exists(app_context.as_ref(), &table_id)
         .into_kalamdb_error("Failed to check table existence")?;
 
     if existing_def.is_some() {
@@ -649,7 +650,7 @@ pub fn create_shared_table(
                 );
 
                 // Use cached Arrow schema (memoized in CachedTableData) instead of to_arrow_schema()
-                let arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
+                let arrow_schema = schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
                 register_shared_table_provider(&app_context, &table_id, arrow_schema)?;
             }
 
@@ -703,7 +704,7 @@ pub fn create_shared_table(
     )?;
 
     // Register SharedTableProvider for CRUD/query access
-    let provider_arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
+    let provider_arrow_schema = schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
     register_shared_table_provider(&app_context, &table_id, provider_arrow_schema)?;
 
     // Log detailed success with table options
@@ -788,7 +789,7 @@ pub fn create_stream_table(
     let schema_registry = app_context.schema_registry();
     let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
     let existing_def = schema_registry
-        .get_table_if_exists(&table_id)
+        .get_table_if_exists(app_context.as_ref(), &table_id)
         .into_kalamdb_error("Failed to check table existence")?;
 
     if let Some(def) = existing_def {
@@ -802,7 +803,7 @@ pub fn create_stream_table(
                 );
 
                 // Use cached Arrow schema (memoized in CachedTableData) instead of to_arrow_schema()
-                let arrow_schema = schema_registry.get_arrow_schema(&table_id)?;
+                let arrow_schema = schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
 
                 // Extract TTL from table options if available, otherwise use default
                 let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) =

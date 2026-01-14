@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn test_shared_table_options_default() {
         let opts = SharedTableOptions::default();
-        assert!(opts.access_level.is_none());
+        assert_eq!(opts.access_level, Some(TableAccess::Private));
         assert!(opts.flush_policy.is_none());
         assert_eq!(opts.compression, "snappy");
     }

@@ -34,6 +34,7 @@ use kalamdb_commons::{Role, StorageKey, TableId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{UserTableIndexedStore, UserTablePkIndex, UserTableRow};
 use std::any::Any;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
@@ -93,7 +94,7 @@ impl UserTableProvider {
         let schema = core
             .app_context
             .schema_registry()
-            .get_arrow_schema(core.table_id())?;
+            .get_arrow_schema(core.app_context.as_ref(), core.table_id())?;
 
         log::debug!(
              "UserTableProvider: Created for {} with schema fields: {:?}",
@@ -126,7 +127,7 @@ impl UserTableProvider {
         self.core
             .app_context
             .schema_registry()
-            .get_table_definition(self.core.table_id())
+            .get_table_if_exists(self.core.app_context.as_ref(), self.core.table_id())
             .ok()
             .flatten()
             .and_then(|def| {
@@ -232,6 +233,65 @@ impl UserTableProvider {
         )
     }
 
+    fn scan_all_users_with_version_resolution(
+        &self,
+        filter: Option<&Expr>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+    ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
+        let table_id = self.core.table_id();
+        base::warn_if_unfiltered_scan(table_id, filter, limit, self.core.table_type());
+
+        let scan_limit = base::calculate_scan_limit(limit);
+        let raw_all = self
+            .store
+            .scan_limited_with_prefix_and_start(None, None, scan_limit)
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to scan user table hot storage: {}",
+                    e
+                ))
+            })?;
+
+        let hot_rows: Vec<(UserTableRowId, UserTableRow)> = raw_all
+            .into_iter()
+            .filter_map(|(key_bytes, row)| {
+                match kalamdb_commons::ids::UserTableRowId::from_bytes(&key_bytes) {
+                    Ok(k) => Some((k, row)),
+                    Err(err) => {
+                        log::warn!("Skipping invalid UserTableRowId key bytes: {}", err);
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        let mut user_ids = HashSet::new();
+        for (_row_id, row) in &hot_rows {
+            user_ids.insert(row.user_id.clone());
+        }
+
+        let mut cold_rows = Vec::new();
+        for user_id in user_ids {
+            let parquet_batch = self.scan_parquet_files_as_batch(&user_id, filter)?;
+            for row_data in parquet_batch_to_rows(&parquet_batch)? {
+                let seq_id = row_data.seq_id;
+                let row = UserTableRow {
+                    user_id: user_id.clone(),
+                    _seq: seq_id,
+                    _deleted: row_data.deleted,
+                    fields: row_data.fields,
+                };
+                cold_rows.push((UserTableRowId::new(user_id.clone(), seq_id), row));
+            }
+        }
+
+        let pk_name = self.primary_key_field_name().to_string();
+        let mut result = merge_versioned_rows(&pk_name, hot_rows, cold_rows, keep_deleted);
+        base::apply_limit(&mut result, limit);
+
+        Ok(result)
+    }
 }
 
 impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
@@ -755,6 +815,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     ) -> Result<RecordBatch, KalamDbError> {
         // Extract user_id and role from SessionState for RLS
         let (user_id, role) = Self::extract_user_context(state)?;
+        let allow_all_users = matches!(role, Role::Service | Role::Dba | Role::System);
 
         // Extract sequence bounds from filter to optimize RocksDB scan
         let (since_seq, _until_seq) = if let Some(expr) = filter {
@@ -763,19 +824,23 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             (None, None)
         };
 
-        // All roles operate within the current effective user scope. Admins must use AS USER to
-        // impersonate other users instead of bypassing RLS.
+        // Privileged roles can scan across all users for read access; others remain scoped to
+        // their own user_id for RLS.
         let keep_deleted = filter
             .map(base::filter_uses_deleted_column)
             .unwrap_or(false);
 
-        let kvs = self.scan_with_version_resolution_to_kvs(
-            &user_id,
-            filter,
-            since_seq,
-            limit,
-            keep_deleted,
-        )?;
+        let kvs = if allow_all_users {
+            self.scan_all_users_with_version_resolution(filter, limit, keep_deleted)?
+        } else {
+            self.scan_with_version_resolution_to_kvs(
+                &user_id,
+                filter,
+                since_seq,
+                limit,
+                keep_deleted,
+            )?
+        };
 
         let table_id = self.core.table_id();
         log::debug!(
@@ -902,6 +967,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         Ok(result)
     }
+
 
     fn extract_row(row: &UserTableRow) -> &Row {
         &row.fields

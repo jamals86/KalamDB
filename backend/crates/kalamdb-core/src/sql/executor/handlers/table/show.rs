@@ -8,6 +8,8 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use datafusion::arrow::array::{
     ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMicrosecondArray,
 };
+use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::datasource::TableProvider;
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_sql::ddl::ShowTablesStatement;
 use std::sync::Arc;
@@ -39,7 +41,7 @@ impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
             let defs = tables_provider.list_tables()?;
             let filtered: Vec<TableDefinition> =
                 defs.into_iter().filter(|t| t.namespace_id == ns).collect();
-            let batch = build_tables_batch(filtered)?;
+            let batch = build_tables_batch(tables_provider.schema(), filtered)?;
             let row_count = batch.num_rows();
             Ok(ExecutionResult::Rows {
                 batches: vec![batch],
@@ -77,7 +79,7 @@ impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
 }
 
 /// Build a RecordBatch for system.tables-like view from definitions
-fn build_tables_batch(tables: Vec<TableDefinition>) -> Result<RecordBatch, KalamDbError> {
+fn build_tables_batch(provider_schema: SchemaRef, tables: Vec<TableDefinition>) -> Result<RecordBatch, KalamDbError> {
     let mut table_ids = StringBuilder::new();
     let mut table_names = StringBuilder::new();
     let mut namespaces = StringBuilder::new();
@@ -99,10 +101,8 @@ fn build_tables_batch(tables: Vec<TableDefinition>) -> Result<RecordBatch, Kalam
         updated_ats.push(Some(t.updated_at.timestamp_millis()));
     }
 
-    // Reuse system.tables schema via provider
-    let provider = self_tables_provider_schema();
     let batch = RecordBatch::try_new(
-        provider,
+        provider_schema,
         vec![
             Arc::new(table_ids.finish()) as ArrayRef,
             Arc::new(table_names.finish()) as ArrayRef,
@@ -127,13 +127,4 @@ fn build_tables_batch(tables: Vec<TableDefinition>) -> Result<RecordBatch, Kalam
     .into_arrow_error()?;
 
     Ok(batch)
-}
-
-/// Fetch system.tables schema from provider to ensure column order/types match
-fn self_tables_provider_schema() -> datafusion::arrow::datatypes::SchemaRef {
-    use crate::app_context::AppContext;
-    use datafusion::datasource::TableProvider;
-    let app = AppContext::get();
-    let provider = app.system_tables().tables();
-    provider.schema()
 }

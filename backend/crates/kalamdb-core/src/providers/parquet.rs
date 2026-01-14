@@ -47,10 +47,10 @@ pub(crate) fn scan_parquet_files_as_batch(
         })?;
 
     // 3. Get ObjectStore (cached)
-    let object_store = cached.object_store()?;
+    let object_store = cached.object_store(core.app_context.as_ref())?;
 
     // 4. Resolve storage path
-    let storage_path = PathResolver::get_storage_path(&cached, user_id, None)?;
+    let storage_path = PathResolver::get_storage_path(core.app_context.as_ref(), &cached, user_id, None)?;
 
     let manifest_service = core.app_context.manifest_service();
     let cache_result = manifest_service.get_or_load(table_id, user_id);
