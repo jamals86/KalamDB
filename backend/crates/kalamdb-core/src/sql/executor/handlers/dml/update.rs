@@ -796,9 +796,14 @@ impl UpdateHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::create_test_session;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
+
+    fn init_app_context() -> Arc<AppContext> {
+        init_test_app_context();
+        AppContext::get()
+    }
 
     fn test_context(role: Role) -> ExecutionContext {
         ExecutionContext::new(UserId::from("test_user"), role, create_test_session())
@@ -806,7 +811,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_authorization_user() {
-        let handler = UpdateHandler::new(AppContext::get());
+        let handler = UpdateHandler::new(init_app_context());
         let ctx = test_context(Role::User);
         let stmt = SqlStatement::new(
             "UPDATE default.test SET x = 1 WHERE id = 1".to_string(),
@@ -818,7 +823,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_authorization_dba() {
-        let handler = UpdateHandler::new(AppContext::get());
+        let handler = UpdateHandler::new(init_app_context());
         let ctx = test_context(Role::Dba);
         let stmt = SqlStatement::new(
             "UPDATE default.test SET x = 1 WHERE id = 1".to_string(),
@@ -830,7 +835,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_authorization_service() {
-        let handler = UpdateHandler::new(AppContext::get());
+        let handler = UpdateHandler::new(init_app_context());
         let ctx = test_context(Role::Service);
         let stmt = SqlStatement::new(
             "UPDATE default.test SET x = 1 WHERE id = 1".to_string(),
