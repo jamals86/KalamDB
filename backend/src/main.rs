@@ -18,15 +18,22 @@ async fn main() -> Result<()> {
     let main_start = std::time::Instant::now();
 
     // Normal server startup
-    // Use first CLI argument as config path, or default to server.toml next to binary
+    // Use first CLI argument as config path; otherwise prefer server.toml in cwd, then next to binary
     let config_path = if let Some(arg_path) = std::env::args().nth(1) {
         std::path::PathBuf::from(arg_path)
     } else {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|path| path.parent().map(|dir| dir.to_path_buf()))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        exe_dir.join("server.toml")
+        let cwd_path = std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .join("server.toml");
+        if cwd_path.exists() {
+            cwd_path
+        } else {
+            let exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|path| path.parent().map(|dir| dir.to_path_buf()))
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            exe_dir.join("server.toml")
+        }
     };
 
     if !config_path.exists() {
