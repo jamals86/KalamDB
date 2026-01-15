@@ -1,3 +1,3 @@
 pub mod user_repo;
 
-pub use user_repo::CoreUsersRepo;
+pub use user_repo::{CachedUsersRepo, CoreUsersRepo};

@@ -282,7 +282,8 @@ async fn authenticate_username_password(
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticatedUser> {
     // Look up user
-    let mut user = repo.get_user_by_username(username).await?;
+    let username_typed = kalamdb_commons::models::UserName::from(username);
+    let mut user = repo.get_user_by_username(&username_typed).await?;
 
     // Check if user is deleted
     if user.deleted_at.is_some() {
@@ -447,7 +448,8 @@ async fn authenticate_bearer(
         .ok_or_else(|| AuthError::MissingClaim("username".to_string()))?;
 
     // Look up user
-    let user = repo.get_user_by_username(username.as_str()).await?;
+    let username_typed = kalamdb_commons::models::UserName::from(username.as_str());
+    let user = repo.get_user_by_username(&username_typed).await?;
 
     if user.deleted_at.is_some() {
         return Err(AuthError::InvalidCredentials(

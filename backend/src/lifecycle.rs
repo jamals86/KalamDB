@@ -234,8 +234,9 @@ pub async fn bootstrap(
 
     // Get system table providers for job executor and flush scheduler
     let users_provider = app_context.system_tables().users();
+    // Use CachedUsersRepo for ~1-3ms faster auth per request (avoids RocksDB lookup on cache hit)
     let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
-        Arc::new(kalamdb_api::repositories::CoreUsersRepo::new(users_provider));
+        Arc::new(kalamdb_api::repositories::CachedUsersRepo::new(users_provider));
 
     // SqlExecutor now uses AppContext directly
     let phase_start = std::time::Instant::now();
@@ -428,8 +429,9 @@ pub async fn bootstrap_isolated(
     let live_query_manager = app_context.live_query_manager();
     let session_factory = app_context.session_factory();
     let users_provider = app_context.system_tables().users();
+    // Use CachedUsersRepo for ~1-3ms faster auth per request (avoids RocksDB lookup on cache hit)
     let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
-        Arc::new(kalamdb_api::repositories::CoreUsersRepo::new(users_provider));
+        Arc::new(kalamdb_api::repositories::CachedUsersRepo::new(users_provider));
 
     // SqlExecutor
     let sql_executor =

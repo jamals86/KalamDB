@@ -940,6 +940,8 @@ TODOS:
 
 51) Need to add a flush all command which flushes all tables which needs flushing according to the system.manifest table;
 
+52) check the raft log serialization ad deserialization to make sure we are optimized as much as possible since this is the new layer we added between the commiting and the actual sql command we are running on the data, also the snapshoting i can see its using json is this the ideal way for it?
+
 
 
 

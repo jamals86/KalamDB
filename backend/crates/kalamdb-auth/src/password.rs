@@ -2,8 +2,10 @@
 
 use crate::error::{AuthError, AuthResult};
 use bcrypt::{hash, verify, DEFAULT_COST};
+use moka::sync::Cache;
 use std::collections::HashSet;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 /// Bcrypt cost factor for password hashing.
 /// Higher values = more secure but slower.
@@ -36,6 +38,31 @@ pub const MAX_PASSWORD_LENGTH: usize = 72;
 /// Common passwords list (loaded once)
 static COMMON_PASSWORDS: OnceLock<HashSet<String>> = OnceLock::new();
 
+/// Cache for verified password hashes.
+/// Key: (password, bcrypt_hash) -> bool (was valid)
+/// TTL: 30 seconds, prevents bcrypt on every request for same credentials.
+/// Only caches SUCCESSFUL verifications to avoid caching attack vectors.
+static PASSWORD_VERIFICATION_CACHE: OnceLock<Cache<(String, String), ()>> = OnceLock::new();
+
+fn get_password_cache() -> &'static Cache<(String, String), ()> {
+    PASSWORD_VERIFICATION_CACHE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(10_000)
+            .time_to_live(Duration::from_secs(30))
+            .build()
+    })
+}
+
+/// Invalidate cached password verification for a specific hash.
+/// Call when password is changed.
+pub fn invalidate_password_cache(password_hash: &str) {
+    let cache = get_password_cache();
+    // We need to iterate and remove entries with matching hash
+    // This is O(n) but password changes are rare
+    let hash = password_hash.to_string();
+    let _ = cache.invalidate_entries_if(move |(_pwd, h), _| h == &hash);
+}
+
 /// Hash a password using bcrypt.
 ///
 /// Uses a configurable cost factor (default 12) and runs on a blocking thread pool
@@ -64,6 +91,8 @@ pub async fn hash_password(password: &str, cost: Option<u32>) -> AuthResult<Stri
 
 /// Verify a password against a bcrypt hash.
 ///
+/// Uses an in-memory cache to avoid expensive bcrypt verification on every request.
+/// Only successful verifications are cached (for 30 seconds).
 /// Runs on a blocking thread pool to avoid blocking the async runtime.
 ///
 /// # Arguments
@@ -75,16 +104,33 @@ pub async fn hash_password(password: &str, cost: Option<u32>) -> AuthResult<Stri
 ///
 /// # Errors
 /// Returns `AuthError::HashingError` if bcrypt verification fails
-pub async fn verify_password(password: &str, hash: &str) -> AuthResult<bool> {
+pub async fn verify_password(password: &str, hash_str: &str) -> AuthResult<bool> {
+    let cache = get_password_cache();
+    let cache_key = (password.to_string(), hash_str.to_string());
+    
+    // Check cache first - if present, we know it was previously verified successfully
+    if cache.contains_key(&cache_key) {
+        return Ok(true);
+    }
+    
     let password = password.to_string();
-    let hash = hash.to_string();
+    let hash = hash_str.to_string();
+    let hash_for_cache = hash_str.to_string();
+    let password_for_cache = password.clone();
 
     // Run bcrypt on blocking thread pool (CPU-intensive)
-    tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         verify(password, &hash).map_err(|e| AuthError::HashingError(e.to_string()))
     })
     .await
-    .map_err(|e| AuthError::HashingError(format!("Task join error: {}", e)))?
+    .map_err(|e| AuthError::HashingError(format!("Task join error: {}", e)))??;
+    
+    // Only cache successful verifications
+    if result {
+        cache.insert((password_for_cache, hash_for_cache), ());
+    }
+    
+    Ok(result)
 }
 
 /// Password validation policy configuration.

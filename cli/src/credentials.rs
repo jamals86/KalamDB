@@ -35,6 +35,7 @@ use kalam_link::credentials::{CredentialStore, Credentials};
 use kalam_link::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -82,6 +83,13 @@ impl FileCredentialStore {
     /// - Windows: `~/.kalam/credentials.toml`
     /// - Linux/macOS: `~/.config/kalamdb/credentials.toml`
     pub fn default_path() -> PathBuf {
+        if let Ok(path) = env::var("KALAMDB_CREDENTIALS_PATH") {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                return PathBuf::from(trimmed);
+            }
+        }
+
         #[cfg(target_os = "windows")]
         {
             get_kalam_config_dir().join("credentials.toml")

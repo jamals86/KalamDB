@@ -338,10 +338,22 @@ fn test_cli_save_credentials_creates_file() {
         return;
     }
 
+    let (temp_dir, creds_path) = create_temp_credentials_path();
+    let instance = format!(
+        "test_save_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
     // Run CLI with --save-credentials flag
     // Note: Uses empty password for root (default test configuration)
     let mut cmd = create_cli_command_with_root_auth();
+    with_credentials_path(&mut cmd, &creds_path);
     let output = cmd
+        .arg("--instance")
+        .arg(&instance)
         .arg("--save-credentials")
         .arg("--command")
         .arg("SELECT 1")
@@ -361,13 +373,13 @@ fn test_cli_save_credentials_creates_file() {
         }
     }
 
-    // Check that credentials file was created at default location
-    let default_creds_path = kalam_cli::FileCredentialStore::default_path();
-    if default_creds_path.exists() {
-        let contents = fs::read_to_string(&default_creds_path).expect("Failed to read credentials");
+    // Check that credentials file was created at the temp location
+    if creds_path.exists() {
+        let contents = fs::read_to_string(&creds_path).expect("Failed to read credentials");
         if contents.contains("jwt_token") {
             assert!(!contents.contains("password"), "Should NOT contain password");
-            println!("✓ Credentials file created at: {:?}", default_creds_path);
+            assert!(contents.contains(&instance), "Should contain instance name");
+            println!("✓ Credentials file created at: {:?}", creds_path);
         } else {
             eprintln!("⚠️  No JWT token in credentials file (root password may not be set). Skipping test.");
         }
@@ -384,9 +396,12 @@ fn test_cli_credentials_loaded_in_session() {
         return;
     }
 
+    let (_temp_dir, creds_path) = create_temp_credentials_path();
+
     // First, save credentials
     // Note: Uses empty password for root (default test configuration)
     let mut cmd = create_cli_command_with_root_auth();
+    with_credentials_path(&mut cmd, &creds_path);
     let save_output = cmd
         .arg("--save-credentials")
         .arg("--command")
@@ -401,6 +416,7 @@ fn test_cli_credentials_loaded_in_session() {
 
     // Now run CLI without username/password - should use stored credentials
     let mut cmd = create_cli_command();
+    with_credentials_path(&mut cmd, &creds_path);
     let output = cmd
         .arg("--command")
         .arg("SELECT 'loaded_from_stored' as source")
@@ -472,9 +488,12 @@ fn test_cli_show_credentials_command() {
         return;
     }
 
+    let (_temp_dir, creds_path) = create_temp_credentials_path();
+
     // First ensure we have credentials saved
     // Note: Uses empty password for root (default test configuration)
     let mut cmd = create_cli_command_with_root_auth();
+    with_credentials_path(&mut cmd, &creds_path);
     let _ = cmd
         .arg("--save-credentials")
         .arg("--command")
@@ -483,6 +502,7 @@ fn test_cli_show_credentials_command() {
 
     // Now test --show-credentials
     let mut cmd = create_cli_command();
+    with_credentials_path(&mut cmd, &creds_path);
     let output = cmd
         .arg("--show-credentials")
         .output()
@@ -502,6 +522,63 @@ fn test_cli_show_credentials_command() {
     println!("✓ Show credentials command works");
 }
 
+/// Test list-instances CLI flag
+#[test]
+fn test_cli_list_instances_command() {
+    let (_temp_dir, creds_path) = create_temp_credentials_path();
+    let mut store = kalam_cli::FileCredentialStore::with_path(creds_path.clone())
+        .expect("Failed to create credential store");
+
+    let instances = vec![
+        ("local", "user1", "token_local"),
+        ("cloud", "user2", "token_cloud"),
+    ];
+
+    for (instance, username, token) in &instances {
+        let creds = Credentials::with_details(
+            instance.to_string(),
+            token.to_string(),
+            username.to_string(),
+            "2099-12-31T23:59:59Z".to_string(),
+            Some(server_url().to_string()),
+        );
+        store.set_credentials(&creds).expect("Failed to store credentials");
+    }
+
+    let mut cmd = create_cli_command();
+    with_credentials_path(&mut cmd, &creds_path);
+    let output = cmd
+        .arg("--list-instances")
+        .output()
+        .expect("Failed to run CLI");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("local"), "Should list local instance. stdout: {}", stdout);
+    assert!(stdout.contains("cloud"), "Should list cloud instance. stdout: {}", stdout);
+}
+
+/// Test show-credentials with missing instance
+#[test]
+fn test_cli_show_credentials_missing_instance() {
+    let (_temp_dir, creds_path) = create_temp_credentials_path();
+
+    let mut cmd = create_cli_command();
+    with_credentials_path(&mut cmd, &creds_path);
+    let output = cmd
+        .arg("--instance")
+        .arg("missing_instance")
+        .arg("--show-credentials")
+        .output()
+        .expect("Failed to run CLI");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("No credentials") || stdout.contains("not found"),
+        "Should report missing credentials. stdout: {}",
+        stdout
+    );
+}
+
 /// Test delete-credentials CLI flag
 #[test]
 fn test_cli_delete_credentials_command() {
@@ -509,6 +586,8 @@ fn test_cli_delete_credentials_command() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
+
+    let (_temp_dir, creds_path) = create_temp_credentials_path();
 
     // Use a unique instance to avoid cross-test interference
     let instance = format!(
@@ -522,6 +601,7 @@ fn test_cli_delete_credentials_command() {
     // First save credentials
     // Note: Uses empty password for root (default test configuration)
     let mut cmd = create_cli_command_with_root_auth();
+    with_credentials_path(&mut cmd, &creds_path);
     let _ = cmd
         .arg("--instance")
         .arg(&instance)
@@ -532,6 +612,7 @@ fn test_cli_delete_credentials_command() {
 
     // Delete credentials
     let mut cmd = create_cli_command();
+    with_credentials_path(&mut cmd, &creds_path);
     let delete_output = cmd
         .arg("--instance")
         .arg(&instance)
@@ -548,6 +629,7 @@ fn test_cli_delete_credentials_command() {
 
     // Verify credentials are gone
     let mut cmd = create_cli_command();
+    with_credentials_path(&mut cmd, &creds_path);
     let show_output = cmd
         .arg("--instance")
         .arg(&instance)

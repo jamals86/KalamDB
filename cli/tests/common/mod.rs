@@ -1272,6 +1272,21 @@ pub fn create_cli_command_with_root_auth() -> assert_cmd::Command {
     create_cli_command_with_auth("root", root_password())
 }
 
+/// Helper to create a temporary credentials file path for CLI tests
+pub fn create_temp_credentials_path() -> (TempDir, std::path::PathBuf) {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let creds_path = temp_dir.path().join("credentials.toml");
+    (temp_dir, creds_path)
+}
+
+/// Helper to set credentials path env for a CLI command
+pub fn with_credentials_path<'a>(
+    cmd: &'a mut assert_cmd::Command,
+    credentials_path: &std::path::Path,
+) -> &'a mut assert_cmd::Command {
+    cmd.env("KALAMDB_CREDENTIALS_PATH", credentials_path)
+}
+
 /// Helper to create a temporary credential store for testing
 pub fn create_temp_store() -> (FileCredentialStore, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");

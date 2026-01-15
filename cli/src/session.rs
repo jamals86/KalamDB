@@ -399,8 +399,15 @@ impl CLISession {
                 // Show timing if query took significant time
                 if elapsed.as_millis() >= self.loading_threshold_ms as u128 {
                     let timing = format!("⏱  Time: {:.3} ms", elapsed.as_secs_f64() * 1000.0);
+                    let is_machine_format = matches!(self.format, OutputFormat::Json | OutputFormat::Csv);
                     if self.color {
-                        println!("{}", timing.dimmed());
+                        if is_machine_format {
+                            eprintln!("{}", timing.dimmed());
+                        } else {
+                            println!("{}", timing.dimmed());
+                        }
+                    } else if is_machine_format {
+                        eprintln!("{}", timing);
                     } else {
                         println!("{}", timing);
                     }
