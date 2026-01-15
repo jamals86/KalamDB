@@ -18,7 +18,7 @@ use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
-use rustyline::{CompletionType, Config, EditMode, Editor, Helper};
+use rustyline::{Cmd, CompletionType, Config, EditMode, Editor, Helper, KeyEvent};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -701,6 +701,7 @@ impl CLISession {
 
         let mut rl = Editor::<CLIHelper, DefaultHistory>::with_config(config)?;
         rl.set_helper(Some(helper));
+        rl.bind_sequence(KeyEvent::from('\t'), Cmd::Complete);
 
         let history_size = self.config.resolved_ui().history_size;
         let history = CommandHistory::new(history_size);
