@@ -37,6 +37,17 @@ pub struct SnapshotInfo {
     pub error: Option<String>,
 }
 
+/// Information about a cluster action result
+#[derive(Debug, Clone)]
+pub struct ClusterActionResult {
+    /// The Raft group ID
+    pub group_id: GroupId,
+    /// Whether the action was successful
+    pub success: bool,
+    /// Error message if the action failed
+    pub error: Option<String>,
+}
+
 /// Summary of all snapshots in the cluster
 #[derive(Debug, Clone)]
 pub struct SnapshotsSummary {
@@ -197,7 +208,7 @@ impl RaftManager {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        log::info!(
+        log::debug!(
             "Created RaftManager with persistent storage: {} user shards, {} shared shards",
             user_shards_count,
             shared_shards_count
@@ -1008,6 +1019,217 @@ impl RaftManager {
                 success_count, total, errors.len(), errors);
         }
         
+        Ok(results)
+    }
+
+    /// Trigger elections for all Raft groups
+    pub async fn trigger_all_elections(&self) -> Result<Vec<ClusterActionResult>, RaftError> {
+        let mut results = Vec::new();
+
+        match self.meta.trigger_election().await {
+            Ok(_) => results.push(ClusterActionResult {
+                group_id: GroupId::Meta,
+                success: true,
+                error: None,
+            }),
+            Err(e) => results.push(ClusterActionResult {
+                group_id: GroupId::Meta,
+                success: false,
+                error: Some(format!("{}", e)),
+            }),
+        }
+
+        for (i, shard) in self.user_data_shards.iter().enumerate() {
+            let group_id = GroupId::DataUserShard(i as u32);
+            match shard.trigger_election().await {
+                Ok(_) => results.push(ClusterActionResult {
+                    group_id,
+                    success: true,
+                    error: None,
+                }),
+                Err(e) => results.push(ClusterActionResult {
+                    group_id,
+                    success: false,
+                    error: Some(format!("{}", e)),
+                }),
+            }
+        }
+
+        for (i, shard) in self.shared_data_shards.iter().enumerate() {
+            let group_id = GroupId::DataSharedShard(i as u32);
+            match shard.trigger_election().await {
+                Ok(_) => results.push(ClusterActionResult {
+                    group_id,
+                    success: true,
+                    error: None,
+                }),
+                Err(e) => results.push(ClusterActionResult {
+                    group_id,
+                    success: false,
+                    error: Some(format!("{}", e)),
+                }),
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Purge logs up to the given index for all Raft groups
+    pub async fn purge_all_logs(&self, upto: u64) -> Result<Vec<ClusterActionResult>, RaftError> {
+        let mut results = Vec::new();
+
+        match self.meta.purge_log(upto).await {
+            Ok(_) => results.push(ClusterActionResult {
+                group_id: GroupId::Meta,
+                success: true,
+                error: None,
+            }),
+            Err(e) => results.push(ClusterActionResult {
+                group_id: GroupId::Meta,
+                success: false,
+                error: Some(format!("{}", e)),
+            }),
+        }
+
+        for (i, shard) in self.user_data_shards.iter().enumerate() {
+            let group_id = GroupId::DataUserShard(i as u32);
+            match shard.purge_log(upto).await {
+                Ok(_) => results.push(ClusterActionResult {
+                    group_id,
+                    success: true,
+                    error: None,
+                }),
+                Err(e) => results.push(ClusterActionResult {
+                    group_id,
+                    success: false,
+                    error: Some(format!("{}", e)),
+                }),
+            }
+        }
+
+        for (i, shard) in self.shared_data_shards.iter().enumerate() {
+            let group_id = GroupId::DataSharedShard(i as u32);
+            match shard.purge_log(upto).await {
+                Ok(_) => results.push(ClusterActionResult {
+                    group_id,
+                    success: true,
+                    error: None,
+                }),
+                Err(e) => results.push(ClusterActionResult {
+                    group_id,
+                    success: false,
+                    error: Some(format!("{}", e)),
+                }),
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Attempt to transfer leadership for all Raft groups
+    pub async fn transfer_leadership_all(
+        &self,
+        target_node_id: u64,
+    ) -> Result<Vec<ClusterActionResult>, RaftError> {
+        let mut results = Vec::new();
+
+        match self.meta.transfer_leadership(target_node_id).await {
+            Ok(_) => results.push(ClusterActionResult {
+                group_id: GroupId::Meta,
+                success: true,
+                error: None,
+            }),
+            Err(e) => results.push(ClusterActionResult {
+                group_id: GroupId::Meta,
+                success: false,
+                error: Some(format!("{}", e)),
+            }),
+        }
+
+        for (i, shard) in self.user_data_shards.iter().enumerate() {
+            let group_id = GroupId::DataUserShard(i as u32);
+            match shard.transfer_leadership(target_node_id).await {
+                Ok(_) => results.push(ClusterActionResult {
+                    group_id,
+                    success: true,
+                    error: None,
+                }),
+                Err(e) => results.push(ClusterActionResult {
+                    group_id,
+                    success: false,
+                    error: Some(format!("{}", e)),
+                }),
+            }
+        }
+
+        for (i, shard) in self.shared_data_shards.iter().enumerate() {
+            let group_id = GroupId::DataSharedShard(i as u32);
+            match shard.transfer_leadership(target_node_id).await {
+                Ok(_) => results.push(ClusterActionResult {
+                    group_id,
+                    success: true,
+                    error: None,
+                }),
+                Err(e) => results.push(ClusterActionResult {
+                    group_id,
+                    success: false,
+                    error: Some(format!("{}", e)),
+                }),
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Attempt to step down leaders for all Raft groups
+    pub async fn step_down_all(&self) -> Result<Vec<ClusterActionResult>, RaftError> {
+        let mut results = Vec::new();
+
+        match self.meta.step_down().await {
+            Ok(_) => results.push(ClusterActionResult {
+                group_id: GroupId::Meta,
+                success: true,
+                error: None,
+            }),
+            Err(e) => results.push(ClusterActionResult {
+                group_id: GroupId::Meta,
+                success: false,
+                error: Some(format!("{}", e)),
+            }),
+        }
+
+        for (i, shard) in self.user_data_shards.iter().enumerate() {
+            let group_id = GroupId::DataUserShard(i as u32);
+            match shard.step_down().await {
+                Ok(_) => results.push(ClusterActionResult {
+                    group_id,
+                    success: true,
+                    error: None,
+                }),
+                Err(e) => results.push(ClusterActionResult {
+                    group_id,
+                    success: false,
+                    error: Some(format!("{}", e)),
+                }),
+            }
+        }
+
+        for (i, shard) in self.shared_data_shards.iter().enumerate() {
+            let group_id = GroupId::DataSharedShard(i as u32);
+            match shard.step_down().await {
+                Ok(_) => results.push(ClusterActionResult {
+                    group_id,
+                    success: true,
+                    error: None,
+                }),
+                Err(e) => results.push(ClusterActionResult {
+                    group_id,
+                    success: false,
+                    error: Some(format!("{}", e)),
+                }),
+            }
+        }
+
         Ok(results)
     }
     

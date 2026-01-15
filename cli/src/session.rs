@@ -1102,11 +1102,39 @@ impl CLISession {
                     Err(e) => eprintln!("Flush failed: {}", e),
                 }
             }
-            Command::ClusterFlush => {
-                println!("Flushing cluster logs to snapshots...");
-                match self.execute("CLUSTER FLUSH").await {
+            Command::ClusterSnapshot => {
+                println!("Triggering cluster snapshots...");
+                match self.execute("CLUSTER SNAPSHOT").await {
                     Ok(_) => {},
-                    Err(e) => eprintln!("Cluster flush failed: {}", e),
+                    Err(e) => eprintln!("Cluster snapshot failed: {}", e),
+                }
+            }
+            Command::ClusterPurge { upto } => {
+                println!("Purging cluster logs up to {}...", upto);
+                match self.execute(&format!("CLUSTER PURGE --UPTO {}", upto)).await {
+                    Ok(_) => {},
+                    Err(e) => eprintln!("Cluster purge failed: {}", e),
+                }
+            }
+            Command::ClusterTriggerElection => {
+                println!("Triggering cluster election...");
+                match self.execute("CLUSTER TRIGGER ELECTION").await {
+                    Ok(_) => {},
+                    Err(e) => eprintln!("Cluster trigger-election failed: {}", e),
+                }
+            }
+            Command::ClusterTransferLeader { node_id } => {
+                println!("Transferring cluster leadership to node {}...", node_id);
+                match self.execute(&format!("CLUSTER TRANSFER-LEADER {}", node_id)).await {
+                    Ok(_) => {},
+                    Err(e) => eprintln!("Cluster transfer-leader failed: {}", e),
+                }
+            }
+            Command::ClusterStepdown => {
+                println!("Requesting cluster leader stepdown...");
+                match self.execute("CLUSTER STEPDOWN").await {
+                    Ok(_) => {},
+                    Err(e) => eprintln!("Cluster stepdown failed: {}", e),
                 }
             }
             Command::ClusterClear => {
@@ -1117,9 +1145,21 @@ impl CLISession {
                 }
             }
             Command::ClusterList => {
-                match self.execute("CLUSTER LIST").await {
+                match self.execute("SELECT * FROM system.cluster").await {
                     Ok(_) => {},
                     Err(e) => eprintln!("Cluster list failed: {}", e),
+                }
+            }
+            Command::ClusterListGroups => {
+                match self.execute("SELECT * FROM system.cluster_groups").await {
+                    Ok(_) => {},
+                    Err(e) => eprintln!("Cluster list groups failed: {}", e),
+                }
+            }
+            Command::ClusterStatus => {
+                match self.execute("SELECT * FROM system.cluster").await {
+                    Ok(_) => {},
+                    Err(e) => eprintln!("Cluster status failed: {}", e),
                 }
             }
             Command::ClusterJoin(addr) => {

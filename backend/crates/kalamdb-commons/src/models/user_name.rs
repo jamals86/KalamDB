@@ -95,6 +95,11 @@ impl UserName {
     pub fn to_lowercase(&self) -> UserName {
         UserName(self.0.to_lowercase())
     }
+
+    /// Root username helper
+    pub fn root() -> UserName {
+        UserName("root".to_string())
+    }
 }
 
 impl fmt::Display for UserName {

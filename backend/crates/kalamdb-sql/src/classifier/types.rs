@@ -91,8 +91,16 @@ pub enum SqlStatementKind {
     FlushAllTables(FlushAllTablesStatement),
     /// SHOW MANIFEST
     ShowManifest(ShowManifestStatement),
-    /// CLUSTER FLUSH - Force snapshots
-    ClusterFlush,
+    /// CLUSTER SNAPSHOT - Force snapshots
+    ClusterSnapshot,
+    /// CLUSTER PURGE - Purge logs up to index
+    ClusterPurge(u64),
+    /// CLUSTER TRIGGER ELECTION - Trigger election
+    ClusterTriggerElection,
+    /// CLUSTER TRANSFER-LEADER - Transfer leadership
+    ClusterTransferLeader(u64),
+    /// CLUSTER STEPDOWN - Attempt leader stepdown
+    ClusterStepdown,
     /// CLUSTER CLEAR - Clear old snapshots
     ClusterClear,
     /// CLUSTER LIST - List cluster nodes
@@ -261,7 +269,11 @@ impl SqlStatement {
             | SqlStatementKind::BeginTransaction
             | SqlStatementKind::CommitTransaction
             | SqlStatementKind::RollbackTransaction
-            | SqlStatementKind::ClusterFlush
+            | SqlStatementKind::ClusterSnapshot
+            | SqlStatementKind::ClusterPurge(_)
+            | SqlStatementKind::ClusterTriggerElection
+            | SqlStatementKind::ClusterTransferLeader(_)
+            | SqlStatementKind::ClusterStepdown
             | SqlStatementKind::ClusterClear
             | SqlStatementKind::ClusterJoin(_)
             | SqlStatementKind::ClusterLeave => true,
@@ -293,7 +305,11 @@ impl SqlStatement {
             SqlStatementKind::FlushTable(_) => "FLUSH TABLE",
             SqlStatementKind::FlushAllTables(_) => "FLUSH ALL TABLES",
             SqlStatementKind::ShowManifest(_) => "SHOW MANIFEST",
-            SqlStatementKind::ClusterFlush => "CLUSTER FLUSH",
+            SqlStatementKind::ClusterSnapshot => "CLUSTER SNAPSHOT",
+            SqlStatementKind::ClusterPurge(_) => "CLUSTER PURGE",
+            SqlStatementKind::ClusterTriggerElection => "CLUSTER TRIGGER ELECTION",
+            SqlStatementKind::ClusterTransferLeader(_) => "CLUSTER TRANSFER-LEADER",
+            SqlStatementKind::ClusterStepdown => "CLUSTER STEPDOWN",
             SqlStatementKind::ClusterClear => "CLUSTER CLEAR",
             SqlStatementKind::ClusterList => "CLUSTER LIST",
             SqlStatementKind::ClusterJoin(_) => "CLUSTER JOIN",

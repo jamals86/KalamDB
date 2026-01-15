@@ -43,16 +43,17 @@ impl CreateViewStatement {
         }
 
         match statements.remove(0) {
-            Statement::CreateView {
-                name,
-                columns,
-                query,
-                or_replace,
-                materialized,
-                if_not_exists,
-                temporary,
-                ..
-            } => {
+            Statement::CreateView(create_view) => {
+                let sqlparser::ast::CreateView {
+                    name,
+                    columns,
+                    query,
+                    or_replace,
+                    materialized,
+                    if_not_exists,
+                    temporary,
+                    ..
+                } = create_view;
                 if materialized {
                     return Err("MATERIALIZED VIEWS are not supported yet".to_string());
                 }
@@ -61,7 +62,10 @@ impl CreateViewStatement {
                 }
 
                 let (namespace_id, view_name) = resolve_object_name(&name, default_namespace)?;
-                let column_names = columns.into_iter().map(|col| col.to_string()).collect();
+                let column_names = columns
+                    .into_iter()
+                    .map(|col| col.name.value)
+                    .collect();
                 let query_sql = query.to_string();
 
                 Ok(Self {

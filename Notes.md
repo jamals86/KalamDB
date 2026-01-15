@@ -898,7 +898,6 @@ TODOS:
 34) isnt struct MetaSnapshot - a waste of resources? or memory? since why having them here as a hashmap in memory?
 35) In backend tests add testserver which runs a cluster of 3 nodes and run tests against it
 
-7) Make sure we also replicate the manifest files as well, so we have them in all replicates
 8) Make sure we first replicate the system changes and then the data after that when a node joins the cluster
 9) instead of using u64 use NodeId, like in target: u64,
 
@@ -919,31 +918,16 @@ TODOS:
 45) Add to stats base_dir/rocksdb dir/namespaces in memory/tables in memory/cluster info (snapshots/changes/...) everything we can display for the cluster
 46) prevent subscribing to system/shared tables with a proper error message, current message:
 [2026-01-13 14:55:01.206] [ERROR] - actix-rt|system:0|arbiter:12 - kalamdb_api::handlers::events::subscription:182 - Failed to register subscription sub-80ba1de3481d280d: Not found: Table not found: system:cluster (sql: 'SELECT * FROM system.cluster LIMIT 100')
-47) Improve the performance of the server startup/bootstrap time currently its about 500ms
-48) There is many backend/tests/misc which are ignored i prefer adding a module which starts all of them, similar to the scnearios: backend\tests\testserver\scenarios\mod.rs
-- misc                        - and split into sub-folder
-- backend\tests\testserver    - 
-49) Add new commands:
-- CLUSTER FLUSH   - Which force snapshotting the current logs and output a message where the snapshot been stored in, and show any other informations we have
-- CLUSTER CLEAR   - Clear the old snapshots
-- CLUSTER LIST    - It lists all the nodes in the cluster, with each node under it its groups from the select * from system.cluster_Groups in a nice display for debugging and over view of the cluster health with colors
-- CLUSTER JOIN    - Prepare the command but return a warning that its not implemented yet
-- CLUSTER LEAVE   - Prepare the command but return a warning that its not implemented yet
-
-50) things like this should be less parameters since appcontext have them already, find other places where we pass things like this and only keep the app_ctx
-    let flush_job = UserTableFlushJob::new(
-        server.app_context.clone(),
-        table_id_arc,
-        user_table_store,
-        arrow_schema.clone(),
-        unified_cache,
-        server.app_context.manifest_service(),
-    );
 
 51) no need to wroite total rows here:
 [21:14:33.419] ✓ SUBSCRIBED [sub_1768331673410754000] 0 total rows, batch 1 (ready), 7 columns
 [21:14:33.419] BATCH 1 [sub_1768331673410754000] 2 rows (complete)
 
 
-52) prepare the code to have CLUSTER JOIN/CLUSTER LEAVE
-53) CLUSTER LIST (read-only, all users) - change this to only dba and admins
+54) Add option so that we block the ui - used in cluster mode when we have multiple nodes and we dont want the ui to be in all
+55) Verify that we have the gRPC secured so noone can access it accidently from the outside and view the data, add a secret key for joining the cluster that the user can define in server.toml and can override it in environment variable
+
+56) make the backend tests/cli tests all of them use the kalamLink client instead of each one using it's own direct code access to the backend or custom http client, this way we will have one aythentication which is user/password and getting token for this user and password
+
+
+

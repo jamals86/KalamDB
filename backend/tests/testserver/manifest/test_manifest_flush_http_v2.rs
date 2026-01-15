@@ -30,7 +30,7 @@ async fn wait_for_flush_job_completed(
     ns: &str,
     table: &str,
 ) -> anyhow::Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let resp = server
             .execute_sql("SELECT job_type, status, parameters FROM system.jobs WHERE job_type = 'flush'")

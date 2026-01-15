@@ -1,5 +1,7 @@
 #![allow(dead_code, unused_imports)]
 use rand::{distr::Alphanumeric, Rng};
+use reqwest::Client;
+use serde_json::json;
 use std::io::{BufRead, BufReader};
 use std::process::Command;
 use std::process::{Child, Stdio};
@@ -68,6 +70,45 @@ pub fn root_password() -> &'static str {
             std::env::var("KALAMDB_ROOT_PASSWORD").unwrap_or_else(|_| "".to_string())
         })
         .as_str()
+}
+
+/// Execute SQL over HTTP with explicit credentials.
+pub async fn execute_sql_via_http_as(
+    username: &str,
+    password: &str,
+    sql: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let response = client
+        .post(format!("{}/v1/api/sql", server_url()))
+        .basic_auth(username, Some(password))
+        .json(&json!({ "sql": sql }))
+        .send()
+        .await?;
+
+    let body = response.text().await?;
+    let parsed: serde_json::Value = serde_json::from_str(&body)?;
+    Ok(parsed)
+}
+
+/// Execute SQL over HTTP as root user.
+pub async fn execute_sql_via_http_as_root(
+    sql: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    execute_sql_via_http_as("root", root_password(), sql).await
+}
+
+/// Check if the server is running and root authentication succeeds.
+pub async fn is_server_running_with_auth() -> bool {
+    if !is_server_running() {
+        return false;
+    }
+
+    execute_sql_via_http_as_root("SELECT 1")
+        .await
+        .ok()
+        .and_then(|response| response.get("status").and_then(|s| s.as_str()).map(|s| s == "success"))
+        .unwrap_or(false)
 }
 
 /// Extract a value from Arrow JSON format
@@ -184,10 +225,94 @@ pub fn get_rows_as_hashmaps(json: &serde_json::Value) -> Option<Vec<std::collect
 
 /// Check if the KalamDB server is running
 pub fn is_server_running() -> bool {
-    // Simple TCP connection check
+    if !is_server_reachable() {
+        return false;
+    }
+
+    if !root_password().is_empty() {
+        return true;
+    }
+
+    match server_requires_auth() {
+        Some(true) => {
+            eprintln!(
+                "⚠️  Server requires authentication but KALAMDB_ROOT_PASSWORD is empty. Skipping tests to avoid account lockouts."
+            );
+            false
+        }
+        Some(false) => true,
+        None => false,
+    }
+}
+
+fn is_server_reachable() -> bool {
     std::net::TcpStream::connect(server_host_port())
         .map(|_| true)
         .unwrap_or(false)
+}
+
+fn server_requires_auth() -> Option<bool> {
+    server_requires_auth_for_url(server_url())
+}
+
+fn server_requires_auth_for_url(url: &str) -> Option<bool> {
+    let host_port = url
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split('/')
+        .next()
+        .unwrap_or("127.0.0.1:8080");
+
+    if std::net::TcpStream::connect(host_port).map(|_| true).unwrap_or(false) == false {
+        return None;
+    }
+
+    let request = async {
+        Client::new()
+            .post(format!("{}/v1/api/sql", url))
+            .json(&json!({ "sql": "SELECT 1" }))
+            .timeout(Duration::from_millis(800))
+            .send()
+            .await
+    };
+
+    let result = match tokio::runtime::Handle::try_current() {
+        Ok(_) => {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(_) => return,
+                };
+                let _ = tx.send(rt.block_on(request));
+            });
+            match rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(result) => result,
+                Err(_) => return None,
+            }
+        }
+        Err(_) => {
+            let rt = tokio::runtime::Runtime::new().ok()?;
+            rt.block_on(request)
+        }
+    };
+
+    let response = match result {
+        Ok(resp) => resp,
+        Err(_) => return None,
+    };
+
+    if response.status().is_success() {
+        return Some(false);
+    }
+
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED
+        || response.status() == reqwest::StatusCode::FORBIDDEN
+    {
+        return Some(true);
+    }
+
+    Some(true)
 }
 
 /// Get available server URLs (cluster mode or single-node)
@@ -363,6 +488,16 @@ pub fn require_server_running() -> bool {
         println!("ℹ️  Running in CLUSTER mode with {} nodes: {:?}", available_urls.len(), available_urls);
     } else {
         println!("ℹ️  Running in SINGLE-NODE mode: {}", available_urls[0]);
+    }
+
+    if root_password().is_empty() {
+        let probe_url = available_urls[0].as_str();
+        if server_requires_auth_for_url(probe_url).unwrap_or(false) {
+            eprintln!(
+                "Skipping CLI tests: server requires auth but KALAMDB_ROOT_PASSWORD is empty."
+            );
+            return false;
+        }
     }
 
     true
@@ -607,6 +742,46 @@ fn get_shared_root_client() -> &'static KalamLinkClient {
             .first()
             .cloned()
             .unwrap_or_else(|| server_url().to_string());
+
+        let auth_required = server_requires_auth_for_url(&base_url).unwrap_or(true);
+        if !auth_required {
+            return KalamLinkClient::builder()
+                .base_url(&base_url)
+                .auth(AuthProvider::none())
+                .timeouts(
+                    KalamLinkTimeouts::builder()
+                        .connection_timeout_secs(5)
+                        .receive_timeout_secs(120)
+                        .send_timeout_secs(30)
+                        .subscribe_timeout_secs(10)
+                        .auth_timeout_secs(10)
+                        .initial_data_timeout(Duration::from_secs(120))
+                        .build(),
+                )
+                .build()
+                .expect("Failed to create shared root client without auth");
+        }
+
+        if root_password().is_empty() {
+            eprintln!(
+                "[TEST_CLIENT] ⚠ Server requires auth but KALAMDB_ROOT_PASSWORD is empty. Requests will fail; set the env var to avoid account lockouts."
+            );
+            return KalamLinkClient::builder()
+                .base_url(&base_url)
+                .auth(AuthProvider::none())
+                .timeouts(
+                    KalamLinkTimeouts::builder()
+                        .connection_timeout_secs(5)
+                        .receive_timeout_secs(120)
+                        .send_timeout_secs(30)
+                        .subscribe_timeout_secs(10)
+                        .auth_timeout_secs(10)
+                        .initial_data_timeout(Duration::from_secs(120))
+                        .build(),
+                )
+                .build()
+                .expect("Failed to create shared root client without auth");
+        }
         
         // PERFORMANCE: Try to login once to get JWT token, then use token for all requests
         // This avoids running bcrypt verification on every single query
@@ -1072,6 +1247,23 @@ fn to_base36(mut value: u128) -> String {
 /// Helper to create a CLI command with default test settings (for assert_cmd tests)
 pub fn create_cli_command() -> assert_cmd::Command {
     assert_cmd::Command::new(env!("CARGO_BIN_EXE_kalam"))
+}
+
+/// Helper to create a CLI command with explicit authentication and URL.
+pub fn create_cli_command_with_auth(username: &str, password: &str) -> assert_cmd::Command {
+    let mut cmd = create_cli_command();
+    cmd.arg("-u")
+        .arg(server_url())
+        .arg("--username")
+        .arg(username)
+        .arg("--password")
+        .arg(password);
+    cmd
+}
+
+/// Helper to create a CLI command authenticated as root.
+pub fn create_cli_command_with_root_auth() -> assert_cmd::Command {
+    create_cli_command_with_auth("root", root_password())
 }
 
 /// Helper to create a temporary credential store for testing

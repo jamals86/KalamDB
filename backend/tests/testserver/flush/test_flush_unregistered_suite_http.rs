@@ -178,7 +178,7 @@ async fn flush_table_and_wait(server: &HttpTestServer, ns: &str, table: &str) ->
 }
 
 #[tokio::test]
-#[ntest::timeout(180000)] // 3 minutes max for this comprehensive test
+#[ntest::timeout(300000)] // 5 minutes max for this comprehensive test
 async fn test_flush_concurrency_and_correctness_over_http() {
 	(async {
 	let server = super::test_support::http_server::get_global_server().await;

@@ -4,6 +4,8 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use openraft::error::{InstallSnapshotError, NetworkError, RPCError, RaftError, RemoteError, Unreachable};
 use openraft::network::{RaftNetwork as OpenRaftNetwork, RaftNetworkFactory as OpenRaftNetworkFactory, RPCOption};
@@ -30,6 +32,113 @@ impl std::fmt::Display for ConnectionError {
 
 impl std::error::Error for ConnectionError {}
 
+#[derive(Debug)]
+struct ConnectionState {
+    last_attempt: Instant,
+    last_log: Instant,
+    retry_count: u64,
+    is_unreachable: bool,
+}
+
+impl ConnectionState {
+    fn new(now: Instant, retry_interval: Duration) -> Self {
+        let initial = now.checked_sub(retry_interval).unwrap_or(now);
+        Self {
+            last_attempt: initial,
+            last_log: initial,
+            retry_count: 0,
+            is_unreachable: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ConnectionTracker {
+    group_id: GroupId,
+    retry_interval_ms: Arc<AtomicU64>,
+    states: Arc<dashmap::DashMap<u64, ConnectionState>>,
+}
+
+impl ConnectionTracker {
+    fn new(group_id: GroupId, retry_interval: Duration) -> Self {
+        Self {
+            group_id,
+            retry_interval_ms: Arc::new(AtomicU64::new(retry_interval.as_millis() as u64)),
+            states: Arc::new(dashmap::DashMap::new()),
+        }
+    }
+
+    fn set_retry_interval(&self, interval: Duration) {
+        self.retry_interval_ms
+            .store(interval.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    fn retry_interval(&self) -> Duration {
+        Duration::from_millis(self.retry_interval_ms.load(Ordering::Relaxed).max(1))
+    }
+
+    fn should_attempt(&self, target: u64) -> bool {
+        let now = Instant::now();
+        let retry_interval = self.retry_interval();
+        let mut entry = self
+            .states
+            .entry(target)
+            .or_insert_with(|| ConnectionState::new(now, retry_interval));
+
+        if now.duration_since(entry.last_attempt) >= retry_interval {
+            entry.last_attempt = now;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn record_failure(&self, target: u64, error: &str) {
+        let now = Instant::now();
+        let retry_interval = self.retry_interval();
+        let mut entry = self
+            .states
+            .entry(target)
+            .or_insert_with(|| ConnectionState::new(now, retry_interval));
+
+        entry.retry_count = entry.retry_count.saturating_add(1);
+        entry.is_unreachable = true;
+
+        if now.duration_since(entry.last_log) >= retry_interval {
+            entry.last_log = now;
+            log::warn!(
+                "Raft node {} in group {} left the cluster - trying to reconnect #{} (interval={}ms): {}",
+                target,
+                self.group_id,
+                entry.retry_count,
+                retry_interval.as_millis(),
+                error
+            );
+        }
+    }
+
+    fn record_success(&self, target: u64) {
+        let now = Instant::now();
+        let retry_interval = self.retry_interval();
+        let mut entry = self
+            .states
+            .entry(target)
+            .or_insert_with(|| ConnectionState::new(now, retry_interval));
+
+        if entry.is_unreachable {
+            log::info!(
+                "Raft node {} in group {} reconnected after {} retries",
+                target,
+                self.group_id,
+                entry.retry_count
+            );
+        }
+
+        entry.retry_count = 0;
+        entry.is_unreachable = false;
+    }
+}
+
 /// Network implementation for a single Raft group
 pub struct RaftNetwork {
     /// Target node ID
@@ -38,15 +147,24 @@ pub struct RaftNetwork {
     group_id: GroupId,
     /// Connect channel
     channel: Channel,
+    /// Connection retry tracker
+    connection_tracker: ConnectionTracker,
 }
 
 impl RaftNetwork {
     /// Create a new network instance
-    pub fn new(target: u64, _target_node: KalamNode, group_id: GroupId, channel: Channel) -> Self {
+    pub fn new(
+        target: u64,
+        _target_node: KalamNode,
+        group_id: GroupId,
+        channel: Channel,
+        connection_tracker: ConnectionTracker,
+    ) -> Self {
         Self {
             target,
             group_id,
             channel,
+            connection_tracker,
         }
     }
     
@@ -62,6 +180,12 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         rpc: AppendEntriesRequest<KalamTypeConfig>,
         _option: RPCOption,
     ) -> Result<AppendEntriesResponse<u64>, RPCError<u64, KalamNode, RaftError<u64>>> {
+        if !self.connection_tracker.should_attempt(self.target) {
+            return Err(RPCError::Unreachable(Unreachable::new(&ConnectionError(
+                "reconnect backoff".to_string(),
+            ))));
+        }
+
         // Get channel
         let channel = self.get_channel()
             .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
@@ -80,12 +204,21 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         });
         
         // Send request
-        let response = client.raft_rpc(grpc_request).await
-            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
+        let response = match client.raft_rpc(grpc_request).await {
+            Ok(response) => {
+                self.connection_tracker.record_success(self.target);
+                response
+            }
+            Err(e) => {
+                self.connection_tracker.record_failure(self.target, &e.to_string());
+                return Err(RPCError::Network(NetworkError::new(&e)));
+            }
+        };
         
         // Deserialize response
         let inner = response.into_inner();
         if !inner.error.is_empty() {
+            self.connection_tracker.record_failure(self.target, &inner.error);
             return Err(RPCError::RemoteError(RemoteError::new(
                 self.target,
                 RaftError::Fatal(openraft::error::Fatal::Panicked),
@@ -93,7 +226,10 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         }
         
         let result: AppendEntriesResponse<u64> = crate::state_machine::decode(&inner.payload)
-            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
+            .map_err(|e| {
+                self.connection_tracker.record_failure(self.target, &e.to_string());
+                RPCError::Network(NetworkError::new(&e))
+            })?;
         
         Ok(result)
     }
@@ -103,6 +239,12 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         rpc: InstallSnapshotRequest<KalamTypeConfig>,
         _option: RPCOption,
     ) -> Result<InstallSnapshotResponse<u64>, RPCError<u64, KalamNode, RaftError<u64, InstallSnapshotError>>> {
+        if !self.connection_tracker.should_attempt(self.target) {
+            return Err(RPCError::Unreachable(Unreachable::new(&ConnectionError(
+                "reconnect backoff".to_string(),
+            ))));
+        }
+
         // Get channel
         let channel = self.get_channel()
             .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
@@ -121,12 +263,21 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         });
         
         // Send request
-        let response = client.raft_rpc(grpc_request).await
-            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
+        let response = match client.raft_rpc(grpc_request).await {
+            Ok(response) => {
+                self.connection_tracker.record_success(self.target);
+                response
+            }
+            Err(e) => {
+                self.connection_tracker.record_failure(self.target, &e.to_string());
+                return Err(RPCError::Network(NetworkError::new(&e)));
+            }
+        };
         
         // Deserialize response
         let inner = response.into_inner();
         if !inner.error.is_empty() {
+            self.connection_tracker.record_failure(self.target, &inner.error);
             return Err(RPCError::RemoteError(RemoteError::new(
                 self.target.into(),
                 RaftError::Fatal(openraft::error::Fatal::Panicked),
@@ -134,7 +285,10 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         }
         
         let result: InstallSnapshotResponse<u64> = crate::state_machine::decode(&inner.payload)
-            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
+            .map_err(|e| {
+                self.connection_tracker.record_failure(self.target, &e.to_string());
+                RPCError::Network(NetworkError::new(&e))
+            })?;
         
         Ok(result)
     }
@@ -144,6 +298,12 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         rpc: VoteRequest<u64>,
         _option: RPCOption,
     ) -> Result<VoteResponse<u64>, RPCError<u64, KalamNode, RaftError<u64>>> {
+        if !self.connection_tracker.should_attempt(self.target) {
+            return Err(RPCError::Unreachable(Unreachable::new(&ConnectionError(
+                "reconnect backoff".to_string(),
+            ))));
+        }
+
         // Get channel
         let channel = self.get_channel()
             .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
@@ -162,12 +322,21 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         });
         
         // Send request
-        let response = client.raft_rpc(grpc_request).await
-            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
+        let response = match client.raft_rpc(grpc_request).await {
+            Ok(response) => {
+                self.connection_tracker.record_success(self.target);
+                response
+            }
+            Err(e) => {
+                self.connection_tracker.record_failure(self.target, &e.to_string());
+                return Err(RPCError::Network(NetworkError::new(&e)));
+            }
+        };
         
         // Deserialize response
         let inner = response.into_inner();
         if !inner.error.is_empty() {
+            self.connection_tracker.record_failure(self.target, &inner.error);
             return Err(RPCError::RemoteError(RemoteError::new(
                 self.target,
                 RaftError::Fatal(openraft::error::Fatal::Panicked),
@@ -175,7 +344,10 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         }
         
         let result: VoteResponse<u64> = crate::state_machine::decode(&inner.payload)
-            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
+            .map_err(|e| {
+                self.connection_tracker.record_failure(self.target, &e.to_string());
+                RPCError::Network(NetworkError::new(&e))
+            })?;
         
         Ok(result)
     }
@@ -190,6 +362,8 @@ pub struct RaftNetworkFactory {
     nodes: Arc<RwLock<HashMap<u64, KalamNode>>>,
     /// Cached gRPC channels (node_id -> channel)
     channels: Arc<dashmap::DashMap<u64, Channel>>,
+    /// Connection retry tracker
+    connection_tracker: ConnectionTracker,
 }
 
 impl RaftNetworkFactory {
@@ -199,7 +373,13 @@ impl RaftNetworkFactory {
             group_id,
             nodes: Arc::new(RwLock::new(HashMap::new())),
             channels: Arc::new(dashmap::DashMap::new()),
+            connection_tracker: ConnectionTracker::new(group_id, Duration::from_secs(3)),
         }
+    }
+
+    /// Configure the minimum interval between reconnect attempts
+    pub fn set_reconnect_interval(&self, interval: Duration) {
+        self.connection_tracker.set_retry_interval(interval);
     }
     
     /// Register a node in the cluster
@@ -252,7 +432,13 @@ impl OpenRaftNetworkFactory<KalamTypeConfig> for RaftNetworkFactory {
             ch
         };
         
-        RaftNetwork::new(target, node.clone(), self.group_id, channel)
+        RaftNetwork::new(
+            target,
+            node.clone(),
+            self.group_id,
+            channel,
+            self.connection_tracker.clone(),
+        )
     }
 }
 

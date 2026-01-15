@@ -114,6 +114,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         
         // Detect single-node mode (no peers configured)
         let is_single_node = config.peers.is_empty();
+
+        self
+            .network_factory
+            .set_reconnect_interval(Duration::from_millis(config.reconnect_interval_ms));
         
         // Parse snapshot policy from configuration
         let snapshot_policy = kalamdb_commons::config::ClusterConfig::parse_snapshot_policy(&config.snapshot_policy)
@@ -621,11 +625,72 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         );
         Ok(())
     }
+
+    /// Trigger election for this Raft group
+    pub async fn trigger_election(&self) -> Result<(), RaftError> {
+        let raft = {
+            let guard = self.raft.read();
+            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
+        };
+
+        raft.trigger().elect().await
+            .map_err(|e| RaftError::Internal(format!("Failed to trigger election for group {}: {:?}", self.group_id, e)))?;
+
+        Ok(())
+    }
+
+    /// Purge logs up to the given index for this Raft group
+    pub async fn purge_log(&self, upto: u64) -> Result<(), RaftError> {
+        let raft = {
+            let guard = self.raft.read();
+            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
+        };
+
+        raft.trigger().purge_log(upto).await
+            .map_err(|e| RaftError::Internal(format!("Failed to purge logs for group {}: {:?}", self.group_id, e)))?;
+
+        Ok(())
+    }
+
+    /// Attempt to step down the leader for this group
+    pub async fn step_down(&self) -> Result<(), RaftError> {
+        let raft = {
+            let guard = self.raft.read();
+            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
+        };
+
+        if !self.is_leader() {
+            return Ok(());
+        }
+
+        let cooldown_ms = raft.config().election_timeout_max * 2;
+        let cooldown = Duration::from_millis(cooldown_ms);
+
+        log::info!(
+            "Stepdown requested for group {} - disabling heartbeats/election for {}ms",
+            self.group_id,
+            cooldown_ms
+        );
+
+        let runtime = raft.runtime_config();
+        runtime.heartbeat(false);
+        runtime.elect(false);
+
+        let raft_clone = raft.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(cooldown).await;
+            let runtime = raft_clone.runtime_config();
+            runtime.heartbeat(true);
+            runtime.elect(true);
+        });
+
+        Ok(())
+    }
     
     /// Trigger a snapshot for this Raft group
     ///
     /// Forces OpenRaft to create a snapshot of the current state.
-    /// This is useful for CLUSTER FLUSH operations to ensure durability.
+    /// This is useful for CLUSTER SNAPSHOT operations to ensure durability.
     pub async fn trigger_snapshot(&self) -> Result<(), RaftError> {
         let raft = {
             let guard = self.raft.read();

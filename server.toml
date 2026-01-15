@@ -367,6 +367,10 @@ max_parameter_size_bytes = 524288
 # # (default: 5000ms = 5 seconds)
 # replication_timeout_ms = 5000
 # 
+# # Minimum interval in milliseconds between reconnect attempts to an unreachable peer
+# # (default: 3000ms = 3 seconds)
+# reconnect_interval_ms = 3000
+# 
 # # NOTE: OpenRaft uses standard Raft quorum: (N/2)+1
 # # For 3 nodes: quorum = 2 (majority required for commit)
 # # For 5 nodes: quorum = 3

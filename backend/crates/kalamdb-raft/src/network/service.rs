@@ -7,6 +7,7 @@
 //! - Client proposal forwarding (forward proposals from followers to leader)
 
 use tonic::{Request, Response, Status};
+use tonic_prost::ProstCodec;
 
 /// Raft RPC request message
 #[derive(Clone, PartialEq, prost::Message)]
@@ -95,7 +96,7 @@ pub mod raft_client {
 
     impl<T> RaftClient<T>
     where
-        T: tonic::client::GrpcService<tonic::body::BoxBody>,
+        T: tonic::client::GrpcService<tonic::body::Body>,
         T::Error: Into<StdError> + std::fmt::Debug,
         T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
         <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
@@ -110,7 +111,7 @@ pub mod raft_client {
                 .await
                 .map_err(|e| tonic::Status::new(tonic::Code::Unknown, format!("Service not ready: {:?}", e)))?;
             
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/kalamdb.raft.Raft/RaftRpc");
             let mut req = request.into_request();
             req.extensions_mut().insert(GrpcMethod::new("kalamdb.raft.Raft", "RaftRpc"));
@@ -127,7 +128,7 @@ pub mod raft_client {
                 .await
                 .map_err(|e| tonic::Status::new(tonic::Code::Unknown, format!("Service not ready: {:?}", e)))?;
             
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/kalamdb.raft.Raft/ClientProposal");
             let mut req = request.into_request();
             req.extensions_mut().insert(GrpcMethod::new("kalamdb.raft.Raft", "ClientProposal"));
@@ -183,7 +184,7 @@ pub mod raft_server {
         B: Body + std::marker::Send + 'static,
         B::Error: Into<StdError> + std::marker::Send + 'static,
     {
-        type Response = http::Response<tonic::body::BoxBody>;
+        type Response = http::Response<tonic::body::Body>;
         type Error = std::convert::Infallible;
         type Future = BoxFuture<Self::Response, Self::Error>;
 
@@ -197,7 +198,7 @@ pub mod raft_server {
             match req.uri().path() {
                 "/kalamdb.raft.Raft/RaftRpc" => {
                     let fut = async move {
-                        let mut grpc = tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
+                        let mut grpc = tonic::server::Grpc::new(ProstCodec::default());
                         let method = RaftRpcSvc(inner);
                         let res = grpc.unary(method, req).await;
                         Ok(res)
@@ -206,7 +207,7 @@ pub mod raft_server {
                 }
                 "/kalamdb.raft.Raft/ClientProposal" => {
                     let fut = async move {
-                        let mut grpc = tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
+                        let mut grpc = tonic::server::Grpc::new(ProstCodec::default());
                         let method = ClientProposalSvc(inner);
                         let res = grpc.unary(method, req).await;
                         Ok(res)
@@ -217,7 +218,7 @@ pub mod raft_server {
                     Box::pin(async move {
                         let mut builder = http::Response::builder();
                         builder = builder.status(200).header("grpc-status", "12");
-                        Ok(builder.body(tonic::body::empty_body()).unwrap())
+                        Ok(builder.body(tonic::body::Body::empty()).unwrap())
                     })
                 }
             }

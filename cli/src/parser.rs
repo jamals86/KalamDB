@@ -17,9 +17,15 @@ pub enum Command {
     Help,
     Config,
     Flush,
-        ClusterFlush,
+        ClusterSnapshot,
+        ClusterPurge { upto: u64 },
+        ClusterTriggerElection,
+        ClusterTransferLeader { node_id: u64 },
+        ClusterStepdown,
         ClusterClear,
         ClusterList,
+        ClusterListGroups,
+        ClusterStatus,
         ClusterJoin(String),  // node address to join
         ClusterLeave,
     Health,
@@ -88,13 +94,75 @@ impl CommandParser {
             "\\cluster" => {
                 if args.is_empty() {
                     Err(CLIError::ParseError(
-                        "\\cluster requires: flush, clear, list, join, or leave".into(),
+                        "\\cluster requires: snapshot, purge, trigger-election, transfer-leader, stepdown, clear, list, status, join, or leave".into(),
                     ))
                 } else {
-                    match args[0] {
-                        "flush" => Ok(Command::ClusterFlush),
+                    let sub = args[0].to_ascii_lowercase();
+                    match sub.as_str() {
+                        "snapshot" => Ok(Command::ClusterSnapshot),
+                        "purge" => {
+                            let upto = args
+                                .iter()
+                                .skip(1)
+                                .position(|arg| arg.trim_start_matches('-').eq_ignore_ascii_case("upto"))
+                                .and_then(|pos| args.get(pos + 2))
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .or_else(|| args.get(1).and_then(|v| v.parse::<u64>().ok()));
+
+                            if let Some(upto) = upto {
+                                Ok(Command::ClusterPurge { upto })
+                            } else {
+                                Err(CLIError::ParseError(
+                                    "\\cluster purge requires --upto <index> or a numeric index".into(),
+                                ))
+                            }
+                        }
+                        "trigger-election" => Ok(Command::ClusterTriggerElection),
+                        "trigger" => {
+                            if args.get(1).map(|v| v.eq_ignore_ascii_case("election")) == Some(true) {
+                                Ok(Command::ClusterTriggerElection)
+                            } else {
+                                Err(CLIError::ParseError(
+                                    "\\cluster trigger requires: election".into(),
+                                ))
+                            }
+                        }
+                        "transfer-leader" => {
+                            let node_id = args.get(1).and_then(|v| v.parse::<u64>().ok());
+                            if let Some(node_id) = node_id {
+                                Ok(Command::ClusterTransferLeader { node_id })
+                            } else {
+                                Err(CLIError::ParseError(
+                                    "\\cluster transfer-leader requires a numeric node id".into(),
+                                ))
+                            }
+                        }
+                        "transfer" => {
+                            if args.get(1).map(|v| v.eq_ignore_ascii_case("leader")) == Some(true) {
+                                let node_id = args.get(2).and_then(|v| v.parse::<u64>().ok());
+                                if let Some(node_id) = node_id {
+                                    Ok(Command::ClusterTransferLeader { node_id })
+                                } else {
+                                    Err(CLIError::ParseError(
+                                        "\\cluster transfer leader requires a numeric node id".into(),
+                                    ))
+                                }
+                            } else {
+                                Err(CLIError::ParseError(
+                                    "\\cluster transfer requires: leader <node_id>".into(),
+                                ))
+                            }
+                        }
+                        "stepdown" | "step-down" => Ok(Command::ClusterStepdown),
                         "clear" => Ok(Command::ClusterClear),
-                        "list" | "ls" => Ok(Command::ClusterList),
+                        "list" | "ls" => {
+                            if args.get(1).map(|v| v.eq_ignore_ascii_case("groups")) == Some(true) {
+                                Ok(Command::ClusterListGroups)
+                            } else {
+                                Ok(Command::ClusterList)
+                            }
+                        }
+                        "status" => Ok(Command::ClusterStatus),
                         "join" => {
                             if args.len() < 2 {
                                 Err(CLIError::ParseError(

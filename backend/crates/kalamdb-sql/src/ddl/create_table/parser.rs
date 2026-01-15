@@ -232,18 +232,8 @@ impl CreateTableStatement {
                 // Check table constraints for PRIMARY KEY
                 for constraint in constraints {
                     match constraint {
-                        TableConstraint::Unique { .. } => {
-                            // Assuming if it's unique and we don't have is_primary, we check if it's intended as PK?
-                            // Or maybe sqlparser 0.58.0 has `primary` field?
-                            // Let's assume for now we only support PK via ColumnOption or if we can detect it here.
-                            // If `is_primary` is gone, maybe `TableConstraint::PrimaryKey` exists?
-                            // Let's check if TableConstraint has PrimaryKey variant.
-                            // If so, we should match that instead.
-                            // But for now, I'll just comment out the PK check from table constraints if I can't find the field.
-                            // Wait, I should check if `TableConstraint::PrimaryKey` exists.
-                            // I'll assume it does if `Unique` doesn't have `is_primary`.
-                        }
-                        TableConstraint::PrimaryKey { columns, .. } => {
+                        TableConstraint::PrimaryKey(constraint) => {
+                            let columns = constraint.columns;
                             if columns.len() != 1 {
                                 return Err(
                                     "Composite PRIMARY KEYs are not supported yet".to_string()
@@ -262,6 +252,7 @@ impl CreateTableStatement {
                                 );
                             }
                         }
+                        TableConstraint::Unique(_) => {}
                         _ => {}
                     }
                 }
@@ -282,17 +273,14 @@ impl CreateTableStatement {
 
                     for option in col.options {
                         match &option.option {
-                            ColumnOption::Unique { is_primary, .. } => {
-                                if *is_primary {
-                                    if primary_key_column.is_some() {
-                                        return Err(
-                                            "Multiple PRIMARY KEY definitions found".to_string()
-                                        );
-                                    }
-                                    primary_key_column = Some(col_name.clone());
-                                    col_is_nullable = false; // PKs cannot be null
+                            ColumnOption::PrimaryKey(_) => {
+                                if primary_key_column.is_some() {
+                                    return Err("Multiple PRIMARY KEY definitions found".to_string());
                                 }
+                                primary_key_column = Some(col_name.clone());
+                                col_is_nullable = false; // PKs cannot be null
                             }
+                            ColumnOption::Unique(_) => {}
                             ColumnOption::NotNull => {
                                 col_is_nullable = false;
                             }

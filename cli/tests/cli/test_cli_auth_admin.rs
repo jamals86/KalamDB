@@ -15,52 +15,14 @@
 #![allow(unused_imports)]
 use assert_cmd::Command;
 use crate::common::*;
-use serde_json::json;
 use std::time::Duration;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Helper to check if server is running
-async fn is_server_running() -> bool {
-    reqwest::Client::new()
-        .post(format!("{}/v1/api/sql", server_url()))
-        .basic_auth("root", Some(""))
-        .json(&json!({ "sql": "SELECT 1" }))
-        .timeout(Duration::from_millis(500))
-        .send()
-        .await
-        .map(|r| r.status().is_success())
-        .unwrap_or(false)
-}
-
-/// Helper to execute SQL with authentication
-async fn execute_sql_as(
-    username: &str,
-    password: &str,
-    sql: &str,
-) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
-    let response = client
-        .post(format!("{}/v1/api/sql", server_url()))
-        .basic_auth(username, Some(password))
-        .json(&json!({ "sql": sql }))
-        .send()
-        .await?;
-
-    let body = response.text().await?;
-    let parsed: serde_json::Value = serde_json::from_str(&body)?;
-    Ok(parsed)
-}
-
-/// Helper to execute SQL as root user (empty password for localhost)
-async fn execute_sql_as_root(sql: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    execute_sql_as("root", "", sql).await
-}
-
 /// Test that root user can create namespaces
 #[tokio::test]
 async fn test_root_can_create_namespace() {
-    if !is_server_running().await {
+    if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running at {}. Skipping test.", server_url());
         return;
     }
@@ -69,7 +31,7 @@ async fn test_root_can_create_namespace() {
     let namespace_name = generate_unique_namespace("test_root_ns");
 
     // Clean up any existing namespace (just in case)
-    let _ = execute_sql_as_root(&format!(
+    let _ = execute_sql_via_http_as_root(&format!(
         "DROP NAMESPACE IF EXISTS {} CASCADE",
         namespace_name
     ))
@@ -77,7 +39,7 @@ async fn test_root_can_create_namespace() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Create namespace as root
-    let result = match execute_sql_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await {
+    let result = match execute_sql_via_http_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await {
         Ok(r) => r,
         Err(e) => {
             eprintln!("execute_sql_as_root failed: {:?}", e);
@@ -92,7 +54,7 @@ async fn test_root_can_create_namespace() {
     }
 
     // Verify namespace was created
-    let select_result = execute_sql_as_root(&format!(
+    let select_result = execute_sql_via_http_as_root(&format!(
         "SELECT name FROM system.namespaces WHERE name = '{}'",
         namespace_name
     ))
@@ -127,13 +89,13 @@ async fn test_root_can_create_namespace() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }
 
 /// Test that root user can create and drop tables
 #[tokio::test]
 async fn test_root_can_create_drop_tables() {
-    if !is_server_running().await {
+    if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
@@ -142,7 +104,7 @@ async fn test_root_can_create_drop_tables() {
     let namespace_name = generate_unique_namespace("test_tables_ns");
 
     // Ensure namespace exists
-    let _ = execute_sql_as_root(&format!(
+    let _ = execute_sql_via_http_as_root(&format!(
         "CREATE NAMESPACE IF NOT EXISTS {}",
         namespace_name
     ))
@@ -150,7 +112,7 @@ async fn test_root_can_create_drop_tables() {
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     // Create table as root
-    let result = execute_sql_as_root(&format!(
+    let result = execute_sql_via_http_as_root(&format!(
         "CREATE TABLE {}.test_table (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
         namespace_name
     ))
@@ -164,7 +126,7 @@ async fn test_root_can_create_drop_tables() {
     );
 
     // Drop table
-    let result = execute_sql_as_root(&format!("DROP TABLE {}.test_table", namespace_name))
+    let result = execute_sql_via_http_as_root(&format!("DROP TABLE {}.test_table", namespace_name))
         .await
         .unwrap();
 
@@ -174,13 +136,13 @@ async fn test_root_can_create_drop_tables() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }
 
 /// Test CREATE NAMESPACE via CLI with root authentication
 #[tokio::test]
 async fn test_cli_create_namespace_as_root() {
-    if !is_server_running().await {
+    if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
@@ -190,7 +152,7 @@ async fn test_cli_create_namespace_as_root() {
 
     // Clean up any existing namespace
     let drop_result =
-        execute_sql_as_root(&format!("DROP NAMESPACE IF EXISTS {}", namespace_name)).await;
+        execute_sql_via_http_as_root(&format!("DROP NAMESPACE IF EXISTS {}", namespace_name)).await;
     if let Err(e) = &drop_result {
         eprintln!("DROP NAMESPACE failed: {:?}", e);
     }
@@ -201,11 +163,9 @@ async fn test_cli_create_namespace_as_root() {
     }
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Execute CREATE NAMESPACE via CLI (auto-authenticates as root for localhost)
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--command")
+    // Execute CREATE NAMESPACE via CLI with root auth
+    let mut cmd = create_cli_command_with_root_auth();
+    cmd.arg("--command")
         .arg(format!("CREATE NAMESPACE {}", namespace_name))
         .timeout(TEST_TIMEOUT);
 
@@ -221,7 +181,7 @@ async fn test_cli_create_namespace_as_root() {
     );
 
     // Verify namespace was created
-    let result = execute_sql_as_root(&format!(
+    let result = execute_sql_via_http_as_root(&format!(
         "SELECT name FROM system.namespaces WHERE name = '{}'",
         namespace_name
     ))
@@ -231,22 +191,22 @@ async fn test_cli_create_namespace_as_root() {
     assert_eq!(result["status"], "success");
 
     // Cleanup
-    let _ = execute_sql_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }
 
 /// Test that non-admin users cannot create namespaces
 #[tokio::test]
 async fn test_regular_user_cannot_create_namespace() {
-    if !is_server_running().await {
+    if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
 
     // First, create a regular user as root
-    let _ = execute_sql_as_root("DROP USER IF EXISTS testuser").await;
+    let _ = execute_sql_via_http_as_root("DROP USER IF EXISTS testuser").await;
     tokio::time::sleep(Duration::from_millis(20)).await;
 
-    let result = execute_sql_as_root("CREATE USER testuser PASSWORD 'testpass' ROLE user").await;
+    let result = execute_sql_via_http_as_root("CREATE USER testuser PASSWORD 'testpass' ROLE user").await;
 
     if result.is_err() || result.as_ref().unwrap()["status"] != "success" {
         eprintln!("⚠️  Failed to create test user, skipping test");
@@ -256,7 +216,7 @@ async fn test_regular_user_cannot_create_namespace() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Try to create namespace as regular user
-    let result = execute_sql_as("testuser", "testpass", "CREATE NAMESPACE user_test_ns").await;
+    let result = execute_sql_via_http_as("testuser", "testpass", "CREATE NAMESPACE user_test_ns").await;
 
     // Should fail with authorization error
     if let Ok(response) = result {
@@ -276,13 +236,13 @@ async fn test_regular_user_cannot_create_namespace() {
     }
 
     // Cleanup
-    let _ = execute_sql_as_root("DROP USER testuser").await;
+    let _ = execute_sql_via_http_as_root("DROP USER testuser").await;
 }
 
 /// Test CLI with explicit username/password
 #[tokio::test]
 async fn test_cli_with_explicit_credentials() {
-    if !is_server_running().await {
+    if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
@@ -294,7 +254,7 @@ async fn test_cli_with_explicit_credentials() {
         .arg("--username")
         .arg("root")
         .arg("--password")
-        .arg("")
+        .arg(root_password())
         .arg("--command")
         .arg("SELECT 1 as test")
         .timeout(TEST_TIMEOUT);
@@ -312,7 +272,7 @@ async fn test_cli_with_explicit_credentials() {
 /// Test admin operations via CLI
 #[tokio::test]
 async fn test_cli_admin_operations() {
-    if !is_server_running().await {
+    if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
@@ -321,7 +281,7 @@ async fn test_cli_admin_operations() {
     let namespace_name = generate_unique_namespace("admin_ops_test");
 
     // Clean up
-    let _ = execute_sql_as_root(&format!(
+    let _ = execute_sql_via_http_as_root(&format!(
         "DROP NAMESPACE IF EXISTS {} CASCADE",
         namespace_name
     ))
@@ -339,12 +299,8 @@ SELECT * FROM {}.users;
         namespace_name, namespace_name, namespace_name, namespace_name
     );
 
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--command")
-        .arg(sql_batch)
-        .timeout(TEST_TIMEOUT);
+    let mut cmd = create_cli_command_with_root_auth();
+    cmd.arg("--command").arg(sql_batch).timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -363,21 +319,19 @@ SELECT * FROM {}.users;
     );
 
     // Cleanup
-    let _ = execute_sql_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }
 
 /// Test SHOW NAMESPACES command
 #[tokio::test]
 async fn test_cli_show_namespaces() {
-    if !is_server_running().await {
+    if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
 
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--command")
+    let mut cmd = create_cli_command_with_root_auth();
+    cmd.arg("--command")
         .arg("SHOW NAMESPACES")
         .timeout(TEST_TIMEOUT);
 
@@ -401,7 +355,7 @@ async fn test_cli_show_namespaces() {
 /// Test FLUSH TABLE command via CLI
 #[tokio::test]
 async fn test_cli_flush_table() {
-    if !is_server_running().await {
+    if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
@@ -410,18 +364,18 @@ async fn test_cli_flush_table() {
     let namespace_name = generate_unique_namespace("flush_test_ns");
 
     // Setup: Create namespace and user table
-    let _ = execute_sql_as_root(&format!(
+    let _ = execute_sql_via_http_as_root(&format!(
         "DROP NAMESPACE IF EXISTS {} CASCADE",
         namespace_name
     ))
     .await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let _ = execute_sql_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Create a USER table with flush policy (SHARED tables cannot be flushed)
-    let result = execute_sql_as_root(&format!(
+    let result = execute_sql_via_http_as_root(&format!(
         "CREATE TABLE {}.metrics (timestamp BIGINT PRIMARY KEY, value DOUBLE) WITH (TYPE='USER', FLUSH_POLICY='rows:5')",
         namespace_name
     ))
@@ -440,15 +394,13 @@ async fn test_cli_flush_table() {
             "INSERT INTO {}.metrics (timestamp, value) VALUES ({}, {}.5)",
             namespace_name, i, i
         );
-        let _ = execute_sql_as_root(&insert_sql).await;
+        let _ = execute_sql_via_http_as_root(&insert_sql).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     // Execute FLUSH TABLE via CLI
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--command")
+    let mut cmd = create_cli_command_with_root_auth();
+    cmd.arg("--command")
         .arg(format!("FLUSH TABLE {}.metrics", namespace_name))
         .timeout(TEST_TIMEOUT);
 
@@ -504,7 +456,7 @@ async fn test_cli_flush_table() {
     // Poll briefly until the job row becomes visible.
     let deadline = std::time::Instant::now() + Duration::from_secs(8);
     let (jobs_result, jobs_data) = loop {
-        let jobs_result = execute_sql_as_root(&jobs_query).await.unwrap();
+        let jobs_result = execute_sql_via_http_as_root(&jobs_query).await.unwrap();
 
         assert_eq!(
             jobs_result["status"], "success",
@@ -628,7 +580,7 @@ async fn test_cli_flush_table() {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Requery current job status
-        let refetch = execute_sql_as_root(&jobs_query).await.unwrap();
+        let refetch = execute_sql_via_http_as_root(&jobs_query).await.unwrap();
         let rows = refetch["results"][0]["rows"]
             .as_array()
             .cloned()
@@ -684,7 +636,7 @@ async fn test_cli_flush_table() {
     }
 
     // Verify data is still accessible after flush
-    let result = execute_sql_as_root(&format!(
+    let result = execute_sql_via_http_as_root(&format!(
         "SELECT COUNT(*) as count FROM {}.metrics",
         namespace_name
     ))
@@ -694,13 +646,13 @@ async fn test_cli_flush_table() {
     assert_eq!(result["status"], "success");
 
     // Cleanup
-    let _ = execute_sql_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }
 
 /// Test FLUSH ALL TABLES command via CLI
 #[tokio::test]
 async fn test_cli_flush_all_tables() {
-    if !is_server_running().await {
+    if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
@@ -709,34 +661,34 @@ async fn test_cli_flush_all_tables() {
     let namespace_name = generate_unique_namespace("flush_all_test");
 
     // Setup: Create namespace with multiple tables
-    let _ = execute_sql_as_root(&format!(
+    let _ = execute_sql_via_http_as_root(&format!(
         "DROP NAMESPACE IF EXISTS {} CASCADE",
         namespace_name
     ))
     .await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let _ = execute_sql_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Create multiple USER tables (SHARED tables cannot be flushed)
-    let _ = execute_sql_as_root(
+    let _ = execute_sql_via_http_as_root(
         &format!("CREATE TABLE {}.table1 (id INT PRIMARY KEY, data VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:10')", namespace_name),
     )
     .await;
-    let _ = execute_sql_as_root(
+    let _ = execute_sql_via_http_as_root(
         &format!("CREATE TABLE {}.table2 (id INT PRIMARY KEY, value DOUBLE) WITH (TYPE='USER', FLUSH_POLICY='rows:10')", namespace_name),
     )
     .await;
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     // Insert some data
-    let _ = execute_sql_as_root(&format!(
+    let _ = execute_sql_via_http_as_root(&format!(
         "INSERT INTO {}.table1 (id, data) VALUES (1, 'test')",
         namespace_name
     ))
     .await;
-    let _ = execute_sql_as_root(&format!(
+    let _ = execute_sql_via_http_as_root(&format!(
         "INSERT INTO {}.table2 (id, value) VALUES (1, 42.0)",
         namespace_name
     ))
@@ -744,10 +696,8 @@ async fn test_cli_flush_all_tables() {
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     // Execute FLUSH ALL TABLES via CLI
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--command")
+    let mut cmd = create_cli_command_with_root_auth();
+    cmd.arg("--command")
         .arg(format!("FLUSH ALL TABLES IN {}", namespace_name))
         .timeout(TEST_TIMEOUT);
 
@@ -821,7 +771,7 @@ async fn test_cli_flush_all_tables() {
         )
     };
 
-    let jobs_result = execute_sql_as_root(&jobs_query).await.unwrap();
+    let jobs_result = execute_sql_via_http_as_root(&jobs_query).await.unwrap();
 
     assert_eq!(
         jobs_result["status"], "success",
@@ -951,5 +901,5 @@ async fn test_cli_flush_all_tables() {
     }
 
     // Cleanup
-    let _ = execute_sql_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }

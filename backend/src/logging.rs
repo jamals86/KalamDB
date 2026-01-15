@@ -77,7 +77,7 @@ pub fn init_logging(
             // OpenRaft generates frequent timeout warnings during normal operation
             // These are expected in clustered environments and fill up logs quickly
             .level_for("openraft", LevelFilter::Error)
-            //.level_for("openraft::replication", LevelFilter::Off) // Disable replication spam entirely
+            .level_for("openraft::replication", LevelFilter::Off)
             .level_for("tracing", LevelFilter::Warn);
 
         // Apply per-target overrides from configuration (if any)

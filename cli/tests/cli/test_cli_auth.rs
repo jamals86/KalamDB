@@ -340,11 +340,8 @@ fn test_cli_save_credentials_creates_file() {
 
     // Run CLI with --save-credentials flag
     // Note: Uses empty password for root (default test configuration)
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_kalam"))
-        .arg("--username")
-        .arg("root")
-        .arg("--password")
-        .arg("") // Empty password for test root user
+    let mut cmd = create_cli_command_with_root_auth();
+    let output = cmd
         .arg("--save-credentials")
         .arg("--command")
         .arg("SELECT 1")
@@ -389,11 +386,8 @@ fn test_cli_credentials_loaded_in_session() {
 
     // First, save credentials
     // Note: Uses empty password for root (default test configuration)
-    let save_output = std::process::Command::new(env!("CARGO_BIN_EXE_kalam"))
-        .arg("--username")
-        .arg("root")
-        .arg("--password")
-        .arg("") // Empty password for test root user
+    let mut cmd = create_cli_command_with_root_auth();
+    let save_output = cmd
         .arg("--save-credentials")
         .arg("--command")
         .arg("SELECT 1")
@@ -406,7 +400,8 @@ fn test_cli_credentials_loaded_in_session() {
     }
 
     // Now run CLI without username/password - should use stored credentials
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_kalam"))
+    let mut cmd = create_cli_command();
+    let output = cmd
         .arg("--command")
         .arg("SELECT 'loaded_from_stored' as source")
         .arg("--verbose")
@@ -439,11 +434,8 @@ fn test_cli_uses_jwt_for_requests() {
 
     // With verbose mode, we can verify JWT is being used
     // Note: Uses empty password for root (default test configuration)
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_kalam"))
-        .arg("--username")
-        .arg("root")
-        .arg("--password")
-        .arg("") // Empty password for test root user
+    let mut cmd = create_cli_command_with_root_auth();
+    let output = cmd
         .arg("--verbose")
         .arg("--command")
         .arg("SELECT 1")
@@ -482,18 +474,16 @@ fn test_cli_show_credentials_command() {
 
     // First ensure we have credentials saved
     // Note: Uses empty password for root (default test configuration)
-    let _ = std::process::Command::new(env!("CARGO_BIN_EXE_kalam"))
-        .arg("--username")
-        .arg("root")
-        .arg("--password")
-        .arg("") // Empty password for test root user
+    let mut cmd = create_cli_command_with_root_auth();
+    let _ = cmd
         .arg("--save-credentials")
         .arg("--command")
         .arg("SELECT 1")
         .output();
 
     // Now test --show-credentials
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_kalam"))
+    let mut cmd = create_cli_command();
+    let output = cmd
         .arg("--show-credentials")
         .output()
         .expect("Failed to run CLI");
@@ -522,18 +512,16 @@ fn test_cli_delete_credentials_command() {
 
     // First save credentials
     // Note: Uses empty password for root (default test configuration)
-    let _ = std::process::Command::new(env!("CARGO_BIN_EXE_kalam"))
-        .arg("--username")
-        .arg("root")
-        .arg("--password")
-        .arg("") // Empty password for test root user
+    let mut cmd = create_cli_command_with_root_auth();
+    let _ = cmd
         .arg("--save-credentials")
         .arg("--command")
         .arg("SELECT 1")
         .output();
 
     // Delete credentials
-    let delete_output = std::process::Command::new(env!("CARGO_BIN_EXE_kalam"))
+    let mut cmd = create_cli_command();
+    let delete_output = cmd
         .arg("--delete-credentials")
         .output()
         .expect("Failed to run CLI");
@@ -546,7 +534,8 @@ fn test_cli_delete_credentials_command() {
     );
 
     // Verify credentials are gone
-    let show_output = std::process::Command::new(env!("CARGO_BIN_EXE_kalam"))
+    let mut cmd = create_cli_command();
+    let show_output = cmd
         .arg("--show-credentials")
         .output()
         .expect("Failed to run CLI");

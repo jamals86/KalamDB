@@ -1,14 +1,17 @@
+#![allow(unused_imports)]
+
 use anyhow::{Context, Result};
 use base64::Engine;
 use kalam_link::models::{QueryResponse, ResponseStatus};
 use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
 use kalamdb_commons::{Role, UserId, UserName};
+use kalamdb_core::app_context::AppContext;
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use std::fs::OpenOptions;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::OnceCell;
 use tokio::time::{sleep, Duration, Instant};
@@ -96,6 +99,8 @@ pub struct HttpTestServer {
     /// Cache of username -> user_id mappings for proper JWT token generation
     /// Uses std::sync::Mutex since it's accessed from sync code (link_client)
     user_id_cache: std::sync::Mutex<HashMap<String, String>>,
+    /// Cache of username -> password for basic auth test clients
+    user_password_cache: std::sync::Mutex<HashMap<String, String>>,
     running: kalamdb_server::lifecycle::RunningTestHttpServer,
     skip_raft_leader_check: bool,
 }
@@ -106,7 +111,7 @@ fn acquire_global_http_test_server_lock() -> Result<Option<std::fs::File>> {
         use std::os::unix::io::AsRawFd;
 
         let lock_path = std::env::temp_dir().join("kalamdb-http-test-server.lock");
-        let file = OpenOptions::new()
+        let file = std::fs::OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
@@ -172,6 +177,11 @@ impl HttpTestServer {
     #[allow(dead_code)]
     pub fn data_path(&self) -> &Path {
         &self.data_path
+    }
+
+    /// Access the underlying AppContext for tests that need direct access.
+    pub fn app_context(&self) -> Arc<AppContext> {
+        self.running.app_context.clone()
     }
 
     /// Returns the storage root directory (e.g. `<data_path>/storage`).
@@ -245,14 +255,32 @@ impl HttpTestServer {
         cache.insert(username.to_string(), user_id.to_string());
     }
 
+    /// Register a user password in the cache for later basic-auth requests
+    pub fn cache_user_password(&self, username: &str, password: &str) {
+        let mut cache = self
+            .user_password_cache
+            .lock()
+            .expect("user_password_cache mutex poisoned");
+        cache.insert(username.to_string(), password.to_string());
+    }
+
     /// Get cached user_id for a username, if available
     pub fn get_cached_user_id(&self, username: &str) -> Option<String> {
         let cache = self.user_id_cache.lock().expect("user_id_cache mutex poisoned");
         cache.get(username).cloned()
     }
 
+    /// Get cached password for a username, if available
+    pub fn get_cached_user_password(&self, username: &str) -> Option<String> {
+        let cache = self
+            .user_password_cache
+            .lock()
+            .expect("user_password_cache mutex poisoned");
+        cache.get(username).cloned()
+    }
+
     /// Create a new user if it doesnt exists already and cache the user_id
-    async fn ensure_user_exists(
+    pub async fn ensure_user_exists(
         &self,
         username: &str,
         password: &str,
@@ -265,6 +293,7 @@ impl HttpTestServer {
         if let Some(rows) = resp.rows_as_maps().first() {
             if let Some(user_id) = rows.get("user_id").and_then(|v| v.as_str()) {
                 self.cache_user_id(username, user_id);
+                self.cache_user_password(username, password);
                 return Ok(user_id.to_string());
             }
         }
@@ -293,6 +322,7 @@ impl HttpTestServer {
             .to_string();
 
         self.cache_user_id(username, &user_id);
+        self.cache_user_password(username, password);
         Ok(user_id)
     }
 
@@ -303,12 +333,23 @@ impl HttpTestServer {
         username: &str,
         _role: &Role,
     ) -> KalamLinkClient {
-        // For localhost tests, use basic auth with root (no password) or username with empty password
+        // For localhost tests, use cached basic-auth password if available
         let auth_username = if username == "root" { "root" } else { username };
+        let auth_password = if username == "root" {
+            String::new()
+        } else {
+            self.get_cached_user_password(username).unwrap_or_else(|| {
+                eprintln!(
+                    "WARNING: link_client('{}') called without cached password. Falling back to test123.",
+                    username
+                );
+                "test123".to_string()
+            })
+        };
 
         KalamLinkClient::builder()
             .base_url(self.base_url())
-            .auth(AuthProvider::basic_auth(auth_username.to_string(), String::new()))
+            .auth(AuthProvider::basic_auth(auth_username.to_string(), auth_password))
             .timeouts(
                 KalamLinkTimeouts::builder()
                     .connection_timeout_secs(5)
@@ -412,6 +453,16 @@ impl HttpTestServer {
                 let built = KalamLinkClient::builder()
                     .base_url(self.base_url())
                     .auth(auth)
+                    .timeouts(
+                        KalamLinkTimeouts::builder()
+                            .connection_timeout_secs(5)
+                            .receive_timeout_secs(120)
+                            .send_timeout_secs(60)
+                            .subscribe_timeout_secs(15)
+                            .auth_timeout_secs(10)
+                            .initial_data_timeout(Duration::from_secs(120))
+                            .build(),
+                    )
                     .build()
                     .context("Failed to build KalamLinkClient")?;
                 cache.insert(auth_header.to_string(), built.clone());
@@ -477,6 +528,7 @@ impl HttpTestServer {
         Some((namespace_id, table_name))
     }
 
+    #[allow(unused_assignments)]
     async fn wait_for_table_queryable(
         &self,
         namespace_id: &str,
@@ -573,6 +625,7 @@ impl HttpTestServer {
         drop(_temp_dir);
     }
 
+    #[allow(unused_assignments)]
     async fn wait_until_ready(&self) -> Result<()> {
         // The server may bind before subsystems (notably Raft/bootstrap) are fully ready.
         // For tests, "ready" means:
@@ -694,6 +747,10 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
         std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
     }
 
+    // Ensure test servers always use localhost-only root auth.
+    // This avoids leaking host env overrides into integration tests.
+    std::env::set_var("KALAMDB_ROOT_PASSWORD", "");
+
     // Use bootstrap_isolated to ensure each test gets a fresh AppContext
     // This prevents state leakage between tests (Raft logs, system tables, etc.)
     let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
@@ -708,10 +765,11 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
         _global_lock: global_lock,
         base_url,
         data_path,
-        root_auth_header: HttpTestServer::basic_auth_header(&UserName::new("root"), ""),
+        root_auth_header: HttpTestServer::basic_auth_header(&UserName::root(), ""),
         jwt_secret,
         link_client_cache: Mutex::new(HashMap::new()),
         user_id_cache: std::sync::Mutex::new(HashMap::new()),
+        user_password_cache: std::sync::Mutex::new(HashMap::new()),
         running,
         skip_raft_leader_check,
     };
@@ -746,6 +804,10 @@ pub async fn start_http_test_server_with_config(
         std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
     }
 
+    // Ensure test servers always use localhost-only root auth.
+    // This avoids leaking host env overrides into integration tests.
+    std::env::set_var("KALAMDB_ROOT_PASSWORD", "");
+
     // Use bootstrap_isolated to ensure each test gets a fresh AppContext
     let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
     let running =
@@ -759,10 +821,11 @@ pub async fn start_http_test_server_with_config(
         _global_lock: global_lock,
         base_url,
         data_path,
-        root_auth_header: HttpTestServer::basic_auth_header(&UserName::new("root"), ""),
+        root_auth_header: HttpTestServer::basic_auth_header(&UserName::root(), ""),
         jwt_secret,
         link_client_cache: Mutex::new(HashMap::new()),
         user_id_cache: std::sync::Mutex::new(HashMap::new()),
+        user_password_cache: std::sync::Mutex::new(HashMap::new()),
         running,
         skip_raft_leader_check,
     };
