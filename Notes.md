@@ -929,5 +929,14 @@ TODOS:
 
 56) make the backend tests/cli tests all of them use the kalamLink client instead of each one using it's own direct code access to the backend or custom http client, this way we will have one aythentication which is user/password and getting token for this user and password
 
+57) make sure we specify compression for each table created - like snappy/lz4/zstd/none and then we use enum for the compression type we support zstd and snappy or none, and then we can pass the same enum to rocksdb column family and to parquet compression as well
+
+58) Time format is not being displayed in the cli make a default display of the time columns in the cli and ui in a human readable format and can be configurable from the cli config which is stored at the client side, make sure we use the kalamdb-link for that display it should be configured ther ein the connection configs
+
+51) 
+
+
+
+
 
 
