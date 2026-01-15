@@ -99,9 +99,15 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::create_test_session;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::{Role, StorageId};
+    use std::sync::Arc;
+
+    fn init_app_context() -> Arc<AppContext> {
+        init_test_app_context();
+        AppContext::get()
+    }
 
     fn create_test_context(role: Role) -> ExecutionContext {
         ExecutionContext::new(UserId::new("test_user"), role, create_test_session())
@@ -109,7 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_storage_authorization() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let handler = DropStorageHandler::new(app_ctx);
         let stmt = DropStorageStatement {
             storage_id: StorageId::new("test_storage"),
@@ -128,7 +134,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_storage_success() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let storages_provider = app_ctx.system_tables().storages();
 
         // Create a test storage
@@ -170,7 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_storage_not_found() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let handler = DropStorageHandler::new(app_ctx);
         let stmt = DropStorageStatement {
             storage_id: StorageId::from("nonexistent_storage"),

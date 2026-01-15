@@ -131,9 +131,15 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::create_test_session;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::{Role, StorageId};
+    use std::sync::Arc;
+
+    fn init_app_context() -> Arc<AppContext> {
+        init_test_app_context();
+        AppContext::get()
+    }
 
     fn create_test_context(role: Role) -> ExecutionContext {
         ExecutionContext::new(UserId::new("test_user"), role, create_test_session())
@@ -141,7 +147,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_storage_authorization() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let handler = CreateStorageHandler::new(app_ctx);
         let stmt = CreateStorageStatement {
             storage_id: StorageId::new("test_storage"),
@@ -168,7 +174,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_storage_success() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let handler = CreateStorageHandler::new(app_ctx);
         let storage_id = format!("test_storage_{}", chrono::Utc::now().timestamp_millis());
         let stmt = CreateStorageStatement {
@@ -194,7 +200,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_storage_duplicate() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let handler = CreateStorageHandler::new(app_ctx);
         let storage_id = format!("test_dup_{}", chrono::Utc::now().timestamp_millis());
         let stmt = CreateStorageStatement {

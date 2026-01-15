@@ -151,9 +151,15 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::create_test_session;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
+    use std::sync::Arc;
+
+    fn init_app_context() -> Arc<AppContext> {
+        init_test_app_context();
+        AppContext::get()
+    }
 
     fn create_test_context() -> ExecutionContext {
         ExecutionContext::new(UserId::new("test_user"), Role::Dba, create_test_session())
@@ -161,7 +167,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_namespace_success() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let handler = DropNamespaceHandler::new(app_ctx);
         let stmt = DropNamespaceStatement {
             name: kalamdb_commons::models::NamespaceId::new("test_namespace"),
@@ -180,7 +186,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_namespace_authorization() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let handler = DropNamespaceHandler::new(app_ctx);
         let stmt = DropNamespaceStatement {
             name: kalamdb_commons::models::NamespaceId::new("test"),
@@ -198,7 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_namespace_if_exists() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let handler = DropNamespaceHandler::new(app_ctx);
         let stmt = DropNamespaceStatement {
             name: kalamdb_commons::models::NamespaceId::new("nonexistent"),

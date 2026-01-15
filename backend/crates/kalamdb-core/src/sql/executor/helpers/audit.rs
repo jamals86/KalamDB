@@ -163,8 +163,13 @@ pub async fn persist_audit_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::create_test_session;
+    use datafusion::prelude::SessionContext;
     use kalamdb_commons::{Role, UserId};
+    use std::sync::Arc;
+
+    fn test_session() -> Arc<SessionContext> {
+        Arc::new(SessionContext::new())
+    }
 
     #[test]
     fn test_create_audit_entry() {
@@ -174,7 +179,7 @@ mod tests {
             None,
             Some("req-123".to_string()),
             Some("192.168.1.1".to_string()),
-            create_test_session(),
+            test_session(),
         );
 
         let entry = create_audit_entry(
@@ -195,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_log_ddl_operation() {
-        let ctx = ExecutionContext::new(UserId::from("bob"), Role::Dba, create_test_session());
+        let ctx = ExecutionContext::new(UserId::from("bob"), Role::Dba, test_session());
 
         let entry = log_ddl_operation(
             &ctx,
@@ -213,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_log_query_operation() {
-        let ctx = ExecutionContext::new(UserId::from("dave"), Role::User, create_test_session());
+        let ctx = ExecutionContext::new(UserId::from("dave"), Role::User, test_session());
 
         let entry = log_query_operation(&ctx, "SELECT", "default.users", 150.0, None);
 

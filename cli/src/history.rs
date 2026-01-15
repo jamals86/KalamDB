@@ -54,18 +54,7 @@ impl CommandHistory {
         let contents = std::fs::read_to_string(&self.path)
             .map_err(|e| CLIError::HistoryError(format!("Failed to read history file: {}", e)))?;
 
-        // Use a sentinel delimiter that won't appear in SQL
-        // Each entry is stored as: base64_encoded_command\n---ENTRY---\n
-        let entries: Vec<String> = contents
-            .split("\n---ENTRY---\n")
-            .filter(|s| !s.trim().is_empty())
-            .filter_map(|encoded| {
-                // Decode from base64 to preserve newlines and special characters
-                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded.trim())
-                    .ok()
-                    .and_then(|bytes| String::from_utf8(bytes).ok())
-            })
-            .collect();
+        let entries = parse_history_entries(&contents);
 
         // Take last max_size entries
         let start_idx = if entries.len() > self.max_size {
@@ -75,6 +64,18 @@ impl CommandHistory {
         };
 
         Ok(entries[start_idx..].to_vec())
+    }
+
+    /// Count entries in the history file (without truncation)
+    pub fn entry_count(&self) -> Result<usize> {
+        if !self.path.exists() {
+            return Ok(0);
+        }
+
+        let contents = std::fs::read_to_string(&self.path)
+            .map_err(|e| CLIError::HistoryError(format!("Failed to read history file: {}", e)))?;
+
+        Ok(parse_history_entries(&contents).len())
     }
 
     /// Save history to file
@@ -133,6 +134,21 @@ impl CommandHistory {
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+fn parse_history_entries(contents: &str) -> Vec<String> {
+    // Use a sentinel delimiter that won't appear in SQL
+    // Each entry is stored as: base64_encoded_command\n---ENTRY---\n
+    contents
+        .split("\n---ENTRY---\n")
+        .filter(|s| !s.trim().is_empty())
+        .filter_map(|encoded| {
+            // Decode from base64 to preserve newlines and special characters
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded.trim())
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+        })
+        .collect()
 }
 
 #[cfg(test)]

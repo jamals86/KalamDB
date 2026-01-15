@@ -110,10 +110,16 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::create_test_session;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::system::Storage;
     use kalamdb_commons::{Role, StorageId};
+    use std::sync::Arc;
+
+    fn init_app_context() -> Arc<AppContext> {
+        init_test_app_context();
+        AppContext::get()
+    }
 
     fn create_test_context(role: Role) -> ExecutionContext {
         ExecutionContext::new(UserId::new("test_user"), role, create_test_session())
@@ -121,7 +127,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_alter_storage_authorization() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let handler = AlterStorageHandler::new(app_ctx);
         let stmt = AlterStorageStatement {
             storage_id: StorageId::from("test_storage"),
@@ -145,7 +151,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_alter_storage_success() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
 
         // First create a storage to alter
         let storages_provider = app_ctx.system_tables().storages();

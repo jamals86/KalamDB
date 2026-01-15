@@ -20,7 +20,7 @@ use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
 use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::ids::SeqId;
-use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
+use kalamdb_commons::models::{ConnectionId, LiveQueryId, NamespaceId, TableId, TableName, UserId};
 use kalamdb_commons::schemas::SchemaField;
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::websocket::SubscriptionRequest;
@@ -148,10 +148,18 @@ impl LiveQueryManager {
             .split_once('.')
             .ok_or_else(|| KalamDbError::InvalidSql("Query must use namespace.table format".to_string()))?;
 
-        let table_id = TableId::new(
-            kalamdb_commons::models::NamespaceId::from(namespace),
-            kalamdb_commons::models::TableName::from(table),
-        );
+        let namespace_id = NamespaceId::from(namespace);
+        let table_name = TableName::from(table);
+        let table_id = TableId::new(namespace_id.clone(), table_name);
+
+        if namespace_id.is_system_namespace() && !user_id.is_admin() {
+            return Err(KalamDbError::PermissionDenied(
+                format!(
+                    "Cannot subscribe to system table '{}': insufficient privileges. Only DBA and system roles can subscribe to system tables.",
+                    table_id
+                ),
+            ));
+        }
 
         // Look up table definition from in-memory cache.
         // Live queries require the table to be registered in the schema registry.

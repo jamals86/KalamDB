@@ -19,13 +19,15 @@
 //! jwt_token = "your-jwt-token"
 //!
 //! [ui]
-//! format = "table"  # table, json, csv
+//! format = "table"           # table, json, csv
 //! color = true
 //! history_size = 1000
+//! timestamp_format = "iso8601" # iso8601, iso8601-date, iso8601-datetime, unix-ms, unix-sec, relative, rfc2822, rfc3339
 //! ```
 
+use kalam_link::{ConnectionOptions, HttpVersion, TimestampFormat};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{CLIError, Result};
 
@@ -102,6 +104,10 @@ pub struct UIConfig {
     /// Maximum history size
     #[serde(default = "default_history_size")]
     pub history_size: usize,
+
+    /// Timestamp format for displaying time values
+    #[serde(default = "default_timestamp_format")]
+    pub timestamp_format: String,
 }
 
 fn default_timeout() -> u64 {
@@ -144,6 +150,10 @@ fn default_history_size() -> usize {
     1000
 }
 
+fn default_timestamp_format() -> String {
+    "iso8601".to_string()
+}
+
 impl Default for CLIConfiguration {
     fn default() -> Self {
         Self {
@@ -164,9 +174,24 @@ impl Default for CLIConfiguration {
                 format: default_format(),
                 color: default_color(),
                 history_size: default_history_size(),
+                timestamp_format: default_timestamp_format(),
             }),
         }
     }
+}
+
+pub fn expand_config_path(path: &Path) -> PathBuf {
+    let path_str = path.to_str().unwrap_or("~/.kalam/config.toml");
+    if let Some(rest) = path_str.strip_prefix("~/") {
+        if let Some(home_dir) = dirs::home_dir() {
+            return home_dir.join(rest);
+        }
+    }
+    path.to_path_buf()
+}
+
+pub fn default_config_path() -> PathBuf {
+    expand_config_path(Path::new("~/.kalam/config.toml"))
 }
 
 impl CLIConfiguration {
@@ -174,17 +199,7 @@ impl CLIConfiguration {
     ///
     /// Returns default configuration if file doesn't exist.
     pub fn load(path: &Path) -> Result<Self> {
-        // Expand tilde manually using home directory
-        let path_str = path.to_str().unwrap_or("~/.kalam/config.toml");
-        let expanded_path = if let Some(rest) = path_str.strip_prefix("~/") {
-            if let Some(home_dir) = dirs::home_dir() {
-                home_dir.join(rest)
-            } else {
-                path.to_path_buf()
-            }
-        } else {
-            path.to_path_buf()
-        };
+        let expanded_path = expand_config_path(path);
         let path = &expanded_path;
 
         if !path.exists() {
@@ -202,17 +217,7 @@ impl CLIConfiguration {
 
     /// Save configuration to file
     pub fn save(&self, path: &Path) -> Result<()> {
-        // Expand tilde manually using home directory
-        let path_str = path.to_str().unwrap_or("~/.kalam/config.toml");
-        let expanded_path = if let Some(rest) = path_str.strip_prefix("~/") {
-            if let Some(home_dir) = dirs::home_dir() {
-                home_dir.join(rest)
-            } else {
-                path.to_path_buf()
-            }
-        } else {
-            path.to_path_buf()
-        };
+        let expanded_path = expand_config_path(path);
         let path = &expanded_path;
 
         if let Some(parent) = path.parent() {
@@ -229,9 +234,7 @@ impl CLIConfiguration {
     /// Build ConnectionOptions from CLI configuration
     ///
     /// Converts CLI config settings to kalam-link ConnectionOptions
-    pub fn to_connection_options(&self) -> kalam_link::ConnectionOptions {
-        use kalam_link::{ConnectionOptions, HttpVersion};
-
+    pub fn to_connection_options(&self) -> ConnectionOptions {
         let mut options = ConnectionOptions::default();
 
         // Apply server settings
@@ -260,13 +263,44 @@ impl CLIConfiguration {
             options = options.with_max_reconnect_attempts(max_attempts);
         }
 
+        if let Some(ref ui) = self.ui {
+            if let Some(format) = parse_timestamp_format(&ui.timestamp_format) {
+                options = options.with_timestamp_format(format);
+            }
+        }
+
         options
     }
 
-    /// Get the HTTP version setting from config
-    pub fn http_version(&self) -> kalam_link::HttpVersion {
-        use kalam_link::HttpVersion;
+    pub fn resolved_server(&self) -> ServerConfig {
+        self.server.clone().unwrap_or(ServerConfig {
+            url: None,
+            timeout: default_timeout(),
+            max_retries: default_retries(),
+            http_version: default_http_version(),
+        })
+    }
 
+    pub fn resolved_connection(&self) -> ConnectionConfig {
+        self.connection.clone().unwrap_or(ConnectionConfig {
+            auto_reconnect: default_auto_reconnect(),
+            reconnect_delay_ms: default_reconnect_delay_ms(),
+            max_reconnect_delay_ms: default_max_reconnect_delay_ms(),
+            max_reconnect_attempts: default_max_reconnect_attempts(),
+        })
+    }
+
+    pub fn resolved_ui(&self) -> UIConfig {
+        self.ui.clone().unwrap_or(UIConfig {
+            format: default_format(),
+            color: default_color(),
+            history_size: default_history_size(),
+            timestamp_format: default_timestamp_format(),
+        })
+    }
+
+    /// Get the HTTP version setting from config
+    pub fn http_version(&self) -> HttpVersion {
         self.server
             .as_ref()
             .map(|s| match s.http_version.to_lowercase().as_str() {
@@ -275,6 +309,20 @@ impl CLIConfiguration {
                 _ => HttpVersion::Auto,
             })
             .unwrap_or(HttpVersion::Http2) // Default to HTTP/2
+    }
+}
+
+fn parse_timestamp_format(value: &str) -> Option<TimestampFormat> {
+    match value.trim().to_lowercase().as_str() {
+        "iso8601" => Some(TimestampFormat::Iso8601),
+        "iso8601-date" | "iso8601_date" | "date" => Some(TimestampFormat::Iso8601Date),
+        "iso8601-datetime" | "iso8601_datetime" | "datetime" => Some(TimestampFormat::Iso8601DateTime),
+        "unix-ms" | "unix_ms" | "ms" => Some(TimestampFormat::UnixMs),
+        "unix-sec" | "unix_sec" | "sec" | "s" => Some(TimestampFormat::UnixSec),
+        "relative" => Some(TimestampFormat::Relative),
+        "rfc2822" => Some(TimestampFormat::Rfc2822),
+        "rfc3339" => Some(TimestampFormat::Rfc3339),
+        _ => None,
     }
 }
 
@@ -327,6 +375,7 @@ mod tests {
         assert_eq!(options.reconnect_delay_ms, 100);
         assert_eq!(options.max_reconnect_delay_ms, 30000);
         assert_eq!(options.max_reconnect_attempts, Some(10));
+        assert_eq!(options.timestamp_format, TimestampFormat::Iso8601);
     }
 
     #[test]

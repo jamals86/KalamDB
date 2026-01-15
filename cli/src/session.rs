@@ -11,16 +11,17 @@ use crate::CLI_VERSION;
 use clap::ValueEnum;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
-use kalam_link::{AuthProvider, ConnectionOptions, KalamLinkClient, KalamLinkTimeouts, SubscriptionConfig, SubscriptionOptions};
+use kalam_link::{AuthProvider, ConnectionOptions, KalamLinkClient, KalamLinkTimeouts, SubscriptionConfig, SubscriptionOptions, TimestampFormatter};
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
-use rustyline::{CompletionType, Config, EditMode, Editor, Helper};
+use rustyline::{Cmd, CompletionType, Config, EditMode, Editor, Helper, KeyEvent};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -82,11 +83,15 @@ impl Drop for TerminalRawModeGuard {
 
 use crate::{
     completer::{AutoCompleter, SQL_KEYWORDS, SQL_TYPES},
+    config::CLIConfiguration,
     error::{CLIError, Result},
     formatter::OutputFormatter,
     history::CommandHistory,
     parser::{Command, CommandParser},
 };
+
+mod commands;
+mod info;
 
 /// Output format for query results
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -126,6 +131,15 @@ pub struct CLISession {
 
     /// Output formatter
     formatter: OutputFormatter,
+
+    /// Timestamp formatter for displaying time values
+    timestamp_formatter: TimestampFormatter,
+
+    /// CLI configuration
+    config: CLIConfiguration,
+
+    /// CLI config file path
+    config_path: PathBuf,
 
     /// Server URL
     server_url: String,
@@ -197,7 +211,21 @@ impl CLISession {
         color: bool,
     ) -> Result<Self> {
         Self::with_auth_and_instance(
-            server_url, auth, format, color, None, None, None, None, true, None, None, None, false,
+            server_url,
+            auth,
+            format,
+            color,
+            None,
+            None,
+            None,
+            None,
+            true,
+            None,
+            None,
+            None,
+            CLIConfiguration::default(),
+            crate::config::default_config_path(),
+            false,
         )
         .await
     }
@@ -219,11 +247,18 @@ impl CLISession {
         client_timeout: Option<Duration>,
         timeouts: Option<KalamLinkTimeouts>,
         connection_options: Option<ConnectionOptions>,
+        config: CLIConfiguration,
+        config_path: PathBuf,
         credentials_loaded: bool,
     ) -> Result<Self> {
         // Build kalam-link client with authentication and timeouts
         let timeouts = timeouts.unwrap_or_default();
         let timeout = client_timeout.unwrap_or(timeouts.receive_timeout);
+
+        let timestamp_formatter = connection_options
+            .as_ref()
+            .map(|opts| opts.create_formatter())
+            .unwrap_or_else(|| ConnectionOptions::default().create_formatter());
         
         // Build client with connection options if provided
         let mut builder = KalamLinkClient::builder()
@@ -282,7 +317,10 @@ impl CLISession {
         Ok(Self {
             client,
             parser: CommandParser::new(),
-            formatter: OutputFormatter::new(format, color),
+            formatter: OutputFormatter::new(format, color, timestamp_formatter.clone()),
+            timestamp_formatter,
+            config,
+            config_path,
             server_url,
             server_host,
             format,
@@ -663,8 +701,10 @@ impl CLISession {
 
         let mut rl = Editor::<CLIHelper, DefaultHistory>::with_config(config)?;
         rl.set_helper(Some(helper));
+        rl.bind_sequence(KeyEvent::from('\t'), Cmd::Complete);
 
-        let history = CommandHistory::new(1000);
+        let history_size = self.config.resolved_ui().history_size;
+        let history = CommandHistory::new(history_size);
 
         // Load history
         if let Ok(history_entries) = history.load() {
@@ -1069,197 +1109,6 @@ impl CLISession {
                         completer.set_columns(table, columns);
                     }
                 }
-            }
-        }
-        Ok(())
-    }
-
-    /// Execute a parsed command
-    ///
-    /// **Implements T094**: Backslash command handling
-    async fn execute_command(&mut self, command: Command) -> Result<()> {
-        match command {
-            Command::Sql(sql) => {
-                self.execute(&sql).await?;
-            }
-            Command::Quit => {
-                println!("Goodbye!");
-                std::process::exit(0);
-            }
-            Command::Help => {
-                self.show_help();
-            }
-            Command::Config => {
-                println!("Configuration:");
-                println!("  Server: {}", self.server_url);
-                println!("  Format: {:?}", self.format);
-                println!("  Color: {}", self.color);
-            }
-            Command::Flush => {
-                println!("Flushing database...");
-                match self.execute("FLUSH").await {
-                    Ok(_) => println!("Flush completed successfully"),
-                    Err(e) => eprintln!("Flush failed: {}", e),
-                }
-            }
-            Command::ClusterSnapshot => {
-                println!("Triggering cluster snapshots...");
-                match self.execute("CLUSTER SNAPSHOT").await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster snapshot failed: {}", e),
-                }
-            }
-            Command::ClusterPurge { upto } => {
-                println!("Purging cluster logs up to {}...", upto);
-                match self.execute(&format!("CLUSTER PURGE --UPTO {}", upto)).await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster purge failed: {}", e),
-                }
-            }
-            Command::ClusterTriggerElection => {
-                println!("Triggering cluster election...");
-                match self.execute("CLUSTER TRIGGER ELECTION").await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster trigger-election failed: {}", e),
-                }
-            }
-            Command::ClusterTransferLeader { node_id } => {
-                println!("Transferring cluster leadership to node {}...", node_id);
-                match self.execute(&format!("CLUSTER TRANSFER-LEADER {}", node_id)).await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster transfer-leader failed: {}", e),
-                }
-            }
-            Command::ClusterStepdown => {
-                println!("Requesting cluster leader stepdown...");
-                match self.execute("CLUSTER STEPDOWN").await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster stepdown failed: {}", e),
-                }
-            }
-            Command::ClusterClear => {
-                println!("Clearing old cluster snapshots...");
-                match self.execute("CLUSTER CLEAR").await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster clear failed: {}", e),
-                }
-            }
-            Command::ClusterList => {
-                match self.execute("SELECT * FROM system.cluster").await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster list failed: {}", e),
-                }
-            }
-            Command::ClusterListGroups => {
-                match self.execute("SELECT * FROM system.cluster_groups").await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster list groups failed: {}", e),
-                }
-            }
-            Command::ClusterStatus => {
-                match self.execute("SELECT * FROM system.cluster").await {
-                    Ok(_) => {},
-                    Err(e) => eprintln!("Cluster status failed: {}", e),
-                }
-            }
-            Command::ClusterJoin(addr) => {
-                println!("{}", "⚠️  CLUSTER JOIN is not implemented yet".yellow());
-                println!("Would join node at: {}", addr);
-                println!("\nTo add a node to the cluster, configure it in server.toml and restart.");
-            }
-            Command::ClusterLeave => {
-                println!("{}", "⚠️  CLUSTER LEAVE is not implemented yet".yellow());
-                println!("\nTo remove this node from the cluster, gracefully shut down the server.");
-            }
-            Command::Health => match self.health_check().await {
-                Ok(_) => {}
-                Err(e) => eprintln!("Health check failed: {}", e),
-            },
-            Command::Pause => {
-                println!("Pausing ingestion...");
-                match self.execute("PAUSE").await {
-                    Ok(_) => println!("Ingestion paused"),
-                    Err(e) => eprintln!("Pause failed: {}", e),
-                }
-            }
-            Command::Continue => {
-                println!("Resuming ingestion...");
-                match self.execute("CONTINUE").await {
-                    Ok(_) => println!("Ingestion resumed"),
-                    Err(e) => eprintln!("Resume failed: {}", e),
-                }
-            }
-            Command::ListTables => {
-                // Show namespace along with table name and type
-                self
-                    .execute(
-                        "SELECT namespace_id AS namespace, table_name, table_type FROM system.tables ORDER BY namespace_id, table_name",
-                    )
-                    .await?;
-            }
-            Command::RefreshTables => {
-                // This is handled in run_interactive, shouldn't reach here
-                println!("Table names refreshed");
-            }
-            Command::Describe(table) => {
-                let query = format!(
-                    "SELECT * FROM information_schema.columns WHERE table_name = '{}' ORDER BY ordinal_position",
-                    table
-                );
-                self.execute(&query).await?;
-            }
-            Command::SetFormat(format) => match format.to_lowercase().as_str() {
-                "table" => {
-                    self.set_format(OutputFormat::Table);
-                    println!("Output format set to: table");
-                }
-                "json" => {
-                    self.set_format(OutputFormat::Json);
-                    println!("Output format set to: json");
-                }
-                "csv" => {
-                    self.set_format(OutputFormat::Csv);
-                    println!("Output format set to: csv");
-                }
-                _ => {
-                    eprintln!("Unknown format: {}. Use: table, json, or csv", format);
-                }
-            },
-            Command::Subscribe(query) => {
-                // Parse OPTIONS clause from SQL before creating config
-                let (clean_sql, options) = Self::extract_subscribe_options(&query);
-                // Generate subscription ID
-                let sub_id = format!("sub_{}", std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos());
-                let mut config = SubscriptionConfig::new(sub_id, clean_sql);
-                config.options = options;
-                self.run_subscription(config).await?;
-            }
-            Command::Unsubscribe => {
-                println!("No active subscription to cancel");
-            }
-            Command::ShowCredentials => {
-                self.show_credentials();
-            }
-            Command::UpdateCredentials { username, password } => {
-                self.update_credentials(username, password).await?;
-            }
-            Command::DeleteCredentials => {
-                self.delete_credentials()?;
-            }
-            Command::Info => {
-                self.show_session_info().await;
-            }
-            Command::Stats => {
-                // Show system statistics via system.stats virtual table
-                // Keep it simple and readable for users
-                self.execute("SELECT metric_name, metric_value FROM system.stats ORDER BY metric_name")
-                    .await?;
-            }
-            Command::Unknown(cmd) => {
-                eprintln!("Unknown command: {}. Type \\help for help.", cmd);
             }
         }
         Ok(())
@@ -2012,119 +1861,6 @@ impl CLISession {
         }
     }
 
-    /// Show help message (styled, sectioned)
-    fn show_help(&self) {
-        use colored::Colorize;
-
-        println!();
-        println!(
-            "{}",
-            "╔═══════════════════════════════════════════════════════════╗"
-                .bright_blue()
-                .bold()
-        );
-        println!(
-            "{}{}{}",
-            "║ ".bright_blue().bold(),
-            "Commands & Shortcuts".white().bold(),
-            "                                                 ║"
-                .to_string()
-                .bright_blue()
-                .bold()
-        );
-        println!(
-            "{}",
-            "╠═══════════════════════════════════════════════════════════╣"
-                .bright_blue()
-                .bold()
-        );
-
-        // Basics
-        println!("{}", "║  Basics".bright_blue().bold());
-        println!("║    • Write SQL; end with ';' to run");
-        println!(
-            "║    • Autocomplete: keywords, namespaces, tables, columns  {}",
-            "(Tab)".dimmed()
-        );
-        println!("║    • Inline hints and SQL highlighting enabled");
-
-        // Meta-commands (two columns)
-        println!(
-            "{}",
-            "╠───────────────────────────────────────────────────────────╣"
-                .bright_blue()
-                .bold()
-        );
-        println!("{}", "║  Meta-Commands".bright_blue().bold());
-        let left = [
-            ("\\help, \\?", "Show this help"),
-            ("\\quit, \\q", "Exit CLI"),
-            ("\\info", "Session info"),
-            ("\\config", "Show config"),
-            ("\\format <type>", "table|json|csv"),
-        ];
-        let right = [
-            ("\\dt", "List tables"),
-            ("\\d <table>", "Describe table"),
-            ("\\stats", "System stats"),
-            ("\\health", "Health check"),
-            ("\\refresh-tables", "Refresh autocomplete"),
-            ("\\subscribe <SQL>", "Start live query"),
-        ];
-        for i in 0..left.len().max(right.len()) {
-            let l = left
-                .get(i)
-                .map(|(a, b)| format!("{:<18} {:<18}", a.cyan(), b))
-                .unwrap_or_else(|| "".into());
-            let r = right
-                .get(i)
-                .map(|(a, b)| format!("{:<18} {:<18}", a.cyan(), b))
-                .unwrap_or_else(|| "".into());
-            println!("║  {}  {}{}", l, r, " ".repeat(7));
-        }
-
-        // Credentials
-        println!(
-            "{}",
-            "╠───────────────────────────────────────────────────────────╣"
-                .bright_blue()
-                .bold()
-        );
-        println!("{}", "║  Credentials".bright_blue().bold());
-        println!(
-            "║    {:<24} Show stored credentials",
-            "\\show-credentials".cyan()
-        );
-        println!(
-            "║    {:<24} Update credentials",
-            "\\update-credentials <u> <p>".cyan()
-        );
-        println!(
-            "║    {:<24} Delete stored credentials",
-            "\\delete-credentials".cyan()
-        );
-
-        // Tips & examples
-        println!(
-            "{}",
-            "╠───────────────────────────────────────────────────────────╣"
-                .bright_blue()
-                .bold()
-        );
-        println!("{}", "║  Examples".bright_blue().bold());
-        println!("║    {}", "SELECT * FROM system.tables LIMIT 5;".green());
-        println!("║    {}", "SELECT name FROM system.namespaces;".green());
-        println!("║    {}", "\\d system.jobs".green());
-
-        println!(
-            "{}",
-            "╚═══════════════════════════════════════════════════════════╝"
-                .bright_blue()
-                .bold()
-        );
-        println!();
-    }
-
     /// Fetch cluster information from system.cluster
     async fn fetch_cluster_info(&self) -> Option<ClusterInfoDisplay> {
         // Query the system.cluster table (cluster_id is now the first column)
@@ -2200,182 +1936,6 @@ impl CLISession {
         }
     }
 
-    /// Show current session information
-    ///
-    /// Displays detailed information about the current CLI session
-    async fn show_session_info(&mut self) {
-        use colored::Colorize;
-
-        // Fetch cluster info from system.cluster_nodes
-        let cluster_info = self.fetch_cluster_info().await;
-
-        println!();
-        println!(
-            "{}",
-            "═══════════════════════════════════════".cyan().bold()
-        );
-        println!("{}", "    Session Information".white().bold());
-        println!(
-            "{}",
-            "═══════════════════════════════════════".cyan().bold()
-        );
-        println!();
-
-        // Connection info
-        println!("{}", "Connection:".yellow().bold());
-        println!("  Server URL:     {}", self.server_url.green());
-        println!("  Username:       {}", self.username.green());
-        println!(
-            "  Connected:      {}",
-            if self.connected {
-                "Yes".green()
-            } else {
-                "No".red()
-            }
-        );
-
-        // Session timing
-        let uptime = self.connected_at.elapsed();
-        let hours = uptime.as_secs() / 3600;
-        let minutes = (uptime.as_secs() % 3600) / 60;
-        let seconds = uptime.as_secs() % 60;
-        let uptime_str = if hours > 0 {
-            format!("{}h {}m {}s", hours, minutes, seconds)
-        } else if minutes > 0 {
-            format!("{}m {}s", minutes, seconds)
-        } else {
-            format!("{}s", seconds)
-        };
-        println!("  Session time:   {}", uptime_str.green());
-        println!();
-
-        // Server info
-        println!("{}", "Server:".yellow().bold());
-        if let Some(ref version) = self.server_version {
-            println!("  Version:        {}", version.green());
-        } else {
-            println!("  Version:        {}", "Unknown".dimmed());
-        }
-        if let Some(ref api_version) = self.server_api_version {
-            println!("  API Version:    {}", api_version.green());
-        } else {
-            println!("  API Version:    {}", "Unknown".dimmed());
-        }
-        if let Some(ref build_date) = self.server_build_date {
-            println!("  Build Date:     {}", build_date.green());
-        } else {
-            println!("  Build Date:     {}", "Unknown".dimmed());
-        }
-        println!();
-
-        // Cluster info (if server provided it)
-        println!("{}", "Cluster:".yellow().bold());
-        if let Some(ref info) = cluster_info {
-            println!(
-                "  Mode:           {}",
-                if info.is_cluster_mode {
-                    "Cluster".green()
-                } else {
-                    "Standalone".dimmed()
-                }
-            );
-            if info.is_cluster_mode {
-                // Show current node (the one we're connected to)
-                if let Some(ref current_node) = info.current_node {
-                    println!("  Connected Node: {}", format!("Node {}", current_node.node_id).green());
-                    println!("  Node Role:      {}", current_node.role.green());
-                    println!("  Node API:       {}", current_node.api_addr.green());
-                }
-                // Show all cluster nodes
-                println!();
-                println!("  {}", "Cluster Nodes:".yellow());
-                for node in &info.nodes {
-                    let self_marker = if node.is_self { " (connected)" } else { "" };
-                    let leader_marker = if node.is_leader { " [LEADER]" } else { "" };
-                    println!(
-                        "    Node {}: {} | {} | {}{}{}",
-                        node.node_id,
-                        node.role,
-                        node.status,
-                        node.api_addr,
-                        leader_marker.yellow(),
-                        self_marker.cyan()
-                    );
-                }
-            }
-        } else {
-            println!(
-                "  Mode:           {}",
-                "Standalone".dimmed()
-            );
-            println!(
-                "  {}",
-                "(Could not fetch cluster info)".dimmed()
-            );
-        }
-        println!(
-            "  {}",
-            "Use 'SELECT * FROM system.cluster' for full details"
-                .dimmed()
-        );
-        println!();
-
-        // Client info
-        println!("{}", "Client:".yellow().bold());
-        println!("  CLI Version:    {}", CLI_VERSION.green());
-        println!("  Build Date:     {}", env!("BUILD_DATE").green());
-        println!("  Git Branch:     {}", env!("GIT_BRANCH").green());
-        println!("  Git Commit:     {}", env!("GIT_COMMIT_HASH").green());
-        println!();
-
-        // Session statistics
-        println!("{}", "Statistics:".yellow().bold());
-        println!(
-            "  Queries:        {}",
-            self.queries_executed.to_string().green()
-        );
-        println!("  Format:         {}", format!("{:?}", self.format).green());
-        println!(
-            "  Colors:         {}",
-            if self.color {
-                "Enabled".green()
-            } else {
-                "Disabled".red()
-            }
-        );
-        println!();
-
-        // Credentials info
-        println!("{}", "Credentials:".yellow().bold());
-        if let Some(ref instance) = self.instance {
-            println!("  Instance:       {}", instance.green());
-        }
-        println!(
-            "  Loaded:         {}",
-            if self.credentials_loaded {
-                "Yes (from stored credentials)".green()
-            } else {
-                "No (provided via CLI args)".dimmed()
-            }
-        );
-        if self.credential_store.is_some() {
-            println!(
-                "  Storage:        {}",
-                crate::credentials::FileCredentialStore::default_path()
-                    .display()
-                    .to_string()
-                    .dimmed()
-            );
-        }
-        println!();
-
-        println!(
-            "{}",
-            "═══════════════════════════════════════".cyan().bold()
-        );
-        println!();
-    }
-
     /// Check server health
     pub async fn health_check(&self) -> Result<()> {
         self.client.health_check().await?;
@@ -2396,13 +1956,13 @@ impl CLISession {
     /// Set output format
     pub fn set_format(&mut self, format: OutputFormat) {
         self.format = format;
-        self.formatter = OutputFormatter::new(format, self.color);
+        self.formatter = OutputFormatter::new(format, self.color, self.timestamp_formatter.clone());
     }
 
     /// Set color mode
     pub fn set_color(&mut self, enabled: bool) {
         self.color = enabled;
-        self.formatter = OutputFormatter::new(self.format, enabled);
+        self.formatter = OutputFormatter::new(self.format, enabled, self.timestamp_formatter.clone());
     }
 
     /// Show stored credentials for current instance

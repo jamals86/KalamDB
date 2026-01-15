@@ -200,17 +200,20 @@ pub struct StorageSettings {
 impl StorageSettings {
     /// Get RocksDB directory path (data_path/rocksdb)
     pub fn rocksdb_dir(&self) -> std::path::PathBuf {
-        crate::file_helpers::join_path(&self.data_path, "rocksdb")
+        let base = crate::file_helpers::normalize_dir_path(&self.data_path);
+        crate::file_helpers::join_path(base, "rocksdb")
     }
 
     /// Get Parquet storage directory path (data_path/storage)
     pub fn storage_dir(&self) -> std::path::PathBuf {
-        crate::file_helpers::join_path(&self.data_path, "storage")
+        let base = crate::file_helpers::normalize_dir_path(&self.data_path);
+        crate::file_helpers::join_path(base, "storage")
     }
 
     /// Get Raft snapshots directory path (data_path/snapshots)
     pub fn resolved_snapshots_dir(&self) -> std::path::PathBuf {
-        crate::file_helpers::join_path(&self.data_path, "snapshots")
+        let base = crate::file_helpers::normalize_dir_path(&self.data_path);
+        crate::file_helpers::join_path(base, "snapshots")
     }
 }
 
