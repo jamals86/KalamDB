@@ -1,10 +1,10 @@
 # Lightweight Docker image for KalamDB using pre-built binaries
 #
 # Option 1: Build with local binaries (after `cargo build --release`):
-#   docker build -f docker/backend/Dockerfile.prebuilt -t jamals86/kalamdb:latest .
+#   docker build -f docker/build/Dockerfile.prebuilt -t jamals86/kalamdb:latest .
 #
 # Option 2: Used in release workflow with pre-compiled binaries:
-#   docker build --build-context binaries=binaries-amd64 -f docker/backend/Dockerfile.prebuilt -t jamals86/kalamdb:latest .
+#   docker build --build-context binaries=binaries-amd64 -f docker/build/Dockerfile.prebuilt -t jamals86/kalamdb:latest .
 
 # Runtime image only (no build stage needed)
 FROM debian:bookworm-slim
@@ -29,10 +29,10 @@ COPY --from=binaries --chmod=755 kalam /usr/local/bin/kalam-cli
 # Create symlink so 'kalam' command works (docs reference this name)
 RUN ln -s /usr/local/bin/kalam-cli /usr/local/bin/kalam
 
-# Copy default server configuration (owned by kalamdb user)
-COPY docker/backend/server.toml /config/server.toml
-COPY docker/backend/server.toml /data/server.toml
-RUN chown kalamdb:kalamdb /config/server.toml /data/server.toml
+# Copy default server configuration (owned by kalamdb user) and normalize data path
+COPY backend/server.example.toml /config/server.toml
+RUN sed -i 's|data_path = "\./data"|data_path = "/data"|g' /config/server.toml && \
+    chown kalamdb:kalamdb /config/server.toml
 
 # Switch to non-root user
 USER kalamdb
@@ -48,4 +48,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -sf http://localhost:8080/health || exit 1
 
 # Default command: run server (looks for server.toml in current directory)
-CMD ["/usr/local/bin/kalamdb-server"]
+CMD ["/usr/local/bin/kalamdb-server", "/config/server.toml"]

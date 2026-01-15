@@ -20,7 +20,7 @@ This is a multi-component project:
 - `link/sdks/typescript/tests/` - TypeScript SDK test suite
 - `cli/kalam-cli/` - CLI tool (depends on kalam-link crate)
 - `examples/simple-typescript/` - React example app (uses link/sdks/typescript/)
-- `docker/backend/` - Docker deployment files
+- `docker/run/` - Docker deployment files
 
 ---
 
@@ -33,7 +33,7 @@ This is a multi-component project:
 - [x] T003 [P] Verify wasm-pack 0.12+ is installed
 - [x] T004 [P] Verify Node.js 18+ and npm are installed
 - [x] T005 [P] Create examples/simple-typescript directory structure
-- [x] T006 [P] Create docker/backend directory structure (already exists from plan phase)
+- [x] T006 [P] Create docker/run directory structure (already exists from plan phase)
 
 ---
 
@@ -172,23 +172,23 @@ This matches industry patterns (e.g., cargo binary + cargo-* libraries) and make
 
 **Goal**: Provide production-ready Docker deployment with environment variable configuration and data persistence
 
-**Independent Test**: Run build-backend.sh, start with docker-compose up, create user with API key inside container, verify data persists after restart, test environment variable overrides
+**Independent Test**: Run build-and-test-local.sh, start with docker-compose up, create user with API key inside container, verify data persists after restart, test environment variable overrides
 
 ### Implementation for User Story 1
 
-- [x] T027 [P] [US1] Verify Dockerfile exists in docker/backend/Dockerfile (already created in plan phase)
-- [x] T028 [P] [US1] Verify docker-compose.yml exists in docker/backend/docker-compose.yml (already created in plan phase)
-- [x] T029 [P] [US1] Verify build-backend.sh exists in docker/backend/build-backend.sh (already created in plan phase)
+- [x] T027 [P] [US1] Verify Dockerfile exists in docker/build/Dockerfile (already created in plan phase)
+- [x] T028 [P] [US1] Verify docker-compose.yml exists in docker/run/single/docker-compose.yml (already created in plan phase)
+- [x] T029 [P] [US1] Verify build script exists in docker/build/build-and-test-local.sh (already created in plan phase)
 - [x] T030 [US1] Add environment variable parsing in backend/crates/kalamdb-server/src/config.rs (KALAMDB_SERVER_PORT, KALAMDB_LOG_LEVEL, etc.)
 - [x] T031 [US1] Update config loading to prioritize env vars over config.toml in backend/crates/kalamdb-server/src/config.rs
-- [ ] T032 [US1] Build Docker image using docker/backend/build-backend.sh and verify kalamdb-server binary exists
+- [ ] T032 [US1] Build Docker image using docker/build/build-and-test-local.sh and verify kalamdb-server binary exists
 - [ ] T033 [US1] Run docker-compose up and verify container starts successfully with default env vars
-- [ ] T032 [US1] Test Docker build with ./build-backend.sh and verify both kalamdb-server and kalam-cli are included
+- [ ] T032 [US1] Test Docker build with ./build-and-test-local.sh and verify both kalamdb-server and kalam-cli are included
 - [ ] T033 [US1] Test docker-compose up and verify server starts with default environment variables
 - [ ] T034 [US1] Test creating user inside container with docker exec -it kalamdb kalam-cli user create
 - [ ] T035 [US1] Test data persistence by stopping container, restarting, and verifying data still exists
 - [ ] T036 [US1] Test environment variable overrides in docker-compose.yml (change port, log level) and verify server respects them
-- [ ] T037 [P] [US1] Create .env.example in docker/backend/.env.example (already created in plan phase)
+- [ ] T037 [P] [US1] Create .env.example in docker/run/single/.env.example (already created in plan phase)
 - [ ] T038 [P] [US1] Update docker/README.md with complete deployment instructions (already created in plan phase)
 
 **Checkpoint**: At this point, User Stories 0 AND 1 should both work independently - Docker deployment is production-ready

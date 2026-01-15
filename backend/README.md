@@ -95,8 +95,9 @@ Benefits:
 Deploy KalamDB in a production-ready Docker container:
 
 ```bash
-cd docker/backend
-./build-backend.sh
+cd docker/build
+docker build -f Dockerfile -t jamals86/kalamdb:latest ../..
+cd ../run/single
 docker-compose up -d
 ```
 

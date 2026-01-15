@@ -1,0 +1,15 @@
+# Minimal KalamDB Server Configuration (Docker - Single Node)
+# Only required sections are included.
+
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[storage]
+data_path = "/data"
+
+[limits]
+
+[logging]
+
+[performance]

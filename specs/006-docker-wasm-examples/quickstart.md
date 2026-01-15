@@ -110,8 +110,8 @@ SELECT * FROM test_soft_delete INCLUDE DELETED;
 
 **Using build script** (recommended):
 ```bash
-cd docker/backend
-./build-backend.sh
+cd docker/build
+./build-and-test-local.sh
 ```
 
 This script:
@@ -122,8 +122,8 @@ This script:
 
 **Manual build** (alternative):
 ```bash
-cd docker/backend
-docker build -t kalamdb:latest -f Dockerfile ../../backend
+cd docker/build
+docker build -t kalamdb:latest -f Dockerfile ../..
 ```
 
 **Dockerfile overview**:
@@ -133,10 +133,10 @@ docker build -t kalamdb:latest -f Dockerfile ../../backend
 
 ### 2. Start with Docker Compose
 
-**Location**: `docker/backend/docker-compose.yml`
+**Location**: `docker/run/single/docker-compose.yml`
 
 ```bash
-cd docker/backend
+cd docker/run/single
 docker-compose up -d
 ```
 

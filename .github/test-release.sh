@@ -119,7 +119,7 @@ print_step "Step 5/5: Testing Docker build (optional)..."
 read -p "Build Docker image? [y/N]: " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    docker build -f docker/backend/Dockerfile -t kalamdb:test .
+    docker build -f docker/build/Dockerfile -t kalamdb:test .
     print_success "Docker build successful"
 else
     print_step "Skipping Docker build"

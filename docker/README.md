@@ -13,11 +13,21 @@ This directory contains Docker configurations for deploying KalamDB in container
 
 ```
 docker/
-└── backend/
-    ├── Dockerfile           # Multi-stage build for kalamdb-server + kalam-cli
-    ├── docker-compose.yml   # Docker Compose configuration
-    ├── build-backend.sh     # Build script with verification
-    └── .env.example         # Example environment variables (create as .env)
+├── build/
+│   ├── Dockerfile           # Multi-stage build for kalamdb-server + kalam-cli
+│   ├── Dockerfile.prebuilt  # Runtime image from prebuilt binaries
+│   ├── build-and-test-local.sh # Build + smoke test (prebuilt)
+│   └── test-docker-image.sh # Docker image smoke tests
+└── run/
+  ├── single/
+  │   ├── docker-compose.yml
+  │   ├── server.toml
+  │   └── .env.example
+  └── cluster/
+    ├── docker-compose.yml
+    ├── server1.toml
+    ├── server2.toml
+    └── server3.toml
 ```
 
 ---
@@ -27,8 +37,8 @@ docker/
 ### 1. Build Image
 
 ```bash
-cd docker/backend
-./build-backend.sh
+cd docker/build
+docker build -f Dockerfile -t jamals86/kalamdb:latest ../..
 ```
 
 This creates `kalamdb:latest` with both server and CLI binaries.
@@ -36,6 +46,7 @@ This creates `kalamdb:latest` with both server and CLI binaries.
 ### 2. Start Container
 
 ```bash
+cd ../run/single
 docker-compose up -d
 ```
 
@@ -67,26 +78,27 @@ curl -X POST http://localhost:8080/sql \
 ### Custom Tag
 
 ```bash
-./build-backend.sh --tag myregistry.com/kalamdb:v1.0.0
+docker build -f Dockerfile -t myregistry.com/kalamdb:v1.0.0 ../..
 ```
 
 ### No Cache
 
 ```bash
-./build-backend.sh --no-cache
+docker build --no-cache -f Dockerfile -t jamals86/kalamdb:latest ../..
 ```
 
 ### Build and Push
 
 ```bash
-./build-backend.sh --tag myregistry.com/kalamdb:v1.0.0 --push
+docker build -f Dockerfile -t myregistry.com/kalamdb:v1.0.0 ../..
+docker push myregistry.com/kalamdb:v1.0.0
 ```
 
 ---
 
 ## Environment Variables
 
-Create a `.env` file in `docker/backend/` to override defaults:
+Create a `.env` file in `docker/run/single/` to override defaults:
 
 ```bash
 # Server configuration

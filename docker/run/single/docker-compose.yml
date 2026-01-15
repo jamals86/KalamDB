@@ -1,5 +1,5 @@
-# KalamDB Docker Compose Configuration
-# 
+# KalamDB Docker Compose Configuration (Single Node)
+#
 # This compose file runs the pre-built KalamDB Docker image.
 # Build the image first using: ./tools/build (select Docker option)
 #
