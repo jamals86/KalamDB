@@ -54,7 +54,7 @@ fn verify_data_identical_with_retry(
 /// Test: Inserted rows are byte-for-byte identical across all nodes
 #[test]
 fn cluster_test_table_identity_inserts() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Table Identity - Inserts ===\n");
 
@@ -130,7 +130,7 @@ fn cluster_test_table_identity_inserts() {
 /// Test: Updates propagate identically to all nodes
 #[test]
 fn cluster_test_table_identity_updates() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Table Identity - Updates ===\n");
 
@@ -220,7 +220,7 @@ fn cluster_test_table_identity_updates() {
 /// Test: Deletes are reflected identically on all nodes
 #[test]
 fn cluster_test_table_identity_deletes() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Table Identity - Deletes ===\n");
 
@@ -303,7 +303,7 @@ fn cluster_test_table_identity_deletes() {
 /// Test: Mixed operations result in identical final state
 #[test]
 fn cluster_test_table_identity_mixed_operations() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Table Identity - Mixed Operations ===\n");
 
@@ -451,7 +451,7 @@ fn cluster_test_table_identity_mixed_operations() {
 /// Test: Large batch operations are replicated identically
 #[test]
 fn cluster_test_table_identity_large_batch() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Table Identity - Large Batch ===\n");
 
@@ -527,7 +527,7 @@ fn cluster_test_table_identity_large_batch() {
 /// Test: User table data is properly partitioned and replicated
 #[test]
 fn cluster_test_table_identity_user_tables() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Table Identity - User Tables ===\n");
 

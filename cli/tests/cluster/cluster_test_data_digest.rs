@@ -35,7 +35,7 @@ fn fetch_sorted_rows(base_url: &str, sql: &str) -> Result<Vec<String>, String> {
 /// Test: Data content is identical across all nodes
 #[test]
 fn cluster_test_data_digest_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Data Digest Consistency Across Nodes ===\n");
 

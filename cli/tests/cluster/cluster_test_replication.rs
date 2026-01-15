@@ -49,7 +49,7 @@ fn query_count_with_retry(base_url: &str, sql: &str) -> i64 {
 /// Verifies that system table changes replicate quickly to all nodes.
 #[test]
 fn cluster_test_metadata_replication_timing() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Metadata Replication Timing ===\n");
 
@@ -110,7 +110,7 @@ fn cluster_test_metadata_replication_timing() {
 /// Verifies that operations are applied in the correct order across nodes.
 #[test]
 fn cluster_test_operation_ordering() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Operation Ordering ===\n");
 
@@ -192,7 +192,7 @@ fn cluster_test_operation_ordering() {
 /// Verifies that concurrent writes are properly serialized.
 #[test]
 fn cluster_test_concurrent_writes() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Concurrent Writes ===\n");
 
@@ -285,7 +285,7 @@ fn cluster_test_concurrent_writes() {
 /// Test: Cluster info is consistent across nodes
 #[test]
 fn cluster_test_cluster_info_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Cluster Info Consistency ===\n");
 

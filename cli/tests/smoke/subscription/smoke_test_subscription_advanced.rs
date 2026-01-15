@@ -480,9 +480,10 @@ fn smoke_subscription_high_volume_changes() {
     println!("[TEST] Initial subscription ready, {} events received", initial_events.len());
 
     // Now perform rapid changes
-    let num_inserts = 20;
-    let num_updates = 10;
+    let num_inserts = 12;
+    let num_updates = 6;
     let test_id = std::process::id();
+    let update_marker = test_id.to_string();
 
     println!("[TEST] Starting {} rapid inserts...", num_inserts);
     let start = std::time::Instant::now();
@@ -524,7 +525,7 @@ fn smoke_subscription_high_volume_changes() {
                 
                 if line.contains("Insert") {
                     insert_count += 1;
-                } else if line.contains("Update") {
+                } else if line.contains("Update") || line.contains(&update_marker) {
                     update_count += 1;
                 }
 

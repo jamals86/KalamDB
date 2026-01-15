@@ -111,7 +111,7 @@ fn wait_for_node_healthy(base_url: &str, timeout_secs: u64) -> bool {
 /// (namespaces, tables) are replicated to it when it rejoins.
 #[test]
 fn cluster_test_node_rejoin_system_metadata() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
     
     if !is_docker_cluster() {
         println!("\n  ⏭ Skipping: Docker cluster not detected (requires Docker mode)\n");
@@ -251,7 +251,7 @@ fn cluster_test_node_rejoin_system_metadata() {
 /// This test verifies that DML operations are replicated to a rejoining node.
 #[test]
 fn cluster_test_node_rejoin_dml_operations() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
     
     if !is_docker_cluster() {
         println!("\n  ⏭ Skipping: Docker cluster not detected (requires Docker mode)\n");
@@ -400,7 +400,7 @@ fn cluster_test_node_rejoin_dml_operations() {
 #[test]
 #[ignore] // Run separately with: cargo test cluster_test_node_rejoin_user_management -- --ignored
 fn cluster_test_node_rejoin_user_management() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
     
     if !is_docker_cluster() {
         println!("\n  ⏭ Skipping: Docker cluster not detected (requires Docker mode)\n");
@@ -488,7 +488,7 @@ fn cluster_test_node_rejoin_user_management() {
 /// This test verifies data remains consistent after multiple stop/start cycles.
 #[test]
 fn cluster_test_multiple_rejoin_cycles() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
     
     if !is_docker_cluster() {
         println!("\n  ⏭ Skipping: Docker cluster not detected (requires Docker mode)\n");
@@ -572,7 +572,7 @@ fn cluster_test_multiple_rejoin_cycles() {
 /// This test verifies ALTER TABLE and other DDL operations are replicated.
 #[test]
 fn cluster_test_node_rejoin_schema_changes() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
     
     if !is_docker_cluster() {
         println!("\n  ⏭ Skipping: Docker cluster not detected (requires Docker mode)\n");

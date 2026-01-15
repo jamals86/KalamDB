@@ -9,7 +9,7 @@ use std::time::Duration;
 /// Test: System table counts are consistent across all cluster nodes
 #[test]
 fn cluster_test_system_table_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Cluster System Table Count Consistency ===\n");
 
@@ -61,7 +61,7 @@ fn cluster_test_system_table_consistency() {
 /// Test: Namespace creation is replicated to all nodes
 #[test]
 fn cluster_test_namespace_replication() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Namespace Replication ===\n");
 
@@ -106,7 +106,7 @@ fn cluster_test_namespace_replication() {
 /// Test: Table creation is replicated to all nodes
 #[test]
 fn cluster_test_table_replication() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Table Replication ===\n");
 
@@ -188,7 +188,7 @@ fn cluster_test_table_replication() {
 /// Test: Data written to leader is readable from followers
 #[test]
 fn cluster_test_data_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Data Consistency Across Nodes ===\n");
 

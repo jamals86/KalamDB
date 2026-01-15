@@ -182,6 +182,32 @@ pub fn get_rows_as_hashmaps(json: &serde_json::Value) -> Option<Vec<std::collect
     rows_as_hashmaps(first_result)
 }
 
+pub fn parse_json_from_cli_output(
+    output: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let start = output.find('{').ok_or("No JSON object start found")?;
+    let end = output.rfind('}').ok_or("No JSON object end found")?;
+    let json_str = &output[start..=end];
+    Ok(serde_json::from_str(json_str)?)
+}
+
+pub fn parse_cli_json_output(
+    output: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let trimmed = output.trim();
+    let start = trimmed
+        .find('{')
+        .ok_or_else(|| "JSON output missing '{'")?;
+    let end = trimmed
+        .rfind('}')
+        .ok_or_else(|| "JSON output missing '}'")?;
+    let json_str = &trimmed[start..=end];
+    let value = serde_json::from_str(json_str).map_err(|e| {
+        format!("Failed to parse JSON output: {}. Raw: {}", e, output)
+    })?;
+    Ok(value)
+}
+
 /// Check if the KalamDB server is running
 pub fn is_server_running() -> bool {
     // Simple TCP connection check
@@ -1028,7 +1054,8 @@ pub fn generate_unique_namespace(base_name: &str) -> String {
     } else {
         ts36.as_str()
     };
-    format!("{}_{}_{}", base_name, suffix, count).to_lowercase()
+    let pid36 = to_base36(std::process::id() as u128);
+    format!("{}_{}_{}_{}", base_name, suffix, pid36, count).to_lowercase()
 }
 
 /// Helper to generate unique table name
@@ -1050,7 +1077,8 @@ pub fn generate_unique_table(base_name: &str) -> String {
     } else {
         ts36.as_str()
     };
-    format!("{}_{}_{}", base_name, suffix, count).to_lowercase()
+    let pid36 = to_base36(std::process::id() as u128);
+    format!("{}_{}_{}_{}", base_name, suffix, pid36, count).to_lowercase()
 }
 
 fn to_base36(mut value: u128) -> String {

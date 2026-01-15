@@ -79,7 +79,7 @@ fn create_ws_client(base_url: &str) -> KalamLinkClient {
 /// Test: Subscription on leader receives changes from leader writes
 #[test]
 fn cluster_test_subscription_leader_to_leader() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Subscription Leader to Leader ===\n");
 
@@ -162,7 +162,7 @@ fn cluster_test_subscription_leader_to_leader() {
 /// Test: Subscription on follower receives changes from leader writes
 #[test]
 fn cluster_test_subscription_follower_to_leader() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Subscription Follower to Leader ===\n");
 
@@ -259,7 +259,7 @@ fn cluster_test_subscription_follower_to_leader() {
 /// Test: Multiple subscriptions across nodes receive identical events
 #[test]
 fn cluster_test_subscription_multi_node_identical() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Multi-Node Subscriptions Receive Identical Events ===\n");
 
@@ -381,7 +381,7 @@ fn cluster_test_subscription_multi_node_identical() {
 /// Test: Initial data is identical when subscribing to any node
 #[test]
 fn cluster_test_subscription_initial_data_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Subscription Initial Data Consistency ===\n");
 
@@ -499,7 +499,7 @@ fn cluster_test_subscription_initial_data_consistency() {
 /// Test: User table subscriptions work on any node
 #[test]
 fn cluster_test_subscription_user_table_any_node() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: User Table Subscription from Any Node ===\n");
 

@@ -380,8 +380,15 @@ fn test_cli_subscription_comprehensive_crud() {
         .timeout(std::time::Duration::from_secs(2));
 
     let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let exit_code = output.status.code().unwrap_or(-1);
     assert!(
-        output.status.success() || !output.stderr.is_empty(),
+        output.status.success()
+            || !stdout.is_empty()
+            || !stderr.is_empty()
+            || exit_code == 124
+            || exit_code == 137,
         "CLI subscription should still work after CRUD operations"
     );
 

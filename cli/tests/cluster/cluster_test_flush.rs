@@ -18,7 +18,7 @@ use std::time::Duration;
 /// 5. Verify row counts match on all nodes
 #[test]
 fn cluster_test_flush_data_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Cluster Flush Data Consistency ===\n");
 
@@ -150,7 +150,7 @@ fn cluster_test_flush_data_consistency() {
 /// 5. Verify all data is present and consistent
 #[test]
 fn cluster_test_multiple_flushes() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Cluster Multiple Flushes ===\n");
 
@@ -252,7 +252,7 @@ fn cluster_test_multiple_flushes() {
 /// Verifies that flushing doesn't block or corrupt concurrent read operations
 #[test]
 fn cluster_test_flush_during_reads() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Cluster Flush During Reads ===\n");
 

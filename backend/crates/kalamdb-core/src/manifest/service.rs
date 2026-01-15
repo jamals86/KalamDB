@@ -13,13 +13,14 @@ use crate::storage::storage_registry::StorageRegistry;
 use kalamdb_commons::config::ManifestCacheSettings;
 use kalamdb_commons::models::types::{Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
 use kalamdb_commons::models::StorageId;
-use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
+use kalamdb_commons::{NamespaceId, StorageKey, TableId, TableName, UserId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{StorageBackend, StorageError};
 use kalamdb_system::providers::manifest::{new_manifest_store, ManifestCacheKey, ManifestStore};
 use log::{debug, info, warn};
 use moka::sync::Cache;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -647,6 +648,28 @@ impl ManifestService {
     ) -> Result<String, StorageError> {
         let storage_path = self.get_storage_path(table_id, user_id)?;
         Ok(format!("{}/manifest.json", storage_path))
+    }
+
+    /// List user scopes that have manifests for a given table.
+    pub fn list_user_scopes_for_table(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Vec<UserId>, StorageError> {
+        let prefix = ManifestCacheKey::from(format!("{}:", table_id));
+        let entries = EntityStore::scan_all(&self.store, None, Some(&prefix), None)?;
+        let mut user_ids = HashSet::new();
+
+        for (key_bytes, _entry) in entries {
+            let key = ManifestCacheKey::from_storage_key(&key_bytes)
+                .map_err(StorageError::SerializationError)?;
+            if let Some((_namespace, _table, scope)) = key.parse() {
+                if scope != "shared" {
+                    user_ids.insert(UserId::from(scope));
+                }
+            }
+        }
+
+        Ok(user_ids.into_iter().collect())
     }
 
     // ========== Private Helper Methods ==========

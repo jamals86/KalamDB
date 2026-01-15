@@ -25,7 +25,7 @@ fn get_row_count(url: &str, table: &str) -> i64 {
 /// Test: All nodes have identical row counts after workload
 #[test]
 fn cluster_test_final_row_count_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Final Row Count Consistency ===\n");
 
@@ -135,7 +135,7 @@ fn cluster_test_final_row_count_consistency() {
 /// Test: System metadata is identical after multiple DDL operations
 #[test]
 fn cluster_test_final_metadata_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Final Metadata Consistency ===\n");
 
@@ -245,7 +245,7 @@ fn cluster_test_final_metadata_consistency() {
 /// Test: All data is consistent after mixed read/write workload
 #[test]
 fn cluster_test_final_mixed_workload_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Final Consistency After Mixed Workload ===\n");
 
@@ -443,7 +443,7 @@ fn cluster_test_final_mixed_workload_consistency() {
 /// (Simulated by querying system.cluster and verifying all nodes respond)
 #[test]
 fn cluster_test_final_cluster_health_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Cluster Health Consistency ===\n");
 
@@ -500,7 +500,7 @@ fn cluster_test_final_cluster_health_consistency() {
 /// Test: Empty tables are consistent (edge case)
 #[test]
 fn cluster_test_final_empty_table_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Empty Table Consistency ===\n");
 

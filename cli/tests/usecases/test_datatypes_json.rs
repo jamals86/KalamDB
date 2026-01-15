@@ -69,7 +69,7 @@ fn test_datatypes_json_preservation() {
     println!("Query output: {}", output);
 
     // Parse JSON output
-    let json: Value = serde_json::from_str(&output).expect("Failed to parse JSON output");
+    let json: Value = parse_cli_json_output(&output).expect("Failed to parse JSON output");
 
     // Navigate to results[0].rows[0] using the new schema-based format
     let rows = get_rows_as_hashmaps(&json)

@@ -43,7 +43,7 @@ fn assert_rows_on_all_nodes_as_user(
 
 #[test]
 fn cluster_test_table_crud_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: CRUD Consistency for User/Shared/Stream Tables ===\n");
 
