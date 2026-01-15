@@ -186,9 +186,9 @@ COPY --from=builder --chmod=755 /build/target/docker/kalam /usr/local/bin/kalam-
 # Create symlink so 'kalam' command works
 RUN ln -s /usr/local/bin/kalam-cli /usr/local/bin/kalam
 
-# Copy default server configuration
-COPY --chown=kalamdb:kalamdb docker/backend/server.toml /config/server.toml
-#COPY --chown=kalamdb:kalamdb docker/backend/server.toml /data/server.toml
+# Copy default server configuration (from backend example) and normalize data path
+COPY --chown=kalamdb:kalamdb backend/server.example.toml /config/server.toml
+RUN sed -i 's|data_path = "\./data"|data_path = "/data"|g' /config/server.toml
 
 # Switch to non-root user
 USER kalamdb
@@ -204,4 +204,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -sf http://localhost:8080/health || exit 1
 
 # Default command
-CMD ["/usr/local/bin/kalamdb-server"]
+CMD ["/usr/local/bin/kalamdb-server", "/config/server.toml"]

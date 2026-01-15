@@ -44,7 +44,7 @@ NC='\033[0m'
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DOCKER_DIR="$ROOT_DIR/docker/backend"
+DOCKER_DIR="$ROOT_DIR/docker/build"
 DIST_DIR="$ROOT_DIR/dist"
 REPO_OWNER="jamals86"
 REPO_NAME="KalamDB"

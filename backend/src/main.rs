@@ -18,27 +18,35 @@ async fn main() -> Result<()> {
     let main_start = std::time::Instant::now();
 
     // Normal server startup
-    // Load configuration from server.toml (fallback to config.toml for backward compatibility)
-    let config_path = if std::path::Path::new("server.toml").exists() {
-        "server.toml"
+    // Use first CLI argument as config path, or default to server.toml next to binary
+    let config_path = if let Some(arg_path) = std::env::args().nth(1) {
+        std::path::PathBuf::from(arg_path)
     } else {
-        eprintln!("❌ FATAL: Neither server.toml nor config.toml found");
-        eprintln!("❌ Server cannot start without valid configuration");
-        std::process::exit(1);
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|dir| dir.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        exe_dir.join("server.toml")
     };
 
-    let config = match ServerConfig::from_file(config_path) {
+    if !config_path.exists() {
+        eprintln!("❌ FATAL: Config file not found: {}", config_path.display());
+        eprintln!("❌ Server cannot start without valid configuration");
+        std::process::exit(1);
+    }
+
+    let config = match ServerConfig::from_file(&config_path) {
         Ok(cfg) => {
             eprintln!(
                 "✅ Loaded config from: {}",
-                std::fs::canonicalize(config_path)
-                    .unwrap_or_else(|_| std::path::PathBuf::from(config_path))
+                std::fs::canonicalize(&config_path)
+                    .unwrap_or_else(|_| config_path.clone())
                     .display()
             );
             cfg
         },
         Err(e) => {
-            eprintln!("❌ FATAL: Failed to load {}: {}", config_path, e);
+            eprintln!("❌ FATAL: Failed to load {}: {}", config_path.display(), e);
             eprintln!("❌ Server cannot start without valid configuration");
             std::process::exit(1);
         },

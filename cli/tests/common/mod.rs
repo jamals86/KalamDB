@@ -293,7 +293,8 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
         return None;
     }
 
-    let request = async {
+    let url = url.to_string();
+    let request = async move {
         Client::new()
             .post(format!("{}/v1/api/sql", url))
             .json(&json!({ "sql": "SELECT 1" }))

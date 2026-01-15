@@ -306,4 +306,4 @@ This document tracks the implementation of Raft-based replication for KalamDB, e
 - Removed `bootstrap` field (auto-bootstrap based on node_id=1)
 - Added `min_replication_nodes` field (default: 1, set to 3 for strong consistency)
 - Updated server.toml and server.example.toml documentation
-- Updated docker/cluster/server*.toml configs
+- Updated docker/run/cluster/server*.toml configs

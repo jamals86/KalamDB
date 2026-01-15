@@ -256,14 +256,17 @@ jobs:
           mkdir -p dist/$VERSION
           CLI_OUT="kalamcli-${VERSION}-windows-x86_64.exe"
           cp "target/x86_64-pc-windows-gnu/release-dist/kalam.exe" "dist/$VERSION/$CLI_OUT"
-          DLL_DIR="/usr/x86_64-w64-mingw32/bin"
-          for dll in libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; do
-            if [[ ! -f "$DLL_DIR/$dll" ]]; then
-              echo "Missing $dll in $DLL_DIR" >&2
-              exit 1
-            fi
-            cp "$DLL_DIR/$dll" "dist/$VERSION/"
-          done
+          CROSS_IMAGE="ghcr.io/cross-rs/x86_64-pc-windows-gnu:latest"
+          docker run --rm -v "$PWD":/work "$CROSS_IMAGE" bash -lc "\
+            set -euo pipefail; \
+            DLL_DIR=/usr/x86_64-w64-mingw32/bin; \
+            for dll in libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; do \
+              if [[ ! -f \"$DLL_DIR/$dll\" ]]; then \
+                echo \"Missing $dll in $DLL_DIR\" >&2; \
+                exit 1; \
+              fi; \
+              cp \"$DLL_DIR/$dll\" \"/work/dist/$VERSION/\"; \
+            done"
           (cd "dist/$VERSION" && zip -q "${CLI_OUT%.exe}.zip" "$CLI_OUT" libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
 
       - name: Upload CLI artifact
@@ -1320,7 +1323,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/backend/Dockerfile.prebuilt
+          file: docker/build/Dockerfile.prebuilt
           push: true
           platforms: linux/amd64
           build-contexts: |
@@ -1337,14 +1340,14 @@ jobs:
           docker pull ${{ steps.vars.outputs.docker_repo }}:${{ steps.vars.outputs.version }}-amd64
           
           # Run smoke test
-          chmod +x docker/backend/test-docker-image.sh
-          ./docker/backend/test-docker-image.sh ${{ steps.vars.outputs.docker_repo }}:${{ steps.vars.outputs.version }}-amd64
+          chmod +x docker/build/test-docker-image.sh
+          ./docker/build/test-docker-image.sh ${{ steps.vars.outputs.docker_repo }}:${{ steps.vars.outputs.version }}-amd64
 
       - name: Build and push Docker image (linux/arm64)
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/backend/Dockerfile.prebuilt
+          file: docker/build/Dockerfile.prebuilt
           push: true
           platforms: linux/arm64
           build-contexts: |

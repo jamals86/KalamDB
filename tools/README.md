@@ -113,8 +113,8 @@ dist/0.1.1/
 ### Docker
 
 For Docker-specific builds, see:
-- `docker/backend/Dockerfile` - Production Dockerfile
-- `docker/backend/docker-compose.yml` - Compose configuration
+- `docker/build/Dockerfile` - Production Dockerfile
+- `docker/run/single/docker-compose.yml` - Compose configuration
 - `docker/README.md` - Docker deployment guide
 
 ## Other Files

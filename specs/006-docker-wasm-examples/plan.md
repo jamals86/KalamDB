@@ -164,7 +164,7 @@ docker/
 ├── backend/
 │   ├── Dockerfile              # NEW: Docker image definition
 │   ├── docker-compose.yml      # NEW: Compose configuration with volumes
-│   └── build-backend.sh        # NEW: Build script for backend + CLI image
+│   └── build-and-test-local.sh # NEW: Build script for backend + CLI image
 └── README.md                    # NEW: Docker deployment guide
 ```
 

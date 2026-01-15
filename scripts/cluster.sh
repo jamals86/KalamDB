@@ -56,7 +56,7 @@ elif [[ "$1" == "--local" ]]; then
 fi
 
 CLUSTER_DATA_DIR="$PROJECT_ROOT/.cluster-local"
-DOCKER_CLUSTER_DIR="$PROJECT_ROOT/docker/cluster"
+DOCKER_CLUSTER_DIR="$PROJECT_ROOT/docker/run/cluster"
 
 # Colors for output
 RED='\033[0;31m'
@@ -124,7 +124,7 @@ docker_build_image() {
     
     echo "Project root: $PROJECT_ROOT"
     echo "Building image (this may take several minutes)..."
-    docker build -f "$PROJECT_ROOT/docker/backend/Dockerfile" -t jamals86/kalamdb:latest "$PROJECT_ROOT"
+    docker build -f "$PROJECT_ROOT/docker/build/Dockerfile" -t jamals86/kalamdb:latest "$PROJECT_ROOT"
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ Image built successfully${NC}"

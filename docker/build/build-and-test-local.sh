@@ -53,7 +53,7 @@ main() {
     log_info "Step 3/4: Building Docker image..."
     docker build \
         --build-context binaries=binaries-amd64 \
-        -f docker/backend/Dockerfile.prebuilt \
+        -f docker/build/Dockerfile.prebuilt \
         -t "$IMAGE_TAG" \
         .
     
@@ -62,8 +62,8 @@ main() {
     
     # Step 4: Run smoke tests
     log_info "Step 4/4: Running smoke tests..."
-    chmod +x docker/backend/test-docker-image.sh
-    ./docker/backend/test-docker-image.sh "$IMAGE_TAG"
+    chmod +x docker/build/test-docker-image.sh
+    ./docker/build/test-docker-image.sh "$IMAGE_TAG"
     
     # Cleanup
     log_info "Cleaning up binaries directory..."

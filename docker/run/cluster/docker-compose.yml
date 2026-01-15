@@ -1,5 +1,5 @@
 # KalamDB 3-Node Cluster Configuration
-# 
+#
 # This compose file runs a 3-node KalamDB cluster with Raft consensus.
 # All nodes share the same network and can communicate via their container names.
 #
