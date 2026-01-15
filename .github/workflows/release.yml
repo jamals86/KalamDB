@@ -257,16 +257,16 @@ jobs:
           CLI_OUT="kalamcli-${VERSION}-windows-x86_64.exe"
           cp "target/x86_64-pc-windows-gnu/release-dist/kalam.exe" "dist/$VERSION/$CLI_OUT"
           CROSS_IMAGE="ghcr.io/cross-rs/x86_64-pc-windows-gnu:latest"
-          docker run --rm -v "$PWD":/work "$CROSS_IMAGE" bash -lc "\
+          docker run --rm -v "$PWD":/work "$CROSS_IMAGE" bash -lc '\
             set -euo pipefail; \
             DLL_DIR=/usr/x86_64-w64-mingw32/bin; \
             for dll in libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; do \
-              if [[ ! -f \"$DLL_DIR/$dll\" ]]; then \
-                echo \"Missing $dll in $DLL_DIR\" >&2; \
+              if [[ ! -f "${DLL_DIR}/${dll}" ]]; then \
+                echo "Missing ${dll} in ${DLL_DIR}" >&2; \
                 exit 1; \
               fi; \
-              cp \"$DLL_DIR/$dll\" \"/work/dist/$VERSION/\"; \
-            done"
+              cp "${DLL_DIR}/${dll}" "/work/dist/'"$VERSION"'/"; \
+            done'
           (cd "dist/$VERSION" && zip -q "${CLI_OUT%.exe}.zip" "$CLI_OUT" libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
 
       - name: Upload CLI artifact
