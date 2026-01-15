@@ -12,8 +12,8 @@ async fn test_cluster_commands_over_http() -> Result<()> {
         let resp = server.execute_sql("CLUSTER LIST").await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success, "CLUSTER LIST failed: {:?}", resp.error);
 
-        let resp = server.execute_sql("CLUSTER FLUSH").await?;
-        anyhow::ensure!(resp.status == ResponseStatus::Success, "CLUSTER FLUSH failed: {:?}", resp.error);
+        let resp = server.execute_sql("CLUSTER SNAPSHOT").await?;
+        anyhow::ensure!(resp.status == ResponseStatus::Success, "CLUSTER SNAPSHOT failed: {:?}", resp.error);
 
         let resp = server.execute_sql("CLUSTER CLEAR").await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success, "CLUSTER CLEAR failed: {:?}", resp.error);

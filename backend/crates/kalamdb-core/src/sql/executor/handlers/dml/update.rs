@@ -7,6 +7,10 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::providers::base::BaseTableProvider; // Phase 13.6: Bring trait methods into scope
 use crate::sql::executor::handlers::StatementHandler;
+use crate::sql::executor::handlers::dml::mod_helpers::{
+    coerce_scalar_to_type, extract_pk_from_where_pair, scalar_from_placeholder,
+    scalar_from_sql_value,
+};
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
@@ -17,7 +21,7 @@ use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::collections::BTreeMap;
 use sqlparser::ast::{
     AssignmentTarget, BinaryOperator, Expr as SqlExpr, Ident, ObjectNamePart,
-    Statement as SqlStatementAst, TableFactor,
+    Statement as SqlStatementAst, TableFactor, UnaryOperator,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -94,13 +98,9 @@ impl StatementHandler for UpdateHandler {
             .map(|c| (c.column_name.clone(), c.data_type.clone()))
             .collect();
 
-        let mut values = BTreeMap::new();
-        for (col, token) in assignments {
-            let target_type = col_types.get(&col);
-            let val = self.token_to_scalar_value(&token, &params, target_type)?;
-            values.insert(col, val);
-        }
-        let updates = Row::new(values);
+        let needs_row = assignments
+            .iter()
+            .any(|(_, expr)| Self::expr_needs_row(expr));
 
         // T153: Use effective user_id for impersonation support (Phase 7)
         let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
@@ -120,27 +120,12 @@ impl StatementHandler for UpdateHandler {
                     KalamDbError::InvalidOperation("User table provider not found".into())
                 })?;
 
-                // Coerce updates using provider's schema
-                use crate::providers::arrow_json_conversion::coerce_updates;
-                let updates = coerce_updates(updates, &provider_arc.schema()).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!("Update coercion failed: {}", e))
-                })?;
-
                 if let Some(provider) = provider_arc
                     .as_any()
                     .downcast_ref::<crate::providers::UserTableProvider>()
                 {
                     // T064: Get actual PK column name from provider instead of assuming "id"
                     let pk_column = provider.primary_key_field_name();
-
-                    // PK updates are not supported: the UPDATE fast-path targets a single row via PK filter.
-                    // Allowing the PK column to change would require row relocation and strict uniqueness checks.
-                    if updates.get(pk_column).is_some() {
-                        return Err(KalamDbError::InvalidOperation(format!(
-                            "UPDATE cannot modify primary key column '{}'",
-                            pk_column
-                        )));
-                    }
 
                     // Check if WHERE clause targets PK for fast path
                     let id_value_opt =
@@ -149,6 +134,46 @@ impl StatementHandler for UpdateHandler {
                     // Phase 20: Always route through Raft (single-node or cluster)
                     // PK filter is required for update operations
                     if let Some(id_value) = id_value_opt {
+                        let current_row = if needs_row {
+                            let pk_scalar =
+                                self.token_to_scalar_value(&id_value, &params, col_types.get(pk_column))?;
+                            let (_row_id, row) = provider
+                                .find_by_pk(effective_user_id, &pk_scalar)?
+                                .ok_or_else(|| {
+                                    KalamDbError::NotFound(format!(
+                                        "Row with {}={} not found",
+                                        pk_column, id_value
+                                    ))
+                                })?;
+                            Some(row.fields)
+                        } else {
+                            None
+                        };
+
+                        let updates = self.build_updates(
+                            &assignments,
+                            &params,
+                            &col_types,
+                            current_row.as_ref(),
+                        )?;
+
+                        if updates.get(pk_column).is_some() {
+                            return Err(KalamDbError::InvalidOperation(format!(
+                                "UPDATE cannot modify primary key column '{}'",
+                                pk_column
+                            )));
+                        }
+
+                        // Coerce updates using provider's schema
+                        use crate::providers::arrow_json_conversion::coerce_updates;
+                        let updates =
+                            coerce_updates(updates, &provider_arc.schema()).map_err(|e| {
+                                KalamDbError::InvalidOperation(format!(
+                                    "Update coercion failed: {}",
+                                    e
+                                ))
+                            })?;
+
                         let rows_affected = self
                             .execute_user_update_via_raft(
                                 &table_id,
@@ -195,28 +220,55 @@ impl StatementHandler for UpdateHandler {
                     KalamDbError::InvalidOperation("Shared table provider not found".into())
                 })?;
 
-                // Coerce updates using provider's schema
-                use crate::providers::arrow_json_conversion::coerce_updates;
-                let updates = coerce_updates(updates, &provider_arc.schema()).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!("Update coercion failed: {}", e))
-                })?;
-
                 if let Some(provider) = provider_arc
                     .as_any()
                     .downcast_ref::<crate::providers::SharedTableProvider>()
                 {
                     let pk_column = provider.primary_key_field_name();
 
-                    if updates.get(pk_column).is_some() {
-                        return Err(KalamDbError::InvalidOperation(format!(
-                            "UPDATE cannot modify primary key column '{}'",
-                            pk_column
-                        )));
-                    }
-
                     if let Some(id_value) =
                         self.extract_row_id_for_column(&where_pair, pk_column, &params)?
                     {
+                        let current_row = if needs_row {
+                            let (_row_id, row) = crate::providers::base::find_row_by_pk(
+                                provider,
+                                None,
+                                &id_value,
+                            )?
+                            .ok_or_else(|| {
+                                KalamDbError::NotFound(format!(
+                                    "Row with {}={} not found",
+                                    pk_column, id_value
+                                ))
+                            })?;
+                            Some(row.fields)
+                        } else {
+                            None
+                        };
+
+                        let updates = self.build_updates(
+                            &assignments,
+                            &params,
+                            &col_types,
+                            current_row.as_ref(),
+                        )?;
+
+                        if updates.get(pk_column).is_some() {
+                            return Err(KalamDbError::InvalidOperation(format!(
+                                "UPDATE cannot modify primary key column '{}'",
+                                pk_column
+                            )));
+                        }
+
+                        // Coerce updates using provider's schema
+                        use crate::providers::arrow_json_conversion::coerce_updates;
+                        let updates =
+                            coerce_updates(updates, &provider_arc.schema()).map_err(|e| {
+                                KalamDbError::InvalidOperation(format!(
+                                    "Update coercion failed: {}",
+                                    e
+                                ))
+                            })?;
                         // Phase 20: Always route through Raft (single-node or cluster)
                         let rows_affected = self.execute_update_via_raft(
                             &table_id,
@@ -289,7 +341,7 @@ impl UpdateHandler {
         (
             NamespaceId,
             TableName,
-            Vec<(String, String)>,
+            Vec<(String, SqlExpr)>,
             Option<(String, String)>,
         ),
         KalamDbError,
@@ -302,7 +354,14 @@ impl UpdateHandler {
             .ok_or_else(|| KalamDbError::InvalidOperation("Empty UPDATE statement".into()))?;
 
         let (ns, tbl, assigns, where_pair) = match stmt {
-            SqlStatementAst::Update { table, assignments, selection, .. } => {
+            SqlStatementAst::Update(update) => {
+                let sqlparser::ast::Update {
+                    table,
+                    assignments,
+                    selection,
+                    ..
+                } = update;
+
                 let (ns, tbl) = match table.relation {
                     TableFactor::Table { name, .. } => {
                         let parts: Vec<String> = name
@@ -352,7 +411,7 @@ impl UpdateHandler {
                             ))
                         }
                     };
-                    assigns.push((col, assign.value.to_string()));
+                    assigns.push((col, assign.value));
                 }
 
                 let where_pair = selection.and_then(|expr| Self::extract_pk_filter_from_expr(&expr));
@@ -401,59 +460,7 @@ impl UpdateHandler {
         pk_column: &str,
         params: &[ScalarValue],
     ) -> Result<Option<String>, KalamDbError> {
-        if let Some((col, token)) = where_pair {
-            // Ensure WHERE references the actual PK column
-            if !col.eq_ignore_ascii_case(pk_column) {
-                return Ok(None);
-            }
-            let t = token.trim();
-            // Check for placeholder
-            if let Some(stripped) = t.strip_prefix('$') {
-                let num: usize = stripped.parse().map_err(|_| {
-                    KalamDbError::InvalidOperation("Invalid placeholder in WHERE".into())
-                })?;
-                if num == 0 || num > params.len() {
-                    return Err(KalamDbError::InvalidOperation(
-                        "Placeholder index out of range".into(),
-                    ));
-                }
-                let sv = &params[num - 1];
-                return Ok(match sv {
-                    ScalarValue::Int64(Some(i)) => Some(i.to_string()),
-                    ScalarValue::Utf8(Some(s)) => Some(s.clone()),
-                    _ => None,
-                });
-            }
-            // Otherwise treat as literal (strip quotes if present)
-            let unquoted = t.trim_matches('\'').trim_matches('"');
-            return Ok(Some(unquoted.to_string()));
-        }
-        Ok(None)
-    }
-
-    /// Coerce ScalarValue to target type if needed
-    fn coerce_scalar_value(
-        &self,
-        value: ScalarValue,
-        target: &KalamDataType,
-    ) -> Result<ScalarValue, KalamDbError> {
-        match (target, &value) {
-            (KalamDataType::Uuid, ScalarValue::Utf8(Some(s))) => {
-                // Parse UUID string to bytes
-                let uuid = uuid::Uuid::parse_str(s).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!("Invalid UUID string '{}': {}", s, e))
-                })?;
-                Ok(ScalarValue::FixedSizeBinary(
-                    16,
-                    Some(uuid.as_bytes().to_vec()),
-                ))
-            }
-            (KalamDataType::Uuid, ScalarValue::Utf8(None)) => {
-                Ok(ScalarValue::FixedSizeBinary(16, None))
-            }
-            // Add other coercions if needed
-            _ => Ok(value),
-        }
+        extract_pk_from_where_pair(where_pair, pk_column, params)
     }
 
     fn token_to_scalar_value(
@@ -465,22 +472,10 @@ impl UpdateHandler {
         let t = token.trim();
 
         // Check for placeholder ($1, $2, etc.)
-        if let Some(stripped) = t.strip_prefix('$') {
-            let param_num: usize = stripped.parse().map_err(|_| {
-                KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", t))
-            })?;
-
-            if param_num == 0 || param_num > params.len() {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Parameter ${} out of range (have {} parameters)",
-                    param_num,
-                    params.len()
-                )));
-            }
-
-            let val = params[param_num - 1].clone();
+        if t.starts_with('$') {
+            let val = scalar_from_placeholder(t, params)?;
             if let Some(target) = target_type {
-                return self.coerce_scalar_value(val, target);
+                return coerce_scalar_to_type(val, target);
             }
             return Ok(val);
         }
@@ -506,7 +501,7 @@ impl UpdateHandler {
             let unquoted = &t[1..t.len() - 1];
             let val = ScalarValue::Utf8(Some(unquoted.to_string()));
             if let Some(target) = target_type {
-                return self.coerce_scalar_value(val, target);
+                return coerce_scalar_to_type(val, target);
             }
             return Ok(val);
         }
@@ -522,9 +517,219 @@ impl UpdateHandler {
         // Default to string
         let val = ScalarValue::Utf8(Some(t.to_string()));
         if let Some(target) = target_type {
-            return self.coerce_scalar_value(val, target);
+            return coerce_scalar_to_type(val, target);
         }
         Ok(val)
+    }
+
+    fn build_updates(
+        &self,
+        assignments: &[(String, SqlExpr)],
+        params: &[ScalarValue],
+        col_types: &std::collections::HashMap<String, KalamDataType>,
+        current_row: Option<&Row>,
+    ) -> Result<Row, KalamDbError> {
+        let mut values = BTreeMap::new();
+        for (col, expr) in assignments {
+            let target_type = col_types.get(col);
+            let val = self.expr_to_scalar_value(expr, params, current_row, target_type)?;
+            values.insert(col.clone(), val);
+        }
+        Ok(Row::new(values))
+    }
+
+    fn expr_needs_row(expr: &SqlExpr) -> bool {
+        match expr {
+            SqlExpr::Identifier(_) | SqlExpr::CompoundIdentifier(_) => true,
+            SqlExpr::BinaryOp { left, right, .. } => {
+                Self::expr_needs_row(left) || Self::expr_needs_row(right)
+            }
+            SqlExpr::UnaryOp { expr, .. } => Self::expr_needs_row(expr),
+            SqlExpr::Nested(inner) => Self::expr_needs_row(inner),
+            SqlExpr::Cast { expr, .. } => Self::expr_needs_row(expr),
+            _ => false,
+        }
+    }
+
+    fn expr_to_scalar_value(
+        &self,
+        expr: &SqlExpr,
+        params: &[ScalarValue],
+        current_row: Option<&Row>,
+        target_type: Option<&KalamDataType>,
+    ) -> Result<ScalarValue, KalamDbError> {
+        let mut value = match expr {
+            SqlExpr::Value(v) => scalar_from_sql_value(&v.value, params)?,
+            SqlExpr::Identifier(ident) => {
+                let row = current_row.ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Cannot resolve column '{}' without a row context",
+                        ident.value
+                    ))
+                })?;
+                row.values
+                    .get(&ident.value)
+                    .cloned()
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Column '{}' not found in current row",
+                            ident.value
+                        ))
+                    })?
+            }
+            SqlExpr::CompoundIdentifier(idents) => {
+                let col = idents
+                    .last()
+                    .map(|Ident { value, .. }| value.clone())
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation(
+                            "Invalid compound identifier in update expression".into(),
+                        )
+                    })?;
+                let row = current_row.ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Cannot resolve column '{}' without a row context",
+                        col
+                    ))
+                })?;
+                row.values.get(&col).cloned().ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Column '{}' not found in current row",
+                        col
+                    ))
+                })?
+            }
+            SqlExpr::BinaryOp { left, op, right } => {
+                let left_val = self.expr_to_scalar_value(left, params, current_row, None)?;
+                let right_val = self.expr_to_scalar_value(right, params, current_row, None)?;
+                self.apply_numeric_binary_op(op.clone(), left_val, right_val)?
+            }
+            SqlExpr::UnaryOp { op, expr } => {
+                let inner = self.expr_to_scalar_value(expr, params, current_row, None)?;
+                match op {
+                    UnaryOperator::Minus => {
+                        if let Some(n) = Self::scalar_to_i64(&inner) {
+                            ScalarValue::Int64(Some(-n))
+                        } else if let Some(n) = Self::scalar_to_f64(&inner) {
+                            ScalarValue::Float64(Some(-n))
+                        } else {
+                            return Err(KalamDbError::InvalidOperation(format!(
+                                "Unary '-' not supported for value {:?}",
+                                inner
+                            )));
+                        }
+                    }
+                    UnaryOperator::Plus => inner,
+                    _ => {
+                        return Err(KalamDbError::InvalidOperation(format!(
+                            "Unsupported unary operator {:?} in UPDATE expression",
+                            op
+                        )))
+                    }
+                }
+            }
+            SqlExpr::Nested(inner) => {
+                self.expr_to_scalar_value(inner, params, current_row, None)?
+            }
+            SqlExpr::Cast { expr, .. } => {
+                self.expr_to_scalar_value(expr, params, current_row, None)?
+            }
+            _ => {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Unsupported UPDATE expression: {}",
+                    expr
+                )))
+            }
+        };
+
+        if let Some(target) = target_type {
+            value = coerce_scalar_to_type(value, target)?;
+        }
+
+        Ok(value)
+    }
+
+    fn apply_numeric_binary_op(
+        &self,
+        op: BinaryOperator,
+        left: ScalarValue,
+        right: ScalarValue,
+    ) -> Result<ScalarValue, KalamDbError> {
+        if matches!(left, ScalarValue::Null) || matches!(right, ScalarValue::Null) {
+            return Ok(ScalarValue::Null);
+        }
+
+        let left_int = Self::scalar_to_i64(&left);
+        let right_int = Self::scalar_to_i64(&right);
+        let left_float = Self::scalar_to_f64(&left);
+        let right_float = Self::scalar_to_f64(&right);
+
+        match op {
+            BinaryOperator::Plus
+            | BinaryOperator::Minus
+            | BinaryOperator::Multiply
+            | BinaryOperator::Divide => {}
+            _ => {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Unsupported binary operator {:?} in UPDATE expression",
+                    op
+                )))
+            }
+        }
+
+        if let (Some(l), Some(r)) = (left_int, right_int) {
+            let result = match op {
+                BinaryOperator::Plus => ScalarValue::Int64(Some(l + r)),
+                BinaryOperator::Minus => ScalarValue::Int64(Some(l - r)),
+                BinaryOperator::Multiply => ScalarValue::Int64(Some(l * r)),
+                BinaryOperator::Divide => ScalarValue::Float64(Some(l as f64 / r as f64)),
+                _ => unreachable!(),
+            };
+            return Ok(result);
+        }
+
+        if left_float.is_none() || right_float.is_none() {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Non-numeric operands in UPDATE expression: {:?} {:?}",
+                left, right
+            )));
+        }
+
+        let l = left_float.unwrap();
+        let r = right_float.unwrap();
+        let result = match op {
+            BinaryOperator::Plus => l + r,
+            BinaryOperator::Minus => l - r,
+            BinaryOperator::Multiply => l * r,
+            BinaryOperator::Divide => l / r,
+            _ => unreachable!(),
+        };
+
+        Ok(ScalarValue::Float64(Some(result)))
+    }
+
+    fn scalar_to_f64(value: &ScalarValue) -> Option<f64> {
+        match value {
+            ScalarValue::Float64(Some(v)) => Some(*v),
+            ScalarValue::Float32(Some(v)) => Some(f64::from(*v)),
+            ScalarValue::Int64(Some(v)) => Some(*v as f64),
+            ScalarValue::Int32(Some(v)) => Some(*v as f64),
+            ScalarValue::Int16(Some(v)) => Some(*v as f64),
+            ScalarValue::UInt64(Some(v)) => Some(*v as f64),
+            ScalarValue::UInt32(Some(v)) => Some(*v as f64),
+            _ => None,
+        }
+    }
+
+    fn scalar_to_i64(value: &ScalarValue) -> Option<i64> {
+        match value {
+            ScalarValue::Int64(Some(v)) => Some(*v),
+            ScalarValue::Int32(Some(v)) => Some(*v as i64),
+            ScalarValue::Int16(Some(v)) => Some(*v as i64),
+            ScalarValue::UInt64(Some(v)) => i64::try_from(*v).ok(),
+            ScalarValue::UInt32(Some(v)) => Some(*v as i64),
+            _ => None,
+        }
     }
 
     /// Execute UPDATE via Raft consensus for cluster replication

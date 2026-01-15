@@ -95,16 +95,16 @@ pub async fn bootstrap(
     if is_cluster_mode {
         // Multi-node cluster mode
         let cluster_config = config.cluster.as_ref().unwrap();
-        info!("╔═══════════════════════════════════════════════════════════════════╗");
-        info!("║                     Multi-Node Cluster Mode                       ║");
-        info!("╚═══════════════════════════════════════════════════════════════════╝");
-        info!(
+        debug!("╔═══════════════════════════════════════════════════════════════════╗");
+        debug!("║                     Multi-Node Cluster Mode                       ║");
+        debug!("╚═══════════════════════════════════════════════════════════════════╝");
+        debug!(
             "Cluster: {} | Node: {} | Peers: {}",
             cluster_config.cluster_id,
             cluster_config.node_id,
             cluster_config.peers.len()
         );
-        info!(
+        debug!(
             "Shards: {} user, {} shared",
             cluster_config.user_shards, cluster_config.shared_shards
         );

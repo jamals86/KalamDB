@@ -398,10 +398,7 @@ pub async fn insert_message(
     );
     let resp = server.execute_sql_as_user(&sql, user_id).await;
     if resp.status != ResponseStatus::Success {
-        eprintln!(
-            "INSERT MESSAGE failed: ns={}, user={}, error={:?}",
-            namespace, user_id, resp.error
-        );
+        eprintln!("INSERT failed: status={}, error={:?}", resp.status, resp.error);
     }
     resp
 }

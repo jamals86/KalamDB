@@ -7,7 +7,7 @@
 //! - System users
 //! - System user initialization
 
-#[path = "../../common/mod.rs"]
+#[path = "../../common/testserver/mod.rs"]
 #[allow(dead_code)]
 pub(super) mod test_support;
 

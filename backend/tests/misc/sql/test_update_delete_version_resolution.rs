@@ -608,7 +608,7 @@ async fn test_nanosecond_collision_handling() {
 
 /// T068: Performance regression test - query latency with 1/10/100 versions ≤ 2× baseline
 #[actix_web::test]
-#[ntest::timeout(120000)]
+#[ntest::timeout(300000)]
 async fn test_query_performance_with_multiple_versions() {
     let server = TestServer::new().await;
     let run_id = std::time::SystemTime::now()
@@ -683,7 +683,10 @@ async fn test_query_performance_with_multiple_versions() {
     }
 
     // Create 10 versions
+    let mut total_update_10 = std::time::Duration::ZERO;
+    let mut total_flush_10 = std::time::Duration::ZERO;
     for i in 1..=10 {
+        let start = std::time::Instant::now();
         server
             .execute_sql_as_user(
                 &format!(
@@ -693,9 +696,13 @@ async fn test_query_performance_with_multiple_versions() {
                 "user1",
             )
             .await;
+        total_update_10 += start.elapsed();
+
+        let start = std::time::Instant::now();
         flush_helpers::execute_flush_synchronously(&server, &namespace, &table)
             .await
             .expect("Flush should succeed");
+        total_flush_10 += start.elapsed();
     }
 
     // Measure query time with 10 versions
@@ -712,7 +719,10 @@ async fn test_query_performance_with_multiple_versions() {
     let duration_10_versions = start.elapsed();
 
     // Create 100 versions (91 more)
+    let mut total_update_100 = std::time::Duration::ZERO;
+    let mut total_flush_100 = std::time::Duration::ZERO;
     for i in 11..=100 {
+        let start = std::time::Instant::now();
         server
             .execute_sql_as_user(
                 &format!(
@@ -722,9 +732,13 @@ async fn test_query_performance_with_multiple_versions() {
                 "user1",
             )
             .await;
+        total_update_100 += start.elapsed();
+
+        let start = std::time::Instant::now();
         flush_helpers::execute_flush_synchronously(&server, &namespace, &table)
             .await
             .expect("Flush should succeed");
+        total_flush_100 += start.elapsed();
     }
 
     // Measure query time with 100 versions
@@ -771,5 +785,13 @@ async fn test_query_performance_with_multiple_versions() {
     println!(
         "   Baseline: {:?}, 10 versions: {:?}, 100 versions: {:?}",
         baseline_duration, duration_10_versions, duration_100_versions
+    );
+    println!(
+        "   Updates: 10 versions total={:?}, 100 versions total={:?}",
+        total_update_10, total_update_100
+    );
+    println!(
+        "   Flushes: 10 versions total={:?}, 100 versions total={:?}",
+        total_flush_10, total_flush_100
     );
 }

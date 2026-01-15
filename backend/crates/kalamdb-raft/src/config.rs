@@ -44,6 +44,7 @@ mod tests {
             max_snapshots_to_keep: 5,
             snapshot_policy: "NONE".to_string(),
             replication_timeout_ms: 5000,
+            reconnect_interval_ms: 3000,
         };
 
         assert_eq!(config.node_id, 1);

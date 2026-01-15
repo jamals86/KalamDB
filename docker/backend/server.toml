@@ -54,9 +54,9 @@ keepalive_timeout = 75
 max_connections = 25000
 
 [rate_limit]
-max_queries_per_sec = 100
-max_messages_per_sec = 50
-max_subscriptions_per_user = 10
+max_queries_per_sec = 10000
+max_messages_per_sec = 1000
+max_subscriptions_per_user = 100
 
 [auth]
 allow_remote_access = true

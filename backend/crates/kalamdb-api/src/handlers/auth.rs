@@ -6,10 +6,10 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{Duration, Utc};
 use kalamdb_auth::{
+    authenticate, extract_client_ip_secure, AuthError, AuthRequest,
     cookie::{extract_auth_token, CookieConfig},
     create_auth_cookie, create_logout_cookie,
     jwt_auth::{validate_jwt_token, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER, create_and_sign_token},
-    password::verify_password,
     UserRepository,
 };
 use kalamdb_commons::Role;
@@ -146,60 +146,38 @@ impl AuthConfig {
 /// Authenticates a user and returns an HttpOnly cookie with JWT token.
 /// Only allows dba and system roles to access the admin UI.
 pub async fn login_handler(
+    req: HttpRequest,
     user_repo: web::Data<Arc<dyn UserRepository>>,
     config: web::Data<AuthConfig>,
     body: web::Json<LoginRequest>,
 ) -> HttpResponse {
-    // Find user by username
-    let user = match user_repo.get_user_by_username(&body.username).await {
-        Ok(user) => user,
-        Err(e) => {
-            // Return generic error to prevent username enumeration
-            log::debug!("Login failed for '{}': {}", body.username, e);
-            return HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "Invalid username or password"));
-        }
+    // Extract client IP with anti-spoofing checks for localhost validation
+    let connection_info = extract_client_ip_secure(&req);
+
+    // Authenticate using unified auth flow (includes localhost/empty password rules)
+    let auth_request = AuthRequest::Credentials {
+        username: body.username.clone(),
+        password: body.password.clone(),
     };
 
-    // Check if user is soft-deleted
-    if user.deleted_at.is_some() {
-        return HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "Invalid username or password"));
-    }
-
-    // Check if user has a password set (required for Admin UI)
-    // Root user starts with empty password for localhost CLI access
-    // Admin UI requires a password for security
-    if user.password_hash.is_empty() {
-        log::info!(
-            "Login attempt for '{}' failed: password not set. Set with: ALTER USER {} SET PASSWORD '...'",
-            body.username,
-            body.username
-        );
-        return HttpResponse::Unauthorized().json(ErrorResponse::new(
-            "password_required",
-            format!(
-                "Password not set for '{}'. Set a password using: ALTER USER {} SET PASSWORD 'your-password'",
-                body.username, body.username
-            ),
-        ));
-    }
-
-    // Verify password
-    match verify_password(&body.password, &user.password_hash).await {
-        Ok(true) => {}
-        Ok(false) => {
-            return HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "Invalid username or password"));
-        }
-        Err(e) => {
-            log::error!("Error verifying password: {}", e);
-            return HttpResponse::InternalServerError().json(ErrorResponse::new("internal_error", "Authentication failed"));
-        }
-    }
+    let auth_result = match authenticate(auth_request, &connection_info, user_repo.get_ref()).await {
+        Ok(result) => result,
+        Err(err) => return map_auth_error_to_response(err),
+    };
 
     // Check role - only dba and system can access admin UI
-    let role = Role::from(user.role.as_str());
-    if !matches!(role, Role::Dba | Role::System) {
+    if !matches!(auth_result.user.role, Role::Dba | Role::System) {
         return HttpResponse::Forbidden().json(ErrorResponse::new("forbidden", "Admin UI access requires dba or system role"));
     }
+
+    // Load full user record for response fields
+    let user = match user_repo.get_user_by_username(&auth_result.user.username).await {
+        Ok(user) => user,
+        Err(e) => {
+            log::error!("Failed to load user after authentication: {}", e);
+            return HttpResponse::InternalServerError().json(ErrorResponse::new("internal_error", "Authentication failed"));
+        }
+    };
 
     // Generate JWT token
     let (token, _claims) = match create_and_sign_token(
@@ -243,7 +221,7 @@ pub async fn login_handler(
         .json(LoginResponse {
             user: UserInfo {
                 id: user.id.to_string(),
-                username: user.username.to_string(),
+                username: user.username.as_str().to_string(),
                 role: user.role.to_string(),
                 email: user.email,
                 created_at,
@@ -252,6 +230,35 @@ pub async fn login_handler(
             expires_at: expires_at.to_rfc3339(),
             access_token: token,
         })
+}
+
+fn map_auth_error_to_response(err: AuthError) -> HttpResponse {
+    match err {
+        AuthError::InvalidCredentials(_)
+        | AuthError::UserNotFound(_)
+        | AuthError::UserDeleted
+        | AuthError::AuthenticationFailed(_) => {
+            HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "Invalid username or password"))
+        }
+        AuthError::AccountLocked(message) => {
+            HttpResponse::Unauthorized().json(ErrorResponse::new("account_locked", message))
+        }
+        AuthError::RemoteAccessDenied(message) | AuthError::InsufficientPermissions(message) => {
+            HttpResponse::Forbidden().json(ErrorResponse::new("forbidden", message))
+        }
+        AuthError::MalformedAuthorization(message)
+        | AuthError::MissingAuthorization(message)
+        | AuthError::MissingClaim(message)
+        | AuthError::WeakPassword(message) => {
+            HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", message))
+        }
+        AuthError::TokenExpired | AuthError::InvalidSignature | AuthError::UntrustedIssuer(_) => {
+            HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "Invalid username or password"))
+        }
+        AuthError::DatabaseError(_) | AuthError::HashingError(_) => {
+            HttpResponse::InternalServerError().json(ErrorResponse::new("internal_error", "Authentication failed"))
+        }
+    }
 }
 
 /// POST /v1/api/auth/refresh

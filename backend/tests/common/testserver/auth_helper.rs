@@ -181,17 +181,7 @@ pub fn authenticate_basic(username: &str, password: &str) -> (String, bool) {
     (auth_header, true)
 }
 
-/// Create test user with default settings for quick testing
-///
-/// Creates a user with:
-/// - Username: provided
-/// - Password: "Test123!@#" (default test password)
-/// - Role: User
-/// - Email: username@example.com
-///
-/// # Example
-///
-/// Create HTTP Basic Auth header value
+/// Create JWT token for testing
 ///
 /// # Arguments
 ///

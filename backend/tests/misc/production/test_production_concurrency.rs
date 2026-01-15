@@ -73,7 +73,12 @@ async fn concurrent_inserts_same_user_table() {
         .await;
 
     assert_eq!(resp.status, ResponseStatus::Success);
-    if let Some(row) = resp.results.first().and_then(|r| r.row_as_map(0)) {
+    let rows = resp
+        .results
+        .first()
+        .map(|r| r.rows_as_maps())
+        .unwrap_or_default();
+    if let Some(row) = rows.first() {
         let count = row.get("count").unwrap().as_i64().unwrap();
         assert_eq!(count, 50, "Should have 50 rows from concurrent inserts");
     }
@@ -127,7 +132,12 @@ async fn concurrent_select_queries() {
                 .await;
 
             assert_eq!(resp.status, ResponseStatus::Success);
-            if let Some(row) = resp.results.first().and_then(|r| r.row_as_map(0)) {
+            let rows = resp
+                .results
+                .first()
+                .map(|r| r.rows_as_maps())
+                .unwrap_or_default();
+            if let Some(row) = rows.first() {
                 let count = row.get("count").unwrap().as_i64().unwrap();
                 assert_eq!(count, 20, "All readers should see 20 rows");
             }
