@@ -255,18 +255,8 @@ pub fn is_server_running() -> bool {
         return false;
     }
 
-    if !root_password().is_empty() {
-        return true;
-    }
-
     match server_requires_auth() {
-        Some(true) => {
-            eprintln!(
-                "⚠️  Server requires authentication but KALAMDB_ROOT_PASSWORD is empty. Skipping tests to avoid account lockouts."
-            );
-            false
-        }
-        Some(false) => true,
+        Some(_) => true,
         None => false,
     }
 }
@@ -515,16 +505,6 @@ pub fn require_server_running() -> bool {
         println!("ℹ️  Running in CLUSTER mode with {} nodes: {:?}", available_urls.len(), available_urls);
     } else {
         println!("ℹ️  Running in SINGLE-NODE mode: {}", available_urls[0]);
-    }
-
-    if root_password().is_empty() {
-        let probe_url = available_urls[0].as_str();
-        if server_requires_auth_for_url(probe_url).unwrap_or(false) {
-            eprintln!(
-                "Skipping CLI tests: server requires auth but KALAMDB_ROOT_PASSWORD is empty."
-            );
-            return false;
-        }
     }
 
     true
@@ -790,12 +770,9 @@ fn get_shared_root_client() -> &'static KalamLinkClient {
         }
 
         if root_password().is_empty() {
-            eprintln!(
-                "[TEST_CLIENT] ⚠ Server requires auth but KALAMDB_ROOT_PASSWORD is empty. Requests will fail; set the env var to avoid account lockouts."
-            );
             return KalamLinkClient::builder()
                 .base_url(&base_url)
-                .auth(AuthProvider::none())
+                .auth(AuthProvider::basic_auth("root".to_string(), "".to_string()))
                 .timeouts(
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
@@ -807,7 +784,7 @@ fn get_shared_root_client() -> &'static KalamLinkClient {
                         .build(),
                 )
                 .build()
-                .expect("Failed to create shared root client without auth");
+                .expect("Failed to create shared root client with empty password");
         }
         
         // PERFORMANCE: Try to login once to get JWT token, then use token for all requests

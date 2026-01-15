@@ -510,10 +510,21 @@ fn test_cli_delete_credentials_command() {
         return;
     }
 
+    // Use a unique instance to avoid cross-test interference
+    let instance = format!(
+        "test_delete_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
     // First save credentials
     // Note: Uses empty password for root (default test configuration)
     let mut cmd = create_cli_command_with_root_auth();
     let _ = cmd
+        .arg("--instance")
+        .arg(&instance)
         .arg("--save-credentials")
         .arg("--command")
         .arg("SELECT 1")
@@ -522,6 +533,8 @@ fn test_cli_delete_credentials_command() {
     // Delete credentials
     let mut cmd = create_cli_command();
     let delete_output = cmd
+        .arg("--instance")
+        .arg(&instance)
         .arg("--delete-credentials")
         .output()
         .expect("Failed to run CLI");
@@ -536,6 +549,8 @@ fn test_cli_delete_credentials_command() {
     // Verify credentials are gone
     let mut cmd = create_cli_command();
     let show_output = cmd
+        .arg("--instance")
+        .arg(&instance)
         .arg("--show-credentials")
         .output()
         .expect("Failed to run CLI");

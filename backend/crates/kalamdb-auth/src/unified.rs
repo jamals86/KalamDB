@@ -321,9 +321,10 @@ async fn authenticate_username_password(
         if is_localhost {
             // Localhost system users: accept empty password OR valid password
             let password_ok = user.password_hash.is_empty()
-                || password::verify_password(password, &user.password_hash)
-                    .await
-                    .unwrap_or(false);
+                || (!password.is_empty()
+                    && password::verify_password(password, &user.password_hash)
+                        .await
+                        .unwrap_or(false));
 
             if password_ok {
                 auth_success = true;
@@ -343,9 +344,10 @@ async fn authenticate_username_password(
                     "Remote access is not allowed for this user".to_string(),
                 ));
             }
-            if password::verify_password(password, &user.password_hash)
-                .await
-                .unwrap_or(false)
+            if !password.is_empty()
+                && password::verify_password(password, &user.password_hash)
+                    .await
+                    .unwrap_or(false)
             {
                 auth_success = true;
             } else {
@@ -360,9 +362,10 @@ async fn authenticate_username_password(
                 "Invalid username or password".to_string(),
             ));
         }
-        if password::verify_password(password, &user.password_hash)
-            .await
-            .unwrap_or(false)
+        if !password.is_empty()
+            && password::verify_password(password, &user.password_hash)
+                .await
+                .unwrap_or(false)
         {
             auth_success = true;
         } else {
