@@ -184,7 +184,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ) -> Result<Vec<K>, KalamDbError> {
         updates
             .into_iter()
-            .map(|(key, update)| self.update(user_id, &key, update))
+            .map(|(key, update)| BaseTableProvider::update(self, user_id, &key, update))
             .collect()
     }
 

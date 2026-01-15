@@ -23,7 +23,17 @@ use std::sync::Arc;
 use crate::sql::executor::handlers::dml::{DeleteHandler, InsertHandler, UpdateHandler};
 use crate::sql::executor::handlers::flush::{FlushAllTablesHandler, FlushTableHandler};
 use crate::sql::executor::handlers::jobs::{KillJobHandler, KillLiveQueryHandler};
-use crate::sql::executor::handlers::cluster::{ClusterFlushHandler, ClusterClearHandler, ClusterListHandler, ClusterJoinHandler, ClusterLeaveHandler};
+use crate::sql::executor::handlers::cluster::{
+    ClusterSnapshotHandler,
+    ClusterPurgeHandler,
+    ClusterTriggerElectionHandler,
+    ClusterTransferLeaderHandler,
+    ClusterStepdownHandler,
+    ClusterClearHandler,
+    ClusterListHandler,
+    ClusterJoinHandler,
+    ClusterLeaveHandler,
+};
 use crate::sql::executor::handlers::namespace::{
     AlterNamespaceHandler, CreateNamespaceHandler, DropNamespaceHandler, ShowNamespacesHandler,
     UseNamespaceHandler,
@@ -391,8 +401,28 @@ impl HandlerRegistry {
         // CLUSTER HANDLERS
         // ============================================================================
         registry.register_dynamic(
-            SqlStatementKind::ClusterFlush,
-            ClusterFlushHandler::new(app_context.clone()),
+            SqlStatementKind::ClusterSnapshot,
+            ClusterSnapshotHandler::new(app_context.clone()),
+        );
+
+        registry.register_dynamic(
+            SqlStatementKind::ClusterPurge(0),
+            ClusterPurgeHandler::new(app_context.clone()),
+        );
+
+        registry.register_dynamic(
+            SqlStatementKind::ClusterTriggerElection,
+            ClusterTriggerElectionHandler::new(app_context.clone()),
+        );
+
+        registry.register_dynamic(
+            SqlStatementKind::ClusterTransferLeader(0),
+            ClusterTransferLeaderHandler::new(app_context.clone()),
+        );
+
+        registry.register_dynamic(
+            SqlStatementKind::ClusterStepdown,
+            ClusterStepdownHandler::new(app_context.clone()),
         );
 
         registry.register_dynamic(

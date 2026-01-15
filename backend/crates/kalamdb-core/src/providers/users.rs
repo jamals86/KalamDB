@@ -271,6 +271,15 @@ impl UserTableProvider {
             user_ids.insert(row.user_id.clone());
         }
 
+        if let Ok(scopes) = self
+            .core
+            .app_context
+            .manifest_service()
+            .list_user_scopes_for_table(table_id)
+        {
+            user_ids.extend(scopes);
+        }
+
         let mut cold_rows = Vec::new();
         for user_id in user_ids {
             let parquet_batch = self.scan_parquet_files_as_batch(&user_id, filter)?;

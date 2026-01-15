@@ -19,7 +19,7 @@ use std::thread;
 /// and verifies the job always executes on the leader.
 #[test]
 fn cluster_test_leader_only_flush_jobs() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
     
     println!("\n=== TEST: Leader-Only Flush Job Execution ===\n");
     
@@ -105,7 +105,7 @@ fn cluster_test_leader_only_flush_jobs() {
 /// Verifies that all nodes see the same job records in system.jobs
 #[test]
 fn cluster_test_jobs_table_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
     
     println!("\n=== TEST: Jobs Table Consistency Across Cluster ===\n");
     
@@ -151,7 +151,7 @@ fn cluster_test_jobs_table_consistency() {
 /// other nodes cannot execute it.
 #[test]
 fn cluster_test_job_claiming() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
     
     println!("\n=== TEST: Job Claiming Prevents Duplicate Execution ===\n");
     

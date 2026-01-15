@@ -383,7 +383,7 @@ impl TableProvider for UsersTableProvider {
         let users: Vec<(Vec<u8>, User)> = if let Some((index_idx, index_prefix)) =
             self.store.find_best_index_for_filters(filters)
         {
-            log::info!(
+            log::debug!(
                 "[system.users] Using secondary index {} for filters: {:?}",
                 index_idx,
                 filters
@@ -397,7 +397,7 @@ impl TableProvider for UsersTableProvider {
                 .map(|(id, user)| (id.storage_key(), user))
                 .collect()
         } else {
-            log::info!(
+            log::debug!(
                 "[system.users] Full table scan (no index match) for filters: {:?}",
                 filters
             );

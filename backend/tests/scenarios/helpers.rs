@@ -81,6 +81,7 @@ pub async fn ensure_user_exists(server: &HttpTestServer, username: &str, passwor
             if !user_id_str.is_empty() {
                 // Cache the user_id in the server for link_client to use
                 server.cache_user_id(username, &user_id_str);
+                server.cache_user_password(username, password);
                 return Ok(user_id_str);
             }
         }
@@ -105,6 +106,7 @@ pub async fn create_test_users(server: &HttpTestServer, users: &[(&str, &Role)])
 /// Create a user and return a link client configured for that user
 pub async fn create_user_and_client(server: &HttpTestServer, username: &str, role: &Role) -> Result<kalam_link::KalamLinkClient> {
     let user_id = ensure_user_exists(server, username, "test123", role).await?;
+    server.cache_user_password(username, "test123");
     Ok(server.link_client_with_id(&user_id, username, role))
 }
 

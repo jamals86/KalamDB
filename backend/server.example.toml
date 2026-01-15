@@ -169,17 +169,17 @@ keepalive_timeout = 75
 max_connections = 25000
 
 [rate_limit]
-# Maximum SQL queries per second per user (default: 100)
+# Maximum SQL queries per second per user (default: 100000)
 # Prevents query flooding from a single user
-max_queries_per_sec = 100
+max_queries_per_sec = 100000
 
-# Maximum WebSocket messages per second per connection (default: 50)
+# Maximum WebSocket messages per second per connection (default: 500)
 # Prevents message flooding on WebSocket connections
-max_messages_per_sec = 50
+max_messages_per_sec = 500
 
-# Maximum concurrent live query subscriptions per user (default: 10)
+# Maximum concurrent live query subscriptions per user (default: 100)
 # Limits total active subscriptions to prevent resource exhaustion
-max_subscriptions_per_user = 10
+max_subscriptions_per_user = 100
 
 # ============================================================================
 # Security Settings

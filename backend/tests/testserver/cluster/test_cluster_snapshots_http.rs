@@ -35,6 +35,57 @@ async fn wait_for_snapshots(dir: &Path, min_files: usize) -> Result<Vec<PathBuf>
     }
 }
 
+async fn wait_for_lock_release(lock_path: &Path) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if !lock_path.exists() {
+            return Ok(());
+        }
+
+        let open_result = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(lock_path);
+
+        if open_result.is_ok() {
+            return Ok(());
+        }
+
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "Timed out waiting for RocksDB lock release at {}",
+                lock_path.display()
+            );
+        }
+
+        sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn start_server_with_retry(data_path: &Path) -> Result<super::test_support::http_server::HttpTestServer> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match start_http_test_server_with_config(|cfg| {
+            cfg.storage.data_path = data_path.to_string_lossy().into_owned();
+        })
+        .await
+        {
+            Ok(server) => return Ok(server),
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("LOCK") || msg.contains("lock file") {
+                    if Instant::now() >= deadline {
+                        return Err(e);
+                    }
+                    sleep(Duration::from_millis(200)).await;
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+}
+
 #[tokio::test]
 #[ntest::timeout(120000)]
 async fn test_cluster_snapshot_creation_and_reuse() -> Result<()> {
@@ -42,10 +93,7 @@ async fn test_cluster_snapshot_creation_and_reuse() -> Result<()> {
     let data_path = temp_dir.path().join("data");
     std::fs::create_dir_all(&data_path)?;
 
-    let server = start_http_test_server_with_config(|cfg| {
-        cfg.storage.data_path = data_path.to_string_lossy().into_owned();
-    })
-    .await?;
+    let server = start_server_with_retry(&data_path).await?;
 
     let result = async {
         let ns = "snap_ns";
@@ -69,8 +117,8 @@ async fn test_cluster_snapshot_creation_and_reuse() -> Result<()> {
             .await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success, "INSERT failed: {:?}", resp.error);
 
-        let resp = server.execute_sql("CLUSTER FLUSH").await?;
-        anyhow::ensure!(resp.status == ResponseStatus::Success, "CLUSTER FLUSH failed: {:?}", resp.error);
+        let resp = server.execute_sql("CLUSTER SNAPSHOT").await?;
+        anyhow::ensure!(resp.status == ResponseStatus::Success, "CLUSTER SNAPSHOT failed: {:?}", resp.error);
 
         let snapshots_dir = data_path.join("snapshots").join("meta");
         let _ = wait_for_snapshots(&snapshots_dir, 1).await?;
@@ -80,12 +128,11 @@ async fn test_cluster_snapshot_creation_and_reuse() -> Result<()> {
     .await;
 
     server.shutdown().await;
+    let lock_path = data_path.join("rocksdb").join("LOCK");
+    let _ = wait_for_lock_release(&lock_path).await;
     result?;
 
-    let server = start_http_test_server_with_config(|cfg| {
-        cfg.storage.data_path = data_path.to_string_lossy().into_owned();
-    })
-    .await?;
+    let server = start_server_with_retry(&data_path).await?;
 
     let result = async {
         let resp = server

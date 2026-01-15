@@ -12,7 +12,7 @@ use std::time::Duration;
 /// It verifies the cluster can detect unhealthy nodes.
 #[test]
 fn cluster_test_node_health_detection() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Node Health Detection ===\n");
 
@@ -44,7 +44,7 @@ fn cluster_test_node_health_detection() {
 /// This test checks the system.cluster table for leader information.
 #[test]
 fn cluster_test_leader_visibility() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Leader Visibility ===\n");
 
@@ -100,7 +100,7 @@ fn cluster_test_leader_visibility() {
 /// receives the request (follower should forward to leader).
 #[test]
 fn cluster_test_write_routing() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Write Routing to Leader ===\n");
 
@@ -141,7 +141,7 @@ fn cluster_test_write_routing() {
 /// Verifies that read operations can be performed on any node.
 #[test]
 fn cluster_test_read_from_any_node() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: Read from Any Node ===\n");
 

@@ -196,13 +196,22 @@ fn smoke_cli_sql_execution() {
     assert!(result.contains("300"), "Should contain value 300: {}", result);
 
     // Test SELECT with WHERE
-    let result = execute_sql_as_root_via_client(&format!(
+    let result = execute_sql_as_root_via_client_json(&format!(
         "SELECT * FROM {} WHERE value > 150",
         full_table
-    )).expect("SELECT with WHERE should succeed");
-    assert!(result.contains("200"), "Should contain value 200: {}", result);
-    assert!(result.contains("300"), "Should contain value 300: {}", result);
-    assert!(!result.contains("100"), "Should NOT contain value 100: {}", result);
+    ))
+    .expect("SELECT with WHERE should succeed");
+    let json: serde_json::Value =
+        serde_json::from_str(&result).expect("Failed to parse JSON output");
+    let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
+    let values: Vec<i64> = rows
+        .iter()
+        .filter_map(|row| row.get("value"))
+        .filter_map(|value| extract_typed_value(value).as_i64())
+        .collect();
+    assert!(values.contains(&200), "Should contain value 200: {:?}", values);
+    assert!(values.contains(&300), "Should contain value 300: {:?}", values);
+    assert!(!values.contains(&100), "Should NOT contain value 100: {:?}", values);
 
     // Test SELECT with aggregation
     let result = execute_sql_as_root_via_client(&format!(

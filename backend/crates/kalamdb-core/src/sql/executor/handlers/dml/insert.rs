@@ -12,19 +12,20 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::providers::arrow_json_conversion::scalar_value_to_json;
 use crate::sql::executor::default_evaluator::evaluate_default;
 use crate::sql::executor::handlers::StatementHandler;
+use crate::sql::executor::handlers::dml::mod_helpers::{
+    coerce_scalar_to_type, function_expr_to_scalar, scalar_from_placeholder, scalar_from_sql_value,
+};
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::{NamespaceId, Row, TableName};
-use kalamdb_commons::schemas::{ColumnDefault, TableType};
+use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::TableId;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
-use serde_json::Value as JsonValue;
 use sqlparser::ast::{Expr, Statement, Values as SqlValues};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -342,31 +343,6 @@ impl InsertHandler {
         Ok((namespace, table_name, columns, rows))
     }
 
-    /// Coerce ScalarValue to target type if needed
-    fn coerce_scalar_value(
-        &self,
-        value: ScalarValue,
-        target: &KalamDataType,
-    ) -> Result<ScalarValue, KalamDbError> {
-        match (target, &value) {
-            (KalamDataType::Uuid, ScalarValue::Utf8(Some(s))) => {
-                // Parse UUID string to bytes
-                let uuid = uuid::Uuid::parse_str(s).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!("Invalid UUID string '{}': {}", s, e))
-                })?;
-                Ok(ScalarValue::FixedSizeBinary(
-                    16,
-                    Some(uuid.as_bytes().to_vec()),
-                ))
-            }
-            (KalamDataType::Uuid, ScalarValue::Utf8(None)) => {
-                Ok(ScalarValue::FixedSizeBinary(16, None))
-            }
-            // Add other coercions if needed
-            _ => Ok(value),
-        }
-    }
-
     /// Convert sqlparser Expr to ScalarValue for row construction
     fn expr_to_scalar_value(
         &self,
@@ -376,119 +352,16 @@ impl InsertHandler {
         target_type: Option<&KalamDataType>,
     ) -> Result<ScalarValue, KalamDbError> {
         let value = match expr {
-            Expr::Value(val_with_span) => {
-                match &val_with_span.value {
-                    sqlparser::ast::Value::Placeholder(ph) => {
-                        // Parameter placeholder: $1, $2, etc.
-                        let stripped = ph.strip_prefix('$').ok_or_else(|| {
-                            KalamDbError::InvalidOperation(format!(
-                                "Unsupported placeholder format: {}",
-                                ph
-                            ))
-                        })?;
-
-                        let param_num: usize = stripped.parse().map_err(|_| {
-                            KalamDbError::InvalidOperation(format!(
-                                "Invalid placeholder: {}",
-                                ph
-                            ))
-                        })?;
-
-                        if param_num == 0 || param_num > params.len() {
-                            return Err(KalamDbError::InvalidOperation(format!(
-                                "Parameter ${} out of range (have {} parameters)",
-                                param_num,
-                                params.len()
-                            )));
-                        }
-
-                        Ok(params[param_num - 1].clone())
-                    }
-                    sqlparser::ast::Value::Number(n, _) => {
-                        // Try as i64 first, then f64
-                        if let Ok(i) = n.parse::<i64>() {
-                            Ok(ScalarValue::Int64(Some(i)))
-                        } else if let Ok(f) = n.parse::<f64>() {
-                            Ok(ScalarValue::Float64(Some(f)))
-                        } else {
-                            Err(KalamDbError::InvalidOperation(format!(
-                                "Invalid number: {}",
-                                n
-                            )))
-                        }
-                    }
-                    sqlparser::ast::Value::SingleQuotedString(s)
-                    | sqlparser::ast::Value::DoubleQuotedString(s) => {
-                        Ok(ScalarValue::Utf8(Some(s.clone())))
-                    }
-                    sqlparser::ast::Value::Boolean(b) => Ok(ScalarValue::Boolean(Some(*b))),
-                    sqlparser::ast::Value::Null => Ok(ScalarValue::Null),
-                    _ => Ok(ScalarValue::Utf8(Some(val_with_span.to_string()))),
-                }
-            }
+            Expr::Value(val_with_span) => scalar_from_sql_value(&val_with_span.value, params),
             Expr::Identifier(ident) if ident.value.starts_with('$') => {
-                // Parameter placeholder: $1, $2, etc.
-                let param_num: usize = ident.value[1..].parse().map_err(|_| {
-                    KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", ident.value))
-                })?;
-
-                if param_num == 0 || param_num > params.len() {
-                    return Err(KalamDbError::InvalidOperation(format!(
-                        "Parameter ${} out of range (have {} parameters)",
-                        param_num,
-                        params.len()
-                    )));
-                }
-
-                Ok(params[param_num - 1].clone())
+                scalar_from_placeholder(&ident.value, params)
             }
-            Expr::Function(func) => {
-                // Handle function calls (e.g. SNOWFLAKE_ID(), NOW(), etc.)
-                let name = func.name.to_string();
-                let mut args = Vec::new();
-
-                match &func.args {
-                    sqlparser::ast::FunctionArguments::List(arg_list) => {
-                        for arg in &arg_list.args {
-                            match arg {
-                                sqlparser::ast::FunctionArg::Named { .. } => {
-                                    return Err(KalamDbError::InvalidOperation(
-                                        "Named function arguments not supported".into(),
-                                    ));
-                                }
-                                sqlparser::ast::FunctionArg::Unnamed(arg_expr) => match arg_expr {
-                                    sqlparser::ast::FunctionArgExpr::Expr(expr) => {
-                                        args.push(self.expr_to_json_arg(expr, params, user_id)?);
-                                    }
-                                    _ => {
-                                        return Err(KalamDbError::InvalidOperation(
-                                            "Unsupported function argument expression type".into(),
-                                        ));
-                                    }
-                                },
-                                _ => {
-                                    return Err(KalamDbError::InvalidOperation(
-                                        "Unsupported function argument type".into(),
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    sqlparser::ast::FunctionArguments::None => {
-                        // No arguments
-                    }
-                    _ => {
-                        return Err(KalamDbError::InvalidOperation(
-                            "Unsupported function argument format".into(),
-                        ));
-                    }
-                }
-
-                let col_default = ColumnDefault::FunctionCall { name, args };
-                let sys_cols = self.app_context.system_columns_service();
-
-                evaluate_default(&col_default, user_id, Some(sys_cols))
-            }
+            Expr::Function(func) => function_expr_to_scalar(
+                func,
+                params,
+                user_id,
+                self.app_context.as_ref(),
+            ),
             _ => {
                 // For other expressions, convert to string (fallback)
                 Ok(ScalarValue::Utf8(Some(expr.to_string())))
@@ -496,128 +369,13 @@ impl InsertHandler {
         }?;
 
         if let Some(target) = target_type {
-            self.coerce_scalar_value(value, target)
+            coerce_scalar_to_type(value, target)
         } else {
             Ok(value)
         }
     }
 
-    /// Convert Expr into JsonValue for DEFAULT function arguments
-    fn expr_to_json_arg(
-        &self,
-        expr: &Expr,
-        params: &[ScalarValue],
-        user_id: &kalamdb_commons::models::UserId,
-    ) -> Result<JsonValue, KalamDbError> {
-        match expr {
-            Expr::Value(val_with_span) => match &val_with_span.value {
-                sqlparser::ast::Value::Placeholder(ph) => {
-                    let stripped = ph.strip_prefix('$').ok_or_else(|| {
-                        KalamDbError::InvalidOperation(format!(
-                            "Unsupported placeholder format: {}",
-                            ph
-                        ))
-                    })?;
-
-                    let param_num: usize = stripped.parse().map_err(|_| {
-                        KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", ph))
-                    })?;
-
-                    if param_num == 0 || param_num > params.len() {
-                        return Err(KalamDbError::InvalidOperation(format!(
-                            "Parameter ${} out of range (have {} parameters)",
-                            param_num,
-                            params.len()
-                        )));
-                    }
-
-                    scalar_value_to_json(&params[param_num - 1])
-                }
-                sqlparser::ast::Value::Number(n, _) => {
-                    if let Ok(i) = n.parse::<i64>() {
-                        Ok(JsonValue::Number(i.into()))
-                    } else if let Ok(f) = n.parse::<f64>() {
-                        serde_json::Number::from_f64(f)
-                            .map(JsonValue::Number)
-                            .ok_or_else(|| {
-                                KalamDbError::InvalidOperation("Invalid float value".into())
-                            })
-                    } else {
-                        Err(KalamDbError::InvalidOperation(format!(
-                            "Invalid number: {}",
-                            n
-                        )))
-                    }
-                }
-                sqlparser::ast::Value::SingleQuotedString(s)
-                | sqlparser::ast::Value::DoubleQuotedString(s) => Ok(JsonValue::String(s.clone())),
-                sqlparser::ast::Value::Boolean(b) => Ok(JsonValue::Bool(*b)),
-                sqlparser::ast::Value::Null => Ok(JsonValue::Null),
-                _ => Ok(JsonValue::String(val_with_span.to_string())),
-            },
-            Expr::Identifier(ident) if ident.value.starts_with('$') => {
-                let param_num: usize = ident.value[1..].parse().map_err(|_| {
-                    KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", ident.value))
-                })?;
-
-                if param_num == 0 || param_num > params.len() {
-                    return Err(KalamDbError::InvalidOperation(format!(
-                        "Parameter ${} out of range (have {} parameters)",
-                        param_num,
-                        params.len()
-                    )));
-                }
-
-                scalar_value_to_json(&params[param_num - 1])
-            }
-            Expr::Function(func) => {
-                let name = func.name.to_string();
-                let mut args = Vec::new();
-
-                match &func.args {
-                    sqlparser::ast::FunctionArguments::List(arg_list) => {
-                        for arg in &arg_list.args {
-                            match arg {
-                                sqlparser::ast::FunctionArg::Named { .. } => {
-                                    return Err(KalamDbError::InvalidOperation(
-                                        "Named function arguments not supported".into(),
-                                    ));
-                                }
-                                sqlparser::ast::FunctionArg::Unnamed(arg_expr) => match arg_expr {
-                                    sqlparser::ast::FunctionArgExpr::Expr(expr) => {
-                                        args.push(self.expr_to_json_arg(expr, params, user_id)?);
-                                    }
-                                    _ => {
-                                        return Err(KalamDbError::InvalidOperation(
-                                            "Unsupported function argument expression type".into(),
-                                        ));
-                                    }
-                                },
-                                _ => {
-                                    return Err(KalamDbError::InvalidOperation(
-                                        "Unsupported function argument type".into(),
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    sqlparser::ast::FunctionArguments::None => {}
-                    _ => {
-                        return Err(KalamDbError::InvalidOperation(
-                            "Unsupported function argument format".into(),
-                        ));
-                    }
-                }
-
-                let col_default = ColumnDefault::FunctionCall { name, args };
-                let sys_cols = self.app_context.system_columns_service();
-
-                let scalar = evaluate_default(&col_default, user_id, Some(sys_cols))?;
-                scalar_value_to_json(&scalar)
-            }
-            _ => Ok(JsonValue::String(expr.to_string())),
-        }
-    }
+    
 
     /// Execute native INSERT using UserTableInsertHandler
     ///

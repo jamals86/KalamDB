@@ -71,8 +71,16 @@ pub enum ExtensionStatement {
     DropUser(DropUserStatement),
     /// SHOW MANIFEST CACHE command
     ShowManifest(ShowManifestStatement),
-    /// CLUSTER FLUSH command
-    ClusterFlush,
+    /// CLUSTER SNAPSHOT command
+    ClusterSnapshot,
+    /// CLUSTER PURGE command
+    ClusterPurge { upto: u64 },
+    /// CLUSTER TRIGGER ELECTION command
+    ClusterTriggerElection,
+    /// CLUSTER TRANSFER-LEADER command
+    ClusterTransferLeader { node_id: u64 },
+    /// CLUSTER STEPDOWN command
+    ClusterStepdown,
     /// CLUSTER CLEAR command
     ClusterClear,
     /// CLUSTER LIST command
@@ -187,9 +195,56 @@ impl ExtensionStatement {
             let parts: Vec<&str> = sql_upper.split_whitespace().collect();
             if parts.len() >= 2 {
                 match parts[1] {
-                    "FLUSH" => return Ok(ExtensionStatement::ClusterFlush),
+                    "SNAPSHOT" => return Ok(ExtensionStatement::ClusterSnapshot),
+                    "PURGE" => {
+                        let original_parts: Vec<&str> = sql.trim().split_whitespace().collect();
+                        let upto = original_parts
+                            .iter()
+                            .skip(2)
+                            .find(|part| part.trim_start_matches('-').eq_ignore_ascii_case("upto"))
+                            .and_then(|_| {
+                                original_parts
+                                    .iter()
+                                    .skip(3)
+                                    .find(|p| p.parse::<u64>().is_ok())
+                                    .and_then(|p| p.parse::<u64>().ok())
+                            })
+                            .or_else(|| {
+                                original_parts
+                                    .get(2)
+                                    .and_then(|p| p.parse::<u64>().ok())
+                            });
+
+                        if let Some(upto) = upto {
+                            return Ok(ExtensionStatement::ClusterPurge { upto });
+                        }
+                        return Err("CLUSTER PURGE requires --upto <index> or a numeric index".to_string());
+                    }
+                    "TRIGGER" => {
+                        if parts.get(2) == Some(&"ELECTION") {
+                            return Ok(ExtensionStatement::ClusterTriggerElection);
+                        }
+                    }
+                    "TRIGGER-ELECTION" => return Ok(ExtensionStatement::ClusterTriggerElection),
+                    "TRANSFER" => {
+                        if parts.get(2) == Some(&"LEADER") {
+                            let node_id = parts.get(3).and_then(|id| id.parse::<u64>().ok());
+                            if let Some(node_id) = node_id {
+                                return Ok(ExtensionStatement::ClusterTransferLeader { node_id });
+                            }
+                            return Err("CLUSTER TRANSFER LEADER requires a node id".to_string());
+                        }
+                    }
+                    "TRANSFER-LEADER" => {
+                        let node_id = parts.get(2).and_then(|id| id.parse::<u64>().ok());
+                        if let Some(node_id) = node_id {
+                            return Ok(ExtensionStatement::ClusterTransferLeader { node_id });
+                        }
+                        return Err("CLUSTER TRANSFER-LEADER requires a node id".to_string());
+                    }
+                    "STEPDOWN" | "STEP-DOWN" => return Ok(ExtensionStatement::ClusterStepdown),
                     "CLEAR" => return Ok(ExtensionStatement::ClusterClear),
-                    "LIST" | "LS" => return Ok(ExtensionStatement::ClusterList),
+                    "LIST" | "LS" | "STATUS" => return Ok(ExtensionStatement::ClusterList),
                     "JOIN" => {
                         // Get the address from the original SQL to preserve case
                         let original_parts: Vec<&str> = sql.trim().split_whitespace().collect();
@@ -200,7 +255,7 @@ impl ExtensionStatement {
                         }
                     }
                     "LEAVE" => return Ok(ExtensionStatement::ClusterLeave),
-                    _ => return Err("Unknown CLUSTER subcommand. Supported: FLUSH, CLEAR, LIST, JOIN, LEAVE".to_string()),
+                    _ => return Err("Unknown CLUSTER subcommand. Supported: SNAPSHOT, PURGE, TRIGGER ELECTION, TRANSFER-LEADER, STEPDOWN, CLEAR, LIST, JOIN, LEAVE".to_string()),
                 }
             }
         }

@@ -173,7 +173,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
             // =========================================================
             // Step 7: Test RBAC - normal user cannot write to restricted shared table
             // =========================================================
-            let resp = user1_client
+            let _ = user1_client
                 .execute_query(
                     &format!(
                         "INSERT INTO {}.plans (id, name, price) VALUES (99, 'Hacker Plan', 0)",
@@ -182,7 +182,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                     None,
                     None,
                 )
-                .await?;
+                .await;
             // This should fail for normal users writing to SHARED tables
             // (depending on RBAC implementation - may succeed if shared tables are writable by all)
             // We just verify the table wasn't corrupted

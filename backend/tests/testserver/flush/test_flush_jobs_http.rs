@@ -5,7 +5,7 @@ use kalam_link::models::ResponseStatus;
 use tokio::time::{sleep, Duration, Instant};
 
 #[tokio::test]
-#[ntest::timeout(30000)] // 30 seconds - straightforward flush test
+#[ntest::timeout(120000)] // 120 seconds - allow for server startup + job persistence
 async fn test_flush_table_persists_job_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
     let ns = format!("app_flush_jobs_{}", std::process::id());

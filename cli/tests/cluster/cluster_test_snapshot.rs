@@ -8,7 +8,7 @@ use crate::common::*;
 /// Test that snapshots are created after enough log entries
 #[test]
 fn test_snapshot_creation() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
     
     println!("\n=== TEST: Snapshot Creation ===\n");
     
@@ -69,7 +69,7 @@ fn test_snapshot_creation() {
 /// Test snapshot with higher write load
 #[test]
 fn test_snapshot_with_high_write_load() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
     
     println!("\n=== TEST: High Write Load Snapshot ===\n");
     

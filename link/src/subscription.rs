@@ -681,11 +681,8 @@ impl SubscriptionManager {
             let _ = self.ws_stream.send(Message::Text(payload.into())).await;
         }
 
-        // Close WebSocket connection
-        self.ws_stream
-            .close(None)
-            .await
-            .map_err(|e| KalamLinkError::WebSocketError(format!("Failed to close: {}", e)))?;
+        // Close WebSocket connection (best-effort)
+        let _ = self.ws_stream.close(None).await;
 
         Ok(())
     }

@@ -246,23 +246,31 @@ mod cluster_common {
     }
 
     /// Require cluster to be running (skip test if not available)
-    pub fn require_cluster_running() {
+    pub fn require_cluster_running() -> bool {
+        if !crate::common::is_cluster_mode() {
+            println!(
+                "\n  Skipping: single-node server detected (cluster tests require multi-node)\n"
+            );
+            return false;
+        }
+
         let urls = cluster_urls();
         if urls.is_empty() {
-            panic!("No cluster URLs configured. Set KALAMDB_CLUSTER_URLS environment variable.");
+            println!("\n  Skipping: no cluster URLs configured (set KALAMDB_CLUSTER_URLS)\n");
+            return false;
         }
 
         // Check if at least one node is reachable
         let any_healthy = urls.iter().any(|url| is_node_healthy(url));
         if !any_healthy {
-            panic!(
-                "No cluster nodes are reachable. Start the cluster first.\n\
-                 Expected nodes at: {:?}\n\
-                 Use: ./docker/cluster/cluster.sh start  (Docker)\n\
-                 Or:  ./scripts/cluster.sh start   (local)",
+            println!(
+                "\n  Skipping: no cluster nodes are reachable. Expected nodes at: {:?}\n",
                 urls
             );
+            return false;
         }
+
+        true
     }
 
     /// Wait for a table to be visible on all cluster nodes

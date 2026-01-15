@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 /// election_timeout_ms = [150, 300]
 /// snapshot_threshold = 10000
 /// replication_timeout_ms = 5000
+/// reconnect_interval_ms = 3000
 ///
 /// [[cluster.peers]]
 /// node_id = 2
@@ -101,6 +102,10 @@ pub struct ClusterConfig {
     /// Timeout in milliseconds to wait for learner catchup during cluster membership changes
     #[serde(default = "default_replication_timeout_ms")]
     pub replication_timeout_ms: u64,
+
+    /// Minimum interval in milliseconds between reconnect attempts to an unreachable peer
+    #[serde(default = "default_reconnect_interval_ms")]
+    pub reconnect_interval_ms: u64,
 }
 
 /// Configuration for a peer node in the cluster
@@ -154,6 +159,10 @@ fn default_max_snapshots_to_keep() -> u32 {
 
 fn default_replication_timeout_ms() -> u64 {
     5000 // 5 seconds for learner catchup
+}
+
+fn default_reconnect_interval_ms() -> u64 {
+    3000 // 3 seconds between reconnect attempts
 }
 
 impl ClusterConfig {
@@ -216,6 +225,10 @@ impl ClusterConfig {
             return Err("shared_shards must be > 0".to_string());
         }
 
+        if self.reconnect_interval_ms == 0 {
+            return Err("reconnect_interval_ms must be > 0".to_string());
+        }
+
         Ok(())
     }
 
@@ -261,6 +274,7 @@ mod tests {
             snapshot_policy: "LogsSinceLast(1000)".to_string(),
             max_snapshots_to_keep: 3,
             replication_timeout_ms: 5000,
+            reconnect_interval_ms: 3000,
         }
     }
 

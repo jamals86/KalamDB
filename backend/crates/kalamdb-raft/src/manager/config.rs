@@ -61,6 +61,9 @@ pub struct RaftManagerConfig {
     
     /// Timeout for waiting for learner catchup during cluster membership changes
     pub replication_timeout: Duration,
+
+    /// Minimum interval between reconnect attempts to an unreachable peer
+    pub reconnect_interval_ms: u64,
 }
 
 impl Default for RaftManagerConfig {
@@ -79,6 +82,7 @@ impl Default for RaftManagerConfig {
             max_snapshots_to_keep: 3,
             replication_timeout_ms: 5000,
             replication_timeout: Duration::from_secs(5),
+            reconnect_interval_ms: 3000,
         }
     }
 }
@@ -110,6 +114,7 @@ impl RaftManagerConfig {
             max_snapshots_to_keep: 1,  // Keep only most recent snapshot for single-node
             replication_timeout_ms: 5000,
             replication_timeout: Duration::from_secs(5),
+            reconnect_interval_ms: 3000,
         }
     }
 }
@@ -131,6 +136,7 @@ impl From<kalamdb_commons::config::ClusterConfig> for RaftManagerConfig {
             max_snapshots_to_keep: config.max_snapshots_to_keep,
             replication_timeout_ms: config.replication_timeout_ms,
             replication_timeout: Duration::from_millis(config.replication_timeout_ms),
+            reconnect_interval_ms: config.reconnect_interval_ms,
         }
     }
 }

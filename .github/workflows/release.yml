@@ -229,7 +229,7 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zip
+          sudo apt-get install -y --no-install-recommends zip mingw-w64
 
       - name: Install cross
         shell: bash
@@ -256,7 +256,15 @@ jobs:
           mkdir -p dist/$VERSION
           CLI_OUT="kalamcli-${VERSION}-windows-x86_64.exe"
           cp "target/x86_64-pc-windows-gnu/release-dist/kalam.exe" "dist/$VERSION/$CLI_OUT"
-          (cd "dist/$VERSION" && zip -q "${CLI_OUT%.exe}.zip" "$CLI_OUT")
+          DLL_DIR="/usr/x86_64-w64-mingw32/bin"
+          for dll in libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; do
+            if [[ ! -f "$DLL_DIR/$dll" ]]; then
+              echo "Missing $dll in $DLL_DIR" >&2
+              exit 1
+            fi
+            cp "$DLL_DIR/$dll" "dist/$VERSION/"
+          done
+          (cd "dist/$VERSION" && zip -q "${CLI_OUT%.exe}.zip" "$CLI_OUT" libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
 
       - name: Upload CLI artifact
         uses: actions/upload-artifact@v4
@@ -700,7 +708,7 @@ jobs:
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zip
+          sudo apt-get install -y --no-install-recommends zip mingw-w64
 
       - name: Install cross
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
@@ -733,8 +741,16 @@ jobs:
           SRV_OUT="kalamdb-server-${VERSION}-windows-x86_64.exe"
 
           cp "target/x86_64-pc-windows-gnu/release-dist/kalamdb-server.exe" "dist/$VERSION/$SRV_OUT"
+          DLL_DIR="/usr/x86_64-w64-mingw32/bin"
+          for dll in libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; do
+            if [[ ! -f "$DLL_DIR/$dll" ]]; then
+              echo "Missing $dll in $DLL_DIR" >&2
+              exit 1
+            fi
+            cp "$DLL_DIR/$dll" "dist/$VERSION/"
+          done
 
-          (cd "dist/$VERSION" && zip -q "${SRV_OUT%.exe}.zip" "$SRV_OUT")
+          (cd "dist/$VERSION" && zip -q "${SRV_OUT%.exe}.zip" "$SRV_OUT" libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
 
       - name: Upload artifacts
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
@@ -1001,6 +1017,10 @@ jobs:
           sed -i 's|default_storage_path = "./data/storage"|default_storage_path = "./test-data/storage"|g' server.toml
           sed -i 's|logs_path = "./logs"|logs_path = "./test-data/logs"|g' server.toml
           sed -i 's|jwt_secret = ".*"|jwt_secret = "smoke-test-secret-key-minimum-32-characters-long-for-ci"|g' server.toml
+          
+          # Increase rate limits for smoke tests
+          sed -i 's|max_queries_per_sec = 1000|max_queries_per_sec = 10000|g' server.toml
+          sed -i 's|max_messages_per_sec = 500|max_messages_per_sec = 1000|g' server.toml
           
           # Verify the config
           echo "=== server.toml ==="

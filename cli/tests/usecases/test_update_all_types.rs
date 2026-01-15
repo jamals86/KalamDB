@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 fn extract_first_row_from_cli_json(output: &str) -> Value {
-    let json: Value = serde_json::from_str(output)
+    let json: Value = parse_json_from_cli_output(output)
         .unwrap_or_else(|e| panic!("Failed to parse CLI JSON output: {e}. Raw: {output}"));
 
     let result = json.get("results")

@@ -77,7 +77,7 @@ fn create_ws_client(base_url: &str) -> KalamLinkClient {
 
 #[test]
 fn cluster_test_ws_follower_receives_leader_changes() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: WebSocket Follower Receives Leader Changes ===\n");
 

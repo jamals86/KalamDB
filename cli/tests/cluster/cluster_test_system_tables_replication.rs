@@ -39,7 +39,7 @@ fn extract_row_set(base_url: &str, sql: &str) -> Result<HashSet<String>, String>
 /// Test: system.tables is identical across all nodes
 #[test]
 fn cluster_test_system_tables_replication() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: system.tables Replication ===\n");
 
@@ -127,7 +127,7 @@ fn cluster_test_system_tables_replication() {
 /// Test: system.namespaces is identical across all nodes
 #[test]
 fn cluster_test_system_namespaces_replication() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: system.namespaces Replication ===\n");
 
@@ -197,7 +197,7 @@ fn cluster_test_system_namespaces_replication() {
 /// Test: system.users is identical across all nodes after user creation
 #[test]
 fn cluster_test_system_users_replication() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: system.users Replication ===\n");
 
@@ -263,7 +263,7 @@ fn cluster_test_system_users_replication() {
 /// Test: system.cluster shows consistent view from all nodes
 #[test]
 fn cluster_test_system_cluster_consistency() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: system.cluster Consistency ===\n");
 
@@ -319,7 +319,7 @@ fn cluster_test_system_cluster_consistency() {
 /// Test: ALTER TABLE is replicated to all nodes
 #[test]
 fn cluster_test_alter_table_replication() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: ALTER TABLE Replication ===\n");
 
@@ -396,7 +396,7 @@ fn cluster_test_alter_table_replication() {
 /// Test: DROP operations are replicated to all nodes
 #[test]
 fn cluster_test_drop_replication() {
-    require_cluster_running();
+    if !require_cluster_running() { return; }
 
     println!("\n=== TEST: DROP Operation Replication ===\n");
 

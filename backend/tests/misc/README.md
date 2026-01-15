@@ -4,8 +4,8 @@ This folder contains integration tests that use the `TestServer` infrastructure 
 
 All tests in this folder reference the shared test infrastructure via:
 ```rust
-#[path = "../common/mod.rs"]
-mod common;
+#[path = "../common/testserver/mod.rs"]
+mod test_support;
 ```
 
 ## Test Status

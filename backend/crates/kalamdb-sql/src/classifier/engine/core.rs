@@ -482,14 +482,105 @@ impl SqlStatement {
             }
 
             // Cluster operations - require admin (except CLUSTER LIST which is read-only)
-            ["CLUSTER", "FLUSH", ..] => {
+            ["CLUSTER", "SNAPSHOT", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for cluster operations"
                             .to_string(),
                     ));
                 }
-                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterFlush))
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterSnapshot))
+            }
+            ["CLUSTER", "PURGE", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for cluster operations"
+                            .to_string(),
+                    ));
+                }
+
+                let tokens_no_ws: Vec<&sqlparser::tokenizer::Token> = tokens
+                    .iter()
+                    .filter(|tok| !matches!(tok, sqlparser::tokenizer::Token::Whitespace(_)))
+                    .collect();
+
+                let parse_u64 = |token: &sqlparser::tokenizer::Token| -> Option<u64> {
+                    match token {
+                        sqlparser::tokenizer::Token::Number(value, _) => value.parse::<u64>().ok(),
+                        sqlparser::tokenizer::Token::Word(word) => word.value.parse::<u64>().ok(),
+                        _ => None,
+                    }
+                };
+
+                let is_upto = |token: &sqlparser::tokenizer::Token| match token {
+                    sqlparser::tokenizer::Token::Word(word) => {
+                        word.value.eq_ignore_ascii_case("upto")
+                    }
+                    _ => false,
+                };
+
+                let upto = tokens_no_ws
+                    .iter()
+                    .enumerate()
+                    .find_map(|(idx, _)| {
+                        if idx + 3 < tokens_no_ws.len()
+                            && matches!(tokens_no_ws[idx], sqlparser::tokenizer::Token::Minus)
+                            && matches!(tokens_no_ws[idx + 1], sqlparser::tokenizer::Token::Minus)
+                            && is_upto(tokens_no_ws[idx + 2])
+                        {
+                            parse_u64(tokens_no_ws[idx + 3])
+                        } else {
+                            None
+                        }
+                    })
+                    .or_else(|| tokens_no_ws.iter().find_map(|t| parse_u64(t)));
+
+                let Some(upto) = upto else {
+                    return Err(StatementClassificationError::InvalidSql {
+                        sql: sql.to_string(),
+                        message: "CLUSTER PURGE requires --upto <index> or a numeric index"
+                            .to_string(),
+                    });
+                };
+
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterPurge(upto)))
+            }
+            ["CLUSTER", "TRIGGER", "ELECTION", ..] | ["CLUSTER", "TRIGGER-ELECTION", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for cluster operations"
+                            .to_string(),
+                    ));
+                }
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterTriggerElection))
+            }
+            ["CLUSTER", "TRANSFER", "LEADER", node_id, ..]
+            | ["CLUSTER", "TRANSFER-LEADER", node_id, ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for cluster operations"
+                            .to_string(),
+                    ));
+                }
+                let node_id = node_id.parse::<u64>().map_err(|_| {
+                    StatementClassificationError::InvalidSql {
+                        sql: sql.to_string(),
+                        message: "CLUSTER TRANSFER-LEADER requires a numeric node id".to_string(),
+                    }
+                })?;
+                Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::ClusterTransferLeader(node_id),
+                ))
+            }
+            ["CLUSTER", "STEPDOWN", ..] | ["CLUSTER", "STEP-DOWN", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for cluster operations"
+                            .to_string(),
+                    ));
+                }
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterStepdown))
             }
             ["CLUSTER", "CLEAR", ..] => {
                 if !is_admin {
@@ -504,6 +595,10 @@ impl SqlStatement {
                 // Read-only, allowed for all users
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterList))
             }
+            ["CLUSTER", "STATUS", ..] => {
+                // Read-only, allowed for all users
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterList))
+            }
             ["CLUSTER", "JOIN", addr, ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -512,6 +607,30 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterJoin(addr.to_string())))
+            }
+            ["CLUSTER", "JOIN"] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for cluster operations"
+                            .to_string(),
+                    ));
+                }
+
+                let addr = sql
+                    .split_whitespace()
+                    .nth(2)
+                    .unwrap_or("")
+                    .trim_end_matches(';')
+                    .to_string();
+
+                if addr.is_empty() {
+                    return Err(StatementClassificationError::InvalidSql {
+                        sql: sql.to_string(),
+                        message: "CLUSTER JOIN requires a node address".to_string(),
+                    });
+                }
+
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterJoin(addr)))
             }
             ["CLUSTER", "LEAVE", ..] => {
                 if !is_admin {
@@ -699,8 +818,13 @@ impl SqlStatement {
             | SqlStatementKind::AlterStorage(_)
             | SqlStatementKind::DropStorage(_)
             | SqlStatementKind::KillJob(_)
-            | SqlStatementKind::ClusterFlush
+            | SqlStatementKind::ClusterSnapshot
+            | SqlStatementKind::ClusterPurge(_)
+            | SqlStatementKind::ClusterTriggerElection
+            | SqlStatementKind::ClusterTransferLeader(_)
+            | SqlStatementKind::ClusterStepdown
             | SqlStatementKind::ClusterClear
+            | SqlStatementKind::ClusterList
             | SqlStatementKind::ClusterJoin(_)
             | SqlStatementKind::ClusterLeave => Err(
                 "Admin privileges (DBA or System role) required for storage and cluster operations"
@@ -763,7 +887,6 @@ impl SqlStatement {
             | SqlStatementKind::BeginTransaction
             | SqlStatementKind::CommitTransaction
             | SqlStatementKind::RollbackTransaction => Ok(()),
-            | SqlStatementKind::ClusterList => Ok(()),
 
             // DataFusion meta commands are already admin-checked in classify_from_tokens
             // This branch should only be reached by admin users (DBA/System)

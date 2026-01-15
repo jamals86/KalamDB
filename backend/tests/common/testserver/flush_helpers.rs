@@ -339,8 +339,7 @@ pub fn verify_parquet_files_exist(
     if parquet_files.len() < expected_min {
         return Err(format!(
             "Found {} Parquet files but expected at least {}",
-            parquet_files.len(),
-            expected_min
+            parquet_files.len(), expected_min
         ));
     }
 
@@ -398,154 +397,74 @@ pub async fn wait_for_parquet_files(
     max_wait: Duration,
     expected_min: usize,
 ) -> Result<Vec<PathBuf>, String> {
+    let storage_path = resolve_user_table_storage_path(server, namespace, table_name, Some(user_id));
     let start = std::time::Instant::now();
-    let check_interval = Duration::from_millis(200);
+    let check_interval = Duration::from_millis(100);
 
     loop {
-        let parquet_files = check_user_parquet_files(server, namespace, table_name, user_id);
-
-        if parquet_files.len() >= expected_min {
-            println!(
-                "  ✓ Found {} Parquet files (expected at least {})",
-                parquet_files.len(),
-                expected_min
-            );
-            return Ok(parquet_files);
-        }
-
         if start.elapsed() > max_wait {
             return Err(format!(
-                "Timeout waiting for Parquet files. Found {}, expected at least {}. Waited {:?}",
-                parquet_files.len(),
+                "Timeout waiting for Parquet files after {:?}. Expected at least {} files in {}",
+                max_wait,
                 expected_min,
-                max_wait
+                storage_path.display()
             ));
+        }
+
+        let parquet_files = list_parquet_files(&storage_path);
+        if parquet_files.len() >= expected_min {
+            return Ok(parquet_files);
         }
 
         sleep(check_interval).await;
     }
 }
 
+/// Resolve storage path for user table (based on storage registry templates)
 fn resolve_user_table_storage_path(
     server: &TestServer,
     namespace: &str,
     table_name: &str,
     user_id: Option<&str>,
 ) -> PathBuf {
+    let storage_id = StorageId::new("local");
     let storage = server
         .app_context
-        .system_tables()
-        .storages()
-        .get_storage(&StorageId::local())
-        .expect("Failed to get local storage")
-        .expect("Local storage configuration missing");
+        .storage_registry()
+        .get_storage(&storage_id)
+        .expect("Storage lookup failed")
+        .expect("Storage not found");
 
-    let user_id_value = user_id.unwrap_or("");
-    // Support both {user_id} and {userId} placeholder variants (historical inconsistency)
-    let mut relative = storage
-        .user_tables_template
+    let base_directory = storage.base_directory.clone();
+    let template = storage.user_tables_template.clone();
+    let user_id = user_id.unwrap_or("user");
+
+    // Replace template variables
+    let path = template
+        .replace("{userId}", user_id)
         .replace("{namespace}", namespace)
-        .replace("{tableName}", table_name)
-        .replace("{user_id}", user_id_value)
-        .replace("{userId}", user_id_value)
-        .replace("${user_id}", user_id_value)
-        .replace("{shard}", "");
+        .replace("{tableName}", table_name);
 
-    if relative.starts_with('/') {
-        relative = relative.trim_start_matches('/').to_string();
-    }
-
-    let base = if storage.base_directory.is_empty() {
-        server.storage_root()
-    } else {
-        PathBuf::from(&storage.base_directory)
-    };
-
-    base.join(relative)
+    PathBuf::from(base_directory).join(path)
 }
 
-fn resolve_shared_table_storage_path(
-    server: &TestServer,
-    namespace: &str,
-    table_name: &str,
-) -> PathBuf {
+/// Resolve storage path for shared table (based on storage registry templates)
+fn resolve_shared_table_storage_path(server: &TestServer, namespace: &str, table_name: &str) -> PathBuf {
+    let storage_id = StorageId::new("local");
     let storage = server
         .app_context
-        .system_tables()
-        .storages()
-        .get_storage(&StorageId::new("local"))
-        .expect("Failed to get local storage")
-        .expect("Local storage configuration missing");
+        .storage_registry()
+        .get_storage(&storage_id)
+        .expect("Storage lookup failed")
+        .expect("Storage not found");
 
-    let mut relative = storage
-        .shared_tables_template
+    let base_directory = storage.base_directory.clone();
+    let template = storage.shared_tables_template.clone();
+
+    // Replace template variables
+    let path = template
         .replace("{namespace}", namespace)
-        .replace("{tableName}", table_name)
-        .replace("{shard}", "");
+        .replace("{tableName}", table_name);
 
-    if relative.starts_with('/') {
-        relative = relative.trim_start_matches('/').to_string();
-    }
-
-    let base = if storage.base_directory.is_empty() {
-        server.storage_root()
-    } else {
-        PathBuf::from(&storage.base_directory)
-    };
-
-    base.join(relative)
-}
-
-/// Extract job_id from FLUSH TABLE response message
-///
-/// Example message: "Flush job created. Job ID: flush-messages-20251026..."
-pub fn extract_job_id(message: &str) -> Result<String, String> {
-    if let Some(pos) = message.find("Job ID:") {
-        let rest = &message[pos + 7..].trim();
-        if rest.starts_with('[') {
-            // Multiple job IDs (FLUSH ALL TABLES)
-            let end = rest.find(']').unwrap_or(rest.len());
-            let ids_str = &rest[1..end];
-            let first_id = ids_str.split(',').next().unwrap_or("").trim().to_string();
-            if first_id.is_empty() {
-                return Err("No job ID found in array".to_string());
-            }
-            Ok(first_id)
-        } else {
-            // Single job ID
-            let job_id = rest.split_whitespace().next().unwrap_or("").to_string();
-            if job_id.is_empty() {
-                return Err("Empty job ID".to_string());
-            }
-            Ok(job_id)
-        }
-    } else {
-        Err(format!("No 'Job ID:' found in message: {}", message))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_job_id_single() {
-        let msg = "Flush job created. Job ID: flush-messages-20251026-abc123";
-        let result = extract_job_id(msg);
-        assert_eq!(result.unwrap(), "flush-messages-20251026-abc123");
-    }
-
-    #[test]
-    fn test_extract_job_id_multiple() {
-        let msg = "Flush jobs created. Job ID: [flush-table1-123, flush-table2-456]";
-        let result = extract_job_id(msg);
-        assert_eq!(result.unwrap(), "flush-table1-123");
-    }
-
-    #[test]
-    fn test_extract_job_id_missing() {
-        let msg = "Flush job created but no ID";
-        let result = extract_job_id(msg);
-        assert!(result.is_err());
-    }
+    PathBuf::from(base_directory).join(path)
 }

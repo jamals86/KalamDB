@@ -188,7 +188,7 @@ RUN ln -s /usr/local/bin/kalam-cli /usr/local/bin/kalam
 
 # Copy default server configuration
 COPY --chown=kalamdb:kalamdb docker/backend/server.toml /config/server.toml
-COPY --chown=kalamdb:kalamdb docker/backend/server.toml /data/server.toml
+#COPY --chown=kalamdb:kalamdb docker/backend/server.toml /data/server.toml
 
 # Switch to non-root user
 USER kalamdb
