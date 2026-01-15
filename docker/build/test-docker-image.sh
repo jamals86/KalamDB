@@ -50,6 +50,7 @@ main() {
     docker run -d \
         --name "$CONTAINER_NAME" \
         -p "$TEST_PORT:8080" \
+        -e KALAMDB_SERVER_HOST=0.0.0.0 \
         -e KALAMDB_LOG_LEVEL=info \
         "$IMAGE_NAME"
     

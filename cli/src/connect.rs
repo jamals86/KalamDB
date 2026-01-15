@@ -33,6 +33,7 @@ pub async fn create_session(
     cli: &Cli,
     credential_store: &mut FileCredentialStore,
     config: &CLIConfiguration,
+    config_path: std::path::PathBuf,
 ) -> Result<CLISession> {
     // Determine output format
     let format = if cli.json {
@@ -231,6 +232,8 @@ pub async fn create_session(
         Some(Duration::from_secs(cli.timeout)),
         Some(build_timeouts(cli)),
         Some(config.to_connection_options()),
+        config.clone(),
+        config_path,
         credentials_loaded,
     )
     .await

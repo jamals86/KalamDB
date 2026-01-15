@@ -15,7 +15,6 @@ pub enum Command {
     /// Meta-commands (backslash commands)
     Quit,
     Help,
-    Config,
     Flush,
         ClusterSnapshot,
         ClusterPurge { upto: u64 },
@@ -89,7 +88,6 @@ impl CommandParser {
             "\\quit" | "\\q" => Ok(Command::Quit),
             "\\help" | "\\?" => Ok(Command::Help),
             "\\stats" | "\\metrics" => Ok(Command::Stats),
-            "\\config" => Ok(Command::Config),
             "\\flush" => Ok(Command::Flush),
             "\\cluster" => {
                 if args.is_empty() {

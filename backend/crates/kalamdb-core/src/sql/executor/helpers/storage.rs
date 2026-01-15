@@ -187,10 +187,16 @@ pub fn ensure_filesystem_directory(path: &str) -> Result<(), KalamDbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::create_test_session;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
     use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
+    use std::sync::Arc;
+
+    fn init_app_context() -> Arc<AppContext> {
+        init_test_app_context();
+        AppContext::get()
+    }
 
     fn test_context() -> ExecutionContext {
         ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session())
@@ -198,7 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_storage_success() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let session = SessionContext::new();
         let ctx = test_context();
 
@@ -226,7 +232,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_storage_duplicate() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let session = SessionContext::new();
         let ctx = test_context();
 
@@ -256,7 +262,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_storage_invalid_type() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let session = SessionContext::new();
         let ctx = test_context();
 

@@ -4,7 +4,7 @@
 //!
 //! Provides consistent, colorized output formatting for query results.
 
-use kalam_link::{ErrorDetail, QueryResponse};
+use kalam_link::{ErrorDetail, KalamDataType, QueryResponse, TimestampFormatter};
 use serde_json::Value as JsonValue;
 
 use crate::{error::Result, session::OutputFormat};
@@ -19,12 +19,17 @@ const MIN_COLUMN_WIDTH: usize = 6;
 pub struct OutputFormatter {
     format: OutputFormat,
     color: bool,
+    timestamp_formatter: TimestampFormatter,
 }
 
 impl OutputFormatter {
     /// Create a new formatter
-    pub fn new(format: OutputFormat, color: bool) -> Self {
-        Self { format, color }
+    pub fn new(format: OutputFormat, color: bool, timestamp_formatter: TimestampFormatter) -> Self {
+        Self {
+            format,
+            color,
+            timestamp_formatter,
+        }
     }
 
     /// Get terminal width, defaulting to 80 if unavailable
@@ -98,9 +103,10 @@ impl OutputFormatter {
             for row in rows {
                 let mut srow: Vec<String> = Vec::with_capacity(columns.len());
                 for (i, _col) in columns.iter().enumerate() {
+                    let data_type = result.schema.get(i).map(|field| &field.data_type);
                     let value = row
                         .get(i)
-                        .map(|v| self.format_json_value(v))
+                        .map(|v| self.format_json_value_with_type(v, data_type))
                         .unwrap_or_else(|| "NULL".to_string());
                     col_widths[i] = col_widths[i].max(value.len());
                     srow.push(value);
@@ -271,8 +277,9 @@ impl OutputFormatter {
                 .iter()
                 .enumerate()
                 .map(|(i, _col)| {
+                    let data_type = result.schema.get(i).map(|field| &field.data_type);
                     row.get(i)
-                        .map(|v| self.format_csv_value(v))
+                        .map(|v| self.format_csv_value_with_type(v, data_type))
                         .unwrap_or_else(|| "".to_string())
                 })
                 .collect();
@@ -333,14 +340,36 @@ impl OutputFormatter {
                         // Binary data - show as hex or indicate it's binary
                         "<binary>".to_string()
                     }
-                    "Date32" | "Time64Microsecond" => {
-                        inner_value.as_i64().map(|n| n.to_string()).unwrap_or_else(|| "NULL".to_string())
+                    "Date32" => {
+                        inner_value
+                            .as_i64()
+                            .map(|days| self.timestamp_formatter.format(Some(days * 86_400_000)))
+                            .unwrap_or_else(|| "NULL".to_string())
                     }
-                    "TimestampMillisecond" | "TimestampMicrosecond" | "TimestampNanosecond" => {
+                    "Time64Microsecond" => {
+                        inner_value
+                            .as_i64()
+                            .map(|micros| self.timestamp_formatter.format(Some(micros / 1000)))
+                            .unwrap_or_else(|| "NULL".to_string())
+                    }
+                    "Time64Nanosecond" => {
+                        inner_value
+                            .as_i64()
+                            .map(|nanos| self.timestamp_formatter.format(Some(nanos / 1_000_000)))
+                            .unwrap_or_else(|| "NULL".to_string())
+                    }
+                    "TimestampSecond" | "TimestampMillisecond" | "TimestampMicrosecond" | "TimestampNanosecond" => {
                         // Timestamp objects have 'value' and optionally 'timezone'
                         if let Some(obj) = inner_value.as_object() {
-                            if let Some(val) = obj.get("value") {
-                                return val.as_i64().map(|n| n.to_string()).unwrap_or_else(|| "NULL".to_string());
+                            if let Some(val) = obj.get("value").and_then(|v| v.as_i64()) {
+                                let ms = match type_name.as_str() {
+                                    "TimestampSecond" => val * 1000,
+                                    "TimestampMillisecond" => val,
+                                    "TimestampMicrosecond" => val / 1000,
+                                    "TimestampNanosecond" => val / 1_000_000,
+                                    _ => val,
+                                };
+                                return self.timestamp_formatter.format(Some(ms));
                             }
                         }
                         "NULL".to_string()
@@ -368,9 +397,95 @@ impl OutputFormatter {
         }
     }
 
+    fn format_json_value_with_type(
+        &self,
+        value: &JsonValue,
+        data_type: Option<&KalamDataType>,
+    ) -> String {
+        match data_type {
+            Some(KalamDataType::Timestamp) => {
+                self.format_timestamp_value(value, TimestampUnit::Microseconds)
+            }
+            Some(KalamDataType::Date) => self.format_date_value(value),
+            Some(KalamDataType::DateTime) => {
+                self.format_timestamp_value(value, TimestampUnit::Auto)
+            }
+            _ => self.format_json_value(value),
+        }
+    }
+
+    fn format_date_value(&self, value: &JsonValue) -> String {
+        self.parse_i64(value)
+            .map(|days| self.timestamp_formatter.format(Some(days * 86_400_000)))
+            .unwrap_or_else(|| "NULL".to_string())
+    }
+
+    fn format_timestamp_value(&self, value: &JsonValue, unit: TimestampUnit) -> String {
+        match value {
+            JsonValue::Object(map) if map.len() == 1 => {
+                let (type_name, inner_value) = map.iter().next().unwrap();
+                match type_name.as_str() {
+                    "TimestampSecond" | "TimestampMillisecond" | "TimestampMicrosecond" | "TimestampNanosecond" => {
+                        if let Some(obj) = inner_value.as_object() {
+                            if let Some(val) = obj.get("value").and_then(|v| v.as_i64()) {
+                                let ms = match type_name.as_str() {
+                                    "TimestampSecond" => val * 1000,
+                                    "TimestampMillisecond" => val,
+                                    "TimestampMicrosecond" => val / 1000,
+                                    "TimestampNanosecond" => val / 1_000_000,
+                                    _ => val,
+                                };
+                                return self.timestamp_formatter.format(Some(ms));
+                            }
+                        }
+                        "NULL".to_string()
+                    }
+                    "Date32" => self.format_date_value(inner_value),
+                    "Time64Microsecond" => self
+                        .parse_i64(inner_value)
+                        .map(|micros| self.timestamp_formatter.format(Some(micros / 1000)))
+                        .unwrap_or_else(|| "NULL".to_string()),
+                    "Time64Nanosecond" => self
+                        .parse_i64(inner_value)
+                        .map(|nanos| self.timestamp_formatter.format(Some(nanos / 1_000_000)))
+                        .unwrap_or_else(|| "NULL".to_string()),
+                    _ => self.format_json_value(inner_value),
+                }
+            }
+            _ => {
+                let ms = self.parse_i64(value).map(|raw| match unit {
+                    TimestampUnit::Milliseconds => raw,
+                    TimestampUnit::Microseconds => raw / 1000,
+                    TimestampUnit::Nanoseconds => raw / 1_000_000,
+                    TimestampUnit::Auto => {
+                        if raw.abs() >= 100_000_000_000_000 {
+                            raw / 1000
+                        } else {
+                            raw
+                        }
+                    }
+                });
+                ms.map(|val| self.timestamp_formatter.format(Some(val)))
+                    .unwrap_or_else(|| "NULL".to_string())
+            }
+        }
+    }
+
+    fn parse_i64(&self, value: &JsonValue) -> Option<i64> {
+        match value {
+            JsonValue::Number(n) => n.as_i64(),
+            JsonValue::String(s) => s.parse::<i64>().ok(),
+            _ => None,
+        }
+    }
+
     /// Format JSON value for CSV (escape commas and quotes)
-    fn format_csv_value(&self, value: &JsonValue) -> String {
-        let s = self.format_json_value(value);
+    fn format_csv_value_with_type(
+        &self,
+        value: &JsonValue,
+        data_type: Option<&KalamDataType>,
+    ) -> String {
+        let s = self.format_json_value_with_type(value, data_type);
         if s.contains(',') || s.contains('"') || s.contains('\n') {
             format!("\"{}\"", s.replace('"', "\"\""))
         } else {
@@ -379,13 +494,25 @@ impl OutputFormatter {
     }
 }
 
+enum TimestampUnit {
+    Milliseconds,
+    Microseconds,
+    Nanoseconds,
+    Auto,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalam_link::TimestampFormat;
 
     #[test]
     fn test_format_json_value() {
-        let formatter = OutputFormatter::new(OutputFormat::Table, false);
+        let formatter = OutputFormatter::new(
+            OutputFormat::Table,
+            false,
+            TimestampFormatter::new(TimestampFormat::Iso8601),
+        );
         assert_eq!(formatter.format_json_value(&JsonValue::Null), "NULL");
         assert_eq!(formatter.format_json_value(&JsonValue::Bool(true)), "true");
         assert_eq!(
@@ -396,9 +523,16 @@ mod tests {
 
     #[test]
     fn test_csv_escaping() {
-        let formatter = OutputFormatter::new(OutputFormat::Csv, false);
+        let formatter = OutputFormatter::new(
+            OutputFormat::Csv,
+            false,
+            TimestampFormatter::new(TimestampFormat::Iso8601),
+        );
         let value = JsonValue::String("hello, world".into());
-        assert_eq!(formatter.format_csv_value(&value), "\"hello, world\"");
+        assert_eq!(
+            formatter.format_csv_value_with_type(&value, None),
+            "\"hello, world\""
+        );
     }
 
     #[test]

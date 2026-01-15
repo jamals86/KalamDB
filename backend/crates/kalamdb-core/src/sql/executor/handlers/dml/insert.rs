@@ -517,6 +517,7 @@ mod tests {
     use crate::test_helpers::{create_test_session, init_test_app_context};
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
+    use std::sync::Arc;
 
     fn init_app_context() -> Arc<AppContext> {
         init_test_app_context();

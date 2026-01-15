@@ -11,7 +11,8 @@ pub async fn handle_subscriptions(
         // Load configuration
         let config = CLIConfiguration::load(&cli.config)?;
 
-        let mut session = create_session(cli, credential_store, &config).await?;
+        let config_path = kalam_cli::config::expand_config_path(&cli.config);
+        let mut session = create_session(cli, credential_store, &config, config_path).await?;
 
         if cli.list_subscriptions {
             session.list_subscriptions().await?;

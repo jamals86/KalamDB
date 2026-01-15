@@ -92,9 +92,15 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::create_test_session;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
+    use std::sync::Arc;
+
+    fn init_app_context() -> Arc<AppContext> {
+        init_test_app_context();
+        AppContext::get()
+    }
 
     fn create_test_context() -> ExecutionContext {
         ExecutionContext::new(UserId::new("test_user"), Role::Dba, create_test_session())
@@ -102,7 +108,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_alter_namespace_authorization() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let handler = AlterNamespaceHandler::new(app_ctx);
         let stmt = AlterNamespaceStatement {
             name: NamespaceId::new("test"),
@@ -119,7 +125,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_alter_namespace_success() {
-        let app_ctx = AppContext::get();
+        let app_ctx = init_app_context();
         let handler = AlterNamespaceHandler::new(app_ctx);
         let mut options = std::collections::HashMap::new();
         options.insert("max_tables".to_string(), serde_json::json!(100));

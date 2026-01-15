@@ -888,6 +888,11 @@ UI Changes:
 
 
 
+Features:
+1) Emedding and vector search
+2) File uploading and storage inside the user's own table with a reference
+
+
 
 
 TODOS:

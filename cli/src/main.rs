@@ -76,8 +76,9 @@ async fn run() -> Result<()> {
 
     // Load configuration
     let config = CLIConfiguration::load(&cli.config)?;
+    let config_path = kalam_cli::config::expand_config_path(&cli.config);
 
-    let mut session = create_session(&cli, &mut credential_store, &config).await?;
+    let mut session = create_session(&cli, &mut credential_store, &config, config_path).await?;
 
     // Execute based on mode
     match (cli.file, cli.command) {

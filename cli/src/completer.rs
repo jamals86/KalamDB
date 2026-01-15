@@ -179,7 +179,6 @@ impl AutoCompleter {
             "\\?",
             "\\stats",
             "\\metrics",
-            "\\config",
             "\\flush",
             "\\health",
             "\\pause",
