@@ -161,7 +161,7 @@ mod tests {
     use super::*;
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::ids::SeqId;
-    use kalamdb_commons::models::row::Row;
+    use kalamdb_commons::models::rows::Row;
     use std::collections::BTreeMap;
 
     fn create_test_row(seq: i64, id_value: i64) -> (SharedTableRowId, SharedTableRow) {

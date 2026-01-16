@@ -416,3 +416,169 @@ impl StreamLogStore for FileStreamLogStore {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FileStreamLogStore;
+    use crate::config::StreamLogConfig;
+    use crate::store_trait::StreamLogStore;
+    use crate::time_bucket::StreamTimeBucket;
+    use chrono::{Datelike, TimeZone, Timelike};
+    use datafusion::scalar::ScalarValue;
+    use kalamdb_commons::ids::{SeqId, SnowflakeGenerator, StreamTableRowId};
+    use kalamdb_commons::models::rows::Row;
+    use kalamdb_commons::models::{NamespaceId, StreamTableRow, TableId, TableName, UserId};
+    use kalamdb_sharding::ShardRouter;
+    use std::collections::{BTreeMap, HashMap};
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_base_dir(prefix: &str) -> PathBuf {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let mut path = std::env::temp_dir();
+        path.push(format!("{}_{}_{}", prefix, std::process::id(), now));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn seq_from_timestamp(ts_ms: u64) -> SeqId {
+        let id = SnowflakeGenerator::max_id_for_timestamp(ts_ms)
+            .expect("max_id_for_timestamp failed");
+        SeqId::new(id)
+    }
+
+    fn window_start_ms(bucket: StreamTimeBucket, ts_ms: u64) -> u64 {
+        let dt = chrono::Utc
+            .timestamp_millis_opt(ts_ms as i64)
+            .single()
+            .unwrap_or_else(|| chrono::Utc.timestamp_millis_opt(0).single().unwrap());
+
+        match bucket {
+            StreamTimeBucket::Hour => dt
+                .with_minute(0)
+                .and_then(|v| v.with_second(0))
+                .and_then(|v| v.with_nanosecond(0))
+                .map(|v| v.timestamp_millis() as u64)
+                .unwrap_or(ts_ms),
+            StreamTimeBucket::Day => dt
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .map(|naive| chrono::Utc.from_utc_datetime(&naive))
+                .map(|v| v.timestamp_millis() as u64)
+                .unwrap_or(ts_ms),
+            StreamTimeBucket::Week => {
+                let weekday = dt.weekday().num_days_from_monday() as i64;
+                let date = dt.date_naive() - chrono::Duration::days(weekday);
+                let naive = date.and_hms_opt(0, 0, 0);
+                naive
+                    .map(|v| chrono::Utc.from_utc_datetime(&v).timestamp_millis() as u64)
+                    .unwrap_or(ts_ms)
+            }
+            StreamTimeBucket::Month => chrono::NaiveDate::from_ymd_opt(dt.year(), dt.month(), 1)
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+                .map(|v| chrono::Utc.from_utc_datetime(&v).timestamp_millis() as u64)
+                .unwrap_or(ts_ms),
+        }
+    }
+
+    fn bucket_folder(bucket: StreamTimeBucket, window_start_ms: u64) -> String {
+        let dt = chrono::Utc
+            .timestamp_millis_opt(window_start_ms as i64)
+            .single()
+            .unwrap_or_else(|| chrono::Utc.timestamp_millis_opt(0).single().unwrap());
+        match bucket {
+            StreamTimeBucket::Hour => dt.format("%Y%m%d%H").to_string(),
+            StreamTimeBucket::Day => dt.format("%Y%m%d").to_string(),
+            StreamTimeBucket::Week => dt.format("%G%V").to_string(),
+            StreamTimeBucket::Month => dt.format("%Y%m").to_string(),
+        }
+    }
+
+    fn build_row(user_id: &UserId, seq: SeqId) -> StreamTableRow {
+        let values: BTreeMap<String, ScalarValue> = BTreeMap::new();
+        StreamTableRow {
+            user_id: user_id.clone(),
+            _seq: seq,
+            fields: Row::new(values),
+        }
+    }
+
+    #[test]
+    fn test_delete_old_logs_cleans_files_and_folders() {
+        let base_dir = temp_base_dir("kalamdb_streams_delete_old");
+        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let shard_router = ShardRouter::new(4, 1);
+        let bucket = StreamTimeBucket::Hour;
+
+        let store = FileStreamLogStore::new(StreamLogConfig {
+            base_dir: base_dir.clone(),
+            shard_router: shard_router.clone(),
+            bucket,
+            table_id: table_id.clone(),
+        });
+
+        let user_id = UserId::new("user-1");
+        let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+        let old_ts = now_ms.saturating_sub(3 * 60 * 60 * 1000);
+        let new_ts = now_ms.saturating_sub(10 * 60 * 1000);
+
+        let old_seq = seq_from_timestamp(old_ts);
+        let new_seq = seq_from_timestamp(new_ts);
+        let old_id = StreamTableRowId::new(user_id.clone(), old_seq);
+        let new_id = StreamTableRowId::new(user_id.clone(), new_seq);
+
+        let mut rows = HashMap::new();
+        rows.insert(old_id.clone(), build_row(&user_id, old_seq));
+        rows.insert(new_id.clone(), build_row(&user_id, new_seq));
+
+        store
+            .append_rows(&table_id, &user_id, rows)
+            .expect("append_rows failed");
+
+        let shard_folder = shard_router.route_stream_user(&user_id).folder_name();
+        let old_window = window_start_ms(bucket, old_ts);
+        let new_window = window_start_ms(bucket, new_ts);
+        let old_bucket = bucket_folder(bucket, old_window);
+        let new_bucket = bucket_folder(bucket, new_window);
+
+        let old_path = base_dir
+            .join(old_bucket.clone())
+            .join(&shard_folder)
+            .join(user_id.as_str())
+            .join(format!("{}.log", old_window));
+        let new_path = base_dir
+            .join(new_bucket.clone())
+            .join(&shard_folder)
+            .join(user_id.as_str())
+            .join(format!("{}.log", new_window));
+
+        assert!(old_path.exists(), "expected old log file to exist");
+        assert!(new_path.exists(), "expected new log file to exist");
+        assert!(
+            store
+                .has_logs_before(now_ms.saturating_sub(60 * 60 * 1000))
+                .expect("has_logs_before failed"),
+            "expected logs before cutoff"
+        );
+
+        let deleted = store
+            .delete_old_logs_with_count(now_ms.saturating_sub(60 * 60 * 1000))
+            .expect("delete_old_logs_with_count failed");
+        assert!(deleted >= 1, "expected at least one log file deleted");
+
+        assert!(!old_path.exists(), "expected old log file to be deleted");
+        assert!(new_path.exists(), "expected new log file to remain");
+
+        let old_bucket_dir = base_dir.join(old_bucket);
+        assert!(
+            !old_bucket_dir.exists(),
+            "expected old bucket directory to be removed"
+        );
+        assert!(base_dir.exists(), "expected base dir to remain");
+
+        let _ = fs::remove_dir_all(&base_dir);
+    }
+}

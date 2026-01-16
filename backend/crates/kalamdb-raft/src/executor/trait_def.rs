@@ -10,7 +10,7 @@ use crate::commands::{
     DataResponse, MetaCommand, MetaResponse, SharedDataCommand, UserDataCommand,
 };
 use crate::error::Result;
-use crate::group_id::GroupId;
+use crate::GroupId;
 
 /// Information about a cluster node
 #[derive(Debug, Clone)]

@@ -1,7 +1,7 @@
-//! Stream table store implementation backed by commit logs.
+//! Stream table store implementation backed by in-memory storage.
 //!
-//! Stream tables are persisted to append-only logs on disk under:
-//! /data/streams/<namespace>/<table>/<bucket>/<shardid>/<userId>/<windowStartMs>.log
+//! Stream tables now use in-memory BTreeMap storage for fast ephemeral access.
+//! In the future, we will support specifying persistence mode when creating a stream table.
 //!
 //! **MVCC Architecture (Phase 13.2)**:
 //! - StreamTableRowId: Composite struct with user_id and _seq fields
@@ -15,9 +15,10 @@ use kalamdb_commons::TableId;
 use kalamdb_sharding::ShardRouter;
 use kalamdb_store::entity_store::ScanDirection;
 use kalamdb_store::storage_trait::{Result, StorageError};
-use kalamdb_streams::{bucket_for_ttl, FileStreamLogStore, StreamLogConfig, StreamLogStore};
+use kalamdb_streams::{MemoryStreamLogStore, StreamLogStore};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 const MAX_SCAN_LIMIT: usize = 100000;
 
@@ -29,35 +30,23 @@ pub struct StreamTableStoreConfig {
     pub ttl_seconds: Option<u64>,
 }
 
-/// Store for stream tables (append-only commit log on disk).
+/// Store for stream tables (in-memory BTreeMap storage for fast ephemeral access).
 #[derive(Clone)]
 pub struct StreamTableStore {
     table_id: TableId,
     partition: String,
-    log_store: FileStreamLogStore,
+    log_store: Arc<MemoryStreamLogStore>,
 }
 
 impl StreamTableStore {
-    /// Create a new stream table store (commit log-backed)
-    pub fn new(table_id: TableId, partition: impl Into<String>, config: StreamTableStoreConfig) -> Self {
-        let ttl_seconds = config.ttl_seconds.unwrap_or(0);
-        let bucket = if ttl_seconds > 0 {
-            bucket_for_ttl(ttl_seconds)
-        } else {
-            bucket_for_ttl(3600)
-        };
-
-        let log_config = StreamLogConfig {
-            base_dir: config.base_dir,
-            shard_router: config.shard_router,
-            bucket,
-            table_id: table_id.clone(),
-        };
+    /// Create a new stream table store (in-memory backed)
+    pub fn new(table_id: TableId, partition: impl Into<String>, _config: StreamTableStoreConfig) -> Self {
+        let log_store = Arc::new(MemoryStreamLogStore::with_table_id(table_id.clone()));
 
         Self {
             table_id,
             partition: partition.into(),
-            log_store: FileStreamLogStore::new(log_config),
+            log_store,
         }
     }
 
@@ -201,7 +190,7 @@ impl StreamTableStore {
     }
 }
 
-/// Helper function to create a new stream table store (commit log-backed).
+/// Helper function to create a new stream table store (in-memory backed).
 ///
 /// # Arguments
 /// * `table_id` - Table identifier
@@ -221,14 +210,14 @@ pub fn new_stream_table_store(table_id: &TableId, config: StreamTableStoreConfig
 mod tests {
     use super::*;
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::models::{NamespaceId, Row, TableName};
+    use kalamdb_commons::models::{NamespaceId, TableName, rows::Row};
     use kalamdb_sharding::ShardRouter;
     use std::collections::BTreeMap;
 
-    fn create_test_store(base_dir: &std::path::Path) -> StreamTableStore {
+    fn create_test_store(_base_dir: &std::path::Path) -> StreamTableStore {
         let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_stream"));
         let config = StreamTableStoreConfig {
-            base_dir: base_dir.join("streams").join("test_ns").join("test_stream"),
+            base_dir: _base_dir.join("streams").join("test_ns").join("test_stream"),
             shard_router: ShardRouter::default_config(),
             ttl_seconds: Some(3600),
         };
@@ -299,16 +288,7 @@ mod tests {
         assert_eq!(all_rows.len(), 6);
     }
 
-    #[test]
-    fn test_stream_table_persistence() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let store1 = create_test_store(temp_dir.path());
-        let key = StreamTableRowId::new(UserId::new("user1"), SeqId::new(100));
-        let row = create_test_row("user1", 100);
-        store1.put(&key, &row).unwrap();
-
-        let store2 = create_test_store(temp_dir.path());
-        let retrieved = store2.get(&key).unwrap();
-        assert!(retrieved.is_some());
-    }
+    // Note: Persistence test removed since we now use in-memory storage.
+    // In the future, when we add persistence mode selection, we'll add
+    // a separate test for file-backed persistence.
 }

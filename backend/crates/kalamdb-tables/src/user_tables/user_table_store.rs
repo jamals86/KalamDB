@@ -113,6 +113,8 @@ pub fn new_indexed_user_table_store(
         table_id,
         pk_field_name,
     );
+    let index_partition_name = format!("user_{}_pk_idx", table_id);
+    ensure_partition(&backend, &index_partition_name);
     new_indexed_store_with_pk(backend, name, vec![pk_index])
 }
 
@@ -120,7 +122,7 @@ pub fn new_indexed_user_table_store(
 mod tests {
     use super::*;
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::models::{NamespaceId, TableId, TableName};
+    use kalamdb_commons::{UserId, ids::SeqId, models::{NamespaceId, TableId, TableName, rows::Row}};
     use kalamdb_store::test_utils::InMemoryBackend;
     use std::collections::BTreeMap;
 

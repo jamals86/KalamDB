@@ -34,7 +34,7 @@
 //!
 //! 1. **Add variant to `AuthRequest`** in this file:
 //!    ```rust,ignore
-//!    pub enum AuthRequest {
+//!    enum AuthRequest {
 //!        // ... existing variants ...
 //!        ApiKey { key: String },
 //!    }
@@ -42,7 +42,7 @@
 //!
 //! 2. **Add variant to `AuthMethod`** (if tracking method used):
 //!    ```rust,ignore
-//!    pub enum AuthMethod {
+//!    enum AuthMethod {
 //!        // ... existing variants ...
 //!        ApiKey,
 //!    }

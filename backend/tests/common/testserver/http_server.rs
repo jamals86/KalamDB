@@ -6,6 +6,7 @@ use kalam_link::models::{QueryResponse, ResponseStatus};
 use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
 use kalamdb_commons::{Role, UserId, UserName};
 use kalamdb_core::app_context::AppContext;
+use super::cluster::ClusterTestServer;
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -834,106 +835,6 @@ pub async fn start_http_test_server_with_config(
     Ok(server)
 }
 
-// ============================================================================
-// CLUSTER TEST SERVER - 3-Node Cluster Support
-// ============================================================================
-
-/// A test cluster with 3 nodes for testing replication and consistency.
-pub struct ClusterTestServer {
-    /// Three independent server instances that form a cluster
-    nodes: Vec<HttpTestServer>,
-}
-
-impl ClusterTestServer {
-    /// Get a reference to a node in the cluster (0, 1, or 2)
-    pub fn get_node(&self, index: usize) -> Result<&HttpTestServer> {
-        self.nodes
-            .get(index)
-            .ok_or_else(|| anyhow::anyhow!("Node index {} out of range (0-2)", index))
-    }
-
-    /// Execute SQL on a random node in the cluster
-    pub async fn execute_sql_on_random(&self, sql: &str) -> Result<QueryResponse> {
-        use rand::Rng;
-        let mut rng = rand::rng();
-        let index = rng.random_range(0..3);
-        self.nodes[index].execute_sql(sql).await
-    }
-
-    /// Execute SQL on all nodes and return results
-    pub async fn execute_sql_on_all(&self, sql: &str) -> Result<Vec<QueryResponse>> {
-        let mut results = Vec::new();
-        for node in &self.nodes {
-            results.push(node.execute_sql(sql).await?);
-        }
-        Ok(results)
-    }
-
-    /// Check data consistency across all nodes for a query
-    pub async fn verify_data_consistency(&self, query: &str) -> Result<bool> {
-        let results = self.execute_sql_on_all(query).await?;
-        
-        if results.is_empty() {
-            return Ok(true);
-        }
-
-        // Check if all nodes returned the same data
-        let first_result = &results[0];
-        for (i, result) in results.iter().enumerate().skip(1) {
-            if result.results.len() != first_result.results.len() {
-                eprintln!(
-                    "❌ Node consistency failed: Node 0 has {} result sets, Node {} has {}",
-                    first_result.results.len(),
-                    i,
-                    result.results.len()
-                );
-                return Ok(false);
-            }
-
-            for (j, (first_rows, result_rows)) in first_result
-                .results
-                .iter()
-                .zip(result.results.iter())
-                .enumerate()
-            {
-                let first_maps = first_rows.rows_as_maps();
-                let result_maps = result_rows.rows_as_maps();
-
-                if first_maps.len() != result_maps.len() {
-                    eprintln!(
-                        "❌ Node consistency failed: Node 0 result set {} has {} rows, Node {} has {}",
-                        j,
-                        first_maps.len(),
-                        i,
-                        result_maps.len()
-                    );
-                    return Ok(false);
-                }
-
-                // Basic row comparison (convert to strings for comparison)
-                for (k, (first_map, result_map)) in
-                    first_maps.iter().zip(result_maps.iter()).enumerate()
-                {
-                    let first_str = format!("{:?}", first_map);
-                    let result_str = format!("{:?}", result_map);
-
-                    if first_str != result_str {
-                        eprintln!(
-                            "❌ Node consistency failed: Node 0 row {} differs from Node {} row {}",
-                            k, i, k
-                        );
-                        eprintln!("   Node 0: {}", first_str);
-                        eprintln!("   Node {}: {}", i, result_str);
-                        return Ok(false);
-                    }
-                }
-            }
-        }
-
-        Ok(true)
-    }
-}
-
 /// Start a 3-node cluster for testing
 async fn start_cluster_server() -> Result<ClusterTestServer> {
     let _guard = HTTP_TEST_SERVER_LOCK.lock().await;
@@ -953,7 +854,7 @@ async fn start_cluster_server() -> Result<ClusterTestServer> {
 
     eprintln!("✅ 3-node cluster started successfully");
 
-    Ok(ClusterTestServer { nodes })
+    Ok(ClusterTestServer::new(nodes))
 }
 // ============================================================================
 // LEGACY API (DEPRECATED) - Use get_global_server() instead

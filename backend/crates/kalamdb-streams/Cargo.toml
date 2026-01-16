@@ -32,3 +32,6 @@ log = { workspace = true }
 [lib]
 name = "kalamdb_streams"
 path = "src/lib.rs"
+
+[dev-dependencies]
+datafusion = { workspace = true }

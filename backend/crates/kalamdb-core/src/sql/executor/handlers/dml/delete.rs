@@ -316,6 +316,12 @@ impl DeleteHandler {
                 })?;
                 Ok(arr.value(row_idx).to_string())
             }
+            DataType::Int32 => {
+                let arr = array.as_any().downcast_ref::<Int32Array>().ok_or_else(|| {
+                    KalamDbError::InvalidOperation("Failed to downcast Int32Array".into())
+                })?;
+                Ok(arr.value(row_idx).to_string())
+            }
             DataType::Utf8 => {
                 let arr = array
                     .as_any()

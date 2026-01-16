@@ -167,7 +167,7 @@ mod tests {
     use super::*;
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::ids::SeqId;
-    use kalamdb_commons::models::row::Row;
+    use kalamdb_commons::models::rows::Row;
     use kalamdb_commons::models::UserId;
     use std::collections::BTreeMap;
 

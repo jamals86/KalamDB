@@ -213,14 +213,14 @@ impl<T: JobParams> JobContext<T> {
 /// use serde::{Serialize, Deserialize};
 ///
 /// #[derive(Serialize, Deserialize, Clone)]
-/// pub struct FlushParams {
+/// struct FlushParams {
 ///     pub table_id: TableId,
 ///     pub threshold: u64,
 /// }
 ///
 /// impl JobParams for FlushParams {}
 ///
-/// pub struct FlushExecutor;
+/// struct FlushExecutor;
 ///
 /// #[async_trait]
 /// impl JobExecutor for FlushExecutor {

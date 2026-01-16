@@ -81,12 +81,12 @@ pub struct UserInfo {
 
 /// Error response body
 #[derive(Debug, Serialize)]
-pub struct ErrorResponse {
+pub struct AuthErrorResponse {
     pub error: String,
     pub message: String,
 }
 
-impl ErrorResponse {
+impl AuthErrorResponse {
     /// Create a new error response
     #[inline]
     pub fn new(error: impl Into<String>, message: impl Into<String>) -> Self {
@@ -168,7 +168,7 @@ pub async fn login_handler(
 
     // Check role - only dba and system can access admin UI
     if !matches!(auth_result.user.role, Role::Dba | Role::System) {
-        return HttpResponse::Forbidden().json(ErrorResponse::new("forbidden", "Admin UI access requires dba or system role"));
+        return HttpResponse::Forbidden().json(AuthErrorResponse::new("forbidden", "Admin UI access requires dba or system role"));
     }
 
     // Load full user record for response fields
@@ -177,7 +177,7 @@ pub async fn login_handler(
         Ok(user) => user,
         Err(e) => {
             log::error!("Failed to load user after authentication: {}", e);
-            return HttpResponse::InternalServerError().json(ErrorResponse::new("internal_error", "Authentication failed"));
+            return HttpResponse::InternalServerError().json(AuthErrorResponse::new("internal_error", "Authentication failed"));
         }
     };
 
@@ -193,7 +193,7 @@ pub async fn login_handler(
         Ok(t) => t,
         Err(e) => {
             log::error!("Error generating JWT: {}", e);
-            return HttpResponse::InternalServerError().json(ErrorResponse::new("internal_error", "Failed to generate token"));
+            return HttpResponse::InternalServerError().json(AuthErrorResponse::new("internal_error", "Failed to generate token"));
         }
     };
 
@@ -240,25 +240,25 @@ fn map_auth_error_to_response(err: AuthError) -> HttpResponse {
         | AuthError::UserNotFound(_)
         | AuthError::UserDeleted
         | AuthError::AuthenticationFailed(_) => {
-            HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "Invalid username or password"))
+            HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "Invalid username or password"))
         }
         AuthError::AccountLocked(message) => {
-            HttpResponse::Unauthorized().json(ErrorResponse::new("account_locked", message))
+            HttpResponse::Unauthorized().json(AuthErrorResponse::new("account_locked", message))
         }
         AuthError::RemoteAccessDenied(message) | AuthError::InsufficientPermissions(message) => {
-            HttpResponse::Forbidden().json(ErrorResponse::new("forbidden", message))
+            HttpResponse::Forbidden().json(AuthErrorResponse::new("forbidden", message))
         }
         AuthError::MalformedAuthorization(message)
         | AuthError::MissingAuthorization(message)
         | AuthError::MissingClaim(message)
         | AuthError::WeakPassword(message) => {
-            HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", message))
+            HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", message))
         }
         AuthError::TokenExpired | AuthError::InvalidSignature | AuthError::UntrustedIssuer(_) => {
-            HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "Invalid username or password"))
+            HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "Invalid username or password"))
         }
         AuthError::DatabaseError(_) | AuthError::HashingError(_) => {
-            HttpResponse::InternalServerError().json(ErrorResponse::new("internal_error", "Authentication failed"))
+            HttpResponse::InternalServerError().json(AuthErrorResponse::new("internal_error", "Authentication failed"))
         }
     }
 }
@@ -275,7 +275,7 @@ pub async fn refresh_handler(
     let token = match extract_auth_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned())) {
         Some(t) => t,
         None => {
-            return HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "No auth token found"));
+            return HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "No auth token found"));
         }
     };
 
@@ -285,7 +285,7 @@ pub async fn refresh_handler(
         Ok(c) => c,
         Err(e) => {
             log::debug!("Token validation failed: {}", e);
-            return HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "Invalid or expired token"));
+            return HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "Invalid or expired token"));
         }
     };
 
@@ -295,7 +295,7 @@ pub async fn refresh_handler(
     let user = match user_repo.get_user_by_username(&username_typed).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {
-            return HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "User no longer valid"));
+            return HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "User no longer valid"));
         }
     };
 
@@ -311,7 +311,7 @@ pub async fn refresh_handler(
         Ok(t) => t,
         Err(e) => {
             log::error!("Error generating JWT: {}", e);
-            return HttpResponse::InternalServerError().json(ErrorResponse::new("internal_error", "Failed to refresh token"));
+            return HttpResponse::InternalServerError().json(AuthErrorResponse::new("internal_error", "Failed to refresh token"));
         }
     };
 
@@ -379,7 +379,7 @@ pub async fn me_handler(
     let token = match extract_auth_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned())) {
         Some(t) => t,
         None => {
-            return HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "Not authenticated"));
+            return HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "Not authenticated"));
         }
     };
 
@@ -389,7 +389,7 @@ pub async fn me_handler(
         Ok(c) => c,
         Err(e) => {
             log::debug!("Token validation failed: {}", e);
-            return HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "Invalid or expired token"));
+            return HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "Invalid or expired token"));
         }
     };
 
@@ -399,7 +399,7 @@ pub async fn me_handler(
     let user = match user_repo.get_user_by_username(&username_typed).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {
-            return HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "User not found"));
+            return HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "User not found"));
         }
     };
 

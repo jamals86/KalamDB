@@ -3648,6 +3648,7 @@ name = "kalamdb-sharding"
 version = "0.2.0"
 dependencies = [
  "kalamdb-commons",
+ "kalamdb-configs",
  "serde",
 ]
 
@@ -3702,6 +3703,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "chrono",
+ "datafusion",
  "kalamdb-commons",
  "kalamdb-sharding",
  "log",

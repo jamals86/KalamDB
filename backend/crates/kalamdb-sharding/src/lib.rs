@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 
 // Re-export GroupId and related types
 pub use group_id::{GroupId, DEFAULT_USER_SHARDS, DEFAULT_SHARED_SHARDS};
+// Re-export cluster config types for shared consumption
+pub use kalamdb_configs::{ClusterConfig, PeerConfig};
 
 /// Shard kind used across stream and data shards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

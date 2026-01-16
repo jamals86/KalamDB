@@ -38,10 +38,8 @@
 
 pub mod applier;
 pub mod cluster_types;
-pub mod config;
 pub mod error;
 pub mod executor;
-pub mod group_id;
 pub mod commands;
 pub mod state_machine;
 pub mod storage;
@@ -63,10 +61,10 @@ pub use state_machine::{UserDataStateMachine, SharedDataStateMachine};
 
 // Re-exports - Core types
 pub use cluster_types::{NodeRole, NodeStatus, ServerStateExt};
-pub use config::{ClusterConfig as RaftClusterConfig, PeerConfig};
+pub use kalamdb_sharding::{ClusterConfig as RaftClusterConfig, PeerConfig};
 pub use error::{RaftError, Result};
 pub use executor::{ClusterInfo, ClusterNodeInfo, CommandExecutor, RaftExecutor};
-pub use group_id::{GroupId, ShardRouter};
+pub use kalamdb_sharding::{GroupId, ShardRouter};
 pub use state_machine::{KalamStateMachine, StateMachineSnapshot, ApplyResult, serde_helpers};
 pub use storage::{KalamRaftStorage, KalamTypeConfig, KalamNode};
 pub use network::{RaftNetwork, RaftNetworkFactory, RaftService, start_rpc_server};

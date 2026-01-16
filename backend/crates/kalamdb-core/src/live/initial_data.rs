@@ -386,8 +386,9 @@ mod tests {
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_commons::UserId;
     use kalamdb_store::test_utils::InMemoryBackend;
+    use kalamdb_tables::UserTableRow;
     use kalamdb_tables::user_tables::user_table_store::{
-        new_indexed_user_table_store, UserTableRow,
+        new_indexed_user_table_store
     };
     use std::sync::Arc;
     use tokio::sync::Mutex;

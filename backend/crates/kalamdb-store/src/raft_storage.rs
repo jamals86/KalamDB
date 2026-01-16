@@ -509,7 +509,7 @@ mod tests {
     use super::*;
     use crate::test_utils::InMemoryBackend;
 
-    fn create_test_store(group_id: RaftGroupId) -> RaftPartitionStore {
+    fn create_test_store(group_id: GroupId) -> RaftPartitionStore {
         let backend = Arc::new(InMemoryBackend::new());
         // Create the raft_data partition
         backend
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn test_append_and_get_log() {
-        let store = create_test_store(RaftGroupId::Meta);
+        let store = create_test_store(GroupId::Meta);
 
         let entries = vec![
             RaftLogEntry {
@@ -557,7 +557,7 @@ mod tests {
 
     #[test]
     fn test_scan_logs() {
-        let store = create_test_store(RaftGroupId::Meta);
+        let store = create_test_store(GroupId::Meta);
 
         let entries: Vec<RaftLogEntry> = (1..=10)
             .map(|i| RaftLogEntry {
@@ -582,7 +582,7 @@ mod tests {
 
     #[test]
     fn test_first_last_log_index() {
-        let store = create_test_store(RaftGroupId::Meta);
+        let store = create_test_store(GroupId::Meta);
 
         // Empty log
         assert!(store.first_log_index().unwrap().is_none());
@@ -614,7 +614,7 @@ mod tests {
 
     #[test]
     fn test_delete_logs_before() {
-        let store = create_test_store(RaftGroupId::DataUserShard(5));
+        let store = create_test_store(GroupId::DataUserShard(5));
 
         let entries: Vec<RaftLogEntry> = (1..=10)
             .map(|i| RaftLogEntry {
@@ -644,7 +644,7 @@ mod tests {
 
     #[test]
     fn test_vote_operations() {
-        let store = create_test_store(RaftGroupId::Meta);
+        let store = create_test_store(GroupId::Meta);
 
         // No vote initially
         assert!(store.read_vote().unwrap().is_none());
@@ -677,7 +677,7 @@ mod tests {
 
     #[test]
     fn test_commit_purge_operations() {
-        let store = create_test_store(RaftGroupId::DataSharedShard(0));
+        let store = create_test_store(GroupId::DataSharedShard(0));
 
         // No commit/purge initially
         assert!(store.read_commit().unwrap().is_none());
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_operations() {
-        let store = create_test_store(RaftGroupId::Meta);
+        let store = create_test_store(GroupId::Meta);
 
         // No snapshot initially
         assert!(store.read_snapshot_meta().unwrap().is_none());
@@ -756,8 +756,8 @@ mod tests {
             .create_partition(&Partition::new(RAFT_PARTITION_NAME))
             .unwrap();
 
-        let store1 = RaftPartitionStore::new(backend.clone(), RaftGroupId::Meta);
-        let store2 = RaftPartitionStore::new(backend.clone(), RaftGroupId::DataUserShard(0));
+        let store1 = RaftPartitionStore::new(backend.clone(), GroupId::Meta);
+        let store2 = RaftPartitionStore::new(backend.clone(), GroupId::DataUserShard(0));
 
         // Add entries to store1
         store1
@@ -789,9 +789,9 @@ mod tests {
 
     #[test]
     fn test_group_id_key_prefixes() {
-        assert_eq!(RaftGroupId::Meta.key_prefix(), "meta");
-        assert_eq!(RaftGroupId::DataUserShard(0).key_prefix(), "u:00000");
-        assert_eq!(RaftGroupId::DataUserShard(31).key_prefix(), "u:00031");
-        assert_eq!(RaftGroupId::DataSharedShard(0).key_prefix(), "s:00000");
+        assert_eq!(GroupId::Meta.key_prefix(), "meta");
+        assert_eq!(GroupId::DataUserShard(0).key_prefix(), "u:00000");
+        assert_eq!(GroupId::DataUserShard(31).key_prefix(), "u:00031");
+        assert_eq!(GroupId::DataSharedShard(0).key_prefix(), "s:00000");
     }
 }
