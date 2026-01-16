@@ -40,10 +40,12 @@ impl TypedStatementHandler<FlushAllTablesStatement> for FlushAllTablesHandler {
             .collect();
 
         if target_tables.is_empty() {
-            return Err(KalamDbError::NotFound(format!(
-                "No tables found in namespace {}",
-                ns.as_str()
-            )));
+            return Ok(ExecutionResult::Success {
+                message: format!(
+                    "Storage flush skipped: no tables found in namespace '{}'",
+                    ns.as_str()
+                ),
+            });
         }
 
         let job_manager = self.app_context.job_manager();

@@ -535,7 +535,7 @@ impl TableProvider for LiveQueriesTableProvider {
         let live_queries: Vec<(Vec<u8>, LiveQuery)> = if let Some((index_idx, index_prefix)) =
             self.store.find_best_index_for_filters(filters)
         {
-            log::info!(
+            log::debug!(
                 "[system.live_queries] Using secondary index {} for filters: {:?}",
                 index_idx,
                 filters
@@ -552,7 +552,7 @@ impl TableProvider for LiveQueriesTableProvider {
                 .map(|(id, lq)| (id.storage_key(), lq))
                 .collect()
         } else {
-            log::info!(
+            log::debug!(
                 "[system.live_queries] Full table scan (no index match) for filters: {:?}",
                 filters
             );

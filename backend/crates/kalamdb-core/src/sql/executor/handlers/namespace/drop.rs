@@ -34,7 +34,7 @@ impl DropNamespaceHandler {
         //
         // For a clean deregistration, we would need a custom CatalogProvider that supports removal.
         // This is tracked as a future enhancement.
-        log::info!(
+        log::debug!(
             "Namespace '{}' dropped - schema will be unavailable for new queries",
             namespace_id.as_str()
         );

@@ -33,7 +33,7 @@ pub async fn cleanup_table_data_internal(
     table_id: &TableId,
     table_type: TableType,
 ) -> Result<usize, KalamDbError> {
-    log::info!(
+    log::debug!(
         "[CleanupHelper] Cleaning up table data for {:?} (type: {:?})",
         table_id,
         table_type
@@ -58,7 +58,7 @@ pub async fn cleanup_table_data_internal(
 
             match backend.drop_partition(&partition) {
                 Ok(_) => {
-                    log::info!(
+                    log::debug!(
                         "[CleanupHelper] Dropped partition '{}' for user table {:?}",
                         partition_name,
                         table_id
@@ -101,7 +101,7 @@ pub async fn cleanup_table_data_internal(
 
             match backend.drop_partition(&partition) {
                 Ok(_) => {
-                    log::info!(
+                    log::debug!(
                         "[CleanupHelper] Dropped partition '{}' for shared table {:?}",
                         partition_name,
                         table_id
@@ -142,7 +142,7 @@ pub async fn cleanup_table_data_internal(
 
             match backend.drop_partition(&partition) {
                 Ok(_) => {
-                    log::info!(
+                    log::debug!(
                         "[CleanupHelper] Dropped partition '{}' for stream table {:?}",
                         partition_name,
                         table_id
@@ -174,7 +174,7 @@ pub async fn cleanup_table_data_internal(
         }
     };
 
-    log::info!(
+    log::debug!(
         "[CleanupHelper] Deleted {} rows from table data",
         rows_deleted
     );
@@ -197,7 +197,7 @@ pub async fn cleanup_parquet_files_internal(
     table_type: TableType,
     storage: &StorageCleanupDetails,
 ) -> Result<u64, KalamDbError> {
-    log::info!(
+    log::debug!(
         "[CleanupHelper] Cleaning up Parquet files for {:?} using storage {}",
         table_id,
         storage.storage_id.as_str()
@@ -226,7 +226,7 @@ pub async fn cleanup_parquet_files_internal(
     )
     .into_kalamdb_error("Filestore delete failed")?;
 
-    log::info!(
+    log::debug!(
         "[CleanupHelper] Freed {} bytes from Parquet files",
         bytes_freed
     );
@@ -248,10 +248,10 @@ pub async fn cleanup_metadata_internal(
     schema_registry: &Arc<SchemaRegistry>,
     table_id: &TableId,
 ) -> Result<(), KalamDbError> {
-    log::info!("[CleanupHelper] Cleaning up metadata for {:?}", table_id);
+    log::debug!("[CleanupHelper] Cleaning up metadata for {:?}", table_id);
 
     if !schema_registry.table_exists(app_ctx, table_id)? {
-        log::info!(
+        log::debug!(
             "[CleanupHelper] Metadata already removed for {:?}, skipping",
             table_id
         );
@@ -262,7 +262,7 @@ pub async fn cleanup_metadata_internal(
     // This removes from both cache and persistent store (delete-through pattern)
     schema_registry.delete_table_definition(app_ctx, table_id)?;
 
-    log::info!("[CleanupHelper] Metadata cleanup complete");
+    log::debug!("[CleanupHelper] Metadata cleanup complete");
     Ok(())
 }
 
@@ -347,7 +347,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             statement.table_name.as_str(),
         );
 
-        log::info!(
+        log::debug!(
             "🗑️  DROP TABLE request: {}.{} (if_exists: {}, user: {}, role: {:?})",
             statement.namespace_id.as_str(),
             statement.table_name.as_str(),
@@ -392,7 +392,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
 
         if !exists {
             if statement.if_exists {
-                log::info!(
+                log::debug!(
                     "ℹ️  DROP TABLE {}.{}: Table does not exist (IF EXISTS - skipping)",
                     statement.namespace_id.as_str(),
                     statement.table_name.as_str()
@@ -467,7 +467,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             ) {
                 match job_manager.cancel_job(&job.job_id).await {
                     Ok(_) => {
-                        log::info!(
+                        log::debug!(
                             "🛑 Cancelled flush job {} for table {}.{} before DROP",
                             job.job_id,
                             statement.namespace_id.as_str(),
@@ -489,7 +489,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         }
 
         if cancelled_count > 0 {
-            log::info!(
+            log::debug!(
                 "🛑 Cancelled {} active flush job(s) for table {}.{}",
                 cancelled_count,
                 statement.namespace_id.as_str(),
@@ -557,7 +557,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         );
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
-        log::info!(
+        log::debug!(
             "✅ DROP TABLE succeeded: {}.{} (type: {:?}) - Cleanup job: {}",
             statement.namespace_id.as_str(),
             statement.table_name.as_str(),

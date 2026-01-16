@@ -1074,7 +1074,7 @@ jobs:
           
           # Run smoke tests and capture result
           # Using --test-threads=1 for sequential execution
-          if cargo test --features e2e-tests --test smoke -- --test-threads=1 2>&1 | tee ../smoke-test-output.txt; then
+          if cargo test --features e2e-tests --test smoke 2>&1 | tee ../smoke-test-output.txt; then
             echo "smoke_tests_passed=true" >> "$GITHUB_OUTPUT"
             echo "✅ All smoke tests passed!"
           else

@@ -510,7 +510,7 @@ impl TableFlush for UserTableFlushJob {
             return Err(KalamDbError::Other(summary));
         }
 
-        log::info!("✅ User table flush completed: table={}, rows_flushed={}, users_count={}, parquet_files={}",
+        log::debug!("✅ User table flush completed: table={}, rows_flushed={}, users_count={}, parquet_files={}",
                   self.table_id,
                   total_rows_flushed, rows_by_user.len(), parquet_files.len());
 

@@ -99,7 +99,7 @@ impl JobExecutor for CleanupExecutor {
     }
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
-        ctx.log_info("Starting cleanup operation");
+        ctx.log_debug("Starting cleanup operation");
 
         // Parameters already validated in JobContext - type-safe access
         let params = ctx.params();
@@ -107,7 +107,7 @@ impl JobExecutor for CleanupExecutor {
         let table_type = params.table_type;
         let operation = params.operation;
 
-        ctx.log_info(&format!(
+        ctx.log_debug(&format!(
             "Cleaning up table {} (operation: {:?}, type: {:?})",
             table_id, operation, table_type
         ));
@@ -117,7 +117,7 @@ impl JobExecutor for CleanupExecutor {
         let rows_deleted =
             cleanup_table_data_internal(&ctx.app_ctx, &table_id, table_type).await?;
 
-        ctx.log_info(&format!("Cleaned up {} rows from table data", rows_deleted));
+        ctx.log_debug(&format!("Cleaned up {} rows from table data", rows_deleted));
 
         // 2. Clean up Parquet files from storage backend
         let bytes_freed = cleanup_parquet_files_internal(
@@ -128,7 +128,7 @@ impl JobExecutor for CleanupExecutor {
         )
         .await?;
 
-        ctx.log_info(&format!("Freed {} bytes from Parquet files", bytes_freed));
+        ctx.log_debug(&format!("Freed {} bytes from Parquet files", bytes_freed));
 
         // 3. Invalidate manifest cache (L1 hot cache + L2 RocksDB)
         let manifest_service = ctx.app_ctx.manifest_service();
@@ -136,7 +136,7 @@ impl JobExecutor for CleanupExecutor {
             .invalidate_table(&table_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to invalidate manifest cache: {}", e)))?;
 
-        ctx.log_info(&format!(
+        ctx.log_debug(&format!(
             "Invalidated {} manifest cache entries",
             cache_entries_invalidated
         ));
@@ -145,7 +145,7 @@ impl JobExecutor for CleanupExecutor {
         let schema_registry = ctx.app_ctx.schema_registry();
         cleanup_metadata_internal(ctx.app_ctx.as_ref(), &schema_registry, &table_id).await?;
 
-        ctx.log_info("Removed table metadata from SchemaRegistry");
+        ctx.log_debug("Removed table metadata from SchemaRegistry");
 
         // Build success message with metrics
         let message = format!(
@@ -153,7 +153,7 @@ impl JobExecutor for CleanupExecutor {
             table_id, rows_deleted, bytes_freed, cache_entries_invalidated
         );
 
-        ctx.log_info(&message);
+        ctx.log_debug(&message);
 
         Ok(JobDecision::Completed {
             message: Some(message),

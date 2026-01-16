@@ -15,6 +15,7 @@ use super::base::{self, BaseTableProvider, TableProviderCore};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use crate::providers::arrow_json_conversion::coerce_rows;
 use crate::providers::helpers::extract_user_context;
 use crate::providers::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::schema_registry::TableType;
@@ -96,11 +97,14 @@ impl UserTableProvider {
             .schema_registry()
             .get_arrow_schema(core.app_context.as_ref(), core.table_id())?;
 
-        log::debug!(
-             "UserTableProvider: Created for {} with schema fields: {:?}",
-             core.table_id(),
-             schema.fields().iter().map(|f| f.name()).collect::<Vec<_>>()
-        );
+        if log::log_enabled!(log::Level::Debug) {
+            let field_names: Vec<_> = schema.fields().iter().map(|f| f.name()).collect();
+            log::debug!(
+                "UserTableProvider: Created for {} with schema fields: {:?}",
+                core.table_id(),
+                field_names
+            );
+        }
 
         let pk_index = UserTablePkIndex::new(
             core.table_id(),
@@ -119,24 +123,6 @@ impl UserTableProvider {
     /// Get the primary key field name
     pub fn primary_key_field_name(&self) -> &str {
         &self.primary_key_field_name
-    }
-
-    /// Get the primary key column_id from the table definition
-    /// Returns 0 if the table definition cannot be found (shouldn't happen for existing providers)
-    fn get_pk_column_id(&self) -> u64 {
-        self.core
-            .app_context
-            .schema_registry()
-            .get_table_if_exists(self.core.app_context.as_ref(), self.core.table_id())
-            .ok()
-            .flatten()
-            .and_then(|def| {
-                def.columns
-                    .iter()
-                    .find(|c| c.is_primary_key)
-                    .map(|c| c.column_id)
-            })
-            .unwrap_or(0)
     }
 
     /// Build a complete Row from UserTableRow including system columns (_seq, _deleted)
@@ -198,16 +184,6 @@ impl UserTableProvider {
         } else {
             Ok(None)
         }
-    }
-
-    /// Extract user context from DataFusion SessionState
-    ///
-    /// **Purpose**: Read (user_id, role) from SessionState.config.options.extensions
-    /// injected by ExecutionContext.create_session_with_user()
-    ///
-    /// **Returns**: (UserId, Role) tuple for RLS enforcement
-    fn extract_user_context(state: &dyn Session) -> Result<(UserId, Role), KalamDbError> {
-        extract_user_context(state)
     }
 
     /// Scan Parquet files from cold storage for a specific user
@@ -374,7 +350,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Not found in hot storage - check cold storage using optimized manifest-based lookup
         // This uses column_stats to prune segments that can't contain the PK
         let pk_name = self.primary_key_field_name();
-        let pk_column_id = self.get_pk_column_id();
+        let pk_column_id = self.core.primary_key_column_id();
         let exists_in_cold = base::pk_exists_in_cold(
             &self.core,
             self.core.table_id(),
@@ -472,8 +448,6 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         user_id: &UserId,
         rows: Vec<Row>,
     ) -> Result<Vec<UserTableRowId>, KalamDbError> {
-        use crate::providers::arrow_json_conversion::coerce_rows;
-
         if rows.is_empty() {
             return Ok(Vec::new());
         }
@@ -823,7 +797,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError> {
         // Extract user_id and role from SessionState for RLS
-        let (user_id, role) = Self::extract_user_context(state)?;
+        let (user_id, role) = extract_user_context(state)?;
         let allow_all_users = matches!(role, Role::Service | Role::Dba | Role::System);
 
         // Extract sequence bounds from filter to optimize RocksDB scan
@@ -843,7 +817,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             self.scan_all_users_with_version_resolution(filter, limit, keep_deleted)?
         } else {
             self.scan_with_version_resolution_to_kvs(
-                &user_id,
+                user_id,
                 filter,
                 since_seq,
                 limit,

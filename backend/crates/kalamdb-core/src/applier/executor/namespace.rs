@@ -25,7 +25,7 @@ impl NamespaceExecutor {
         &self,
         namespace_id: &NamespaceId,
     ) -> Result<String, ApplierError> {
-        log::info!("CommandExecutorImpl: Creating namespace {}", namespace_id);
+        log::debug!("CommandExecutorImpl: Creating namespace {}", namespace_id);
         
         let namespace = Namespace::new(namespace_id.as_str());
         
@@ -43,7 +43,7 @@ impl NamespaceExecutor {
         &self,
         namespace_id: &NamespaceId,
     ) -> Result<String, ApplierError> {
-        log::info!("CommandExecutorImpl: Dropping namespace {}", namespace_id);
+        log::debug!("CommandExecutorImpl: Dropping namespace {}", namespace_id);
         
         self.app_context
             .system_tables()

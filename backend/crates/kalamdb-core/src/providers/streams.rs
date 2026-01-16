@@ -29,7 +29,7 @@ use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::{SeqId, StreamTableRowId};
 use kalamdb_commons::models::UserId;
-use kalamdb_commons::{Role, TableId};
+use kalamdb_commons::TableId;
 use kalamdb_tables::{StreamTableRow, StreamTableStore};
 use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -145,15 +145,6 @@ impl StreamTableProvider {
         self.store.clone()
     }
 
-    /// Extract user context from DataFusion SessionState
-    ///
-    /// **Purpose**: Read (user_id, role) from SessionState.config.options.extensions
-    /// injected by ExecutionContext.create_session_with_user()
-    ///
-    /// **Returns**: (UserId, Role) tuple for RLS enforcement
-    fn extract_user_context(state: &dyn Session) -> Result<(UserId, Role), KalamDbError> {
-        extract_user_context(state)
-    }
 }
 
 impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider {
@@ -285,7 +276,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError> {
         // Extract user_id from SessionState for RLS
-        let (user_id, _role) = Self::extract_user_context(state)?;
+        let (user_id, _role) = extract_user_context(state)?;
 
         // Extract sequence bounds from filter to optimize scan
         let (since_seq, _until_seq) = if let Some(expr) = filter {
@@ -297,7 +288,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         // Perform KV scan (hot-only) and convert to batch
         let keep_deleted = false; // Stream tables don't support soft delete yet
         let kvs = self.scan_with_version_resolution_to_kvs(
-            &user_id,
+            user_id,
             filter,
             since_seq,
             limit,
