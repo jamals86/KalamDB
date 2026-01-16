@@ -13,9 +13,15 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use crate::manifest::ManifestAccessPlanner;
+use crate::providers::arrow_json_conversion::coerce_rows;
 use crate::providers::unified_dml;
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
+use datafusion::arrow::array::{
+    Array, BooleanArray, Int16Array, Int32Array, Int64Array, StringArray, UInt32Array,
+    UInt64Array,
+};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::constants::SystemColumnNames;
@@ -23,13 +29,15 @@ use datafusion::catalog::Session;
 use datafusion::datasource::memory::MemTable;
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
+use datafusion::logical_expr::{utils::expr_to_columns, Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+use kalamdb_commons::types::Manifest;
 use kalamdb_commons::{StorageKey, TableId};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 // Re-export types moved to submodules
@@ -141,8 +149,6 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// Iterates over rows and calls insert() for each. Providers may override
     /// with batch-optimized implementation.
     fn insert_batch(&self, user_id: &UserId, rows: Vec<Row>) -> Result<Vec<K>, KalamDbError> {
-        use crate::providers::arrow_json_conversion::coerce_rows;
-
         // Coerce rows to match schema types (e.g. String -> Timestamp)
         // This ensures real-time events match the storage format
         let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
@@ -448,8 +454,6 @@ fn scalar_value_matches_id(value: &ScalarValue, target: &str) -> bool {
 
 /// Check if a filter expression references the _deleted column
 pub fn filter_uses_deleted_column(filter: &Expr) -> bool {
-    use datafusion::logical_expr::utils::expr_to_columns;
-    use std::collections::HashSet;
     let mut columns = HashSet::new();
     if expr_to_columns(filter, &mut columns).is_ok() {
         columns.iter().any(|c| c.name == SystemColumnNames::DELETED)
@@ -519,9 +523,6 @@ pub fn pk_exists_in_cold(
     pk_column_id: u64,
     pk_value: &str,
 ) -> Result<bool, KalamDbError> {
-    use crate::manifest::ManifestAccessPlanner;
-    use kalamdb_commons::types::Manifest;
-
     let namespace = table_id.namespace_id();
     let table = table_id.table_name();
     let scope_label = user_id
@@ -715,10 +716,6 @@ pub fn pk_exists_batch_in_cold(
     pk_column_id: u64,
     pk_values: &[String],
 ) -> Result<Option<String>, KalamDbError> {
-    use crate::manifest::ManifestAccessPlanner;
-    use kalamdb_commons::types::Manifest;
-    use std::collections::HashSet;
-
     if pk_values.is_empty() {
         return Ok(None);
     }
@@ -906,9 +903,6 @@ fn pk_exists_batch_in_parquet_via_store(
     pk_column: &str,
     pk_values: &std::collections::HashSet<&str>,
 ) -> Result<Option<String>, KalamDbError> {
-    use datafusion::arrow::array::{Array, BooleanArray, Int64Array, UInt64Array};
-    use std::collections::HashMap;
-
     // Read Parquet file via object_store
     let batches = kalamdb_filestore::read_parquet_batches_sync(store, storage, parquet_path)
         .into_kalamdb_error("Failed to read Parquet file")?;
@@ -991,9 +985,6 @@ fn pk_exists_in_parquet_via_store(
     pk_column: &str,
     pk_value: &str,
 ) -> Result<bool, KalamDbError> {
-    use datafusion::arrow::array::{Array, BooleanArray, Int64Array, UInt64Array};
-    use std::collections::HashMap;
-
     // Read Parquet file via object_store
     let batches = kalamdb_filestore::read_parquet_batches_sync(store, storage, parquet_path)
         .into_kalamdb_error("Failed to read Parquet file")?;
@@ -1065,9 +1056,7 @@ fn pk_exists_in_parquet_via_store(
 }
 
 /// Extract PK value as string from an Arrow array at given index.
-fn extract_pk_as_string(col: &dyn datafusion::arrow::array::Array, idx: usize) -> Option<String> {
-    use datafusion::arrow::array::{Int16Array, Int32Array, Int64Array, StringArray, UInt32Array, UInt64Array};
-
+fn extract_pk_as_string(col: &dyn Array, idx: usize) -> Option<String> {
     if col.is_null(idx) {
         return None;
     }

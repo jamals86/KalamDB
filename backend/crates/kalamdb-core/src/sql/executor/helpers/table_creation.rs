@@ -315,7 +315,7 @@ pub fn build_table_definition(
     let sys_cols = app_context.system_columns_service();
     sys_cols.add_system_columns(&mut table_def)?;
 
-    log::info!(
+    log::debug!(
         "✅ Built TableDefinition for {} (type: {:?}, columns: {}, version: {})",
         table_id_str,
         stmt.table_type,

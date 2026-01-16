@@ -14,6 +14,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use crate::providers::arrow_json_conversion::coerce_rows;
 use crate::providers::base::{self, BaseTableProvider, TableProviderCore};
 use crate::providers::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::schema_registry::TableType;
@@ -97,24 +98,6 @@ impl SharedTableProvider {
             primary_key_field_name,
             schema,
         }
-    }
-
-    /// Get the primary key column_id from the table definition
-    /// Returns 0 if the table definition cannot be found (shouldn't happen for existing providers)
-    fn get_pk_column_id(&self) -> u64 {
-        self.core
-            .app_context
-            .schema_registry()
-            .get_table_if_exists(self.core.app_context.as_ref(), self.core.table_id())
-            .ok()
-            .flatten()
-            .and_then(|def| {
-                def.columns
-                    .iter()
-                    .find(|c| c.is_primary_key)
-                    .map(|c| c.column_id)
-            })
-            .unwrap_or(0)
     }
 
     /// Scan Parquet files from cold storage for shared table
@@ -236,7 +219,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Not found in hot storage - check cold storage using optimized manifest-based lookup
         // This uses column_stats to prune segments that can't contain the PK
         let pk_name = self.primary_key_field_name();
-        let pk_column_id = self.get_pk_column_id();
+        let pk_column_id = self.core.primary_key_column_id();
         let exists_in_cold = base::pk_exists_in_cold(
             &self.core,
             self.core.table_id(),
@@ -316,9 +299,6 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         _user_id: &UserId,
         rows: Vec<Row>,
     ) -> Result<Vec<SharedTableRowId>, KalamDbError> {
-        use crate::error_extensions::KalamDbResultExt;
-        use crate::providers::arrow_json_conversion::coerce_rows;
-
         if rows.is_empty() {
             return Ok(Vec::new());
         }
@@ -398,7 +378,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
             // OPTIMIZED: Batch cold storage check - O(files) instead of O(files × N)
             // This reads Parquet files ONCE for all PK values instead of N times
-            let pk_column_id = self.get_pk_column_id();
+            let pk_column_id = self.core.primary_key_column_id();
             if let Some(found_pk) = base::pk_exists_batch_in_cold(
                 &self.core,
                 self.core.table_id(),

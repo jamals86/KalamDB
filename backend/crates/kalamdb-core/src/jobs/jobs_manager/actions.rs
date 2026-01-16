@@ -109,7 +109,7 @@ impl JobsManager {
         // Log job creation
         self.log_job_event(
             &job_id,
-            &Level::Info,
+            &Level::Debug,
             &format!("Job created: type={:?}", job_type),
         );
 

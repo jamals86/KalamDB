@@ -90,15 +90,8 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         let existing = namespaces_provider.get_namespace(&namespace_id)?;
 
         if existing.is_some() {
-            if statement.if_not_exists {
-                let message = format!("Namespace '{}' already exists", name);
-                return Ok(ExecutionResult::Success { message });
-            } else {
-                return Err(KalamDbError::AlreadyExists(format!(
-                    "Namespace '{}' already exists",
-                    name
-                )));
-            }
+            let message = format!("Namespace '{}' already exists", name);
+            return Ok(ExecutionResult::Success { message });
         }
 
         // In cluster mode, route through executor for Raft replication

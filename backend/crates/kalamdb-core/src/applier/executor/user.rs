@@ -22,7 +22,7 @@ impl UserExecutor {
     
     /// Execute CREATE USER
     pub async fn create_user(&self, user: &User) -> Result<String, ApplierError> {
-        log::info!("CommandExecutorImpl: Creating user {}", user.id);
+        log::debug!("CommandExecutorImpl: Creating user {}", user.id);
         
         self.app_context
             .system_tables()
@@ -35,7 +35,7 @@ impl UserExecutor {
     
     /// Execute ALTER USER (update)
     pub async fn update_user(&self, user: &User) -> Result<String, ApplierError> {
-        log::info!("CommandExecutorImpl: Updating user {}", user.id);
+        log::debug!("CommandExecutorImpl: Updating user {}", user.id);
         
         self.app_context
             .system_tables()
@@ -50,7 +50,7 @@ impl UserExecutor {
     /// 
     /// Note: The deleted_at timestamp is set internally by delete_user
     pub async fn delete_user(&self, user_id: &UserId) -> Result<String, ApplierError> {
-        log::info!("CommandExecutorImpl: Deleting user {}", user_id);
+        log::debug!("CommandExecutorImpl: Deleting user {}", user_id);
         
         self.app_context
             .system_tables()

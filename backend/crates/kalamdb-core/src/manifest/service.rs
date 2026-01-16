@@ -328,7 +328,7 @@ impl ManifestService {
             }
         }
 
-        info!(
+        debug!(
             "Invalidated {} manifest cache entries for table {}",
             invalidated, table_id
         );

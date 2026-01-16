@@ -45,7 +45,7 @@ impl DdlExecutor {
         table_type: TableType,
         table_def: &TableDefinition,
     ) -> Result<String, ApplierError> {
-        log::info!(
+        log::debug!(
             "CommandExecutorImpl: Creating {} table {}",
             table_type,
             table_id.full_name()
@@ -82,13 +82,19 @@ impl DdlExecutor {
         table_def: &TableDefinition,
         old_version: u32,
     ) -> Result<String, ApplierError> {
-        log::info!(
-            "CommandExecutorImpl: Altering table {} (version {} -> {}). New columns: {:?}",
-            table_id.full_name(),
-            old_version,
-            table_def.schema_version,
-            table_def.columns.iter().map(|c| c.column_name.as_str()).collect::<Vec<_>>()
-        );
+        if log::log_enabled!(log::Level::Debug) {
+            log::debug!(
+                "CommandExecutorImpl: Altering table {} (version {} -> {}). New columns: {:?}",
+                table_id.full_name(),
+                old_version,
+                table_def.schema_version,
+                table_def
+                    .columns
+                    .iter()
+                    .map(|c| c.column_name.as_str())
+                    .collect::<Vec<_>>()
+            );
+        }
         
         // 1. Update in system.tables
         self.app_context
@@ -113,7 +119,7 @@ impl DdlExecutor {
         // 4. Verify the schema was updated correctly
         if let Some(cached) = self.app_context.schema_registry().get(table_id) {
             if let Ok(schema) = cached.arrow_schema() {
-                log::info!(
+                log::debug!(
                     "CommandExecutorImpl: ALTER TABLE {} complete - Arrow schema now has {} fields: {:?}",
                     table_id.full_name(),
                     schema.fields().len(),
@@ -133,7 +139,7 @@ impl DdlExecutor {
     
     /// Execute DROP TABLE
     pub async fn drop_table(&self, table_id: &TableId) -> Result<String, ApplierError> {
-        log::info!("CommandExecutorImpl: Dropping table {}", table_id.full_name());
+        log::debug!("CommandExecutorImpl: Dropping table {}", table_id.full_name());
         
         // 1. Remove from system.tables
         self.app_context

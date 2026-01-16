@@ -62,7 +62,7 @@ impl MetaApplier for ProviderMetaApplier {
         namespace_id: &NamespaceId,
         created_by: Option<&UserId>,
     ) -> Result<String, RaftError> {
-        log::info!("ProviderMetaApplier: Creating namespace {} by {:?}", namespace_id, created_by);
+        log::debug!("ProviderMetaApplier: Creating namespace {} by {:?}", namespace_id, created_by);
         
         let message = self.executor.namespace()
             .create_namespace(namespace_id)
@@ -73,7 +73,7 @@ impl MetaApplier for ProviderMetaApplier {
     }
 
     async fn delete_namespace(&self, namespace_id: &NamespaceId) -> Result<String, RaftError> {
-        log::info!("ProviderMetaApplier: Deleting namespace {}", namespace_id);
+        log::debug!("ProviderMetaApplier: Deleting namespace {}", namespace_id);
         
         let message = self.executor.namespace()
             .drop_namespace(namespace_id)
@@ -93,7 +93,7 @@ impl MetaApplier for ProviderMetaApplier {
         table_type: TableType,
         schema_json: &str,
     ) -> Result<String, RaftError> {
-        log::info!("ProviderMetaApplier: Creating table {} (type: {})", table_id.full_name(), table_type);
+        log::debug!("ProviderMetaApplier: Creating table {} (type: {})", table_id.full_name(), table_type);
         
         let table_def: TableDefinition = serde_json::from_str(schema_json)
             .map_err(|e| RaftError::Internal(format!("Failed to deserialize table schema: {}", e)))?;
@@ -111,7 +111,7 @@ impl MetaApplier for ProviderMetaApplier {
         table_id: &TableId,
         schema_json: &str,
     ) -> Result<String, RaftError> {
-        log::info!("ProviderMetaApplier: Altering table {}", table_id.full_name());
+        log::debug!("ProviderMetaApplier: Altering table {}", table_id.full_name());
         
         let table_def: TableDefinition = serde_json::from_str(schema_json)
             .map_err(|e| RaftError::Internal(format!("Failed to deserialize table schema: {}", e)))?;
@@ -124,7 +124,7 @@ impl MetaApplier for ProviderMetaApplier {
     }
 
     async fn drop_table(&self, table_id: &TableId) -> Result<String, RaftError> {
-        log::info!("ProviderMetaApplier: Dropping table {}", table_id.full_name());
+        log::debug!("ProviderMetaApplier: Dropping table {}", table_id.full_name());
         
         self.executor.ddl()
             .drop_table(table_id)
@@ -232,7 +232,7 @@ impl MetaApplier for ProviderMetaApplier {
         node_id: NodeId,
         created_at: i64,
     ) -> Result<String, RaftError> {
-        log::info!("ProviderMetaApplier: Creating job {} (type: {:?})", job_id, job_type);
+        log::debug!("ProviderMetaApplier: Creating job {} (type: {:?})", job_id, job_type);
         
         let job = Job {
             job_id: job_id.clone(),
@@ -532,7 +532,7 @@ impl MetaApplier for ProviderMetaApplier {
         connection_id: &ConnectionId,
         _deleted_at: i64,
     ) -> Result<String, RaftError> {
-        log::info!("ProviderMetaApplier: Deleting live queries for connection {}", connection_id);
+        log::debug!("ProviderMetaApplier: Deleting live queries for connection {}", connection_id);
         
         // Get all live queries for this connection and delete them
         let live_queries = self.app_context.system_tables()

@@ -81,6 +81,22 @@ impl TableProviderCore {
         self.table_id.as_ref()
     }
 
+    /// Best-effort primary key column_id for this table.
+    /// Returns 0 if the schema is missing or no primary key is defined.
+    pub fn primary_key_column_id(&self) -> u64 {
+        self.schema_registry
+            .get_table_if_exists(self.app_context.as_ref(), self.table_id())
+            .ok()
+            .flatten()
+            .and_then(|def| {
+                def.columns
+                    .iter()
+                    .find(|c| c.is_primary_key)
+                    .map(|c| c.column_id)
+            })
+            .unwrap_or(0)
+    }
+
     /// Cloneable TableId handle (avoids leaking Arc internals to callers)
     pub fn table_id_arc(&self) -> Arc<TableId> {
         self.table_id.clone()
