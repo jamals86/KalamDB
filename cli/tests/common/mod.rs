@@ -996,7 +996,7 @@ pub fn execute_sql_via_client_as_with_args(
                 let mut output = String::new();
                 
                 for result in &response.results {
-                    // Check if this has a message (e.g., FLUSH TABLE, DDL statements)
+                    // Check if this has a message (e.g., STORAGE FLUSH TABLE, DDL statements)
                     if let Some(ref message) = result.message {
                         // Check if this is a DML message like "Inserted N row(s)" or "Updated N row(s)"
                         // and normalize to "N rows affected" format for test compatibility
@@ -1352,7 +1352,7 @@ pub fn random_string(len: usize) -> String {
         .collect()
 }
 
-/// Parse job ID from FLUSH TABLE output
+/// Parse job ID from STORAGE FLUSH TABLE output
 ///
 /// Expected format: "Flush started for table 'namespace.table'. Job ID: flush-table-123-uuid"
 pub fn parse_job_id_from_flush_output(output: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -1400,7 +1400,7 @@ pub fn parse_job_id_from_json_message(json_output: &str) -> Result<String, Box<d
     Err(format!("Failed to parse job ID from message: {}", message).into())
 }
 
-/// Parse multiple job IDs from FLUSH ALL TABLES output
+/// Parse multiple job IDs from STORAGE FLUSH ALL output
 ///
 /// Expected format: "Flush started for N table(s) in namespace 'ns'. Job IDs: [id1, id2, id3]"
 pub fn parse_job_ids_from_flush_all_output(
@@ -1511,7 +1511,7 @@ pub fn verify_job_completed(
 
 /// Verify that multiple jobs have all completed successfully
 ///
-/// Convenience wrapper for verifying multiple jobs from FLUSH ALL TABLES
+/// Convenience wrapper for verifying multiple jobs from STORAGE FLUSH ALL
 pub fn verify_jobs_completed(
     job_ids: &[String],
     timeout: Duration,
@@ -2001,7 +2001,7 @@ fn verify_flush_storage_files_in_dir(dir: &std::path::Path) -> FlushStorageVerif
 /// Verify flush storage files exist after a flush operation
 ///
 /// This is a convenience function that combines the flush job verification with
-/// storage file verification. Use after calling FLUSH TABLE and before cleanup.
+/// storage file verification. Use after calling STORAGE FLUSH TABLE and before cleanup.
 ///
 /// # Arguments
 /// * `namespace` - The namespace name

@@ -18,7 +18,7 @@ fn user_table_select_cold_100() -> anyhow::Result<()> {
     std::thread::sleep(Duration::from_millis(100));
 
     // Flush to cold storage
-    let flush_sql = "FLUSH TABLE bench_user.items";
+    let flush_sql = "STORAGE FLUSH TABLE bench_user.items";
     let flush_result = execute_cli_timed_root(flush_sql)?;
     let job_id = parse_job_id_from_flush(&flush_result.output)?;
     wait_for_flush_completion(&job_id, Duration::from_secs(30))?;

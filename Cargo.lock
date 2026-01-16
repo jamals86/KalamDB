@@ -439,12 +439,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arrayref"
-version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
-
-[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -579,7 +573,6 @@ dependencies = [
  "arrow-select",
  "flatbuffers",
  "lz4_flex",
- "zstd",
 ]
 
 [[package]]
@@ -686,18 +679,6 @@ dependencies = [
  "predicates-core",
  "predicates-tree",
  "wait-timeout",
-]
-
-[[package]]
-name = "async-compression"
-version = "0.4.37"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d10e4f991a553474232bc0a31799f6d24b034a84c0971d80d2e2f78b2e576e40"
-dependencies = [
- "compression-codecs",
- "compression-core",
- "pin-project-lite",
- "tokio",
 ]
 
 [[package]]
@@ -909,28 +890,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blake2"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
-dependencies = [
- "digest",
-]
-
-[[package]]
-name = "blake3"
-version = "1.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3888aaa89e4b2a40fca9848e400f6a658a5a3978de7be858e209cafa8be9a4a0"
-dependencies = [
- "arrayref",
- "arrayvec",
- "cc",
- "cfg-if",
- "constant_time_eq",
-]
-
-[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1063,15 +1022,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "113b4343b5f6617e7ad401ced8de3cc8b012e73a594347c307b90db3e9271289"
 dependencies = [
  "bytes",
-]
-
-[[package]]
-name = "bzip2"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3a53fac24f34a81bc9954b5d6cfce0c21e18ec6959f44f56e8e90e4bb7c346c"
-dependencies = [
- "libbz2-rs-sys",
 ]
 
 [[package]]
@@ -1295,27 +1245,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "compression-codecs"
-version = "0.4.36"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00828ba6fd27b45a448e57dbfe84f1029d4c9f26b368157e9a448a5f49a2ec2a"
-dependencies = [
- "bzip2",
- "compression-core",
- "flate2",
- "liblzma",
- "memchr",
- "zstd",
- "zstd-safe",
-]
-
-[[package]]
-name = "compression-core"
-version = "0.4.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75984efb6ed102a0d42db99afb6c1948f0380d1d91808d5529916e6c08b49d8d"
-
-[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1362,12 +1291,6 @@ dependencies = [
  "once_cell",
  "tiny-keccak",
 ]
-
-[[package]]
-name = "constant_time_eq"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
 name = "cookie"
@@ -1631,7 +1554,6 @@ dependencies = [
  "arrow-schema",
  "async-trait",
  "bytes",
- "bzip2",
  "chrono",
  "datafusion-catalog",
  "datafusion-catalog-listing",
@@ -1658,10 +1580,8 @@ dependencies = [
  "datafusion-physical-plan",
  "datafusion-session",
  "datafusion-sql",
- "flate2",
  "futures",
  "itertools 0.14.0",
- "liblzma",
  "log",
  "object_store",
  "parking_lot",
@@ -1673,7 +1593,6 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
- "zstd",
 ]
 
 [[package]]
@@ -1766,10 +1685,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86b32b7b12645805d20b70aba6ba846cd262d7b073f7f617640c3294af108d44"
 dependencies = [
  "arrow",
- "async-compression",
  "async-trait",
  "bytes",
- "bzip2",
  "chrono",
  "datafusion-common",
  "datafusion-common-runtime",
@@ -1780,18 +1697,14 @@ dependencies = [
  "datafusion-physical-expr-common",
  "datafusion-physical-plan",
  "datafusion-session",
- "flate2",
  "futures",
  "glob",
  "itertools 0.14.0",
- "liblzma",
  "log",
  "object_store",
  "rand 0.9.2",
  "tokio",
- "tokio-util",
  "url",
- "zstd",
 ]
 
 [[package]]
@@ -1965,8 +1878,6 @@ dependencies = [
  "arrow",
  "arrow-buffer",
  "base64",
- "blake2",
- "blake3",
  "chrono",
  "chrono-tz",
  "datafusion-common",
@@ -1978,11 +1889,9 @@ dependencies = [
  "hex",
  "itertools 0.14.0",
  "log",
- "md-5",
  "num-traits",
  "rand 0.9.2",
  "regex",
- "sha2",
  "unicode-segmentation",
  "uuid",
 ]
@@ -3489,6 +3398,7 @@ dependencies = [
  "jsonwebtoken",
  "kalamdb-auth",
  "kalamdb-commons",
+ "kalamdb-configs",
  "kalamdb-core",
  "kalamdb-raft",
  "kalamdb-sql",
@@ -3519,6 +3429,7 @@ dependencies = [
  "cookie 0.18.1",
  "jsonwebtoken",
  "kalamdb-commons",
+ "kalamdb-configs",
  "kalamdb-sql",
  "kalamdb-store",
  "log",
@@ -3572,6 +3483,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalamdb-configs"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "num_cpus",
+ "openraft",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "kalamdb-core"
 version = "0.2.0"
 dependencies = [
@@ -3589,8 +3511,10 @@ dependencies = [
  "hostname",
  "kalamdb-auth",
  "kalamdb-commons",
+ "kalamdb-configs",
  "kalamdb-filestore",
  "kalamdb-raft",
+ "kalamdb-sharding",
  "kalamdb-sql",
  "kalamdb-store",
  "kalamdb-system",
@@ -3651,6 +3575,8 @@ dependencies = [
  "chrono",
  "dashmap",
  "kalamdb-commons",
+ "kalamdb-configs",
+ "kalamdb-sharding",
  "kalamdb-store",
  "log",
  "openraft",
@@ -3690,8 +3616,10 @@ dependencies = [
  "kalamdb-api",
  "kalamdb-auth",
  "kalamdb-commons",
+ "kalamdb-configs",
  "kalamdb-core",
  "kalamdb-raft",
+ "kalamdb-sharding",
  "kalamdb-sql",
  "kalamdb-store",
  "kalamdb-system",
@@ -3716,6 +3644,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalamdb-sharding"
+version = "0.2.0"
+dependencies = [
+ "kalamdb-commons",
+ "serde",
+]
+
+[[package]]
 name = "kalamdb-sql"
 version = "0.2.0"
 dependencies = [
@@ -3725,6 +3661,7 @@ dependencies = [
  "dashmap",
  "kalamdb-commons",
  "kalamdb-store",
+ "kalamdb-system",
  "log",
  "moka",
  "once_cell",
@@ -3748,12 +3685,28 @@ dependencies = [
  "dashmap",
  "datafusion",
  "kalamdb-commons",
+ "kalamdb-configs",
+ "kalamdb-sharding",
  "log",
  "rocksdb",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "kalamdb-streams"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "chrono",
+ "kalamdb-commons",
+ "kalamdb-sharding",
+ "log",
+ "serde",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -3770,7 +3723,6 @@ dependencies = [
  "datafusion",
  "datafusion-common",
  "kalamdb-commons",
- "kalamdb-raft",
  "kalamdb-store",
  "log",
  "once_cell",
@@ -3799,11 +3751,14 @@ dependencies = [
  "hex",
  "kalamdb-commons",
  "kalamdb-filestore",
+ "kalamdb-sharding",
  "kalamdb-store",
+ "kalamdb-streams",
  "kalamdb-system",
  "log",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.17",
  "tokio",
  "uuid",
@@ -3882,12 +3837,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libbz2-rs-sys"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c4a545a15244c7d945065b5d392b2d2d7f21526fba56ce51467b06ed445e8f7"
-
-[[package]]
 name = "libc"
 version = "0.2.180"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3915,26 +3864,6 @@ dependencies = [
  "core2",
  "hashbrown 0.16.1",
  "rle-decode-fast",
-]
-
-[[package]]
-name = "liblzma"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73c36d08cad03a3fbe2c4e7bb3a9e84c57e4ee4135ed0b065cade3d98480c648"
-dependencies = [
- "liblzma-sys",
-]
-
-[[package]]
-name = "liblzma-sys"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01b9596486f6d60c3bbe644c0e1be1aa6ccc472ad630fe8927b456973d7cb736"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
 ]
 
 [[package]]

@@ -24,7 +24,7 @@ use actix_web::middleware;
 use actix_web::{Error, HttpResponse};
 use futures_util::future::LocalBoxFuture;
 use kalamdb_api::rate_limiter::{ConnectionGuard, ConnectionGuardConfig, ConnectionGuardResult};
-use kalamdb_commons::config::ServerConfig;
+use kalamdb_configs::ServerConfig;
 use log::{debug, warn};
 use std::future::{ready, Ready};
 use std::net::IpAddr;
@@ -129,7 +129,7 @@ impl ConnectionProtection {
     }
 
     /// Create connection protection from server config
-    pub fn from_server_config(config: &kalamdb_commons::config::ServerConfig) -> Self {
+    pub fn from_server_config(config: &ServerConfig) -> Self {
         let guard_config = ConnectionGuardConfig {
             max_connections_per_ip: config.rate_limit.max_connections_per_ip,
             max_requests_per_ip_per_sec: config.rate_limit.max_requests_per_ip_per_sec,

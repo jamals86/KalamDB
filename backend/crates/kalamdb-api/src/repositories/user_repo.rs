@@ -63,7 +63,7 @@ impl UserRepository for CachedUsersRepo {
         // Cache miss: fetch from database
         let user = self.inner.get_user_by_username(username).await?;
         
-        // Cache the result
+        // Cache the result (insert takes ownership, no need to clone user)
         self.cache.insert(username.clone(), user.clone());
         
         Ok(user)

@@ -96,7 +96,7 @@ Ok(total_rows_flushed)
 **Test Flow**:
 1. Create user table with Timestamp column (unsupported type for Parquet serialization)
 2. Insert 3 rows with NOW() timestamps
-3. Execute `FLUSH TABLE` command
+3. Execute `STORAGE FLUSH TABLE` command
 4. Wait for flush attempt to complete
 5. **Verify**: All 3 rows remain in RocksDB buffer (not flushed)
 

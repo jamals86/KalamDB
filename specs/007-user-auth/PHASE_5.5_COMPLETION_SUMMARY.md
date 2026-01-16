@@ -163,7 +163,7 @@ test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 
 - CREATE USER, ALTER USER, DROP USER parsed in `backend/crates/kalamdb-sql/src/ddl/user_commands.rs`
 - Integrated into `ExtensionStatement` enum in `backend/crates/kalamdb-sql/src/parser/extensions.rs`
-- Same architecture as CREATE STORAGE, FLUSH TABLE commands
+- Same architecture as CREATE STORAGE, STORAGE FLUSH commands
 
 ### RBAC Integration ✅
 

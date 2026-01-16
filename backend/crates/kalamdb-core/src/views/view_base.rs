@@ -15,7 +15,7 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::SystemTable;
+use kalamdb_system::SystemTable;
 use std::any::Any;
 use std::sync::Arc;
 

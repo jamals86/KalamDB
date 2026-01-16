@@ -4,7 +4,9 @@
 //! system column families present.
 
 use anyhow::Result;
-use kalamdb_commons::{config::RocksDbSettings, StoragePartition, SystemTable};
+use kalamdb_commons::system_tables::StoragePartition;
+use kalamdb_commons::SystemTable;
+use kalamdb_configs::RocksDbSettings;
 use rocksdb::{BlockBasedOptions, Cache, ColumnFamilyDescriptor, Options, DB};
 use std::path::Path;
 use std::sync::Arc;

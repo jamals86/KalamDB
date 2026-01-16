@@ -389,3 +389,5 @@ mod cluster_test_node_rejoin;
 mod cluster_test_leader_jobs;
 #[path = "cluster/cluster_test_flush.rs"]
 mod cluster_test_flush;
+#[path = "cluster/cluster_test_cluster_list.rs"]
+mod cluster_test_cluster_list;

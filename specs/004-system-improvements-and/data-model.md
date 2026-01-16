@@ -327,7 +327,7 @@ pub struct FlushJob {
 
 pub enum FlushType {
     Automatic,  // Scheduled by flush configuration
-    Manual,     // Triggered by FLUSH TABLE command
+    Manual,     // Triggered by STORAGE FLUSH TABLE command
     Shutdown,   // Triggered by server shutdown
 }
 

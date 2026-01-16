@@ -111,7 +111,7 @@ Responses are serialized bincode payloads returned after apply.
 
 ## How to Run Cluster Mode (today)
 
-1. Build `RaftManagerConfig` from cluster TOML (mapped from `kalamdb_commons::config::ClusterConfig`).
+1. Build `RaftManagerConfig` from cluster TOML (mapped from `kalamdb_configs::ClusterConfig`).
 2. Create `RaftManager` and wire appliers once providers are available.
 3. Use `RaftExecutor` as the `CommandExecutor` for handlers.
 4. Call `RaftExecutor::start()` to launch the RPC server and start all groups.

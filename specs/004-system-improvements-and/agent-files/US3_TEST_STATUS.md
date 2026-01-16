@@ -7,7 +7,7 @@
 
 **BLOCKER RESOLVED**: JobManager now initialized in TestServer. All US3 integration tests passing.
 
-Added 8 comprehensive integration tests to `test_manual_flush_verification.rs` covering US3 (Manual Flushing) requirements. Tests verify SQL API behavior for FLUSH TABLE and FLUSH ALL TABLES commands.
+Added 8 comprehensive integration tests to `test_manual_flush_verification.rs` covering US3 (Manual Flushing) requirements. Tests verify SQL API behavior for STORAGE FLUSH TABLE and STORAGE FLUSH ALL commands.
 
 ### Test Results
 
@@ -28,15 +28,15 @@ test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out
 
 | Test | Task | Description | Status |
 |------|------|-------------|--------|
-| test_10 | T240 | FLUSH ALL TABLES returns multiple job_ids | ✅ PASSING |
-| test_14 | T245 | FLUSH non-existent table error handling | ✅ PASSING |
-| test_15 | T245 | FLUSH shared table fails (user-table only) | ✅ PASSING |
+| test_10 | T240 | STORAGE FLUSH ALL returns multiple job_ids | ✅ PASSING |
+| test_14 | T245 | STORAGE FLUSH non-existent table error handling | ✅ PASSING |
+| test_15 | T245 | STORAGE FLUSH shared table fails (user-table only) | ✅ PASSING |
 
 ### ⏸️ Blocked Tests (JobManager Required)
 
 | Test | Task | Description | Blocker |
 |------|------|-------------|---------|
-| test_08 | T238 | FLUSH TABLE returns job_id <100ms | JobManager not initialized |
+| test_08 | T238 | STORAGE FLUSH TABLE returns job_id <100ms | JobManager not initialized |
 | test_09 | T239 | Flush job completes asynchronously | JobManager not initialized |
 | test_11 | T241 | Job result includes metrics | JobManager not initialized |
 | test_12 | T242 | Flush empty table (0 records) | JobManager not initialized |
@@ -46,8 +46,8 @@ test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out
 
 | Component | Location | Status |
 |-----------|----------|--------|
-| FLUSH TABLE parsing | kalamdb-sql/flush_commands.rs | ✅ Complete |
-| FLUSH ALL TABLES parsing | kalamdb-sql/flush_commands.rs | ✅ Complete |
+| STORAGE FLUSH TABLE parsing | kalamdb-sql/flush_commands.rs | ✅ Complete |
+| STORAGE FLUSH ALL parsing | kalamdb-sql/flush_commands.rs | ✅ Complete |
 | execute_flush_table() | kalamdb-core/sql/executor.rs:1542-1715 | ✅ Complete |
 | execute_flush_all_tables() | kalamdb-core/sql/executor.rs:1721-1821 | ✅ Complete |
 | Async job spawning | JobManager.start_job() | ✅ Implemented |
@@ -79,7 +79,7 @@ Flush response: SqlResponse {
 ✓ Test 01 completed (job creation verified)  # <-- PASSES despite error!
 ```
 
-The existing tests pass because they **don't assert success** - they just verify the FLUSH command is parsed and executed without checking the result.
+The existing tests pass because they **don't assert success** - they just verify the STORAGE FLUSH command is parsed and executed without checking the result.
 
 ### New Tests Are More Rigorous
 

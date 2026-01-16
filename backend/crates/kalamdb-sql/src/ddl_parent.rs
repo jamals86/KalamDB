@@ -16,6 +16,8 @@ impl DdlAst for CreateTableStatement {}
 impl DdlAst for DescribeTableStatement {}
 impl DdlAst for DropNamespaceStatement {}
 impl DdlAst for DropTableStatement {}
+impl DdlAst for CompactAllTablesStatement {}
+impl DdlAst for CompactTableStatement {}
 impl DdlAst for FlushAllTablesStatement {}
 impl DdlAst for FlushTableStatement {}
 impl DdlAst for KillLiveQueryStatement {}

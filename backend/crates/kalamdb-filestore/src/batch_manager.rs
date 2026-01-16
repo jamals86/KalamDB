@@ -26,20 +26,21 @@ fn parse_batch_filename(filename: &str) -> Result<(i64, u64)> {
 
     let without_prefix = filename.strip_prefix("batch_").unwrap();
     let without_suffix = without_prefix.strip_suffix(".parquet").unwrap();
-    let parts: Vec<&str> = without_suffix.split('_').collect();
-
-    if parts.len() != 2 {
+    let mut parts = without_suffix.splitn(2, '_');
+    let timestamp_part = parts.next();
+    let index_part = parts.next();
+    if timestamp_part.is_none() || index_part.is_none() {
         return Err(FilestoreError::InvalidBatchFile(format!(
             "Expected format: batch_{{timestamp}}_{{index}}.parquet, got: {}",
             filename
         )));
     }
 
-    let timestamp_ms = parts[0].parse::<i64>().map_err(|e| {
+    let timestamp_ms = timestamp_part.unwrap().parse::<i64>().map_err(|e| {
         FilestoreError::InvalidBatchFile(format!("Invalid timestamp in filename: {}", e))
     })?;
 
-    let batch_index = parts[1].parse::<u64>().map_err(|e| {
+    let batch_index = index_part.unwrap().parse::<u64>().map_err(|e| {
         FilestoreError::InvalidBatchFile(format!("Invalid batch index in filename: {}", e))
     })?;
 

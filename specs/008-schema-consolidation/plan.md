@@ -613,7 +613,7 @@ impl UserTableFlushJob {
 - `backend/crates/kalamdb-core/src/sql/executor.rs`
 
 **Changes**:
-- FLUSH TABLE: Get path from `table_cache.get_storage_path()`
+- STORAGE FLUSH TABLE: Get path from `table_cache.get_storage_path()`
 - CREATE TABLE: Set `storage_id`, not `storage_location`
 - All table registration: Use storage_id references
 
@@ -701,7 +701,7 @@ backend/crates/kalamdb-core/src/sql/executor/
     ├── ddl.rs                   (CREATE, ALTER, DROP tables/namespaces/storages)
     ├── dml.rs                   (INSERT, UPDATE, DELETE)
     ├── query.rs                 (SELECT, DESCRIBE, SHOW)
-    ├── flush.rs                 (FLUSH TABLE)
+    ├── flush.rs                 (STORAGE FLUSH TABLE)
     ├── subscription.rs          (LIVE SELECT)
     ├── user_management.rs       (CREATE/ALTER/DROP USER)
     ├── table_registry.rs        (REGISTER/UNREGISTER TABLE)
@@ -2009,7 +2009,7 @@ let result = match stmt_type {
 ```
 
 **Tests**:
-- `handlers/tests/flush_tests.rs`: FLUSH TABLE, FLUSH ALL TABLES
+- `handlers/tests/flush_tests.rs`: STORAGE FLUSH TABLE, STORAGE FLUSH ALL
 - `handlers/tests/subscription_tests.rs`: LIVE SELECT with parameters
 - `handlers/tests/user_management_tests.rs`: CREATE/ALTER/DROP USER
 - `handlers/tests/table_registry_tests.rs`: REGISTER/UNREGISTER TABLE

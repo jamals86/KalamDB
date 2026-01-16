@@ -20,6 +20,7 @@ use kalamdb_sql::statement_classifier::SqlStatement;
 
 // Typed handlers organized by category
 pub mod dml;
+pub mod compact;
 pub mod flush;
 pub mod jobs;
 pub mod namespace;

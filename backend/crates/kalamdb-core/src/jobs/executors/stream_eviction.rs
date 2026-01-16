@@ -27,10 +27,11 @@ use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::providers::StreamTableProvider;
 use async_trait::async_trait;
-use kalamdb_commons::ids::{SeqId, SnowflakeGenerator, StreamTableRowId};
+use kalamdb_commons::ids::{SeqId, SnowflakeGenerator};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::{JobType, TableId};
-use kalamdb_store::entity_store::{EntityStore, ScanDirection};
+#[cfg(test)]
+use kalamdb_sharding::ShardRouter;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -135,54 +136,16 @@ impl JobExecutor for StreamEvictionExecutor {
                 ))
             })?;
         let store = stream_provider.store_arc();
-        let (cutoff_ms, cutoff_seq) = compute_cutoff_window(params.ttl_seconds)?;
+        let (cutoff_ms, _cutoff_seq) = compute_cutoff_window(params.ttl_seconds)?;
 
-        const KEY_SCAN_LIMIT: usize = 512;
-        let mut start_key: Option<StreamTableRowId> = None;
-
-        loop {
-            let iterator = store
-                .scan_directional(start_key.as_ref(), ScanDirection::Newer, KEY_SCAN_LIMIT)
-                .map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to scan stream keys during pre-validation: {}",
-                        e
-                    ))
-                })?;
-
-            let mut batch_count = 0usize;
-            let mut last_key_in_batch: Option<StreamTableRowId> = None;
-
-            for result in iterator {
-                let (row_key, row) = result.map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to deserialize row during pre-validation: {}",
-                        e
-                    ))
-                })?;
-                batch_count += 1;
-
-                if row._seq.timestamp_millis() < cutoff_ms {
-                    return Ok(true);
-                }
-
-                if row_key.seq() <= cutoff_seq {
-                    return Ok(true);
-                }
-
-                last_key_in_batch = Some(row_key);
-            }
-
-            if batch_count < KEY_SCAN_LIMIT {
-                return Ok(false);
-            }
-
-            if let Some(last_key) = last_key_in_batch {
-                start_key = Some(last_key);
-            } else {
-                return Ok(false);
-            }
-        }
+        store
+            .has_logs_before(cutoff_ms)
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to scan stream logs during pre-validation: {}",
+                    e
+                ))
+            })
     }
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
@@ -200,7 +163,7 @@ impl JobExecutor for StreamEvictionExecutor {
         ));
 
         // Calculate cutoff time for eviction (records created before this time are expired)
-        let (cutoff_ms, cutoff_seq) = compute_cutoff_window(ttl_seconds)?;
+        let (cutoff_ms, _cutoff_seq) = compute_cutoff_window(ttl_seconds)?;
 
         ctx.log_info(&format!(
             "Cutoff time: {}ms (records with timestamp < {} are expired)",
@@ -235,75 +198,14 @@ impl JobExecutor for StreamEvictionExecutor {
                 ))
             })?;
         let store = stream_provider.store_arc();
+        let deleted_count = store.delete_old_logs(cutoff_ms).map_err(|e| {
+            KalamDbError::InvalidOperation(format!(
+                "Failed to delete old stream logs: {}",
+                e
+            ))
+        })?;
 
-        let batch_target = batch_size.min(usize::MAX as u64) as usize;
-        const SCAN_CHUNK_MAX: usize = 1024;
-        let scan_chunk = batch_target.clamp(1, SCAN_CHUNK_MAX);
-
-        let mut expired_keys: Vec<StreamTableRowId> = Vec::new();
-        let mut start_key: Option<StreamTableRowId> = None;
-        
-        // Track current user to optimize scanning (skip fresh rows for same user)
-        let mut current_user_id: Option<kalamdb_commons::models::UserId> = None;
-        let mut skip_current_user = false;
-
-        while expired_keys.len() < batch_target {
-            let iterator = store
-                .scan_directional(start_key.as_ref(), ScanDirection::Newer, scan_chunk)
-                .map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to scan stream rows for eviction: {}",
-                        e
-                    ))
-                })?;
-
-            let mut batch_count = 0usize;
-            let mut last_processed_key: Option<StreamTableRowId> = None;
-
-            for item in iterator {
-                let (row_key, _) = item.into_invalid_operation("Failed to iterate stream rows")?;
-                batch_count += 1;
-                last_processed_key = Some(row_key.clone());
-
-                // Check if we switched to a new user
-                if Some(row_key.user_id()) != current_user_id.as_ref() {
-                    current_user_id = Some(row_key.user_id().clone());
-                    skip_current_user = false;
-                }
-
-                if skip_current_user {
-                    continue;
-                }
-
-                // Check expiration using key only (no deserialization needed)
-                if row_key.seq() <= cutoff_seq {
-                    expired_keys.push(row_key);
-                    if expired_keys.len() >= batch_target {
-                        break;
-                    }
-                } else {
-                    // Found a fresh row for this user. Since we scan Newer (oldest first),
-                    // all subsequent rows for this user are also fresh.
-                    skip_current_user = true;
-                }
-            }
-
-            if expired_keys.len() >= batch_target {
-                break;
-            }
-
-            if batch_count < scan_chunk {
-                break;
-            }
-
-            if let Some(last_key) = last_processed_key {
-                start_key = Some(last_key);
-            } else {
-                break;
-            }
-        }
-
-        if expired_keys.is_empty() {
+        if deleted_count == 0 {
             ctx.log_info("No expired rows found; nothing to evict");
             return Ok(JobDecision::Completed {
                 message: Some(format!("No expired rows found in {}", table_id)),
@@ -311,55 +213,13 @@ impl JobExecutor for StreamEvictionExecutor {
         }
 
         ctx.log_info(&format!(
-            "Found {} expired rows ready for eviction (batch limit: {})",
-            expired_keys.len(),
-            batch_size
-        ));
-
-        // Delete expired rows in batch
-        let mut deleted_count = 0;
-        for key in &expired_keys {
-            match store.delete(key) {
-                Ok(_) => deleted_count += 1,
-                Err(e) => {
-                    ctx.log_warn(&format!("Failed to delete row {:?}: {}", key, e));
-                }
-            }
-        }
-
-        // Safety: Some backends may skip deletes due to iterator buffering; do a second pass
-        // over any remaining keys and enforce removal to keep tests deterministic.
-        if deleted_count < expired_keys.len() {
-            let residual_keys: Vec<_> = expired_keys
-                .iter()
-                .filter(|k| store.get(k).is_ok())
-                .cloned()
-                .collect();
-            for key in residual_keys {
-                if store.delete(&key).is_ok() {
-                    deleted_count += 1;
-                }
-            }
-        }
-
-        ctx.log_info(&format!(
-            "Stream eviction completed - {} rows evicted from {}",
+            "Stream eviction completed - {} log files removed from {}",
             deleted_count, table_id
         ));
 
-        // If we hit batch size limit, schedule retry for next batch
-        if expired_keys.len() >= batch_target {
-            ctx.log_info("Batch size limit reached - scheduling retry for next batch");
-            return Ok(JobDecision::Retry {
-                message: format!("Batch evicted {} rows, more remaining", deleted_count),
-                exception_trace: None,
-                backoff_ms: 5000,
-            });
-        }
-
         Ok(JobDecision::Completed {
             message: Some(format!(
-                "Evicted {} expired records from {} (ttl: {}s)",
+                "Evicted {} expired log files from {} (ttl: {}s)",
                 deleted_count, table_id, ttl_seconds
             )),
         })
@@ -396,7 +256,7 @@ mod tests {
     use kalamdb_commons::models::{TableId, TableName, UserId};
     use kalamdb_commons::system::Job;
     use kalamdb_commons::{JobId, NamespaceId, NodeId};
-    use kalamdb_store::entity_store::EntityStore;
+    use kalamdb_tables::StreamTableStoreConfig;
     use serde_json::json;
     use std::sync::Arc;
     use tokio::time::{sleep, Duration};
@@ -430,6 +290,7 @@ mod tests {
         namespace: NamespaceId,
         table_name_value: String,
         provider: Arc<StreamTableProvider>,
+        _stream_temp_dir: tempfile::TempDir,
     }
 
     fn setup_stream_table(app_ctx: &Arc<AppContext>) -> StreamTestHarness {
@@ -479,7 +340,19 @@ mod tests {
             Arc::new(CachedTableData::new(Arc::new(table_def))),
         );
 
-        let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(&table_id));
+        let stream_temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
+            &table_id,
+            StreamTableStoreConfig {
+                base_dir: stream_temp_dir
+                    .path()
+                    .join("streams")
+                    .join(namespace.as_str())
+                    .join(table_name_value.as_str()),
+                shard_router: ShardRouter::default_config(),
+                ttl_seconds: Some(1),
+            },
+        ));
         let core = Arc::new(TableProviderCore::from_app_context(
             app_ctx,
             table_id.clone(),
@@ -502,6 +375,7 @@ mod tests {
             namespace,
             table_name_value,
             provider,
+            _stream_temp_dir: stream_temp_dir,
         }
     }
 
@@ -614,14 +488,13 @@ mod tests {
             other => panic!("Expected Completed decision, got {:?}", other),
         }
 
-        let remaining_iter = harness
+        let remaining_rows = harness
             .provider
             .store_arc()
-            .scan_iterator(None, None)
+            .scan_all(None)
             .expect("scan store after eviction");
         
-        let remaining_count = remaining_iter.count();
-        assert_eq!(remaining_count, 0, "All expired rows should be removed");
+        assert_eq!(remaining_rows.len(), 0, "All expired rows should be removed");
     }
 
     #[tokio::test]

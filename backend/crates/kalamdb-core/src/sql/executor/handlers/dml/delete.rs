@@ -372,15 +372,17 @@ impl DeleteHandler {
             &sql[from_pos + 12..]
         };
         let (ns, tbl) = {
-            let parts: Vec<&str> = head.trim().split('.').collect();
-            match parts.len() {
-                1 => (
+            let mut parts = head.trim().splitn(2, '.');
+            let first = parts.next().map(str::trim);
+            let second = parts.next().map(str::trim);
+            match (first, second) {
+                (Some(table), None) => (
                     default_namespace.clone(),
-                    TableName::new(parts[0].trim().to_string()),
+                    TableName::new(table.to_string()),
                 ),
-                2 => (
-                    NamespaceId::new(parts[0].trim().to_string()),
-                    TableName::new(parts[1].trim().to_string()),
+                (Some(namespace), Some(table)) => (
+                    NamespaceId::new(namespace.to_string()),
+                    TableName::new(table.to_string()),
                 ),
                 _ => {
                     return Err(KalamDbError::InvalidOperation(
@@ -392,13 +394,12 @@ impl DeleteHandler {
         let (where_pair, has_where_clause) = if let Some(wp) = where_pos {
             let cond = sql[wp + 7..].trim();
             // Support '<col> = <literal>' - handle both numeric and quoted string values
-            let parts: Vec<&str> = cond.splitn(2, '=').collect();
-            if parts.len() == 2 {
-                let col = parts[0].trim().to_string();
-                let val = parts[1].trim().to_string();
-                (Some((col, val)), true)
-            } else {
-                (None, true)
+            let mut parts = cond.splitn(2, '=');
+            let col = parts.next().map(str::trim);
+            let val = parts.next().map(str::trim);
+            match (col, val) {
+                (Some(col), Some(val)) => (Some((col.to_string(), val.to_string())), true),
+                _ => (None, true),
             }
         } else {
             (None, false)

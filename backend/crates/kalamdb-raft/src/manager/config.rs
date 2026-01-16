@@ -16,11 +16,11 @@ pub const DEFAULT_SHARED_DATA_SHARDS: u32 = 1;
 /// Runtime configuration for the Raft Manager
 ///
 /// This is the internal runtime config used by RaftManager, distinct from the
-/// TOML-parseable `kalamdb_commons::config::ClusterConfig` which uses primitives
+/// TOML-parseable `kalamdb_configs::ClusterConfig` which uses primitives
 /// like `u64` for TOML compatibility. This struct uses types like `Duration`
 /// for runtime convenience.
 ///
-/// Construct this from `kalamdb_commons::config::ClusterConfig` using `From` trait.
+/// Construct this from `kalamdb_configs::ClusterConfig` using `From` trait.
 #[derive(Debug, Clone)]
 pub struct RaftManagerConfig {
     /// Cluster identifier
@@ -120,8 +120,8 @@ impl RaftManagerConfig {
 }
 
 /// Convert from the TOML-parseable ClusterConfig to runtime RaftManagerConfig
-impl From<kalamdb_commons::config::ClusterConfig> for RaftManagerConfig {
-    fn from(config: kalamdb_commons::config::ClusterConfig) -> Self {
+impl From<kalamdb_configs::ClusterConfig> for RaftManagerConfig {
+    fn from(config: kalamdb_configs::ClusterConfig) -> Self {
         Self {
             cluster_id: config.cluster_id,
             node_id: NodeId::new(config.node_id),
@@ -154,8 +154,8 @@ pub struct PeerNode {
     pub api_addr: String,
 }
 
-impl From<kalamdb_commons::config::PeerConfig> for PeerNode {
-    fn from(peer: kalamdb_commons::config::PeerConfig) -> Self {
+impl From<kalamdb_configs::PeerConfig> for PeerNode {
+    fn from(peer: kalamdb_configs::PeerConfig) -> Self {
         Self {
             node_id: NodeId::new(peer.node_id),
             rpc_addr: peer.rpc_addr,
@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_peer_node_from() {
-        let peer_config = kalamdb_commons::config::PeerConfig {
+        let peer_config = kalamdb_configs::PeerConfig {
             node_id: 2,
             rpc_addr: "127.0.0.1:9101".to_string(),
             api_addr: "127.0.0.1:8081".to_string(),

@@ -3,7 +3,7 @@
 //! This test validates:
 //! - INSERT → SELECT (hot storage)
 //! - UPDATE → SELECT (hot storage)
-//! - FLUSH TABLE → verify cold storage
+//! - STORAGE FLUSH TABLE → verify cold storage
 //! - SELECT after flush (cold storage)
 //! - INSERT duplicate PK fails (both hot and cold)
 //! - UPDATE works correctly post-flush
@@ -110,9 +110,9 @@ fn smoke_test_flush_pk_integrity_user_table() {
     );
     println!("✅ Verified UPDATE worked in hot storage");
 
-    // Step 5: FLUSH TABLE
+    // Step 5: STORAGE FLUSH TABLE
     println!("🚀 Step 5: Flush table to cold storage");
-    let flush_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table_name))
+    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
         .expect("Failed to flush table");
 
     let job_id = parse_job_id_from_flush_output(&flush_output)
@@ -286,7 +286,7 @@ fn smoke_test_flush_pk_integrity_shared_table() {
 
     // Flush
     println!("🚀 Flush SHARED table");
-    let flush_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table_name))
+    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
         .expect("Failed to flush table");
 
     let job_id = parse_job_id_from_flush_output(&flush_output)

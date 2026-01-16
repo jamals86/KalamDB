@@ -7,7 +7,7 @@ use crate::jobs::executors::{
 };
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::{NamespaceId, NodeId, StorageId};
-use kalamdb_commons::{StoragePartition, SystemTable};
+use kalamdb_system::{StoragePartition, SystemTable};
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
 use once_cell::sync::OnceCell;
@@ -39,7 +39,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         let storage_backend: Arc<dyn StorageBackend> =
             Arc::new(RocksDBBackend::new(test_db.db.clone()));
 
-        let mut test_config = kalamdb_commons::config::ServerConfig::default();
+        let mut test_config = kalamdb_configs::ServerConfig::default();
         test_config.storage.data_path = "data".to_string();
         test_config.execution.max_parameters = 50;
         test_config.execution.max_parameter_size_bytes = 512 * 1024;

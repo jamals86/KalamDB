@@ -4,13 +4,13 @@
 //! in `main.rs`: bootstrapping databases and services, wiring the HTTP
 //! server, and coordinating graceful shutdown.
 
-use crate::config::ServerConfig;
 use crate::{middleware, routes};
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
 use kalamdb_api::handlers::AuthConfig;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
+use kalamdb_configs::ServerConfig;
 use kalamdb_core::live::ConnectionsManager;
 use kalamdb_core::live_query::LiveQueryManager;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
@@ -298,7 +298,7 @@ pub async fn bootstrap(
     // Stream eviction is now handled by JobsManager.run_loop() - no separate scheduler needed
     // JobsManager periodically checks for STREAM tables with TTL and creates eviction jobs
     // Crash recovery handled by JobsManager.recover_incomplete_jobs() in run_loop
-    // Flush scheduling via FLUSH TABLE/FLUSH ALL TABLES commands
+    // Flush scheduling via STORAGE FLUSH TABLE/STORAGE FLUSH ALL commands
 
     debug!("Job management delegated to JobsManager (already running in background, handles stream eviction)");
 
@@ -569,7 +569,7 @@ pub async fn run(
         if kalamdb_api::routes::is_embedded_ui_available() {
             app = app.configure(kalamdb_api::routes::configure_embedded_ui_routes);
         } else if let Some(ref path) = ui_path {
-            let path = path.clone();
+            let path: String = path.clone();
             app = app.configure(move |cfg| {
                 kalamdb_api::routes::configure_ui_routes(cfg, &path);
             });
@@ -776,7 +776,7 @@ pub async fn run_for_tests(
         if kalamdb_api::routes::is_embedded_ui_available() {
             app = app.configure(kalamdb_api::routes::configure_embedded_ui_routes);
         } else if let Some(ref path) = ui_path {
-            let path = path.clone();
+            let path: String = path.clone();
             app = app.configure(move |cfg| {
                 kalamdb_api::routes::configure_ui_routes(cfg, &path);
             });

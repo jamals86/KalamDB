@@ -8,6 +8,7 @@ use crate::schema_registry::TableType;
 use arrow::datatypes::SchemaRef;
 use datafusion::datasource::TableProvider;
 use kalamdb_commons::models::TableId;
+use kalamdb_sharding::ShardRouter;
 use std::sync::Arc;
 
 /// Register USER table provider with SchemaRegistry
@@ -184,7 +185,7 @@ pub fn register_stream_table_provider(
     ttl_seconds: Option<u64>,
 ) -> Result<(), KalamDbError> {
     use crate::providers::{StreamTableProvider, TableProviderCore};
-    use kalamdb_tables::new_stream_table_store;
+    use kalamdb_tables::{new_stream_table_store, StreamTableStoreConfig};
 
     log::debug!(
         "📋 Registering STREAM table provider: {} (TTL: {:?}s)",
@@ -193,8 +194,17 @@ pub fn register_stream_table_provider(
     );
 
     // Create stream table store
+    let streams_root = app_context.config().storage.streams_dir();
+    let base_dir = streams_root
+        .join(table_id.namespace_id().as_str())
+        .join(table_id.table_name().as_str());
     let stream_store = Arc::new(new_stream_table_store(
         table_id,
+        StreamTableStoreConfig {
+            base_dir,
+            shard_router: ShardRouter::default_config(),
+            ttl_seconds,
+        },
     ));
 
     log::debug!(

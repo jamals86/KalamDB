@@ -256,9 +256,9 @@ Color: Enabled
 ### Administration
 
 ```sql
--- Flush table manually
-\flush chat.messages
-Flushed 1,523 records to ./data/storage/chat/users/jamal/messages/j/
+-- Storage flush all tables in current namespace
+\flush
+Storage flush completed successfully
 
 -- Check server health
 \health
@@ -284,7 +284,7 @@ Backslash Commands:
   \help            Show this help
   \connect         Switch connection
   \config          Show configuration
-  \flush <table>   Flush table to storage
+  \flush           Storage flush all tables in current namespace
   \health          Check server health
   \pause           Pause subscription
   \continue        Resume subscription

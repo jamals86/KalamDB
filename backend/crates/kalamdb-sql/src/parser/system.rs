@@ -3,7 +3,7 @@
 //! Parses SQL statements targeting system tables using sqlparser-rs.
 
 use anyhow::{anyhow, Result};
-pub use kalamdb_commons::system_tables::SystemTable;
+pub use kalamdb_system::SystemTable;
 use sqlparser::ast::Statement;
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;

@@ -10,9 +10,12 @@ use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, 
 use kalamdb_commons::websocket::{SubscriptionOptions, SubscriptionRequest};
 use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_commons::{NodeId, UserId};
+use kalamdb_sharding::ShardRouter;
 use kalamdb_store::RocksDbInit;
 use kalamdb_system::providers::live_queries::LiveQueriesTableProvider;
-use kalamdb_tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
+use kalamdb_tables::{
+    new_shared_table_store, new_stream_table_store, new_user_table_store, StreamTableStoreConfig,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -59,7 +62,19 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         backend.clone(),
         &table_id,
     ));
-    let _stream_table_store = Arc::new(new_stream_table_store(&table_id));
+    let stream_temp_dir = TempDir::new().unwrap();
+    let _stream_table_store = Arc::new(new_stream_table_store(
+        &table_id,
+        StreamTableStoreConfig {
+            base_dir: stream_temp_dir
+                .path()
+                .join("streams")
+                .join(test_namespace.as_str())
+                .join(test_table.as_str()),
+            shard_router: ShardRouter::default_config(),
+            ttl_seconds: Some(60),
+        },
+    ));
 
     let app_ctx = AppContext::get();
 
@@ -273,12 +288,14 @@ async fn test_get_subscriptions_for_table() {
     let messages_subs = registry.get_subscriptions_for_table(&user_id, &table_id1);
     assert_eq!(messages_subs.len(), 1);
     // LiveQueryId no longer has table_id() - verify by subscription_id instead
-    assert_eq!(messages_subs[0].live_id.subscription_id(), "q1");
+    let sub = messages_subs.iter().next().unwrap();
+    assert_eq!(sub.key().subscription_id(), "q1");
 
     let table_id2 = TableId::from_strings("user1", "notifications");
     let notif_subs = registry.get_subscriptions_for_table(&user_id, &table_id2);
     assert_eq!(notif_subs.len(), 1);
-    assert_eq!(notif_subs[0].live_id.subscription_id(), "q2");
+    let sub = notif_subs.iter().next().unwrap();
+    assert_eq!(sub.key().subscription_id(), "q2");
 }
 
 #[tokio::test]

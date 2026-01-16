@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use crate::app_context::AppContext;
 use crate::applier::executor::CommandExecutorImpl;
+use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::TableId;
 use kalamdb_raft::{RaftError, SharedDataApplier};
 
@@ -49,7 +50,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
     async fn insert(
         &self,
         table_id: &TableId,
-        rows: &[kalamdb_commons::models::Row],
+        rows: &[Row],
     ) -> Result<usize, RaftError> {
         log::debug!(
             "ProviderSharedDataApplier: Inserting into {} ({} rows)",
@@ -66,7 +67,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
     async fn update(
         &self,
         table_id: &TableId,
-        updates: &[kalamdb_commons::models::Row],
+        updates: &[Row],
         filter: Option<&str>,
     ) -> Result<usize, RaftError> {
         log::debug!(

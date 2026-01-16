@@ -82,9 +82,9 @@ The tests are correctly written and follow the requirements:
 
 The failure indicates an issue in the flush/query implementation that needs to be fixed in the core flush modules before these tests can pass.
 
-## Note on Manual FLUSH TABLE Command
+## Note on Manual STORAGE FLUSH TABLE Command
 
-The manual `FLUSH TABLE namespace.table` SQL command is **not implemented**. Flushing is only triggered automatically based on the FLUSH ROWS policy specified during table creation. To implement manual flush tests, the SQL parser and executor would need to be extended to support the FLUSH TABLE statement.
+The manual `STORAGE FLUSH TABLE namespace.table` SQL command is **not implemented**. Flushing is only triggered automatically based on the FLUSH ROWS policy specified during table creation. To implement manual flush tests, the SQL parser and executor would need to be extended to support the STORAGE FLUSH TABLE statement.
 
 ---
 

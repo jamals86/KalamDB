@@ -27,9 +27,9 @@ async fn test_flush_table_persists_job_over_http() -> anyhow::Result<()> {
     let resp = server.execute_sql(&insert_sql).await?;
     assert_eq!(resp.status, ResponseStatus::Success, "INSERT failed");
 
-    let flush_sql = format!("FLUSH TABLE {}.logs", ns);
+    let flush_sql = format!("STORAGE FLUSH TABLE {}.logs", ns);
     let resp = server.execute_sql(&flush_sql).await?;
-    assert_eq!(resp.status, ResponseStatus::Success, "FLUSH TABLE failed");
+    assert_eq!(resp.status, ResponseStatus::Success, "STORAGE FLUSH TABLE failed");
 
     // Jobs may be persisted asynchronously. Poll briefly.
     let deadline = Instant::now() + Duration::from_secs(5);

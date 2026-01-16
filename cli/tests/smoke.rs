@@ -75,6 +75,8 @@ mod smoke_test_flush_pk_integrity;
 // Storage tests
 #[path = "smoke/storage/smoke_test_storage_templates.rs"]
 mod smoke_test_storage_templates;
+#[path = "smoke/storage/smoke_test_storage_compact.rs"]
+mod smoke_test_storage_compact;
 
 // DDL tests
 #[path = "smoke/ddl/smoke_test_ddl_alter.rs"]

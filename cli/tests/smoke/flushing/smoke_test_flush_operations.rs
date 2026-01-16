@@ -2,7 +2,7 @@
 //!
 //! Tests comprehensive flush behavior for both USER and SHARED tables:
 //! - Auto-flush with FLUSH ROWS policy
-//! - Manual flush with FLUSH TABLE command
+//! - Manual flush with STORAGE FLUSH TABLE command
 //! - Job completion verification
 //! - Data retrieval from both RocksDB (unflushed) and Parquet (flushed) sources
 //!
@@ -100,8 +100,8 @@ fn smoke_test_user_table_flush() {
     println!("✅ Inserted {} rows", INSERT_ROWS);
 
     // Manually flush the table
-    println!("🚀 Triggering manual FLUSH TABLE...");
-    let flush_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table_name))
+    println!("🚀 Triggering manual STORAGE FLUSH TABLE...");
+    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
         .expect("Failed to flush table");
 
     println!("Flush output: {}", flush_output);
@@ -252,8 +252,8 @@ fn smoke_test_shared_table_flush() {
     println!("✅ Inserted {} rows", INSERT_ROWS);
 
     // Manually flush the table
-    println!("🚀 Triggering manual FLUSH TABLE...");
-    let flush_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table_name))
+    println!("🚀 Triggering manual STORAGE FLUSH TABLE...");
+    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
         .expect("Failed to flush table");
 
     println!("Flush output: {}", flush_output);
@@ -386,7 +386,7 @@ fn smoke_test_mixed_source_query() {
 
     // Manually flush to ensure first batch is in Parquet
     println!("🚀 Flushing first batch...");
-    let flush1_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table_name))
+    let flush1_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
         .expect("Failed to flush");
     let job1_id = parse_job_id_from_flush_output(&flush1_output).expect("Failed to parse job ID");
     verify_job_completed(&job1_id, JOB_TIMEOUT).expect("First flush failed");

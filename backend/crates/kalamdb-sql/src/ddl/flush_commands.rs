@@ -1,4 +1,4 @@
-//! FLUSH TABLE and FLUSH ALL TABLES command parsing
+//! STORAGE FLUSH TABLE and STORAGE FLUSH ALL command parsing
 //!
 //! This module provides SQL command parsing for manual flush operations. Flush commands
 //! trigger immediate data migration from RocksDB to Parquet files asynchronously,
@@ -6,24 +6,24 @@
 //!
 //! ## Commands
 //!
-//! ### FLUSH TABLE
+//! ### STORAGE FLUSH TABLE
 //!
 //! Triggers an asynchronous flush for a single table:
 //!
 //! ```sql
-//! FLUSH TABLE namespace.table_name;
+//! STORAGE FLUSH TABLE namespace.table_name;
 //! ```
 //!
 //! **Response**: Returns job_id immediately (< 100ms)
 //! **Monitoring**: Poll `SELECT * FROM system.jobs WHERE job_id = 'returned_id'`
 //! **Result**: When complete, system.jobs.result contains records_flushed and storage_location
 //!
-//! ### FLUSH ALL TABLES
+//! ### STORAGE FLUSH ALL
 //!
 //! Triggers asynchronous flush for all user tables in a namespace:
 //!
 //! ```sql
-//! FLUSH ALL TABLES IN namespace;
+//! STORAGE FLUSH ALL IN namespace;
 //! ```
 //!
 //! **Response**: Returns array of job_ids (one per table)
@@ -32,12 +32,12 @@
 //!
 //! ## Asynchronous Execution
 //!
-//! FLUSH commands return immediately with a job_id. The actual flush operation runs
+//! STORAGE FLUSH commands return immediately with a job_id. The actual flush operation runs
 //! in the background via the JobsManager. This design prevents long-running SQL
 //! commands from blocking the API.
 //!
 //! **Job Lifecycle**:
-//! 1. Parse FLUSH command → validate table/namespace exists
+//! 1. Parse STORAGE FLUSH command → validate table/namespace exists
 //! 2. Create job record in system.jobs with status='running'
 //! 3. Return job_id to client (< 100ms)
 //! 4. JobsManager spawns async task for flush execution
@@ -60,25 +60,27 @@
 //! use kalamdb_sql::ddl::flush_commands::{FlushTableStatement, FlushAllTablesStatement};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Parse FLUSH TABLE
-//! let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events")?;
+//! // Parse STORAGE FLUSH TABLE
+//! let stmt = FlushTableStatement::parse("STORAGE FLUSH TABLE prod.events")?;
 //! assert_eq!(stmt.namespace, "prod".into());
 //! assert_eq!(stmt.table_name, "events".into());
 //!
-//! // Parse FLUSH ALL TABLES
-//! let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod")?;
+//! // Parse STORAGE FLUSH ALL
+//! let stmt = FlushAllTablesStatement::parse("STORAGE FLUSH ALL IN prod")?;
 //! assert_eq!(stmt.namespace, "prod".into());
 //! # Ok(())
 //! # }
 //! ```
 
-//! Parsers for FLUSH TABLE and FLUSH ALL TABLES commands (US4).
+//! Parsers for STORAGE FLUSH TABLE and STORAGE FLUSH ALL commands (US4).
 
+use crate::ddl::parsing;
+use crate::parser::utils::normalize_sql;
 use kalamdb_commons::{NamespaceId, TableName};
 
-const ERR_EXPECTED_NAMESPACE: &str = "Expected FLUSH ALL TABLES IN namespace";
+const ERR_EXPECTED_NAMESPACE: &str = "Expected STORAGE FLUSH ALL IN namespace";
 
-/// FLUSH TABLE statement
+/// STORAGE FLUSH TABLE statement
 ///
 /// Triggers asynchronous flush for a single table, returning job_id immediately.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,19 +92,19 @@ pub struct FlushTableStatement {
 }
 
 impl FlushTableStatement {
-    /// Parse FLUSH TABLE command from SQL string
+    /// Parse STORAGE FLUSH TABLE command from SQL string
     ///
     /// # Syntax
     ///
     /// ```sql
-    /// FLUSH TABLE <namespace>.<table_name>;
+    /// STORAGE FLUSH TABLE <namespace>.<table_name>;
     /// ```
     ///
     /// # Examples
     ///
     /// ```
     /// # use kalamdb_sql::ddl::flush_commands::FlushTableStatement;
-    /// let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events").unwrap();
+    /// let stmt = FlushTableStatement::parse("STORAGE FLUSH TABLE prod.events").unwrap();
     /// assert_eq!(stmt.namespace, "prod".into());
     /// assert_eq!(stmt.table_name, "events".into());
     /// ```
@@ -113,23 +115,20 @@ impl FlushTableStatement {
     /// - Syntax is invalid
     /// - Table name is not qualified (missing namespace)
     pub fn parse(sql: &str) -> Result<Self, String> {
-        use crate::ddl::parsing;
-        use crate::parser::utils::normalize_sql;
-
         // Normalize SQL: remove extra whitespace, semicolons
         let normalized = normalize_sql(sql);
 
-        // Extract table reference after FLUSH TABLE
-        let table_ref = parsing::extract_after_prefix(&normalized, "FLUSH TABLE")?;
+        // Extract table reference after STORAGE FLUSH TABLE
+        let table_ref = parsing::extract_after_prefix(&normalized, "STORAGE FLUSH TABLE")?;
         let (namespace, table_name) = parsing::parse_table_reference(&table_ref)?;
 
-        // FLUSH TABLE requires qualified names
+        // STORAGE FLUSH TABLE requires qualified names
         let namespace = namespace.ok_or_else(|| {
-            "Table name must be qualified (namespace.table) for FLUSH TABLE".to_string()
+            "Table name must be qualified (namespace.table) for STORAGE FLUSH TABLE".to_string()
         })?;
 
-        // Check for extra tokens (should be exactly: FLUSH TABLE namespace.table)
-        parsing::validate_no_extra_tokens(&normalized, 3, "FLUSH TABLE")?;
+        // Check for extra tokens (should be exactly: STORAGE FLUSH TABLE namespace.table)
+        parsing::validate_no_extra_tokens(&normalized, 4, "STORAGE FLUSH TABLE")?;
 
         Ok(Self {
             namespace: NamespaceId::from(namespace),
@@ -138,7 +137,7 @@ impl FlushTableStatement {
     }
 }
 
-/// FLUSH ALL TABLES statement
+/// STORAGE FLUSH ALL statement
 ///
 /// Triggers asynchronous flush for all user tables in a namespace, returning
 /// array of job_ids (one per table).
@@ -149,19 +148,19 @@ pub struct FlushAllTablesStatement {
 }
 
 impl FlushAllTablesStatement {
-    /// Parse FLUSH ALL TABLES command from SQL string
+    /// Parse STORAGE FLUSH ALL command from SQL string
     ///
     /// # Syntax
     ///
     /// ```sql
-    /// FLUSH ALL TABLES IN <namespace>;
+    /// STORAGE FLUSH ALL IN <namespace>;
     /// ```
     ///
     /// # Examples
     ///
     /// ```
     /// # use kalamdb_sql::ddl::flush_commands::FlushAllTablesStatement;
-    /// let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod").unwrap();
+    /// let stmt = FlushAllTablesStatement::parse("STORAGE FLUSH ALL IN prod").unwrap();
     /// assert_eq!(stmt.namespace, "prod".into());
     /// ```
     ///
@@ -172,14 +171,11 @@ impl FlushAllTablesStatement {
     /// - Missing IN keyword
     /// - Extra tokens after namespace
     pub fn parse(sql: &str) -> Result<Self, String> {
-        use crate::ddl::parsing;
-        use crate::parser::utils::normalize_sql;
-
         // Normalize SQL: remove extra whitespace, semicolons
         let normalized = normalize_sql(sql);
 
         // Parse using utility
-        let namespace = parsing::parse_optional_in_clause(&normalized, "FLUSH ALL TABLES")?
+        let namespace = parsing::parse_optional_in_clause(&normalized, "STORAGE FLUSH ALL")?
             .ok_or_else(|| ERR_EXPECTED_NAMESPACE.to_string())?;
 
         // Check for extra tokens, supporting both "IN <ns>" and "IN NAMESPACE <ns>"
@@ -187,9 +183,9 @@ impl FlushAllTablesStatement {
         let has_namespace_keyword = normalized_upper.contains(" IN NAMESPACE ");
         let expected_tokens = if has_namespace_keyword { 6 } else { 5 };
         let command_for_error = if has_namespace_keyword {
-            "FLUSH ALL TABLES IN NAMESPACE"
+            "STORAGE FLUSH ALL IN NAMESPACE"
         } else {
-            "FLUSH ALL TABLES IN"
+            "STORAGE FLUSH ALL IN"
         };
         parsing::validate_no_extra_tokens(&normalized, expected_tokens, command_for_error)?;
 
@@ -222,21 +218,21 @@ mod tests {
 
     #[test]
     fn test_parse_flush_table_basic() {
-        let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events").unwrap();
+        let stmt = FlushTableStatement::parse("STORAGE FLUSH TABLE prod.events").unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("prod"));
         assert_eq!(stmt.table_name, TableName::from("events"));
     }
 
     #[test]
     fn test_parse_flush_table_with_semicolon() {
-        let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events;").unwrap();
+        let stmt = FlushTableStatement::parse("STORAGE FLUSH TABLE prod.events;").unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("prod"));
         assert_eq!(stmt.table_name, TableName::from("events"));
     }
 
     #[test]
     fn test_parse_flush_table_unqualified_error() {
-        let result = FlushTableStatement::parse("FLUSH TABLE events");
+        let result = FlushTableStatement::parse("STORAGE FLUSH TABLE events");
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -246,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_parse_flush_table_extra_tokens_error() {
-        let result = FlushTableStatement::parse("FLUSH TABLE prod.events WHERE id > 100");
+        let result = FlushTableStatement::parse("STORAGE FLUSH TABLE prod.events WHERE id > 100");
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -256,32 +252,32 @@ mod tests {
 
     #[test]
     fn test_parse_flush_all_tables_basic() {
-        let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod").unwrap();
+        let stmt = FlushAllTablesStatement::parse("STORAGE FLUSH ALL IN prod").unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("prod"));
     }
 
     #[test]
     fn test_parse_flush_all_tables_with_semicolon() {
-        let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod;").unwrap();
+        let stmt = FlushAllTablesStatement::parse("STORAGE FLUSH ALL IN prod;").unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("prod"));
     }
 
     #[test]
     fn test_parse_flush_all_tables_in_namespace_keyword() {
-        let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN NAMESPACE prod").unwrap();
+        let stmt = FlushAllTablesStatement::parse("STORAGE FLUSH ALL IN NAMESPACE prod").unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("prod"));
     }
 
     #[test]
     fn test_parse_flush_all_tables_missing_in_error() {
-        let result = FlushAllTablesStatement::parse("FLUSH ALL TABLES prod");
+        let result = FlushAllTablesStatement::parse("STORAGE FLUSH ALL prod");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("FLUSH ALL TABLES IN"));
+        assert!(result.unwrap_err().contains("STORAGE FLUSH ALL IN"));
     }
 
     #[test]
     fn test_parse_flush_all_tables_extra_tokens_error() {
-        let result = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod WHERE id > 100");
+        let result = FlushAllTablesStatement::parse("STORAGE FLUSH ALL IN prod WHERE id > 100");
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -292,7 +288,7 @@ mod tests {
     #[test]
     fn test_parse_with_default_namespace_when_missing_in_clause() {
         let default_ns = NamespaceId::from("fallback_ns");
-        let stmt = FlushAllTablesStatement::parse_with_default("FLUSH ALL TABLES", &default_ns)
+        let stmt = FlushAllTablesStatement::parse_with_default("STORAGE FLUSH ALL", &default_ns)
             .expect("default namespace should be applied");
         assert_eq!(stmt.namespace, default_ns);
     }

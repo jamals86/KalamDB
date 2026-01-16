@@ -9,11 +9,11 @@
 //! - T100: SHOW MANIFEST returns all cached entries
 //! - T101: cache eviction and re-population
 use kalamdb_commons::{
-    config::ManifestCacheSettings,
     models::TableId,
     types::{Manifest, SyncState},
     NamespaceId, TableName, UserId,
 };
+use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_core::manifest::ManifestService;
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use std::sync::Arc;

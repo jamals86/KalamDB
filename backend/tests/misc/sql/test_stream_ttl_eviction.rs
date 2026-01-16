@@ -22,9 +22,10 @@ use kalamdb_core::providers::base::{BaseTableProvider, TableProviderCore};
 use kalamdb_core::providers::StreamTableProvider;
 use kalamdb_core::schema_registry::CachedTableData;
 use kalamdb_core::sql::executor::models::ExecutionContext;
+use kalamdb_sharding::ShardRouter;
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
-use kalamdb_tables::{new_stream_table_store, StreamTableStore};
+use kalamdb_tables::{new_stream_table_store, StreamTableStore, StreamTableStoreConfig};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -34,7 +35,19 @@ async fn test_stream_table_ttl_eviction_with_select() {
     let test_db = TestDb::new(&["test:test_events"]).expect("Failed to create test DB");
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
     let table_id = TableId::new(NamespaceId::new("test"), TableName::new("test_events"));
-    let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(&table_id));
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
+        &table_id,
+        StreamTableStoreConfig {
+            base_dir: temp_dir
+                .path()
+                .join("streams")
+                .join("test")
+                .join("test_events"),
+            shard_router: ShardRouter::default_config(),
+            ttl_seconds: Some(1),
+        },
+    ));
 
     // Create stream table schema
     let schema = Arc::new(Schema::new(vec![
@@ -46,7 +59,7 @@ async fn test_stream_table_ttl_eviction_with_select() {
     // Create stream table provider with 1-second TTL
     // Initialize AppContext and TableProviderCore
     let node_id = kalamdb_commons::NodeId::new(1);
-    let config = kalamdb_commons::ServerConfig::default();
+    let config = kalamdb_configs::ServerConfig::default();
     let app_ctx = AppContext::init(
         backend.clone(),
         node_id,
@@ -191,7 +204,19 @@ async fn test_stream_table_select_with_projection() {
     let test_db = TestDb::new(&["test:events_proj"]).expect("Failed to create test DB");
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
     let table_id = TableId::new(NamespaceId::new("test"), TableName::new("events_proj"));
-    let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(&table_id));
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
+        &table_id,
+        StreamTableStoreConfig {
+            base_dir: temp_dir
+                .path()
+                .join("streams")
+                .join("test")
+                .join("events_proj"),
+            shard_router: ShardRouter::default_config(),
+            ttl_seconds: Some(60),
+        },
+    ));
 
     // Create stream table schema
     let schema = Arc::new(Schema::new(vec![
@@ -203,7 +228,7 @@ async fn test_stream_table_select_with_projection() {
     // Create stream table provider
     // Initialize AppContext and TableProviderCore
     let node_id = kalamdb_commons::NodeId::new(1);
-    let config = kalamdb_commons::ServerConfig::default();
+    let config = kalamdb_configs::ServerConfig::default();
     let app_ctx = AppContext::init(
         backend.clone(),
         node_id,
@@ -315,7 +340,19 @@ async fn test_stream_table_select_with_limit() {
     let test_db = TestDb::new(&["test:events_limit"]).expect("Failed to create test DB");
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
     let table_id = TableId::new(NamespaceId::new("test"), TableName::new("events_limit"));
-    let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(&table_id));
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
+        &table_id,
+        StreamTableStoreConfig {
+            base_dir: temp_dir
+                .path()
+                .join("streams")
+                .join("test")
+                .join("events_limit"),
+            shard_router: ShardRouter::default_config(),
+            ttl_seconds: Some(60),
+        },
+    ));
 
     // Create stream table schema
     let schema = Arc::new(Schema::new(vec![
@@ -326,7 +363,7 @@ async fn test_stream_table_select_with_limit() {
     // Create stream table provider
     // Initialize AppContext and TableProviderCore
     let node_id = kalamdb_commons::NodeId::new(1);
-    let config = kalamdb_commons::ServerConfig::default();
+    let config = kalamdb_configs::ServerConfig::default();
     let app_ctx = AppContext::init(
         backend.clone(),
         node_id,

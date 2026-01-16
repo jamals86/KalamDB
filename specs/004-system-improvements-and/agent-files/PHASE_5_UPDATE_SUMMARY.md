@@ -111,7 +111,7 @@ impl JobManager for ActorJobManager {
 
 ```sql
 -- Start a manual flush (creates a job)
-FLUSH TABLE my_namespace.my_table;
+STORAGE FLUSH TABLE my_namespace.my_table;
 
 -- Query job status
 SELECT * FROM system.jobs WHERE job_id = 'abc-123';

@@ -732,7 +732,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
     let temp_dir = tempfile::TempDir::new()?;
     let data_path = temp_dir.path().to_path_buf();
 
-    let mut config = kalamdb_commons::config::ServerConfig::default();
+    let mut config = kalamdb_configs::ServerConfig::default();
     config.server.host = "127.0.0.1".to_string();
     config.server.port = 0;
     config.server.ui_path = None;
@@ -782,14 +782,14 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
 /// Start a near-production HTTP server with a config override.
 #[allow(dead_code)]
 pub async fn start_http_test_server_with_config(
-    override_config: impl FnOnce(&mut kalamdb_commons::config::ServerConfig),
+    override_config: impl FnOnce(&mut kalamdb_configs::ServerConfig),
 ) -> Result<HttpTestServer> {
     let global_lock = acquire_global_http_test_server_lock()?;
 
     let temp_dir = tempfile::TempDir::new()?;
     let data_path = temp_dir.path().to_path_buf();
 
-    let mut config = kalamdb_commons::config::ServerConfig::default();
+    let mut config = kalamdb_configs::ServerConfig::default();
     config.server.host = "127.0.0.1".to_string();
     config.server.port = 0;
     config.server.ui_path = None;
@@ -968,7 +968,7 @@ async fn start_cluster_server() -> Result<ClusterTestServer> {
 /// **DEPRECATED**: Only use this if you need a config override. Otherwise use `get_global_server()`.
 #[allow(dead_code)]
 pub async fn with_http_test_server_config<T, F>(
-    override_config: impl FnOnce(&mut kalamdb_commons::config::ServerConfig),
+    override_config: impl FnOnce(&mut kalamdb_configs::ServerConfig),
     f: F,
 ) -> Result<T>
 where

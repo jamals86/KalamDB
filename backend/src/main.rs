@@ -4,12 +4,11 @@
 //! lives in dedicated modules so this file remains a thin orchestrator.
 
 use kalamdb_core::metrics::SERVER_VERSION;
-use kalamdb_server::config;
 
 mod logging;
 
 use anyhow::Result;
-use config::ServerConfig;
+use kalamdb_configs::ServerConfig;
 use kalamdb_server::lifecycle::{bootstrap, run};
 use log::info;
 

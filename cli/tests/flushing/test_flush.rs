@@ -3,7 +3,7 @@
 //! **Implements T059**: Flush table operations and data persistence
 //!
 //! These tests validate:
-//! - Explicit FLUSH TABLE commands
+//! - Explicit STORAGE FLUSH TABLE commands
 //! - Data persistence after flush operations
 //! - Flush command error handling
 
@@ -48,7 +48,7 @@ fn test_cli_explicit_flush() {
         .arg("--password")
         .arg(root_password())
         .arg("--command")
-        .arg(format!("FLUSH TABLE {}", full_table_name));
+        .arg(format!("STORAGE FLUSH TABLE {}", full_table_name));
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -57,7 +57,7 @@ fn test_cli_explicit_flush() {
     // Should successfully execute flush command (not unsupported)
     assert!(
         output.status.success(),
-        "FLUSH TABLE should succeed. stdout: {}, stderr: {}",
+        "STORAGE FLUSH TABLE should succeed. stdout: {}, stderr: {}",
         stdout,
         stderr
     );
@@ -67,7 +67,7 @@ fn test_cli_explicit_flush() {
         !stderr.contains("ERROR")
             && !stderr.contains("not supported")
             && !stderr.contains("Unsupported"),
-        "FLUSH TABLE should not error. stderr: {}",
+        "STORAGE FLUSH TABLE should not error. stderr: {}",
         stderr
     );
 

@@ -373,7 +373,7 @@ fn build_values_clause(row_count: usize, prefix: &str) -> String {
 }
 
 fn trigger_flush_and_wait(table_name: &str) {
-    let flush_sql = format!("FLUSH TABLE {}", table_name);
+    let flush_sql = format!("STORAGE FLUSH TABLE {}", table_name);
     let output = execute_sql_as_root_via_client(&flush_sql).expect("flush command should succeed");
     let job_id =
         parse_job_id_from_flush_output(&output).expect("flush output should contain job id");

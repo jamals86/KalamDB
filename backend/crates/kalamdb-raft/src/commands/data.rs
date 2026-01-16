@@ -5,7 +5,8 @@
 //! buffer data commands until local `Meta` has applied at least that index.
 
 use chrono::{DateTime, Utc};
-use kalamdb_commons::models::{NodeId, UserId, Row};
+use kalamdb_commons::models::rows::Row;
+use kalamdb_commons::models::{NodeId, UserId};
 use kalamdb_commons::TableId;
 use serde::{Deserialize, Serialize};
 

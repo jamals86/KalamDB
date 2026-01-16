@@ -12,7 +12,8 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::models::{Row, UserId};
+use kalamdb_commons::models::rows::Row;
+use kalamdb_commons::models::UserId;
 use kalamdb_commons::TableId;
 
 use crate::app_context::AppContext;

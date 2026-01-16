@@ -11,7 +11,7 @@
 //! - Single storage partition for simplicity
 
 use crate::system_table_store::SystemTableStore;
-use kalamdb_commons::SystemTable;
+use crate::SystemTable;
 use kalamdb_commons::models::{NamespaceId, TableId, TableVersionId};
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_store::entity_store::EntityStore;

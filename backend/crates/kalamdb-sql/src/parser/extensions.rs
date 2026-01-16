@@ -5,7 +5,7 @@
 //!
 //! - **CREATE STORAGE**: Define cloud storage locations
 //! - **ALTER STORAGE**: Modify storage configuration
-//! - **FLUSH TABLE / FLUSH ALL TABLES**: Trigger manual data persistence
+//! - **STORAGE FLUSH / STORAGE COMPACT**: Trigger storage maintenance operations
 //! - **KILL JOB**: Cancel background jobs
 //! - **KILL LIVE QUERY**: Terminate WebSocket subscriptions
 //!
@@ -22,7 +22,8 @@ pub use crate::ddl::storage_commands::{
     AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
 };
 
-// Re-export flush commands
+// Re-export flush/compact commands
+pub use crate::ddl::compact_commands::{CompactAllTablesStatement, CompactTableStatement};
 pub use crate::ddl::flush_commands::{FlushAllTablesStatement, FlushTableStatement};
 
 // Job commands (KILL JOB)
@@ -55,10 +56,14 @@ pub enum ExtensionStatement {
     DropStorage(DropStorageStatement),
     /// SHOW STORAGES command
     ShowStorages(ShowStoragesStatement),
-    /// FLUSH TABLE command
+    /// STORAGE FLUSH TABLE command
     FlushTable(FlushTableStatement),
-    /// FLUSH ALL TABLES command
+    /// STORAGE FLUSH ALL command
     FlushAllTables(FlushAllTablesStatement),
+    /// STORAGE COMPACT TABLE command
+    CompactTable(CompactTableStatement),
+    /// STORAGE COMPACT ALL command
+    CompactAllTables(CompactAllTablesStatement),
     /// KILL JOB command
     KillJob(JobCommand),
     /// SUBSCRIBE TO command (for live query subscriptions)
@@ -134,18 +139,32 @@ impl ExtensionStatement {
                 .map_err(|e| format!("SHOW STORAGES parsing failed: {}", e));
         }
 
-        // Try FLUSH TABLE
-        if sql_upper.starts_with("FLUSH TABLE") {
+        // Try STORAGE FLUSH TABLE
+        if sql_upper.starts_with("STORAGE FLUSH TABLE") {
             return FlushTableStatement::parse(sql)
                 .map(ExtensionStatement::FlushTable)
-                .map_err(|e| format!("FLUSH TABLE parsing failed: {}", e));
+            .map_err(|e| format!("STORAGE FLUSH TABLE parsing failed: {}", e));
         }
 
-        // Try FLUSH ALL TABLES
-        if sql_upper.starts_with("FLUSH ALL TABLES") {
+        // Try STORAGE FLUSH ALL
+        if sql_upper.starts_with("STORAGE FLUSH ALL") {
             return FlushAllTablesStatement::parse(sql)
                 .map(ExtensionStatement::FlushAllTables)
-                .map_err(|e| format!("FLUSH ALL TABLES parsing failed: {}", e));
+            .map_err(|e| format!("STORAGE FLUSH ALL parsing failed: {}", e));
+        }
+
+        // Try STORAGE COMPACT TABLE
+        if sql_upper.starts_with("STORAGE COMPACT TABLE") {
+            return CompactTableStatement::parse(sql)
+            .map(ExtensionStatement::CompactTable)
+            .map_err(|e| format!("STORAGE COMPACT TABLE parsing failed: {}", e));
+        }
+
+        // Try STORAGE COMPACT ALL
+        if sql_upper.starts_with("STORAGE COMPACT ALL") {
+            return CompactAllTablesStatement::parse(sql)
+            .map(ExtensionStatement::CompactAllTables)
+            .map_err(|e| format!("STORAGE COMPACT ALL parsing failed: {}", e));
         }
 
         // Try KILL JOB
@@ -260,7 +279,7 @@ impl ExtensionStatement {
             }
         }
 
-        Err("Unknown KalamDB extension command. Supported commands: CREATE/ALTER/DROP/SHOW STORAGE, FLUSH TABLE, FLUSH ALL TABLES, KILL JOB, SUBSCRIBE TO, CREATE/ALTER/DROP USER, SHOW MANIFEST".to_string())
+        Err("Unknown KalamDB extension command. Supported commands: CREATE/ALTER/DROP/SHOW STORAGE, STORAGE FLUSH, STORAGE COMPACT, KILL JOB, SUBSCRIBE TO, CREATE/ALTER/DROP USER, SHOW MANIFEST".to_string())
     }
 }
 
@@ -289,10 +308,18 @@ mod tests {
 
     #[test]
     fn test_parse_flush_table() {
-        let sql = "FLUSH TABLE prod.events";
+        let sql = "STORAGE FLUSH TABLE prod.events";
         let result = ExtensionStatement::parse(sql);
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), ExtensionStatement::FlushTable(_)));
+    }
+
+    #[test]
+    fn test_parse_compact_table() {
+        let sql = "STORAGE COMPACT TABLE prod.events";
+        let result = ExtensionStatement::parse(sql);
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), ExtensionStatement::CompactTable(_)));
     }
 
     #[test]

@@ -261,7 +261,7 @@ fn test_storage_operations() {
     }
 }
 
-/// Test 5: FLUSH TABLE/ALL operations with job verification
+/// Test 5: STORAGE FLUSH TABLE/ALL operations with job verification
 fn test_flush_operations() {
     println!("TEST 5: Flush Operations & Job Verification");
     println!("============================================");
@@ -292,33 +292,33 @@ fn test_flush_operations() {
     execute_sql_as_root_via_client(&insert_sql).expect("INSERT should succeed");
     println!("    ✓ Test data inserted");
 
-    // Test 5a: FLUSH TABLE
-    println!("\n  Test 5a: FLUSH TABLE");
-    let flush_table_sql = format!("FLUSH TABLE {}", full_table_name);
+    // Test 5a: STORAGE FLUSH TABLE
+    println!("\n  Test 5a: STORAGE FLUSH TABLE");
+    let flush_table_sql = format!("STORAGE FLUSH TABLE {}", full_table_name);
     let flush_result = execute_sql_as_root_via_client(&flush_table_sql);
 
     match flush_result {
         Ok(output) => {
-            println!("    ✓ FLUSH TABLE executed");
+            println!("    ✓ STORAGE FLUSH TABLE executed");
             println!("    Output: {}", output);
         }
         Err(e) => {
             // Note: system.jobs may have serialization issues, so flush might fail
             println!(
-                "    ⚠️  FLUSH TABLE failed (may be due to jobs table issues): {}",
+                "    ⚠️  STORAGE FLUSH TABLE failed (may be due to jobs table issues): {}",
                 e
             );
         }
     }
 
-    // Test 5b: FLUSH ALL TABLES
-    println!("\n  Test 5b: FLUSH ALL TABLES");
-    let flush_all_sql = format!("FLUSH ALL TABLES IN {}", ns_name);
+    // Test 5b: STORAGE FLUSH ALL
+    println!("\n  Test 5b: STORAGE FLUSH ALL");
+    let flush_all_sql = format!("STORAGE FLUSH ALL IN {}", ns_name);
     let flush_all_result = execute_sql_as_root_via_client(&flush_all_sql);
 
     match flush_all_result {
         Ok(output) => {
-            println!("    ✓ FLUSH ALL TABLES executed");
+            println!("    ✓ STORAGE FLUSH ALL executed");
 
             // Try to parse job IDs from output using common helper
             if let Ok(job_ids) = crate::common::parse_job_ids_from_flush_all_output(&output) {
@@ -354,7 +354,7 @@ fn test_flush_operations() {
         }
         Err(e) => {
             println!(
-                "    ⚠️  FLUSH ALL TABLES failed (may be due to jobs table issues): {}",
+                "    ⚠️  STORAGE FLUSH ALL failed (may be due to jobs table issues): {}",
                 e
             );
         }

@@ -2,7 +2,10 @@
 resolver = "2"
 members = [
     "backend/crates/kalamdb-commons",
+    "backend/crates/kalamdb-configs",
     "backend/crates/kalamdb-filestore",
+    "backend/crates/kalamdb-streams",
+    "backend/crates/kalamdb-sharding",
     "backend/crates/kalamdb-system",
     "backend/crates/kalamdb-tables",
     "backend/crates/kalamdb-core",
@@ -58,7 +61,7 @@ rocksdb = { version = "0.24.0", default-features = false, features = ["snappy", 
 # Apache Arrow ecosystem
 arrow = { version = "57.2.0", default-features = false, features = ["prettyprint", "ipc", "json"] }
 arrow-schema = { version = "57.2.0" }
-datafusion = { version = "52.0.0" }
+datafusion = { version = "52.0.0", default-features = false, features = ["sql", "parquet", "recursive_protection"] }
 datafusion-common = { version = "52.0.0" }
 sqlparser = { version = "0.60.0" }
 parquet = { version = "57.2.0", default-features = false, features = ["snap", "zstd", "arrow"] }

@@ -210,6 +210,12 @@ impl StorageSettings {
         crate::file_helpers::join_path(base, "storage")
     }
 
+    /// Get stream log directory path (data_path/streams)
+    pub fn streams_dir(&self) -> std::path::PathBuf {
+        let base = crate::file_helpers::normalize_dir_path(&self.data_path);
+        crate::file_helpers::join_path(base, "streams")
+    }
+
     /// Get Raft snapshots directory path (data_path/snapshots)
     pub fn resolved_snapshots_dir(&self) -> std::path::PathBuf {
         let base = crate::file_helpers::normalize_dir_path(&self.data_path);
@@ -856,4 +862,3 @@ impl Default for ServerConfig {
         }
     }
 }
-

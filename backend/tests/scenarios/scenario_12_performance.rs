@@ -344,7 +344,7 @@ async fn test_scenario_12_memory_baseline() -> anyhow::Result<()> {
 
             // Flush to test memory after flush
             let resp = server
-                .execute_sql(&format!("FLUSH TABLE {}.large_data", ns))
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.large_data", ns))
                 .await?;
             assert_success(&resp, "FLUSH large_data");
 

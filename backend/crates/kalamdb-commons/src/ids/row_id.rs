@@ -8,6 +8,7 @@ use crate::ids::SeqId;
 use crate::models::UserId;
 use crate::StorageKey;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 
 /// Composite key for user table rows: {user_id}:{_seq}
 ///
@@ -167,6 +168,21 @@ impl StreamTableRowId {
         let seq = SeqId::from_bytes(seq_bytes)?;
 
         Ok(Self::new(user_id, seq))
+    }
+}
+
+impl Ord for StreamTableRowId {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.user_id.as_str().cmp(other.user_id.as_str()) {
+            Ordering::Equal => self.seq.cmp(&other.seq),
+            other => other,
+        }
+    }
+}
+
+impl PartialOrd for StreamTableRowId {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

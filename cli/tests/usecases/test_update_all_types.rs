@@ -181,7 +181,7 @@ fn test_update_all_types_user_table() {
 
     // --- NEW SCENARIO: Flush initial data to cold storage before update ---
     println!("Flushing initial data to cold storage...");
-    let flush_sql = format!("FLUSH TABLE {}", full_table_name);
+    let flush_sql = format!("STORAGE FLUSH TABLE {}", full_table_name);
     let output = execute_sql_as_root_via_cli(&flush_sql).unwrap();
 
     // Wait for flush to complete
@@ -255,7 +255,7 @@ fn test_update_all_types_user_table() {
     assert!(output.contains("updated"), "Updated JSON content not found");
 
     // Flush table
-    let flush_sql = format!("FLUSH TABLE {}", full_table_name);
+    let flush_sql = format!("STORAGE FLUSH TABLE {}", full_table_name);
     let output = execute_sql_as_root_via_cli(&flush_sql).unwrap();
 
     // Wait for flush to complete
@@ -371,7 +371,7 @@ fn test_update_all_types_shared_table() {
 
     // --- NEW SCENARIO: Flush initial data to cold storage before update ---
     println!("Flushing initial data to cold storage...");
-    let flush_sql = format!("FLUSH TABLE {}", full_table_name);
+    let flush_sql = format!("STORAGE FLUSH TABLE {}", full_table_name);
     let output = execute_sql_as_root_via_cli(&flush_sql).unwrap();
 
     // Wait for flush to complete
@@ -438,7 +438,7 @@ fn test_update_all_types_shared_table() {
     assert!(output.contains("updated"), "Updated JSON content not found");
 
     // Flush table
-    let flush_sql = format!("FLUSH TABLE {}", full_table_name);
+    let flush_sql = format!("STORAGE FLUSH TABLE {}", full_table_name);
     let output = execute_sql_as_root_via_cli(&flush_sql).unwrap();
 
     // Wait for flush to complete

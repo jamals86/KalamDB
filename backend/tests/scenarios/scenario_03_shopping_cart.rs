@@ -417,7 +417,9 @@ async fn test_scenario_03_partial_flush() -> anyhow::Result<()> {
             }
 
             // Trigger flush
-            let resp = server.execute_sql(&format!("FLUSH TABLE {}.cart_items", ns)).await?;
+            let resp = server
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.cart_items", ns))
+                .await?;
             // Accept success or idempotent conflict
             if resp.status != ResponseStatus::Success {
                 let is_conflict = resp.error.as_ref()

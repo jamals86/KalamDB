@@ -13,7 +13,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
-use kalamdb_commons::models::Row;
+use kalamdb_commons::models::rows::Row;
 use kalamdb_tables::{SharedTableRow, UserTableRow};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;

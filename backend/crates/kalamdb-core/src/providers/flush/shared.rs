@@ -16,7 +16,8 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
-use kalamdb_commons::models::{Row, StorageId, TableId, UserId};
+use kalamdb_commons::models::rows::Row;
+use kalamdb_commons::models::{StorageId, TableId, UserId};
 use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
 use std::sync::Arc;
 

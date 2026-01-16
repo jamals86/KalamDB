@@ -88,7 +88,7 @@ We will use **sqlparser-rs** (https://github.com/sqlparser-rs/sqlparser-rs) as t
 
 3. **KalamDB-Specific Commands**:
    - Fully custom parsers (no sqlparser-rs involvement)
-   - Examples: CREATE NAMESPACE, CREATE STORAGE, FLUSH TABLE, BACKUP/RESTORE
+    - Examples: CREATE NAMESPACE, CREATE STORAGE, STORAGE FLUSH, BACKUP/RESTORE
    - These commands don't exist in standard SQL
 
 ### Custom Dialect Extension
@@ -205,7 +205,7 @@ kalamdb-sql/
 │   │   ├── stream_table.rs       # CREATE STREAM TABLE
 │   │   └── ...
 │   ├── storage_commands.rs       # CREATE STORAGE, ALTER STORAGE, etc.
-│   ├── flush_commands.rs         # FLUSH TABLE, FLUSH ALL TABLES
+│   ├── flush_commands.rs         # STORAGE FLUSH TABLE, STORAGE FLUSH ALL
 │   └── job_commands.rs           # KILL JOB, KILL LIVE QUERY
 ```
 

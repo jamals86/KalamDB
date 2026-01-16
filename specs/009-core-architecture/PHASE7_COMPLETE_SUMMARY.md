@@ -260,7 +260,7 @@ executor.rs: Routing orchestrator (~200 lines of routing logic)
 handlers/
 ├── dml.rs: 167 lines (INSERT, UPDATE, DELETE)
 ├── query.rs: 123 lines (SELECT, DESCRIBE, SHOW)
-├── flush.rs: 134 lines (FLUSH TABLE)
+├── flush.rs: 134 lines (STORAGE FLUSH TABLE)
 ├── subscription.rs: 110 lines (LIVE SELECT)
 ├── user_management.rs: 178 lines (CREATE/ALTER/DROP USER)
 ├── table_registry.rs: 140 lines (REGISTER/UNREGISTER TABLE)
@@ -376,7 +376,7 @@ All handlers need (future work):
 5. **Implement handler logic**
    - DMLHandler: INSERT, UPDATE, DELETE operations
    - QueryHandler: SELECT, DESCRIBE, SHOW operations
-   - FlushHandler: FLUSH TABLE job creation
+   - FlushHandler: STORAGE FLUSH TABLE job creation
    - SubscriptionHandler: LIVE SELECT subscriptions
    - UserManagementHandler: User CRUD with bcrypt
    - TableRegistryHandler: External table registration

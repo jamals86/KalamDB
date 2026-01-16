@@ -27,9 +27,8 @@
 
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::ids::UserTableRowId;
+use kalamdb_commons::models::rows::UserTableRow;
 use kalamdb_store::IndexDefinition;
-
-use super::UserTableRow;
 
 /// Index for querying user table rows by primary key value.
 ///

@@ -96,7 +96,7 @@ async fn test_shared_flush_creates_manifest_json_over_http() -> anyhow::Result<(
             }
 
             let resp = server
-                .execute_sql(&format!("FLUSH TABLE {}.{}", namespace, table))
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.{}", namespace, table))
                 .await?;
             assert_eq!(resp.status, ResponseStatus::Success);
 

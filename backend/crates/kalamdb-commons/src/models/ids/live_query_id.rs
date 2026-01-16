@@ -127,17 +127,20 @@ impl LiveQueryId {
 
     /// Parse LiveQueryId from string format
     pub fn from_string(s: &str) -> Result<Self, String> {
-        let parts: Vec<&str> = s.splitn(3, '-').collect();
-        if parts.len() != 3 {
+        let mut parts = s.splitn(3, '-');
+        let user = parts.next();
+        let connection = parts.next();
+        let subscription = parts.next();
+        if user.is_none() || connection.is_none() || subscription.is_none() {
             return Err(format!(
                 "Invalid live_query_id format: {}. Expected: {{user_id}}-{{connection_id}}-{{subscription_id}}",
                 s
             ));
         }
 
-        let user_id = UserId::new(parts[0].to_string());
-        let connection_id = ConnectionId::new(parts[1].to_string());
-        let subscription_id = parts[2].to_string();
+        let user_id = UserId::new(user.unwrap().to_string());
+        let connection_id = ConnectionId::new(connection.unwrap().to_string());
+        let subscription_id = subscription.unwrap().to_string();
         
         Ok(Self::new(user_id, connection_id, subscription_id))
     }

@@ -1,5 +1,5 @@
 // Smoke Test 3: System tables and user lifecycle
-// Covers: SELECT from system tables, CREATE USER, verify presence, DROP USER, FLUSH ALL TABLES job
+// Covers: SELECT from system tables, CREATE USER, verify presence, DROP USER, STORAGE FLUSH ALL job
 
 use crate::common::*;
 
@@ -60,7 +60,7 @@ fn smoke_system_tables_and_user_lifecycle() {
         users_out2
     );
 
-    // 4) FLUSH ALL TABLES should enqueue jobs and complete successfully
+    // 4) STORAGE FLUSH ALL should enqueue jobs and complete successfully
     // Create a test namespace and user table first
     // Use a unique namespace per run to avoid cross-test collisions when tests run in parallel
     let test_ns = generate_unique_namespace("smoke_test_flush");
@@ -80,7 +80,7 @@ fn smoke_system_tables_and_user_lifecycle() {
     execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
 
     // Now flush all tables in the namespace
-    let flush_output = execute_sql_as_root_via_client(&format!("FLUSH ALL TABLES IN {}", test_ns))
+    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH ALL IN {}", test_ns))
         .expect("flush all tables in namespace should succeed");
 
     println!("[FLUSH ALL] Output: {}", flush_output);

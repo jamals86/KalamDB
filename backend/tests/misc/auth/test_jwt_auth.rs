@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 fn jwt_secret_for_tests() -> String {
     std::env::var("KALAMDB_JWT_SECRET")
-        .unwrap_or_else(|_| kalamdb_commons::config::defaults::default_auth_jwt_secret())
+        .unwrap_or_else(|_| kalamdb_configs::defaults::default_auth_jwt_secret())
 }
 
 fn trusted_issuer_for_tests() -> String {

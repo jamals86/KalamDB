@@ -120,7 +120,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             .set_reconnect_interval(Duration::from_millis(config.reconnect_interval_ms));
         
         // Parse snapshot policy from configuration
-        let snapshot_policy = kalamdb_commons::config::ClusterConfig::parse_snapshot_policy(&config.snapshot_policy)
+        let snapshot_policy = kalamdb_configs::ClusterConfig::parse_snapshot_policy(&config.snapshot_policy)
             .map_err(|e| RaftError::Config(format!("Invalid snapshot policy: {}", e)))?;
         
         // Create Raft configuration with optimizations for single-node mode
@@ -400,10 +400,11 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             crate::RaftCommand::SharedData(cmd) => crate::state_machine::serde_helpers::encode(cmd)?,
         };
         
-        let raft = {
-            let guard = self.raft.read();
-            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
-        };
+        // Clone Arc once outside the lock scope to avoid holding read lock
+        let raft = self.raft.read()
+            .as_ref()
+            .ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
+            .clone();
         
         // Submit the command and wait for commit
         let response = raft.client_write(command_bytes).await
@@ -448,6 +449,8 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         const INITIAL_BACKOFF_MS: u64 = 50;
         
         let mut last_error = None;
+        let mut command_bytes_opt = Some(command_bytes);
+        
         for attempt in 0..MAX_RETRIES {
             // Get current leader
             match self.current_leader() {
@@ -460,8 +463,15 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                                 self.group_id, leader_id, leader_node.rpc_addr, attempt + 1
                             );
                             
+                            // Take ownership on first attempt, clone on retries
+                            let cmd_bytes = if attempt == 0 {
+                                command_bytes_opt.take().unwrap()
+                            } else {
+                                command_bytes_opt.as_ref().unwrap().clone()
+                            };
+                            
                             // Try to forward
-                            match self.forward_to_leader(&leader_node.rpc_addr, command_bytes.clone()).await {
+                            match self.forward_to_leader(&leader_node.rpc_addr, cmd_bytes).await {
                                 Ok((response_bytes, log_index)) => {
                                     // Deserialize the response using serdes_helpers
                                     let response = crate::state_machine::serde_helpers::decode(&response_bytes)

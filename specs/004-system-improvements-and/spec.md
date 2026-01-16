@@ -19,7 +19,7 @@
    - *Impact*: User Story 1, Phase 4 tasks (T117a-c, T125, T128, T132a, T133, T136)
    - *Rationale*: Maximizes memory efficiency and benefits all users; simpler than per-session caching
 
-3. **Q: Should manual FLUSH TABLE be synchronous or asynchronous?** → A: Always asynchronous (returns job_id immediately, client polls system.jobs for completion status)
+3. **Q: Should manual STORAGE FLUSH TABLE be synchronous or asynchronous?** → A: Always asynchronous (returns job_id immediately, client polls system.jobs for completion status)
    - *Impact*: User Story 3, Phase 8 tasks (T206, T206a, T207, T208, T209, T211, T211a, T217, T217a, T219, T219a, T220, T221)
    - *Rationale*: Prevents HTTP timeout for large flushes, enables concurrent operations, consistent with automatic flush job pattern
 
@@ -188,12 +188,12 @@ System administrators and developers need consistent API versioning for future c
 
 - **FR-VER-020**: All SQL statement parsing MUST be located in kalamdb-sql crate
 - **FR-VER-021**: backend/crates/kalamdb-core/src/sql/executor.rs MUST be moved to backend/crates/kalamdb-sql/src/executor.rs
-- **FR-VER-022**: CREATE STORAGE, ALTER STORAGE, FLUSH TABLE parsers MUST be in kalamdb-sql
+- **FR-VER-022**: CREATE STORAGE, ALTER STORAGE, STORAGE FLUSH parsers MUST be in kalamdb-sql
 - **FR-VER-023**: kalamdb-core MUST NOT contain any SQL parsing logic (only execution coordination)
 - **FR-VER-024**: kalamdb-sql MUST export all parsers through a unified API
 - **FR-VER-025**: All SQL keywords MUST be defined in a single centralized file as enums in kalamdb-sql
 - **FR-VER-026**: System MUST use sqlparser-rs for standard SQL parsing (SELECT, INSERT, UPDATE, DELETE, CREATE TABLE, etc.)
-- **FR-VER-027**: KalamDB-specific commands (CREATE STORAGE, FLUSH TABLE, KILL JOB) MUST extend sqlparser-rs with custom statement types
+- **FR-VER-027**: KalamDB-specific commands (CREATE STORAGE, STORAGE FLUSH, KILL JOB) MUST extend sqlparser-rs with custom statement types
 - **FR-VER-028**: SQL syntax MUST follow PostgreSQL and MySQL conventions where applicable for familiarity
 - **FR-VER-029**: Error messages MUST match PostgreSQL/MySQL style for consistency (e.g., "ERROR: relation 'tablename' does not exist")
 - **FR-VER-030**: CLI output formatting MUST match psql/mysql style (table borders, alignment, row counts)
@@ -494,25 +494,25 @@ Database administrators need to manually trigger table flushing for maintenance,
 
 **Why this priority**: Manual control is necessary for planned maintenance and backup operations. While automatic flushing handles routine operations, administrators need the ability to force immediate persistence. Asynchronous execution prevents HTTP timeouts for large table flushes and allows concurrent flush operations.
 
-**Independent Test**: Can be fully tested by executing a `FLUSH TABLE` SQL command via the API, verifying it returns a job_id immediately, then polling system.jobs to confirm the flush completes and Parquet files are written.
+**Independent Test**: Can be fully tested by executing a `STORAGE FLUSH TABLE` SQL command via the API, verifying it returns a job_id immediately, then polling system.jobs to confirm the flush completes and Parquet files are written.
 
 **Acceptance Scenarios**:
 
-1. **Given** a user table has buffered data, **When** administrator executes `FLUSH TABLE namespace.table_name`, **Then** the command returns immediately with a job_id and the flush executes asynchronously
+1. **Given** a user table has buffered data, **When** administrator executes `STORAGE FLUSH TABLE namespace.table_name`, **Then** the command returns immediately with a job_id and the flush executes asynchronously
 2. **Given** a flush job is running, **When** querying system.jobs with the job_id, **Then** the status field shows progress ('pending', 'running', 'completed', or 'failed')
-3. **Given** multiple tables exist, **When** administrator executes `FLUSH ALL TABLES`, **Then** multiple flush jobs are created and all job_ids are returned in the response
+3. **Given** multiple tables exist, **When** administrator executes `STORAGE FLUSH ALL`, **Then** multiple flush jobs are created and all job_ids are returned in the response
 4. **Given** a flush job completes successfully, **When** querying system.jobs, **Then** the result field includes records_flushed count and storage_location path
 5. **Given** the server is shutting down, **When** the shutdown sequence initiates, **Then** all pending flush jobs complete (or timeout) before the process terminates
 
 **Integration Tests** (backend/tests/integration/test_manual_flushing.rs):
 
-1. **test_flush_table_returns_job_id**: Create user table, insert 100 rows, execute FLUSH TABLE, verify response contains job_id and returns immediately (< 100ms)
-2. **test_flush_job_completes_asynchronously**: Execute FLUSH TABLE to get job_id, poll system.jobs, verify status progresses from 'pending' → 'running' → 'completed'
-3. **test_flush_all_tables_multiple_jobs**: Create 3 tables with buffered data, execute FLUSH ALL TABLES, verify response contains array of job_ids (one per table)
-4. **test_flush_job_result_includes_metrics**: Execute FLUSH TABLE, wait for completion, query system.jobs, verify result field includes records_flushed and storage_location
-5. **test_flush_empty_table**: Execute FLUSH TABLE on table with no buffered data, verify job completes with result indicating 0 records flushed
-6. **test_concurrent_flush_same_table**: Execute FLUSH TABLE twice concurrently on same table, verify both jobs succeed or second job detects in-progress flush
-7. **test_shutdown_waits_for_flush_jobs**: Insert data, execute FLUSH TABLE, immediately initiate shutdown, verify flush completes before process terminates
+1. **test_flush_table_returns_job_id**: Create user table, insert 100 rows, execute STORAGE FLUSH TABLE, verify response contains job_id and returns immediately (< 100ms)
+2. **test_flush_job_completes_asynchronously**: Execute STORAGE FLUSH TABLE to get job_id, poll system.jobs, verify status progresses from 'pending' → 'running' → 'completed'
+3. **test_flush_all_tables_multiple_jobs**: Create 3 tables with buffered data, execute STORAGE FLUSH ALL, verify response contains array of job_ids (one per table)
+4. **test_flush_job_result_includes_metrics**: Execute STORAGE FLUSH TABLE, wait for completion, query system.jobs, verify result field includes records_flushed and storage_location
+5. **test_flush_empty_table**: Execute STORAGE FLUSH TABLE on table with no buffered data, verify job completes with result indicating 0 records flushed
+6. **test_concurrent_flush_same_table**: Execute STORAGE FLUSH TABLE twice concurrently on same table, verify both jobs succeed or second job detects in-progress flush
+7. **test_shutdown_waits_for_flush_jobs**: Insert data, execute STORAGE FLUSH TABLE, immediately initiate shutdown, verify flush completes before process terminates
 8. **test_flush_job_failure_handling**: Simulate flush error (e.g., disk full), verify job status='failed' and error message in system.jobs.result
 
 ---
@@ -1682,11 +1682,11 @@ fn rows_to_record_batch(&self, rows: &[(Vec<u8>, JsonValue)]) -> Result<RecordBa
 
 #### Manual Flushing Commands
 
-- **FR-027**: System MUST support SQL command: `FLUSH TABLE <namespace>.<table_name>`
-- **FR-028**: System MUST support SQL command: `FLUSH ALL TABLES` to flush all tables with buffered data
+- **FR-027**: System MUST support SQL command: `STORAGE FLUSH TABLE <namespace>.<table_name>`
+- **FR-028**: System MUST support SQL command: `STORAGE FLUSH ALL` to flush all tables with buffered data
 - **FR-029**: Manual flush commands MUST be asynchronous, returning immediately with job_id(s) for status monitoring
-- **FR-029a**: FLUSH TABLE command MUST return response containing job_id for the flush operation
-- **FR-029b**: FLUSH ALL TABLES command MUST return response containing array of job_ids (one per table)
+- **FR-029a**: STORAGE FLUSH TABLE command MUST return response containing job_id for the flush operation
+- **FR-029b**: STORAGE FLUSH ALL command MUST return response containing array of job_ids (one per table)
 - **FR-030**: Flush job result in system.jobs MUST include number of records flushed and target storage location
 - **FR-031**: System MUST automatically flush all tables during server shutdown sequence before process termination
 - **FR-031a**: Server shutdown MUST wait for pending flush jobs to complete (or timeout after configurable duration)

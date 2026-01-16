@@ -13,6 +13,7 @@ use kalamdb_auth::{
     UserRepository,
 };
 use kalamdb_commons::Role;
+use kalamdb_configs::ServerConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -110,7 +111,7 @@ impl Default for AuthConfig {
             // IMPORTANT: This must match the default in kalamdb-auth/src/unified.rs JWT_CONFIG
             // Use centralized default from kalamdb-commons to ensure consistency
             jwt_secret: std::env::var("KALAMDB_JWT_SECRET")
-                .unwrap_or_else(|_| kalamdb_commons::config::defaults::default_auth_jwt_secret()),
+                .unwrap_or_else(|_| kalamdb_configs::defaults::default_auth_jwt_secret()),
             jwt_expiry_hours: std::env::var("KALAMDB_JWT_EXPIRY_HOURS")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -126,7 +127,7 @@ impl Default for AuthConfig {
 
 impl AuthConfig {
     /// Create AuthConfig from ServerConfig (reads jwt_secret from config file)
-    pub fn from_server_config(config: &kalamdb_commons::ServerConfig) -> Self {
+    pub fn from_server_config(config: &ServerConfig) -> Self {
         Self {
             // Use jwt_secret from config file (which falls back to env var or default)
             jwt_secret: config.auth.jwt_secret.clone(),

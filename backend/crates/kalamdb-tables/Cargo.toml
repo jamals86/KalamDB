@@ -12,10 +12,12 @@ categories = ["database"]
 
 [dependencies]
 # Internal crates
-kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
+kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-filestore = { path = "../kalamdb-filestore" }
 kalamdb-system = { path = "../kalamdb-system" }
+kalamdb-streams = { path = "../kalamdb-streams" }
+kalamdb-sharding = { path = "../kalamdb-sharding" }
 
 # Apache Arrow ecosystem
 arrow = { workspace = true }
@@ -51,6 +53,9 @@ log = { workspace = true }
 
 # UUID generation
 uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lib]
 name = "kalamdb_tables"

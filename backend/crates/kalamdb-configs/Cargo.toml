@@ -1,0 +1,20 @@
+[package]
+name = "kalamdb-configs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Server configuration types and loader for KalamDB"
+
+[dependencies]
+serde = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+num_cpus = { workspace = true }
+openraft = { workspace = true }
+
+[lib]
+name = "kalamdb_configs"
+path = "src/lib.rs"

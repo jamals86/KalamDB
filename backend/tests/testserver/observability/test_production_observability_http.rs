@@ -77,7 +77,9 @@ async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result
         .await?;
     assert_eq!(resp.status, ResponseStatus::Success);
 
-    let resp = server.execute_sql(&format!("FLUSH TABLE {}.logs", ns_jobs)).await?;
+    let resp = server
+        .execute_sql(&format!("STORAGE FLUSH TABLE {}.logs", ns_jobs))
+        .await?;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let deadline = Instant::now() + Duration::from_secs(5);

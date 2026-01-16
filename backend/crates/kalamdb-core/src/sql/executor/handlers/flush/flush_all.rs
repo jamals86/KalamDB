@@ -1,4 +1,4 @@
-//! Typed handler for FLUSH ALL TABLES statement
+//! Typed handler for STORAGE FLUSH ALL statement
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
@@ -10,7 +10,7 @@ use kalamdb_commons::{JobId, JobType};
 use kalamdb_sql::ddl::FlushAllTablesStatement;
 use std::sync::Arc;
 
-/// Handler for FLUSH ALL TABLES
+/// Handler for STORAGE FLUSH ALL
 pub struct FlushAllTablesHandler {
     app_context: Arc<AppContext>,
 }
@@ -69,7 +69,7 @@ impl TypedStatementHandler<FlushAllTablesStatement> for FlushAllTablesHandler {
 
         Ok(ExecutionResult::Success {
             message: format!(
-                "Flush started for {} table(s) in namespace '{}'. Job IDs: [{}]",
+                "Storage flush started for {} table(s) in namespace '{}'. Job IDs: [{}]",
                 job_ids.len(),
                 ns.as_str(),
                 job_ids.join(", ")
@@ -89,7 +89,7 @@ impl TypedStatementHandler<FlushAllTablesStatement> for FlushAllTablesHandler {
             Role::Service | Role::Dba | Role::System
         ) {
             return Err(KalamDbError::Unauthorized(
-                "FLUSH ALL TABLES requires Service, DBA, or System role".to_string(),
+                "STORAGE FLUSH ALL requires Service, DBA, or System role".to_string(),
             ));
         }
         Ok(())

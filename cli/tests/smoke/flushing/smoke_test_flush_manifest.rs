@@ -66,8 +66,8 @@ fn smoke_test_user_table_flush_manifest() {
     println!("✅ Inserted 20 rows");
 
     // Trigger manual flush to ensure data is flushed
-    println!("🚀 Triggering manual FLUSH TABLE...");
-    let flush_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table))
+    println!("🚀 Triggering manual STORAGE FLUSH TABLE...");
+    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
         .expect("Failed to flush table");
 
     println!("Flush output: {}", flush_output);
@@ -151,8 +151,8 @@ fn smoke_test_shared_table_flush_manifest() {
     }
 
     // Trigger manual flush
-    println!("🚀 Triggering manual FLUSH TABLE...");
-    let flush_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table))
+    println!("🚀 Triggering manual STORAGE FLUSH TABLE...");
+    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
         .expect("Failed to flush table");
 
     let job_id = parse_job_id_from_flush_output(&flush_output)
@@ -225,7 +225,7 @@ fn smoke_test_manifest_updated_on_second_flush() {
         execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
     }
 
-    let flush1_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table))
+    let flush1_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
         .expect("Failed to flush table (first)");
     let job1_id =
         parse_job_id_from_flush_output(&flush1_output).expect("Failed to parse job ID (first)");
@@ -262,7 +262,7 @@ fn smoke_test_manifest_updated_on_second_flush() {
         execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
     }
 
-    let flush2_output = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table))
+    let flush2_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
         .expect("Failed to flush table (second)");
     let job2_id =
         parse_job_id_from_flush_output(&flush2_output).expect("Failed to parse job ID (second)");
@@ -308,7 +308,7 @@ fn smoke_test_manifest_updated_on_second_flush() {
 /// Test error: FLUSH on STREAM table should fail
 ///
 /// Verifies:
-/// - FLUSH TABLE on stream table returns error
+/// - STORAGE FLUSH TABLE on stream table returns error
 /// - Error message mentions stream tables don't support flushing
 #[ntest::timeout(180_000)]
 #[test]
@@ -322,7 +322,7 @@ fn smoke_test_flush_stream_table_error() {
     let table = generate_unique_table("stream_no_flush");
     let full_table = format!("{}.{}", namespace, table);
 
-    println!("🧪 Testing FLUSH TABLE error on STREAM table");
+    println!("🧪 Testing STORAGE FLUSH TABLE error on STREAM table");
 
     // Cleanup and setup
     let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
@@ -344,11 +344,11 @@ fn smoke_test_flush_stream_table_error() {
     println!("✅ Created STREAM table");
 
     // Try to flush stream table (should fail)
-    let flush_result = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table));
+    let flush_result = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table));
 
     match flush_result {
         Err(e) => {
-            println!("✅ FLUSH TABLE on STREAM table failed as expected: {}", e);
+            println!("✅ STORAGE FLUSH TABLE on STREAM table failed as expected: {}", e);
             let error_msg = e.to_string().to_lowercase();
             assert!(
                 error_msg.contains("stream")
@@ -371,5 +371,5 @@ fn smoke_test_flush_stream_table_error() {
         }
     }
 
-    println!("✅ Verified FLUSH TABLE on STREAM table returns error");
+    println!("✅ Verified STORAGE FLUSH TABLE on STREAM table returns error");
 }

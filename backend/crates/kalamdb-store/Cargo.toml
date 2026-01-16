@@ -13,7 +13,9 @@ datafusion = ["dep:datafusion"]
 
 [dependencies]
 # Internal crates
-kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
+kalamdb-commons = { path = "../kalamdb-commons", features = ["serde", "full"] }
+kalamdb-configs = { path = "../kalamdb-configs" }
+kalamdb-sharding = { path = "../kalamdb-sharding", features = ["serde"] }
 
 rocksdb = { workspace = true }
 serde = { workspace = true }

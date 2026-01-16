@@ -60,7 +60,9 @@ async fn test_scenario_06_jobs_lifecycle() -> anyhow::Result<()> {
             // =========================================================
             // Step 2: Trigger flush job
             // =========================================================
-            let resp = server.execute_sql(&format!("FLUSH TABLE {}.data", ns)).await?;
+            let resp = server
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.data", ns))
+                .await?;
             // Accept success or idempotent conflict
             if resp.status != ResponseStatus::Success {
                 let is_conflict = resp.error.as_ref()
@@ -172,11 +174,15 @@ async fn test_scenario_06_job_idempotency() -> anyhow::Result<()> {
             }
 
             // First flush
-            let resp1 = server.execute_sql(&format!("FLUSH TABLE {}.data", ns)).await?;
+            let resp1 = server
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.data", ns))
+                .await?;
             let _ = wait_for_flush_complete(server, &ns, "data", Duration::from_secs(10)).await;
 
             // Second flush (should be idempotent or no-op)
-            let resp2 = server.execute_sql(&format!("FLUSH TABLE {}.data", ns)).await?;
+            let resp2 = server
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.data", ns))
+                .await?;
             // This might succeed, conflict, or be no-op depending on implementation
             
             // Wait again
@@ -268,7 +274,9 @@ async fn test_scenario_06_job_status_transitions() -> anyhow::Result<()> {
             }
 
             // Trigger flush
-            let resp = server.execute_sql(&format!("FLUSH TABLE {}.data", ns)).await?;
+            let resp = server
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.data", ns))
+                .await?;
 
             // Capture job states over time
             let mut states_seen = Vec::new();

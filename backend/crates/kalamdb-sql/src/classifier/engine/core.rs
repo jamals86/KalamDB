@@ -432,16 +432,26 @@ impl SqlStatement {
                 }))
             }
 
-            // Flush operations - authorization deferred to table ownership checks
-            ["FLUSH", "ALL", "TABLES", ..] => Ok(Self::wrap(sql, || {
+            // Storage maintenance operations - authorization deferred to table ownership checks
+            ["STORAGE", "FLUSH", "ALL", ..] => Ok(Self::wrap(sql, || {
                 FlushAllTablesStatement::parse_with_default(sql, default_namespace)
                     .ok()
                     .map(SqlStatementKind::FlushAllTables)
             })),
-            ["FLUSH", "TABLE", ..] => Ok(Self::wrap(sql, || {
+            ["STORAGE", "FLUSH", "TABLE", ..] => Ok(Self::wrap(sql, || {
                 FlushTableStatement::parse(sql)
                     .ok()
                     .map(SqlStatementKind::FlushTable)
+            })),
+            ["STORAGE", "COMPACT", "ALL", ..] => Ok(Self::wrap(sql, || {
+                CompactAllTablesStatement::parse_with_default(sql, default_namespace)
+                    .ok()
+                    .map(SqlStatementKind::CompactAllTables)
+            })),
+            ["STORAGE", "COMPACT", "TABLE", ..] => Ok(Self::wrap(sql, || {
+                CompactTableStatement::parse(sql)
+                    .ok()
+                    .map(SqlStatementKind::CompactTable)
             })),
             ["SHOW", "MANIFEST"] => {
                 // SHOW MANIFEST command for inspecting manifest cache
@@ -857,13 +867,15 @@ impl SqlStatement {
             | SqlStatementKind::DescribeTable(_)
             | SqlStatementKind::UseNamespace(_) => Ok(()),
 
-            // CREATE TABLE/VIEW, DROP TABLE, FLUSH TABLE, ALTER TABLE - defer to ownership checks
+            // CREATE TABLE/VIEW, DROP TABLE, STORAGE FLUSH/COMPACT, ALTER TABLE - defer to ownership checks
             SqlStatementKind::CreateTable(_)
             | SqlStatementKind::CreateView(_)
             | SqlStatementKind::AlterTable(_)
             | SqlStatementKind::DropTable(_)
             | SqlStatementKind::FlushTable(_)
-            | SqlStatementKind::FlushAllTables(_) => {
+            | SqlStatementKind::FlushAllTables(_)
+            | SqlStatementKind::CompactTable(_)
+            | SqlStatementKind::CompactAllTables(_) => {
                 // Table-level authorization will be checked in the execution methods
                 // Users can only create/modify/drop tables they own
                 // Admin users can operate on any table (already returned above)

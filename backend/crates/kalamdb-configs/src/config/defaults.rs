@@ -258,54 +258,72 @@ pub fn default_auth_jwt_secret() -> String {
         .unwrap_or_else(|_| "CHANGE_ME_IN_PRODUCTION".to_string())
 }
 
+/// Default trusted JWT issuers (empty = no issuer validation)
 pub fn default_auth_jwt_trusted_issuers() -> String {
-    "".to_string() // Empty list means no JWT auth by default
+    std::env::var("KALAMDB_JWT_TRUSTED_ISSUERS").unwrap_or_default()
 }
 
+/// Default minimum password length
 pub fn default_auth_min_password_length() -> usize {
-    8 // Minimum 8 characters for passwords
+    8
 }
 
+/// Default maximum password length
 pub fn default_auth_max_password_length() -> usize {
-    1024 // Maximum 1024 characters for passwords
+    1024
 }
 
+/// Default bcrypt cost factor
 pub fn default_auth_bcrypt_cost() -> u32 {
-    12 // Bcrypt cost factor 12 (good balance of security and performance)
+    12
 }
 
+/// Default password complexity enforcement
 pub fn default_auth_enforce_password_complexity() -> bool {
     false
 }
 
-// OAuth defaults (Phase 10, User Story 8)
+// OAuth defaults
 pub fn default_oauth_enabled() -> bool {
-    false // OAuth disabled by default
+    false
 }
 
 pub fn default_oauth_auto_provision() -> bool {
-    false // Auto-provisioning disabled by default
+    false
 }
 
 pub fn default_oauth_default_role() -> String {
-    "user".to_string() // Default role for auto-provisioned users
+    "user".to_string()
 }
 
 pub fn default_oauth_provider_enabled() -> bool {
-    false // Individual providers disabled by default
+    false
 }
 
-// RocksDB defaults (memory-optimized for many column families)
+// WebSocket defaults
+pub fn default_websocket_client_timeout() -> Option<u64> {
+    Some(10)
+}
+
+pub fn default_websocket_auth_timeout() -> Option<u64> {
+    Some(3)
+}
+
+pub fn default_websocket_heartbeat_interval() -> Option<u64> {
+    Some(5)
+}
+
+// RocksDB defaults
 pub fn default_rocksdb_write_buffer_size() -> usize {
-    4 * 1024 * 1024 // 4MB (reduced from 8MB for many-CF scenarios)
+    64 * 1024 * 1024 // 64MB
 }
 
 pub fn default_rocksdb_max_write_buffers() -> i32 {
-    2 // 2 write buffers per CF (memory = 4MB × 2 = 8MB per CF)
+    3
 }
 
 pub fn default_rocksdb_block_cache_size() -> usize {
-    16 * 1024 * 1024 // 16MB shared cache (reduced for low-memory profiles)
+    256 * 1024 * 1024 // 256MB
 }
 
 pub fn default_rocksdb_max_background_jobs() -> i32 {
@@ -313,27 +331,14 @@ pub fn default_rocksdb_max_background_jobs() -> i32 {
 }
 
 pub fn default_rocksdb_sync_writes() -> bool {
-    false // Don't sync on each write for performance (WAL still provides durability)
+    false
 }
 
 // Security defaults
 pub fn default_max_ws_message_size() -> usize {
-    1024 * 1024 // 1MB - prevents memory exhaustion from large messages
+    1024 * 1024 // 1MB
 }
 
 pub fn default_max_request_body_size() -> usize {
-    10 * 1024 * 1024 // 10MB - reasonable limit for SQL queries
-}
-
-// WebSocket defaults (Phase 14 - Live Queries)
-pub fn default_websocket_client_timeout() -> Option<u64> {
-    Some(10) // 10 seconds for client heartbeat timeout
-}
-
-pub fn default_websocket_auth_timeout() -> Option<u64> {
-    Some(3) // 3 seconds for authentication timeout
-}
-
-pub fn default_websocket_heartbeat_interval() -> Option<u64> {
-    Some(5) // 5 seconds between heartbeat checks
+    10 * 1024 * 1024 // 10MB
 }

@@ -653,7 +653,7 @@ fn smoke_test_cluster_job_tracking() {
 
     // Trigger manual flush
     let flush_result = execute_sql_as_root_via_client(&format!(
-        "FLUSH TABLE {}.flush_test",
+        "STORAGE FLUSH TABLE {}.flush_test",
         namespace
     ));
 

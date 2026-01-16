@@ -3,7 +3,8 @@
 //! This module defines secondary indexes for the system.jobs table.
 
 use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobId, JobStatus, StoragePartition};
+use crate::StoragePartition;
+use kalamdb_commons::{JobId, JobStatus};
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
 

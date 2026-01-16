@@ -10,9 +10,7 @@
 //! [GroupPrefix]:[KeyType]:[Suffix]
 //!
 //! Group Prefixes:
-//!   - MetaSystem:       "sys"
-//!   - MetaUsers:        "users"
-//!   - MetaJobs:         "jobs"
+//!   - Meta:             "meta"
 //!   - DataUserShard(N): "u:{N:05}"
 //!   - DataSharedShard(N): "s:{N:05}"
 //!
@@ -28,12 +26,12 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use kalamdb_store::raft_storage::{RaftPartitionStore, RaftGroupId};
+//! use kalamdb_store::raft_storage::{RaftPartitionStore, GroupId};
 //! use kalamdb_store::StorageBackend;
 //! use std::sync::Arc;
 //!
 //! let backend: Arc<dyn StorageBackend> = /* ... */;
-//! let store = RaftPartitionStore::new(backend, RaftGroupId::MetaSystem);
+//! let store = RaftPartitionStore::new(backend, GroupId::Meta);
 //!
 //! // Append log entries
 //! store.append_logs(&entries)?;
@@ -47,39 +45,15 @@ use crate::storage_trait::{Operation, Partition, Result, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+// Re-export GroupId from kalamdb-sharding
+pub use kalamdb_sharding::GroupId;
+
 /// The single partition name for all Raft data.
 pub const RAFT_PARTITION_NAME: &str = "raft_data";
 
 // ============================================================================
 // Types
 // ============================================================================
-
-/// Raft group identifier for storage purposes.
-///
-/// This is a simplified version of `kalamdb_raft::GroupId` to avoid circular
-/// dependencies. The conversion is done at the boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum RaftGroupId {
-    /// Unified metadata (namespaces, tables, storages, users, jobs)
-    Meta,
-    /// User table data shard
-    DataUserShard(u32),
-    /// Shared table data shard
-    DataSharedShard(u32),
-}
-
-impl RaftGroupId {
-    /// Returns the key prefix for this group.
-    ///
-    /// All keys in `raft_data` partition are prefixed with this string.
-    pub fn key_prefix(&self) -> String {
-        match self {
-            RaftGroupId::Meta => "meta".to_string(),
-            RaftGroupId::DataUserShard(n) => format!("u:{:05}", n),
-            RaftGroupId::DataSharedShard(n) => format!("s:{:05}", n),
-        }
-    }
-}
 
 /// A single Raft log entry for persistent storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,7 +126,7 @@ impl KSerializable for RaftSnapshotData {}
 /// Thread-safe via internal `Arc<dyn StorageBackend>`.
 pub struct RaftPartitionStore {
     backend: Arc<dyn StorageBackend>,
-    group_id: RaftGroupId,
+    group_id: GroupId,
     partition: Partition,
 }
 
@@ -160,7 +134,7 @@ impl RaftPartitionStore {
     /// Creates a new store for the given Raft group.
     ///
     /// The partition `raft_data` must already exist in the backend.
-    pub fn new(backend: Arc<dyn StorageBackend>, group_id: RaftGroupId) -> Self {
+    pub fn new(backend: Arc<dyn StorageBackend>, group_id: GroupId) -> Self {
         Self {
             backend,
             group_id,
@@ -169,7 +143,7 @@ impl RaftPartitionStore {
     }
 
     /// Returns the group ID this store is for.
-    pub fn group_id(&self) -> RaftGroupId {
+    pub fn group_id(&self) -> GroupId {
         self.group_id
     }
 
@@ -354,9 +328,11 @@ impl RaftPartitionStore {
     fn parse_log_index_from_key(key: &[u8]) -> Option<u64> {
         let key_str = std::str::from_utf8(key).ok()?;
         // Key format: "{prefix}:log:{index:020}"
-        let parts: Vec<&str> = key_str.split(':').collect();
-        if parts.len() >= 2 && parts[parts.len() - 2] == "log" {
-            parts.last()?.parse().ok()
+        let mut parts = key_str.rsplitn(3, ':');
+        let index = parts.next()?;
+        let marker = parts.next()?;
+        if marker == "log" {
+            index.parse().ok()
         } else {
             None
         }

@@ -94,11 +94,14 @@ fn smoke_test_00_parallel_query_burst() {
         }
     }
 
-    println!("Issuing FLUSH TABLE {} to force persistence before load test", full_table_name);
-    let flush_sql = format!("FLUSH TABLE {}", full_table_name);
+    println!(
+        "Issuing STORAGE FLUSH TABLE {} to force persistence before load test",
+        full_table_name
+    );
+    let flush_sql = format!("STORAGE FLUSH TABLE {}", full_table_name);
     match execute_sql_as_root_via_client(&flush_sql) {
-        Ok(output) => println!("FLUSH TABLE acknowledged: {}", output.trim()),
-        Err(err) => panic!("FLUSH TABLE {} failed: {}", full_table_name, err),
+        Ok(output) => println!("STORAGE FLUSH TABLE acknowledged: {}", output.trim()),
+        Err(err) => panic!("STORAGE FLUSH TABLE {} failed: {}", full_table_name, err),
     }
 
     // Verify row count via JSON output for precise validation

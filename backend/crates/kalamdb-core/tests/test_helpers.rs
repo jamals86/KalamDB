@@ -4,7 +4,7 @@
 
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::{NamespaceId, NodeId, StorageId};
-use kalamdb_commons::{StoragePartition, SystemTable};
+use kalamdb_system::{StoragePartition, SystemTable};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobRegistry, RestoreExecutor,
@@ -57,7 +57,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
             Arc::new(RocksDBBackend::new(test_db.db.clone()));
 
         // Create minimal test config using Default + overrides
-        let mut test_config = kalamdb_commons::config::ServerConfig::default();
+        let mut test_config = kalamdb_configs::ServerConfig::default();
         test_config.storage.data_path = "data".to_string();
         test_config.execution.max_parameters = 50;
         test_config.execution.max_parameter_size_bytes = 512 * 1024;

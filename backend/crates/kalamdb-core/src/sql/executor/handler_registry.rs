@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 // Import all typed handlers
 use crate::sql::executor::handlers::dml::{DeleteHandler, InsertHandler, UpdateHandler};
+use crate::sql::executor::handlers::compact::{CompactAllTablesHandler, CompactTableHandler};
 use crate::sql::executor::handlers::flush::{FlushAllTablesHandler, FlushTableHandler};
 use crate::sql::executor::handlers::jobs::{KillJobHandler, KillLiveQueryHandler};
 use crate::sql::executor::handlers::cluster::{
@@ -393,6 +394,29 @@ impl HandlerRegistry {
             FlushAllTablesHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {
                 SqlStatementKind::FlushAllTables(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        registry.register_typed(
+            SqlStatementKind::CompactTable(kalamdb_sql::ddl::CompactTableStatement {
+                namespace: NamespaceId::new("_placeholder"),
+                table_name: TableName::new("_placeholder"),
+            }),
+            CompactTableHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::CompactTable(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        registry.register_typed(
+            SqlStatementKind::CompactAllTables(kalamdb_sql::ddl::CompactAllTablesStatement {
+                namespace: NamespaceId::new("_placeholder"),
+            }),
+            CompactAllTablesHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::CompactAllTables(s) => Some(s.clone()),
                 _ => None,
             },
         );

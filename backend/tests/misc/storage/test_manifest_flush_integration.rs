@@ -12,7 +12,7 @@
 #[path = "../../../crates/kalamdb-core/tests/test_helpers.rs"]
 mod test_helpers;
 
-use kalamdb_commons::config::ManifestCacheSettings;
+use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::types::{Manifest, SegmentMetadata};
 use kalamdb_commons::UserId;

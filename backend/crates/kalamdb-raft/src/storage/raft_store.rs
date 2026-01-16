@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use kalamdb_store::raft_storage::{
-    RaftGroupId, RaftLogEntry, RaftLogId, RaftPartitionStore, RaftSnapshotData, RaftSnapshotMeta,
+    RaftLogEntry, RaftLogId, RaftPartitionStore, RaftSnapshotData, RaftSnapshotMeta,
     RaftVote,
 };
 use kalamdb_store::StorageBackend;
@@ -55,15 +55,6 @@ struct StateMachineData {
     state_applied_index: u64,
     state_applied_term: u64,
     state: Vec<u8>,
-}
-
-/// Convert kalamdb-raft GroupId to kalamdb-store RaftGroupId
-fn to_storage_group_id(group_id: &GroupId) -> RaftGroupId {
-    match group_id {
-        GroupId::Meta => RaftGroupId::Meta,
-        GroupId::DataUserShard(n) => RaftGroupId::DataUserShard(*n),
-        GroupId::DataSharedShard(n) => RaftGroupId::DataSharedShard(*n),
-    }
 }
 
 fn group_dir_name(group_id: &GroupId) -> String {
@@ -205,8 +196,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         backend: Arc<dyn StorageBackend>,
         snapshots_dir: PathBuf,
     ) -> Result<Self, kalamdb_store::StorageError> {
-        let storage_group_id = to_storage_group_id(&group_id);
-        let store = RaftPartitionStore::new(backend, storage_group_id);
+        let store = RaftPartitionStore::new(backend, group_id);
 
         std::fs::create_dir_all(&snapshots_dir)
             .map_err(|e| kalamdb_store::StorageError::IoError(e.to_string()))?;
@@ -378,15 +368,18 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
     /// and log entries would be re-applied even if they were already applied
     /// before the restart.
     pub async fn restore_state_machine_from_snapshot(&self) -> Result<(), crate::RaftError> {
+        let start = std::time::Instant::now();
         let snapshot_data = {
             let guard = self.current_snapshot.read();
             guard.as_ref().map(|s| s.data.clone())
         };
 
         if let Some(data) = snapshot_data {
+            let deserialize_start = std::time::Instant::now();
             // Deserialize the snapshot data
             let sm_data: StateMachineData = decode(&data)
                 .map_err(|e| crate::RaftError::Serialization(format!("Failed to decode snapshot: {:?}", e)))?;
+            let deserialize_ms = deserialize_start.elapsed().as_secs_f64() * 1000.0;
 
             // Create a snapshot for the state machine
             let sm_snapshot = crate::state_machine::StateMachineSnapshot::new(
@@ -396,14 +389,19 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
                 sm_data.state,
             );
 
+            let restore_start = std::time::Instant::now();
             // Restore the state machine
             self.state_machine.restore(sm_snapshot).await?;
+            let restore_ms = restore_start.elapsed().as_secs_f64() * 1000.0;
 
             log::info!(
-                "KalamRaftStorage[{}]: Restored state machine from snapshot (last_applied_index={}, last_applied_term={})",
+                "KalamRaftStorage[{}]: Restored state machine from snapshot (last_applied_index={}, last_applied_term={}) - deserialize: {:.2}ms, restore: {:.2}ms, total: {:.2}ms",
                 self.group_id,
                 sm_data.state_applied_index,
-                sm_data.state_applied_term
+                sm_data.state_applied_term,
+                deserialize_ms,
+                restore_ms,
+                start.elapsed().as_secs_f64() * 1000.0
             );
         } else {
             log::debug!(
@@ -735,17 +733,22 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStorage<KalamTypeConfig>
     {
         let entries_vec: Vec<_> = entries.into_iter().collect();
 
+        // Serialize payloads once to avoid double encoding
+        let mut encoded_entries: Vec<(LogId<u64>, Vec<u8>)> = Vec::with_capacity(entries_vec.len());
+        for entry in &entries_vec {
+            let payload = encode(&entry.payload).map_err(|e| StorageIOError::write_logs(&e))?;
+            encoded_entries.push((entry.log_id, payload));
+        }
+
         // Persist to storage if available
         if let Some(store) = &self.persistent_store {
-            let raft_entries: Vec<RaftLogEntry> = entries_vec
+            let raft_entries: Vec<RaftLogEntry> = encoded_entries
                 .iter()
-                .map(|entry| {
-                    let payload =
-                        encode(&entry.payload).map_err(|e| StorageIOError::write_logs(&e))?;
+                .map(|(log_id, payload)| {
                     Ok(RaftLogEntry {
-                        index: entry.log_id.index,
-                        term: entry.log_id.leader_id.term,
-                        payload,
+                        index: log_id.index,
+                        term: log_id.leader_id.term,
+                        payload: payload.clone(),
                     })
                 })
                 .collect::<Result<Vec<_>, StorageError<u64>>>()?;
@@ -757,13 +760,11 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStorage<KalamTypeConfig>
 
         // Update in-memory cache
         let mut log = self.log.write();
-        for entry in entries_vec {
-            let payload = encode(&entry.payload).map_err(|e| StorageIOError::write_logs(&e))?;
-
+        for (log_id, payload) in encoded_entries {
             log.insert(
-                entry.log_id.index,
+                log_id.index,
                 LogEntryData {
-                    log_id: entry.log_id,
+                    log_id,
                     payload,
                 },
             );

@@ -43,23 +43,20 @@
 //! ```
 
 pub mod arrow_utils;
-pub mod config;
 pub mod constants;
 pub mod errors;
-pub mod file_helpers;
 pub mod ids;
 pub mod models;
 pub mod security; // Security utilities (SQL redaction, etc.)
-pub mod storage;
+pub mod storage; // Storage backend abstraction (Partition, StorageError, etc.)
 pub mod storage_key; // StorageKey trait for type-safe key serialization
 pub mod string_interner;
-pub mod system_tables;
+pub mod system_tables; // System table enumeration (SystemTable, StoragePartition)
 pub mod validation; // Naming validation for namespaces, tables, and columns
 pub mod websocket;
 
 // Re-export commonly used types at crate root
 pub use arrow_utils::{empty_batch, RecordBatchBuilder};
-pub use config::ServerConfig;
 pub use constants::{ANONYMOUS_USER_ID, MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES};
 pub use errors::{CommonError, Result};
 pub use models::{
@@ -86,7 +83,6 @@ pub use models::{
     UserName,
 };
 pub use schemas::TableType;
-pub use storage::{Operation, Partition, StorageBackend, StorageError};
 pub use storage_key::StorageKey;
 pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM_COLUMNS};
 pub use system_tables::{StoragePartition, SystemTable};

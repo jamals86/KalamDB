@@ -4,7 +4,7 @@
 
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;
-use kalamdb_commons::StoragePartition;
+use crate::StoragePartition;
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
 

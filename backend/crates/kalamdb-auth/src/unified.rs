@@ -391,10 +391,10 @@ async fn authenticate_username_password(
     }
 
     Ok(AuthenticatedUser::new(
-        user.id.clone(),
+        user.id,
         user.username.as_str().to_string(),
         user.role,
-        user.email.clone(),
+        user.email,
         connection_info.clone(),
     ))
 }
@@ -412,7 +412,7 @@ static JWT_CONFIG: Lazy<JwtConfig> = Lazy::new(|| {
     // Use centralized default from kalamdb-commons to ensure consistency
     // The server startup validates that insecure defaults are not used in production
     let secret = std::env::var("KALAMDB_JWT_SECRET")
-        .unwrap_or_else(|_| kalamdb_commons::config::defaults::default_auth_jwt_secret());
+        .unwrap_or_else(|_| kalamdb_configs::defaults::default_auth_jwt_secret());
     // Default trusted issuer is "kalamdb" (matching KALAMDB_ISSUER in jwt_auth.rs)
     // Additional issuers can be added via KALAMDB_JWT_TRUSTED_ISSUERS env var
     let trusted = std::env::var("KALAMDB_JWT_TRUSTED_ISSUERS")
@@ -515,14 +515,17 @@ pub fn extract_username_for_audit(request: &AuthRequest) -> String {
 fn extract_jwt_username_unsafe(token: &str) -> String {
     // JWT format: header.payload.signature
     // We decode the payload without verification for audit purposes only
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
+    let mut parts = token.splitn(3, '.');
+    let _header = parts.next();
+    let payload = parts.next();
+    let signature = parts.next();
+    if payload.is_none() || signature.is_none() {
         return "unknown".to_string();
     }
 
     // Decode payload (base64url)
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-    if let Ok(payload_bytes) = URL_SAFE_NO_PAD.decode(parts[1]) {
+    if let Ok(payload_bytes) = URL_SAFE_NO_PAD.decode(payload.unwrap()) {
         if let Ok(payload_str) = String::from_utf8(payload_bytes) {
             if let Ok(claims) = serde_json::from_str::<serde_json::Value>(&payload_str) {
                 if let Some(username) = claims.get("username").and_then(|v| v.as_str()) {

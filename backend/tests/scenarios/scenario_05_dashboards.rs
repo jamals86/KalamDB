@@ -236,7 +236,9 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
             // =========================================================
             // Step 9: Flush and verify
             // =========================================================
-            let resp = server.execute_sql(&format!("FLUSH TABLE {}.activity", ns)).await?;
+            let resp = server
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.activity", ns))
+                .await?;
             if resp.status == ResponseStatus::Success {
                 let _ = wait_for_flush_complete(server, &ns, "activity", Duration::from_secs(15)).await;
             }

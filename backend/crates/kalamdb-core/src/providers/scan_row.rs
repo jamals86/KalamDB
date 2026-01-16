@@ -5,7 +5,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
-use kalamdb_commons::models::Row;
+use kalamdb_commons::models::rows::Row;
 use kalamdb_tables::{SharedTableRow, StreamTableRow, UserTableRow};
 use std::sync::Arc;
 

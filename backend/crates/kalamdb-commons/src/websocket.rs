@@ -596,7 +596,7 @@ impl Notification {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::Row;
+    use crate::models::rows::Row;
     use datafusion::scalar::ScalarValue;
     use std::collections::BTreeMap;
 

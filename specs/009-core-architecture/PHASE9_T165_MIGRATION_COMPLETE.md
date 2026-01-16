@@ -77,7 +77,7 @@ DDLHandler::execute_drop_table(
 ).await
 ```
 
-### 2. Flush Operations - FLUSH TABLE (✅ COMPLETE)
+### 2. Flush Operations - STORAGE FLUSH TABLE (✅ COMPLETE)
 **File**: `backend/crates/kalamdb-core/src/sql/executor/mod.rs`  
 **Lines**: ~2085-2105
 
@@ -115,7 +115,7 @@ let job_id_clone = job_id.clone();
 - Typed JobId: FL-* prefix for easy filtering
 - Automatic retry: 3 retries with exponential backoff
 
-### 3. Flush Operations - FLUSH ALL TABLES (✅ COMPLETE)
+### 3. Flush Operations - STORAGE FLUSH ALL (✅ COMPLETE)
 **File**: `backend/crates/kalamdb-core/src/sql/executor/mod.rs`  
 **Lines**: ~2300-2335
 
@@ -160,7 +160,7 @@ for table in user_tables {
 
 **Benefits**:
 - 32% code reduction per table (34 lines → 23 lines)
-- Idempotency: FLUSH ALL TABLES is now safe to retry
+- Idempotency: STORAGE FLUSH ALL is now safe to retry
 - Prevents duplicate jobs if command runs multiple times
 - Each table gets unique FL-* JobId
 
@@ -250,8 +250,8 @@ pub async fn fail_job(&self, job_id: &JobId, error_message: String) -> Result<()
    
 2. `backend/crates/kalamdb-core/src/sql/executor/mod.rs`
    - Updated DROP TABLE routing (line 811)
-   - Migrated FLUSH TABLE job creation (~line 2095)
-   - Migrated FLUSH ALL TABLES job creation (~line 2315)
+    - Migrated STORAGE FLUSH TABLE job creation (~line 2095)
+    - Migrated STORAGE FLUSH ALL job creation (~line 2315)
    
 3. `backend/crates/kalamdb-core/src/jobs/unified_manager.rs`
    - Added complete_job() helper (line 218)
@@ -313,7 +313,7 @@ Pre-existing errors in kalamdb-auth (unrelated):
 - **Pattern**: `{operation}-{namespace}-{table_name}` for deterministic keys
 - **Examples**:
   - DROP TABLE: `drop-table-{table_id}`
-  - FLUSH TABLE: `flush-{namespace}-{table_name}`
+    - STORAGE FLUSH TABLE: `flush-{namespace}-{table_name}`
 - **Benefit**: Same command twice = same job_id (no duplicates)
 
 ### 4. JSON Parameters

@@ -77,7 +77,7 @@ Notes:
 #15) divide the main.rs file into multiple files
 #16) All parsers which is responsible for parsing SQL statemenets like cREATE STORAGE and other commands should be moved to kalamdb-sql
 #        Should this be moved to kalamdb-sql -> backend/crates/kalamdb-core/src/sql/executor.rs
-#22) In progress -   flush jobs not working it stuck running and never starts, i init the flush using flush table namespac1.files
+#22) In progress -   flush jobs not working it stuck running and never starts, i init the flush using STORAGE FLUSH TABLE namespac1.files
 
 #21) dont create flush job 2 times if there is an already running one
 #23) The fields order when i run select * from table should always be consistent with the created table order of fields

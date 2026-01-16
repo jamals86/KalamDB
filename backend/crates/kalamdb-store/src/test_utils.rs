@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use rocksdb::{Options, DB};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
 use tempfile::TempDir;
 
@@ -27,7 +27,7 @@ use crate::storage_trait::{Operation, Partition, StorageBackend};
 /// backend.put(&partition, b"key", b"value").unwrap();
 /// assert_eq!(backend.get(&partition, b"key").unwrap(), Some(b"value".to_vec()));
 /// ```
-type PartitionMap = HashMap<Vec<u8>, Vec<u8>>;
+type PartitionMap = BTreeMap<Vec<u8>, Vec<u8>>;
 
 pub struct InMemoryBackend {
     // Partition -> (Key -> Value)
@@ -108,36 +108,48 @@ impl StorageBackend for InMemoryBackend {
         limit: Option<usize>,
     ) -> crate::storage_trait::Result<kalamdb_commons::storage::KvIterator<'_>> {
         let data = self.data.read().unwrap();
+        let limit = limit.unwrap_or(usize::MAX);
+
         let items: Vec<(Vec<u8>, Vec<u8>)> = data
             .get(partition.name())
             .map(|map| {
-                let mut items: Vec<_> = map
-                    .iter()
-                    .filter(|(k, _)| {
-                        let prefix_match = if let Some(prefix) = prefix {
-                            k.starts_with(prefix)
+                if limit == 0 {
+                    return Vec::new();
+                }
+
+                let start_bound = match (prefix, start_key) {
+                    (Some(prefix), Some(start)) => {
+                        if start >= prefix {
+                            Some(start.to_vec())
                         } else {
-                            true
-                        };
-                        let start_match = if let Some(start) = start_key {
-                            k.as_slice() >= start
-                        } else {
-                            true
-                        };
-                        prefix_match && start_match
-                    })
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
-                items.sort_by(|a, b| a.0.cmp(&b.0));
+                            Some(prefix.to_vec())
+                        }
+                    }
+                    (Some(prefix), None) => Some(prefix.to_vec()),
+                    (None, Some(start)) => Some(start.to_vec()),
+                    (None, None) => None,
+                };
+
+                let iter: Box<dyn Iterator<Item = (&Vec<u8>, &Vec<u8>)>> = match start_bound {
+                    Some(start) => Box::new(map.range(start..)),
+                    None => Box::new(map.iter()),
+                };
+
+                let mut items = Vec::new();
+                for (k, v) in iter {
+                    if let Some(prefix) = prefix {
+                        if !k.starts_with(prefix) {
+                            break;
+                        }
+                    }
+                    items.push((k.clone(), v.clone()));
+                    if items.len() >= limit {
+                        break;
+                    }
+                }
                 items
             })
             .unwrap_or_default();
-
-        let items = if let Some(limit) = limit {
-            items.into_iter().take(limit).collect()
-        } else {
-            items
-        };
 
         Ok(Box::new(items.into_iter()))
     }

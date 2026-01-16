@@ -1,7 +1,7 @@
 //! Common parsing utilities
 //!
 //! This module provides shared parsing helpers to avoid code duplication across
-//! custom parsers (CREATE STORAGE, FLUSH TABLE, KILL JOB, etc.).
+//! custom parsers (CREATE STORAGE, STORAGE FLUSH, KILL JOB, etc.).
 
 /// Normalize SQL by removing extra whitespace and semicolons
 ///
@@ -123,11 +123,10 @@ pub fn extract_keyword_value(sql: &str, keyword: &str) -> Result<String, String>
 /// assert_eq!(id, "s3_prod");
 /// ```
 pub fn extract_identifier(sql: &str, skip_tokens: usize) -> Result<String, String> {
-    let parts: Vec<&str> = sql.split_whitespace().collect();
-    if parts.len() <= skip_tokens {
-        return Err(format!("Expected identifier after {} tokens", skip_tokens));
-    }
-    Ok(parts[skip_tokens].to_string())
+    sql.split_whitespace()
+        .nth(skip_tokens)
+        .map(|s| s.to_string())
+        .ok_or_else(|| format!("Expected identifier after {} tokens", skip_tokens))
 }
 
 /// Extract a qualified table name (namespace.table_name)
@@ -150,11 +149,13 @@ pub fn extract_identifier(sql: &str, skip_tokens: usize) -> Result<String, Strin
 /// - Table reference is not qualified (missing namespace)
 /// - Invalid format
 pub fn extract_qualified_table(table_ref: &str) -> Result<(String, String), String> {
-    let parts: Vec<&str> = table_ref.split('.').collect();
-    if parts.len() != 2 {
-        return Err("Table name must be qualified (namespace.table_name)".to_string());
+    let mut parts = table_ref.splitn(2, '.');
+    let namespace = parts.next();
+    let table = parts.next();
+    match (namespace, table) {
+        (Some(namespace), Some(table)) => Ok((namespace.to_string(), table.to_string())),
+        _ => Err("Table name must be qualified (namespace.table_name)".to_string()),
     }
-    Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
 /// Find whole-word match in a string (case-insensitive)

@@ -1,6 +1,7 @@
 use super::initial_data::InitialDataResult;
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::models::{LiveQueryId, Row};
+use kalamdb_commons::models::rows::Row;
+use kalamdb_commons::models::LiveQueryId;
 use kalamdb_commons::schemas::SchemaField;
 use std::collections::BTreeMap;
 

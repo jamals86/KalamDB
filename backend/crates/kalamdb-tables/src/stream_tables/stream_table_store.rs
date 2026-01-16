@@ -1,124 +1,238 @@
-//! Stream table store implementation using EntityStore pattern
+//! Stream table store implementation backed by commit logs.
 //!
-//! This module provides an EntityStore-based implementation for stream tables.
-//! Unlike system tables, stream tables use EntityStore directly (not SystemTableStore)
-//! because they are user data (ephemeral events), not system metadata.
+//! Stream tables are persisted to append-only logs on disk under:
+//! /data/streams/<namespace>/<table>/<bucket>/<shardid>/<userId>/<windowStartMs>.log
 //!
 //! **MVCC Architecture (Phase 13.2)**:
 //! - StreamTableRowId: Composite struct with user_id and _seq fields
 //! - StreamTableRow: Minimal structure with user_id, _seq, fields (JSON)
-//! - Storage key format: {user_id}:{_seq} (big-endian bytes)
+//! - Ordering: (user_id, _seq) for deterministic scans
 
 use crate::common::partition_name;
 use kalamdb_commons::ids::{SeqId, StreamTableRowId};
-use kalamdb_commons::models::row::Row;
-use kalamdb_commons::models::{KTableRow, UserId};
+use kalamdb_commons::models::{StreamTableRow, UserId};
 use kalamdb_commons::TableId;
-use kalamdb_store::entity_store::{EntityStore, KSerializable};
-use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use kalamdb_sharding::ShardRouter;
+use kalamdb_store::entity_store::ScanDirection;
+use kalamdb_store::storage_trait::{Result, StorageError};
+use kalamdb_streams::{bucket_for_ttl, FileStreamLogStore, StreamLogConfig, StreamLogStore};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
-/// Stream table row entity (ephemeral, in-memory only)
-///
-/// **Design Notes**:
-/// - Removed: event_id (redundant with _seq), timestamp (embedded in _seq Snowflake ID), row_id, inserted_at, _updated
-/// - Kept: user_id (event owner), _seq (unique version ID with embedded timestamp), fields (all event data)
-/// - Note: NO _deleted field (stream tables don't use soft deletes, only TTL eviction)
-///
-/// **Note on System Column Naming**:
-/// The underscore prefix (`_seq`) follows SQL convention for system-managed columns.
-/// This name matches the SQL column name exactly for consistency across the codebase.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct StreamTableRow {
-    /// User who owns this event
-    pub user_id: UserId,
-    /// Monotonically increasing sequence ID (Snowflake ID with embedded timestamp)
-    /// Maps to SQL column `_seq`
-    pub _seq: SeqId,
-    /// All event data (serialized as JSON map)
-    pub fields: Row,
+const MAX_SCAN_LIMIT: usize = 100000;
+
+/// Configuration for StreamTableStore.
+#[derive(Debug, Clone)]
+pub struct StreamTableStoreConfig {
+    pub base_dir: PathBuf,
+    pub shard_router: ShardRouter,
+    pub ttl_seconds: Option<u64>,
 }
 
-impl KSerializable for StreamTableRow {}
-
-impl From<StreamTableRow> for KTableRow {
-    fn from(row: StreamTableRow) -> Self {
-        KTableRow {
-            user_id: row.user_id,
-            _seq: row._seq,
-            _deleted: false, // Stream tables don't have soft deletes
-            fields: row.fields,
-        }
-    }
-}
-
-/// Store for stream tables (ephemeral event data, in-memory only).
-///
-/// Uses composite StreamTableRowId keys (user_id:_seq) for user isolation.
-/// Unlike SystemTableStore, this is a direct EntityStore implementation
-/// for user event data, not system metadata.
+/// Store for stream tables (append-only commit log on disk).
 #[derive(Clone)]
 pub struct StreamTableStore {
-    backend: Arc<dyn StorageBackend>,
+    table_id: TableId,
     partition: String,
+    log_store: FileStreamLogStore,
 }
 
 impl StreamTableStore {
-    /// Create a new stream table store
-    ///
-    /// # Arguments
-    /// * `backend` - Storage backend (always in-memory for stream tables)
-    /// * `partition` - Partition name (e.g., "stream_default:events")
-    pub fn new(backend: Arc<dyn StorageBackend>, partition: impl Into<String>) -> Self {
+    /// Create a new stream table store (commit log-backed)
+    pub fn new(table_id: TableId, partition: impl Into<String>, config: StreamTableStoreConfig) -> Self {
+        let ttl_seconds = config.ttl_seconds.unwrap_or(0);
+        let bucket = if ttl_seconds > 0 {
+            bucket_for_ttl(ttl_seconds)
+        } else {
+            bucket_for_ttl(3600)
+        };
+
+        let log_config = StreamLogConfig {
+            base_dir: config.base_dir,
+            shard_router: config.shard_router,
+            bucket,
+            table_id: table_id.clone(),
+        };
+
         Self {
-            backend,
+            table_id,
             partition: partition.into(),
+            log_store: FileStreamLogStore::new(log_config),
         }
     }
-}
 
-/// Implement EntityStore trait for typed CRUD operations
-impl EntityStore<StreamTableRowId, StreamTableRow> for StreamTableStore {
-    fn backend(&self) -> &Arc<dyn StorageBackend> {
-        &self.backend
-    }
-
-    fn partition(&self) -> &str {
+    /// Returns the partition name.
+    pub fn partition(&self) -> &str {
         &self.partition
     }
+
+    /// Append a row.
+    pub fn put(&self, key: &StreamTableRowId, entity: &StreamTableRow) -> Result<()> {
+        let mut rows = HashMap::new();
+        rows.insert(key.clone(), entity.clone());
+        self.log_store
+            .append_rows(&self.table_id, key.user_id(), rows)
+            .map_err(|e| StorageError::IoError(e.to_string()))
+    }
+
+    /// Retrieve a row by key.
+    pub fn get(&self, key: &StreamTableRowId) -> Result<Option<StreamTableRow>> {
+        let ts = key.seq().timestamp_millis();
+        let rows = self
+            .log_store
+            .read_in_time_range(&self.table_id, key.user_id(), ts, ts, MAX_SCAN_LIMIT)
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+        Ok(rows.get(key).cloned())
+    }
+
+    /// Delete a row by key (append tombstone).
+    pub fn delete(&self, key: &StreamTableRowId) -> Result<()> {
+        self.log_store
+            .append_delete(&self.table_id, key.user_id(), key)
+            .map_err(|e| StorageError::IoError(e.to_string()))
+    }
+
+    /// Delete old logs for this table before a timestamp.
+    pub fn delete_old_logs(&self, before_time: u64) -> Result<usize> {
+        self.log_store
+            .delete_old_logs_with_count(before_time)
+            .map_err(|e| StorageError::IoError(e.to_string()))
+    }
+
+    /// Check if any logs exist before a timestamp.
+    pub fn has_logs_before(&self, before_time: u64) -> Result<bool> {
+        self.log_store
+            .has_logs_before(before_time)
+            .map_err(|e| StorageError::IoError(e.to_string()))
+    }
+
+    /// Scan all rows with an optional limit.
+    pub fn scan_all(&self, limit: Option<usize>) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
+        let limit = limit.unwrap_or(MAX_SCAN_LIMIT);
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let users = self
+            .log_store
+            .list_user_ids()
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+        let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
+
+        for user_id in users {
+            let remaining = limit.saturating_sub(results.len());
+            if remaining == 0 {
+                break;
+            }
+            let rows = self
+                .log_store
+                .read_in_time_range(&self.table_id, &user_id, 0, u64::MAX, remaining)
+                .map_err(|e| StorageError::IoError(e.to_string()))?;
+            results.extend(rows.into_iter());
+        }
+
+        results.sort_by(|(a, _), (b, _)| a.cmp(b));
+        if results.len() > limit {
+            results.truncate(limit);
+        }
+        Ok(results)
+    }
+
+    /// Scan rows for a single user, starting at an optional sequence ID (inclusive).
+    pub fn scan_user(
+        &self,
+        user_id: &UserId,
+        start_seq: Option<SeqId>,
+        limit: usize,
+    ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let start_time = start_seq.map(|seq| seq.timestamp_millis()).unwrap_or(0);
+        let rows = self
+            .log_store
+            .read_in_time_range(&self.table_id, user_id, start_time, u64::MAX, limit)
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+
+        let mut vec: Vec<(StreamTableRowId, StreamTableRow)> = rows
+            .into_iter()
+            .filter(|(key, _)| {
+                start_seq
+                    .map(|seq| key.seq() >= seq)
+                    .unwrap_or(true)
+            })
+            .collect();
+        vec.sort_by(|(a, _), (b, _)| a.cmp(b));
+        Ok(vec)
+    }
+
+    /// Scan row keys for a single user, starting at an optional sequence ID (inclusive).
+    pub fn scan_user_keys(
+        &self,
+        user_id: &UserId,
+        start_seq: Option<SeqId>,
+        limit: usize,
+    ) -> Result<Vec<StreamTableRowId>> {
+        let rows = self.scan_user(user_id, start_seq, limit)?;
+        Ok(rows.into_iter().map(|(key, _)| key).collect())
+    }
+
+    /// Scan keys relative to a starting key in a specified direction.
+    ///
+    /// Note: This operation scans logs across users and is intended for maintenance jobs.
+    pub fn scan_keys_directional(
+        &self,
+        _start_key: Option<&StreamTableRowId>,
+        direction: ScanDirection,
+        limit: usize,
+    ) -> Result<Vec<StreamTableRowId>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut rows = self.scan_all(Some(limit))?;
+        rows.sort_by(|(a, _), (b, _)| match direction {
+            ScanDirection::Newer => a.cmp(b),
+            ScanDirection::Older => b.cmp(a),
+        });
+
+        Ok(rows.into_iter().map(|(k, _)| k).collect())
+    }
 }
 
-/// Helper function to create a new stream table store (always in-memory)
+/// Helper function to create a new stream table store (commit log-backed).
 ///
 /// # Arguments
-/// * `namespace_id` - Namespace identifier
-/// * `table_name` - Table name
+/// * `table_id` - Table identifier
+/// * `config` - Stream log configuration
 ///
 /// # Returns
-/// A new StreamTableStore instance configured for the stream table (in-memory backend)
-pub fn new_stream_table_store(
-    table_id: &TableId,
-) -> StreamTableStore {
+/// A new StreamTableStore instance configured for the stream table
+pub fn new_stream_table_store(table_id: &TableId, config: StreamTableStoreConfig) -> StreamTableStore {
     let partition_name = partition_name(
         kalamdb_commons::constants::ColumnFamilyNames::STREAM_TABLE_PREFIX,
         table_id,
     );
-    // Always use in-memory backend for stream tables (ephemeral, no persistence)
-    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    StreamTableStore::new(backend, partition_name)
+    StreamTableStore::new(table_id.clone(), partition_name, config)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::models::{NamespaceId, TableId, TableName};
+    use kalamdb_commons::models::{NamespaceId, Row, TableName};
+    use kalamdb_sharding::ShardRouter;
     use std::collections::BTreeMap;
 
-    fn create_test_store() -> StreamTableStore {
+    fn create_test_store(base_dir: &std::path::Path) -> StreamTableStore {
         let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_stream"));
-        new_stream_table_store(&table_id)
+        let config = StreamTableStoreConfig {
+            base_dir: base_dir.join("streams").join("test_ns").join("test_stream"),
+            shard_router: ShardRouter::default_config(),
+            ttl_seconds: Some(3600),
+        };
+        new_stream_table_store(&table_id, config)
     }
 
     fn create_test_row(user_id: &str, seq: i64) -> StreamTableRow {
@@ -134,17 +248,18 @@ mod tests {
 
     #[test]
     fn test_stream_table_store_create() {
-        let store = create_test_store();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = create_test_store(temp_dir.path());
         assert!(store.partition().contains("stream_"));
     }
 
     #[test]
     fn test_stream_table_store_put_get() {
-        let store = create_test_store();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = create_test_store(temp_dir.path());
         let key = StreamTableRowId::new(UserId::new("user1"), SeqId::new(100));
         let row = create_test_row("user1", 100);
 
-        // Put and get
         store.put(&key, &row).unwrap();
         let retrieved = store.get(&key).unwrap();
         assert!(retrieved.is_some());
@@ -153,11 +268,11 @@ mod tests {
 
     #[test]
     fn test_stream_table_store_delete() {
-        let store = create_test_store();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = create_test_store(temp_dir.path());
         let key = StreamTableRowId::new(UserId::new("user1"), SeqId::new(200));
         let row = create_test_row("user1", 200);
 
-        // Put, delete, verify
         store.put(&key, &row).unwrap();
         store.delete(&key).unwrap();
         assert!(store.get(&key).unwrap().is_none());
@@ -165,9 +280,9 @@ mod tests {
 
     #[test]
     fn test_stream_table_store_scan_all() {
-        let store = create_test_store();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = create_test_store(temp_dir.path());
 
-        // Insert multiple rows for different users
         for user_i in 1..=2 {
             for seq_i in 1..=3 {
                 let key = StreamTableRowId::new(
@@ -180,48 +295,20 @@ mod tests {
             }
         }
 
-        // Scan all
-        let all_rows = store.scan_all(None, None, None).unwrap();
-        assert_eq!(all_rows.len(), 6); // 2 users * 3 events
+        let all_rows = store.scan_all(None).unwrap();
+        assert_eq!(all_rows.len(), 6);
     }
 
     #[test]
-    fn test_stream_table_user_isolation() {
-        let store = create_test_store();
-
-        // User1's event
-        let key1 = StreamTableRowId::new(UserId::new("user1"), SeqId::new(100));
-        let row1 = create_test_row("user1", 100);
-        store.put(&key1, &row1).unwrap();
-
-        // User2's event with same seq
-        let key2 = StreamTableRowId::new(UserId::new("user2"), SeqId::new(100));
-        let row2 = create_test_row("user2", 100);
-        store.put(&key2, &row2).unwrap();
-
-        // Both exist independently
-        assert_eq!(
-            store.get(&key1).unwrap().unwrap().user_id,
-            UserId::new("user1")
-        );
-        assert_eq!(
-            store.get(&key2).unwrap().unwrap().user_id,
-            UserId::new("user2")
-        );
-    }
-
-    #[test]
-    fn test_stream_table_in_memory() {
-        // Verify that stream tables use in-memory storage
-        let store1 = create_test_store();
-        let store2 = create_test_store();
-
-        // Store1 writes
+    fn test_stream_table_persistence() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store1 = create_test_store(temp_dir.path());
         let key = StreamTableRowId::new(UserId::new("user1"), SeqId::new(100));
         let row = create_test_row("user1", 100);
         store1.put(&key, &row).unwrap();
 
-        // Store2 can't see it (different in-memory backend instances)
-        assert!(store2.get(&key).unwrap().is_none());
+        let store2 = create_test_store(temp_dir.path());
+        let retrieved = store2.get(&key).unwrap();
+        assert!(retrieved.is_some());
     }
 }

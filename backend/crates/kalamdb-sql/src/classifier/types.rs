@@ -84,11 +84,15 @@ pub enum SqlStatementKind {
     /// SHOW STATS [FOR <namespace>.<table>]
     ShowStats(ShowTableStatsStatement),
 
-    // ===== Flush Operations =====
-    /// FLUSH TABLE <namespace>.<table>
+    // ===== Storage Maintenance Operations =====
+    /// STORAGE FLUSH TABLE <namespace>.<table>
     FlushTable(FlushTableStatement),
-    /// FLUSH ALL TABLES [IN <namespace>]
+    /// STORAGE FLUSH ALL [IN <namespace>]
     FlushAllTables(FlushAllTablesStatement),
+    /// STORAGE COMPACT TABLE <namespace>.<table>
+    CompactTable(CompactTableStatement),
+    /// STORAGE COMPACT ALL [IN <namespace>]
+    CompactAllTables(CompactAllTablesStatement),
     /// SHOW MANIFEST
     ShowManifest(ShowManifestStatement),
     /// CLUSTER SNAPSHOT - Force snapshots
@@ -260,6 +264,8 @@ impl SqlStatement {
             | SqlStatementKind::Delete(_)
             | SqlStatementKind::FlushTable(_)
             | SqlStatementKind::FlushAllTables(_)
+            | SqlStatementKind::CompactTable(_)
+            | SqlStatementKind::CompactAllTables(_)
             | SqlStatementKind::KillJob(_)
             | SqlStatementKind::KillLiveQuery(_)
             | SqlStatementKind::Subscribe(_)
@@ -302,8 +308,10 @@ impl SqlStatement {
             SqlStatementKind::ShowTables(_) => "SHOW TABLES",
             SqlStatementKind::DescribeTable(_) => "DESCRIBE TABLE",
             SqlStatementKind::ShowStats(_) => "SHOW STATS",
-            SqlStatementKind::FlushTable(_) => "FLUSH TABLE",
-            SqlStatementKind::FlushAllTables(_) => "FLUSH ALL TABLES",
+            SqlStatementKind::FlushTable(_) => "STORAGE FLUSH TABLE",
+            SqlStatementKind::FlushAllTables(_) => "STORAGE FLUSH ALL",
+            SqlStatementKind::CompactTable(_) => "STORAGE COMPACT TABLE",
+            SqlStatementKind::CompactAllTables(_) => "STORAGE COMPACT ALL",
             SqlStatementKind::ShowManifest(_) => "SHOW MANIFEST",
             SqlStatementKind::ClusterSnapshot => "CLUSTER SNAPSHOT",
             SqlStatementKind::ClusterPurge(_) => "CLUSTER PURGE",

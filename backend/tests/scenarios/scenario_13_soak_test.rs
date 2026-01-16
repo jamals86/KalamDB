@@ -213,7 +213,11 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
                     tokio::time::sleep(Duration::from_secs(5)).await;
 
                     let _ = flush_client
-                        .execute_query(&format!("FLUSH TABLE {}.orders", ns_for_flush), None, None)
+                        .execute_query(
+                            &format!("STORAGE FLUSH TABLE {}.orders", ns_for_flush),
+                            None,
+                            None,
+                        )
                         .await;
                     flush_count += 1;
                     println!("Background flush {} triggered", flush_count);

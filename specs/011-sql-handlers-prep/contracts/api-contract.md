@@ -60,8 +60,8 @@ Execute SQL statement with optional parameters.
 | CREATE/ALTER/DROP TABLE | `rows_affected` | Always 1 |
 | CREATE/ALTER/DROP STORAGE | `rows_affected` | Always 1 |
 | CREATE/ALTER/DROP USER | `rows_affected` | Always 1 |
-| FLUSH TABLE | `rows_affected` | Always 1 |
-| FLUSH ALL TABLES | `rows_affected` | Number of tables flushed |
+| STORAGE FLUSH TABLE | `rows_affected` | Always 1 |
+| STORAGE FLUSH ALL | `rows_affected` | Number of tables flushed |
 | KILL JOB | `rows_affected` | Always 1 |
 | KILL LIVE QUERY | `rows_affected` | Always 1 |
 | SHOW NAMESPACES/TABLES/STORAGES | `row_count` | Rows returned |
@@ -113,7 +113,7 @@ Execute SQL statement with optional parameters.
 }
 ```
 
-4. **Flush Results** (FLUSH TABLE, FLUSH ALL TABLES):
+4. **Flush Results** (STORAGE FLUSH TABLE, STORAGE FLUSH ALL):
 ```json
 {
   "status": "success",
@@ -244,7 +244,7 @@ POST /v1/api/sql
 | CREATE/ALTER/DROP STORAGE | ✗ | ✗ | ✓ | ✓ |
 | CREATE/ALTER/DROP TABLE | ✓ (own namespace) | ✓ (configured namespaces) | ✓ (all) | ✓ (all) |
 | SHOW TABLES/STATS | ✓ (own namespace) | ✓ (configured namespaces) | ✓ (all) | ✓ (all) |
-| FLUSH TABLE/ALL | ✗ | ✗ | ✓ | ✓ |
+| STORAGE FLUSH TABLE/ALL | ✗ | ✗ | ✓ | ✓ |
 | KILL JOB/LIVE QUERY | ✗ (own jobs only) | ✗ (own jobs only) | ✓ (all) | ✓ (all) |
 | LIVE SELECT | ✓ (own namespace) | ✓ (configured namespaces) | ✓ (all) | ✓ (all) |
 | CREATE/ALTER USER | ✗ (self password only) | ✗ | ✓ | ✓ |

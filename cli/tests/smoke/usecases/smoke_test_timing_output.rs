@@ -374,10 +374,11 @@ fn smoke_test_timing_flush_operation() {
 
     // Execute FLUSH and verify timing
     let output =
-        execute_sql_as_root_via_cli(&format!("FLUSH TABLE {}", full)).expect("flush table");
+        execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}", full))
+            .expect("flush table");
 
     let timing = parse_timing_ms(&output);
-    println!("FLUSH TABLE timing: {:?}", timing);
+    println!("STORAGE FLUSH TABLE timing: {:?}", timing);
 
     // Note: FLUSH may return job ID instead of timing - this is informational
 

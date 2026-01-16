@@ -37,7 +37,7 @@ pub trait UserDataApplier: Send + Sync {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        rows: &[kalamdb_commons::models::Row],
+        rows: &[kalamdb_commons::models::rows::Row],
     ) -> Result<usize, RaftError>;
 
     /// Update rows in a user table
@@ -54,7 +54,7 @@ pub trait UserDataApplier: Send + Sync {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        updates: &[kalamdb_commons::models::Row],
+        updates: &[kalamdb_commons::models::rows::Row],
         filter: Option<&str>,
     ) -> Result<usize, RaftError>;
 
@@ -92,7 +92,7 @@ pub trait SharedDataApplier: Send + Sync {
     async fn insert(
         &self,
         table_id: &TableId,
-        rows: &[kalamdb_commons::models::Row],
+        rows: &[kalamdb_commons::models::rows::Row],
     ) -> Result<usize, RaftError>;
 
     /// Update rows in a shared table
@@ -107,7 +107,7 @@ pub trait SharedDataApplier: Send + Sync {
     async fn update(
         &self,
         table_id: &TableId,
-        updates: &[kalamdb_commons::models::Row],
+        updates: &[kalamdb_commons::models::rows::Row],
         filter: Option<&str>,
     ) -> Result<usize, RaftError>;
 
@@ -135,7 +135,7 @@ impl UserDataApplier for NoOpUserDataApplier {
         &self,
         _table_id: &TableId,
         _user_id: &UserId,
-        _rows: &[kalamdb_commons::models::Row],
+        _rows: &[kalamdb_commons::models::rows::Row],
     ) -> Result<usize, RaftError> {
         Ok(0)
     }
@@ -144,7 +144,7 @@ impl UserDataApplier for NoOpUserDataApplier {
         &self,
         _table_id: &TableId,
         _user_id: &UserId,
-        _updates: &[kalamdb_commons::models::Row],
+        _updates: &[kalamdb_commons::models::rows::Row],
         _filter: Option<&str>,
     ) -> Result<usize, RaftError> {
         Ok(0)
@@ -168,7 +168,7 @@ impl SharedDataApplier for NoOpSharedDataApplier {
     async fn insert(
         &self,
         _table_id: &TableId,
-        _rows: &[kalamdb_commons::models::Row],
+        _rows: &[kalamdb_commons::models::rows::Row],
     ) -> Result<usize, RaftError> {
         Ok(0)
     }
@@ -176,7 +176,7 @@ impl SharedDataApplier for NoOpSharedDataApplier {
     async fn update(
         &self,
         _table_id: &TableId,
-        _updates: &[kalamdb_commons::models::Row],
+        _updates: &[kalamdb_commons::models::rows::Row],
         _filter: Option<&str>,
     ) -> Result<usize, RaftError> {
         Ok(0)
@@ -229,7 +229,7 @@ mod tests {
             &self,
             _table_id: &TableId,
             _user_id: &UserId,
-            rows: &[kalamdb_commons::models::Row],
+            rows: &[kalamdb_commons::models::rows::Row],
         ) -> Result<usize, RaftError> {
             self.insert_count.fetch_add(1, Ordering::SeqCst);
             Ok(rows.len())
@@ -239,7 +239,7 @@ mod tests {
             &self,
             _table_id: &TableId,
             _user_id: &UserId,
-            _updates: &[kalamdb_commons::models::Row],
+            _updates: &[kalamdb_commons::models::rows::Row],
             _filter: Option<&str>,
         ) -> Result<usize, RaftError> {
             self.update_count.fetch_add(1, Ordering::SeqCst);
@@ -275,7 +275,7 @@ mod tests {
         async fn insert(
             &self,
             _table_id: &TableId,
-            rows: &[kalamdb_commons::models::Row],
+            rows: &[kalamdb_commons::models::rows::Row],
         ) -> Result<usize, RaftError> {
             self.insert_count.fetch_add(1, Ordering::SeqCst);
             Ok(rows.len())
@@ -284,7 +284,7 @@ mod tests {
         async fn update(
             &self,
             _table_id: &TableId,
-            _updates: &[kalamdb_commons::models::Row],
+            _updates: &[kalamdb_commons::models::rows::Row],
             _filter: Option<&str>,
         ) -> Result<usize, RaftError> {
             Ok(1)

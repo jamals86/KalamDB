@@ -544,7 +544,7 @@ async fn test_user_table_pk_index_delete() {
 ///
 /// Strategy:
 /// 1. Insert 50 rows
-/// 2. Flush table to Parquet (cold storage)
+/// 2. STORAGE FLUSH table to Parquet (cold storage)
 /// 3. UPDATE a row by PK
 /// 4. Verify the update worked correctly
 #[actix_web::test]

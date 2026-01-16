@@ -19,7 +19,7 @@
 
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::{LiveQueryId, TableId};
-use kalamdb_commons::StoragePartition;
+use crate::StoragePartition;
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
 

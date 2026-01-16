@@ -362,7 +362,7 @@ This is a Rust workspace project:
 - [ ] T132 [US6] Add integration test for namespace handlers in `backend/tests/integration/test_namespace_handlers.rs` (CREATE/ALTER/DROP/SHOW)
 - [ ] T133 [US6] Add integration test for storage handlers in `backend/tests/integration/test_storage_handlers.rs` (CREATE/ALTER/DROP/SHOW)
 - [ ] T134 [US6] Add integration test for table handlers in `backend/tests/integration/test_table_handlers.rs` (CREATE/ALTER/DROP/SHOW/DESCRIBE all 3 types)
-- [ ] T135 [US6] Add integration test for flush handlers in `backend/tests/integration/test_flush_handlers.rs` (FLUSH TABLE/ALL TABLES)
+- [ ] T135 [US6] Add integration test for flush handlers in `backend/tests/integration/test_flush_handlers.rs` (STORAGE FLUSH TABLE/ALL)
 - [ ] T136 [US6] Add integration test for job handlers in `backend/tests/integration/test_job_handlers.rs` (KILL JOB/LIVE QUERY)
 - [ ] T137 [US6] Add integration test for subscription handler in `backend/tests/integration/test_subscription_handler.rs` (SUBSCRIBE)
 - [ ] T138 [US6] Add integration test for user handlers in `backend/tests/integration/test_user_handlers.rs` (CREATE/ALTER/DROP USER)
@@ -376,7 +376,7 @@ This is a Rust workspace project:
 
 **Goal**: Complete production logic for 4 critical job executors (CleanupExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor) required for smoke tests and system tests to pass
 
-**Independent Test**: Execute FLUSH TABLE → verify job created → verify FlushExecutor completes → verify metrics returned; create soft-deleted records → verify RetentionExecutor cleanup works
+**Independent Test**: Execute STORAGE FLUSH TABLE → verify job created → verify FlushExecutor completes → verify metrics returned; create soft-deleted records → verify RetentionExecutor cleanup works
 
 **Critical**: Smoke tests and system tests are BLOCKED until these executors are implemented
 
@@ -521,7 +521,7 @@ This is a Rust workspace project:
 ### Integration & System Tests
 
 - [ ] T153 Update smoke tests to verify FlushExecutor works end-to-end in `backend/tests/quickstart.sh`
-  - Execute FLUSH TABLE command → verify job created with FL-* JobId
+  - Execute STORAGE FLUSH TABLE command → verify job created with FL-* JobId
   - Poll job status until Completed → verify metrics (rows_flushed, parquet_files)
   - Verify Parquet files created in storage backend
 
@@ -652,7 +652,7 @@ This is a Rust workspace project:
 
 ### Integration & Testing
 
-- [ ] T153 Update smoke tests to verify FlushExecutor works end-to-end (FLUSH TABLE → job created → execution)
+- [ ] T153 Update smoke tests to verify FlushExecutor works end-to-end (STORAGE FLUSH TABLE → job created → execution)
 - [ ] T154 Add system tests for RetentionExecutor (create soft-deleted records → wait → verify cleanup)
 - [ ] T155 Add system tests for StreamEvictionExecutor (create TTL records → wait → verify eviction)
 - [ ] T156 Add integration test for job retry logic (force failure → verify 3× retry → verify backoff timing)

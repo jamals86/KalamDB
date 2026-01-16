@@ -65,10 +65,10 @@ impl LiveQueryManager {
             node_id.clone(),
         ));
 
-        let notification_service = Arc::new(NotificationService::new(
+        let notification_service = NotificationService::new(
             registry.clone(),
             live_queries_provider.clone(),
-        ));
+        );
 
         Self {
             registry,

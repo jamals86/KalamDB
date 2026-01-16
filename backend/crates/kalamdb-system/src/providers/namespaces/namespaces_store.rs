@@ -3,7 +3,7 @@
 //! This module provides a SystemTableStore<NamespaceId, Namespace> wrapper for the system.namespaces table.
 
 use crate::system_table_store::SystemTableStore;
-use kalamdb_commons::SystemTable;
+use crate::SystemTable;
 use kalamdb_commons::system::Namespace;
 use kalamdb_commons::NamespaceId;
 use kalamdb_store::StorageBackend;
@@ -26,7 +26,7 @@ pub fn new_namespaces_store(backend: Arc<dyn StorageBackend>) -> NamespacesStore
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::SystemTable;
+    use crate::SystemTable;
     use kalamdb_commons::Role;
     use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;

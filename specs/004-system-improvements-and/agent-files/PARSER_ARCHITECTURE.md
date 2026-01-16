@@ -26,8 +26,8 @@ The following commands use custom parsers because they do not fit standard SQL s
 ### 2. Flush Commands (`flush_commands.rs`)
 
 **Commands:**
-- `FLUSH TABLE <namespace>.<table>`
-- `FLUSH ALL TABLES IN <namespace>`
+- `STORAGE FLUSH TABLE <namespace>.<table>`
+- `STORAGE FLUSH ALL IN <namespace>`
 
 **Rationale:**
 - Not part of SQL standard

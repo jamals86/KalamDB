@@ -4,7 +4,7 @@
 
 use kalamdb_commons::models::AuditLogId;
 use kalamdb_commons::system::AuditLogEntry;
-use kalamdb_commons::SystemTable;
+use crate::SystemTable;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
@@ -27,7 +27,7 @@ pub fn new_audit_logs_store(backend: Arc<dyn StorageBackend>) -> AuditLogsStore 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::SystemTable;
+    use crate::SystemTable;
     use kalamdb_commons::{UserId, UserName};
     use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;

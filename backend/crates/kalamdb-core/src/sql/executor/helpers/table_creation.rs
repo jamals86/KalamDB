@@ -878,6 +878,29 @@ pub fn create_stream_table(
     }
 
     let ttl_seconds = stmt.ttl_seconds.unwrap();
+    const MAX_STREAM_TTL_SECONDS: u64 = 30 * 24 * 60 * 60;
+    if ttl_seconds == 0 {
+        log::error!(
+            "❌ CREATE TABLE (TYPE='STREAM') failed: {}.{} - TTL must be greater than 0",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str()
+        );
+        return Err(KalamDbError::InvalidOperation(
+            "STREAM table TTL must be greater than 0".to_string(),
+        ));
+    }
+
+    if ttl_seconds > MAX_STREAM_TTL_SECONDS {
+        log::error!(
+            "❌ CREATE TABLE (TYPE='STREAM') failed: {}.{} - TTL exceeds 30 days ({}s)",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str(),
+            ttl_seconds
+        );
+        return Err(KalamDbError::InvalidOperation(
+            "STREAM table TTL must be 30 days or less".to_string(),
+        ));
+    }
     log::debug!(
         "✓ Validation passed for STREAM TABLE {}.{} (TTL: {}s)",
         stmt.namespace_id.as_str(),

@@ -9,7 +9,7 @@
 
 use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
-use kalamdb_commons::SystemTable;
+use crate::SystemTable;
 use kalamdb_store::{
     entity_store::{CrossUserTableStore, EntityStore, KSerializable},
     StorageBackend, StorageKey,

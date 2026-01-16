@@ -32,10 +32,10 @@ pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 1000;
 pub const EVENT_CHANNEL_CAPACITY: usize = 16;
 
 /// Type alias for sending live query notifications to WebSocket clients
-pub type NotificationSender = mpsc::Sender<(LiveQueryId, Notification)>;
+pub type NotificationSender = mpsc::Sender<Arc<Notification>>;
 
 /// Type alias for receiving live query notifications
-pub type NotificationReceiver = mpsc::Receiver<(LiveQueryId, Notification)>;
+pub type NotificationReceiver = mpsc::Receiver<Arc<Notification>>;
 
 /// Type alias for sending control events to connections
 pub type EventSender = mpsc::Sender<ConnectionEvent>;
@@ -65,7 +65,6 @@ pub enum ConnectionEvent {
 /// ~48 bytes per handle (vs ~800+ bytes for full SubscriptionState)
 #[derive(Debug, Clone)]
 pub struct SubscriptionHandle {
-    pub live_id: LiveQueryId,
     /// Shared filter expression (Arc for zero-copy across indices)
     pub filter_expr: Option<Arc<Expr>>,
     /// Column projections for filtering notification payload (None = all columns)
@@ -104,8 +103,6 @@ pub struct SubscriptionState {
     /// Current batch number for pagination tracking (0-indexed)
     /// Incremented after each batch is sent
     pub current_batch_num: u32,
-    /// Shared notification channel (Arc for zero-copy)
-    pub notification_tx: Arc<NotificationSender>,
 }
 
 /// Connection state - everything about a connection in one struct
@@ -258,9 +255,11 @@ pub struct ConnectionsManager {
     connections: DashMap<ConnectionId, SharedConnectionState>,
 
     // === Secondary Indices (for efficient lookups) ===
-    /// (UserId, TableId) → Vec<SubscriptionHandle> for O(1) notification delivery
+    /// (UserId, TableId) → DashMap<LiveQueryId, SubscriptionHandle> for O(1) notification delivery
     /// Uses lightweight handles (~48 bytes) instead of full state (~800+ bytes)
-    user_table_subscriptions: DashMap<(UserId, TableId), Vec<SubscriptionHandle>>,
+    user_table_subscriptions: DashMap<(UserId, TableId), Arc<DashMap<LiveQueryId, SubscriptionHandle>>>,
+    /// Shared empty map to avoid allocations on lookup misses
+    empty_subscriptions: Arc<DashMap<LiveQueryId, SubscriptionHandle>>,
     /// LiveQueryId → ConnectionId reverse index
     live_id_to_connection: DashMap<LiveQueryId, ConnectionId>,
 
@@ -318,6 +317,7 @@ impl ConnectionsManager {
         let registry = Arc::new(Self {
             connections: DashMap::with_capacity(1024),
             user_table_subscriptions: DashMap::new(),
+            empty_subscriptions: Arc::new(DashMap::new()),
             live_id_to_connection: DashMap::new(),
             node_id,
             client_timeout,
@@ -427,8 +427,8 @@ impl ConnectionsManager {
                 for entry in state.subscriptions.iter() {
                     let sub = entry.value();
                     let key = (user_id.clone(), sub.table_id.clone());
-                    if let Some(mut entries) = self.user_table_subscriptions.get_mut(&key) {
-                        entries.retain(|h| h.live_id != sub.live_id);
+                    if let Some(entries) = self.user_table_subscriptions.get(&key) {
+                        entries.remove(&sub.live_id);
                         if entries.is_empty() {
                             drop(entries);
                             self.user_table_subscriptions.remove(&key);
@@ -481,11 +481,17 @@ impl ConnectionsManager {
         table_id: TableId,
         handle: SubscriptionHandle,
     ) {
-        // Add to (UserId, TableId) → Vec<SubscriptionHandle> index
+        // Add to (UserId, TableId) → Arc<DashMap<LiveQueryId, SubscriptionHandle>> index
         self.user_table_subscriptions
             .entry((user_id.clone(), table_id))
-            .or_default()
-            .push(handle);
+            .and_modify(|handles| {
+                handles.insert(live_id.clone(), handle.clone());
+            })
+            .or_insert_with(|| {
+                let handles = DashMap::new();
+                handles.insert(live_id.clone(), handle.clone());
+                Arc::new(handles)
+            });
 
         // Add to reverse index
         self.live_id_to_connection.insert(live_id, connection_id.clone());
@@ -500,8 +506,8 @@ impl ConnectionsManager {
 
         // Remove from user_table_subscriptions index
         let key = (user_id.clone(), table_id.clone());
-        if let Some(mut handles) = self.user_table_subscriptions.get_mut(&key) {
-            handles.retain(|h| &h.live_id != live_id);
+        if let Some(handles) = self.user_table_subscriptions.get(&key) {
+            handles.remove(live_id);
             if handles.is_empty() {
                 drop(handles);
                 self.user_table_subscriptions.remove(&key);
@@ -537,18 +543,28 @@ impl ConnectionsManager {
         &self,
         user_id: &UserId,
         table_id: &TableId,
-    ) -> Vec<SubscriptionHandle> {
+    ) -> Arc<DashMap<LiveQueryId, SubscriptionHandle>> {
         self.user_table_subscriptions
             .get(&(user_id.clone(), table_id.clone()))
-            .map(|handles| handles.clone())
-            .unwrap_or_default()
+            .map(|handles| Arc::clone(handles.value()))
+            .unwrap_or_else(|| Arc::clone(&self.empty_subscriptions))
     }
 
     /// Check if any subscriptions exist for a table (across all users)
     pub fn has_subscriptions_for_table(&self, table_ref: &str) -> bool {
-        self.user_table_subscriptions.iter().any(|entry| {
-            entry.key().1.to_string().contains(table_ref)
-        })
+        let mut parts = table_ref.splitn(2, '.');
+        let first = parts.next().unwrap_or("");
+        let second = parts.next();
+        match second {
+            Some(table_name) => self.user_table_subscriptions.iter().any(|entry| {
+                let key_table = &entry.key().1;
+                key_table.namespace_id().as_str() == first
+                    && key_table.table_name().as_str() == table_name
+            }),
+            None => self.user_table_subscriptions.iter().any(|entry| {
+                entry.key().1.table_name().as_str() == first
+            }),
+        }
     }
 
     // ==================== Notification Delivery ====================
@@ -558,7 +574,8 @@ impl ConnectionsManager {
         if let Some(conn_id) = self.live_id_to_connection.get(live_id) {
             if let Some(shared_state) = self.connections.get(conn_id.value()) {
                 let state = shared_state.read();
-                if let Err(e) = state.notification_tx.try_send((live_id.clone(), notification)) {
+                let notification = Arc::new(notification);
+                if let Err(e) = state.notification_tx.try_send(notification) {
                     if matches!(e, mpsc::error::TrySendError::Full(_)) {
                         warn!("Notification channel full for {}, dropping notification", live_id);
                     }
@@ -576,10 +593,12 @@ impl ConnectionsManager {
         notification: Notification,
     ) {
         if let Some(handles) = self.user_table_subscriptions.get(&(user_id.clone(), table_id.clone())) {
+            let notification = Arc::new(notification);
             for handle in handles.iter() {
-                if let Err(e) = handle.notification_tx.try_send((handle.live_id.clone(), notification.clone())) {
+                let live_id = handle.key().clone();
+                if let Err(e) = handle.notification_tx.try_send(Arc::clone(&notification)) {
                     if matches!(e, mpsc::error::TrySendError::Full(_)) {
-                        warn!("Notification channel full for {}, dropping", handle.live_id);
+                        warn!("Notification channel full for {}, dropping", live_id);
                     }
                 }
             }

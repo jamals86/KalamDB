@@ -8,7 +8,7 @@ Three critical issues have been addressed to improve reliability, consistency, a
 ## Task 21: Prevent Duplicate Flush Jobs ✅
 
 ### Problem
-When executing `FLUSH TABLE`, the system would allow multiple flush jobs to run simultaneously for the same table, leading to resource contention and potential data inconsistencies.
+When executing `STORAGE FLUSH TABLE`, the system would allow multiple flush jobs to run simultaneously for the same table, leading to resource contention and potential data inconsistencies.
 
 ### Solution
 Added duplicate job detection in `execute_flush_table()` method:
@@ -254,7 +254,7 @@ curl -X POST http://127.0.0.1:8080/v1/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-USER-ID: user123" \
-  -d '{"sql":"FLUSH TABLE namespace1.files;"}'
+    -d '{"sql":"STORAGE FLUSH TABLE namespace1.files;"}'
 
 # Verify job status
 curl -X POST http://127.0.0.1:8080/v1/api/sql \

@@ -193,12 +193,10 @@ impl SubscriptionService {
             batch_size,
             snapshot_end_seq: None,
             current_batch_num: 0,  // Start at batch 0
-            notification_tx: notification_tx.clone(),
         };
 
         // Create lightweight handle for the index (~48 bytes vs ~800+ bytes)
         let subscription_handle = SubscriptionHandle {
-            live_id: live_id.clone(),
             filter_expr: filter_expr_arc,
             projections: projections_arc,
             notification_tx,

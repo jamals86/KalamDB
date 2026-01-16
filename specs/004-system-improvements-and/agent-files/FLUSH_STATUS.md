@@ -129,7 +129,7 @@ cargo run --bin kalamdb-server
 ### Test Manual Flush
 ```bash
 # Via API or SQL command
-FLUSH TABLE namespace.table_name;
+STORAGE FLUSH TABLE namespace.table_name;
 ```
 
 Should see the same logging sequence.

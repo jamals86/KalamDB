@@ -821,6 +821,7 @@ impl RaftManager {
     /// Without this, state machines would start with `last_applied_index = 0`, and log
     /// entries would be re-applied even if they were already applied before the restart.
     pub async fn restore_state_machines_from_snapshots(&self) -> Result<(), RaftError> {
+        let start = std::time::Instant::now();
         let mut restored_count = 0;
 
         // Restore meta state machine
@@ -847,8 +848,9 @@ impl RaftManager {
 
         if restored_count > 0 {
             log::info!(
-                "RaftManager: Restored {} state machines from snapshots",
-                restored_count
+                "RaftManager: Restored {} state machines from snapshots in {:.2}ms",
+                restored_count,
+                start.elapsed().as_secs_f64() * 1000.0
             );
         }
 
