@@ -92,6 +92,8 @@ impl TestServer {
         let users_provider = self.app_context.system_tables().users();
         let role = if let Ok(Some(user)) = users_provider.get_user_by_id(&user_id_obj) {
             user.role
+        } else if let Ok(Some(user)) = users_provider.get_user_by_username(user_id) {
+            user.role
         } else {
             let password_hash = bcrypt::hash("test123", bcrypt::DEFAULT_COST)
                 .unwrap_or_else(|_| String::new());
