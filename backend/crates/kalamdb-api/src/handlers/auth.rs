@@ -171,7 +171,8 @@ pub async fn login_handler(
     }
 
     // Load full user record for response fields
-    let user = match user_repo.get_user_by_username(&auth_result.user.username).await {
+    let username_typed = kalamdb_commons::models::UserName::from(auth_result.user.username.as_str());
+    let user = match user_repo.get_user_by_username(&username_typed).await {
         Ok(user) => user,
         Err(e) => {
             log::error!("Failed to load user after authentication: {}", e);
@@ -289,7 +290,8 @@ pub async fn refresh_handler(
 
     // Verify user still exists and is active by username (we don't have find_by_id)
     let username = claims.username.as_ref().map(|u| u.as_str()).unwrap_or("");
-    let user = match user_repo.get_user_by_username(username).await {
+    let username_typed = kalamdb_commons::models::UserName::from(username);
+    let user = match user_repo.get_user_by_username(&username_typed).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {
             return HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "User no longer valid"));
@@ -392,7 +394,8 @@ pub async fn me_handler(
 
     // Get current user info
     let username = claims.username.as_ref().map(|u| u.as_str()).unwrap_or("");
-    let user = match user_repo.get_user_by_username(username).await {
+    let username_typed = kalamdb_commons::models::UserName::from(username);
+    let user = match user_repo.get_user_by_username(&username_typed).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {
             return HttpResponse::Unauthorized().json(ErrorResponse::new("unauthorized", "User not found"));

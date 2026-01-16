@@ -255,18 +255,8 @@ pub fn is_server_running() -> bool {
         return false;
     }
 
-    if !root_password().is_empty() {
-        return true;
-    }
-
     match server_requires_auth() {
-        Some(true) => {
-            eprintln!(
-                "⚠️  Server requires authentication but KALAMDB_ROOT_PASSWORD is empty. Skipping tests to avoid account lockouts."
-            );
-            false
-        }
-        Some(false) => true,
+        Some(_) => true,
         None => false,
     }
 }
@@ -515,16 +505,6 @@ pub fn require_server_running() -> bool {
         println!("ℹ️  Running in CLUSTER mode with {} nodes: {:?}", available_urls.len(), available_urls);
     } else {
         println!("ℹ️  Running in SINGLE-NODE mode: {}", available_urls[0]);
-    }
-
-    if root_password().is_empty() {
-        let probe_url = available_urls[0].as_str();
-        if server_requires_auth_for_url(probe_url).unwrap_or(false) {
-            eprintln!(
-                "Skipping CLI tests: server requires auth but KALAMDB_ROOT_PASSWORD is empty."
-            );
-            return false;
-        }
     }
 
     true
@@ -790,12 +770,9 @@ fn get_shared_root_client() -> &'static KalamLinkClient {
         }
 
         if root_password().is_empty() {
-            eprintln!(
-                "[TEST_CLIENT] ⚠ Server requires auth but KALAMDB_ROOT_PASSWORD is empty. Requests will fail; set the env var to avoid account lockouts."
-            );
             return KalamLinkClient::builder()
                 .base_url(&base_url)
-                .auth(AuthProvider::none())
+                .auth(AuthProvider::basic_auth("root".to_string(), "".to_string()))
                 .timeouts(
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
@@ -807,7 +784,7 @@ fn get_shared_root_client() -> &'static KalamLinkClient {
                         .build(),
                 )
                 .build()
-                .expect("Failed to create shared root client without auth");
+                .expect("Failed to create shared root client with empty password");
         }
         
         // PERFORMANCE: Try to login once to get JWT token, then use token for all requests
@@ -1293,6 +1270,21 @@ pub fn create_cli_command_with_auth(username: &str, password: &str) -> assert_cm
 /// Helper to create a CLI command authenticated as root.
 pub fn create_cli_command_with_root_auth() -> assert_cmd::Command {
     create_cli_command_with_auth("root", root_password())
+}
+
+/// Helper to create a temporary credentials file path for CLI tests
+pub fn create_temp_credentials_path() -> (TempDir, std::path::PathBuf) {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let creds_path = temp_dir.path().join("credentials.toml");
+    (temp_dir, creds_path)
+}
+
+/// Helper to set credentials path env for a CLI command
+pub fn with_credentials_path<'a>(
+    cmd: &'a mut assert_cmd::Command,
+    credentials_path: &std::path::Path,
+) -> &'a mut assert_cmd::Command {
+    cmd.env("KALAMDB_CREDENTIALS_PATH", credentials_path)
 }
 
 /// Helper to create a temporary credential store for testing

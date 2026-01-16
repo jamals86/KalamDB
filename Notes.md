@@ -938,7 +938,11 @@ TODOS:
 
 58) Time format is not being displayed in the cli make a default display of the time columns in the cli and ui in a human readable format and can be configurable from the cli config which is stored at the client side, make sure we use the kalamdb-link for that display it should be configured ther ein the connection configs
 
-51) 
+51) Need to add a flush all command which flushes all tables which needs flushing according to the system.manifest table;
+
+52) check the raft log serialization ad deserialization to make sure we are optimized as much as possible since this is the new layer we added between the commiting and the actual sql command we are running on the data, also the snapshoting i can see its using json is this the ideal way for it?
+
+
 
 
 

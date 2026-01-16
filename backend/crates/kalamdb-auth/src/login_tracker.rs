@@ -104,6 +104,9 @@ impl LoginTracker {
     }
 
     /// Record a successful login and reset tracking
+    ///
+    /// **Performance**: Only writes to database if there were failed login attempts
+    /// to clear. This avoids a database write on every authenticated request.
     pub async fn record_successful_login(
         &self,
         user: &mut User,
@@ -114,16 +117,20 @@ impl LoginTracker {
         }
 
         let had_failed_attempts = user.failed_login_attempts > 0;
-        user.record_successful_login();
-
+        
+        // Only update the database if there were failed attempts to clear
+        // This avoids writing to the database on every successful request
         if had_failed_attempts {
+            user.record_successful_login();
             info!(
                 "Successful login, reset failed attempts: username={}",
                 user.username
             );
+            repo.update_user(user).await
+        } else {
+            // No failed attempts - skip database write for performance
+            Ok(())
         }
-
-        repo.update_user(user).await
     }
 }
 

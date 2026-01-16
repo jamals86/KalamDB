@@ -282,7 +282,8 @@ async fn authenticate_username_password(
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticatedUser> {
     // Look up user
-    let mut user = repo.get_user_by_username(username).await?;
+    let username_typed = kalamdb_commons::models::UserName::from(username);
+    let mut user = repo.get_user_by_username(&username_typed).await?;
 
     // Check if user is deleted
     if user.deleted_at.is_some() {
@@ -321,9 +322,10 @@ async fn authenticate_username_password(
         if is_localhost {
             // Localhost system users: accept empty password OR valid password
             let password_ok = user.password_hash.is_empty()
-                || password::verify_password(password, &user.password_hash)
-                    .await
-                    .unwrap_or(false);
+                || (!password.is_empty()
+                    && password::verify_password(password, &user.password_hash)
+                        .await
+                        .unwrap_or(false));
 
             if password_ok {
                 auth_success = true;
@@ -343,9 +345,10 @@ async fn authenticate_username_password(
                     "Remote access is not allowed for this user".to_string(),
                 ));
             }
-            if password::verify_password(password, &user.password_hash)
-                .await
-                .unwrap_or(false)
+            if !password.is_empty()
+                && password::verify_password(password, &user.password_hash)
+                    .await
+                    .unwrap_or(false)
             {
                 auth_success = true;
             } else {
@@ -360,9 +363,10 @@ async fn authenticate_username_password(
                 "Invalid username or password".to_string(),
             ));
         }
-        if password::verify_password(password, &user.password_hash)
-            .await
-            .unwrap_or(false)
+        if !password.is_empty()
+            && password::verify_password(password, &user.password_hash)
+                .await
+                .unwrap_or(false)
         {
             auth_success = true;
         } else {
@@ -444,7 +448,8 @@ async fn authenticate_bearer(
         .ok_or_else(|| AuthError::MissingClaim("username".to_string()))?;
 
     // Look up user
-    let user = repo.get_user_by_username(username.as_str()).await?;
+    let username_typed = kalamdb_commons::models::UserName::from(username.as_str());
+    let user = repo.get_user_by_username(&username_typed).await?;
 
     if user.deleted_at.is_some() {
         return Err(AuthError::InvalidCredentials(

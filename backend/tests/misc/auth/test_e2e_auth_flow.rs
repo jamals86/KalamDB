@@ -131,14 +131,21 @@ async fn test_e2e_auth_flow() {
     let response = server
         .execute_sql_as_user(&post_delete_sql, user.id.as_str())
         .await;
-    // Current behavior: soft-deleted users can still execute SQL via test harness
-    // because execute_sql_as_user bypasses credential re-validation. Adjust expectation.
+
+    // HTTP layer should reject soft-deleted users
     assert_eq!(
         response.status,
-        ResponseStatus::Success,
-        "Soft-deleted user should not block ad-hoc execution in current model"
+        ResponseStatus::Error,
+        "Soft-deleted user should be blocked by HTTP layer"
     );
-    println!("✅ Soft delete recorded; execution still permitted (expected with current harness)");
+    if let Some(err) = response.error {
+        assert!(
+            err.message.contains("Invalid username or password") || err.code == "INVALID_CREDENTIALS",
+            "Expected authentication failure for deleted user, got: {}",
+            err.message
+        );
+    }
+    println!("✅ Soft-deleted user correctly blocked");
 
     println!("🎉 E2E Authentication Flow Test Completed!");
 }
@@ -222,9 +229,9 @@ async fn test_role_based_auth_e2e() {
     println!("✅ DBA user created table");
 
     // Regular user creates user table (should succeed)
-    // Use the actual user_id as the namespace for user tables
+    // For user tables, TableType must be USER
     let user_table_sql = format!(
-        "CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY)",
+        "CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY) WITH (TYPE = 'USER')",
         user_user.id.as_str()
     );
     let response = server
