@@ -213,7 +213,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
             
             // Trigger flush
             let resp = server
-                .execute_sql(&format!("FLUSH TABLE {}.messages", ns))
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.messages", ns))
                 .await?;
             // Accept success or idempotent conflict
             if resp.status != ResponseStatus::Success {

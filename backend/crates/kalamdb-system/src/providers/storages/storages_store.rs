@@ -3,7 +3,7 @@
 //! This module provides a SystemTableStore<StorageId, Storage> wrapper for the system.storages table.
 
 use crate::system_table_store::SystemTableStore;
-use kalamdb_commons::SystemTable;
+use crate::SystemTable;
 use kalamdb_commons::system::Storage;
 use kalamdb_commons::StorageId;
 use kalamdb_store::StorageBackend;
@@ -26,7 +26,7 @@ pub fn new_storages_store(backend: Arc<dyn StorageBackend>) -> StoragesStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::SystemTable;
+    use crate::SystemTable;
     use kalamdb_commons::Role;
     use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;

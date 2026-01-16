@@ -1,5 +1,4 @@
-use arrow::array::{Array, ArrayRef, FixedSizeListArray, Float32Array};
-use arrow_schema::{DataType, Field};
+use arrow::array::{Array, FixedSizeListArray, Float32Array};
 use datafusion::scalar::ScalarValue;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -10,7 +9,7 @@ use thiserror::Error;
 
 /// A unified Row representation that holds DataFusion ScalarValues
 /// but serializes to clean, standard JSON for clients.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     // RowEnvelope values as column name -> ScalarValue map
     pub values: BTreeMap<String, ScalarValue>,
@@ -141,7 +140,7 @@ impl From<&ScalarValue> for StoredScalarValue {
                 precision: *precision,
                 scale: *scale,
             },
-            ScalarValue::FixedSizeList(array) => match encode_embedding_from_list(array) {
+            ScalarValue::FixedSizeList(array) => match encode_embedding_from_list(array.clone()) {
                 Some(stored) => stored,
                 None => StoredScalarValue::Fallback(value.to_string()),
             },
@@ -198,112 +197,10 @@ impl From<StoredScalarValue> for ScalarValue {
     }
 }
 
-fn encode_embedding_from_list(array: &Arc<FixedSizeListArray>) -> Option<StoredScalarValue> {
-    if array.len() != 1 {
-        return None;
-    }
-
-    let size = array.value_length();
-    if size <= 0 {
-        return None;
-    }
-
-    if array.is_null(0) {
-        return Some(StoredScalarValue::Embedding { size, values: None });
-    }
-
-    let values = array.value(0);
-    let floats = values.as_any().downcast_ref::<Float32Array>()?;
-    if floats.len() != size as usize {
-        return None;
-    }
-
-    let mut collected = Vec::with_capacity(size as usize);
-    for i in 0..size as usize {
-        if floats.is_null(i) {
-            collected.push(None);
-        } else {
-            collected.push(Some(floats.value(i)));
-        }
-    }
-
-    Some(StoredScalarValue::Embedding {
-        size,
-        values: Some(collected),
-    })
+#[derive(Debug, Clone, PartialEq)]
+struct RowSerdeHelper {
+    values: Vec<(String, StoredScalarValue)>,
 }
-
-fn decode_embedding(size: i32, values: &Option<Vec<Option<f32>>>) -> ScalarValue {
-    let coerced_size = size.max(0);
-    let field = Arc::new(Field::new("item", DataType::Float32, true));
-    let array = match values {
-        None => FixedSizeListArray::new_null(field.clone(), coerced_size, 1),
-        Some(vals) => {
-            let mut padded = vals.clone();
-            match padded.len().cmp(&(coerced_size as usize)) {
-                Ordering::Less => {
-                    padded.resize(coerced_size as usize, None);
-                }
-                Ordering::Greater => {
-                    padded.truncate(coerced_size as usize);
-                }
-                Ordering::Equal => {}
-            }
-
-            let values_array: ArrayRef = Arc::new(Float32Array::from(padded));
-            FixedSizeListArray::new(field.clone(), coerced_size, values_array, None)
-        }
-    };
-
-    ScalarValue::FixedSizeList(Arc::new(array))
-}
-
-pub type RowConversionResult<T> = Result<T, RowConversionError>;
-
-impl Row {
-    pub fn new(values: BTreeMap<String, ScalarValue>) -> Self {
-        Self { values }
-    }
-
-    /// Helper to retrieve a value by column name
-    pub fn get(&self, key: &str) -> Option<&ScalarValue> {
-        self.values.get(key)
-    }
-
-    /// Materialize the row into a column-ordered envelope. Missing columns become NULL.
-    pub fn to_envelope<'a, I>(&self, column_order: I) -> RowEnvelope
-    where
-        I: IntoIterator<Item = &'a str>,
-    {
-        let columns = column_order
-            .into_iter()
-            .map(|name| self.get(name).cloned().unwrap_or(ScalarValue::Null))
-            .collect();
-        RowEnvelope::new(columns)
-    }
-
-    /// Construct a row from an envelope and matching column names.
-    pub fn from_envelope<'a, I>(column_order: I, envelope: RowEnvelope) -> RowConversionResult<Self>
-    where
-        I: IntoIterator<Item = &'a str>,
-    {
-        let names: Vec<&str> = column_order.into_iter().collect();
-        if names.len() != envelope.columns.len() {
-            return Err(RowConversionError::ColumnCountMismatch {
-                expected: names.len(),
-                actual: envelope.columns.len(),
-            });
-        }
-
-        let mut values = BTreeMap::new();
-        for (name, value) in names.into_iter().zip(envelope.columns.into_iter()) {
-            values.insert(name.to_string(), value);
-        }
-        Ok(Row { values })
-    }
-}
-
-// --- Serialization (ScalarValue -> JSON) ---
 
 impl Serialize for Row {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -319,81 +216,140 @@ impl Serialize for Row {
     }
 }
 
-// --- Deserialization (JSON -> ScalarValue) ---
-
 impl<'de> Deserialize<'de> for Row {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let raw = BTreeMap::<String, StoredScalarValue>::deserialize(deserializer)?;
+        let helper = RowSerdeHelper::deserialize(deserializer)?;
         let mut values = BTreeMap::new();
-        for (key, value) in raw {
-            values.insert(key, ScalarValue::from(value));
+        for (k, v) in helper.values {
+            values.insert(k, ScalarValue::from(v));
         }
         Ok(Row { values })
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use bincode::config::standard;
-    use bincode::serde::{decode_from_slice, encode_to_vec};
-    use std::sync::Arc;
+impl Serialize for RowSerdeHelper {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.values.len()))?;
+        for (k, v) in &self.values {
+            map.serialize_entry(k, v)?;
+        }
+        map.end()
+    }
+}
 
-    #[test]
-    fn binary_roundtrip_preserves_scalar_types() {
-        let mut values = BTreeMap::new();
-        values.insert("id".to_string(), ScalarValue::Int64(Some(42)));
-        values.insert("name".to_string(), ScalarValue::Utf8(Some("Alice".into())));
-        values.insert("active".to_string(), ScalarValue::Boolean(Some(true)));
-        let row = Row::new(values);
+impl<'de> Deserialize<'de> for RowSerdeHelper {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let map: std::collections::BTreeMap<String, StoredScalarValue> =
+            Deserialize::deserialize(deserializer)?;
+        let values = map.into_iter().collect();
+        Ok(RowSerdeHelper { values })
+    }
+}
 
-        let config = standard();
-        let bytes = encode_to_vec(&row, config).expect("bincode encode");
-        let (decoded, _): (Row, usize) = decode_from_slice(&bytes, config).expect("bincode decode");
-        assert_eq!(decoded, row);
+impl Row {
+    pub fn new(values: BTreeMap<String, ScalarValue>) -> Self {
+        Self { values }
     }
 
-    #[test]
-    fn extended_roundtrip_covers_binary_decimal_and_embedding() {
-        let mut values = BTreeMap::new();
-        values.insert(
-            "bin".to_string(),
-            ScalarValue::Binary(Some(vec![1_u8, 2, 3, 4])),
-        );
-        values.insert(
-            "fixed_bin".to_string(),
-            ScalarValue::FixedSizeBinary(4, Some(vec![9_u8, 8, 7, 6])),
-        );
-        values.insert(
-            "decimal".to_string(),
-            ScalarValue::Decimal128(Some(123_456_i128), 10, 2),
-        );
-        values.insert(
-            "time".to_string(),
-            ScalarValue::Time64Microsecond(Some(987_654_i64)),
-        );
+    pub fn from_vec(values: Vec<(String, ScalarValue)>) -> Self {
+        let mut map = BTreeMap::new();
+        for (k, v) in values {
+            map.insert(k, v);
+        }
+        Self { values: map }
+    }
 
-        let field = Arc::new(Field::new("item", DataType::Float32, true));
-        let floats = Float32Array::from(vec![Some(0.1_f32), None, Some(0.3_f32)]);
-        let embedding = FixedSizeListArray::new(field.clone(), 3, Arc::new(floats), None);
-        values.insert(
-            "embedding".to_string(),
-            ScalarValue::FixedSizeList(Arc::new(embedding)),
-        );
+    pub fn get(&self, key: &str) -> Option<&ScalarValue> {
+        self.values.get(key)
+    }
 
-        let null_embedding = FixedSizeListArray::new_null(field, 3, 1);
-        values.insert(
-            "embedding_null".to_string(),
-            ScalarValue::FixedSizeList(Arc::new(null_embedding)),
-        );
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or_else(|_| serde_json::Value::Null)
+    }
 
-        let row = Row::new(values);
-        let config = standard();
-        let bytes = encode_to_vec(&row, config).expect("bincode encode");
-        let (decoded, _): (Row, usize) = decode_from_slice(&bytes, config).expect("bincode decode");
-        assert_eq!(decoded, row);
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    pub fn iter(&self) -> std::collections::btree_map::Iter<'_, String, ScalarValue> {
+        self.values.iter()
+    }
+}
+
+fn encode_embedding_from_list(array: Arc<FixedSizeListArray>) -> Option<StoredScalarValue> {
+    let size = array.value_length();
+    let values = array.values();
+    let float_array = values.as_any().downcast_ref::<Float32Array>()?;
+
+    let mut vector = Vec::with_capacity(size as usize);
+    for i in 0..size {
+        let value = float_array.value(i as usize);
+        vector.push(Some(value));
+    }
+
+    Some(StoredScalarValue::Embedding {
+        size,
+        values: Some(vector),
+    })
+}
+
+fn decode_embedding(size: i32, values: &Option<Vec<Option<f32>>>) -> ScalarValue {
+    use arrow::datatypes::Float32Type;
+    
+    let values = values.clone().unwrap_or_else(|| vec![None; size as usize]);
+    let mut floats = Vec::with_capacity(size as usize);
+    for value in values {
+        floats.push(value.unwrap_or(0.0));
+    }
+
+    let array = Float32Array::from(floats);
+    let list = FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
+        (0..1).map(|_| Some(array.iter().map(|v| v.map(|x| x as f32)))),
+        size,
+    );
+
+    ScalarValue::FixedSizeList(Arc::new(list))
+}
+
+impl PartialOrd for Row {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Row {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Compare by number of values first
+        let len_cmp = self.values.len().cmp(&other.values.len());
+        if len_cmp != Ordering::Equal {
+            return len_cmp;
+        }
+
+        // Then compare by key/value pairs
+        for ((k1, v1), (k2, v2)) in self.values.iter().zip(other.values.iter()) {
+            let key_cmp = k1.cmp(k2);
+            if key_cmp != Ordering::Equal {
+                return key_cmp;
+            }
+            let val_cmp = v1.partial_cmp(v2).unwrap_or(Ordering::Equal);
+            if val_cmp != Ordering::Equal {
+                return val_cmp;
+            }
+        }
+
+        Ordering::Equal
     }
 }

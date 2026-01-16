@@ -15,3 +15,4 @@ pub(super) mod test_support;
 mod test_cold_storage_manifest;
 mod test_manifest_cache;
 mod test_manifest_flush_integration;
+mod test_storage_compact;

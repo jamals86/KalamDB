@@ -156,7 +156,9 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
             // =========================================================
             // Step 5: Trigger flush
             // =========================================================
-            let resp = server.execute_sql(&format!("FLUSH TABLE {}.telemetry", ns)).await?;
+            let resp = server
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.telemetry", ns))
+                .await?;
             if resp.status != ResponseStatus::Success {
                 let is_conflict = resp.error.as_ref()
                     .map(|e| e.message.contains("conflict") || e.message.contains("Idempotent"))

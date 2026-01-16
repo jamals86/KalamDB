@@ -48,7 +48,7 @@ Place your handler in the appropriate directory:
 |----------|-----------|----------|
 | DDL | `handlers/ddl/` | CREATE TABLE, ALTER NAMESPACE, DROP STORAGE |
 | DML | `handlers/dml/` | INSERT, UPDATE, DELETE |
-| Flush | `handlers/flush/` | FLUSH TABLE, FLUSH ALL TABLES |
+| Flush | `handlers/flush/` | STORAGE FLUSH TABLE, STORAGE FLUSH ALL |
 | Jobs | `handlers/jobs/` | KILL JOB, KILL LIVE QUERY |
 | Subscription | `handlers/subscription/` | LIVE SELECT (SUBSCRIBE) |
 | User | `handlers/user/` | CREATE USER, ALTER USER, DROP USER |

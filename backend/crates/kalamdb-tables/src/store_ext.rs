@@ -80,18 +80,7 @@ pub trait StreamTableStoreExt {
 
 impl StreamTableStoreExt for StreamTableStore {
     fn scan_all_stream(&self) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, TableError> {
-        let raw_results = EntityStore::scan_all(self, None, None, None)
-            .map_err(|e| TableError::Storage(e.to_string()))?;
-
-        // Deserialize Vec<u8> keys back to StreamTableRowId
-        raw_results
-            .into_iter()
-            .map(|(key_bytes, value)| {
-                let key = StreamTableRowId::from_bytes(&key_bytes).map_err(|e| {
-                    TableError::Serialization(format!("Failed to deserialize key: {}", e))
-                })?;
-                Ok((key, value))
-            })
-            .collect()
+        self.scan_all(None)
+            .map_err(|e| TableError::Storage(e.to_string()))
     }
 }

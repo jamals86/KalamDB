@@ -22,7 +22,8 @@ use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::schemas::{
     ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
 };
-use kalamdb_commons::{NamespaceId, SystemTable, TableName};
+use kalamdb_commons::{NamespaceId, TableName};
+use kalamdb_system::SystemTable;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 

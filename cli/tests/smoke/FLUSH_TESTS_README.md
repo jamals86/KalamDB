@@ -16,7 +16,7 @@ This test suite validates flush operations for both USER and SHARED tables, ensu
 Tests USER table flush with the following flow:
 1. Creates table with `FLUSH ROWS 50` policy
 2. Inserts 200 rows in batches
-3. Manually triggers `FLUSH TABLE`
+3. Manually triggers `STORAGE FLUSH TABLE`
 4. Verifies flush job completes successfully (using `verify_job_completed()`)
 5. Queries all data and verifies 200 rows are returned
 6. Validates data integrity by checking sequence numbers
@@ -30,7 +30,7 @@ Tests USER table flush with the following flow:
 Tests SHARED table flush with identical flow to USER table test:
 1. Creates SHARED table with `FLUSH ROWS 50` policy
 2. Inserts 200 rows in batches
-3. Manually triggers `FLUSH TABLE`
+3. Manually triggers `STORAGE FLUSH TABLE`
 4. Verifies flush job completes successfully
 5. Queries all data and verifies 200 rows are returned
 6. Validates data integrity
@@ -88,7 +88,7 @@ cargo test --test smoke -- --nocapture
 ## Helper Functions Used
 
 ### Job Verification
-- `parse_job_id_from_flush_output(output)` - Extracts job ID from FLUSH TABLE response
+- `parse_job_id_from_flush_output(output)` - Extracts job ID from STORAGE FLUSH TABLE response
 - `verify_job_completed(job_id, timeout)` - Polls `system.jobs` until job completes or fails
 - `verify_jobs_completed(job_ids, timeout)` - Bulk verification for multiple jobs
 

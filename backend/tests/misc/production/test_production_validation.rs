@@ -183,7 +183,9 @@ async fn flush_on_stream_table_rejected() {
 
     // Try to FLUSH a STREAM table (should fail)
     let _user_id = server.create_user("user1_stream", "Pass123!", Role::User).await;
-    let resp = server.execute_sql("FLUSH TABLE app_stream.events").await;
+    let resp = server
+        .execute_sql("STORAGE FLUSH TABLE app_stream.events")
+        .await;
 
     // Should fail - FLUSH doesn't make sense for STREAM tables
     assert_eq!(resp.status, ResponseStatus::Error);

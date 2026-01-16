@@ -40,7 +40,7 @@ use std::sync::Arc;
 // Arrow <-> JSON helpers
 use crate::live_query::ChangeNotification;
 use crate::providers::version_resolution::{merge_versioned_rows, parquet_batch_to_rows};
-use kalamdb_commons::models::Row;
+use kalamdb_commons::models::rows::Row;
 
 /// User table provider with RLS
 ///

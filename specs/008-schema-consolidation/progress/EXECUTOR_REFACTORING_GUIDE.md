@@ -18,7 +18,7 @@ src/sql/executor/
     ├── query.rs           // SELECT/SHOW/DESCRIBE
     ├── transaction.rs     // BEGIN/COMMIT/ROLLBACK
     ├── subscription.rs    // SUBSCRIBE TO/KILL LIVE QUERY
-    ├── flush.rs           // FLUSH TABLE/FLUSH ALL TABLES  
+    ├── flush.rs           // STORAGE FLUSH TABLE/STORAGE FLUSH ALL  
     ├── table_registry.rs  // register_table_with_datafusion, extract_table_references
     ├── audit.rs           // Audit logging helpers
     ├── helpers.rs         // Parsing utilities, validation

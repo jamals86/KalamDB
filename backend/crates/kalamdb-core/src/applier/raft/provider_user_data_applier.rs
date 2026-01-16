@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use crate::app_context::AppContext;
 use crate::applier::executor::CommandExecutorImpl;
+use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::TableId;
 use kalamdb_raft::{RaftError, UserDataApplier};
@@ -51,7 +52,7 @@ impl UserDataApplier for ProviderUserDataApplier {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        rows: &[kalamdb_commons::models::Row],
+        rows: &[Row],
     ) -> Result<usize, RaftError> {
         log::debug!(
             "ProviderUserDataApplier: Inserting into {} for user {} ({} rows)",
@@ -70,7 +71,7 @@ impl UserDataApplier for ProviderUserDataApplier {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        updates: &[kalamdb_commons::models::Row],
+        updates: &[Row],
         filter: Option<&str>,
     ) -> Result<usize, RaftError> {
         log::debug!(

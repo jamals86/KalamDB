@@ -155,7 +155,7 @@ async fn create_user_table(
 }
 
 async fn flush_table_and_wait(server: &HttpTestServer, ns: &str, table: &str) -> anyhow::Result<()> {
-	let sql = format!("FLUSH TABLE {}.{}", ns, table);
+	let sql = format!("STORAGE FLUSH TABLE {}.{}", ns, table);
 	let resp = server.execute_sql(&sql).await?;
 
 	if resp.status == ResponseStatus::Success {
@@ -174,7 +174,7 @@ async fn flush_table_and_wait(server: &HttpTestServer, ns: &str, table: &str) ->
 		return wait_for_flush_jobs_settled(server, ns, table).await;
 	}
 
-	anyhow::bail!("FLUSH TABLE failed: {:?}", resp.error);
+	anyhow::bail!("STORAGE FLUSH TABLE failed: {:?}", resp.error);
 }
 
 #[tokio::test]

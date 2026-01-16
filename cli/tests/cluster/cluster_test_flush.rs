@@ -77,7 +77,7 @@ fn cluster_test_flush_data_consistency() {
 
     // Step 4: Execute FLUSH command
     println!("  5. Executing FLUSH command...");
-    let flush_sql = format!("FLUSH TABLE {}", full_table);
+    let flush_sql = format!("STORAGE FLUSH TABLE {}", full_table);
     let flush_result = execute_on_node(&urls[0], &flush_sql);
     assert!(flush_result.is_ok(), "FLUSH command failed: {:?}", flush_result);
 
@@ -199,7 +199,7 @@ fn cluster_test_multiple_flushes() {
     }
 
     println!("  2. Flushing batch 1...");
-    execute_on_node(&urls[0], &format!("FLUSH TABLE {}", full_table))
+    execute_on_node(&urls[0], &format!("STORAGE FLUSH TABLE {}", full_table))
         .expect("Failed to flush batch 1");
     std::thread::sleep(Duration::from_secs(2));
 
@@ -214,7 +214,7 @@ fn cluster_test_multiple_flushes() {
     }
 
     println!("  4. Flushing batch 2...");
-    execute_on_node(&urls[0], &format!("FLUSH TABLE {}", full_table))
+    execute_on_node(&urls[0], &format!("STORAGE FLUSH TABLE {}", full_table))
         .expect("Failed to flush batch 2");
     std::thread::sleep(Duration::from_secs(2));
 
@@ -302,7 +302,7 @@ fn cluster_test_flush_during_reads() {
 
     // Start flush and immediately query from another node
     println!("  2. Flushing and querying concurrently...");
-    let _ = execute_on_node(&urls[0], &format!("FLUSH TABLE {}", full_table));
+    let _ = execute_on_node(&urls[0], &format!("STORAGE FLUSH TABLE {}", full_table));
     
     // Query from another node during flush
     let read_result = execute_on_node(&urls[1], &format!("SELECT count(*) FROM {}", full_table));

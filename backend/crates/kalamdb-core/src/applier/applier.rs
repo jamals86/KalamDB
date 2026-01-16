@@ -8,6 +8,7 @@ use chrono::Utc;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 
+use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::schemas::{TableDefinition, TableType};
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
 use kalamdb_commons::system::Storage;
@@ -103,7 +104,7 @@ pub trait UnifiedApplier: Send + Sync {
         &self,
         table_id: TableId,
         user_id: UserId,
-        rows: Vec<kalamdb_commons::models::Row>,
+        rows: Vec<Row>,
     ) -> Result<DataResponse, ApplierError>;
 
     /// Update rows in a user table
@@ -111,7 +112,7 @@ pub trait UnifiedApplier: Send + Sync {
         &self,
         table_id: TableId,
         user_id: UserId,
-        updates: Vec<kalamdb_commons::models::Row>,
+        updates: Vec<Row>,
         filter: Option<String>,
     ) -> Result<DataResponse, ApplierError>;
 
@@ -131,14 +132,14 @@ pub trait UnifiedApplier: Send + Sync {
     async fn insert_shared_data(
         &self,
         table_id: TableId,
-        rows: Vec<kalamdb_commons::models::Row>,
+        rows: Vec<Row>,
     ) -> Result<DataResponse, ApplierError>;
 
     /// Update rows in a shared table
     async fn update_shared_data(
         &self,
         table_id: TableId,
-        updates: Vec<kalamdb_commons::models::Row>,
+        updates: Vec<Row>,
         filter: Option<String>,
     ) -> Result<DataResponse, ApplierError>;
 
@@ -397,7 +398,7 @@ impl UnifiedApplier for RaftApplier {
         &self,
         table_id: TableId,
         user_id: UserId,
-        rows: Vec<kalamdb_commons::models::Row>,
+        rows: Vec<Row>,
     ) -> Result<DataResponse, ApplierError> {
         let raft_cmd = UserDataCommand::Insert {
             required_meta_index: 0, // Will be set by RaftExecutor
@@ -412,7 +413,7 @@ impl UnifiedApplier for RaftApplier {
         &self,
         table_id: TableId,
         user_id: UserId,
-        updates: Vec<kalamdb_commons::models::Row>,
+        updates: Vec<Row>,
         filter: Option<String>,
     ) -> Result<DataResponse, ApplierError> {
         let raft_cmd = UserDataCommand::Update {
@@ -447,7 +448,7 @@ impl UnifiedApplier for RaftApplier {
     async fn insert_shared_data(
         &self,
         table_id: TableId,
-        rows: Vec<kalamdb_commons::models::Row>,
+        rows: Vec<Row>,
     ) -> Result<DataResponse, ApplierError> {
         let raft_cmd = SharedDataCommand::Insert {
             required_meta_index: 0, // Will be set by RaftExecutor
@@ -460,7 +461,7 @@ impl UnifiedApplier for RaftApplier {
     async fn update_shared_data(
         &self,
         table_id: TableId,
-        updates: Vec<kalamdb_commons::models::Row>,
+        updates: Vec<Row>,
         filter: Option<String>,
     ) -> Result<DataResponse, ApplierError> {
         let raft_cmd = SharedDataCommand::Update {

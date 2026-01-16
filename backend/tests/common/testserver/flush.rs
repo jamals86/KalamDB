@@ -75,9 +75,9 @@ pub async fn wait_for_flush_jobs_settled(
     }
 }
 
-/// Execute `FLUSH TABLE` and wait until it settles. Treat idempotency conflicts as success.
+/// Execute `STORAGE FLUSH TABLE` and wait until it settles. Treat idempotency conflicts as success.
 pub async fn flush_table_and_wait(server: &HttpTestServer, ns: &str, table: &str) -> Result<()> {
-    let sql = format!("FLUSH TABLE {}.{}", ns, table);
+    let sql = format!("STORAGE FLUSH TABLE {}.{}", ns, table);
     let resp = server.execute_sql(&sql).await?;
 
     if resp.status == ResponseStatus::Success {
@@ -94,7 +94,7 @@ pub async fn flush_table_and_wait(server: &HttpTestServer, ns: &str, table: &str
         return wait_for_flush_jobs_settled(server, ns, table).await;
     }
 
-    anyhow::bail!("FLUSH TABLE failed: {:?}", resp.error);
+    anyhow::bail!("STORAGE FLUSH TABLE failed: {:?}", resp.error);
 }
 
 /// Recursively find parquet files under `root`.

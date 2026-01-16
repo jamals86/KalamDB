@@ -113,10 +113,9 @@ pub async fn verify_password(password: &str, hash_str: &str) -> AuthResult<bool>
         return Ok(true);
     }
     
+    // Convert once for bcrypt (requires owned String)
     let password = password.to_string();
     let hash = hash_str.to_string();
-    let hash_for_cache = hash_str.to_string();
-    let password_for_cache = password.clone();
 
     // Run bcrypt on blocking thread pool (CPU-intensive)
     let result = tokio::task::spawn_blocking(move || {
@@ -125,9 +124,9 @@ pub async fn verify_password(password: &str, hash_str: &str) -> AuthResult<bool>
     .await
     .map_err(|e| AuthError::HashingError(format!("Task join error: {}", e)))??;
     
-    // Only cache successful verifications
+    // Only cache successful verifications (reuse cache_key we already created)
     if result {
-        cache.insert((password_for_cache, hash_for_cache), ());
+        cache.insert(cache_key, ());
     }
     
     Ok(result)

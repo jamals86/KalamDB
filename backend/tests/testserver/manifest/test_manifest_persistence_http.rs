@@ -125,7 +125,7 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
             );
 
             let resp = server
-                .execute_sql(&format!("FLUSH TABLE {}.{}", ns, table))
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.{}", ns, table))
                 .await?;
             assert_eq!(resp.status, ResponseStatus::Success);
 
@@ -211,7 +211,7 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
             assert_eq!(resp.status, ResponseStatus::Success);
 
             let resp = server
-                .execute_sql(&format!("FLUSH TABLE {}.{}", ns, table))
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.{}", ns, table))
                 .await?;
             assert_eq!(resp.status, ResponseStatus::Success);
 

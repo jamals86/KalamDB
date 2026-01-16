@@ -14,7 +14,6 @@ categories = ["database"]
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
 kalamdb-store = { path = "../kalamdb-store", features = ["datafusion"] }
-kalamdb-raft = { path = "../kalamdb-raft" }
 
 # Apache Arrow ecosystem
 arrow = { workspace = true }

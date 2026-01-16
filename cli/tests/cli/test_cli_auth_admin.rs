@@ -352,7 +352,7 @@ async fn test_cli_show_namespaces() {
     );
 }
 
-/// Test FLUSH TABLE command via CLI
+/// Test STORAGE FLUSH TABLE command via CLI
 #[tokio::test]
 async fn test_cli_flush_table() {
     if !is_server_running_with_auth().await {
@@ -398,10 +398,10 @@ async fn test_cli_flush_table() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    // Execute FLUSH TABLE via CLI
+    // Execute STORAGE FLUSH TABLE via CLI
     let mut cmd = create_cli_command_with_root_auth();
     cmd.arg("--command")
-        .arg(format!("FLUSH TABLE {}.metrics", namespace_name))
+        .arg(format!("STORAGE FLUSH TABLE {}.metrics", namespace_name))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -410,7 +410,7 @@ async fn test_cli_flush_table() {
 
     assert!(
         output.status.success(),
-        "FLUSH TABLE should succeed.\nstdout: {}\nstderr: {}",
+        "STORAGE FLUSH TABLE should succeed.\nstdout: {}\nstderr: {}",
         stdout,
         stderr
     );
@@ -641,7 +641,7 @@ async fn test_cli_flush_table() {
     let _ = execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }
 
-/// Test FLUSH ALL TABLES command via CLI
+/// Test STORAGE FLUSH ALL command via CLI
 #[tokio::test]
 async fn test_cli_flush_all_tables() {
     if !is_server_running_with_auth().await {
@@ -687,10 +687,10 @@ async fn test_cli_flush_all_tables() {
     .await;
     tokio::time::sleep(Duration::from_millis(20)).await;
 
-    // Execute FLUSH ALL TABLES via CLI
+    // Execute STORAGE FLUSH ALL via CLI
     let mut cmd = create_cli_command_with_root_auth();
     cmd.arg("--command")
-        .arg(format!("FLUSH ALL TABLES IN {}", namespace_name))
+        .arg(format!("STORAGE FLUSH ALL IN {}", namespace_name))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -699,7 +699,7 @@ async fn test_cli_flush_all_tables() {
 
     assert!(
         output.status.success(),
-        "FLUSH ALL TABLES should succeed.\nstdout: {}\nstderr: {}",
+        "STORAGE FLUSH ALL should succeed.\nstdout: {}\nstderr: {}",
         stdout,
         stderr
     );
@@ -719,7 +719,7 @@ async fn test_cli_flush_all_tables() {
     let job_ids: Vec<String> = if let Some(pos) = stdout.find("Job ID:") {
         let rest = &stdout[pos + 7..].trim();
         if rest.starts_with('[') {
-            // Multiple job IDs (FLUSH ALL TABLES)
+            // Multiple job IDs (STORAGE FLUSH ALL)
             let end = rest.find(']').unwrap_or(rest.len());
             let ids_str = &rest[1..end];
             ids_str

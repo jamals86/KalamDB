@@ -59,7 +59,7 @@ pub use indexed_store::{extract_i64_equality, extract_string_equality};
 
 // Phase 17: Export Raft storage types
 pub use raft_storage::{
-    RaftGroupId, RaftLogEntry, RaftLogId, RaftPartitionStore, RaftSnapshotData, RaftSnapshotMeta,
+    GroupId, RaftLogEntry, RaftLogId, RaftPartitionStore, RaftSnapshotData, RaftSnapshotMeta,
     RaftVote, RAFT_PARTITION_NAME,
 };
 

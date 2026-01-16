@@ -94,13 +94,13 @@ error[E0282]: type annotations needed for `Box<_>`
 **Effort**: ~1 day
 
 **What it does**:
-- `FLUSH TABLE namespace.table_name` - Trigger immediate flush
-- `FLUSH ALL TABLES` - Flush all user tables
+- `STORAGE FLUSH TABLE namespace.table_name` - Trigger immediate flush
+- `STORAGE FLUSH ALL` - Flush all user tables
 - Returns job_id for monitoring via system.jobs table
 - Asynchronous execution using existing JobManager
 
 **Key Tasks** (23 total):
-- [ ] T237-T242: SQL command parsing (FLUSH TABLE, FLUSH ALL TABLES)
+- [ ] T237-T242: SQL command parsing (STORAGE FLUSH TABLE, STORAGE FLUSH ALL)
 - [ ] T243-T248: Executor integration with JobManager
 - [ ] T249-T259: Integration tests (manual flush, job monitoring, error handling)
 
@@ -112,7 +112,7 @@ error[E0282]: type annotations needed for `Box<_>`
 
 **Files to Create**:
 - `/backend/crates/kalamdb-sql/src/flush_commands.rs` - Parser
-- Update `/backend/crates/kalamdb-core/src/sql/executor.rs` - Add FLUSH execution
+- Update `/backend/crates/kalamdb-core/src/sql/executor.rs` - Add STORAGE FLUSH execution
 
 ---
 

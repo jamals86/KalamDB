@@ -5,7 +5,7 @@
 
 use crate::error::KalamDbError;
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::models::Row;
+use kalamdb_commons::models::rows::Row;
 
 /// Extract primary key value from a `Row`
 pub fn extract_user_pk_value(fields: &Row, pk_column: &str) -> Result<String, KalamDbError> {

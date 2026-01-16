@@ -142,7 +142,7 @@ async fn test_service_role_flush_operations() {
         server.execute_sql_as_user(&insert, user.as_str()).await;
     }
 
-    let flush = format!("FLUSH TABLE {}.events", ns);
+    let flush = format!("STORAGE FLUSH TABLE {}.events", ns);
     let resp = server.execute_sql_as_user(&flush, svc.as_str()).await;
     assert_eq!(
         resp.status,

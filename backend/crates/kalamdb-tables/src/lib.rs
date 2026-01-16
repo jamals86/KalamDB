@@ -56,13 +56,15 @@ pub use shared_tables::shared_table_store::{
     SharedTableRow, SharedTableStore,
 };
 pub use stream_tables::stream_table_store::{
-    new_stream_table_store, StreamTableRow, StreamTableStore,
+    new_stream_table_store, StreamTableStore, StreamTableStoreConfig,
 };
+pub use kalamdb_commons::models::StreamTableRow;
 pub use user_tables::pk_index::{create_user_table_pk_index, UserTablePkIndex};
 pub use user_tables::user_table_store::{
-    new_indexed_user_table_store, new_user_table_store, UserTableIndexedStore, UserTableRow,
+    new_indexed_user_table_store, new_user_table_store, UserTableIndexedStore,
     UserTableStore,
 };
+pub use kalamdb_commons::models::UserTableRow;
 
 // Re-export extension traits
 pub use store_ext::{SharedTableStoreExt, StreamTableStoreExt, UserTableStoreExt};

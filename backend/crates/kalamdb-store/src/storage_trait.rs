@@ -40,7 +40,7 @@
 //! ```rust,ignore
 //! use kalamdb_store::storage_trait::{StorageBackend, Partition, Operation};
 //!
-//! pub struct MyBackend {
+//! struct MyBackend {
 //!     // Your backend's connection/state
 //! }
 //!
@@ -60,128 +60,8 @@
 //! ```
 
 use std::any::Any;
-use std::fmt;
 
-/// Result type for storage operations.
-///
-/// All storage operations return this result type. Callers should always
-/// handle both success and error cases.
-pub type Result<T> = std::result::Result<T, StorageError>;
-
-/// Errors that can occur during storage operations.
-#[derive(Debug, Clone)]
-#[must_use = "errors should be handled or propagated"]
-pub enum StorageError {
-    /// Partition (column family, tree, namespace) not found
-    PartitionNotFound(String),
-
-    /// Generic I/O error from underlying storage
-    IoError(String),
-
-    /// Serialization/deserialization error
-    SerializationError(String),
-
-    /// Operation not supported by this backend
-    Unsupported(String),
-
-    /// Unique constraint violation (for indexes)
-    UniqueConstraintViolation(String),
-
-    /// Lock poisoning error (internal concurrency issue)
-    LockPoisoned(String),
-
-    /// Other errors
-    Other(String),
-}
-
-impl fmt::Display for StorageError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            StorageError::PartitionNotFound(p) => write!(f, "Partition not found: {}", p),
-            StorageError::IoError(msg) => write!(f, "I/O error: {}", msg),
-            StorageError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
-            StorageError::Unsupported(msg) => write!(f, "Unsupported operation: {}", msg),
-            StorageError::UniqueConstraintViolation(msg) => {
-                write!(f, "Unique constraint violation: {}", msg)
-            }
-            StorageError::LockPoisoned(msg) => write!(f, "Lock poisoned: {}", msg),
-            StorageError::Other(msg) => write!(f, "Storage error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for StorageError {}
-
-/// Represents a logical partition of data within a storage backend.
-///
-/// Partitions provide a way to organize data into separate namespaces.
-/// Different backends map partitions to their native concepts:
-/// - RocksDB: Column Family
-/// - Sled: Tree
-/// - Redis: Key prefix
-/// - In-memory: HashMap namespace
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Partition {
-    name: String,
-}
-
-impl Partition {
-    /// Creates a new partition with the given name.
-    pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into() }
-    }
-
-    /// Returns the partition name.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-impl fmt::Display for Partition {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.name)
-    }
-}
-
-impl From<String> for Partition {
-    fn from(name: String) -> Self {
-        Self::new(name)
-    }
-}
-
-impl From<&str> for Partition {
-    fn from(name: &str) -> Self {
-        Self::new(name)
-    }
-}
-
-impl From<kalamdb_commons::storage::Partition> for Partition {
-    fn from(p: kalamdb_commons::storage::Partition) -> Self {
-        Self::new(p.name().to_owned())
-    }
-}
-
-impl From<&kalamdb_commons::storage::Partition> for Partition {
-    fn from(p: &kalamdb_commons::storage::Partition) -> Self {
-        Self::new(p.name())
-    }
-}
-
-/// Represents a single operation in a batch transaction.
-///
-/// Used with `StorageBackend::batch()` for atomic multi-operation transactions.
-#[derive(Debug, Clone)]
-pub enum Operation {
-    /// Insert or update a key-value pair
-    Put {
-        partition: Partition,
-        key: Vec<u8>,
-        value: Vec<u8>,
-    },
-
-    /// Delete a key
-    Delete { partition: Partition, key: Vec<u8> },
-}
+pub use kalamdb_commons::storage::{KvIterator, Operation, Partition, Result, StorageError};
 
 /// Trait for pluggable storage backend implementations.
 ///
@@ -236,7 +116,7 @@ pub trait StorageBackend: Send + Sync {
         prefix: Option<&[u8]>,
         start_key: Option<&[u8]>,
         limit: Option<usize>,
-    ) -> Result<kalamdb_commons::storage::KvIterator<'_>>;
+        ) -> Result<KvIterator<'_>>;
 
     /// Checks if a partition exists.
     fn partition_exists(&self, partition: &Partition) -> bool;

@@ -15,50 +15,15 @@
 
 use super::pk_index::create_user_table_pk_index;
 use crate::common::{ensure_partition, new_indexed_store_with_pk, partition_name};
-use kalamdb_commons::ids::{SeqId, UserTableRowId};
-use kalamdb_commons::models::row::Row;
-use kalamdb_commons::models::{KTableRow, UserId};
+use kalamdb_commons::ids::UserTableRowId;
+use kalamdb_commons::models::rows::UserTableRow;
 use kalamdb_commons::TableId;
-use kalamdb_store::entity_store::{EntityStore, KSerializable};
+use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// User table row data
-///
-/// **MVCC Architecture (Phase 12, User Story 5)**:
-/// - Removed: row_id (redundant with _seq), _updated (timestamp embedded in _seq Snowflake ID)
-/// - Kept: user_id (row owner), _seq (version identifier with embedded timestamp), _deleted (tombstone), fields (all user columns including PK)
-///
-/// **Note on System Column Naming**:
-/// The underscore prefix (`_seq`, `_deleted`) follows SQL convention for system-managed columns.
-/// These names match the SQL column names exactly for consistency across the codebase.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct UserTableRow {
-    /// User who owns this row
-    pub user_id: UserId,
-    /// Monotonically increasing sequence ID (Snowflake ID with embedded timestamp)
-    /// Maps to SQL column `_seq`
-    pub _seq: SeqId,
-    /// Soft delete tombstone marker
-    /// Maps to SQL column `_deleted`
-    pub _deleted: bool,
-    /// All user-defined columns including PK (serialized as JSON map)
-    pub fields: Row,
-}
-
-impl KSerializable for UserTableRow {}
-
-impl From<UserTableRow> for KTableRow {
-    fn from(row: UserTableRow) -> Self {
-        KTableRow {
-            user_id: row.user_id,
-            _seq: row._seq,
-            _deleted: row._deleted,
-            fields: row.fields,
-        }
-    }
-}
+// KSerializable for UserTableRow is implemented in kalamdb-store
+// impl KSerializable for UserTableRow {}
 
 /// Store for user tables (user data, not system metadata).
 ///
@@ -148,6 +113,8 @@ pub fn new_indexed_user_table_store(
         table_id,
         pk_field_name,
     );
+    let index_partition_name = format!("user_{}_pk_idx", table_id);
+    ensure_partition(&backend, &index_partition_name);
     new_indexed_store_with_pk(backend, name, vec![pk_index])
 }
 
@@ -155,7 +122,7 @@ pub fn new_indexed_user_table_store(
 mod tests {
     use super::*;
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::models::{NamespaceId, TableId, TableName};
+    use kalamdb_commons::{UserId, ids::SeqId, models::{NamespaceId, TableId, TableName, rows::Row}};
     use kalamdb_store::test_utils::InMemoryBackend;
     use std::collections::BTreeMap;
 

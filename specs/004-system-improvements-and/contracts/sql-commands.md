@@ -12,13 +12,13 @@ This document defines new SQL commands added in this feature for manual flushing
 
 ## FLUSH Commands
 
-### FLUSH TABLE
+### STORAGE FLUSH TABLE
 
 **Purpose**: Manually trigger immediate table flush to storage.
 
 **Syntax**:
 ```sql
-FLUSH TABLE [<namespace>.]<table_name>
+STORAGE FLUSH TABLE [<namespace>.]<table_name>
 ```
 
 **Description**: Flushes all buffered data for the specified table to Parquet files in storage. The operation is synchronous and blocks until flush completes.
@@ -26,7 +26,7 @@ FLUSH TABLE [<namespace>.]<table_name>
 **Examples**:
 ```sql
 -- Flush specific table
-FLUSH TABLE chat.messages;
+STORAGE FLUSH TABLE chat.messages;
 
 -- Response:
 Flushed 1,523 records to ./data/storage/chat/users/jamal/messages/j/batch-2025-10-21-143022.parquet
@@ -45,20 +45,20 @@ Flushed 1,523 records to ./data/storage/chat/users/jamal/messages/j/batch-2025-1
 
 ---
 
-### FLUSH ALL TABLES
+### STORAGE FLUSH ALL
 
 **Purpose**: Flush all tables with buffered data.
 
 **Syntax**:
 ```sql
-FLUSH ALL TABLES
+STORAGE FLUSH ALL
 ```
 
 **Description**: Flushes all tables that have buffered data. Tables are flushed sequentially in alphabetical order.
 
 **Examples**:
 ```sql
-FLUSH ALL TABLES;
+STORAGE FLUSH ALL;
 
 -- Response:
 Flushed 3 tables:
@@ -449,8 +449,8 @@ Stopped at statement 2 due to error.
 
 | Command | Required Permission | Notes |
 |---------|-------------------|-------|
-| FLUSH TABLE | Table owner or admin | Can only flush own tables |
-| FLUSH ALL TABLES | Admin | Flushes all tables across all users |
+| STORAGE FLUSH TABLE | Table owner or admin | Can only flush own tables |
+| STORAGE FLUSH ALL | Admin | Flushes all tables across all users |
 | SUBSCRIBE TO | Table read access | User tables: own data only |
 | KILL LIVE QUERY | Subscription owner or admin | Can only kill own subscriptions |
 | INSERT INTO system.users | Admin | User management restricted |
@@ -483,7 +483,7 @@ Connections from 127.0.0.1 bypass JWT authentication and use `localhost_default_
 
 ### KalamDB Extensions
 - SUBSCRIBE TO (live queries)
-- FLUSH TABLE / FLUSH ALL TABLES
+- STORAGE FLUSH TABLE / STORAGE FLUSH ALL
 - KILL LIVE QUERY
 - CREATE NAMESPACE
 - CREATE USER TABLE / CREATE SHARED TABLE / CREATE STREAM TABLE
@@ -526,7 +526,7 @@ SELECT * FROM system.live_queries;
 SELECT * FROM system.jobs ORDER BY created_at DESC LIMIT 10;
 
 -- Flush specific table
-FLUSH TABLE chat.messages;
+STORAGE FLUSH TABLE chat.messages;
 
 -- Get table statistics
 SHOW TABLE STATS chat.messages;
@@ -570,7 +570,7 @@ INSERT INTO chat.messages VALUES (100, 'jamal', 'Real-time message', now());
 ## Version History
 
 - **1.0.0** (2025-10-21): Initial specification
-  - FLUSH TABLE, FLUSH ALL TABLES
+  - STORAGE FLUSH TABLE, STORAGE FLUSH ALL
   - SUBSCRIBE TO (with LAST n)
   - KILL LIVE QUERY
   - User management (INSERT/UPDATE/DELETE on system.users)

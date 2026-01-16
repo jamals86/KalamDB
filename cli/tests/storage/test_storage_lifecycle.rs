@@ -79,7 +79,7 @@ fn test_storage_drop_requires_detached_tables() {
     ));
     // Flush to force Parquet file creation (directories are created on flush, not on insert)
     let flush_output = execute_sql_as_root_via_cli(&format!(
-        "FLUSH TABLE {}.{}",
+        "STORAGE FLUSH TABLE {}.{}",
         namespace, user_table
     ))
     .expect("flush user table");
@@ -115,7 +115,7 @@ fn test_storage_drop_requires_detached_tables() {
     ));
     // Flush to force Parquet file creation (directories are created on flush, not on insert)
     let flush_output = execute_sql_as_root_via_cli(&format!(
-        "FLUSH TABLE {}.{}",
+        "STORAGE FLUSH TABLE {}.{}",
         namespace, shared_table
     ))
     .expect("flush shared table");

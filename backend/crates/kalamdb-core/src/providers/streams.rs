@@ -8,7 +8,7 @@
 //! - Shared core via Arc<TableProviderCore>
 //! - No handlers - all DML logic inline
 //! - RLS via user_id parameter in DML methods
-//! - HOT-ONLY storage (RocksDB, no Parquet merging)
+//! - Commit log-backed storage (append-only, no Parquet)
 //! - TTL-based eviction in scan operations
 
 use super::base::{extract_seq_bounds_from_filter, BaseTableProvider, TableProviderCore};
@@ -27,17 +27,18 @@ use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
-use kalamdb_commons::ids::StreamTableRowId;
+use kalamdb_commons::ids::{SeqId, StreamTableRowId};
 use kalamdb_commons::models::UserId;
-use kalamdb_commons::{Role, StorageKey, TableId};
-use kalamdb_store::entity_store::EntityStore;
+use kalamdb_commons::{Role, TableId};
 use kalamdb_tables::{StreamTableRow, StreamTableStore};
 use std::any::Any;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // Arrow <-> JSON helpers
 use crate::live_query::ChangeNotification;
-use kalamdb_commons::models::Row;
+use kalamdb_commons::models::rows::Row;
 
 /// Stream table provider with RLS and TTL filtering
 ///
@@ -52,7 +53,7 @@ pub struct StreamTableProvider {
     /// Shared core (app_context, live_query_manager, storage_registry)
     core: Arc<TableProviderCore>,
 
-    /// StreamTableStore for DML operations (hot-only, in-memory)
+    /// StreamTableStore for DML operations (commit log-backed)
     store: Arc<StreamTableStore>,
 
     /// TTL in seconds (optional)
@@ -63,9 +64,17 @@ pub struct StreamTableProvider {
 
     /// Cached Arrow schema (prevents panics if table is dropped while provider is in use)
     schema: SchemaRef,
+
+    /// Whether the Arrow schema includes a user_id column
+    has_user_column: bool,
+
+    /// Last time (ms since epoch) we ran TTL cleanup for inserts
+    last_ttl_cleanup_ms: AtomicU64,
 }
 
 impl StreamTableProvider {
+    const TTL_CLEANUP_INTERVAL_MS: u64 = 1000;
+
     /// Create a new stream table provider
     ///
     /// # Arguments
@@ -87,6 +96,7 @@ impl StreamTableProvider {
             .schema_registry()
             .get_arrow_schema(core.app_context.as_ref(), core.table_id())
             .expect("Failed to get Arrow schema from registry during provider creation");
+        let has_user_column = schema.field_with_name("user_id").is_ok();
 
         Self {
             core,
@@ -94,6 +104,8 @@ impl StreamTableProvider {
             ttl_seconds,
             primary_key_field_name,
             schema,
+            has_user_column,
+            last_ttl_cleanup_ms: AtomicU64::new(0),
         }
     }
 
@@ -108,6 +120,24 @@ impl StreamTableProvider {
             ScalarValue::Int64(Some(entity._seq.as_i64())),
         );
         Row::new(values)
+    }
+
+    fn now_millis() -> Result<u64, KalamDbError> {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .into_invalid_operation("System time error")
+            .map(|d| d.as_millis() as u64)
+    }
+
+    fn should_run_ttl_cleanup(&self, now_ms: u64) -> bool {
+        let last = self.last_ttl_cleanup_ms.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(last) < Self::TTL_CLEANUP_INTERVAL_MS {
+            return false;
+        }
+
+        self.last_ttl_cleanup_ms
+            .compare_exchange(last, now_ms, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
     }
 
     /// Expose the underlying store (used by maintenance jobs such as stream eviction)
@@ -150,50 +180,13 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
     fn insert(&self, user_id: &UserId, row_data: Row) -> Result<StreamTableRowId, KalamDbError> {
         let table_id = self.core.table_id();
-        // Lazy TTL cleanup: delete expired rows BEFORE inserting new one
-        // This ensures storage doesn't grow unbounded without background jobs
-        if let Some(ttl_seconds) = self.ttl_seconds {
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            let ttl_ms = ttl_seconds * 1000;
-            let cutoff_ms = now_ms.saturating_sub(ttl_ms);
-
-            // Scan for expired rows (limit to 100 per insert to avoid blocking)
-            let all_rows = self.store.scan_all(Some(100), None, None).map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Failed to scan for TTL cleanup: {}", e))
-            })?;
-
-            let mut deleted_count = 0;
-            for (key_bytes, row) in all_rows.iter() {
-                let row_ts = row._seq.timestamp_millis();
-                if row_ts < cutoff_ms {
-                    // Parse key from bytes
-                    if let Ok(row_key) = StreamTableRowId::from_bytes(key_bytes) {
-                        if let Err(e) = self.store.delete(&row_key) {
-                            log::warn!("Failed to delete expired row during TTL cleanup: {}", e);
-                        } else {
-                            deleted_count += 1;
-                        }
-                    }
-                }
-            }
-
-            if deleted_count > 0 {
-                log::debug!(
-                    "[StreamProvider] TTL cleanup: table={} deleted={} expired rows",
-                    table_id,
-                    deleted_count
-                );
-            }
-        }
 
         // Call SystemColumnsService to generate SeqId
         let sys_cols = self.core.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id()?;
 
         // Create StreamTableRow (no _deleted field for stream tables)
+        let user_id = user_id.clone();
         let entity = StreamTableRow {
             user_id: user_id.clone(),
             _seq: seq_id,
@@ -203,7 +196,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         // Create composite key
         let row_key = StreamTableRowId::new(user_id.clone(), seq_id);
 
-        // Store in hot-only storage (RocksDB, no Parquet)
+        // Store in commit log (append-only, no Parquet)
         self.store.put(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to insert stream event: {}", e))
         })?;
@@ -243,7 +236,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         updates: Row,
     ) -> Result<StreamTableRowId, KalamDbError> {
         // TODO: Implement full UPDATE logic for stream tables
-        // 1. Scan ONLY RocksDB (hot storage, no Parquet)
+        // 1. Scan in-memory hot storage (no Parquet)
         // 2. Find row by key (user-scoped)
         // 3. Merge updates
         // 4. Append new version
@@ -294,7 +287,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         // Extract user_id from SessionState for RLS
         let (user_id, _role) = Self::extract_user_context(state)?;
 
-        // Extract sequence bounds from filter to optimize RocksDB scan
+        // Extract sequence bounds from filter to optimize scan
         let (since_seq, _until_seq) = if let Some(expr) = filter {
             extract_seq_bounds_from_filter(expr)
         } else {
@@ -320,9 +313,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         );
 
         let schema = self.schema_ref();
-        let has_user = schema.field_with_name("user_id").is_ok();
         crate::providers::base::rows_to_arrow_batch(&schema, kvs, projection, |row_values, row| {
-            if has_user {
+            if self.has_user_column {
                 row_values.values.insert(
                     "user_id".to_string(),
                     ScalarValue::Utf8(Some(row.user_id.as_str().to_string())),
@@ -335,38 +327,21 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         &self,
         user_id: &UserId,
         _filter: Option<&Expr>,
-        since_seq: Option<kalamdb_commons::ids::SeqId>,
+        since_seq: Option<SeqId>,
         limit: Option<usize>,
         _keep_deleted: bool,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
         let table_id = self.core.table_id();
-        // 1) Scan ONLY RocksDB (hot storage) with user_id prefix filter
-        let user_bytes = user_id.as_str().as_bytes();
-        let len = (user_bytes.len().min(255)) as u8;
-        let mut prefix = Vec::with_capacity(1 + len as usize);
-        prefix.push(len);
-        prefix.extend_from_slice(&user_bytes[..len as usize]);
-
-        // Construct start_key if since_seq is provided
-        let start_key_bytes = if let Some(seq) = since_seq {
-            // since_seq is exclusive, so start at seq + 1
-            let start_seq = kalamdb_commons::ids::SeqId::from(seq.as_i64() + 1);
-            let key = StreamTableRowId::new(user_id.clone(), start_seq);
-            Some(key.storage_key())
-        } else {
-            None
-        };
+        // 1) Scan hot storage for the user
+        // since_seq is exclusive, so start at seq + 1
+        let start_seq = since_seq.map(|seq| SeqId::from_i64(seq.as_i64().saturating_add(1)));
 
         let ttl_ms = self.ttl_seconds.map(|s| s * 1000);
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .into_invalid_operation("System time error")?
-            .as_millis() as u64;
+        let now_ms = Self::now_millis()?;
         log::debug!(
-            "[StreamProvider] prefix scan: table={} user={} prefix_len={} ttl_ms={:?} now_ms={}",
+            "[StreamProvider] user scan: table={} user={} ttl_ms={:?} now_ms={}",
             table_id,
             user_id.as_str(),
-            prefix.len(),
             ttl_ms,
             now_ms
         );
@@ -374,58 +349,65 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         // Use limit if provided, otherwise default to 100,000
         let scan_limit = limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000);
 
-        let raw = self
-            .store
-            .scan_limited_with_prefix_and_start(
-                Some(&prefix),
-                start_key_bytes.as_deref(),
-                scan_limit,
-            )
-            .map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to scan stream table hot storage: {}",
-                    e
-                ))
-            })?;
-        log::debug!(
-            "[StreamProvider] raw scan results: table={} user={} count={}",
-            table_id,
-            user_id.as_str(),
-            raw.len()
-        );
+        let initial_capacity = limit.unwrap_or(scan_limit.min(1024));
+        let mut results: Vec<(StreamTableRowId, StreamTableRow)> =
+            Vec::with_capacity(initial_capacity);
+        let mut next_start_seq = start_seq;
 
-        // 2) TTL filtering (if configured)
-
-        let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
-        for (key_bytes, row) in raw.into_iter() {
-            // Parse typed key from bytes
-            let maybe_key = kalamdb_commons::ids::StreamTableRowId::from_bytes(&key_bytes);
-            let key = match maybe_key {
-                Ok(k) => k,
-                Err(err) => {
-                    log::warn!("Skipping invalid StreamTableRowId key bytes: {}", err);
-                    continue;
-                }
-            };
-
-            // TTL check: keep if no TTL or not expired
-            let keep = match ttl_ms {
-                None => true,
-                Some(ttl) => {
-                    let ts = row._seq.timestamp_millis();
-                    ts + ttl > now_ms
-                }
-            };
-
-            if keep {
-                results.push((key, row));
+        loop {
+            let raw = self
+                .store
+                .scan_user(user_id, next_start_seq, scan_limit)
+                .map_err(|e| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to scan stream table hot storage: {}",
+                        e
+                    ))
+                })?;
+            if raw.is_empty() {
+                break;
             }
-        }
 
-        // Apply limit after TTL filtering
-        if let Some(l) = limit {
-            if results.len() > l {
-                results.truncate(l);
+            let raw_len = raw.len();
+            log::debug!(
+                "[StreamProvider] raw scan results: table={} user={} count={}",
+                table_id,
+                user_id.as_str(),
+                raw_len
+            );
+
+            let mut last_seq: Option<SeqId> = None;
+            for (key, row) in raw.into_iter() {
+                last_seq = Some(key.seq());
+
+                // TTL check: keep if no TTL or not expired
+                let keep = match ttl_ms {
+                    None => true,
+                    Some(ttl) => {
+                        let ts = row._seq.timestamp_millis();
+                        ts + ttl > now_ms
+                    }
+                };
+
+                if keep {
+                    results.push((key, row));
+                    if let Some(limit) = limit {
+                        if results.len() >= limit {
+                            return Ok(results);
+                        }
+                    }
+                }
+            }
+
+            if limit.is_none() || raw_len < scan_limit {
+                break;
+            }
+
+            if let Some(last_seq) = last_seq {
+                let next_seq = SeqId::from_i64(last_seq.as_i64().saturating_add(1));
+                next_start_seq = Some(next_seq);
+            } else {
+                break;
             }
         }
 

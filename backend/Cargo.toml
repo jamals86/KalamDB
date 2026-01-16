@@ -16,6 +16,7 @@ kalamdb-sql = { path = "crates/kalamdb-sql" }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-auth = { path = "crates/kalamdb-auth" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
+kalamdb-configs = { path = "crates/kalamdb-configs" }
 kalamdb-system = { path = "crates/kalamdb-system" }
 
 
@@ -101,8 +102,10 @@ kalamdb-auth = { path = "crates/kalamdb-auth" }
 kalamdb-sql = { path = "crates/kalamdb-sql" }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
+kalamdb-configs = { path = "crates/kalamdb-configs" }
 kalamdb-tables = { path = "crates/kalamdb-tables" }
 kalamdb-raft = { path = "crates/kalamdb-raft" }
+kalamdb-sharding = { path = "crates/kalamdb-sharding" }
 kalam-link = { path = "../link" }
 
 # External dependencies

@@ -204,7 +204,7 @@ Test 3: System tables and user lifecycle
 1. When selecting from each system table (`system.jobs`, `system.users`, `system.live_queries`, `system.tables`, `system.namespaces`), then at least one row is returned where applicable
 2. When a new user is created, then selecting from `system.users` shows the user
 3. When the user is deleted, then selection shows it removed or soft-deleted per policy
-4. When issuing a FLUSH ALL TABLES command, then a job is recorded in `system.jobs`
+4. When issuing a STORAGE FLUSH ALL command, then a job is recorded in `system.jobs`
 
 Test 4: Stream table subscription
 1. Given stream tables are enabled, when a namespace and stream table are created, then subscription to the stream table opens
@@ -232,11 +232,11 @@ Developers need a single unified cache for all table-related data instead of mai
 
 **Why this priority**: This is critical technical debt that wastes memory, increases code complexity, and creates maintenance burden. Eliminating redundant caching frees memory for actual data, simplifies code (~1,200 lines deleted), and prevents cache synchronization bugs. This directly improves system reliability and resource efficiency.
 
-**Independent Test**: Can be fully tested by running CREATE/ALTER/DROP TABLE operations and verifying single cache serves all use cases (DESCRIBE TABLE, FLUSH TABLE, schema queries) with >99% hit rate and <100μs latency. Memory profiling should show ~50% reduction in cache memory usage compared to dual-cache baseline.
+**Independent Test**: Can be fully tested by running CREATE/ALTER/DROP TABLE operations and verifying single cache serves all use cases (DESCRIBE TABLE, STORAGE FLUSH TABLE, schema queries) with >99% hit rate and <100μs latency. Memory profiling should show ~50% reduction in cache memory usage compared to dual-cache baseline.
 
 **Acceptance Scenarios**:
 
-1. **Given** a table is created with full schema definition, **When** querying via DESCRIBE TABLE and FLUSH TABLE, **Then** both operations use the same SchemaCache instance (not separate TableCache and SchemaCache)
+1. **Given** a table is created with full schema definition, **When** querying via DESCRIBE TABLE and STORAGE FLUSH TABLE, **Then** both operations use the same SchemaCache instance (not separate TableCache and SchemaCache)
 
 2. **Given** CachedTableData contains table_id (with namespace + table_name), table_type, storage_id, storage_path_template, and schema (TableDefinition), **When** accessing any table metadata, **Then** all data is retrieved from single DashMap lookup
 
@@ -1183,7 +1183,7 @@ impl Job for CleanupJob {
 
 - **FR-TEST-012**: System MUST provide integration test suite for User Story 4 (Schema Caching) measuring cache hit rates and performance under concurrent load
 
-- **FR-TEST-013**: System MUST provide integration test suite for User Story 7 (Cache Consolidation) verifying single unified cache serves all use cases (DESCRIBE TABLE, FLUSH TABLE, schema queries) with >99% hit rate, <100μs latency, and ~50% memory reduction vs dual-cache baseline
+- **FR-TEST-013**: System MUST provide integration test suite for User Story 7 (Cache Consolidation) verifying single unified cache serves all use cases (DESCRIBE TABLE, STORAGE FLUSH TABLE, schema queries) with >99% hit rate, <100μs latency, and ~50% memory reduction vs dual-cache baseline
 
 #### Code Refactoring (FR-REFACTOR)
 
@@ -1676,7 +1676,7 @@ The `kalamdb-sql` crate already provides extensive SQL infrastructure:
 
 2. **SQL Parser Infrastructure** (`parser/` module):
    - ✅ **Standard SQL via sqlparser-rs** (SELECT, INSERT, UPDATE, DELETE, CREATE TABLE)
-   - ✅ **KalamDB extensions** (CREATE STORAGE, FLUSH TABLE, SUBSCRIBE, etc.)
+    - ✅ **KalamDB extensions** (CREATE STORAGE, STORAGE FLUSH, SUBSCRIBE, etc.)
    - ✅ **PostgreSQL/MySQL compatibility** (multiple syntax variants)
    - ✅ **Type-safe AST** (strongly typed statement representations)
    - **Usage**: `let statement = kalam_sql.parse_statement(sql)?;`
@@ -1862,7 +1862,7 @@ impl SqlExecutor {
 /// ├── ddl.rs               - CREATE, ALTER, DROP (tables, namespaces, storages)
 /// ├── dml.rs               - INSERT, UPDATE, DELETE
 /// ├── query.rs             - SELECT, DESCRIBE, SHOW
-/// ├── flush.rs             - FLUSH TABLE
+/// ├── flush.rs             - STORAGE FLUSH TABLE
 /// ├── subscription.rs      - LIVE SELECT
 /// ├── user_management.rs   - CREATE USER, ALTER USER, DROP USER
 /// ├── table_registry.rs    - REGISTER TABLE, UNREGISTER TABLE
@@ -2107,7 +2107,7 @@ Given QueryCache is enabled
 When "CREATE TABLE mydb.test (id INT)" executes
 Then DdlHandler executes normally
 And query is NOT added to QueryCache (DDL excluded)
-When "FLUSH TABLE users" executes
+When "STORAGE FLUSH TABLE users" executes
 Then FlushHandler executes normally
 And query is NOT cached (admin command excluded)
 ```
@@ -2196,7 +2196,7 @@ And all identifier types provide compile-time safety
 - **Validation**: All query tests pass, results correct
 
 **Phase 8: Remaining Handlers (P1)**
-- Extract to `executor/handlers/flush.rs`: FLUSH TABLE handler (uses TableName)
+- Extract to `executor/handlers/flush.rs`: STORAGE FLUSH TABLE handler (uses TableName)
 - Extract to `executor/handlers/subscription.rs`: LIVE SELECT handler (uses NamespaceId, params)
 - Extract to `executor/handlers/user_management.rs`: CREATE/ALTER/DROP USER handlers (uses UserId)
 - Extract to `executor/handlers/table_registry.rs`: REGISTER/UNREGISTER TABLE handlers (uses TableName, NamespaceId)

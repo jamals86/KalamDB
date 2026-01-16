@@ -10,9 +10,10 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use kalamdb_commons::models::rows::Row;
 use tokio::time::{sleep, Duration};
 
-use kalamdb_commons::models::{NamespaceId, UserId, Row};
+use kalamdb_commons::models::{NamespaceId, UserId};
 use kalamdb_commons::TableId;
 use kalamdb_raft::state_machine::{
     encode, get_coordinator, init_coordinator, MetadataCoordinator, PendingBuffer, PendingCommand,

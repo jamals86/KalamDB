@@ -176,7 +176,7 @@ Special commands starting with backslash (`\`):
 | `\quit` or `\q` | Exit the CLI |
 | `\connect HOST [PORT]` | Connect to different server |
 | `\config` | Show current configuration |
-| `\flush` | Execute manual flush |
+| `\flush` | Execute STORAGE FLUSH ALL in current namespace |
 | `\health` | Check server health |
 | `\pause` | Pause active subscription |
 | `\continue` | Resume paused subscription |

@@ -13,13 +13,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
+use kalamdb_commons::models::rows::Row;
 use serde_json;
 
 use chrono::Utc;
 use parking_lot::RwLock;
 use tokio::time::sleep;
 
-use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, Row, StorageId, TableName, UserId};
+use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::JobStatus;
 use kalamdb_commons::TableId;

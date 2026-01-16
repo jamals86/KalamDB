@@ -210,6 +210,12 @@ impl StorageSettings {
         crate::file_helpers::join_path(base, "storage")
     }
 
+    /// Get stream log directory path (data_path/streams)
+    pub fn streams_dir(&self) -> std::path::PathBuf {
+        let base = crate::file_helpers::normalize_dir_path(&self.data_path);
+        crate::file_helpers::join_path(base, "streams")
+    }
+
     /// Get Raft snapshots directory path (data_path/snapshots)
     pub fn resolved_snapshots_dir(&self) -> std::path::PathBuf {
         let base = crate::file_helpers::normalize_dir_path(&self.data_path);
@@ -236,6 +242,12 @@ pub struct RocksDbSettings {
     #[serde(default = "default_rocksdb_max_background_jobs")]
     pub max_background_jobs: i32,
 
+    /// Maximum number of open files RocksDB can keep open (default: 512)
+    /// Set to -1 for unlimited. Lower values reduce memory usage but may impact performance.
+    /// If you see "Too many open files" errors, increase your OS limits or reduce this value.
+    #[serde(default = "default_rocksdb_max_open_files")]
+    pub max_open_files: i32,
+
     /// Sync writes to WAL on each write (default: false for performance)
     /// When false, writes are buffered and synced periodically by OS.
     /// Setting to true guarantees durability but reduces write throughput 10-100x.
@@ -247,6 +259,12 @@ pub struct RocksDbSettings {
     /// WARNING: Setting to true means data loss on crash. Only for ephemeral/cacheable data.
     #[serde(default)]
     pub disable_wal: bool,
+
+    /// Compact all column families on startup (default: true)
+    /// This reduces the number of SST files and prevents "Too many open files" errors.
+    /// May increase startup time for large databases.
+    #[serde(default = "default_rocksdb_compact_on_startup")]
+    pub compact_on_startup: bool,
 }
 
 impl Default for RocksDbSettings {
@@ -256,8 +274,10 @@ impl Default for RocksDbSettings {
             max_write_buffers: default_rocksdb_max_write_buffers(),
             block_cache_size: default_rocksdb_block_cache_size(),
             max_background_jobs: default_rocksdb_max_background_jobs(),
+            max_open_files: default_rocksdb_max_open_files(),
             sync_writes: default_rocksdb_sync_writes(),
             disable_wal: false,
+            compact_on_startup: default_rocksdb_compact_on_startup(),
         }
     }
 }
@@ -856,4 +876,3 @@ impl Default for ServerConfig {
         }
     }
 }
-

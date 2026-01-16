@@ -10,12 +10,26 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::providers::arrow_json_conversion::row_to_json_map;
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::models::{LiveQueryId, Row, TableId, UserId};
+use kalamdb_commons::models::rows::Row;
+use kalamdb_commons::models::{LiveQueryId, TableId, UserId};
 use kalamdb_system::LiveQueriesTableProvider;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::mpsc;
+use tokio::time::{self, Duration};
+
+const NOTIFY_QUEUE_CAPACITY: usize = 10_000;
+const INCREMENT_QUEUE_CAPACITY: usize = 50_000;
+const INCREMENT_BATCH_MAX: usize = 2048;
+const INCREMENT_FLUSH_INTERVAL_MS: u64 = 50;
+
+struct NotificationTask {
+    user_id: UserId,
+    table_id: TableId,
+    notification: ChangeNotification,
+}
 
 /// Apply column projections to a Row, returning only the requested columns.
 /// Uses Cow to avoid cloning when no projections are needed (SELECT *).
@@ -41,17 +55,81 @@ pub struct NotificationService {
     /// Manager uses DashMap internally for lock-free access
     registry: Arc<ConnectionsManager>,
     live_queries_provider: Arc<LiveQueriesTableProvider>,
+    notify_tx: mpsc::Sender<NotificationTask>,
+    increment_tx: mpsc::Sender<LiveQueryId>,
 }
 
 impl NotificationService {
     pub fn new(
         registry: Arc<ConnectionsManager>,
         live_queries_provider: Arc<LiveQueriesTableProvider>,
-    ) -> Self {
-        Self {
+    ) -> Arc<Self> {
+        let (notify_tx, mut notify_rx) = mpsc::channel(NOTIFY_QUEUE_CAPACITY);
+        let (increment_tx, mut increment_rx) = mpsc::channel(INCREMENT_QUEUE_CAPACITY);
+        let service = Arc::new(Self {
             registry,
             live_queries_provider,
-        }
+            notify_tx,
+            increment_tx,
+        });
+
+        // Notification worker (single task, no per-notification spawn)
+        let notify_service = Arc::clone(&service);
+        tokio::spawn(async move {
+            while let Some(task) = notify_rx.recv().await {
+                let handles = notify_service
+                    .registry
+                    .get_subscriptions_for_table(&task.user_id, &task.table_id);
+                if handles.is_empty() {
+                    continue;
+                }
+
+                if let Err(e) = notify_service
+                    .notify_table_change_with_handles(
+                        &task.user_id,
+                        &task.table_id,
+                        task.notification,
+                        handles,
+                    )
+                    .await
+                {
+                    log::warn!(
+                        "Failed to notify subscribers for table {}: {}",
+                        task.table_id,
+                        e
+                    );
+                }
+            }
+        });
+
+        // Increment worker (batched updates, off hot path)
+        let increment_service = Arc::clone(&service);
+        tokio::spawn(async move {
+            let mut pending = std::collections::HashMap::new();
+            let mut ticker = time::interval(Duration::from_millis(INCREMENT_FLUSH_INTERVAL_MS));
+
+            loop {
+                tokio::select! {
+                    Some(live_id) = increment_rx.recv() => {
+                        let counter = pending.entry(live_id).or_insert(0u64);
+                        *counter += 1;
+                        if pending.len() >= INCREMENT_BATCH_MAX {
+                            flush_increment_batch(&increment_service, &mut pending).await;
+                        }
+                    }
+                    _ = ticker.tick() => {
+                        if !pending.is_empty() {
+                            flush_increment_batch(&increment_service, &mut pending).await;
+                        }
+                    }
+                    else => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        service
     }
 
     /// Get current timestamp in milliseconds
@@ -67,14 +145,22 @@ impl NotificationService {
     /// Uses provider's async method which handles spawn_blocking internally.
     pub async fn increment_changes(&self, live_id: &LiveQueryId) -> Result<(), KalamDbError> {
         let timestamp = Self::current_timestamp_ms();
-        let live_id_string = live_id.to_string();
 
         self.live_queries_provider
-            .increment_changes_async(&live_id_string, timestamp)
+            .increment_changes_async(live_id.as_str(), timestamp)
             .await
             .into_kalamdb_error("Failed to increment changes")?;
 
         Ok(())
+    }
+
+    #[inline]
+    fn enqueue_increment(&self, live_id: &LiveQueryId) {
+        if let Err(e) = self.increment_tx.try_send(live_id.clone()) {
+            if matches!(e, mpsc::error::TrySendError::Full(_)) {
+                log::warn!("Increment queue full for live_id={}, dropping", live_id);
+            }
+        }
     }
 
     /// Notify subscribers about a table change (fire-and-forget async)
@@ -84,24 +170,15 @@ impl NotificationService {
         table_id: TableId,
         notification: ChangeNotification,
     ) {
-        // Get subscription handles directly - avoids double lookup (has_subscriptions + get_subscriptions)
-        // DashMap provides lock-free access
-        let handles = self.registry.get_subscriptions_for_table(&user_id, &table_id);
-
-        if !handles.is_empty() {
-            let service = Arc::clone(self);
-            tokio::spawn(async move {
-                if let Err(e) = service
-                    .notify_table_change_with_handles(&user_id, &table_id, notification, handles)
-                    .await
-                {
-                    log::warn!(
-                        "Failed to notify subscribers for table {}: {}",
-                        table_id,
-                        e
-                    );
-                }
-            });
+        let task = NotificationTask {
+            user_id,
+            table_id,
+            notification,
+        };
+        if let Err(e) = self.notify_tx.try_send(task) {
+            if matches!(e, mpsc::error::TrySendError::Full(_)) {
+                log::warn!("Notification queue full, dropping notification");
+            }
         }
     }
 
@@ -125,108 +202,123 @@ impl NotificationService {
         user_id: &UserId,
         table_id: &TableId,
         change_notification: ChangeNotification,
-        all_handles: Vec<SubscriptionHandle>,
+        all_handles: Arc<dashmap::DashMap<LiveQueryId, SubscriptionHandle>>,
     ) -> Result<usize, KalamDbError> {
-        let table_name = table_id.full_name();
-
         log::debug!(
             "notify_table_change called for table: '{}', user: '{}', change_type: {:?}",
-            table_name,
+            table_id,
             user_id.as_str(),
             change_notification.change_type
         );
 
-        // Gather subscriptions for the specific user AND admin/system observers
-        // DashMap provides lock-free access
-        // Collect (live_id, projections, notification_tx) tuples in a single pass
-        let live_ids_to_notify: Vec<(LiveQueryId, Option<Arc<Vec<String>>>, _)> = {
-            let mut results = Vec::new();
-            let mut seen = HashSet::new();
-
-            // Define filtering_row for filter evaluation
-            let filtering_row = &change_notification.row_data;
-
-            // Iterate only through subscriptions for this specific table - O(k)
-            for handle in all_handles {
-                // Skip duplicates
-                if !seen.insert(handle.live_id.to_string()) {
-                    continue;
+        // Send notifications and increment changes
+        let mut notification_count = 0usize;
+        let filtering_row = &change_notification.row_data;
+        let mut full_row_json: Option<std::collections::HashMap<String, serde_json::Value>> = None;
+        let mut full_old_json: Option<std::collections::HashMap<String, serde_json::Value>> = None;
+        for entry in all_handles.iter() {
+            let live_id = entry.key();
+            let handle = entry.value();
+            let should_notify = if matches!(change_notification.change_type, ChangeType::Flush) {
+                true
+            } else if let Some(ref filter_expr) = handle.filter_expr {
+                match filter_matches(filter_expr, filtering_row) {
+                    Ok(true) => true,
+                    Ok(false) => {
+                        log::trace!(
+                            "Filter didn't match for live_id={}, skipping notification",
+                            live_id
+                        );
+                        false
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Filter evaluation error for live_id={}: {}",
+                            live_id,
+                            e
+                        );
+                        false
+                    }
                 }
+            } else {
+                true
+            };
 
-                // FLUSH notifications are metadata events (not row-level changes)
-                // Skip filter evaluation for FLUSH - notify all subscribers
-                if matches!(change_notification.change_type, ChangeType::Flush) {
-                    results.push((handle.live_id, handle.projections, handle.notification_tx));
-                    continue;
-                }
+            if !should_notify {
+                continue;
+            }
 
-                // Check filter_expr if one exists (for INSERT/UPDATE/DELETE only)
-                // Filter is stored directly in SubscriptionState - no cache lookup needed
-                if let Some(ref filter_expr) = handle.filter_expr {
-                    // Apply filter to row data
-                    match filter_matches(filter_expr, filtering_row) {
-                        Ok(true) => {
-                            results.push((handle.live_id, handle.projections, handle.notification_tx));
-                        }
-                        Ok(false) => {
-                            log::trace!(
-                                "Filter didn't match for live_id={}, skipping notification",
-                                handle.live_id
-                            );
+            let projections = &handle.projections;
+            let tx = &handle.notification_tx;
+
+            let use_full_row = projections.is_none();
+            let row_json = if use_full_row {
+                match full_row_json {
+                    Some(ref json) => json.clone(),
+                    None => match row_to_json_map(&change_notification.row_data) {
+                        Ok(json) => {
+                            full_row_json = Some(json.clone());
+                            json
                         }
                         Err(e) => {
                             log::error!(
-                                "Filter evaluation error for live_id={}: {}",
-                                handle.live_id,
+                                "Failed to convert row to JSON for live_id={}: {}",
+                                live_id,
                                 e
                             );
+                            continue;
                         }
-                    }
-                } else {
-                    // No filter, notify all subscribers
-                    results.push((handle.live_id, handle.projections, handle.notification_tx));
+                    },
                 }
-            }
-
-            results
-        };
-
-        let notification_count = live_ids_to_notify.len();
-
-        // Send notifications and increment changes
-        for (live_id, projections, tx) in live_ids_to_notify {
-            // Apply projections to row data (filters columns based on subscription)
-            // Uses Cow to avoid cloning when no projections (SELECT *)
-            let projected_row_data = apply_projections(&change_notification.row_data, &projections);
-            let projected_old_data = change_notification
-                .old_data
-                .as_ref()
-                .map(|old| apply_projections(old, &projections));
-
-            // Convert Row to HashMap<String, JsonValue>
-            // All values are serialized as plain JSON values
-            let row_json = match row_to_json_map(&projected_row_data) {
-                Ok(json) => json,
-                Err(e) => {
-                    log::error!(
-                        "Failed to convert row to JSON for live_id={}: {}",
-                        live_id,
-                        e
-                    );
-                    continue;
-                }
-            };
-
-            let old_json = if let Some(old) = projected_old_data {
-                match row_to_json_map(&old) {
-                    Ok(json) => Some(json),
+            } else {
+                // Apply projections to row data (filters columns based on subscription)
+                // Uses Cow to avoid cloning when no projections (SELECT *)
+                let projected_row_data =
+                    apply_projections(&change_notification.row_data, projections);
+                match row_to_json_map(&projected_row_data) {
+                    Ok(json) => json,
                     Err(e) => {
                         log::error!(
-                            "Failed to convert old row to JSON for live_id={}: {}",
+                            "Failed to convert row to JSON for live_id={}: {}",
                             live_id,
                             e
                         );
                         continue;
+                    }
+                }
+            };
+
+            let old_json = if let Some(old) = change_notification.old_data.as_ref() {
+                if use_full_row {
+                    match full_old_json {
+                        Some(ref json) => Some(json.clone()),
+                        None => match row_to_json_map(old) {
+                            Ok(json) => {
+                                full_old_json = Some(json.clone());
+                                Some(json)
+                            }
+                            Err(e) => {
+                                log::error!(
+                                    "Failed to convert old row to JSON for live_id={}: {}",
+                                    live_id,
+                                    e
+                                );
+                                continue;
+                            }
+                        },
+                    }
+                } else {
+                    let projected_old_data = apply_projections(old, projections);
+                    match row_to_json_map(&projected_old_data) {
+                        Ok(json) => Some(json),
+                        Err(e) => {
+                            log::error!(
+                                "Failed to convert old row to JSON for live_id={}: {}",
+                                live_id,
+                                e
+                            );
+                            continue;
+                        }
                     }
                 }
             } else {
@@ -257,7 +349,8 @@ impl NotificationService {
             };
 
             // Send notification through channel (non-blocking, bounded)
-            if let Err(e) = tx.try_send((live_id.clone(), notification)) {
+            let notification = Arc::new(notification);
+            if let Err(e) = tx.try_send(notification) {
                 use tokio::sync::mpsc::error::TrySendError;
                 match e {
                     TrySendError::Full(_) => {
@@ -275,9 +368,26 @@ impl NotificationService {
                 }
             }
 
-            self.increment_changes(&live_id).await?;
+            self.enqueue_increment(live_id);
+            notification_count += 1;
         }
 
         Ok(notification_count)
+    }
+}
+
+async fn flush_increment_batch(
+    service: &NotificationService,
+    pending: &mut std::collections::HashMap<LiveQueryId, u64>,
+) {
+    let timestamp = NotificationService::current_timestamp_ms();
+    for (live_id, count) in pending.drain() {
+        if let Err(e) = service
+            .live_queries_provider
+            .increment_changes_by_async(live_id.as_str(), count, timestamp)
+            .await
+        {
+            log::error!("Failed to increment changes for live_id={}: {}", live_id, e);
+        }
     }
 }

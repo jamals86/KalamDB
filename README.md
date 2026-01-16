@@ -92,6 +92,15 @@ data/
 
 `kalamdb-core` orchestrates everything and never talks to RocksDB or the filesystem directly; it goes through `kalamdb-store` (key/value hot path) and `kalamdb-filestore` (Parquet + `manifest.json` and batch indexes).
 
+## 🧩 Clustering & High Availability
+
+KalamDB includes built-in clustering with **high availability** using **Raft consensus**. The cluster coordinates metadata and data placement while ensuring durability and failover when nodes go down.
+
+- **Raft-based consensus** for leader election and log replication
+- **Multi‑Raft groups** for sharding and scaling out
+- **Automatic failover** to keep the cluster available
+- **Snapshots and backups** for recovery and fast restarts
+
 ## 🌟 **KalamDB Core Features & Roadmap**
 
 ### ✅ **Implemented**

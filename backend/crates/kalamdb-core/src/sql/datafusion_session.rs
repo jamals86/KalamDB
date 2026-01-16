@@ -18,7 +18,7 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::context::SessionContext;
 use datafusion::logical_expr::ScalarUDF;
 use datafusion::prelude::SessionConfig;
-use kalamdb_commons::config::DataFusionSettings;
+use kalamdb_configs::DataFusionSettings;
 
 // KalamSessionState removed (ExecutionContext used at higher layer)
 

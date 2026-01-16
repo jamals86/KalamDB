@@ -27,7 +27,8 @@ use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::ids::SeqId;
-use kalamdb_commons::models::{NamespaceId, Row, TableName, UserId};
+use kalamdb_commons::models::rows::Row;
+use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 use kalamdb_commons::{StorageKey, TableId};
 use std::sync::Arc;
 
@@ -435,22 +436,12 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
 fn scalar_value_matches_id(value: &ScalarValue, target: &str) -> bool {
     match value {
         ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s == target,
-        ScalarValue::Int64(Some(n)) => {
-            n.to_string() == target || target.parse::<i64>().map(|t| *n == t).unwrap_or(false)
-        }
-        ScalarValue::Int32(Some(n)) => {
-            n.to_string() == target || target.parse::<i32>().map(|t| *n == t).unwrap_or(false)
-        }
-        ScalarValue::Int16(Some(n)) => {
-            n.to_string() == target || target.parse::<i16>().map(|t| *n == t).unwrap_or(false)
-        }
-        ScalarValue::UInt64(Some(n)) => {
-            n.to_string() == target || target.parse::<u64>().map(|t| *n == t).unwrap_or(false)
-        }
-        ScalarValue::UInt32(Some(n)) => {
-            n.to_string() == target || target.parse::<u32>().map(|t| *n == t).unwrap_or(false)
-        }
-        ScalarValue::Boolean(Some(b)) => b.to_string() == target,
+        ScalarValue::Int64(Some(n)) => target.parse::<i64>().map(|t| *n == t).unwrap_or(false),
+        ScalarValue::Int32(Some(n)) => target.parse::<i32>().map(|t| *n == t).unwrap_or(false),
+        ScalarValue::Int16(Some(n)) => target.parse::<i16>().map(|t| *n == t).unwrap_or(false),
+        ScalarValue::UInt64(Some(n)) => target.parse::<u64>().map(|t| *n == t).unwrap_or(false),
+        ScalarValue::UInt32(Some(n)) => target.parse::<u32>().map(|t| *n == t).unwrap_or(false),
+        ScalarValue::Boolean(Some(b)) => target.parse::<bool>().map(|t| *b == t).unwrap_or(false),
         _ => false,
     }
 }

@@ -179,7 +179,7 @@ Scope: Validate assumptions, surface unknowns, and create an actionable checklis
 - **Missing Handlers** (from plan.md):
   - dml.rs (INSERT, UPDATE, DELETE)
   - query.rs (SELECT, DESCRIBE, SHOW)
-  - flush.rs (FLUSH TABLE)
+  - flush.rs (STORAGE FLUSH TABLE)
   - subscription.rs (LIVE SELECT)
   - user_management.rs (CREATE/ALTER/DROP USER)
   - table_registry.rs (REGISTER/UNREGISTER TABLE)

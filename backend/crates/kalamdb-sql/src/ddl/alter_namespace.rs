@@ -87,14 +87,16 @@ impl AlterNamespaceStatement {
 
         // Simple parsing: split by comma (doesn't handle commas in strings, but good enough for now)
         for pair in inner.split(',') {
-            let parts: Vec<&str> = pair.split('=').map(|s| s.trim()).collect();
+            let mut parts = pair.splitn(2, '=').map(|s| s.trim());
+            let key = parts.next();
+            let value_str = parts.next();
 
-            if parts.len() != 2 {
+            if key.is_none() || value_str.is_none() {
                 return Err(format!("Invalid option format: {}", pair));
             }
 
-            let key = parts[0].to_string();
-            let value_str = parts[1];
+            let key = key.unwrap().to_string();
+            let value_str = value_str.unwrap();
 
             // Parse value as JSON
             let value = if value_str.starts_with('\'') && value_str.ends_with('\'') {

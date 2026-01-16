@@ -51,6 +51,8 @@ pub use error::{Result, SystemError};
 pub use initialization::initialize_system_tables;
 pub use registry::SystemTablesRegistry;
 pub use system_table_trait::SystemTableProviderExt;
+// Re-export SystemTable and StoragePartition from kalamdb_commons for consistent usage
+pub use kalamdb_commons::{StoragePartition, SystemTable};
 
 // Re-export all providers
 pub use providers::{

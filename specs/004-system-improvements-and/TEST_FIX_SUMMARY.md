@@ -8,7 +8,7 @@
 
 Fixed fake tests that were hiding real bugs! Tests were accepting errors as passing conditions. Now with proper validation, we discovered:
 - ✅ SUBSCRIBE TO works correctly via HTTP API
-- ✅ FLUSH TABLE works correctly  
+- ✅ STORAGE FLUSH TABLE works correctly  
 - ❌ **WebSocket real-time notifications NOT working** (INSERT/UPDATE/DELETE events not broadcast)
 
 ## Problems Found
@@ -110,7 +110,7 @@ cargo test --workspace -- --test-threads=1 --nocapture
 
 #### Fixed `test_cli_explicit_flush`
 - **Before**: Accepted any output with "FLUSH" keyword
-- **After**: Verifies FLUSH TABLE command succeeds with proper exit code
+- **After**: Verifies STORAGE FLUSH TABLE command succeeds with proper exit code
 - **Error Detection**: Fails if stderr contains ERROR or "not supported"
 
 #### Fixed `test_cli_unsubscribe`
@@ -293,7 +293,7 @@ assert!(body.contains("expected_field"), "Missing field: {}", body);
 - [x] Serial execution enforced
 - [x] Fake tests rewritten with real validation
 - [x] SUBSCRIBE TO functionality verified working
-- [x] FLUSH TABLE functionality verified working
+- [x] STORAGE FLUSH TABLE functionality verified working
 - [x] Error conditions properly detected
 - [x] No false positives (errors passing as success)
 - [x] WebSocket notification tests now fail correctly (exposing backend bug)
@@ -345,7 +345,7 @@ cargo test --test test_cli_integration -- --test-threads=1 --nocapture test_name
 **Conclusion**: 
 - ✅ Race conditions resolved by enforcing serial test execution
 - ✅ Fake tests rewritten to validate real functionality (no more false positives!)
-- ✅ SUBSCRIBE TO and FLUSH TABLE verified as working features
+- ✅ SUBSCRIBE TO and STORAGE FLUSH TABLE verified as working features
 - ✅ Test quality significantly improved - tests now properly fail when features don't work
 - ❌ **CRITICAL BUG FOUND**: WebSocket real-time notifications are not working in backend
 - 📝 **Action Required**: Backend team needs to implement change event broadcasting

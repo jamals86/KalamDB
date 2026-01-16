@@ -5,7 +5,7 @@
 
 use crate::system_table_store::SystemTableStore;
 use kalamdb_commons::types::ManifestCacheEntry;
-use kalamdb_commons::SystemTable;
+use crate::SystemTable;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
@@ -23,16 +23,15 @@ impl ManifestCacheKey {
 
     /// Parse cache key into components (namespace, table, scope)
     pub fn parse(&self) -> Option<(String, String, String)> {
-        let parts: Vec<&str> = self.0.split(':').collect();
-        if parts.len() == 3 {
-            Some((
-                parts[0].to_string(),
-                parts[1].to_string(),
-                parts[2].to_string(),
-            ))
-        } else {
-            None
-        }
+        let mut parts = self.0.splitn(3, ':');
+        let namespace = parts.next()?;
+        let table = parts.next()?;
+        let scope = parts.next()?;
+        Some((
+            namespace.to_string(),
+            table.to_string(),
+            scope.to_string(),
+        ))
     }
 }
 

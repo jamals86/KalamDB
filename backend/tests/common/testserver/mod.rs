@@ -8,5 +8,6 @@ pub mod fixtures;
 pub mod flush_helpers;
 pub mod test_server;
 
+pub use cluster::ClusterTestServer;
 pub use query_result_ext::QueryResultTestExt;
 pub use test_server::TestServer;

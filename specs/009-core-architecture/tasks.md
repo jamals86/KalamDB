@@ -246,7 +246,7 @@
 - [X] T083 [US3] Route INSERT to dml::execute_insert with parameter binding support (Now routes to DMLHandler)
 - [X] T084 [US3] Route UPDATE to dml::execute_update with parameter binding support (Now routes to DMLHandler)
 - [X] T085 [US3] Route DELETE to dml::execute_delete with parameter binding support (Now routes to DMLHandler)
-- [X] T086 [US3] Route FLUSH TABLE to flush::execute_flush (Now routes to FlushHandler)
+- [X] T086 [US3] Route STORAGE FLUSH TABLE to flush::execute_flush (Now routes to FlushHandler)
 - [X] T087 [US3] Route LIVE SELECT to subscription::execute_live_select (Now routes to SubscriptionHandler)
 - [X] T088 [US3] Route CREATE/ALTER/DROP USER to user_management handlers (Now routes to UserManagementHandler)
 - [ ] T089 [US3] Route REGISTER/UNREGISTER TABLE to table_registry handlers (Statement types not yet in SqlStatement enum)

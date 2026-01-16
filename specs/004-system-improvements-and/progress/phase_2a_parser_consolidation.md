@@ -29,7 +29,7 @@ All parsers are appropriately categorized. Standard SQL uses sqlparser-rs, Kalam
    - Not part of SQL standard
    - KalamDB-specific feature for Parquet storage backends
    
-2. **Flush Commands** - FLUSH TABLE, FLUSH ALL TABLES
+2. **Flush Commands** - STORAGE FLUSH TABLE, STORAGE FLUSH ALL
    - Not part of SQL standard
    - KalamDB-specific async flush operations
    

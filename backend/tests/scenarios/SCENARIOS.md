@@ -117,7 +117,7 @@ Suggested columns:
    * Soft delete a message.
 7. **Flush messages** while active:
 
-   * Trigger `FLUSH TABLE chat.messages`.
+   * Trigger `STORAGE FLUSH TABLE chat.messages`.
    * During flush, continue inserting (5–10 rows) and selecting.
 8. After flush completes:
 

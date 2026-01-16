@@ -20,11 +20,12 @@ use crate::sql::executor::SqlExecutor;
 use crate::storage::storage_registry::StorageRegistry;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{constants::ColumnFamilyNames, NodeId, ServerConfig, SystemTable};
+use kalamdb_commons::{constants::ColumnFamilyNames, NodeId};
+use kalamdb_configs::ServerConfig;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_store::StorageBackend;
-use kalamdb_system::SystemTablesRegistry;
-use kalamdb_tables::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_system::{SystemTable, SystemTablesRegistry};
+use kalamdb_tables::{SharedTableStore, UserTableStore};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -61,7 +62,6 @@ pub struct AppContext {
     // ===== Stores =====
     user_table_store: Arc<UserTableStore>,
     shared_table_store: Arc<SharedTableStore>,
-    stream_table_store: Arc<StreamTableStore>,
 
     // ===== Core Infrastructure =====
     storage_backend: Arc<dyn StorageBackend>,
@@ -114,7 +114,6 @@ impl std::fmt::Debug for AppContext {
             .field("schema_registry", &"Arc<SchemaRegistry>")
             .field("user_table_store", &"Arc<UserTableStore>")
             .field("shared_table_store", &"Arc<SharedTableStore>")
-            .field("stream_table_store", &"Arc<StreamTableStore>")
             .field("storage_backend", &"Arc<dyn StorageBackend>")
             .field("job_manager", &"Arc<JobsManager>")
             .field("live_query_manager", &"Arc<LiveQueryManager>")
@@ -232,10 +231,6 @@ impl AppContext {
                 let shared_table_store = Arc::new(SharedTableStore::new(
                     storage_backend.clone(),
                     ColumnFamilyNames::SHARED_TABLE_PREFIX.to_string(),
-                ));
-                let stream_table_store = Arc::new(StreamTableStore::new(
-                    storage_backend.clone(),
-                    ColumnFamilyNames::STREAM_TABLE_PREFIX.to_string(),
                 ));
 
                 // Create system table providers registry FIRST (needed by StorageRegistry and information_schema)
@@ -425,7 +420,6 @@ impl AppContext {
                     schema_registry,
                     user_table_store,
                     shared_table_store,
-                    stream_table_store,
                     storage_backend,
                     job_manager: job_manager.clone(),
                     live_query_manager,
@@ -586,10 +580,6 @@ impl AppContext {
             storage_backend.clone(),
             ColumnFamilyNames::SHARED_TABLE_PREFIX.to_string(),
         ));
-        let stream_table_store = Arc::new(StreamTableStore::new(
-            storage_backend.clone(),
-            ColumnFamilyNames::STREAM_TABLE_PREFIX.to_string(),
-        ));
 
         // Create system tables registry
         let system_tables = Arc::new(SystemTablesRegistry::new(storage_backend.clone()));
@@ -682,7 +672,6 @@ impl AppContext {
             schema_registry,
             user_table_store,
             shared_table_store,
-            stream_table_store,
             storage_backend,
             job_manager,
             live_query_manager,
@@ -744,9 +733,6 @@ impl AppContext {
         self.shared_table_store.clone()
     }
 
-    pub fn stream_table_store(&self) -> Arc<StreamTableStore> {
-        self.stream_table_store.clone()
-    }
 
     pub fn storage_backend(&self) -> Arc<dyn StorageBackend> {
         self.storage_backend.clone()

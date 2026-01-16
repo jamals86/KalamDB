@@ -10,7 +10,7 @@
 use crate::schema_registry::PathResolver;
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::storage_registry::StorageRegistry;
-use kalamdb_commons::config::ManifestCacheSettings;
+use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_commons::models::types::{Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::{NamespaceId, StorageKey, TableId, TableName, UserId};
@@ -310,7 +310,7 @@ impl ManifestService {
         let all_entries = EntityStore::scan_all(&self.store, None, None, None)?;
 
         for (key_bytes, _entry) in all_entries {
-            let key_str = match String::from_utf8(key_bytes.clone()) {
+            let key_str = match String::from_utf8(key_bytes) {
                 Ok(s) => s,
                 Err(_) => continue,
             };
@@ -448,7 +448,7 @@ impl ManifestService {
         let all_entries = EntityStore::scan_all(&self.store, None, None, None)?;
 
         for (key_bytes, entry) in all_entries {
-            let key_str = match String::from_utf8(key_bytes.clone()) {
+            let key_str = match String::from_utf8(key_bytes) {
                 Ok(s) => s,
                 Err(_) => continue,
             };
@@ -684,33 +684,29 @@ impl ManifestService {
     }
 
     fn parse_key_string(&self, key_str: &str) -> Option<(TableId, Option<UserId>)> {
-        let parts: Vec<&str> = key_str.split(':').collect();
-        if parts.len() == 3 {
-            let namespace = NamespaceId::new(parts[0]);
-            let table = TableName::new(parts[1]);
-            let user_id = if parts[2] == "shared" {
-                None
-            } else {
-                Some(UserId::from(parts[2]))
-            };
-            Some((TableId::new(namespace, table), user_id))
-        } else {
+        let mut parts = key_str.splitn(3, ':');
+        let namespace = parts.next()?;
+        let table = parts.next()?;
+        let scope = parts.next()?;
+        let user_id = if scope == "shared" {
             None
-        }
+        } else {
+            Some(UserId::from(scope))
+        };
+        Some((TableId::new(NamespaceId::new(namespace), TableName::new(table)), user_id))
     }
 
     fn parse_user_id_from_key(&self, key_str: &str) -> Option<Option<UserId>> {
-        let parts: Vec<&str> = key_str.split(':').collect();
-        if parts.len() == 3 {
-            let user_id = if parts[2] == "shared" {
-                None
-            } else {
-                Some(UserId::from(parts[2]))
-            };
-            Some(user_id)
-        } else {
+        let mut parts = key_str.splitn(3, ':');
+        let _namespace = parts.next()?;
+        let _table = parts.next()?;
+        let scope = parts.next()?;
+        let user_id = if scope == "shared" {
             None
-        }
+        } else {
+            Some(UserId::from(scope))
+        };
+        Some(user_id)
     }
 
     fn upsert_cache_entry(

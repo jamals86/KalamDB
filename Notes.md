@@ -943,6 +943,63 @@ TODOS:
 52) check the raft log serialization ad deserialization to make sure we are optimized as much as possible since this is the new layer we added between the commiting and the actual sql command we are running on the data, also the snapshoting i can see its using json is this the ideal way for it?
 
 
+53) Do we still need this in connection socketS:
+    /// Increment the changes counter for a live query
+    ///
+    /// Uses provider's async method which handles spawn_blocking internally.
+    pub async fn increment_changes(&self, live_id: &LiveQueryId) -> Result<(), KalamDbError> {
+        let timestamp = Self::current_timestamp_ms();
+
+        self.live_queries_provider
+            .increment_changes_async(live_id.as_str(), timestamp)
+            .await
+            .into_kalamdb_error("Failed to increment changes")?;
+
+        Ok(())
+    }
+
+54) fix:
+● KalamDB[cluster] root@0.0.0.0:8080 ❯ create namespace chat;
+✗ Server error (400): Statement 1 failed: Already exists: Namespace 'chat' already exists
+● KalamDB[cluster] root@0.0.0.0:8080 ❯ STORAGE FLUSH ALL IN chat;
+✗ Server error (400): Statement 1 failed: Not found: No tables found in namespace chat
+
+55) instead of streams tables being in memory use commitlog to persist them into a folder which we can select them fast and clean them fast as well
+/data/streams/<table>/<YYYYMMDD>/<shardid>/<userId>/<windowStartMs>.log this will use the same way we read rocksdb/snapshots and storage paths
+the implementation for this storage need to be done in a separate crate called kalamdb-stream-log
+It should support:
+1) append only writes
+2) reading from a specific time range for a specific table/userid
+3) deleting old logs based on retention policy date
+4) If the stream table has ttl by hours the folders should be by hour as well for faster deletion, if its by day then by day, other by week/month
+5) We should block creating stream table with TTL or the ttl is more than a month
+6) create a new trait which has these methods:
+    - append_rows(TableId, UserId, HashMap<StreamTableRowId, StreamTableRow>)
+    - read_with_limit(TableId, UserId, limit) -> HashMap<StreamTableRowId, StreamTableRow>
+    - read_in_time_range(TableId, UserId, start_time: u64, end_time: u64, limit) -> HashMap<StreamTableRowId, StreamTableRow>
+    - delete_old_logs(before_time: u64) -> Result<()>
+
+    basicly it will be used inside: backend/crates/kalamdb-tables/src/stream_tables/stream_table_store.rs
+
+
+56) move backend/crates/kalamdb-raft/src/group_id.rs into sharding crate
+57) Make sure the shard template in the user table uses the sharding same ones as well
+58) check if we have duplicate structs which we use in configs and also define or duplicate else wehere and maybe we can use enum's directly in configs then we can use them everywhere then
+
+59) i want you to: 
+make a file with all: pub enum 
+and pub struct 
+and then try to find duplicated structs and duplicated enum's in the codebase backend
+and remove the duplicates all of them
+currently i have one duplicate which is:
+backend/crates/kalamdb-commons/src/system_tables.rs
+i prefer to keep the one in kalamdb-commons
+
+make sure the backend compiles after this
+
+60) Make a new crate which has struct's which link and backend has them in common
+
+
 
 
 

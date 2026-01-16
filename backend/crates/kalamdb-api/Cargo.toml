@@ -11,6 +11,7 @@ build = "../../build.rs"
 [dependencies]
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons" }
+kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-core = { path = "../kalamdb-core" }
 kalamdb-raft = { path = "../kalamdb-raft" }
 kalamdb-sql = { path = "../kalamdb-sql" }

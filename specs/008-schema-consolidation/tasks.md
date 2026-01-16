@@ -789,7 +789,7 @@
   1) SELECT from each system table: `system.jobs`, `system.users`, `system.live_queries`, `system.tables`, `system.namespaces` and verify at least one row is returned (where applicable)
   2) CREATE USER, then SELECT to verify it’s present
   3) DELETE USER, then SELECT to verify it’s removed (or appears as soft-deleted based on policy)
-  4) FLUSH ALL TABLES and verify a corresponding job is added in `system.jobs`
+  4) STORAGE FLUSH ALL and verify a corresponding job is added in `system.jobs`
 
 - Test 4: Stream table subscription
   1) Ensure stream tables are enabled
@@ -820,7 +820,7 @@
   - 81 lines implementing: namespace, shared table, insert, select, delete, update, verify, drop
   - Unique namespace per run for isolation
 - [X] T604 (US6) Create `cli/tests/smoke/smoke_test_system_and_users.rs` implementing Smoke Test 3 ✅ **COMPLETE** (2025-11-03)
-  - 115 lines implementing: SELECT from all 5 system tables, CREATE USER, verify, DROP USER, FLUSH ALL TABLES
+  - 115 lines implementing: SELECT from all 5 system tables, CREATE USER, verify, DROP USER, STORAGE FLUSH ALL
   - Tests all system tables: jobs, users, live_queries, tables, namespaces
 - [X] T605 (US6) Create `cli/tests/smoke/smoke_test_stream_subscription.rs` implementing Smoke Test 4 ✅ **COMPLETE** (2025-11-03)
   - 69 lines implementing: namespace, stream table with TTL, subscription, insert, event verification
@@ -955,15 +955,15 @@ Note: Subscriptions are supported for user and stream tables only; shared tables
 
 ### SQL Executor Updates
 
-- [x] T207 [US7] Update FLUSH TABLE implementation in `backend/crates/kalamdb-core/src/sql/executor.rs` to create flush jobs with table_cache
-  **Status**: COMPLETE - FLUSH TABLE now instantiates TableCache with storage_registry
+- [x] T207 [US7] Update STORAGE FLUSH TABLE implementation in `backend/crates/kalamdb-core/src/sql/executor.rs` to create flush jobs with table_cache
+  **Status**: COMPLETE - STORAGE FLUSH TABLE now instantiates TableCache with storage_registry
 - [x] T208 [US7] Update CREATE TABLE implementation to set storage_id field instead of resolving path inline
   **Status**: COMPLETE - All table services use storage_id references
 - [x] T209 [US7] Update table registration logic to not populate storage_location
   **Status**: COMPLETE - No storage_location population in any service
 - [x] T210 [P] [US7] Search executor.rs for all `storage_location` references: `git grep "storage_location" backend/crates/kalamdb-core/src/sql/executor.rs` and update each
   **Status**: COMPLETE - Only "storage_location" label string remains in DESCRIBE output (displays storage_id value)
-- [x] T211 [US7] Verify FLUSH TABLE queries work end-to-end with dynamic path resolution
+- [x] T211 [US7] Verify STORAGE FLUSH TABLE queries work end-to-end with dynamic path resolution
   **Status**: COMPLETE - Executor creates TableCache correctly; integration helpers pass Arc<TableCache> to both user/shared flush jobs
 
 ### System Tables Provider Updates

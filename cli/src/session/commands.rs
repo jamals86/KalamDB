@@ -21,10 +21,10 @@ impl CLISession {
                 self.show_help();
             }
             Command::Flush => {
-                println!("Flushing database...");
-                match self.execute("FLUSH").await {
-                    Ok(_) => println!("Flush completed successfully"),
-                    Err(e) => eprintln!("Flush failed: {}", e),
+                println!("Storage flushing all tables in current namespace...");
+                match self.execute("STORAGE FLUSH ALL").await {
+                    Ok(_) => println!("Storage flush completed successfully"),
+                    Err(e) => eprintln!("Storage flush failed: {}", e),
                 }
             }
             Command::ClusterSnapshot => {

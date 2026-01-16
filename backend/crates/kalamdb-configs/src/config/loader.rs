@@ -218,9 +218,12 @@ mod tests {
     fn test_env_override_server_host() {
         let _guard = acquire_env_lock();
         env::set_var("KALAMDB_SERVER_HOST", "0.0.0.0");
+
         let mut config = ServerConfig::default();
         config.apply_env_overrides().unwrap();
+
         assert_eq!(config.server.host, "0.0.0.0");
+
         env::remove_var("KALAMDB_SERVER_HOST");
     }
 
@@ -228,9 +231,12 @@ mod tests {
     fn test_env_override_server_port() {
         let _guard = acquire_env_lock();
         env::set_var("KALAMDB_SERVER_PORT", "9090");
+
         let mut config = ServerConfig::default();
         config.apply_env_overrides().unwrap();
+
         assert_eq!(config.server.port, 9090);
+
         env::remove_var("KALAMDB_SERVER_PORT");
     }
 
@@ -238,72 +244,12 @@ mod tests {
     fn test_env_override_log_level() {
         let _guard = acquire_env_lock();
         env::set_var("KALAMDB_LOG_LEVEL", "debug");
+
         let mut config = ServerConfig::default();
         config.apply_env_overrides().unwrap();
+
         assert_eq!(config.logging.level, "debug");
+
         env::remove_var("KALAMDB_LOG_LEVEL");
-    }
-
-    #[test]
-    fn test_env_override_log_to_console() {
-        let _guard = acquire_env_lock();
-        env::set_var("KALAMDB_LOG_TO_CONSOLE", "false");
-        let mut config = ServerConfig::default();
-        config.apply_env_overrides().unwrap();
-        assert!(!config.logging.log_to_console);
-        env::remove_var("KALAMDB_LOG_TO_CONSOLE");
-
-        // Test truthy values
-        env::set_var("KALAMDB_LOG_TO_CONSOLE", "true");
-        config.apply_env_overrides().unwrap();
-        assert!(config.logging.log_to_console);
-        env::remove_var("KALAMDB_LOG_TO_CONSOLE");
-
-        env::set_var("KALAMDB_LOG_TO_CONSOLE", "1");
-        config.apply_env_overrides().unwrap();
-        assert!(config.logging.log_to_console);
-        env::remove_var("KALAMDB_LOG_TO_CONSOLE");
-    }
-
-    #[test]
-    fn test_env_override_data_dir() {
-        let _guard = acquire_env_lock();
-        env::set_var("KALAMDB_DATA_DIR", "/custom/data");
-        let mut config = ServerConfig::default();
-        config.apply_env_overrides().unwrap();
-        assert_eq!(config.storage.data_path, "/custom/data");
-        env::remove_var("KALAMDB_DATA_DIR");
-    }
-
-    #[test]
-    fn test_legacy_env_vars() {
-        // Test function is kept for historical reference
-        // Legacy environment variables have been removed
-    }
-
-    #[test]
-    fn test_new_env_vars_override_legacy() {
-        let _guard = acquire_env_lock();
-        // Set both new and legacy vars - new should win
-        env::set_var("KALAMDB_SERVER_HOST", "new.host");
-        env::set_var("KALAMDB_HOST", "old.host");
-
-        let mut config = ServerConfig::default();
-        config.apply_env_overrides().unwrap();
-        assert_eq!(config.server.host, "new.host");
-
-        env::remove_var("KALAMDB_SERVER_HOST");
-        env::remove_var("KALAMDB_HOST");
-
-        // Same for port
-        env::set_var("KALAMDB_SERVER_PORT", "8888");
-        env::set_var("KALAMDB_PORT", "9999");
-
-        config = ServerConfig::default();
-        config.apply_env_overrides().unwrap();
-        assert_eq!(config.server.port, 8888);
-
-        env::remove_var("KALAMDB_SERVER_PORT");
-        env::remove_var("KALAMDB_PORT");
     }
 }

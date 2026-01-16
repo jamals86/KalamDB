@@ -253,13 +253,13 @@ CREATE USER TABLE auto_user_ns.messages WITH FLUSH ROWS 100 (
 
 ## Important Notes
 
-### Manual FLUSH TABLE Not Implemented
-The SQL command `FLUSH TABLE <table_name>` is **NOT implemented**. Only automatic flushing via `FLUSH ROWS` policy works.
+### Manual STORAGE FLUSH TABLE Not Implemented
+The SQL command `STORAGE FLUSH TABLE <table_name>` is **NOT implemented**. Only automatic flushing via `FLUSH ROWS` policy works.
 
 **Tests only cover**: Automatic flush triggered by row count threshold
 
 **Tests do NOT cover**: 
-- Manual `FLUSH TABLE` command
+- Manual `STORAGE FLUSH TABLE` command
 - Time-based flush policies
 - `FLUSH INTERVAL` policies
 - Explicit flush API calls
@@ -292,8 +292,8 @@ The fix for empty projections (COUNT(*)) is critical. Without it:
 6. **UPDATE/DELETE**: Flush behavior with DML operations
 
 ### Manual Flush Implementation
-If manual FLUSH TABLE is implemented in the future, add tests for:
-- Explicit flush command: `FLUSH TABLE messages`
+If manual STORAGE FLUSH TABLE is implemented in the future, add tests for:
+- Explicit flush command: `STORAGE FLUSH TABLE messages`
 - Flush completion verification
 - Concurrent manual + auto flush
 - Permission checks (can user flush table?)

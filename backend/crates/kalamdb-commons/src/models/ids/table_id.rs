@@ -128,14 +128,15 @@ impl<'de> Deserialize<'de> for TableId {
                 E: Error,
             {
                 // Parse "namespace.table" format
-                let parts: Vec<&str> = value.split('.').collect();
-                if parts.len() == 2 {
-                    Ok(TableId {
-                        namespace_id: NamespaceId::new(parts[0]),
-                        table_name: TableName::new(parts[1]),
-                    })
-                } else {
-                    Err(E::custom(format!("Invalid table_id format: {}", value)))
+                let mut parts = value.splitn(2, '.');
+                let namespace = parts.next();
+                let table = parts.next();
+                match (namespace, table) {
+                    (Some(namespace), Some(table)) => Ok(TableId {
+                        namespace_id: NamespaceId::new(namespace),
+                        table_name: TableName::new(table),
+                    }),
+                    _ => Err(E::custom(format!("Invalid table_id format: {}", value))),
                 }
             }
             

@@ -10,9 +10,7 @@
 //! [GroupPrefix]:[KeyType]:[Suffix]
 //!
 //! Group Prefixes:
-//!   - MetaSystem:       "sys"
-//!   - MetaUsers:        "users"
-//!   - MetaJobs:         "jobs"
+//!   - Meta:             "meta"
 //!   - DataUserShard(N): "u:{N:05}"
 //!   - DataSharedShard(N): "s:{N:05}"
 //!
@@ -28,12 +26,12 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use kalamdb_store::raft_storage::{RaftPartitionStore, RaftGroupId};
+//! use kalamdb_store::raft_storage::{RaftPartitionStore, GroupId};
 //! use kalamdb_store::StorageBackend;
 //! use std::sync::Arc;
 //!
 //! let backend: Arc<dyn StorageBackend> = /* ... */;
-//! let store = RaftPartitionStore::new(backend, RaftGroupId::MetaSystem);
+//! let store = RaftPartitionStore::new(backend, GroupId::Meta);
 //!
 //! // Append log entries
 //! store.append_logs(&entries)?;
@@ -47,39 +45,15 @@ use crate::storage_trait::{Operation, Partition, Result, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+// Re-export GroupId from kalamdb-sharding
+pub use kalamdb_sharding::GroupId;
+
 /// The single partition name for all Raft data.
 pub const RAFT_PARTITION_NAME: &str = "raft_data";
 
 // ============================================================================
 // Types
 // ============================================================================
-
-/// Raft group identifier for storage purposes.
-///
-/// This is a simplified version of `kalamdb_raft::GroupId` to avoid circular
-/// dependencies. The conversion is done at the boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum RaftGroupId {
-    /// Unified metadata (namespaces, tables, storages, users, jobs)
-    Meta,
-    /// User table data shard
-    DataUserShard(u32),
-    /// Shared table data shard
-    DataSharedShard(u32),
-}
-
-impl RaftGroupId {
-    /// Returns the key prefix for this group.
-    ///
-    /// All keys in `raft_data` partition are prefixed with this string.
-    pub fn key_prefix(&self) -> String {
-        match self {
-            RaftGroupId::Meta => "meta".to_string(),
-            RaftGroupId::DataUserShard(n) => format!("u:{:05}", n),
-            RaftGroupId::DataSharedShard(n) => format!("s:{:05}", n),
-        }
-    }
-}
 
 /// A single Raft log entry for persistent storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,7 +126,7 @@ impl KSerializable for RaftSnapshotData {}
 /// Thread-safe via internal `Arc<dyn StorageBackend>`.
 pub struct RaftPartitionStore {
     backend: Arc<dyn StorageBackend>,
-    group_id: RaftGroupId,
+    group_id: GroupId,
     partition: Partition,
 }
 
@@ -160,7 +134,7 @@ impl RaftPartitionStore {
     /// Creates a new store for the given Raft group.
     ///
     /// The partition `raft_data` must already exist in the backend.
-    pub fn new(backend: Arc<dyn StorageBackend>, group_id: RaftGroupId) -> Self {
+    pub fn new(backend: Arc<dyn StorageBackend>, group_id: GroupId) -> Self {
         Self {
             backend,
             group_id,
@@ -169,7 +143,7 @@ impl RaftPartitionStore {
     }
 
     /// Returns the group ID this store is for.
-    pub fn group_id(&self) -> RaftGroupId {
+    pub fn group_id(&self) -> GroupId {
         self.group_id
     }
 
@@ -354,9 +328,11 @@ impl RaftPartitionStore {
     fn parse_log_index_from_key(key: &[u8]) -> Option<u64> {
         let key_str = std::str::from_utf8(key).ok()?;
         // Key format: "{prefix}:log:{index:020}"
-        let parts: Vec<&str> = key_str.split(':').collect();
-        if parts.len() >= 2 && parts[parts.len() - 2] == "log" {
-            parts.last()?.parse().ok()
+        let mut parts = key_str.rsplitn(3, ':');
+        let index = parts.next()?;
+        let marker = parts.next()?;
+        if marker == "log" {
+            index.parse().ok()
         } else {
             None
         }
@@ -533,7 +509,7 @@ mod tests {
     use super::*;
     use crate::test_utils::InMemoryBackend;
 
-    fn create_test_store(group_id: RaftGroupId) -> RaftPartitionStore {
+    fn create_test_store(group_id: GroupId) -> RaftPartitionStore {
         let backend = Arc::new(InMemoryBackend::new());
         // Create the raft_data partition
         backend
@@ -544,7 +520,7 @@ mod tests {
 
     #[test]
     fn test_append_and_get_log() {
-        let store = create_test_store(RaftGroupId::Meta);
+        let store = create_test_store(GroupId::Meta);
 
         let entries = vec![
             RaftLogEntry {
@@ -581,7 +557,7 @@ mod tests {
 
     #[test]
     fn test_scan_logs() {
-        let store = create_test_store(RaftGroupId::Meta);
+        let store = create_test_store(GroupId::Meta);
 
         let entries: Vec<RaftLogEntry> = (1..=10)
             .map(|i| RaftLogEntry {
@@ -606,7 +582,7 @@ mod tests {
 
     #[test]
     fn test_first_last_log_index() {
-        let store = create_test_store(RaftGroupId::Meta);
+        let store = create_test_store(GroupId::Meta);
 
         // Empty log
         assert!(store.first_log_index().unwrap().is_none());
@@ -638,7 +614,7 @@ mod tests {
 
     #[test]
     fn test_delete_logs_before() {
-        let store = create_test_store(RaftGroupId::DataUserShard(5));
+        let store = create_test_store(GroupId::DataUserShard(5));
 
         let entries: Vec<RaftLogEntry> = (1..=10)
             .map(|i| RaftLogEntry {
@@ -668,7 +644,7 @@ mod tests {
 
     #[test]
     fn test_vote_operations() {
-        let store = create_test_store(RaftGroupId::Meta);
+        let store = create_test_store(GroupId::Meta);
 
         // No vote initially
         assert!(store.read_vote().unwrap().is_none());
@@ -701,7 +677,7 @@ mod tests {
 
     #[test]
     fn test_commit_purge_operations() {
-        let store = create_test_store(RaftGroupId::DataSharedShard(0));
+        let store = create_test_store(GroupId::DataSharedShard(0));
 
         // No commit/purge initially
         assert!(store.read_commit().unwrap().is_none());
@@ -729,7 +705,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_operations() {
-        let store = create_test_store(RaftGroupId::Meta);
+        let store = create_test_store(GroupId::Meta);
 
         // No snapshot initially
         assert!(store.read_snapshot_meta().unwrap().is_none());
@@ -780,8 +756,8 @@ mod tests {
             .create_partition(&Partition::new(RAFT_PARTITION_NAME))
             .unwrap();
 
-        let store1 = RaftPartitionStore::new(backend.clone(), RaftGroupId::Meta);
-        let store2 = RaftPartitionStore::new(backend.clone(), RaftGroupId::DataUserShard(0));
+        let store1 = RaftPartitionStore::new(backend.clone(), GroupId::Meta);
+        let store2 = RaftPartitionStore::new(backend.clone(), GroupId::DataUserShard(0));
 
         // Add entries to store1
         store1
@@ -813,9 +789,9 @@ mod tests {
 
     #[test]
     fn test_group_id_key_prefixes() {
-        assert_eq!(RaftGroupId::Meta.key_prefix(), "meta");
-        assert_eq!(RaftGroupId::DataUserShard(0).key_prefix(), "u:00000");
-        assert_eq!(RaftGroupId::DataUserShard(31).key_prefix(), "u:00031");
-        assert_eq!(RaftGroupId::DataSharedShard(0).key_prefix(), "s:00000");
+        assert_eq!(GroupId::Meta.key_prefix(), "meta");
+        assert_eq!(GroupId::DataUserShard(0).key_prefix(), "u:00000");
+        assert_eq!(GroupId::DataUserShard(31).key_prefix(), "u:00031");
+        assert_eq!(GroupId::DataSharedShard(0).key_prefix(), "s:00000");
     }
 }

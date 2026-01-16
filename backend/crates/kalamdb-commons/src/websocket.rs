@@ -444,6 +444,9 @@ pub enum ChangeType {
 
     /// Row(s) deleted
     Delete,
+
+    /// Parquet flush completion
+    Flush,
 }
 
 
@@ -596,7 +599,7 @@ impl Notification {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::Row;
+    use crate::models::rows::Row;
     use datafusion::scalar::ScalarValue;
     use std::collections::BTreeMap;
 

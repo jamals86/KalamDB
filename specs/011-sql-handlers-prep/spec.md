@@ -159,8 +159,8 @@ All SQL operations MUST return a `row_count` or `rows_affected` field in the res
 | **CREATE USER** | `rows_affected` | Always 1 (user created) | `CREATE USER alice` → `1 row affected` |
 | **ALTER USER** | `rows_affected` | Always 1 (user altered) | `ALTER USER alice SET PASSWORD '...'` → `1 row affected` |
 | **DROP USER** | `rows_affected` | Always 1 (user dropped) | `DROP USER bob` → `1 row affected` |
-| **FLUSH TABLE** | `rows_affected` | Number of tables flushed (always 1) | `FLUSH TABLE users` → `1 row affected` |
-| **FLUSH ALL TABLES** | `rows_affected` | Number of tables flushed | `FLUSH ALL TABLES` → `15 rows affected` (15 tables) |
+| **STORAGE FLUSH TABLE** | `rows_affected` | Number of tables flushed (always 1) | `STORAGE FLUSH TABLE users` → `1 row affected` |
+| **STORAGE FLUSH ALL** | `rows_affected` | Number of tables flushed | `STORAGE FLUSH ALL` → `15 rows affected` (15 tables) |
 | **KILL JOB** | `rows_affected` | Always 1 (job killed) | `KILL JOB 'FL-abc123'` → `1 row affected` |
 | **KILL LIVE QUERY** | `rows_affected` | Always 1 (subscription cancelled) | `KILL LIVE QUERY 'sub_xyz789'` → `1 row affected` |
 | **SHOW NAMESPACES** | `row_count` | Number of namespaces returned | `SHOW NAMESPACES` → `5 rows in set` |
@@ -173,7 +173,7 @@ All SQL operations MUST return a `row_count` or `rows_affected` field in the res
 - UPDATE: Only count rows where values actually changed (not rows matched by WHERE clause)
 - DDL operations: Always return 1 (single entity created/modified/dropped)
 - SHOW/DESCRIBE: Return count of result rows
-- FLUSH ALL TABLES: Return count of tables flushed
+- STORAGE FLUSH ALL: Return count of tables flushed
 - CREATE IF NOT EXISTS: Return 1 if created, 0 if already exists (with warning message)
 
 ## Success Criteria (mandatory)
@@ -538,7 +538,7 @@ Functional Requirements:
 
 - FR-017: Create `handlers/ddl/` directory structure with separate files for namespace operations (`namespace.rs`), storage operations (`storage.rs`), and table operations (`table.rs`).
 - FR-018: Create `handlers/dml/` directory with files for `insert.rs`, `update.rs`, and `delete.rs` (all delegate to `execute_via_datafusion` with DataFusion's ScalarValue parameter binding). SELECT is handled directly in `execute_via_datafusion()` and does NOT need a separate handler.
-- FR-019: Create `handlers/flush/` directory with `table.rs` (FLUSH TABLE) and `all_tables.rs` (FLUSH ALL TABLES).
+- FR-019: Create `handlers/flush/` directory with `table.rs` (STORAGE FLUSH TABLE) and `all_tables.rs` (STORAGE FLUSH ALL).
 - FR-020: Create `handlers/jobs/` directory with `kill_job.rs` and `kill_live_query.rs` handlers.
 - FR-021: Create `handlers/subscription/` directory with `subscribe.rs` handler for live query subscriptions.
 - FR-022: Create `handlers/user/` directory with `create_user.rs`, `alter_user.rs`, and `drop_user.rs` handlers.
@@ -650,7 +650,7 @@ Functional Requirements:
 - FR-054: Unit tests for each executor: success scenario, error handling, parameter validation
 - FR-055: Integration tests for retry logic: force failure → verify 3× retry → verify backoff timing
 - FR-056: Integration tests for cancellation: start long-running job → KILL JOB → verify cleanup
-- FR-057: Smoke tests must verify FlushExecutor works end-to-end: FLUSH TABLE → job created → execution → metrics returned
+- FR-057: Smoke tests must verify FlushExecutor works end-to-end: STORAGE FLUSH TABLE → job created → execution → metrics returned
 - FR-058: System tests for RetentionExecutor: create soft-deleted records → wait → verify cleanup
 - FR-059: System tests for StreamEvictionExecutor: create TTL records → wait → verify eviction
 - FR-029: Transaction handlers must integrate with future transaction manager (placeholder implementations for Phase 11). Until transaction manager is implemented, BEGIN/COMMIT/ROLLBACK handlers must return `KalamDbError::NotImplemented` with explicit message: "Transaction support planned for Phase 11".

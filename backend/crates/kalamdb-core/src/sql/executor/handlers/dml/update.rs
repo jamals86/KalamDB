@@ -15,7 +15,8 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
 use kalamdb_commons::models::datatypes::KalamDataType;
-use kalamdb_commons::models::{NamespaceId, Row, TableId, TableName, UserId};
+use kalamdb_commons::models::rows::Row;
+use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
 use kalamdb_raft::{DataResponse, SharedDataCommand, UserDataCommand};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::collections::BTreeMap;

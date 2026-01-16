@@ -298,7 +298,7 @@ fn smoke_cli_system_tables() {
     println!("✅ smoke_cli_system_tables passed!");
 }
 
-/// Smoke Test: FLUSH TABLE command
+/// Smoke Test: STORAGE FLUSH TABLE command
 #[ntest::timeout(30000)]
 #[test]
 fn smoke_cli_flush_command() {
@@ -327,9 +327,9 @@ fn smoke_cli_flush_command() {
     ))
     .expect("Failed to insert");
 
-    // Test FLUSH TABLE
-    let result = execute_sql_as_root_via_client(&format!("FLUSH TABLE {}", full_table));
-    assert!(result.is_ok(), "FLUSH TABLE should succeed: {:?}", result);
+    // Test STORAGE FLUSH TABLE
+    let result = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table));
+    assert!(result.is_ok(), "STORAGE FLUSH TABLE should succeed: {:?}", result);
 
     // Verify data still accessible after flush
     let result = execute_sql_as_root_via_client(&format!("SELECT * FROM {}", full_table))

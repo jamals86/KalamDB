@@ -33,7 +33,7 @@ use thiserror::Error;
 #[must_use = "errors should be handled or propagated"]
 pub enum KalamDbError {
     #[error("Storage error: {0}")]
-    Storage(#[from] StorageError),
+    Storage(#[from] CoreStorageError),
 
     #[error("Configuration error: {0}")]
     Config(#[from] ConfigError),
@@ -363,7 +363,7 @@ impl From<crate::live::error::LiveError> for KalamDbError {
 
 /// Storage-related errors
 #[derive(Error, Debug)]
-pub enum StorageError {
+pub enum CoreStorageError {
     #[error("Backend error: {0}")]
     Backend(String),
 
@@ -415,7 +415,7 @@ pub enum ConfigError {
 #[derive(Error, Debug)]
 pub enum ApiError {
     #[error("Storage error: {0}")]
-    Storage(#[from] StorageError),
+    Storage(#[from] CoreStorageError),
 
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
@@ -505,15 +505,15 @@ pub enum BackupError {
     Io(String),
 }
 
-impl StorageError {
+impl CoreStorageError {
     /// Create a validation error
     pub fn validation<S: Into<String>>(msg: S) -> Self {
-        StorageError::Validation(msg.into())
+        CoreStorageError::Validation(msg.into())
     }
 
     /// Create a generic error
     pub fn other<S: Into<String>>(msg: S) -> Self {
-        StorageError::Other(msg.into())
+        CoreStorageError::Other(msg.into())
     }
 }
 
@@ -648,9 +648,9 @@ impl KalamDbError {
 }
 
 // Conversion from StorageError validation to string
-impl From<String> for StorageError {
+impl From<String> for CoreStorageError {
     fn from(msg: String) -> Self {
-        StorageError::Validation(msg)
+        CoreStorageError::Validation(msg)
     }
 }
 
@@ -673,7 +673,7 @@ impl From<kalamdb_tables::TableError> for KalamDbError {
     fn from(err: kalamdb_tables::TableError) -> Self {
         use kalamdb_tables::TableError;
         match err {
-            TableError::Storage(msg) => KalamDbError::Storage(StorageError::Other(msg)),
+            TableError::Storage(msg) => KalamDbError::Storage(CoreStorageError::Other(msg)),
             TableError::NotFound(msg) => KalamDbError::NotFound(msg),
             TableError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
             TableError::Serialization(msg) => KalamDbError::SerializationError(msg),
@@ -694,7 +694,7 @@ mod tests {
 
     #[test]
     fn test_storage_error_display() {
-        let err = StorageError::MessageNotFound(12345);
+        let err = CoreStorageError::MessageNotFound(12345);
         assert_eq!(err.to_string(), "Message not found: 12345");
     }
 
@@ -718,8 +718,8 @@ mod tests {
 
     #[test]
     fn test_storage_error_validation() {
-        let err = StorageError::validation("invalid data");
-        assert!(matches!(err, StorageError::Validation(_)));
+        let err = CoreStorageError::validation("invalid data");
+        assert!(matches!(err, CoreStorageError::Validation(_)));
     }
 
     #[test]

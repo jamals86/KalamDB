@@ -43,9 +43,7 @@ mod connection;
 
 // Row types only available with full feature (datafusion dependency)
 #[cfg(feature = "full")]
-mod k_table_row;
-#[cfg(feature = "full")]
-pub mod row;
+pub mod rows;
 
 mod role;
 mod table_access;
@@ -60,12 +58,9 @@ pub use job_status::JobStatus;
 pub use job_type::JobType;
 
 #[cfg(feature = "full")]
-pub use k_table_row::KTableRow;
+pub use rows::{KTableRow, StreamTableRow, UserTableRow};
 
 pub use role::Role;
-
-#[cfg(feature = "full")]
-pub use row::{Row, RowEnvelope};
 
 pub use storage::{
     AzureStorageConfig, GcsStorageConfig, LocalStorageConfig, S3StorageConfig, StorageConfig,

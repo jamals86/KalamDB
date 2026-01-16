@@ -90,7 +90,7 @@ pub enum ParamValue {
 - CREATE TABLE, ALTER TABLE, DROP TABLE
 - Transactions: BEGIN, COMMIT, ROLLBACK
 - CREATE NAMESPACE, SHOW TABLES, DESCRIBE
-- FLUSH TABLE, CREATE USER
+- STORAGE FLUSH TABLE, CREATE USER
 - Unknown statements (VACUUM, PRAGMA, EXPLAIN)
 - Edge cases: case insensitivity, whitespace, SQL comments
 
@@ -326,7 +326,7 @@ let k = self.kalam_sql();
 ### Remaining Phases (9.6-9.12)
 - **Phase 9.6**: DML Handler with parameter binding (INSERT/UPDATE/DELETE)
 - **Phase 9.7**: Query Handler (SELECT execution, table loading)
-- **Phase 9.8**: Flush Handler (FLUSH TABLE operations)
+- **Phase 9.8**: Flush Handler (STORAGE FLUSH TABLE operations)
 - **Phase 9.9**: Subscription Handler (SUBSCRIBE TO, KILL LIVE QUERY)
 - **Phase 9.10**: User Management Handler (CREATE/ALTER/DROP USER)
 - **Phase 9.11**: System Commands Handler (SHOW, DESCRIBE, KILL JOB)

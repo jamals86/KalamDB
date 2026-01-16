@@ -1,0 +1,26 @@
+[package]
+name = "kalamdb-sharding"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shard routing and shard models for KalamDB"
+keywords = ["kalamdb", "sharding", "shard"]
+categories = ["database"]
+
+[dependencies]
+# Internal crates
+kalamdb-commons = { path = "../kalamdb-commons" }
+kalamdb-configs = { path = "../kalamdb-configs" }
+
+# Serialization
+serde = { workspace = true, optional = true }
+
+[features]
+serde = ["dep:serde"]
+
+[lib]
+name = "kalamdb_sharding"
+path = "src/lib.rs"

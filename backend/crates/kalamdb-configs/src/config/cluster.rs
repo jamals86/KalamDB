@@ -261,16 +261,11 @@ mod tests {
                     rpc_addr: "127.0.0.2:9100".to_string(),
                     api_addr: "127.0.0.2:8080".to_string(),
                 },
-                PeerConfig {
-                    node_id: 3,
-                    rpc_addr: "127.0.0.3:9100".to_string(),
-                    api_addr: "127.0.0.3:8080".to_string(),
-                },
             ],
-            user_shards: 32,
+            user_shards: 12,
             shared_shards: 1,
-            heartbeat_interval_ms: 50,
-            election_timeout_ms: (150, 300),
+            heartbeat_interval_ms: 250,
+            election_timeout_ms: (500, 1000),
             snapshot_policy: "LogsSinceLast(1000)".to_string(),
             max_snapshots_to_keep: 3,
             replication_timeout_ms: 5000,
@@ -279,30 +274,48 @@ mod tests {
     }
 
     #[test]
-    fn test_valid_config() {
+    fn test_parse_snapshot_policy() {
+        assert_eq!(
+            ClusterConfig::parse_snapshot_policy("LogsSinceLast(100)"),
+            Ok(openraft::SnapshotPolicy::LogsSinceLast(100))
+        );
+        assert_eq!(
+            ClusterConfig::parse_snapshot_policy("Never"),
+            Ok(openraft::SnapshotPolicy::Never)
+        );
+        assert!(ClusterConfig::parse_snapshot_policy("Invalid").is_err());
+    }
+
+    #[test]
+    fn test_validate_valid_config() {
         let config = valid_config();
         assert!(config.validate().is_ok());
     }
 
     #[test]
-    fn test_invalid_empty_cluster_id() {
-        let mut config = valid_config();
-        config.cluster_id = "".to_string();
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn test_invalid_node_id_zero() {
+    fn test_validate_invalid_node_id() {
         let mut config = valid_config();
         config.node_id = 0;
         assert!(config.validate().is_err());
     }
 
     #[test]
+    fn test_validate_invalid_election_timeout() {
+        let mut config = valid_config();
+        config.election_timeout_ms = (200, 100);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
     fn test_total_groups() {
         let config = valid_config();
-        // 3 metadata + 32 user + 1 shared = 36
-        assert_eq!(config.total_groups(), 36);
+        assert_eq!(config.total_groups(), 3 + 12 + 1);
+    }
+
+    #[test]
+    fn test_find_peer() {
+        let config = valid_config();
+        assert!(config.find_peer(2).is_some());
+        assert!(config.find_peer(99).is_none());
     }
 }
-

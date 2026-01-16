@@ -156,7 +156,7 @@ fn test_parameter_limits_from_config() {
    - Added dependencies: `toml`, `anyhow`, `num_cpus` (workspace = true)
 
 4. **backend/src/config.rs**
-   - Replaced with 2-line re-export: `pub use kalamdb_commons::config::*;`
+    - Replaced with 2-line re-export: `pub use kalamdb_configs::*;`
 
 5. **backend/crates/kalamdb-core/src/app_context.rs**
    - Added `config: Arc<ServerConfig>` field

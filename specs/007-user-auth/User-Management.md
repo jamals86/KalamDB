@@ -370,7 +370,7 @@ allow_remote_access = false
 | INSERT into other user tables      | ❌   | ✅      | ✅  | ✅     |
 | SELECT from public shared tables   | ✅   | ✅      | ✅  | ✅     |
 | SELECT from private shared tables  | ❌   | ✅      | ✅  | ✅     |
-| FLUSH TABLE/FLUSH ALL TABLES       | ❌   | ✅      | ✅  | ✅     |
+| STORAGE FLUSH TABLE/STORAGE FLUSH ALL | ❌   | ✅      | ✅  | ✅     |
 | KILL LIVE QUERY                    | ❌   | ❌      | ✅  | ✅     |
 | CLEAR CACHE                        | ❌   | ❌      | ✅  | ✅     |
 | View system.jobs                   | ❌   | ✅      | ✅  | ✅     |

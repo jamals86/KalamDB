@@ -79,7 +79,7 @@ pub struct ApplicationComponents {
 ```rust
 // Phase 9: All job scheduling now handled by UnifiedJobManager
 // Crash recovery handled by UnifiedJobManager.recover_incomplete_jobs() in run_loop
-// Flush scheduling via FLUSH TABLE/FLUSH ALL TABLES commands
+// Flush scheduling via STORAGE FLUSH TABLE/STORAGE FLUSH ALL commands
 // Stream eviction and user cleanup via scheduled job creation (TODO: implement cron scheduler)
 
 info!("Job management delegated to UnifiedJobManager (already running in background)");

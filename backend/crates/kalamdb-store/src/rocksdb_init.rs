@@ -4,7 +4,9 @@
 //! system column families present.
 
 use anyhow::Result;
-use kalamdb_commons::{config::RocksDbSettings, StoragePartition, SystemTable};
+use kalamdb_commons::system_tables::StoragePartition;
+use kalamdb_commons::SystemTable;
+use kalamdb_configs::RocksDbSettings;
 use rocksdb::{BlockBasedOptions, Cache, ColumnFamilyDescriptor, Options, DB};
 use std::path::Path;
 use std::sync::Arc;
@@ -41,6 +43,10 @@ impl RocksDbInit {
         db_opts.set_write_buffer_size(self.settings.write_buffer_size);
         db_opts.set_max_write_buffer_number(self.settings.max_write_buffers);
         db_opts.set_max_background_jobs(self.settings.max_background_jobs);
+
+        // Limit open files to prevent "Too many open files" errors
+        // This is critical when there are many SST files
+        db_opts.set_max_open_files(self.settings.max_open_files);
 
         // Block cache: Shared across all CFs to control total memory
         let cache = Cache::new_lru_cache(self.settings.block_cache_size);
@@ -94,8 +100,30 @@ impl RocksDbInit {
             })
             .collect();
 
+        let cf_names: Vec<String> = existing.clone();
         let db = DB::open_cf_descriptors(&db_opts, path, cf_descriptors)?;
-        Ok(Arc::new(db))
+        let db = Arc::new(db);
+
+        // Compact all column families on startup if enabled
+        // This reduces SST file count and prevents "Too many open files" errors
+        if self.settings.compact_on_startup {
+            log::info!(
+                "Running startup compaction for {} column families...",
+                cf_names.len()
+            );
+            let start = std::time::Instant::now();
+            for cf_name in &cf_names {
+                if let Some(cf) = db.cf_handle(cf_name) {
+                    db.compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+                }
+            }
+            log::info!(
+                "Startup compaction completed in {:?}",
+                start.elapsed()
+            );
+        }
+
+        Ok(db)
     }
 
     /// Close database handle (drop Arc)

@@ -173,7 +173,7 @@ pub fn parse_create_drop_statement(
 /// # Examples
 ///
 /// ```ignore
-/// // "FLUSH TABLE prod.events" - extract "prod.events" (token index 2)
+/// // "STORAGE FLUSH TABLE prod.events" - extract "prod.events" (token index 3)
 /// let table_ref = extract_token(sql, 2)?;
 /// ```
 pub fn extract_token(sql: &str, token_index: usize) -> DdlResult<String> {
@@ -194,8 +194,8 @@ pub fn extract_token(sql: &str, token_index: usize) -> DdlResult<String> {
 /// # Examples
 ///
 /// ```ignore
-/// // Ensure "FLUSH TABLE prod.events" has no tokens after position 2
-/// validate_no_extra_tokens(sql, 2, "FLUSH TABLE")?;
+/// // Ensure "STORAGE FLUSH TABLE prod.events" has no tokens after position 3
+/// validate_no_extra_tokens(sql, 4, "STORAGE FLUSH TABLE")?;
 /// ```
 pub fn validate_no_extra_tokens(
     sql: &str,
@@ -265,18 +265,18 @@ pub fn parse_table_reference(table_ref: &str) -> DdlResult<(Option<String>, Stri
         ));
     }
 
-    let parts: Vec<&str> = trimmed.split('.').collect();
-    match parts.len() {
-        1 => {
-            let table = parts[0];
+    let mut parts = trimmed.split('.');
+    let first = parts.next();
+    let second = parts.next();
+    let third = parts.next();
+    match (first, second, third) {
+        (Some(table), None, None) => {
             if table.is_empty() {
                 return Err("Table name cannot be empty".to_string());
             }
             Ok((None, table.to_string()))
         }
-        2 => {
-            let namespace = parts[0];
-            let table = parts[1];
+        (Some(namespace), Some(table), None) => {
             if namespace.is_empty() {
                 return Err("Namespace name cannot be empty".to_string());
             }
@@ -409,18 +409,29 @@ mod tests {
 
     #[test]
     fn test_extract_token() {
-        let sql = "FLUSH TABLE prod.events";
-        assert_eq!(extract_token(sql, 0).unwrap(), "FLUSH");
-        assert_eq!(extract_token(sql, 1).unwrap(), "TABLE");
-        assert_eq!(extract_token(sql, 2).unwrap(), "prod.events");
+        let sql = "STORAGE FLUSH TABLE prod.events";
+        assert_eq!(extract_token(sql, 0).unwrap(), "STORAGE");
+        assert_eq!(extract_token(sql, 1).unwrap(), "FLUSH");
+        assert_eq!(extract_token(sql, 2).unwrap(), "TABLE");
+        assert_eq!(extract_token(sql, 3).unwrap(), "prod.events");
         assert!(extract_token(sql, 5).is_err());
     }
 
     #[test]
     fn test_validate_no_extra_tokens() {
-        assert!(validate_no_extra_tokens("FLUSH TABLE prod.events", 3, "FLUSH TABLE").is_ok());
+        assert!(validate_no_extra_tokens(
+            "STORAGE FLUSH TABLE prod.events",
+            4,
+            "STORAGE FLUSH TABLE"
+        )
+        .is_ok());
         assert!(
-            validate_no_extra_tokens("FLUSH TABLE prod.events extra", 3, "FLUSH TABLE").is_err()
+            validate_no_extra_tokens(
+                "STORAGE FLUSH TABLE prod.events extra",
+                4,
+                "STORAGE FLUSH TABLE"
+            )
+            .is_err()
         );
     }
 

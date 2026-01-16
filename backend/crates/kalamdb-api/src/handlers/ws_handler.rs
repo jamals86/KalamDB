@@ -163,11 +163,9 @@ async fn handle_websocket(
     let mut event_rx = registration.event_rx;
     let mut notification_rx = registration.notification_rx;
     let connection_state = registration.state;
+    let connection_id = connection_state.read().connection_id().clone();
 
     loop {
-        // Get connection_id for logging (read once per loop iteration)
-        let connection_id = connection_state.read().connection_id().clone();
-
         tokio::select! {
             biased;
 
@@ -291,8 +289,8 @@ async fn handle_websocket(
             // Handle notifications from live query manager
             notification = notification_rx.recv() => {
                 match notification {
-                    Some((_live_id, notif)) => {
-                        if let Ok(json) = serde_json::to_string(&notif) {
+                    Some(notif) => {
+                        if let Ok(json) = serde_json::to_string(notif.as_ref()) {
                             if session.text(json).await.is_err() {
                                 break;
                             }

@@ -77,9 +77,9 @@ CREATE TABLE namespace.table (...) FLUSH ROWS 1000 INTERVAL 300s
 
 ### 5. Manual Flush Commands
 
-**FLUSH TABLE** (single table):
+**STORAGE FLUSH TABLE** (single table):
 ```sql
-FLUSH TABLE namespace.table_name;
+STORAGE FLUSH TABLE namespace.table_name;
 ```
 
 **Implementation Status**:
@@ -88,9 +88,9 @@ FLUSH TABLE namespace.table_name;
 - ⚠️  Job creation works, but async execution via JobManager is TODO (T250)
 - Current behavior: Creates job record in `system.jobs` but doesn't execute flush
 
-**FLUSH ALL TABLES** (all user tables in namespace):
+**STORAGE FLUSH ALL** (all user tables in namespace):
 ```sql
-FLUSH ALL TABLES namespace;
+STORAGE FLUSH ALL IN namespace;
 ```
 
 ### 6. Test Coverage
@@ -158,7 +158,7 @@ System tables (users, namespaces, jobs, etc.) **NEVER flush**:
 
 ## Known Limitations
 
-1. **Manual FLUSH TABLE execution** (T250):
+1. **Manual STORAGE FLUSH TABLE execution** (T250):
    - Command parser works ✅
    - Job record creation works ✅
    - Actual flush execution via JobManager is TODO
@@ -176,7 +176,7 @@ System tables (users, namespaces, jobs, etc.) **NEVER flush**:
 
 1. ✅ **Keep existing test suite** - Tests are comprehensive and working
 2. ✅ **Flush functionality is production-ready** - Core implementation is solid
-3. ⚠️ **Complete T250** - Implement manual FLUSH TABLE job execution
+3. ⚠️ **Complete T250** - Implement manual STORAGE FLUSH TABLE job execution
 4. 📝 **Monitor flush performance** - Track flush duration and Parquet file sizes
 5. 📝 **Document for users** - Add flush behavior to user documentation
 
@@ -212,7 +212,7 @@ test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 
 The implementation is solid, well-tested, and follows best practices. The FlushScheduler automatically monitors tables and triggers flushes based on configured policies. Data integrity is preserved across flushes, and the system properly handles multi-user scenarios.
 
-The only minor gap is manual FLUSH TABLE execution (T250), which is a nice-to-have feature since automatic flushing already works reliably.
+The only minor gap is manual STORAGE FLUSH TABLE execution (T250), which is a nice-to-have feature since automatic flushing already works reliably.
 
 ---
 

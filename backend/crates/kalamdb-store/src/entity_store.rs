@@ -133,7 +133,9 @@ pub trait KSerializable: Serialize + for<'de> Deserialize<'de> + Send + Sync {
 
 impl KSerializable for String {}
 
-impl KSerializable for kalamdb_commons::models::Row {}
+impl KSerializable for kalamdb_commons::models::rows::Row {}
+
+impl KSerializable for kalamdb_commons::models::rows::UserTableRow {}
 
 impl KSerializable for User {}
 
@@ -465,6 +467,98 @@ where
             }
         }
         Ok(results)
+    }
+
+    /// Scans keys with limit, optional prefix, and optional start key.
+    ///
+    /// This avoids deserializing values, which is useful for TTL eviction and key-only scans.
+    fn scan_keys_limited_with_prefix_and_start(
+        &self,
+        prefix: Option<&[u8]>,
+        start_key: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<Vec<Vec<u8>>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let partition = Partition::new(self.partition());
+        let iter = self
+            .backend()
+            .scan(&partition, prefix, start_key, Some(limit))?;
+
+        let mut keys = Vec::with_capacity(limit);
+        for (key_bytes, _) in iter {
+            keys.push(key_bytes);
+            if keys.len() >= limit {
+                break;
+            }
+        }
+        Ok(keys)
+    }
+
+    /// Scans keys relative to a starting key in a specified direction.
+    ///
+    /// This avoids deserializing values, which reduces CPU and allocation pressure.
+    fn scan_keys_directional(
+        &self,
+        start_key: Option<&K>,
+        direction: ScanDirection,
+        limit: usize,
+    ) -> Result<Vec<K>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let partition = Partition::new(self.partition());
+
+        match direction {
+            ScanDirection::Newer => {
+                let start_bytes = start_key.map(|k| next_storage_key_bytes(&k.storage_key()));
+                let iter = self
+                    .backend()
+                    .scan(&partition, None, start_bytes.as_deref(), Some(limit))?;
+
+                let mut keys = Vec::with_capacity(limit);
+                for (key_bytes, _) in iter {
+                    let key = K::from_storage_key(&key_bytes)
+                        .map_err(StorageError::SerializationError)?;
+                    keys.push(key);
+                    if keys.len() >= limit {
+                        break;
+                    }
+                }
+
+                Ok(keys)
+            }
+            ScanDirection::Older => {
+                let start_bytes = start_key.map(|k| k.storage_key());
+                let iter = self.backend().scan(&partition, None, None, None)?;
+                let mut collected: Vec<Vec<u8>> = Vec::new();
+
+                for (key_bytes, _) in iter {
+                    if let Some(start) = &start_bytes {
+                        if key_bytes.as_slice() >= start.as_slice() {
+                            break;
+                        }
+                    }
+                    collected.push(key_bytes);
+                }
+
+                if collected.len() > limit {
+                    let drain_end = collected.len() - limit;
+                    collected.drain(0..drain_end);
+                }
+
+                let mut keys = Vec::with_capacity(collected.len());
+                for key_bytes in collected {
+                    let key = K::from_storage_key(&key_bytes)
+                        .map_err(StorageError::SerializationError)?;
+                    keys.push(key);
+                }
+                Ok(keys)
+            }
+        }
     }
 }
 

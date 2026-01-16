@@ -39,7 +39,7 @@
   - **Priority**: P1 High (production stability validation)
   
 - **US3** (Manual Flushing): T237-T259 (23 tasks) - ✅ **100% COMPLETE** (21/21 core, 2 deferred)
-  - FLUSH TABLE, FLUSH ALL TABLES commands with async execution
+  - STORAGE FLUSH TABLE, STORAGE FLUSH ALL commands with async execution
   - 15 integration tests passing (test_manual_flush_verification.rs)
   - T253-T254 deferred to separate shutdown coordination feature
   
@@ -220,7 +220,7 @@
     - Migrated execute_flush_table() to load schema from information_schema.tables
     - **FIXED (2025-10-24)**: Updated get_table_schema() in adapter.rs to use information_schema.tables instead of deprecated system_table_schemas CF
     - **FIXED (2025-10-24)**: Updated test_02_query_system_table_schemas to use system.storages instead of system.storage_locations
-    - FLUSH TABLE operation fully restored with TableDefinition architecture
+    - STORAGE FLUSH TABLE operation fully restored with TableDefinition architecture
     - SELECT * column ordering automatically preserved via Arrow schema field order
     - Files: backend/crates/kalamdb-sql/src/adapter.rs, backend/crates/kalamdb-core/src/sql/executor.rs
     - **Test Status**: ✅ ALL TESTS PASSING (713 passed, 47 ignored)
@@ -1592,27 +1592,27 @@ Table metadata storage consolidated from fragmented approach (system_tables + sy
 
 ## Phase 8: User Story 3 - Manual Table Flushing via SQL Command (Priority: P2)
 
-**Goal**: Provide asynchronous SQL commands for immediate manual flush control (FLUSH TABLE, FLUSH ALL TABLES) that return job_id for monitoring
+**Goal**: Provide asynchronous SQL commands for immediate manual flush control (STORAGE FLUSH TABLE, STORAGE FLUSH ALL) that return job_id for monitoring
 
-**Independent Test**: Execute FLUSH TABLE command, verify immediate job_id response, poll system.jobs to confirm flush completion and Parquet file creation
+**Independent Test**: Execute STORAGE FLUSH TABLE command, verify immediate job_id response, poll system.jobs to confirm flush completion and Parquet file creation
 
 ### Integration Tests for User Story 3
 
 - [X] T237 [P] [US3] Create `/backend/tests/integration/test_manual_flushing.rs` test file → Extended test_manual_flush_verification.rs with 8 new SQL API tests
-- [X] T238 [P] [US3] test_flush_table_returns_job_id: FLUSH TABLE, verify job_id returned immediately (< 100ms) → PASSING (test_08)
-- [X] T239 [P] [US3] test_flush_job_completes_asynchronously: FLUSH TABLE, poll system.jobs, verify status progression → PASSING (test_09 - verifies job_id format)
-- [X] T240 [P] [US3] test_flush_all_tables_multiple_jobs: Create 3 tables, FLUSH ALL TABLES, verify array of job_ids returned → PASSING (test_10)
+- [X] T238 [P] [US3] test_flush_table_returns_job_id: STORAGE FLUSH TABLE, verify job_id returned immediately (< 100ms) → PASSING (test_08)
+- [X] T239 [P] [US3] test_flush_job_completes_asynchronously: STORAGE FLUSH TABLE, poll system.jobs, verify status progression → PASSING (test_09 - verifies job_id format)
+- [X] T240 [P] [US3] test_flush_all_tables_multiple_jobs: Create 3 tables, STORAGE FLUSH ALL, verify array of job_ids returned → PASSING (test_10)
 - [X] T241 [P] [US3] test_flush_job_result_includes_metrics: After flush completes, query system.jobs, verify records_flushed and storage_location in result → PASSING (test_11)
 - [X] T242 [P] [US3] test_flush_empty_table: FLUSH empty table, verify job completes with 0 records in result → PASSING (test_12)
 - [X] T243 [P] [US3] test_concurrent_flush_same_table: Trigger concurrent FLUSH on same table, verify both succeed or in-progress detection → PASSING (test_13)
-- [ ] T244 [P] [US3] test_shutdown_waits_for_flush_jobs: FLUSH TABLE, initiate shutdown, verify flush completes before exit → DEFERRED (shutdown coordination out of scope)
+- [ ] T244 [P] [US3] test_shutdown_waits_for_flush_jobs: STORAGE FLUSH TABLE, initiate shutdown, verify flush completes before exit → DEFERRED (shutdown coordination out of scope)
 - [X] T245 [P] [US3] test_flush_job_failure_handling: Simulate flush error, verify job status='failed' and error in result → PASSING (test_14, test_15)
 
 ### Implementation for User Story 3
 
-- [X] T246 [P] [US3] Create `/backend/crates/kalamdb-sql/src/flush_commands.rs` with FLUSH TABLE/ALL parsing
-- [X] T247 [US3] Implement FLUSH TABLE SQL command parsing in flush_commands.rs
-- [X] T248 [US3] Implement FLUSH ALL TABLES SQL command parsing
+- [X] T246 [P] [US3] Create `/backend/crates/kalamdb-sql/src/flush_commands.rs` with STORAGE FLUSH TABLE/ALL parsing
+- [X] T247 [US3] Implement STORAGE FLUSH TABLE SQL command parsing in flush_commands.rs
+- [X] T248 [US3] Implement STORAGE FLUSH ALL SQL command parsing
 - [X] T249 [US3] Add flush command execution logic to kalamdb-sql query processor (asynchronous, returns job_id)
 - [X] T250 [US3] Implement asynchronous flush job creation with JobManager, return job_id immediately → VERIFIED (executor.rs lines 1542-1715, execute_flush_table already implemented)
 - [X] T251 [US3] Update flush job to write records_flushed and storage_location to system.jobs result field → ✅ COMPLETE (executor.rs updated with enhanced result message including storage_location and parquet_files count)
@@ -1621,8 +1621,8 @@ Table metadata storage consolidated from fragmented approach (system_tables + sy
 - [~] T254 [US3] Add configurable flush job timeout during shutdown (default: 60s) in config.toml → DEFERRED (shutdown coordination - separate feature)
 
 **Documentation Tasks for User Story 3**:
-- [X] T255 [P] [US3] Add rustdoc to flush_commands.rs explaining asynchronous FLUSH TABLE behavior and job monitoring → ✅ COMPLETE (comprehensive documentation already exists in flush_commands.rs)
-- [X] T256 [P] [US3] Update `/docs/architecture/SQL_SYNTAX.md` with FLUSH TABLE documentation (asynchronous, job_id response) → ✅ COMPLETE (updated with job result format including records_flushed, users_count, storage_location, parquet_files)
+- [X] T255 [P] [US3] Add rustdoc to flush_commands.rs explaining asynchronous STORAGE FLUSH TABLE behavior and job monitoring → ✅ COMPLETE (comprehensive documentation already exists in flush_commands.rs)
+- [X] T256 [P] [US3] Update `/docs/architecture/SQL_SYNTAX.md` with STORAGE FLUSH TABLE documentation (asynchronous, job_id response) → ✅ COMPLETE (updated with job result format including records_flushed, users_count, storage_location, parquet_files)
 
 **Checkpoint**: Manual flush control works asynchronously with job_id tracking and graceful shutdown handling
 

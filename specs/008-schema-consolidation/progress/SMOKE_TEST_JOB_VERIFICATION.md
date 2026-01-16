@@ -9,7 +9,7 @@ Enhanced smoke tests to verify that FLUSH operations not only start jobs but als
 ### 1. New Helper Functions (`cli/tests/common/mod.rs`)
 
 #### `parse_job_id_from_flush_output(output: &str) -> Result<String, ...>`
-Parses a single job ID from `FLUSH TABLE` output.
+Parses a single job ID from `STORAGE FLUSH TABLE` output.
 
 **Expected input format:**
 ```
@@ -19,7 +19,7 @@ Flush started for table 'namespace.table'. Job ID: flush-table-123-uuid
 **Returns:** The job ID string (e.g., `"flush-table-123-uuid"`)
 
 #### `parse_job_ids_from_flush_all_output(output: &str) -> Result<Vec<String>, ...>`
-Parses multiple job IDs from `FLUSH ALL TABLES` output.
+Parses multiple job IDs from `STORAGE FLUSH ALL` output.
 
 **Expected input format:**
 ```
@@ -47,7 +47,7 @@ Convenience wrapper to verify multiple jobs sequentially.
 #### `smoke_test_user_table_subscription.rs`
 **Before:**
 ```rust
-let flush_sql = format!("FLUSH TABLE {}", full);
+let flush_sql = format!("STORAGE FLUSH TABLE {}", full);
 execute_sql_as_root_via_cli(&flush_sql).expect("flush should succeed");
 let jobs = execute_sql_as_root_via_cli("SELECT * FROM system.jobs LIMIT 1");
 assert!(!jobs.trim().is_empty(), "jobs table should not be empty");
@@ -55,7 +55,7 @@ assert!(!jobs.trim().is_empty(), "jobs table should not be empty");
 
 **After:**
 ```rust
-let flush_sql = format!("FLUSH TABLE {}", full);
+let flush_sql = format!("STORAGE FLUSH TABLE {}", full);
 let flush_output = execute_sql_as_root_via_cli(&flush_sql)
     .expect("flush should succeed for user table");
 
@@ -77,7 +77,7 @@ println!("[FLUSH] Job {} completed successfully", job_id);
 #### `smoke_test_system_and_users.rs`
 **Before:**
 ```rust
-let _ = execute_sql_as_root_via_cli(&format!("FLUSH ALL TABLES IN {}", test_ns))
+let _ = execute_sql_as_root_via_cli(&format!("STORAGE FLUSH ALL IN {}", test_ns))
     .expect("flush all tables in namespace should succeed");
 let jobs = execute_sql_as_root_via_cli("SELECT * FROM system.jobs LIMIT 1");
 assert!(!jobs.trim().is_empty(), "jobs table should not be empty");
@@ -100,7 +100,7 @@ execute_sql_as_root_via_cli(&insert_sql)
     .expect("insert should succeed");
 
 // Now flush all tables in the namespace
-let flush_output = execute_sql_as_root_via_cli(&format!("FLUSH ALL TABLES IN {}", test_ns))
+let flush_output = execute_sql_as_root_via_cli(&format!("STORAGE FLUSH ALL IN {}", test_ns))
     .expect("flush all tables in namespace should succeed");
 
 println!("[FLUSH ALL] Output: {}", flush_output);
@@ -133,7 +133,7 @@ The pattern can be applied to any test that uses FLUSH commands:
 
 ```rust
 // 1. Execute FLUSH and capture output
-let flush_output = execute_sql_as_root_via_cli("FLUSH TABLE my.table")?;
+let flush_output = execute_sql_as_root_via_cli("STORAGE FLUSH TABLE my.table")?;
 
 // 2. Parse job ID
 let job_id = parse_job_id_from_flush_output(&flush_output)?;
@@ -142,11 +142,11 @@ let job_id = parse_job_id_from_flush_output(&flush_output)?;
 verify_job_completed(&job_id, Duration::from_secs(10))?;
 ```
 
-For `FLUSH ALL TABLES`:
+For `STORAGE FLUSH ALL`:
 
 ```rust
 // 1. Execute FLUSH ALL and capture output
-let flush_output = execute_sql_as_root_via_cli("FLUSH ALL TABLES IN namespace")?;
+let flush_output = execute_sql_as_root_via_cli("STORAGE FLUSH ALL IN namespace")?;
 
 // 2. Parse job IDs
 let job_ids = parse_job_ids_from_flush_all_output(&flush_output)?;

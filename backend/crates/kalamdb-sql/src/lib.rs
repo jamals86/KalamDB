@@ -52,9 +52,10 @@ pub use compatibility::{
     ErrorStyle,
 };
 pub use ddl::{
-    parse_job_command, AlterStorageStatement, CreateStorageStatement, DropStorageStatement,
-    FlushAllTablesStatement, FlushTableStatement, JobCommand, ShowManifestStatement,
-    ShowStoragesStatement, SubscribeStatement, SubscriptionOptions,
+    parse_job_command, AlterStorageStatement, CompactAllTablesStatement, CompactTableStatement,
+    CreateStorageStatement, DropStorageStatement, FlushAllTablesStatement, FlushTableStatement,
+    JobCommand, ShowManifestStatement, ShowStoragesStatement, SubscribeStatement,
+    SubscriptionOptions,
 };
 pub use ddl_parent::DdlAst;
 pub use parser::SqlParser;

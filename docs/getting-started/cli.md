@@ -83,20 +83,28 @@ kalam -f setup.sql
 
 - `--url`, `-u` – server URL
 - `--host`, `-H` and `--port`, `-p` – alternative to `--url`
+- `--instance` – credential instance name (default: `local`)
 - `--token` – JWT bearer token
 - `--username` / `--password` – Basic auth
+- `--save-credentials` – save JWT token after login
+- `--show-credentials` – show stored credentials for instance
+- `--update-credentials` – login and update stored credentials
+- `--delete-credentials` – delete stored credentials for instance
+- `--list-instances` – list stored credential instances
 - `--format` – `table` (default) | `json` | `csv`
 - `--json` / `--csv` – shorthand for `--format`
+- `--no-color` – disable colored output
+- `--no-spinner` – disable spinners/animations
+- `--loading-threshold-ms` – loading indicator threshold
 - `--file`, `-f` – execute SQL file
 - `--command`, `-c` – execute a single SQL statement
 - `--config` – config path (default `~/.kalam/config.toml`)
+- `--verbose`, `-v` – verbose logging
 - `--timeout` – HTTP timeout in seconds
 - `--connection-timeout` – connection timeout in seconds
 - `--receive-timeout` – receive timeout in seconds
 - `--auth-timeout` – WebSocket auth timeout in seconds
 - `--fast-timeouts` / `--relaxed-timeouts` – timeout presets
-- `--list-instances` – list stored credential instances
-- `--save-credentials` – save JWT token after login
 - `--subscribe <SQL>` – subscribe (non-interactive) to a live query
 - `--subscription-timeout` – subscription idle timeout in seconds (0 = no timeout)
 - `--initial-data-timeout` – max seconds to wait for initial data batch
@@ -111,19 +119,34 @@ In interactive mode, meta-commands start with `\`:
 |----------------------------------|-------------------------------------------|
 | `\help`, `\?`                   | Show help                                 |
 | `\quit`, `\q`                   | Exit                                      |
-| `\info`                         | Show session info                         |
-| `\config`                       | Show CLI configuration                    |
+| `\info`, `\session`             | Show session info                         |
 | `\dt`, `\tables`               | List tables (`system.tables`)             |
-| `\d <table>`                   | Describe table                            |
+| `\d <table>`, `\describe <table>` | Describe table                         |
 | `\stats`, `\metrics`          | Show `system.stats`                       |
 | `\health`                       | Server healthcheck                        |
+| `\pause` / `\continue`          | Pause/resume ingestion                    |
 | `\format table|json|csv`        | Change output format                      |
-| `\subscribe <SELECT ...>`       | Start WebSocket live subscription         |
-| `\unsubscribe`                  | No-op (prints “No active subscription to cancel”) |
+| `\subscribe <SQL>`, `\watch <SQL>` | Start WebSocket live subscription     |
+| `\unsubscribe`, `\unwatch`      | No-op (prints “No active subscription to cancel”) |
+| `\cluster ...`                  | Cluster commands (see below)              |
 | `\refresh-tables`, `\refresh` | Refresh autocomplete metadata             |
-| `\show-credentials`            | Show stored credentials                   |
+| `\show-credentials`, `\credentials` | Show stored credentials               |
 | `\update-credentials <u> <p>`  | Update stored credentials                 |
 | `\delete-credentials`          | Delete stored credentials                 |
+
+**Cluster meta-commands**:
+
+- `\cluster snapshot`
+- `\cluster purge --upto <index>` (or `\cluster purge <index>`)
+- `\cluster trigger-election`
+- `\cluster transfer-leader <node_id>`
+- `\cluster stepdown`
+- `\cluster clear`
+- `\cluster list` (alias: `\cluster ls`)
+- `\cluster list groups`
+- `\cluster status`
+- `\cluster join <node_addr>` (not yet implemented)
+- `\cluster leave` (not yet implemented)
 
 ### Output formats
 

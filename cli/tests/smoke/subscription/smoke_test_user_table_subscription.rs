@@ -152,7 +152,7 @@ fn smoke_user_table_subscription_lifecycle() {
     );
 
     // 6) Flush the user table and verify job completes successfully
-    let flush_sql = format!("FLUSH TABLE {}", full);
+    let flush_sql = format!("STORAGE FLUSH TABLE {}", full);
     let flush_output =
         execute_sql_as_root_via_client_json(&flush_sql).expect("flush should succeed for user table");
 

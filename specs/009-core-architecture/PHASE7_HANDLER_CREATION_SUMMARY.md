@@ -50,7 +50,7 @@ Successfully created 7 new SQL statement handlers following the established hand
 **File**: `backend/crates/kalamdb-core/src/sql/executor/handlers/flush.rs` (134 lines)
 
 **Methods**:
-- `execute_flush()` - Placeholder for FLUSH TABLE operations
+- `execute_flush()` - Placeholder for STORAGE FLUSH TABLE operations
 
 **Authorization**: Requires Dba or System role
 
@@ -252,7 +252,7 @@ SqlStatement::Insert => {
 - DDL: CREATE/ALTER/DROP TABLE/NAMESPACE/STORAGE ✅ (already routed to DDLHandler)
 - DML: INSERT, UPDATE, DELETE (route to DMLHandler)
 - Query: SELECT, DESCRIBE, SHOW (route to QueryHandler)
-- Flush: FLUSH TABLE, FLUSH ALL TABLES (route to FlushHandler)
+- Flush: STORAGE FLUSH TABLE, STORAGE FLUSH ALL (route to FlushHandler)
 - Subscription: LIVE SELECT (route to SubscriptionHandler)
 - User: CREATE/ALTER/DROP USER (route to UserManagementHandler)
 - Registry: REGISTER/UNREGISTER TABLE (route to TableRegistryHandler)

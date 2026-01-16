@@ -80,8 +80,8 @@ fn test_hot_cold_storage_data_integrity() {
     assert!(result.contains("150"), "Alice's value should be updated to 150 in hot storage");
 
     // === Phase 5: FLUSH to cold storage ===
-    let flush_output = execute_sql(&format!("FLUSH TABLE {}", full_table_name))
-        .expect("FLUSH TABLE failed");
+    let flush_output = execute_sql(&format!("STORAGE FLUSH TABLE {}", full_table_name))
+        .expect("STORAGE FLUSH TABLE failed");
     if let Ok(job_id) = parse_job_id_from_flush_output(&flush_output) {
         verify_job_completed(&job_id, std::time::Duration::from_secs(10))
             .expect("flush job should complete");
@@ -220,8 +220,8 @@ fn test_duplicate_primary_key_insert_fails() {
     assert!(result.contains("Alice"), "Original data should remain 'Alice', not changed to 'Bob'");
 
     // === Test 4: FLUSH to cold storage ===
-    execute_sql(&format!("FLUSH TABLE {}", full_table_name))
-        .expect("FLUSH TABLE failed");
+    execute_sql(&format!("STORAGE FLUSH TABLE {}", full_table_name))
+        .expect("STORAGE FLUSH TABLE failed");
 
     std::thread::sleep(std::time::Duration::from_millis(500));
 
@@ -327,8 +327,8 @@ fn test_update_operations_hot_and_cold() {
     assert!(result.contains("35"), "Third row count should be 35");
 
     // === Test 2: FLUSH to cold storage ===
-    execute_sql(&format!("FLUSH TABLE {}", full_table_name))
-        .expect("FLUSH TABLE failed");
+    execute_sql(&format!("STORAGE FLUSH TABLE {}", full_table_name))
+        .expect("STORAGE FLUSH TABLE failed");
 
     std::thread::sleep(std::time::Duration::from_millis(500));
 

@@ -12,7 +12,7 @@ use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::constants::{AuthConstants, SystemColumnNames};
 use kalamdb_commons::ids::SeqId;
-use kalamdb_commons::models::row::Row;
+use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::Role;
 use once_cell::sync::OnceCell;
@@ -386,8 +386,9 @@ mod tests {
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_commons::UserId;
     use kalamdb_store::test_utils::InMemoryBackend;
+    use kalamdb_tables::UserTableRow;
     use kalamdb_tables::user_tables::user_table_store::{
-        new_indexed_user_table_store, UserTableRow,
+        new_indexed_user_table_store
     };
     use std::sync::Arc;
     use tokio::sync::Mutex;
@@ -442,7 +443,7 @@ mod tests {
         // Initialize global AppContext for the test (idempotent)
         let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
         let node_id = kalamdb_commons::NodeId::new(1);
-        let config = kalamdb_commons::ServerConfig::default();
+        let config = kalamdb_configs::ServerConfig::default();
 
         // We use init() which uses get_or_init() internally, so it's safe to call multiple times
         // (subsequent calls return the existing instance)
@@ -580,7 +581,7 @@ mod tests {
         // Initialize global AppContext for the test (idempotent)
         let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
         let node_id = kalamdb_commons::NodeId::new(2);
-        let config = kalamdb_commons::ServerConfig::default();
+        let config = kalamdb_configs::ServerConfig::default();
 
         let app_context = crate::app_context::AppContext::init(
             backend.clone(),
@@ -756,7 +757,7 @@ mod tests {
         // Initialize global AppContext for the test (idempotent)
         let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
         let node_id = kalamdb_commons::NodeId::new(3);
-        let config = kalamdb_commons::ServerConfig::default();
+        let config = kalamdb_configs::ServerConfig::default();
 
         let app_context = crate::app_context::AppContext::init(
             backend.clone(),

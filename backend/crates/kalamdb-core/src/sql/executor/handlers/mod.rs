@@ -20,6 +20,7 @@ use kalamdb_sql::statement_classifier::SqlStatement;
 
 // Typed handlers organized by category
 pub mod dml;
+pub mod compact;
 pub mod flush;
 pub mod jobs;
 pub mod namespace;
@@ -56,7 +57,7 @@ pub use typed::TypedStatementHandler;
 /// use kalamdb_core::sql::executor::handlers::{StatementHandler, ExecutionContext, ExecutionResult};
 /// use async_trait::async_trait;
 ///
-/// pub struct MyHandler;
+/// struct MyHandler;
 ///
 /// #[async_trait]
 /// impl StatementHandler for MyHandler {

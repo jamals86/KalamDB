@@ -1,7 +1,9 @@
 use super::initial_data::InitialDataResult;
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::models::{LiveQueryId, Row};
+use kalamdb_commons::models::rows::Row;
+use kalamdb_commons::models::LiveQueryId;
 use kalamdb_commons::schemas::SchemaField;
+pub use kalamdb_commons::websocket::ChangeType;
 use std::collections::BTreeMap;
 
 /// Change notification for live query subscribers
@@ -115,15 +117,6 @@ pub struct SubscriptionResult {
     /// Schema describing the columns in the subscription result
     /// Contains column name, data type, and index for each field
     pub schema: Vec<SchemaField>,
-}
-
-/// Type of change that occurred
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChangeType {
-    Insert,
-    Update,
-    Delete,
-    Flush, // Parquet flush completion
 }
 
 /// Registry statistics

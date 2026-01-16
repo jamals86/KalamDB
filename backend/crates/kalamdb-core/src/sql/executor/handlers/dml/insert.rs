@@ -22,7 +22,8 @@ use crate::sql::executor::parameter_validation::{validate_parameters, ParameterL
 use async_trait::async_trait;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::datatypes::KalamDataType;
-use kalamdb_commons::models::{NamespaceId, Row, TableName};
+use kalamdb_commons::models::rows::Row;
+use kalamdb_commons::models::{NamespaceId, TableName};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::TableId;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};

@@ -96,8 +96,11 @@ impl ManifestTableProvider {
             let cache_key = String::from_utf8_lossy(&key_bytes);
 
             // Parse cache key (format: namespace:table:scope)
-            let parts: Vec<&str> = cache_key.split(':').collect();
-            if parts.len() != 3 {
+            let mut parts = cache_key.splitn(3, ':');
+            let namespace = parts.next();
+            let table = parts.next();
+            let scope = parts.next();
+            if namespace.is_none() || table.is_none() || scope.is_none() {
                 log::warn!("Invalid cache key format: {}", cache_key);
                 continue;
             }
@@ -109,9 +112,9 @@ impl ManifestTableProvider {
             let manifest_json_str = entry.manifest_json();
 
             cache_keys.push(Some(cache_key_str));
-            namespace_ids.push(Some(parts[0].to_string()));
-            table_names.push(Some(parts[1].to_string()));
-            scopes.push(Some(parts[2].to_string()));
+            namespace_ids.push(Some(namespace.unwrap().to_string()));
+            table_names.push(Some(table.unwrap().to_string()));
+            scopes.push(Some(scope.unwrap().to_string()));
             etags.push(entry.etag);
             last_refreshed_vals.push(Some(entry.last_refreshed * 1000)); // Convert to milliseconds
             // last_accessed = last_refreshed (moka manages TTI internally, we can't get actual access time)

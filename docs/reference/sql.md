@@ -17,7 +17,8 @@ KalamDB is a **SQL-first database** built for real-time chat and AI message hist
 - ✅ Multi-storage backends (local filesystem, S3, Azure Blob, GCS)
 - ✅ Role-based access control (user, service, dba, system)
 - ✅ Schema evolution with backward compatibility
-- ✅ Automatic ID generation (SNOWFLAKE_ID, UUID_V7, ULID)
+- ✅ Admin web UI and CLI tools
+- ✅ Built-in clustering/auto-sharding with Raft consensus for high availability
 
 ---
 
@@ -38,7 +39,8 @@ KalamDB is a **SQL-first database** built for real-time chat and AI message hist
 
 ### III. Administration
 10. [Catalog Browsing](#catalog-browsing) - SHOW, DESCRIBE commands
-11. [Custom Functions](#kalamdb-custom-functions) - SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER
+11. [Cluster Operations](#cluster-operations) - CLUSTER commands and system views
+12. [Custom Functions](#kalamdb-custom-functions) - SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER
 
 ---
 
@@ -680,10 +682,10 @@ SELECT * FROM app.messages WHERE _deleted = true;
 
 Manual flushing allows you to explicitly trigger the flush of data from RocksDB (hot tier) to Parquet files (cold tier) without waiting for automatic flush policies.
 
-### FLUSH TABLE
+### STORAGE FLUSH TABLE
 
 ```sql
-FLUSH TABLE <namespace>.<table_name>;
+STORAGE FLUSH TABLE <namespace>.<table_name>;
 ```
 
 **Behavior**:
@@ -696,17 +698,17 @@ FLUSH TABLE <namespace>.<table_name>;
 **Examples**:
 ```sql
 -- Flush a user table
-FLUSH TABLE app.messages;
+STORAGE FLUSH TABLE app.messages;
 
 -- Flush a shared table
-FLUSH TABLE app.config;
+STORAGE FLUSH TABLE app.config;
 ```
 
 **Response**:
 ```json
 {
   "status": "success",
-  "message": "Flush started for table 'app.messages'. Job ID: flush-messages-1761332099970-f14aa44d"
+  "message": "Storage flush started for table 'app.messages'. Job ID: flush-messages-1761332099970-f14aa44d"
 }
 ```
 
@@ -725,10 +727,10 @@ ORDER BY created_at DESC;
 
 ---
 
-### FLUSH ALL TABLES
+### STORAGE FLUSH ALL
 
 ```sql
-FLUSH ALL TABLES [IN [NAMESPACE] <namespace>];
+STORAGE FLUSH ALL [IN [NAMESPACE] <namespace>];
 ```
 
 **Behavior**:
@@ -739,47 +741,47 @@ FLUSH ALL TABLES [IN [NAMESPACE] <namespace>];
 
 **Examples**:
 ```sql
--- Flush all tables in app namespace
-FLUSH ALL TABLES IN app;
-FLUSH ALL TABLES IN NAMESPACE app;
+-- Storage flush all tables in app namespace
+STORAGE FLUSH ALL IN app;
+STORAGE FLUSH ALL IN NAMESPACE app;
 
 -- Use current session namespace
-FLUSH ALL TABLES;
+STORAGE FLUSH ALL;
 ```
 
 **Response**:
 ```json
 {
   "status": "success",
-  "message": "Flush started for 3 table(s) in namespace 'app'. Job IDs: [flush-messages-..., flush-config-..., flush-logs-...]"
+  "message": "Storage flush started for 3 table(s) in namespace 'app'. Job IDs: [flush-messages-..., flush-config-..., flush-logs-...]"
 }
 ```
 
 ---
 
-### FLUSH Restrictions
+### STORAGE FLUSH Restrictions
 
 **Stream Tables**:
 ```sql
-FLUSH TABLE app.live_events;
+STORAGE FLUSH TABLE app.live_events;
 -- ERROR: Cannot flush stream table 'app.live_events'. Only user and shared tables support flushing.
 ```
 
 **Concurrent Flush Detection**:
 ```sql
 -- First flush
-FLUSH TABLE app.messages;
+STORAGE FLUSH TABLE app.messages;
 -- Returns: job_id_1
 
 -- Immediate second flush (before first completes)
-FLUSH TABLE app.messages;
+STORAGE FLUSH TABLE app.messages;
 -- ERROR: Flush job already running for table 'app.messages'
 -- Or returns different job_id if first flush completed
 ```
 
 **Non-Existent Table**:
 ```sql
-FLUSH TABLE app.nonexistent;
+STORAGE FLUSH TABLE app.nonexistent;
 -- ERROR: Table 'app.nonexistent' does not exist
 ```
 
@@ -1243,6 +1245,162 @@ SHOW STATS FOR TABLE app.messages;
 - Total rows
 - Storage bytes
 - Last flushed timestamp
+
+---
+
+## Cluster Operations
+
+Cluster commands control Raft groups, snapshots, and leadership. Most commands require **DBA** or **System** role.
+
+**Availability**:
+- Requires **cluster mode** (Raft executor).
+- `CLUSTER LIST` / `CLUSTER STATUS` are read‑only (allowed for all users).
+
+### CLUSTER SNAPSHOT
+
+Force all Raft groups to produce snapshots.
+
+```sql
+CLUSTER SNAPSHOT;
+```
+
+**Notes**:
+- Requires DBA/System role.
+- Returns a summary of groups that successfully created snapshots.
+
+---
+
+### CLUSTER PURGE
+
+Purge Raft logs up to a log index (inclusive) across all groups.
+
+```sql
+CLUSTER PURGE --UPTO <index>;
+CLUSTER PURGE <index>;
+```
+
+**Examples**:
+```sql
+CLUSTER PURGE --UPTO 123456;
+CLUSTER PURGE 123456;
+```
+
+**Notes**:
+- Requires DBA/System role.
+- Use with care; only purge indices that are safely snapshotted.
+
+---
+
+### CLUSTER TRIGGER ELECTION
+
+Trigger a leader election on all Raft groups.
+
+```sql
+CLUSTER TRIGGER ELECTION;
+CLUSTER TRIGGER-ELECTION;
+```
+
+**Notes**:
+- Requires DBA/System role.
+
+---
+
+### CLUSTER TRANSFER-LEADER
+
+Request leadership transfer for all groups to a target node.
+
+```sql
+CLUSTER TRANSFER LEADER <node_id>;
+CLUSTER TRANSFER-LEADER <node_id>;
+```
+
+**Examples**:
+```sql
+CLUSTER TRANSFER-LEADER 2;
+```
+
+**Notes**:
+- Requires DBA/System role.
+
+---
+
+### CLUSTER STEPDOWN
+
+Ask current leaders to step down across all groups.
+
+```sql
+CLUSTER STEPDOWN;
+CLUSTER STEP-DOWN;
+```
+
+**Notes**:
+- Requires DBA/System role.
+
+---
+
+### CLUSTER CLEAR
+
+Clear old snapshot files based on the server’s `max_snapshots_to_keep` setting.
+
+```sql
+CLUSTER CLEAR;
+```
+
+**Notes**:
+- Requires DBA/System role.
+
+---
+
+### CLUSTER LIST / CLUSTER STATUS
+
+Show cluster overview and node/group status.
+
+```sql
+CLUSTER LIST;
+CLUSTER STATUS;
+```
+
+**Notes**:
+- Read‑only (no admin role required).
+- Returns a formatted text overview.
+
+---
+
+### CLUSTER JOIN / CLUSTER LEAVE
+
+Join or leave a cluster.
+
+```sql
+CLUSTER JOIN <node_address>;
+CLUSTER LEAVE;
+```
+
+**Notes**:
+- Requires DBA/System role.
+- **Not yet implemented** — returns a warning.
+- Configure cluster membership in `server.toml` and restart nodes.
+
+---
+
+### Cluster System Views
+
+For structured results, query the system views instead of `CLUSTER LIST`:
+
+```sql
+-- Cluster nodes and health
+SELECT cluster_id, node_id, role, status, is_leader, api_addr, rpc_addr
+FROM system.cluster
+ORDER BY is_leader DESC, node_id ASC;
+
+-- Per‑group Raft metrics
+SELECT group_id, group_type, current_term, state, current_leader, last_log_index, last_applied
+FROM system.cluster_groups
+ORDER BY group_id ASC;
+```
+
+**Notes**:
+- `system.cluster` and `system.cluster_groups` are read‑only virtual views.
+- Available only in cluster mode.
 
 ---
 
@@ -2093,8 +2251,7 @@ UPDATE app.messages SET content = 'Updated' WHERE id = 1;
 -- 9. Schema evolution
 ALTER TABLE app.messages ADD COLUMN reaction TEXT;
 
--- 10. Manual flush
-FLUSH TABLE app.messages;
+STORAGE FLUSH TABLE app.messages;
 
 -- Check flush job status
 SELECT job_id, status, result 

@@ -13,7 +13,7 @@ use datafusion::scalar::ScalarValue;
 use datafusion::sql::sqlparser::ast::{BinaryOperator, Expr, Statement, Value};
 use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
 use datafusion::sql::sqlparser::parser::Parser;
-use kalamdb_commons::models::Row;
+use kalamdb_commons::models::rows::Row;
 
 /// Parse a WHERE clause string into an Expr AST
 ///

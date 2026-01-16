@@ -368,7 +368,7 @@ pub fn wait_for_flush_completion(job_id: &str, timeout: Duration) -> anyhow::Res
     }
 }
 
-/// Parse job ID from FLUSH TABLE output
+/// Parse job ID from STORAGE FLUSH TABLE output
 pub fn parse_job_id_from_flush(output: &str) -> anyhow::Result<String> {
     if let Some(idx) = output.find("Job ID: ") {
         let after = &output[idx + "Job ID: ".len()..];

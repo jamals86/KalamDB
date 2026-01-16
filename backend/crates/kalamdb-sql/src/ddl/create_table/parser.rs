@@ -135,30 +135,33 @@ impl CreateTableStatement {
                             }
                             "FLUSH_POLICY" => {
                                 // Format: "rows:1000" or "interval:60" or "rows:1000,interval:60"
-                                let parts: Vec<&str> = value_str.split(',').collect();
                                 let mut rows = 0;
                                 let mut interval = 0;
 
-                                for part in parts {
-                                    let kv: Vec<&str> = part.split(':').collect();
-                                    if kv.len() != 2 {
+                                for part in value_str.split(',') {
+                                    let mut kv = part.splitn(2, ':');
+                                    let key = kv.next();
+                                    let value = kv.next();
+                                    if key.is_none() || value.is_none() {
                                         return Err(format!("Invalid FLUSH_POLICY format '{}'. Expected 'key:value'", part));
                                     }
-                                    match kv[0].to_uppercase().as_str() {
+                                    match key.unwrap().to_uppercase().as_str() {
                                         "ROWS" => {
-                                            rows = kv[1]
+                                            rows = value
+                                                .unwrap()
                                                 .parse()
                                                 .map_err(|_| "Invalid row limit in FLUSH_POLICY")?;
                                         }
                                         "INTERVAL" => {
-                                            interval = kv[1]
+                                            interval = value
+                                                .unwrap()
                                                 .parse()
                                                 .map_err(|_| "Invalid interval in FLUSH_POLICY")?;
                                         }
                                         _ => {
                                             return Err(format!(
                                                 "Unknown FLUSH_POLICY key '{}'",
-                                                kv[0]
+                                                key.unwrap()
                                             ))
                                         }
                                     }

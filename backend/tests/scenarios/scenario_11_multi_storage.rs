@@ -105,12 +105,12 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
             // Step 5: Flush both tables
             // =========================================================
             let resp = server
-                .execute_sql(&format!("FLUSH TABLE {}.hot_data", ns))
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.hot_data", ns))
                 .await?;
             assert_success(&resp, "FLUSH hot_data");
 
             let resp = server
-                .execute_sql(&format!("FLUSH TABLE {}.cold_data", ns))
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.cold_data", ns))
                 .await?;
             assert_success(&resp, "FLUSH cold_data");
 
@@ -205,7 +205,7 @@ async fn test_scenario_11_storage_constraints() -> anyhow::Result<()> {
 
             // Flush and verify
             let resp = server
-                .execute_sql(&format!("FLUSH TABLE {}.constrained", ns))
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.constrained", ns))
                 .await?;
             assert_success(&resp, "FLUSH constrained");
 
@@ -345,9 +345,15 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
             }
 
             // Flush all tables
-            let _ = server.execute_sql(&format!("FLUSH TABLE {}.user_table", ns)).await;
-            let _ = server.execute_sql(&format!("FLUSH TABLE {}.shared_table", ns)).await;
-            let _ = server.execute_sql(&format!("FLUSH TABLE {}.stream_table", ns)).await;
+            let _ = server
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.user_table", ns))
+                .await;
+            let _ = server
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.shared_table", ns))
+                .await;
+            let _ = server
+                .execute_sql(&format!("STORAGE FLUSH TABLE {}.stream_table", ns))
+                .await;
 
             tokio::time::sleep(Duration::from_secs(3)).await;
 

@@ -17,12 +17,13 @@ use super::view_base::VirtualView;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use kalamdb_commons::config::ServerConfig;
+use kalamdb_configs::ServerConfig;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::schemas::{
     ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
 };
-use kalamdb_commons::{NamespaceId, SystemTable, TableName};
+use kalamdb_commons::{NamespaceId, TableName};
+use kalamdb_system::SystemTable;
 use std::sync::{Arc, OnceLock, RwLock};
 
 /// Get the settings schema (memoized)

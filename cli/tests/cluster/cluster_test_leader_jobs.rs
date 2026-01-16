@@ -62,7 +62,7 @@ fn cluster_test_leader_only_flush_jobs() {
     // Step 3: Trigger flush from a follower node (should still execute on leader)
     let follower_url = urls.iter().find(|u| *u != &leader_url).expect("Need at least 2 nodes");
     
-    let flush_sql = format!("FLUSH TABLE {}.{}", namespace, table_name);
+    let flush_sql = format!("STORAGE FLUSH TABLE {}.{}", namespace, table_name);
     println!("  → Triggering FLUSH from follower: {}", follower_url);
     
     let result = execute_on_node(follower_url, &flush_sql);

@@ -2,13 +2,11 @@
 //!
 //! **Phase 9 (T151)**: JobExecutor implementation for table compaction
 //!
-//! Handles compaction of Parquet files for better query performance.
+//! Handles RocksDB column-family compaction to remove tombstones and reclaim space.
 //!
 //! ## Responsibilities (TODO)
-//! - Merge small Parquet files into larger segments
-//! - Remove duplicate records after updates
-//! - Optimize file layout for query patterns
-//! - Track compaction metrics (files merged, compression ratio)
+//! - Trigger RocksDB compaction for the table's column family
+//! - Remove tombstones from deleted/updated rows
 //!
 //! ## Parameters Format
 //! ```json
@@ -23,8 +21,10 @@
 use crate::error::KalamDbError;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use async_trait::async_trait;
+use kalamdb_commons::constants::ColumnFamilyNames;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::{JobType, TableId};
+use kalamdb_store::storage_trait::{Partition, StorageBackendAsync};
 use serde::{Deserialize, Serialize};
 
 /// Typed parameters for compaction operations
@@ -54,9 +54,7 @@ impl JobParams for CompactParams {
     }
 }
 
-/// Compact Job Executor (Placeholder)
-///
-/// TODO: Implement table compaction logic
+/// Compact Job Executor
 pub struct CompactExecutor;
 
 impl CompactExecutor {
@@ -78,18 +76,50 @@ impl JobExecutor for CompactExecutor {
     }
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
-        ctx.log_warn("CompactExecutor not yet implemented");
+        let params = ctx.params();
+        let table_id = params.table_id.clone();
+        let table_type = params.table_type;
 
-        // TODO: Implement compaction logic
-        // - Identify small Parquet files in table storage
-        // - Merge files into larger segments
-        // - Update table metadata with new file references
-        // - Remove old files after successful merge
+        let partition_name = match table_type {
+            TableType::User => format!("{}{}", ColumnFamilyNames::USER_TABLE_PREFIX, table_id),
+            TableType::Shared => {
+                format!("{}{}", ColumnFamilyNames::SHARED_TABLE_PREFIX, table_id)
+            }
+            TableType::Stream => {
+                return Ok(JobDecision::Failed {
+                    message: "STORAGE COMPACT TABLE is not supported for STREAM tables"
+                        .to_string(),
+                    exception_trace: None,
+                })
+            }
+            TableType::System => {
+                return Ok(JobDecision::Failed {
+                    message: "STORAGE COMPACT TABLE is not supported for SYSTEM tables"
+                        .to_string(),
+                    exception_trace: None,
+                })
+            }
+        };
 
-        Ok(JobDecision::Failed {
-            message: "CompactExecutor not yet implemented".to_string(),
-            exception_trace: Some("CompactExecutor not yet implemented".to_string()),
-        })
+        let partition = Partition::new(partition_name);
+        ctx.log_debug(&format!(
+            "Running RocksDB compaction for partition {}",
+            partition.name()
+        ));
+
+        let backend = ctx.app_ctx.storage_backend();
+        match backend.compact_partition_async(&partition).await {
+            Ok(()) => Ok(JobDecision::Completed {
+                message: Some(format!("Compaction completed for {}", table_id)),
+            }),
+            Err(e) => {
+                ctx.log_error(&format!("Compaction failed: {}", e));
+                Ok(JobDecision::Failed {
+                    message: format!("Compaction failed for {}: {}", table_id, e),
+                    exception_trace: Some(e.to_string()),
+                })
+            }
+        }
     }
 }
 
