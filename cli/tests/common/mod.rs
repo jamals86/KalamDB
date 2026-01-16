@@ -2,6 +2,7 @@
 use rand::{distr::Alphanumeric, Rng};
 use reqwest::Client;
 use serde_json::json;
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
 use std::process::Command;
 use std::process::{Child, Stdio};
@@ -1586,6 +1587,7 @@ pub struct SubscriptionListener {
     event_receiver: std_mpsc::Receiver<String>,
     stop_sender: Option<tokio::sync::oneshot::Sender<()>>,
     _handle: Option<std::thread::JoinHandle<()>>,
+    pending_events: VecDeque<String>,
 }
 
 impl Drop for SubscriptionListener {
@@ -1693,11 +1695,15 @@ impl SubscriptionListener {
             event_receiver: event_rx,
             stop_sender: Some(stop_tx),
             _handle: Some(handle),
+            pending_events: VecDeque::new(),
         })
     }
 
     /// Read next line from subscription output
     pub fn read_line(&mut self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        if let Some(line) = self.pending_events.pop_front() {
+            return Ok(Some(line));
+        }
         match self.event_receiver.recv() {
             Ok(line) => {
                 if line.is_empty() {
@@ -1715,6 +1721,9 @@ impl SubscriptionListener {
         &mut self,
         timeout: Duration,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        if let Some(line) = self.pending_events.pop_front() {
+            return Ok(Some(line));
+        }
         match self.event_receiver.recv_timeout(timeout) {
             Ok(line) => {
                 if line.is_empty() {
@@ -1738,15 +1747,33 @@ impl SubscriptionListener {
     ) -> Result<String, Box<dyn std::error::Error>> {
         let start = std::time::Instant::now();
 
+        if let Some(index) = self
+            .pending_events
+            .iter()
+            .position(|line| line.contains(pattern))
+        {
+            let line = self.pending_events.remove(index).unwrap_or_default();
+            if !line.is_empty() {
+                return Ok(line);
+            }
+        }
+
         while start.elapsed() < timeout {
-            match self.try_read_line(Duration::from_millis(100)) {
-                Ok(Some(line)) => {
+            match self
+                .event_receiver
+                .recv_timeout(Duration::from_millis(100))
+            {
+                Ok(line) => {
+                    if line.is_empty() {
+                        break; // EOF
+                    }
                     if line.contains(pattern) {
                         return Ok(line);
                     }
+                    self.pending_events.push_back(line);
                 }
-                Ok(None) => break,  // EOF
-                Err(_) => continue, // Timeout on this read, try again
+                Err(std_mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std_mpsc::RecvTimeoutError::Disconnected) => break,
             }
         }
 

@@ -334,6 +334,14 @@ pub fn default_rocksdb_sync_writes() -> bool {
     false
 }
 
+pub fn default_rocksdb_max_open_files() -> i32 {
+    512 // Reasonable default that stays under typical OS limits
+}
+
+pub fn default_rocksdb_compact_on_startup() -> bool {
+    true // Compact all column families on startup to reduce file count
+}
+
 // Security defaults
 pub fn default_max_ws_message_size() -> usize {
     1024 * 1024 // 1MB
