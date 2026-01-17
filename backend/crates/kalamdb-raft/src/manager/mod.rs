@@ -12,9 +12,11 @@
 //! - [`SnapshotsSummary`]: Summary of all snapshots
 
 mod config;
-mod raft_manager;
 mod raft_group;
+mod raft_manager;
 
-pub use config::{RaftManagerConfig, PeerNode, DEFAULT_USER_DATA_SHARDS, DEFAULT_SHARED_DATA_SHARDS};
-pub use raft_manager::{RaftManager, SnapshotInfo, SnapshotsSummary};
+pub use config::{
+    PeerNode, RaftManagerConfig, DEFAULT_SHARED_DATA_SHARDS, DEFAULT_USER_DATA_SHARDS,
+};
 pub use raft_group::RaftGroup;
+pub use raft_manager::{RaftManager, SnapshotInfo, SnapshotsSummary};

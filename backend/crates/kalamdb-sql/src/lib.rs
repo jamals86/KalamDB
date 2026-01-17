@@ -38,6 +38,7 @@ pub mod ddl_parent;
 pub mod parser;
 pub mod query_cache;
 pub mod statement_classifier;
+pub mod validation;
 
 // Re-export system models from kalamdb-commons (single source of truth)
 pub use kalamdb_commons::system::{
@@ -60,3 +61,7 @@ pub use ddl::{
 pub use ddl_parent::DdlAst;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
+pub use validation::{
+    validate_column_name, validate_namespace_name, validate_table_name, ValidationError,
+    RESERVED_COLUMN_NAMES, RESERVED_NAMESPACES,
+};

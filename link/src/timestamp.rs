@@ -4,7 +4,7 @@
 //! to various human-readable formats. This module is exposed via WASM bindings
 //! for use in all language SDKs (TypeScript, Python, etc.).
 
-use chrono::{DateTime, Utc, TimeZone, Datelike};
+use chrono::{DateTime, Datelike, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -50,7 +50,6 @@ pub enum TimestampFormat {
     #[serde(rename = "rfc3339")]
     Rfc3339,
 }
-
 
 impl fmt::Display for TimestampFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

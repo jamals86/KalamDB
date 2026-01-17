@@ -7,11 +7,10 @@
 //! These tests verify basic authentication behavior and are placeholders for
 //! future last_seen implementation at the HTTP/WebSocket handler level.
 
-
-use base64::{engine::general_purpose, Engine as _};
 use super::test_support::TestServer;
+use base64::{engine::general_purpose, Engine as _};
 use kalamdb_auth::{authenticate, AuthRequest};
-use kalamdb_commons::{Role, models::ConnectionInfo};
+use kalamdb_commons::{models::ConnectionInfo, Role};
 
 fn basic_auth_header(username: &str, password: &str) -> String {
     let credentials = format!("{}:{}", username, password);
@@ -36,7 +35,7 @@ async fn test_authentication_returns_user() {
 
     let result = authenticate(auth_request, &connection_info, &user_repo).await;
     assert!(result.is_ok(), "Authentication should succeed");
-    
+
     let auth_result = result.unwrap();
     assert_eq!(auth_result.user.username, username);
     assert_eq!(auth_result.user.role, Role::User);
@@ -65,7 +64,7 @@ async fn test_multiple_authentications_succeed() {
     let auth_request = AuthRequest::Header(auth_header);
     let result2 = authenticate(auth_request, &connection_info, &user_repo).await;
     assert!(result2.is_ok(), "Second authentication should succeed");
-    
+
     // Both should return the same user
     let user1 = result1.unwrap();
     let user2 = result2.unwrap();

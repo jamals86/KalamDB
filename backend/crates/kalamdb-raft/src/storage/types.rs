@@ -16,8 +16,7 @@ use serde::{Deserialize, Serialize};
 /// - `R`: Response data (serialized responses)  
 /// - `NodeId`: Unique identifier for nodes (u64)
 /// - `Node`: Node metadata for cluster membership
-#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd)]
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct KalamTypeConfig;
 
 impl RaftTypeConfig for KalamTypeConfig {

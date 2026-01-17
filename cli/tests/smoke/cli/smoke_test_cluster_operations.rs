@@ -54,15 +54,9 @@ fn query_count_on_url(base_url: &str, sql: &str) -> i64 {
             client.execute_query(&sql, None, None).await
         })
         .map(|response| {
-            let result = response
-                .results
-                .get(0)
-                .expect("Missing query result for count");
-            let rows = result
-                .rows
-                .as_ref()
-                .and_then(|rows| rows.get(0))
-                .expect("Missing count row");
+            let result = response.results.get(0).expect("Missing query result for count");
+            let rows =
+                result.rows.as_ref().and_then(|rows| rows.get(0)).expect("Missing count row");
             let value = rows.get(0).expect("Missing count column");
             let unwrapped = extract_typed_value(value);
             match unwrapped {
@@ -77,7 +71,9 @@ fn query_count_on_url(base_url: &str, sql: &str) -> i64 {
 #[ntest::timeout(60_000)]
 #[test]
 fn smoke_test_cluster_system_table_counts_consistent() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     // Skip if not in cluster mode
     if !is_cluster_mode() {
@@ -104,7 +100,7 @@ fn smoke_test_cluster_system_table_counts_consistent() {
 
         let max_count = counts.iter().map(|(_, count)| *count).max().unwrap_or(0);
         let min_count = counts.iter().map(|(_, count)| *count).min().unwrap_or(0);
-        
+
         // Allow for slight differences due to eventual consistency
         let difference = max_count - min_count;
         if difference > 2 {
@@ -112,7 +108,10 @@ fn smoke_test_cluster_system_table_counts_consistent() {
             eprintln!("   This may indicate replication lag in the cluster");
             // Don't fail the test, just warn
         } else {
-            println!("  ✓ {} count consistent across nodes (max: {}, min: {})", label, max_count, min_count);
+            println!(
+                "  ✓ {} count consistent across nodes (max: {}, min: {})",
+                label, max_count, min_count
+            );
         }
     }
 
@@ -126,7 +125,9 @@ fn smoke_test_cluster_system_table_counts_consistent() {
 #[ntest::timeout(60_000)]
 #[test]
 fn smoke_test_cluster_namespace_consistency() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     // Skip if not in cluster mode
     if !is_cluster_mode() {
@@ -138,9 +139,7 @@ fn smoke_test_cluster_namespace_consistency() {
 
     // Create multiple namespaces in rapid succession
     let ns_prefix = generate_unique_namespace("cluster_ns");
-    let namespaces: Vec<String> = (0..5)
-        .map(|i| format!("{}_{}", ns_prefix, i))
-        .collect();
+    let namespaces: Vec<String> = (0..5).map(|i| format!("{}_{}", ns_prefix, i)).collect();
 
     // Create all namespaces
     println!("Creating {} namespaces...", namespaces.len());
@@ -156,8 +155,7 @@ fn smoke_test_cluster_namespace_consistency() {
         "SELECT namespace_id FROM system.namespaces WHERE namespace_id LIKE '{}%'",
         ns_prefix
     );
-    let result = execute_sql_as_root_via_client(&query)
-        .expect("Failed to query system.namespaces");
+    let result = execute_sql_as_root_via_client(&query).expect("Failed to query system.namespaces");
 
     // Count returned namespaces
     for ns in &namespaces {
@@ -186,14 +184,17 @@ fn smoke_test_cluster_namespace_consistency() {
 #[ntest::timeout(90_000)]
 #[test]
 fn smoke_test_cluster_table_type_consistency() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     println!("\n=== TEST: Table Type Command Consistency ===\n");
 
     let namespace = generate_unique_namespace("cluster_tables");
 
     // Cleanup if exists
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     // Create namespace
@@ -208,7 +209,8 @@ fn smoke_test_cluster_table_type_consistency() {
             content TEXT NOT NULL
         ) WITH (TYPE = 'USER')"#,
         namespace, user_table
-    )).expect("Failed to create user table");
+    ))
+    .expect("Failed to create user table");
     println!("  ✓ USER table created");
 
     // Create SHARED table
@@ -219,7 +221,8 @@ fn smoke_test_cluster_table_type_consistency() {
             config_value TEXT
         ) WITH (TYPE = 'SHARED')"#,
         namespace, shared_table
-    )).expect("Failed to create shared table");
+    ))
+    .expect("Failed to create shared table");
     println!("  ✓ SHARED table created");
 
     // Create STREAM table
@@ -230,7 +233,8 @@ fn smoke_test_cluster_table_type_consistency() {
             event_type TEXT
         ) WITH (TYPE = 'STREAM', TTL_SECONDS = 60)"#,
         namespace, stream_table
-    )).expect("Failed to create stream table");
+    ))
+    .expect("Failed to create stream table");
     println!("  ✓ STREAM table created");
 
     // Verify all tables in system.tables
@@ -238,8 +242,7 @@ fn smoke_test_cluster_table_type_consistency() {
         "SELECT table_name, table_type FROM system.tables WHERE namespace_id = '{}'",
         namespace
     );
-    let result = execute_sql_as_root_via_client(&query)
-        .expect("Failed to query system.tables");
+    let result = execute_sql_as_root_via_client(&query).expect("Failed to query system.tables");
 
     // Verify each table and its type
     assert!(result.contains(user_table), "User table should exist");
@@ -258,15 +261,15 @@ fn smoke_test_cluster_table_type_consistency() {
 #[ntest::timeout(60_000)]
 #[test]
 fn smoke_test_cluster_user_operations() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     println!("\n=== TEST: User Command Consistency ===\n");
 
     // Create users with unique names
     let user_prefix = format!("cluster_user_{}", rand::random::<u16>());
-    let users: Vec<String> = (0..3)
-        .map(|i| format!("{}_{}", user_prefix, i))
-        .collect();
+    let users: Vec<String> = (0..3).map(|i| format!("{}_{}", user_prefix, i)).collect();
 
     // Create all users
     for user in &users {
@@ -277,19 +280,11 @@ fn smoke_test_cluster_user_operations() {
     }
 
     // Verify all users exist in system.users
-    let query = format!(
-        "SELECT username FROM system.users WHERE username LIKE '{}%'",
-        user_prefix
-    );
-    let result = execute_sql_as_root_via_client(&query)
-        .expect("Failed to query system.users");
+    let query = format!("SELECT username FROM system.users WHERE username LIKE '{}%'", user_prefix);
+    let result = execute_sql_as_root_via_client(&query).expect("Failed to query system.users");
 
     for user in &users {
-        assert!(
-            result.contains(user),
-            "User {} should be in system.users",
-            user
-        );
+        assert!(result.contains(user), "User {} should be in system.users", user);
     }
     println!("\n  ✅ All {} users created and visible", users.len());
 
@@ -308,14 +303,17 @@ fn smoke_test_cluster_user_operations() {
 #[ntest::timeout(120_000)]
 #[test]
 fn smoke_test_cluster_user_data_partitioning() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     println!("\n=== TEST: User Data Partitioning ===\n");
 
     let namespace = generate_unique_namespace("cluster_partition");
 
     // Cleanup if exists
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     // Create namespace and user table
@@ -328,19 +326,24 @@ fn smoke_test_cluster_user_data_partitioning() {
             note TEXT NOT NULL
         ) WITH (TYPE = 'USER')"#,
         namespace
-    )).expect("Failed to create user table");
+    ))
+    .expect("Failed to create user table");
 
     // Create test users
     let user1 = format!("partition_user_a_{}", rand::random::<u16>());
     let user2 = format!("partition_user_b_{}", rand::random::<u16>());
 
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'", user1
-    )).expect("Failed to create user1");
+        "CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'",
+        user1
+    ))
+    .expect("Failed to create user1");
 
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'", user2
-    )).expect("Failed to create user2");
+        "CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'",
+        user2
+    ))
+    .expect("Failed to create user2");
 
     println!("  ✓ Created test users: {}, {}", user1, user2);
 
@@ -348,50 +351,42 @@ fn smoke_test_cluster_user_data_partitioning() {
     execute_sql_via_client_as(
         &user1,
         "testpass123",
-        &format!("INSERT INTO {}.user_notes (note) VALUES ('User1 private note')", namespace)
-    ).expect("Failed to insert as user1");
+        &format!("INSERT INTO {}.user_notes (note) VALUES ('User1 private note')", namespace),
+    )
+    .expect("Failed to insert as user1");
     println!("  ✓ User1 inserted data");
 
     // Insert data as user2
     execute_sql_via_client_as(
         &user2,
         "testpass123",
-        &format!("INSERT INTO {}.user_notes (note) VALUES ('User2 private note')", namespace)
-    ).expect("Failed to insert as user2");
+        &format!("INSERT INTO {}.user_notes (note) VALUES ('User2 private note')", namespace),
+    )
+    .expect("Failed to insert as user2");
     println!("  ✓ User2 inserted data");
 
     // User1 should only see their own data
     let user1_data = execute_sql_via_client_as(
         &user1,
         "testpass123",
-        &format!("SELECT * FROM {}.user_notes", namespace)
-    ).expect("Failed to query as user1");
+        &format!("SELECT * FROM {}.user_notes", namespace),
+    )
+    .expect("Failed to query as user1");
 
-    assert!(
-        user1_data.contains("User1 private note"),
-        "User1 should see their own note"
-    );
-    assert!(
-        !user1_data.contains("User2 private note"),
-        "User1 should NOT see user2's note"
-    );
+    assert!(user1_data.contains("User1 private note"), "User1 should see their own note");
+    assert!(!user1_data.contains("User2 private note"), "User1 should NOT see user2's note");
     println!("  ✓ User1 sees only their data");
 
     // User2 should only see their own data
     let user2_data = execute_sql_via_client_as(
         &user2,
         "testpass123",
-        &format!("SELECT * FROM {}.user_notes", namespace)
-    ).expect("Failed to query as user2");
+        &format!("SELECT * FROM {}.user_notes", namespace),
+    )
+    .expect("Failed to query as user2");
 
-    assert!(
-        user2_data.contains("User2 private note"),
-        "User2 should see their own note"
-    );
-    assert!(
-        !user2_data.contains("User1 private note"),
-        "User2 should NOT see user1's note"
-    );
+    assert!(user2_data.contains("User2 private note"), "User2 should see their own note");
+    assert!(!user2_data.contains("User1 private note"), "User2 should NOT see user1's note");
     println!("  ✓ User2 sees only their data");
 
     println!("\n  ✅ User data partitioning verified\n");
@@ -409,14 +404,17 @@ fn smoke_test_cluster_user_data_partitioning() {
 #[ntest::timeout(90_000)]
 #[test]
 fn smoke_test_cluster_shared_table_consistency() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     println!("\n=== TEST: Shared Table Consistency ===\n");
 
     let namespace = generate_unique_namespace("cluster_shared");
 
     // Cleanup if exists
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     // Create namespace and shared table
@@ -430,7 +428,8 @@ fn smoke_test_cluster_shared_table_consistency() {
             updated_by TEXT
         ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'PUBLIC')"#,
         namespace
-    )).expect("Failed to create shared table");
+    ))
+    .expect("Failed to create shared table");
     println!("  ✓ Shared table created");
 
     // Insert config as root
@@ -443,20 +442,20 @@ fn smoke_test_cluster_shared_table_consistency() {
     // Create a test user
     let user = format!("shared_reader_{}", rand::random::<u16>());
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'", user
-    )).expect("Failed to create test user");
+        "CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'",
+        user
+    ))
+    .expect("Failed to create test user");
 
     // User should be able to read shared data
     let user_data = execute_sql_via_client_as(
         &user,
         "testpass123",
-        &format!("SELECT * FROM {}.global_config WHERE config_key = 'app_version'", namespace)
-    ).expect("Failed to query as user");
+        &format!("SELECT * FROM {}.global_config WHERE config_key = 'app_version'", namespace),
+    )
+    .expect("Failed to query as user");
 
-    assert!(
-        user_data.contains("1.0.0"),
-        "User should see shared config value"
-    );
+    assert!(user_data.contains("1.0.0"), "User should see shared config value");
     println!("  ✓ User can read shared table data");
 
     println!("\n  ✅ Shared table consistency verified\n");
@@ -473,14 +472,17 @@ fn smoke_test_cluster_shared_table_consistency() {
 #[ntest::timeout(120_000)]
 #[test]
 fn smoke_test_cluster_concurrent_operations() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     println!("\n=== TEST: Concurrent Operations Consistency ===\n");
 
     let namespace = generate_unique_namespace("cluster_concurrent");
 
     // Cleanup if exists
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     // Create namespace and shared counter table
@@ -494,13 +496,15 @@ fn smoke_test_cluster_concurrent_operations() {
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) WITH (TYPE = 'SHARED')"#,
         namespace
-    )).expect("Failed to create counters table");
+    ))
+    .expect("Failed to create counters table");
 
     // Initialize counter
     execute_sql_as_root_via_client(&format!(
         "INSERT INTO {}.counters (counter_id, value) VALUES ('main', 0)",
         namespace
-    )).expect("Failed to insert initial counter");
+    ))
+    .expect("Failed to insert initial counter");
 
     println!("  ✓ Counter table created and initialized");
 
@@ -520,7 +524,8 @@ fn smoke_test_cluster_concurrent_operations() {
     let result = execute_sql_as_root_via_client(&format!(
         "SELECT value FROM {}.counters WHERE counter_id = 'main'",
         namespace
-    )).expect("Failed to query final counter value");
+    ))
+    .expect("Failed to query final counter value");
 
     assert!(
         result.contains(&num_updates.to_string()),
@@ -542,14 +547,17 @@ fn smoke_test_cluster_concurrent_operations() {
 #[ntest::timeout(120_000)]
 #[test]
 fn smoke_test_cluster_batch_insert_consistency() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     println!("\n=== TEST: Batch Insert Consistency ===\n");
 
     let namespace = generate_unique_namespace("cluster_batch");
 
     // Cleanup if exists
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     // Create namespace and table
@@ -563,7 +571,8 @@ fn smoke_test_cluster_batch_insert_consistency() {
             seq_num INT NOT NULL
         ) WITH (TYPE = 'SHARED')"#,
         namespace
-    )).expect("Failed to create batch_data table");
+    ))
+    .expect("Failed to create batch_data table");
 
     let batch_id = format!("batch_{}", rand::random::<u32>());
     let batch_size = 20;
@@ -575,14 +584,16 @@ fn smoke_test_cluster_batch_insert_consistency() {
         execute_sql_as_root_via_client(&format!(
             "INSERT INTO {}.batch_data (batch_id, seq_num) VALUES ('{}', {})",
             namespace, batch_id, i
-        )).unwrap_or_else(|e| panic!("Failed to insert row {}: {}", i, e));
+        ))
+        .unwrap_or_else(|e| panic!("Failed to insert row {}: {}", i, e));
     }
 
     // Verify count
     let result = execute_sql_as_root_via_client(&format!(
         "SELECT COUNT(*) as cnt FROM {}.batch_data WHERE batch_id = '{}'",
         namespace, batch_id
-    )).expect("Failed to count rows");
+    ))
+    .expect("Failed to count rows");
 
     assert!(
         result.contains(&batch_size.to_string()),
@@ -597,14 +608,11 @@ fn smoke_test_cluster_batch_insert_consistency() {
     let result = execute_sql_as_root_via_client(&format!(
         "SELECT seq_num FROM {}.batch_data WHERE batch_id = '{}' ORDER BY seq_num",
         namespace, batch_id
-    )).expect("Failed to query sequence");
+    ))
+    .expect("Failed to query sequence");
 
     for i in 0..batch_size {
-        assert!(
-            result.contains(&i.to_string()),
-            "Sequence {} should exist in results",
-            i
-        );
+        assert!(result.contains(&i.to_string()), "Sequence {} should exist in results", i);
     }
 
     println!("  ✓ All sequence numbers verified");
@@ -620,14 +628,17 @@ fn smoke_test_cluster_batch_insert_consistency() {
 #[ntest::timeout(180_000)]
 #[test]
 fn smoke_test_cluster_job_tracking() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     println!("\n=== TEST: Job Tracking Consistency ===\n");
 
     let namespace = generate_unique_namespace("cluster_jobs");
 
     // Cleanup if exists
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     // Create namespace and table
@@ -640,22 +651,22 @@ fn smoke_test_cluster_job_tracking() {
             data TEXT
         ) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'rows:10')"#,
         namespace
-    )).expect("Failed to create flush_test table");
+    ))
+    .expect("Failed to create flush_test table");
 
     // Insert some data
     for i in 0..15 {
         execute_sql_as_root_via_client(&format!(
             "INSERT INTO {}.flush_test (data) VALUES ('test data {}')",
             namespace, i
-        )).expect("Failed to insert data");
+        ))
+        .expect("Failed to insert data");
     }
     println!("  ✓ Inserted 15 rows (flush threshold is 10)");
 
     // Trigger manual flush
-    let flush_result = execute_sql_as_root_via_client(&format!(
-        "STORAGE FLUSH TABLE {}.flush_test",
-        namespace
-    ));
+    let flush_result =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}.flush_test", namespace));
 
     match flush_result {
         Ok(output) => println!("  ✓ Flush command executed: {}", output.trim()),
@@ -690,14 +701,17 @@ fn smoke_test_cluster_job_tracking() {
 #[ntest::timeout(60_000)]
 #[test]
 fn smoke_test_cluster_storage_operations() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     println!("\n=== TEST: Storage Operations Consistency ===\n");
 
     // Query existing storages
     let result = execute_sql_as_root_via_client(
-        "SELECT storage_id, storage_type, base_directory FROM system.storages"
-    ).expect("Failed to query system.storages");
+        "SELECT storage_id, storage_type, base_directory FROM system.storages",
+    )
+    .expect("Failed to query system.storages");
 
     println!("  Existing storages:\n{}", result);
 
@@ -712,7 +726,8 @@ fn smoke_test_cluster_storage_operations() {
     // Create namespace and table using specific storage
     let namespace = generate_unique_namespace("cluster_storage");
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -724,7 +739,8 @@ fn smoke_test_cluster_storage_operations() {
             data TEXT
         ) WITH (TYPE = 'SHARED', STORAGE_ID = 'local')"#,
         namespace
-    )).expect("Failed to create table with storage");
+    ))
+    .expect("Failed to create table with storage");
 
     println!("  ✓ Table created with explicit storage_id");
 
@@ -753,14 +769,17 @@ fn smoke_test_cluster_storage_operations() {
 #[ntest::timeout(90_000)]
 #[test]
 fn smoke_test_cluster_live_query_tracking() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     println!("\n=== TEST: Live Query Tracking ===\n");
 
     // Query current live queries
     let result = execute_sql_as_root_via_client(
-        "SELECT live_id, table_name, user_id FROM system.live_queries LIMIT 10"
-    ).expect("Failed to query system.live_queries");
+        "SELECT live_id, table_name, user_id FROM system.live_queries LIMIT 10",
+    )
+    .expect("Failed to query system.live_queries");
 
     println!("  Current live queries:\n{}", result);
 
@@ -778,7 +797,9 @@ fn smoke_test_cluster_live_query_tracking() {
 #[ntest::timeout(600_000)]
 #[test]
 fn smoke_test_cluster_all() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     println!("\n");
     println!("╔═══════════════════════════════════════════════════════════════════╗");

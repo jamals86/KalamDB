@@ -2,6 +2,7 @@ use crate::error::{FilestoreError, Result};
 use crate::object_store_ops::{delete_file_sync, head_file_sync, list_files_sync};
 use kalamdb_commons::system::Storage;
 use object_store::ObjectStore;
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -63,7 +64,7 @@ impl ObjectStoreBatchManager {
     /// List all batch files in a prefix (directory).
     pub fn list_batches(&self, prefix: &str) -> Result<Vec<BatchFile>> {
         let paths = list_files_sync(Arc::clone(&self.store), &self.storage, prefix)?;
-        let mut batches = Vec::new();
+        let mut batches = Vec::with_capacity(paths.len());
 
         for path in paths {
             // Only process .parquet files
@@ -72,12 +73,10 @@ impl ObjectStoreBatchManager {
             }
 
             // Extract filename from full path
-            let filename = std::path::Path::new(&path)
-                .file_name()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| {
-                    FilestoreError::InvalidBatchFile(format!("Invalid filename: {}", path))
-                })?;
+            let filename =
+                std::path::Path::new(&path).file_name().and_then(|s| s.to_str()).ok_or_else(
+                    || FilestoreError::InvalidBatchFile(format!("Invalid filename: {}", path)),
+                )?;
 
             // Parse batch metadata from filename
             let (timestamp_ms, batch_index) = parse_batch_filename(filename)?;
@@ -106,8 +105,11 @@ impl ObjectStoreBatchManager {
 
         for batch in batches {
             if batch.timestamp_ms < cutoff_timestamp_ms {
-                let path = batch.path.to_string_lossy().to_string();
-                delete_file_sync(Arc::clone(&self.store), &self.storage, &path)?;
+                let path = match batch.path.to_str() {
+                    Some(path) => Cow::Borrowed(path),
+                    None => Cow::Owned(batch.path.to_string_lossy().into_owned()),
+                };
+                delete_file_sync(Arc::clone(&self.store), &self.storage, path.as_ref())?;
                 deleted_count += 1;
                 log::info!("Deleted old batch file: {}", path);
             }

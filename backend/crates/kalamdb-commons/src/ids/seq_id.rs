@@ -94,10 +94,7 @@ impl SeqId {
     /// Parse from bytes (big-endian)
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() != 8 {
-            return Err(format!(
-                "Invalid byte length: expected 8, got {}",
-                bytes.len()
-            ));
+            return Err(format!("Invalid byte length: expected 8, got {}", bytes.len()));
         }
         let mut array = [0u8; 8];
         array.copy_from_slice(bytes);
@@ -175,10 +172,7 @@ mod tests {
         let id = (timestamp_offset << 22) as i64;
         let seq_id = SeqId::new(id);
 
-        assert_eq!(
-            seq_id.timestamp_seconds(),
-            (SeqId::EPOCH + timestamp_offset) / 1000
-        );
+        assert_eq!(seq_id.timestamp_seconds(), (SeqId::EPOCH + timestamp_offset) / 1000);
     }
 
     #[test]

@@ -24,12 +24,12 @@ use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::{
     system::{Job, JobFilter, JobSortField, SortOrder},
     JobId, JobStatus,
@@ -68,9 +68,7 @@ impl JobsTableProvider {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         let store = IndexedEntityStore::new(
             backend,
-            SystemTable::Jobs
-                .column_family_name()
-                .expect("Jobs is a table, not a view"),
+            SystemTable::Jobs.column_family_name().expect("Jobs is a table, not a view"),
             create_jobs_indexes(),
         );
         Self { store }
@@ -81,9 +79,7 @@ impl JobsTableProvider {
     /// Indexes are automatically maintained via `IndexedEntityStore`.
     /// TODO: Return a string message
     pub fn create_job(&self, job: Job) -> Result<String, SystemError> {
-        self.store
-            .insert(&job.job_id, &job)
-            .into_system_error("insert job error")?;
+        self.store.insert(&job.job_id, &job).into_system_error("insert job error")?;
         Ok(format!("Job {} created", job.job_id))
     }
 
@@ -115,10 +111,7 @@ impl JobsTableProvider {
 
     /// Async version of `get_job()`.
     pub async fn get_job_async(&self, job_id: &JobId) -> Result<Option<Job>, SystemError> {
-        self.store
-            .get_async(job_id.clone())
-            .await
-            .into_system_error("get_async error")
+        self.store.get_async(job_id.clone()).await.into_system_error("get_async error")
     }
 
     /// Update an existing job entry.
@@ -129,10 +122,7 @@ impl JobsTableProvider {
         // Check if job exists
         let old_job = self.store.get(&job.job_id)?;
         if old_job.is_none() {
-            return Err(SystemError::NotFound(format!(
-                "Job not found: {}",
-                job.job_id
-            )));
+            return Err(SystemError::NotFound(format!("Job not found: {}", job.job_id)));
         }
         let old_job = old_job.unwrap();
 
@@ -147,7 +137,7 @@ impl JobsTableProvider {
     /// Async version of `update_job()`.
     pub async fn update_job_async(&self, job: Job) -> Result<(), SystemError> {
         log::debug!("[{}] update_job_async called: status={:?}", job.job_id, job.status);
-        
+
         // Check if job exists
         let old_job = self
             .store
@@ -158,11 +148,8 @@ impl JobsTableProvider {
         let old_job = match old_job {
             Some(j) => j,
             None => {
-                return Err(SystemError::NotFound(format!(
-                    "Job not found: {}",
-                    job.job_id
-                )));
-            }
+                return Err(SystemError::NotFound(format!("Job not found: {}", job.job_id)));
+            },
         };
 
         validate_job_update(&job)?;
@@ -177,7 +164,7 @@ impl JobsTableProvider {
         .await
         .into_system_error("spawn_blocking error")?
         .into_system_error("update job error")?;
-        
+
         log::debug!("[{}] update_job_async completed successfully", job_id);
         Ok(())
     }
@@ -186,9 +173,7 @@ impl JobsTableProvider {
     ///
     /// Indexes are automatically cleaned up via `IndexedEntityStore`.
     pub fn delete_job(&self, job_id: &JobId) -> Result<(), SystemError> {
-        self.store
-            .delete(job_id)
-            .into_system_error("delete job error")
+        self.store.delete(job_id).into_system_error("delete job error")
     }
 
     /// List all jobs
@@ -495,8 +480,8 @@ impl JobsTableProvider {
                     break;
                 }
 
-                let job_id_str = String::from_utf8(job_id_bytes)
-                    .into_system_error("Invalid JobId in index")?;
+                let job_id_str =
+                    String::from_utf8(job_id_bytes).into_system_error("Invalid JobId in index")?;
                 let job_id = JobId::new(job_id_str);
 
                 // Load job to check actual finished_at
@@ -530,6 +515,8 @@ impl JobsTableProvider {
         let mut started_ats = Vec::with_capacity(jobs.len());
         let mut finished_ats = Vec::with_capacity(jobs.len());
         let mut node_ids = Vec::with_capacity(jobs.len());
+        let mut leader_node_ids = Vec::with_capacity(jobs.len());
+        let mut leader_statuses = Vec::with_capacity(jobs.len());
         let mut error_messages = Vec::with_capacity(jobs.len());
 
         for (_key, job) in jobs {
@@ -546,6 +533,8 @@ impl JobsTableProvider {
             started_ats.push(job.started_at);
             finished_ats.push(job.finished_at);
             node_ids.push(Some(job.node_id.to_string()));
+            leader_node_ids.push(job.leader_node_id.map(|n| n.to_string()));
+            leader_statuses.push(job.leader_status.map(|s| s.as_str().to_string()));
             error_messages.push(job.message); // message field contains error messages for failed jobs
         }
 
@@ -564,6 +553,8 @@ impl JobsTableProvider {
             .add_timestamp_micros_column(started_ats)
             .add_timestamp_micros_column(finished_ats)
             .add_string_column_owned(node_ids)
+            .add_string_column_owned(leader_node_ids)
+            .add_string_column_owned(leader_statuses)
             .add_string_column_owned(error_messages);
 
         let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
@@ -596,10 +587,8 @@ fn validate_job_update(job: &Job) -> Result<(), SystemError> {
         )));
     }
 
-    if matches!(
-        status,
-        JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
-    ) && job.finished_at.is_none()
+    if matches!(status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled)
+        && job.finished_at.is_none()
     {
         return Err(SystemError::Other(format!(
             "Job {}: finished_at must be set before marking status {}",
@@ -708,11 +697,11 @@ impl TableProvider for JobsTableProvider {
                                 match binary.op {
                                     Operator::Eq => {
                                         prefix = Some(JobId::new(s));
-                                    }
+                                    },
                                     Operator::Gt | Operator::GtEq => {
                                         start_key = Some(JobId::new(s));
-                                    }
-                                    _ => {}
+                                    },
+                                    _ => {},
                                 }
                             }
                         }
@@ -795,6 +784,7 @@ mod tests {
             job_id: JobId::new(job_id),
             job_type: JobType::Flush,
             status: JobStatus::Running,
+            leader_status: None,
             parameters: Some(r#"{"namespace_id":"default","table_name":"events"}"#.to_string()),
             message: None,
             exception_trace: None,
@@ -808,6 +798,7 @@ mod tests {
             started_at: Some(now),
             finished_at: None,
             node_id: NodeId::from(1u64),
+            leader_node_id: None,
             queue: None,
             priority: None,
         }
@@ -908,7 +899,9 @@ mod tests {
         // Scan
         let batch = provider.scan_all_jobs().unwrap();
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 13); // namespace_id and table_name removed (now in parameters JSON)
+        // 15 columns: job_id, job_type, status, parameters, result, trace, memory_used,
+        // cpu_used, created_at, started_at, completed_at, node_id, leader_node_id, leader_status, error_message
+        assert_eq!(batch.num_columns(), 15);
     }
 
     #[tokio::test]

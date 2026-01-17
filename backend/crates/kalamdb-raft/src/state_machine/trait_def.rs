@@ -24,12 +24,12 @@ impl ApplyResult {
     pub fn ok() -> Self {
         ApplyResult::Ok(Vec::new())
     }
-    
+
     /// Create a successful result with serialized data
     pub fn ok_with_data(data: Vec<u8>) -> Self {
         ApplyResult::Ok(data)
     }
-    
+
     /// Check if the result is successful
     pub fn is_ok(&self) -> bool {
         matches!(self, ApplyResult::Ok(_) | ApplyResult::NoOp)
@@ -51,7 +51,12 @@ pub struct StateMachineSnapshot {
 
 impl StateMachineSnapshot {
     /// Create a new snapshot
-    pub fn new(group_id: GroupId, last_applied_index: u64, last_applied_term: u64, data: Vec<u8>) -> Self {
+    pub fn new(
+        group_id: GroupId,
+        last_applied_index: u64,
+        last_applied_term: u64,
+        data: Vec<u8>,
+    ) -> Self {
         Self {
             group_id,
             last_applied_index,
@@ -92,7 +97,7 @@ impl StateMachineSnapshot {
 pub trait KalamStateMachine: Send + Sync {
     /// Get the Raft group this state machine belongs to
     fn group_id(&self) -> GroupId;
-    
+
     /// Apply a committed log entry to the state machine
     ///
     /// # Arguments
@@ -109,7 +114,7 @@ pub trait KalamStateMachine: Send + Sync {
     /// Implementations MUST track `last_applied_index` and skip entries
     /// that have already been applied.
     async fn apply(&self, index: u64, term: u64, command: &[u8]) -> Result<ApplyResult, RaftError>;
-    
+
     /// Get the last applied log index
     ///
     /// Used for:
@@ -117,10 +122,10 @@ pub trait KalamStateMachine: Send + Sync {
     /// - Snapshot creation (include all entries up to this index)
     /// - Recovery (start applying from this index + 1)
     fn last_applied_index(&self) -> u64;
-    
+
     /// Get the last applied log term
     fn last_applied_term(&self) -> u64;
-    
+
     /// Create a snapshot of the current state
     ///
     /// The snapshot should capture all state up to `last_applied_index`.
@@ -130,7 +135,7 @@ pub trait KalamStateMachine: Send + Sync {
     /// # Returns
     /// A `StateMachineSnapshot` containing serialized state
     async fn snapshot(&self) -> Result<StateMachineSnapshot, RaftError>;
-    
+
     /// Restore state from a snapshot
     ///
     /// Called when:
@@ -144,7 +149,7 @@ pub trait KalamStateMachine: Send + Sync {
     /// - State machine state matches the snapshot
     /// - `last_applied_index` and `last_applied_term` are updated
     async fn restore(&self, snapshot: StateMachineSnapshot) -> Result<(), RaftError>;
-    
+
     /// Get approximate size of state machine data in bytes
     ///
     /// Used to determine when to trigger snapshot creation.
@@ -162,16 +167,11 @@ mod tests {
         assert!(ApplyResult::NoOp.is_ok());
         assert!(!ApplyResult::Error("failed".to_string()).is_ok());
     }
-    
+
     #[test]
     fn test_snapshot_creation() {
-        let snapshot = StateMachineSnapshot::new(
-            GroupId::Meta,
-            100,
-            5,
-            vec![1, 2, 3, 4],
-        );
-        
+        let snapshot = StateMachineSnapshot::new(GroupId::Meta, 100, 5, vec![1, 2, 3, 4]);
+
         assert_eq!(snapshot.group_id, GroupId::Meta);
         assert_eq!(snapshot.last_applied_index, 100);
         assert_eq!(snapshot.last_applied_term, 5);

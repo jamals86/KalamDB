@@ -39,49 +39,49 @@ pub struct ClusterConfig {
     /// Unique identifier for this cluster (used for Raft group prefixes)
     #[serde(default = "default_cluster_id")]
     pub cluster_id: String,
-    
+
     /// This node's unique ID within the cluster (must be >= 1)
     /// This is the authoritative node ID for the server.
     pub node_id: u64,
-    
+
     /// RPC address for Raft inter-node communication (e.g., "0.0.0.0:9100")
     #[serde(default = "default_rpc_addr")]
     pub rpc_addr: String,
-    
+
     /// API address for client HTTP requests (e.g., "0.0.0.0:8080")
     /// This should match the server.host:server.port
     #[serde(default = "default_api_addr")]
     pub api_addr: String,
-    
+
     /// List of peer nodes in the cluster
     /// Each peer should have node_id, rpc_addr, and api_addr
     #[serde(default)]
     pub peers: Vec<PeerConfig>,
-    
+
     /// Number of user data shards (default: 12)
     /// Each shard is a separate Raft group for user table data.
     #[serde(default = "default_user_shards")]
     pub user_shards: u32,
-    
+
     /// Number of shared data shards (default: 1)
     /// Each shard is a separate Raft group for shared table data.
     #[serde(default = "default_shared_shards")]
     pub shared_shards: u32,
-    
+
     /// Raft heartbeat interval in milliseconds (default: 50)
     #[serde(default = "default_heartbeat_interval_ms")]
     pub heartbeat_interval_ms: u64,
-    
+
     /// Raft election timeout range (min, max) in milliseconds (default: 150-300)
     /// Election timeout is randomly chosen from this range.
     #[serde(default = "default_election_timeout_ms")]
     pub election_timeout_ms: (u64, u64),
-    
+
     /// Snapshot policy (default: "LogsSinceLast(1000)")
     /// Options:
     /// - "LogsSinceLast(N)" - Snapshot after N log entries since last snapshot
     /// - "Never" - Disable automatic snapshots (not recommended for production)
-    /// 
+    ///
     /// Lower values (e.g., 100) create snapshots more frequently:
     ///   + Faster follower catchup (smaller log to replay)
     ///   + Smaller memory footprint
@@ -92,13 +92,13 @@ pub struct ClusterConfig {
     ///   - Larger memory footprint
     #[serde(default = "default_snapshot_policy")]
     pub snapshot_policy: String,
-    
+
     /// Maximum number of snapshots to keep (default: 3)
     /// Older snapshots are automatically deleted. Set to 0 to keep all snapshots.
     /// For single-node, you may want to set this to 1 to minimize disk usage.
     #[serde(default = "default_max_snapshots_to_keep")]
     pub max_snapshots_to_keep: u32,
-    
+
     /// Timeout in milliseconds to wait for learner catchup during cluster membership changes
     #[serde(default = "default_replication_timeout_ms")]
     pub replication_timeout_ms: u64,
@@ -167,32 +167,34 @@ fn default_reconnect_interval_ms() -> u64 {
 
 impl ClusterConfig {
     /// Parse snapshot policy string into OpenRaft SnapshotPolicy
-    /// 
+    ///
     /// Supported formats:
     /// - "LogsSinceLast(N)" - Snapshot after N log entries (e.g., "LogsSinceLast(100)")
     /// - "Never" - Disable automatic snapshots
     pub fn parse_snapshot_policy(policy_str: &str) -> Result<openraft::SnapshotPolicy, String> {
         let trimmed = policy_str.trim();
-        
+
         if trimmed.eq_ignore_ascii_case("never") {
             return Ok(openraft::SnapshotPolicy::Never);
         }
-        
+
         // Parse LogsSinceLast(N)
         if let Some(inner) = trimmed.strip_prefix("LogsSinceLast(") {
             if let Some(num_str) = inner.strip_suffix(")") {
-                let num = num_str.trim().parse::<u64>()
+                let num = num_str
+                    .trim()
+                    .parse::<u64>()
                     .map_err(|e| format!("Invalid number in LogsSinceLast: {}", e))?;
                 return Ok(openraft::SnapshotPolicy::LogsSinceLast(num));
             }
         }
-        
+
         Err(format!(
             "Invalid snapshot policy: '{}'. Expected 'LogsSinceLast(N)' or 'Never'",
             policy_str
         ))
     }
-    
+
     /// Check if this configuration is valid
     pub fn validate(&self) -> Result<(), String> {
         if self.cluster_id.is_empty() {
@@ -205,15 +207,11 @@ impl ClusterConfig {
 
         // Check election timeout > heartbeat
         if self.election_timeout_ms.0 <= self.heartbeat_interval_ms {
-            return Err(
-                "election_timeout_min must be > heartbeat_interval".to_string()
-            );
+            return Err("election_timeout_min must be > heartbeat_interval".to_string());
         }
 
         if self.election_timeout_ms.1 <= self.election_timeout_ms.0 {
-            return Err(
-                "election_timeout_max must be > election_timeout_min".to_string()
-            );
+            return Err("election_timeout_max must be > election_timeout_min".to_string());
         }
 
         // Check shard counts
@@ -255,13 +253,11 @@ mod tests {
             node_id: 1,
             rpc_addr: "127.0.0.1:9100".to_string(),
             api_addr: "127.0.0.1:8080".to_string(),
-            peers: vec![
-                PeerConfig {
-                    node_id: 2,
-                    rpc_addr: "127.0.0.2:9100".to_string(),
-                    api_addr: "127.0.0.2:8080".to_string(),
-                },
-            ],
+            peers: vec![PeerConfig {
+                node_id: 2,
+                rpc_addr: "127.0.0.2:9100".to_string(),
+                api_addr: "127.0.0.2:8080".to_string(),
+            }],
             user_shards: 12,
             shared_shards: 1,
             heartbeat_interval_ms: 250,

@@ -22,11 +22,7 @@ pub async fn cleanup_connection(
     // Get connection_id, user ID and subscription count before unregistering
     let (connection_id, user_id, subscription_count) = {
         let state = connection_state.read();
-        (
-            state.connection_id().clone(),
-            state.user_id.clone(),
-            state.subscriptions.len(),
-        )
+        (state.connection_id().clone(), state.user_id.clone(), state.subscriptions.len())
     };
 
     //debug!("Cleaning up connection: {}", connection_id);
@@ -36,16 +32,9 @@ pub async fn cleanup_connection(
 
     // Unregister from live query manager (delete from system.live_queries)
     if let Some(ref uid) = user_id {
-        if let Err(e) = live_query_manager
-            .unregister_connection(uid, &connection_id)
-            .await
-        {
+        if let Err(e) = live_query_manager.unregister_connection(uid, &connection_id).await {
             // Log error but don't panic - orphans will be cleaned up on next server restart
-            log::warn!(
-                "Failed to cleanup live queries for connection {}: {}",
-                connection_id,
-                e
-            );
+            log::warn!("Failed to cleanup live queries for connection {}: {}", connection_id, e);
         }
 
         // Update rate limiter

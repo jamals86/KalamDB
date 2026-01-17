@@ -143,11 +143,7 @@ impl DataFusionSessionFactory {
     ///
     /// # Returns
     /// Number of namespaces successfully registered
-    pub fn register_namespaces(
-        &self,
-        session: &SessionContext,
-        namespaces: &[String],
-    ) -> usize {
+    pub fn register_namespaces(&self, session: &SessionContext, namespaces: &[String]) -> usize {
         use datafusion::catalog::MemorySchemaProvider;
 
         let catalog = match session.catalog("kalam") {
@@ -155,7 +151,7 @@ impl DataFusionSessionFactory {
             None => {
                 log::error!("kalam catalog not found in session - cannot register namespaces");
                 return 0;
-            }
+            },
         };
 
         let mut registered = 0;
@@ -171,22 +167,15 @@ impl DataFusionSessionFactory {
                 Ok(_) => {
                     log::debug!("Registered DataFusion schema for namespace '{}'", namespace);
                     registered += 1;
-                }
+                },
                 Err(e) => {
-                    log::warn!(
-                        "Failed to register schema for namespace '{}': {}",
-                        namespace,
-                        e
-                    );
-                }
+                    log::warn!("Failed to register schema for namespace '{}': {}", namespace, e);
+                },
             }
         }
 
         if registered > 0 {
-            log::info!(
-                "Registered {} namespace(s) as DataFusion schemas",
-                registered
-            );
+            log::info!("Registered {} namespace(s) as DataFusion schemas", registered);
         }
 
         registered

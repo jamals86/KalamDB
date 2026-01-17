@@ -6,7 +6,6 @@
 //! - UPDATE/DELETE across flushed and unflushed data
 //! - Multi-row operations
 
-
 use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
 
@@ -75,10 +74,7 @@ async fn test_update_complex_predicate_and() {
 
     // Verify: Should update only p2
     let query_response = server
-        .execute_sql_as_user(
-            "SELECT id, stock FROM test_dml_and.products WHERE id = 'p2'",
-            "user1",
-        )
+        .execute_sql_as_user("SELECT id, stock FROM test_dml_and.products WHERE id = 'p2'", "user1")
         .await;
 
     let rows = query_response.results[0].rows_as_maps();
@@ -144,10 +140,7 @@ async fn test_update_complex_predicate_or() {
 
     // Verify
     let query_response = server
-        .execute_sql_as_user(
-            "SELECT id FROM test_dml_or.inventory WHERE id = 'i1'",
-            "user1",
-        )
+        .execute_sql_as_user("SELECT id FROM test_dml_or.inventory WHERE id = 'i1'", "user1")
         .await;
 
     let rows = query_response.results[0].rows_as_maps();

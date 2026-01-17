@@ -8,8 +8,8 @@ mod test_support;
 
 // Include test modules organized by category
 mod auth;
-mod schema;
-mod storage;
-mod sql;
-mod system;
 mod production;
+mod schema;
+mod sql;
+mod storage;
+mod system;

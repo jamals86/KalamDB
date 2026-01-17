@@ -52,15 +52,14 @@ fn smoke_user_table_rls_isolation() {
     }
 
     // 3) Create a new regular user
-    let create_user_sql = format!(
-        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
-        user_name, user_pass
-    );
+    let create_user_sql =
+        format!("CREATE USER {} WITH PASSWORD '{}' ROLE 'user'", user_name, user_pass);
     execute_sql_as_root_via_client(&create_user_sql).expect("Failed to create user");
 
     // 4) Login via CLI as the regular user (implicit via next commands)
     // Validate auth by running a trivial command
-    let _ = execute_sql_via_client_as(&user_name, user_pass, "SELECT 1").expect("Failed to login as user");
+    let _ = execute_sql_via_client_as(&user_name, user_pass, "SELECT 1")
+        .expect("Failed to login as user");
 
     // 5) As regular user: insert multiple rows
     let user_rows = vec!["user_row_a", "user_row_b", "user_row_c"];
@@ -76,18 +75,19 @@ fn smoke_user_table_rls_isolation() {
         "SELECT id, content FROM {} WHERE content IN ('user_row_b','user_row_c') ORDER BY content",
         full_table
     );
-    let id_out_json = execute_sql_via_client_as_json(&user_name, user_pass, &id_query).expect("Failed to query user rows");
+    let id_out_json = execute_sql_via_client_as_json(&user_name, user_pass, &id_query)
+        .expect("Failed to query user rows");
 
     // Parse JSON response to extract IDs
-    let json_value: serde_json::Value = serde_json::from_str(&id_out_json)
-        .expect("Failed to parse JSON response");
-    let rows = get_rows_as_hashmaps(&json_value)
-        .expect("Expected rows in JSON response");
+    let json_value: serde_json::Value =
+        serde_json::from_str(&id_out_json).expect("Failed to parse JSON response");
+    let rows = get_rows_as_hashmaps(&json_value).expect("Expected rows in JSON response");
 
     let mut row_b_id: Option<String> = None;
     let mut row_c_id: Option<String> = None;
     for row in &rows {
-        let content_value = row.get("content").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
+        let content_value =
+            row.get("content").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
         let content = content_value.as_str().unwrap_or("");
         let id_value = row.get("id").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
         let id = json_value_as_id(&id_value);
@@ -100,16 +100,15 @@ fn smoke_user_table_rls_isolation() {
             }
         }
     }
-    let row_b_id = row_b_id
-        .unwrap_or_else(|| panic!("Failed to parse id for user_row_b from output: {}", id_out_json));
-    let row_c_id = row_c_id
-        .unwrap_or_else(|| panic!("Failed to parse id for user_row_c from output: {}", id_out_json));
+    let row_b_id = row_b_id.unwrap_or_else(|| {
+        panic!("Failed to parse id for user_row_b from output: {}", id_out_json)
+    });
+    let row_c_id = row_c_id.unwrap_or_else(|| {
+        panic!("Failed to parse id for user_row_c from output: {}", id_out_json)
+    });
 
     // Update one of the user's rows (set updated=1) using id predicate
-    let upd = format!(
-        "UPDATE {} SET updated = 1 WHERE id = {}",
-        full_table, row_b_id
-    );
+    let upd = format!("UPDATE {} SET updated = 1 WHERE id = {}", full_table, row_b_id);
     execute_sql_via_client_as(&user_name, user_pass, &upd).expect("Failed to update user row");
 
     // Delete one of the user's rows using id predicate
@@ -120,11 +119,9 @@ fn smoke_user_table_rls_isolation() {
     let select_out = execute_sql_via_client_as(
         &user_name,
         user_pass,
-        &format!(
-            "SELECT id, content, updated FROM {} ORDER BY id",
-            full_table
-        ),
-    ).expect("Failed to select user rows");
+        &format!("SELECT id, content, updated FROM {} ORDER BY id", full_table),
+    )
+    .expect("Failed to select user rows");
 
     // (a) user could insert (at least one of user's values appears)
     assert!(
@@ -146,14 +143,8 @@ fn smoke_user_table_rls_isolation() {
     }
 
     // Ensure update took effect and delete removed the row
-    assert!(
-        select_out.contains("user_row_b"),
-        "Expected updated row to be present"
-    );
-    assert!(
-        !select_out.contains("user_row_c"),
-        "Expected deleted row to be absent"
-    );
+    assert!(select_out.contains("user_row_b"), "Expected updated row to be present");
+    assert!(!select_out.contains("user_row_c"), "Expected deleted row to be absent");
 
     // Cleanup (best-effort)
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", user_name));

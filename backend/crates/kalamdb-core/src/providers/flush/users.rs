@@ -4,13 +4,13 @@
 //! Each user's data is written to a separate Parquet file for RLS isolation.
 
 use super::base::{FlushJobResult, FlushMetadata, TableFlush};
+use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestService};
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use crate::schema_registry::SchemaRegistry;
-use crate::app_context::AppContext;
 use crate::storage::write_parquet_with_store_sync;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -58,10 +58,7 @@ impl UserTableFlushJob {
         let (bloom_filter_columns, indexed_columns) = unified_cache
             .get(&table_id)
             .map(|cached| {
-                (
-                    cached.bloom_filter_columns().to_vec(),
-                    cached.indexed_columns().to_vec(),
-                )
+                (cached.bloom_filter_columns().to_vec(), cached.indexed_columns().to_vec())
             })
             .unwrap_or_else(|| {
                 log::warn!(
@@ -71,10 +68,7 @@ impl UserTableFlushJob {
                 (vec![SystemColumnNames::SEQ.to_string()], vec![])
             });
 
-        log::debug!(
-            "🌸 Bloom filters enabled for columns: {:?}",
-            bloom_filter_columns
-        );
+        log::debug!("🌸 Bloom filters enabled for columns: {:?}", bloom_filter_columns);
 
         Self {
             store,
@@ -163,11 +157,12 @@ impl UserTableFlushJob {
 
         // Generate batch filename using manifest
         let user_id_typed = kalamdb_commons::models::UserId::from(user_id);
-        let batch_number = self.manifest_helper
+        let batch_number = self
+            .manifest_helper
             .get_next_batch_number(&self.table_id, Some(&user_id_typed))?;
         let batch_filename = FlushManifestHelper::generate_batch_filename(batch_number);
         let temp_filename = FlushManifestHelper::generate_temp_filename(batch_number);
-        
+
         // Use PathBuf for proper cross-platform path handling (avoids mixed slashes)
         let temp_path = std::path::Path::new(&storage_path)
             .join(&temp_filename)
@@ -178,18 +173,14 @@ impl UserTableFlushJob {
             .to_string_lossy()
             .to_string();
 
-        let cached = self
-            .unified_cache
-            .get(&self.table_id)
-            .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id)))?;
+        let cached = self.unified_cache.get(&self.table_id).ok_or_else(|| {
+            KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id))
+        })?;
 
         // Get storage from registry (cached lookup)
         let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
-        let storage = self
-            .app_context
-            .storage_registry()
-            .get_storage(&storage_id)?
-            .ok_or_else(|| {
+        let storage =
+            self.app_context.storage_registry().get_storage(&storage_id)?.ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Storage '{}' not found",
                     storage_id.as_str()
@@ -202,15 +193,15 @@ impl UserTableFlushJob {
         // ===== ATOMIC FLUSH PATTERN =====
         // Step 1: Mark manifest as syncing (flush in progress)
         if let Err(e) = self.manifest_helper.mark_syncing(&self.table_id, Some(&user_id_typed)) {
-            log::warn!("⚠️  Failed to mark manifest as syncing for user {}: {} (continuing)", user_id, e);
+            log::warn!(
+                "⚠️  Failed to mark manifest as syncing for user {}: {} (continuing)",
+                user_id,
+                e
+            );
         }
 
         // Step 2: Write Parquet to TEMP location first
-        log::debug!(
-            "📝 [ATOMIC] Writing Parquet to temp path: {}, rows={}",
-            temp_path,
-            rows_count
-        );
+        log::debug!("📝 [ATOMIC] Writing Parquet to temp path: {}, rows={}", temp_path, rows_count);
         let result = write_parquet_with_store_sync(
             object_store.clone(),
             &storage,
@@ -222,18 +213,9 @@ impl UserTableFlushJob {
         .into_kalamdb_error("Filestore error")?;
 
         // Step 3: Rename temp file to final location (atomic operation)
-        log::debug!(
-            "📝 [ATOMIC] Renaming {} -> {}",
-            temp_path,
-            destination_path
-        );
-        kalamdb_filestore::rename_file_sync(
-            object_store,
-            &storage,
-            &temp_path,
-            &destination_path,
-        )
-        .into_kalamdb_error("Failed to rename Parquet file to final location")?;
+        log::debug!("📝 [ATOMIC] Renaming {} -> {}", temp_path, destination_path);
+        kalamdb_filestore::rename_file_sync(object_store, &storage, &temp_path, &destination_path)
+            .into_kalamdb_error("Failed to rename Parquet file to final location")?;
 
         let size_bytes = result.size_bytes;
 
@@ -284,8 +266,7 @@ impl UserTableFlushJob {
         // IMPORTANT: Must use self.store.delete() instead of EntityStore::delete()
         // to ensure both the entity AND its index entries are removed atomically.
         for key in &parsed_keys {
-            self.store.delete(key)
-                .into_kalamdb_error("Failed to delete flushed row")?;
+            self.store.delete(key).into_kalamdb_error("Failed to delete flushed row")?;
         }
 
         log::debug!("Deleted {} flushed rows from storage", keys.len());
@@ -325,11 +306,7 @@ impl TableFlush for UserTableFlushJob {
                 .store
                 .scan_limited_with_prefix_and_start(None, cursor.as_deref(), config::BATCH_SIZE)
                 .map_err(|e| {
-                    log::error!(
-                        "❌ Failed to scan table={}: {}",
-                        self.table_id,
-                        e
-                    );
+                    log::error!("❌ Failed to scan table={}: {}", self.table_id, e);
                     KalamDbError::Other(format!("Failed to scan table: {}", e))
                 })?;
 
@@ -359,7 +336,7 @@ impl TableFlush for UserTableFlushJob {
                     Err(e) => {
                         log::warn!("Skipping row due to invalid key format: {}", e);
                         continue;
-                    }
+                    },
                 };
                 let user_id = row_id.user_id().as_str().to_string();
 
@@ -369,7 +346,7 @@ impl TableFlush for UserTableFlushJob {
                     _ => {
                         // No PK or null PK - use unique _seq as fallback to avoid collapsing
                         format!("_seq:{}", row._seq.as_i64())
-                    }
+                    },
                 };
 
                 let group_key = (user_id.clone(), pk_value.clone());
@@ -388,10 +365,10 @@ impl TableFlush for UserTableFlushJob {
                                        user_id, pk_value, existing_seq, seq_val, row._deleted);
                             latest_versions.insert(group_key, (key_bytes, row, seq_val));
                         }
-                    }
+                    },
                     None => {
                         latest_versions.insert(group_key, (key_bytes, row, seq_val));
-                    }
+                    },
                 }
             }
 
@@ -423,10 +400,7 @@ impl TableFlush for UserTableFlushJob {
                 .values
                 .insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(false)));
 
-            rows_by_user
-                .entry(user_id)
-                .or_default()
-                .push((key_bytes, row_data));
+            rows_by_user.entry(user_id).or_default().push((key_bytes, row_data));
         }
 
         // Log dedup statistics
@@ -467,18 +441,14 @@ impl TableFlush for UserTableFlushJob {
             ) {
                 Ok(rows_count) => {
                     total_rows_flushed += rows_count;
-                }
+                },
                 Err(e) => {
-                    let error_msg = format!(
-                        "Failed to flush {} rows for user {}: {}",
-                        rows.len(),
-                        user_id,
-                        e
-                    );
+                    let error_msg =
+                        format!("Failed to flush {} rows for user {}: {}", rows.len(), user_id, e);
                     log::error!("{}. Rows kept in buffer.", error_msg);
                     error_messages.push(error_msg);
                     flush_succeeded = false;
-                }
+                },
             }
         }
 
@@ -502,11 +472,7 @@ impl TableFlush for UserTableFlushJob {
                 error_messages.len(), total_rows_flushed,
                 error_messages.first().cloned().unwrap_or_else(|| "unknown error".to_string())
             );
-            log::error!(
-                "❌ User table flush failed: table={} — {}",
-                self.table_id,
-                summary
-            );
+            log::error!("❌ User table flush failed: table={} — {}", self.table_id, summary);
             return Err(KalamDbError::Other(summary));
         }
 

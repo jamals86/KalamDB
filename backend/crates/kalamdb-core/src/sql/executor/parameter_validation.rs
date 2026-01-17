@@ -139,10 +139,7 @@ mod tests {
         let limits = ParameterLimits::default();
         let result = validate_parameters(&params, &limits);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Parameter count exceeds limit"));
+        assert!(result.unwrap_err().to_string().contains("Parameter count exceeds limit"));
     }
 
     #[test]
@@ -152,24 +149,15 @@ mod tests {
         let limits = ParameterLimits::default();
         let result = validate_parameters(&params, &limits);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("size exceeds limit"));
+        assert!(result.unwrap_err().to_string().contains("size exceeds limit"));
     }
 
     #[test]
     fn test_estimate_scalar_value_size() {
         assert_eq!(estimate_scalar_value_size(&ScalarValue::Null), 1);
         assert_eq!(estimate_scalar_value_size(&ScalarValue::Int32(Some(42))), 4);
-        assert_eq!(
-            estimate_scalar_value_size(&ScalarValue::Utf8(Some("hello".to_string()))),
-            5
-        );
-        assert_eq!(
-            estimate_scalar_value_size(&ScalarValue::Float64(Some(3.25))),
-            8
-        );
+        assert_eq!(estimate_scalar_value_size(&ScalarValue::Utf8(Some("hello".to_string()))), 5);
+        assert_eq!(estimate_scalar_value_size(&ScalarValue::Float64(Some(3.25))), 8);
     }
 
     #[test]

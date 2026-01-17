@@ -91,10 +91,7 @@ fn test_manifest_multiple_segments() {
     for i in 0..10 {
         assert_eq!(deserialized.segments[i].id, format!("seg-{}", i));
         assert_eq!(deserialized.segments[i].min_seq, (i * 100) as i64);
-        assert_eq!(
-            deserialized.segments[i].max_seq,
-            ((i + 1) * 100 - 1) as i64
-        );
+        assert_eq!(deserialized.segments[i].max_seq, ((i + 1) * 100 - 1) as i64);
     }
 }
 
@@ -168,10 +165,7 @@ fn test_manifest_missing_required_fields() {
     let incomplete_json = r#"{"segments": [], "last_sequence_number": 0}"#;
 
     let result: Result<Manifest, _> = serde_json::from_str(incomplete_json);
-    assert!(
-        result.is_err(),
-        "Should fail when required fields are missing"
-    );
+    assert!(result.is_err(), "Should fail when required fields are missing");
 }
 
 #[test]
@@ -270,8 +264,7 @@ fn test_segment_metadata_schema_version() {
     let json = serde_json::to_string(&segment).expect("Failed to serialize");
 
     // Deserialize
-    let deserialized: SegmentMetadata =
-        serde_json::from_str(&json).expect("Failed to deserialize");
+    let deserialized: SegmentMetadata = serde_json::from_str(&json).expect("Failed to deserialize");
 
     assert_eq!(deserialized.schema_version, 5);
 }

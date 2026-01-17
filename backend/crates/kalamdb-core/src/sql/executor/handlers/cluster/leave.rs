@@ -4,7 +4,9 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::{ExecutionContext, ExecutionResult, ScalarValue, StatementHandler};
+use crate::sql::executor::handlers::{
+    ExecutionContext, ExecutionResult, ScalarValue, StatementHandler,
+};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::sync::Arc;
 
@@ -34,15 +36,11 @@ impl StatementHandler for ClusterLeaveHandler {
             )));
         }
 
-        log::warn!(
-            "CLUSTER LEAVE attempted by user: {} - NOT IMPLEMENTED",
-            ctx.user_id
-        );
+        log::warn!("CLUSTER LEAVE attempted by user: {} - NOT IMPLEMENTED", ctx.user_id);
 
         // Return warning message - not yet implemented
         Ok(ExecutionResult::Success {
-            message: 
-                "⚠️  WARNING: CLUSTER LEAVE is not yet implemented!\n\n\
+            message: "⚠️  WARNING: CLUSTER LEAVE is not yet implemented!\n\n\
                  This command will eventually allow this node to gracefully leave the cluster,\n\
                  transferring leadership and data to other nodes before departing.\n\n\
                  For now, to remove a node from the cluster:\n\
@@ -50,7 +48,7 @@ impl StatementHandler for ClusterLeaveHandler {
                  2. Update the cluster configuration on other nodes\n\
                  3. Wait for the cluster to detect the node is gone\n\n\
                  See the documentation for cluster management procedures."
-                    .to_string(),
+                .to_string(),
         })
     }
 }

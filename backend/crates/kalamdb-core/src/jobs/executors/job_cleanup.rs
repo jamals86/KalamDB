@@ -70,21 +70,23 @@ impl JobExecutor for JobCleanupExecutor {
         let params = ctx.params();
         let retention_days = params.retention_days;
 
-        ctx.log_info(&format!(
-            "Cleaning up jobs older than {} days",
-            retention_days
-        ));
+        ctx.log_info(&format!("Cleaning up jobs older than {} days", retention_days));
 
         let jobs_provider = ctx.app_ctx.system_tables().jobs();
+        let job_nodes_provider = ctx.app_ctx.system_tables().job_nodes();
 
         // Execute cleanup
         let deleted_count = jobs_provider
             .cleanup_old_jobs(retention_days)
             .into_kalamdb_error("Failed to cleanup old jobs")?;
 
+        let deleted_nodes = job_nodes_provider
+            .cleanup_old_job_nodes(retention_days)
+            .into_kalamdb_error("Failed to cleanup old job_nodes")?;
+
         let message = format!(
-            "Job history cleanup completed - {} jobs deleted (retention: {} days)",
-            deleted_count, retention_days
+            "Job history cleanup completed - {} jobs and {} job_nodes deleted (retention: {} days)",
+            deleted_count, deleted_nodes, retention_days
         );
 
         ctx.log_info(&message);

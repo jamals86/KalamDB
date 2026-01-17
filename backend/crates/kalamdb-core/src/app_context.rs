@@ -3,21 +3,21 @@
 //! Provides global access to all core resources with simplified 3-parameter initialization.
 //! Uses constants from kalamdb_commons for table prefixes.
 
+use crate::applier::UnifiedApplier;
 use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobCleanupExecutor,
     JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
 };
 use crate::live::ConnectionsManager;
-use crate::applier::UnifiedApplier;
 use crate::live_query::LiveQueryManager;
-use crate::views::settings::{SettingsTableProvider, SettingsView};
 use crate::schema_registry::stats::StatsTableProvider;
-use crate::views::datatypes::{DatatypesTableProvider, DatatypesView};
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::sql::executor::SqlExecutor;
 use crate::storage::storage_registry::StorageRegistry;
+use crate::views::datatypes::{DatatypesTableProvider, DatatypesView};
+use crate::views::settings::{SettingsTableProvider, SettingsView};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::{constants::ColumnFamilyNames, NodeId};
@@ -34,8 +34,8 @@ use crate::metrics::runtime::collect_runtime_metrics;
 
 // Use RwLock instead of OnceLock to allow resetting in tests
 // The RwLock is wrapped in a OnceLock for lazy initialization
-use std::sync::RwLock as StdRwLock;
 use once_cell::sync::Lazy;
+use std::sync::RwLock as StdRwLock;
 
 static APP_CONTEXT: Lazy<StdRwLock<Option<Arc<AppContext>>>> = Lazy::new(|| StdRwLock::new(None));
 
@@ -67,8 +67,8 @@ pub struct AppContext {
     storage_backend: Arc<dyn StorageBackend>,
 
     // ===== Managers =====
-    job_manager: Arc<crate::jobs::JobsManager>,
-    live_query_manager: Arc<LiveQueryManager>,
+    job_manager: OnceCell<Arc<crate::jobs::JobsManager>>,
+    live_query_manager: OnceCell<Arc<LiveQueryManager>>,
 
     // ===== Connections Manager (WebSocket connections, subscriptions, heartbeat) =====
     connection_registry: Arc<ConnectionsManager>,
@@ -99,7 +99,7 @@ pub struct AppContext {
     manifest_service: Arc<crate::manifest::ManifestService>,
 
     // ===== Unified Applier (single execution path for all commands) =====
-    applier: Arc<dyn UnifiedApplier>,
+    applier: OnceCell<Arc<dyn UnifiedApplier>>,
 
     // ===== Shared SqlExecutor =====
     sql_executor: OnceCell<Arc<SqlExecutor>>,
@@ -115,15 +115,15 @@ impl std::fmt::Debug for AppContext {
             .field("user_table_store", &"Arc<UserTableStore>")
             .field("shared_table_store", &"Arc<SharedTableStore>")
             .field("storage_backend", &"Arc<dyn StorageBackend>")
-            .field("job_manager", &"Arc<JobsManager>")
-            .field("live_query_manager", &"Arc<LiveQueryManager>")
+            .field("job_manager", &"OnceCell<Arc<JobsManager>>")
+            .field("live_query_manager", &"OnceCell<Arc<LiveQueryManager>>")
             .field("connection_registry", &"Arc<ConnectionsManager>")
             .field("storage_registry", &"Arc<StorageRegistry>")
             .field("session_factory", &"Arc<DataFusionSessionFactory>")
             .field("base_session_context", &"Arc<SessionContext>")
             .field("system_tables", &"Arc<SystemTablesRegistry>")
             .field("executor", &"Arc<dyn CommandExecutor>")
-            .field("applier", &"Arc<dyn UnifiedApplier>")
+            .field("applier", &"OnceCell<Arc<dyn UnifiedApplier>>")
             .field("system_columns_service", &"Arc<SystemColumnsService>")
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
             .field("manifest_service", &"Arc<ManifestService>")
@@ -176,7 +176,7 @@ impl AppContext {
                 return existing.clone();
             }
         }
-        
+
         // Initialize
         let app_ctx = Self::create_impl(storage_backend, node_id, storage_base_path, config);
         {
@@ -185,7 +185,7 @@ impl AppContext {
         }
         app_ctx
     }
-    
+
     /// Create an isolated AppContext instance for tests
     ///
     /// Unlike `init()`, this **replaces** the global singleton, ensuring the
@@ -223,255 +223,263 @@ impl AppContext {
         let node_id = Arc::new(node_id); // Wrap NodeId in Arc for zero-copy sharing (FR-000)
         let config = Arc::new(config); // Wrap config in Arc for zero-copy sharing
         {
-                // Create stores using constants from kalamdb_commons
-                let user_table_store = Arc::new(UserTableStore::new(
-                    storage_backend.clone(),
-                    ColumnFamilyNames::USER_TABLE_PREFIX.to_string(),
-                ));
-                let shared_table_store = Arc::new(SharedTableStore::new(
-                    storage_backend.clone(),
-                    ColumnFamilyNames::SHARED_TABLE_PREFIX.to_string(),
-                ));
+            // Create stores using constants from kalamdb_commons
+            let user_table_store = Arc::new(UserTableStore::new(
+                storage_backend.clone(),
+                ColumnFamilyNames::USER_TABLE_PREFIX.to_string(),
+            ));
+            let shared_table_store = Arc::new(SharedTableStore::new(
+                storage_backend.clone(),
+                ColumnFamilyNames::SHARED_TABLE_PREFIX.to_string(),
+            ));
 
-                // Create system table providers registry FIRST (needed by StorageRegistry and information_schema)
-                let system_tables = Arc::new(SystemTablesRegistry::new(storage_backend.clone()));
+            // Create system table providers registry FIRST (needed by StorageRegistry and information_schema)
+            let system_tables = Arc::new(SystemTablesRegistry::new(storage_backend.clone()));
 
-                // Create storage registry (uses StoragesTableProvider from system_tables)
-                let storage_registry = Arc::new(StorageRegistry::new(
-                    system_tables.storages(),
-                    storage_base_path,
-                ));
+            // Create storage registry (uses StoragesTableProvider from system_tables)
+            let storage_registry =
+                Arc::new(StorageRegistry::new(system_tables.storages(), storage_base_path));
 
-                // Create schema cache (Phase 10 unified cache)
-                let schema_registry = Arc::new(SchemaRegistry::new(10000));
+            // Create schema cache (Phase 10 unified cache)
+            let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
-                // Create StatsTableProvider (callback will be set after AppContext is created)
-                let stats_provider = Arc::new(StatsTableProvider::new());
-                system_tables.set_stats_provider(stats_provider.clone());
+            // Create StatsTableProvider (callback will be set after AppContext is created)
+            let stats_provider = Arc::new(StatsTableProvider::new());
+            system_tables.set_stats_provider(stats_provider.clone());
 
-                // Inject SettingsTableProvider with config access (Phase 15)
-                let settings_view = Arc::new(SettingsView::with_config((*config).clone()));
-                let settings_provider = Arc::new(SettingsTableProvider::new(settings_view));
-                system_tables.set_settings_provider(settings_provider);
+            // Inject SettingsTableProvider with config access (Phase 15)
+            let settings_view = Arc::new(SettingsView::with_config((*config).clone()));
+            let settings_provider = Arc::new(SettingsTableProvider::new(settings_view));
+            system_tables.set_settings_provider(settings_provider);
 
-                // Inject ServerLogsTableProvider with logs path (reads JSON log files - dev only)
-                let server_logs_provider = crate::views::create_server_logs_provider(&config.logging.logs_path);
-                system_tables.set_server_logs_provider(Arc::new(server_logs_provider));
+            // Inject ServerLogsTableProvider with logs path (reads JSON log files - dev only)
+            let server_logs_provider =
+                crate::views::create_server_logs_provider(&config.logging.logs_path);
+            system_tables.set_server_logs_provider(Arc::new(server_logs_provider));
 
-                // Register all system tables in DataFusion
-                // Use config-driven DataFusion settings for parallelism
-                let session_factory = Arc::new(
-                    DataFusionSessionFactory::with_config(&config.datafusion)
-                        .expect("Failed to create DataFusion session factory"),
-                );
-                let base_session_context = Arc::new(session_factory.create_session());
+            // Register all system tables in DataFusion
+            // Use config-driven DataFusion settings for parallelism
+            let session_factory = Arc::new(
+                DataFusionSessionFactory::with_config(&config.datafusion)
+                    .expect("Failed to create DataFusion session factory"),
+            );
+            let base_session_context = Arc::new(session_factory.create_session());
 
-                // Wire up SchemaRegistry with base_session_context for automatic table registration
-                schema_registry.set_base_session_context(Arc::clone(&base_session_context));
+            // Wire up SchemaRegistry with base_session_context for automatic table registration
+            schema_registry.set_base_session_context(Arc::clone(&base_session_context));
 
-                // Register system schema
-                // Use constant catalog name "kalam" - configured in DataFusionSessionFactory
-                let system_schema =
-                    Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-                let catalog = base_session_context
+            // Register system schema
+            // Use constant catalog name "kalam" - configured in DataFusionSessionFactory
+            let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
+            let catalog = base_session_context
                     .catalog("kalam")
                     .expect("Catalog 'kalam' not found - ensure DataFusionSessionFactory is properly configured");
 
-                // Register the system schema with the catalog
-                catalog
-                    .register_schema("system", system_schema.clone())
-                    .expect("Failed to register system schema");
+            // Register the system schema with the catalog
+            catalog
+                .register_schema("system", system_schema.clone())
+                .expect("Failed to register system schema");
 
-                // Register all system tables and views in the system schema
-                Self::register_system_tables(&system_schema, &system_tables);
+            // Register all system tables and views in the system schema
+            Self::register_system_tables(&system_schema, &system_tables);
 
-                // Register existing namespaces as DataFusion schemas
-                // This ensures all namespaces persisted in RocksDB are available for SQL queries
-                let namespaces_provider = system_tables.namespaces();
-                if let Ok(namespaces) = namespaces_provider.list_namespaces() {
-                    let namespace_names: Vec<String> = namespaces
-                        .iter()
-                        .map(|ns| ns.namespace_id.as_str().to_string())
-                        .collect();
-                    session_factory.register_namespaces(&base_session_context, &namespace_names);
-                }
-
-                // Note: information_schema.tables and information_schema.columns are provided
-                // by DataFusion's built-in support (enabled via .with_information_schema(true))
-
-                // Create job registry and register all 8 executors (Phase 9, T154)
-                let job_registry = Arc::new(JobRegistry::new());
-                job_registry.register(Arc::new(FlushExecutor::new()));
-                job_registry.register(Arc::new(CleanupExecutor::new()));
-                job_registry.register(Arc::new(JobCleanupExecutor::new()));
-                job_registry.register(Arc::new(RetentionExecutor::new()));
-                job_registry.register(Arc::new(StreamEvictionExecutor::new()));
-                job_registry.register(Arc::new(UserCleanupExecutor::new()));
-                job_registry.register(Arc::new(CompactExecutor::new()));
-                job_registry.register(Arc::new(BackupExecutor::new()));
-                job_registry.register(Arc::new(RestoreExecutor::new()));
-
-                // Create unified job manager (Phase 9, T154)
-                let jobs_provider = system_tables.jobs();
-                let job_manager =
-                    Arc::new(crate::jobs::JobsManager::new(jobs_provider, job_registry));
-
-                // Create connections manager (unified WebSocket connection management)
-                // Timeouts from config or defaults
-                let client_timeout = Duration::from_secs(config.websocket.client_timeout_secs.unwrap_or(30));
-                let auth_timeout = Duration::from_secs(config.websocket.auth_timeout_secs.unwrap_or(10));
-                let heartbeat_interval = Duration::from_secs(config.websocket.heartbeat_interval_secs.unwrap_or(5));
-                let connection_registry = ConnectionsManager::new(
-                    (*node_id).clone(),
-                    client_timeout,
-                    auth_timeout,
-                    heartbeat_interval,
-                );
-
-                let live_query_manager = Arc::new(LiveQueryManager::new(
-                    system_tables.live_queries(),
-                    schema_registry.clone(),
-                    connection_registry.clone(),
-                    Arc::clone(&base_session_context),
-                ));
-
-                // Create slow query logger (Phase 11)
-                let slow_log_path = format!("{}/slow.log", config.logging.logs_path);
-                let slow_query_logger = crate::slow_query_logger::SlowQueryLogger::new(
-                    slow_log_path,
-                    config.logging.slow_query_threshold_ms,
-                );
-
-                // Create system columns service (Phase 12, US5, T027)
-                // Extract worker_id from node_id for Snowflake ID generation
-                let worker_id = Self::extract_worker_id(&node_id);
-                let system_columns_service =
-                    Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
-
-                // Create unified manifest service (hot cache + RocksDB + cold storage)
-                let base_storage_path = config.storage.storage_dir().to_string_lossy().into_owned();
-                let manifest_service = Arc::new(crate::manifest::ManifestService::new_with_registries(
-                    storage_backend.clone(),
-                    base_storage_path,
-                    config.manifest_cache.clone(),
-                    schema_registry.clone(),
-                    storage_registry.clone(),
-                ));
-
-                // Create command executor (Phase 20 - Unified Raft Executor)
-                // ALWAYS use RaftExecutor - same code path for standalone and cluster
-                // In standalone mode: single-node Raft cluster (no peers, instant leader election)
-                // In cluster mode: multi-node Raft cluster with peers
-                let raft_config = if let Some(cluster_config) = &config.cluster {
-                    // Multi-node cluster mode
-                    kalamdb_raft::manager::RaftManagerConfig::from(cluster_config.clone())
-                } else {
-                    // Single-node mode: create a Raft cluster of 1
-                    // Use machine hostname as cluster ID
-                    let cluster_id = hostname::get()
-                        .ok()
-                        .and_then(|h| h.into_string().ok())
-                        .unwrap_or_else(|| "kalamdb".to_string());
-                    let api_addr = format!("{}:{}", config.server.host, config.server.port);
-                    kalamdb_raft::manager::RaftManagerConfig::for_single_node(cluster_id, api_addr)
-                };
-                
-                log::debug!("Creating RaftManager...");
-                let snapshots_dir = config.storage.resolved_snapshots_dir();
-                let manager = Arc::new(
-                    kalamdb_raft::manager::RaftManager::new_persistent(
-                        raft_config,
-                        storage_backend.clone(),
-                        snapshots_dir,
-                    )
-                    .expect("Failed to create persistent RaftManager"),
-                );
-                
-                log::debug!("Creating RaftExecutor...");
-                let executor: Arc<dyn CommandExecutor> = Arc::new(kalamdb_raft::RaftExecutor::new(manager));
-
-                // Note: ClusterLiveNotifier removed - Raft replication now handles
-                // data consistency across nodes, and each node notifies its own
-                // live query subscribers locally when data is applied.
-
-                // Wire up ClusterTableProvider with the executor (cluster mode only)
-                let cluster_provider = Arc::new(crate::views::create_cluster_provider(executor.clone()));
-                system_tables.set_cluster_provider(cluster_provider.clone());
-
-                // Wire up ClusterGroupsTableProvider with the executor (per-group view)
-                let cluster_groups_provider =
-                    Arc::new(crate::views::create_cluster_groups_provider(executor.clone()));
-                system_tables.set_cluster_groups_provider(cluster_groups_provider.clone());
-                
-                // Register cluster view with DataFusion system schema
-                // This must happen after executor is created since ClusterTableProvider needs it
-                Self::register_cluster_view(&system_schema, cluster_provider);
-
-                // Register cluster_groups view with DataFusion system schema
-                Self::register_cluster_groups_view(&system_schema, cluster_groups_provider);
-
-                // Create unified applier (lazy initialization)
-                // All commands flow through Raft (even single-node mode)
-                let applier = crate::applier::create_applier();
-
-                let app_ctx = Arc::new(AppContext {
-                    node_id,
-                    config,
-                    schema_registry,
-                    user_table_store,
-                    shared_table_store,
-                    storage_backend,
-                    job_manager: job_manager.clone(),
-                    live_query_manager,
-                    connection_registry,
-                    storage_registry,
-                    system_tables,
-                    executor,
-                    applier: applier.clone(),
-                    session_factory,
-                    base_session_context,
-                    system_columns_service,
-                    slow_query_logger,
-                    manifest_service,
-                    sql_executor: OnceCell::new(),
-                    server_start_time: Instant::now(),
-                });
-
-                // Attach AppContext to components that require it (JobsManager)
-                job_manager.set_app_context(Arc::clone(&app_ctx));
-                
-                // Wire up UnifiedApplier with AppContext (lazy initialization)
-                applier.set_app_context(Arc::clone(&app_ctx));
-
-                // Wire up StatsTableProvider metrics callback now that AppContext exists
-                let app_ctx_for_stats = Arc::clone(&app_ctx);
-                stats_provider.set_metrics_callback(Arc::new(move || {
-                    app_ctx_for_stats.compute_metrics()
-                }));
-
-                // Wire up ManifestTableProvider in_memory_checker callback
-                // This allows system.manifest to show if a cache entry is in hot memory
-                let manifest_for_checker = Arc::clone(&app_ctx.manifest_service);
-                app_ctx.system_tables().manifest().set_in_memory_checker(
-                    Arc::new(move |cache_key: &str| manifest_for_checker.is_in_hot_cache_by_string(cache_key))
-                );
-
-                app_ctx.wire_raft_appliers();
-
-                // Cleanup orphan live queries from previous server run
-                // Live queries don't persist across restarts (WebSocket connections are lost)
-                match app_ctx.system_tables().live_queries().clear_all() {
-                    Ok(count) if count > 0 => {
-                        log::info!("Cleared {} orphan live queries from previous server run", count);
-                    }
-                    Ok(_) => {} // No orphans to clear
-                    Err(e) => {
-                        log::warn!("Failed to clear orphan live queries: {}", e);
-                    }
-                }
-
-                app_ctx
+            // Register existing namespaces as DataFusion schemas
+            // This ensures all namespaces persisted in RocksDB are available for SQL queries
+            let namespaces_provider = system_tables.namespaces();
+            if let Ok(namespaces) = namespaces_provider.list_namespaces() {
+                let namespace_names: Vec<String> =
+                    namespaces.iter().map(|ns| ns.namespace_id.as_str().to_string()).collect();
+                session_factory.register_namespaces(&base_session_context, &namespace_names);
             }
+
+            // Note: information_schema.tables and information_schema.columns are provided
+            // by DataFusion's built-in support (enabled via .with_information_schema(true))
+
+            // Create job registry and register all 8 executors (Phase 9, T154)
+            let job_registry = Arc::new(JobRegistry::new());
+            job_registry.register(Arc::new(FlushExecutor::new()));
+            job_registry.register(Arc::new(CleanupExecutor::new()));
+            job_registry.register(Arc::new(JobCleanupExecutor::new()));
+            job_registry.register(Arc::new(RetentionExecutor::new()));
+            job_registry.register(Arc::new(StreamEvictionExecutor::new()));
+            job_registry.register(Arc::new(UserCleanupExecutor::new()));
+            job_registry.register(Arc::new(CompactExecutor::new()));
+            job_registry.register(Arc::new(BackupExecutor::new()));
+            job_registry.register(Arc::new(RestoreExecutor::new()));
+
+            // Create unified job manager (Phase 9, T154)
+            let jobs_provider = system_tables.jobs();
+            let job_nodes_provider = system_tables.job_nodes();
+
+            // Create connections manager (unified WebSocket connection management)
+            // Timeouts from config or defaults
+            let client_timeout =
+                Duration::from_secs(config.websocket.client_timeout_secs.unwrap_or(30));
+            let auth_timeout =
+                Duration::from_secs(config.websocket.auth_timeout_secs.unwrap_or(10));
+            let heartbeat_interval =
+                Duration::from_secs(config.websocket.heartbeat_interval_secs.unwrap_or(5));
+            let connection_registry = ConnectionsManager::new(
+                (*node_id).clone(),
+                client_timeout,
+                auth_timeout,
+                heartbeat_interval,
+            );
+
+            // Create slow query logger (Phase 11)
+            let slow_log_path = format!("{}/slow.log", config.logging.logs_path);
+            let slow_query_logger = crate::slow_query_logger::SlowQueryLogger::new(
+                slow_log_path,
+                config.logging.slow_query_threshold_ms,
+            );
+
+            // Create system columns service (Phase 12, US5, T027)
+            // Extract worker_id from node_id for Snowflake ID generation
+            let worker_id = Self::extract_worker_id(&node_id);
+            let system_columns_service =
+                Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
+
+            // Create unified manifest service (hot cache + RocksDB + cold storage)
+            let base_storage_path = config.storage.storage_dir().to_string_lossy().into_owned();
+            let manifest_service = Arc::new(crate::manifest::ManifestService::new_with_registries(
+                storage_backend.clone(),
+                base_storage_path,
+                config.manifest_cache.clone(),
+                schema_registry.clone(),
+                storage_registry.clone(),
+            ));
+
+            // Create command executor (Phase 20 - Unified Raft Executor)
+            // ALWAYS use RaftExecutor - same code path for standalone and cluster
+            // In standalone mode: single-node Raft cluster (no peers, instant leader election)
+            // In cluster mode: multi-node Raft cluster with peers
+            let raft_config = if let Some(cluster_config) = &config.cluster {
+                // Multi-node cluster mode
+                kalamdb_raft::manager::RaftManagerConfig::from(cluster_config.clone())
+            } else {
+                // Single-node mode: create a Raft cluster of 1
+                // Use machine hostname as cluster ID
+                let cluster_id = hostname::get()
+                    .ok()
+                    .and_then(|h| h.into_string().ok())
+                    .unwrap_or_else(|| "kalamdb".to_string());
+                let api_addr = format!("{}:{}", config.server.host, config.server.port);
+                kalamdb_raft::manager::RaftManagerConfig::for_single_node(cluster_id, api_addr)
+            };
+
+            log::debug!("Creating RaftManager...");
+            let snapshots_dir = config.storage.resolved_snapshots_dir();
+            let manager = Arc::new(
+                kalamdb_raft::manager::RaftManager::new_persistent(
+                    raft_config,
+                    storage_backend.clone(),
+                    snapshots_dir,
+                )
+                .expect("Failed to create persistent RaftManager"),
+            );
+
+            log::debug!("Creating RaftExecutor...");
+            let executor: Arc<dyn CommandExecutor> =
+                Arc::new(kalamdb_raft::RaftExecutor::new(manager));
+
+            // Note: ClusterLiveNotifier removed - Raft replication now handles
+            // data consistency across nodes, and each node notifies its own
+            // live query subscribers locally when data is applied.
+
+            // Wire up ClusterTableProvider with the executor (cluster mode only)
+            let cluster_provider =
+                Arc::new(crate::views::create_cluster_provider(executor.clone()));
+            system_tables.set_cluster_provider(cluster_provider.clone());
+
+            // Wire up ClusterGroupsTableProvider with the executor (per-group view)
+            let cluster_groups_provider =
+                Arc::new(crate::views::create_cluster_groups_provider(executor.clone()));
+            system_tables.set_cluster_groups_provider(cluster_groups_provider.clone());
+
+            // Register cluster view with DataFusion system schema
+            // This must happen after executor is created since ClusterTableProvider needs it
+            Self::register_cluster_view(&system_schema, cluster_provider);
+
+            // Register cluster_groups view with DataFusion system schema
+            Self::register_cluster_groups_view(&system_schema, cluster_groups_provider);
+
+            let app_ctx = Arc::new(AppContext {
+                node_id,
+                config,
+                schema_registry,
+                user_table_store,
+                shared_table_store,
+                storage_backend,
+                job_manager: OnceCell::new(),
+                live_query_manager: OnceCell::new(),
+                connection_registry,
+                storage_registry,
+                system_tables,
+                executor,
+                applier: OnceCell::new(),
+                session_factory,
+                base_session_context,
+                system_columns_service,
+                slow_query_logger,
+                manifest_service,
+                sql_executor: OnceCell::new(),
+                server_start_time: Instant::now(),
+            });
+
+            let job_manager = Arc::new(crate::jobs::JobsManager::new(
+                jobs_provider,
+                job_nodes_provider,
+                job_registry,
+                Arc::clone(&app_ctx),
+            ));
+            if app_ctx.job_manager.set(job_manager).is_err() {
+                panic!("JobsManager already initialized");
+            }
+
+            let applier = crate::applier::create_applier(Arc::clone(&app_ctx));
+            if app_ctx.applier.set(applier).is_err() {
+                panic!("UnifiedApplier already initialized");
+            }
+
+            let live_query_manager = Arc::new(LiveQueryManager::new(
+                app_ctx.system_tables().live_queries(),
+                app_ctx.schema_registry(),
+                app_ctx.connection_registry(),
+                Arc::clone(&app_ctx.base_session_context),
+                Arc::clone(&app_ctx),
+            ));
+            if app_ctx.live_query_manager.set(live_query_manager).is_err() {
+                panic!("LiveQueryManager already initialized");
+            }
+
+            // Wire up StatsTableProvider metrics callback now that AppContext exists
+            let app_ctx_for_stats = Arc::clone(&app_ctx);
+            stats_provider
+                .set_metrics_callback(Arc::new(move || app_ctx_for_stats.compute_metrics()));
+
+            // Wire up ManifestTableProvider in_memory_checker callback
+            // This allows system.manifest to show if a cache entry is in hot memory
+            let manifest_for_checker = Arc::clone(&app_ctx.manifest_service);
+            app_ctx.system_tables().manifest().set_in_memory_checker(Arc::new(
+                move |cache_key: &str| manifest_for_checker.is_in_hot_cache_by_string(cache_key),
+            ));
+
+            app_ctx.wire_raft_appliers();
+
+            // Cleanup orphan live queries from previous server run
+            // Live queries don't persist across restarts (WebSocket connections are lost)
+            match app_ctx.system_tables().live_queries().clear_all() {
+                Ok(count) if count > 0 => {
+                    log::info!("Cleared {} orphan live queries from previous server run", count);
+                },
+                Ok(_) => {}, // No orphans to clear
+                Err(e) => {
+                    log::warn!("Failed to clear orphan live queries: {}", e);
+                },
+            }
+
+            app_ctx
+        }
     }
 
     /// Wire Raft appliers that apply replicated commands into local providers.
@@ -482,7 +490,8 @@ impl AppContext {
 
         let executor = self.executor();
 
-        let Some(raft_executor) = executor.as_any().downcast_ref::<kalamdb_raft::RaftExecutor>() else {
+        let Some(raft_executor) = executor.as_any().downcast_ref::<kalamdb_raft::RaftExecutor>()
+        else {
             log::error!("Failed to downcast executor to RaftExecutor - appliers NOT wired!");
             return;
         };
@@ -494,11 +503,13 @@ impl AppContext {
         manager.set_meta_applier(meta_applier);
 
         log::debug!("Wiring UserDataApplier for user table data replication...");
-        let user_data_applier = Arc::new(crate::applier::ProviderUserDataApplier::new(Arc::clone(self)));
+        let user_data_applier =
+            Arc::new(crate::applier::ProviderUserDataApplier::new(Arc::clone(self)));
         manager.set_user_data_applier(user_data_applier);
 
         log::debug!("Wiring SharedDataApplier for shared table data replication...");
-        let shared_data_applier = Arc::new(crate::applier::ProviderSharedDataApplier::new(Arc::clone(self)));
+        let shared_data_applier =
+            Arc::new(crate::applier::ProviderSharedDataApplier::new(Arc::clone(self)));
         manager.set_shared_data_applier(shared_data_applier);
 
         log::debug!("✓ Raft appliers wired successfully");
@@ -517,8 +528,11 @@ impl AppContext {
 
         let executor = self.executor();
 
-        let Some(raft_executor) = executor.as_any().downcast_ref::<kalamdb_raft::RaftExecutor>() else {
-            log::error!("Failed to downcast executor to RaftExecutor - state machines NOT restored!");
+        let Some(raft_executor) = executor.as_any().downcast_ref::<kalamdb_raft::RaftExecutor>()
+        else {
+            log::error!(
+                "Failed to downcast executor to RaftExecutor - state machines NOT restored!"
+            );
             return;
         };
 
@@ -560,12 +574,12 @@ impl AppContext {
     /// use kalamdb_core::app_context::AppContext;
     /// use std::sync::Arc;
     ///
-    /// let app_context = Arc::new(AppContext::new_test());
+    /// let app_context = AppContext::new_test();
     /// let sys_cols = app_context.system_columns_service();
     /// let (snowflake_id, updated_ns, deleted) = sys_cols.handle_insert(None).unwrap();
     /// ```
     #[cfg(test)]
-    pub fn new_test() -> Self {
+    pub fn new_test() -> Arc<AppContext> {
         use kalamdb_store::test_utils::InMemoryBackend;
 
         // Create minimal in-memory backend for tests
@@ -603,7 +617,8 @@ impl AppContext {
         system_tables.set_settings_provider(settings_provider);
 
         // Inject ServerLogsTableProvider with temp path for testing
-        let server_logs_provider = crate::views::create_server_logs_provider("/tmp/kalamdb-test/logs");
+        let server_logs_provider =
+            crate::views::create_server_logs_provider("/tmp/kalamdb-test/logs");
         system_tables.set_server_logs_provider(Arc::new(server_logs_provider));
 
         // Create DataFusion session
@@ -612,10 +627,10 @@ impl AppContext {
         );
         let base_session_context = Arc::new(session_factory.create_session());
 
-        // Create minimal job manager
+        // Create minimal job manager registry
         let job_registry = Arc::new(JobRegistry::new());
         let jobs_provider = system_tables.jobs();
-        let job_manager = Arc::new(crate::jobs::JobsManager::new(jobs_provider, job_registry));
+        let job_nodes_provider = system_tables.job_nodes();
 
         // Create test NodeId
         let node_id = Arc::new(NodeId::new(22));
@@ -627,14 +642,6 @@ impl AppContext {
             Duration::from_secs(10), // auth_timeout
             Duration::from_secs(5),  // heartbeat_interval
         );
-
-        // Create live query manager
-        let live_query_manager = Arc::new(LiveQueryManager::new(
-            system_tables.live_queries(),
-            schema_registry.clone(),
-            connection_registry.clone(),
-            Arc::clone(&base_session_context),
-        ));
 
         // Create test config
         let config = Arc::new(ServerConfig::default());
@@ -662,24 +669,21 @@ impl AppContext {
         );
         let manager = Arc::new(kalamdb_raft::manager::RaftManager::new(raft_config));
         let executor: Arc<dyn CommandExecutor> = Arc::new(kalamdb_raft::RaftExecutor::new(manager));
-        
-        // Create unified applier for tests
-        let applier = crate::applier::create_applier();
 
-        AppContext {
+        let app_ctx = Arc::new(AppContext {
             node_id,
             config,
             schema_registry,
             user_table_store,
             shared_table_store,
             storage_backend,
-            job_manager,
-            live_query_manager,
+            job_manager: OnceCell::new(),
+            live_query_manager: OnceCell::new(),
             connection_registry,
             storage_registry,
             system_tables,
             executor,
-            applier,
+            applier: OnceCell::new(),
             session_factory,
             base_session_context,
             system_columns_service,
@@ -687,7 +691,35 @@ impl AppContext {
             manifest_service,
             sql_executor: OnceCell::new(),
             server_start_time: Instant::now(),
+        });
+
+        let job_manager = Arc::new(crate::jobs::JobsManager::new(
+            jobs_provider,
+            job_nodes_provider,
+            job_registry,
+            Arc::clone(&app_ctx),
+        ));
+        if app_ctx.job_manager.set(job_manager).is_err() {
+            panic!("JobsManager already initialized");
         }
+
+        let applier = crate::applier::create_applier(Arc::clone(&app_ctx));
+        if app_ctx.applier.set(applier).is_err() {
+            panic!("UnifiedApplier already initialized");
+        }
+
+        let live_query_manager = Arc::new(LiveQueryManager::new(
+            app_ctx.system_tables().live_queries(),
+            app_ctx.schema_registry(),
+            app_ctx.connection_registry(),
+            Arc::clone(&app_ctx.base_session_context),
+            Arc::clone(&app_ctx),
+        ));
+        if app_ctx.live_query_manager.set(live_query_manager).is_err() {
+            panic!("LiveQueryManager already initialized");
+        }
+
+        app_ctx
     }
 
     /// Get the AppContext singleton
@@ -705,10 +737,7 @@ impl AppContext {
 
     /// Try to get the AppContext singleton without panicking
     pub fn try_get() -> Option<Arc<AppContext>> {
-        APP_CONTEXT
-            .read()
-            .ok()
-            .and_then(|guard| guard.as_ref().cloned())
+        APP_CONTEXT.read().ok().and_then(|guard| guard.as_ref().cloned())
     }
 
     // ===== Getters =====
@@ -733,17 +762,16 @@ impl AppContext {
         self.shared_table_store.clone()
     }
 
-
     pub fn storage_backend(&self) -> Arc<dyn StorageBackend> {
         self.storage_backend.clone()
     }
 
     pub fn job_manager(&self) -> Arc<crate::jobs::JobsManager> {
-        self.job_manager.clone()
+        self.job_manager.get().expect("JobsManager not initialized").clone()
     }
 
     pub fn live_query_manager(&self) -> Arc<LiveQueryManager> {
-        self.live_query_manager.clone()
+        self.live_query_manager.get().expect("LiveQueryManager not initialized").clone()
     }
 
     /// Get the connections manager (WebSocket connection state)
@@ -797,7 +825,7 @@ impl AppContext {
     /// Returns the applier that handles all database commands.
     /// All mutations flow through this applier, regardless of mode.
     pub fn applier(&self) -> Arc<dyn UnifiedApplier> {
-        self.applier.clone()
+        self.applier.get().expect("UnifiedApplier not initialized").clone()
     }
 
     /// Get the system columns service (Phase 12, US5, T027)
@@ -842,8 +870,7 @@ impl AppContext {
 
     /// Get the shared SqlExecutor (panics if not yet initialized)
     pub fn sql_executor(&self) -> Arc<SqlExecutor> {
-        self.try_sql_executor()
-            .expect("SqlExecutor not initialized in AppContext")
+        self.try_sql_executor().expect("SqlExecutor not initialized in AppContext")
     }
 
     // ===== Convenience methods for backward compatibility =====
@@ -868,10 +895,7 @@ impl AppContext {
     pub fn scan_all_jobs(
         &self,
     ) -> Result<Vec<kalamdb_commons::system::Job>, crate::error::KalamDbError> {
-        self.system_tables
-            .jobs()
-            .list_jobs()
-            .into_kalamdb_error("Failed to scan jobs")
+        self.system_tables.jobs().list_jobs().into_kalamdb_error("Failed to scan jobs")
     }
 
     /// Get server uptime in seconds

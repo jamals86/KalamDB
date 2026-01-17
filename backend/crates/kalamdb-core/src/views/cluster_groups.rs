@@ -7,9 +7,7 @@
 
 use super::view_base::{ViewTableProvider, VirtualView};
 use crate::schema_registry::RegistryError;
-use datafusion::arrow::array::{
-    ArrayRef, Int64Array, StringArray,
-};
+use datafusion::arrow::array::{ArrayRef, Int64Array, StringArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::datatypes::KalamDataType;
@@ -17,8 +15,8 @@ use kalamdb_commons::schemas::{
     ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
 };
 use kalamdb_commons::{NamespaceId, TableName};
-use kalamdb_system::SystemTable;
 use kalamdb_raft::{CommandExecutor, GroupId};
+use kalamdb_system::SystemTable;
 use std::sync::{Arc, OnceLock};
 
 fn cluster_groups_schema() -> SchemaRef {
@@ -192,7 +190,10 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Milliseconds since most recent quorum acknowledgment (leader only)".to_string()),
+                Some(
+                    "Milliseconds since most recent quorum acknowledgment (leader only)"
+                        .to_string(),
+                ),
             ),
         ];
 
@@ -236,7 +237,7 @@ impl VirtualView for ClusterGroupsView {
         for shard in 0..info.shared_shards {
             group_ids.push(GroupId::DataSharedShard(shard));
         }
-        
+
         // log::info!(
         //     "cluster_groups: Building view with {} user_shards, {} shared_shards = {} total groups",
         //     info.user_shards, info.shared_shards, group_ids.len()
@@ -263,7 +264,7 @@ impl VirtualView for ClusterGroupsView {
             // New order: group_id, cluster_id, node_id, group_type, ...
             group_id_nums.push(gid.as_u64() as i64);
             cluster_ids.push(info.cluster_id.as_str());
-            
+
             // Determine group type
             let group_type_str = match gid {
                 GroupId::Meta => "meta",
@@ -320,10 +321,7 @@ impl VirtualView for ClusterGroupsView {
                 Arc::new(StringArray::from(group_types)) as ArrayRef,
                 Arc::new(Int64Array::from(current_terms)) as ArrayRef,
                 {
-                    let refs: Vec<Option<&str>> = votes
-                        .iter()
-                        .map(|s| s.as_deref())
-                        .collect();
+                    let refs: Vec<Option<&str>> = votes.iter().map(|s| s.as_deref()).collect();
                     Arc::new(StringArray::from(refs)) as ArrayRef
                 },
                 Arc::new(Int64Array::from(last_log_indexes)) as ArrayRef,
@@ -332,10 +330,7 @@ impl VirtualView for ClusterGroupsView {
                 Arc::new(Int64Array::from(purgeds)) as ArrayRef,
                 Arc::new(Int64Array::from(committeds)) as ArrayRef,
                 {
-                    let refs: Vec<Option<&str>> = states
-                        .iter()
-                        .map(|s| s.as_deref())
-                        .collect();
+                    let refs: Vec<Option<&str>> = states.iter().map(|s| s.as_deref()).collect();
                     Arc::new(StringArray::from(refs)) as ArrayRef
                 },
                 Arc::new(Int64Array::from(current_leaders)) as ArrayRef,

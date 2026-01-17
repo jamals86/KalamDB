@@ -15,7 +15,7 @@ use crate::StorageKey;
 /// ensuring namespace and table name are always paired correctly.
 ///
 /// # Serialization
-/// 
+///
 /// Serializes as "namespace.table" string format for JSON compatibility.
 /// For example: `"flush_test_ns_mkav1q2g_3.metrics"`
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Encode, Decode)]
@@ -113,16 +113,16 @@ impl<'de> Deserialize<'de> for TableId {
     {
         use serde::de::{Error, Visitor};
         use std::fmt;
-        
+
         struct TableIdVisitor;
-        
+
         impl<'de> Visitor<'de> for TableIdVisitor {
             type Value = TableId;
-            
+
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("a string in the format 'namespace.table'")
             }
-            
+
             fn visit_str<E>(self, value: &str) -> Result<TableId, E>
             where
                 E: Error,
@@ -139,7 +139,7 @@ impl<'de> Deserialize<'de> for TableId {
                     _ => Err(E::custom(format!("Invalid table_id format: {}", value))),
                 }
             }
-            
+
             fn visit_string<E>(self, value: String) -> Result<TableId, E>
             where
                 E: Error,
@@ -147,7 +147,7 @@ impl<'de> Deserialize<'de> for TableId {
                 self.visit_str(&value)
             }
         }
-        
+
         deserializer.deserialize_str(TableIdVisitor)
     }
 }

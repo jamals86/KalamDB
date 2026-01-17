@@ -39,8 +39,8 @@
 //! let row = store.get(&key)?;
 //! ```
 
-pub mod error;
 pub mod common;
+pub mod error;
 pub mod shared_tables;
 pub mod store_ext;
 pub mod stream_tables;
@@ -50,6 +50,8 @@ pub mod user_tables;
 pub use error::{Result, TableError};
 
 // Re-export table stores
+pub use kalamdb_commons::models::StreamTableRow;
+pub use kalamdb_commons::models::UserTableRow;
 pub use shared_tables::pk_index::{create_shared_table_pk_index, SharedTablePkIndex};
 pub use shared_tables::shared_table_store::{
     new_indexed_shared_table_store, new_shared_table_store, SharedTableIndexedStore,
@@ -58,13 +60,10 @@ pub use shared_tables::shared_table_store::{
 pub use stream_tables::stream_table_store::{
     new_stream_table_store, StreamTableStore, StreamTableStoreConfig,
 };
-pub use kalamdb_commons::models::StreamTableRow;
 pub use user_tables::pk_index::{create_user_table_pk_index, UserTablePkIndex};
 pub use user_tables::user_table_store::{
-    new_indexed_user_table_store, new_user_table_store, UserTableIndexedStore,
-    UserTableStore,
+    new_indexed_user_table_store, new_user_table_store, UserTableIndexedStore, UserTableStore,
 };
-pub use kalamdb_commons::models::UserTableRow;
 
 // Re-export extension traits
 pub use store_ext::{SharedTableStoreExt, StreamTableStoreExt, UserTableStoreExt};

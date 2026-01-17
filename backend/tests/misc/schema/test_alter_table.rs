@@ -8,7 +8,6 @@
 //! - Schema versioning
 //! - Cache invalidation after ALTER
 
-
 use super::test_support::{fixtures, QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
 
@@ -70,10 +69,7 @@ async fn test_alter_table_add_column() {
     // Verify new column exists in schema (query should work)
     let query_response = server
         .execute_sql_as_user(
-            &format!(
-                "SELECT id, name, price, stock FROM {}.products WHERE id = 'p1'",
-                ns
-            ),
+            &format!("SELECT id, name, price, stock FROM {}.products WHERE id = 'p1'", ns),
             "user1",
         )
         .await;
@@ -112,13 +108,10 @@ async fn test_alter_table_drop_column() {
         "Failed to create namespace: {:?}",
         ns_resp.error
     );
-    
+
     // Verify namespace exists before proceeding
-    assert!(
-        server.namespace_exists(&ns).await,
-        "Namespace should exist after creation"
-    );
-    
+    assert!(server.namespace_exists(&ns).await, "Namespace should exist after creation");
+
     let create_resp = server
         .execute_sql_as_user(
             &format!(
@@ -173,10 +166,7 @@ async fn test_alter_table_drop_column() {
     // Verify column no longer accessible
     let query_response = server
         .execute_sql_as_user(
-            &format!(
-                "SELECT id, item, quantity FROM {}.inventory WHERE id = 'i1'",
-                ns
-            ),
+            &format!("SELECT id, item, quantity FROM {}.inventory WHERE id = 'i1'", ns),
             "user1",
         )
         .await;
@@ -235,10 +225,7 @@ async fn test_alter_table_rename_column() {
     // ALTER TABLE: RENAME COLUMN
     let alter_response = server
         .execute_sql_as_user(
-            &format!(
-                r#"ALTER TABLE {}.customers RENAME COLUMN customer_name TO name"#,
-                ns
-            ),
+            &format!(r#"ALTER TABLE {}.customers RENAME COLUMN customer_name TO name"#, ns),
             "user1",
         )
         .await;
@@ -395,10 +382,7 @@ async fn test_alter_table_schema_versioning() {
 
     // Query should work with all columns (schema evolution tracked internally)
     let query_response = server
-        .execute_sql_as_user(
-            &format!("SELECT id, col1, col2, col3 FROM {}.versioned", ns),
-            "user1",
-        )
+        .execute_sql_as_user(&format!("SELECT id, col1, col2, col3 FROM {}.versioned", ns), "user1")
         .await;
 
     assert_eq!(

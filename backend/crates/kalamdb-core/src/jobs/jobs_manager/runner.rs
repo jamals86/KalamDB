@@ -3,17 +3,131 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::JobDecision;
 use crate::jobs::{HealthMonitor, StreamEvictionScheduler};
-use crate::jobs::leader_guard::LeaderOnlyJobGuard;
-use kalamdb_commons::system::{Job, JobFilter, JobSortField, SortOrder};
-use kalamdb_commons::JobStatus;
+use kalamdb_commons::system::{Job, JobFilter, JobNode};
+use kalamdb_commons::{JobId, JobStatus, NodeId};
+use kalamdb_raft::commands::MetaCommand;
 use kalamdb_raft::GroupId;
 use log::Level;
 use tokio::time::{sleep, Duration, Instant};
 
+const JOB_NODE_QUORUM_POLL_MS: u64 = 250;
+const JOB_NODE_QUORUM_TIMEOUT_SECS: u64 = 10;
+
+#[derive(Debug, Clone)]
+enum JobNodeQuorumResult {
+    QuorumReached { completed: usize, total: usize },
+    TimedOut { completed: usize, total: usize },
+    Failed { failed_nodes: Vec<NodeId> },
+}
+
 impl JobsManager {
-    /// Update a job in the database asynchronously
-    /// 
+    /// Claim job and mark it Running via Raft (sets `started_at`)
+    async fn mark_job_running(&self, job_id: &JobId) -> Result<(), KalamDbError> {
+        let app_ctx = self.get_attached_app_context();
+        let cmd = MetaCommand::ClaimJob {
+            job_id: job_id.clone(),
+            node_id: self.node_id.clone(),
+            claimed_at: chrono::Utc::now(),
+        };
+        app_ctx
+            .executor()
+            .execute_meta(cmd)
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Failed to claim job via Raft: {}", e)))?;
+        Ok(())
+    }
+
+    /// Claim a per-node job entry via Raft
+    async fn claim_job_node(&self, job_id: &JobId) -> Result<(), KalamDbError> {
+        let app_ctx = self.get_attached_app_context();
+        let cmd = MetaCommand::ClaimJobNode {
+            job_id: job_id.clone(),
+            node_id: self.node_id.clone(),
+            claimed_at: chrono::Utc::now(),
+        };
+
+        app_ctx
+            .executor()
+            .execute_meta(cmd)
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Failed to claim job_node via Raft: {}", e)))?;
+        Ok(())
+    }
+
+    /// Update per-node job status via Raft
+    async fn update_job_node_status(
+        &self,
+        job_id: &JobId,
+        status: JobStatus,
+        error_message: Option<String>,
+    ) -> Result<(), KalamDbError> {
+        let app_ctx = self.get_attached_app_context();
+        let cmd = MetaCommand::UpdateJobNodeStatus {
+            job_id: job_id.clone(),
+            node_id: self.node_id.clone(),
+            status,
+            error_message,
+            updated_at: chrono::Utc::now(),
+        };
+
+        app_ctx
+            .executor()
+            .execute_meta(cmd)
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Failed to update job_node via Raft: {}", e)))?;
+        Ok(())
+    }
+
+    /// Complete a job via Raft (for cluster replication)
+    async fn mark_job_completed(
+        &self,
+        job_id: &kalamdb_commons::JobId,
+        message: Option<String>,
+    ) -> Result<(), KalamDbError> {
+        let app_ctx = self.get_attached_app_context();
+        let success_message = message.unwrap_or_else(|| "Job completed successfully".to_string());
+        let cmd = MetaCommand::CompleteJob {
+            job_id: job_id.clone(),
+            result_json: Some(
+                serde_json::json!({ "message": success_message }).to_string(),
+            ),
+            completed_at: chrono::Utc::now(),
+        };
+        app_ctx
+            .executor()
+            .execute_meta(cmd)
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Failed to complete job via Raft: {}", e)))?;
+
+        self.finalize_job_nodes(job_id, JobStatus::Completed, None)
+            .await?;
+        Ok(())
+    }
+
+    /// Fail a job via Raft (for cluster replication)
+    async fn mark_job_failed(
+        &self,
+        job_id: &kalamdb_commons::JobId,
+        error_message: String,
+    ) -> Result<(), KalamDbError> {
+        let app_ctx = self.get_attached_app_context();
+        let cmd = MetaCommand::FailJob {
+            job_id: job_id.clone(),
+            error_message: error_message.clone(),
+            failed_at: chrono::Utc::now(),
+        };
+        app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
+            KalamDbError::Other(format!("Failed to mark job as failed via Raft: {}", e))
+        })?;
+        self.finalize_job_nodes(job_id, JobStatus::Failed, Some(error_message))
+            .await?;
+        Ok(())
+    }
+
+    /// Update a job in the database asynchronously (for retrying status only)
+    ///
     /// Delegates to provider's async method which handles spawn_blocking internally.
+    /// Note: For Completed/Failed states, use mark_job_completed/mark_job_failed instead.
     async fn update_job_async(&self, job: Job) -> Result<(), KalamDbError> {
         self.jobs_provider
             .update_job_async(job)
@@ -21,20 +135,20 @@ impl JobsManager {
             .into_kalamdb_error("Failed to update job")
     }
 
-    /// Check if this node should process jobs (leader check for cluster mode)
+    /// Check if this node is the cluster leader
     ///
     /// In standalone mode, always returns true.
-    /// In cluster mode, only the leader of the Meta group processes jobs.
-    async fn should_process_jobs(&self) -> bool {
+    /// In cluster mode, checks if this node is the leader of the Meta group.
+    async fn is_cluster_leader(&self) -> bool {
         let app_ctx = self.get_attached_app_context();
-        
+
         // Check if we're in cluster mode
         if !app_ctx.executor().is_cluster_mode() {
-            // Standalone mode - always process jobs
+            // Standalone mode - always act as leader
             return true;
         }
-        
-        // Cluster mode - only leader processes jobs
+
+        // Cluster mode - check if we're the leader
         app_ctx.executor().is_leader(GroupId::Meta).await
     }
 
@@ -44,8 +158,9 @@ impl JobsManager {
     /// Implements idempotency checks, retry logic with exponential backoff, and crash recovery.
     /// Also periodically checks for stream tables requiring TTL eviction.
     ///
-    /// **Leader-Only Execution**: In cluster mode, only the leader node executes jobs.
-    /// Follower nodes will skip job processing and wait for leadership changes.
+    /// **Two-Phase Distributed Execution**:
+    /// - ALL nodes execute local work (RocksDB flush, cache eviction, compaction)
+    /// - ONLY leader executes leader actions (Parquet upload, manifest updates)
     ///
     /// # Arguments
     /// * `max_concurrent` - Maximum number of concurrent jobs to run
@@ -56,10 +171,7 @@ impl JobsManager {
     /// job_manager.run_loop(5).await?;
     /// ```
     pub async fn run_loop(&self, max_concurrent: usize) -> Result<(), KalamDbError> {
-        log::debug!(
-            "Starting job processing loop (max {} concurrent)",
-            max_concurrent
-        );
+        log::debug!("Starting job processing loop (max {} concurrent)", max_concurrent);
 
         // Perform crash recovery on startup
         self.recover_incomplete_jobs().await?;
@@ -73,7 +185,7 @@ impl JobsManager {
         let eviction_interval_secs = app_context.config().stream.eviction_interval_seconds;
         let stream_eviction_interval = Duration::from_secs(eviction_interval_secs);
         let mut last_stream_eviction = Instant::now();
-        
+
         // Leadership check interval (for cluster mode)
         let leadership_check_interval = Duration::from_secs(1);
         let mut last_leadership_check = Instant::now();
@@ -86,33 +198,27 @@ impl JobsManager {
                 break;
             }
 
-            // Check leadership status (for cluster mode)
+            // Check leadership status (for cluster mode, used for leader-only actions and scheduling)
             let is_leader = if last_leadership_check.elapsed() >= leadership_check_interval {
                 last_leadership_check = Instant::now();
-                let should_process = self.should_process_jobs().await;
-                
+                let leader_now = self.is_cluster_leader().await;
+
                 // Log leadership transitions
-                if should_process && !was_leader {
-                    log::info!("[JobLoop] This node became leader - starting job processing");
+                if leader_now && !was_leader {
+                    log::info!("[JobLoop] This node became leader - handling failover");
                     // Perform leader failover recovery
                     self.handle_leader_failover().await;
-                } else if !should_process && was_leader {
-                    log::info!("[JobLoop] This node lost leadership - pausing job processing");
+                } else if !leader_now && was_leader {
+                    log::info!("[JobLoop] This node lost leadership");
                 }
-                
-                was_leader = should_process;
-                should_process
+
+                was_leader = leader_now;
+                leader_now
             } else {
                 was_leader
             };
 
-            // Skip job processing if not leader in cluster mode
-            if !is_leader {
-                sleep(Duration::from_millis(500)).await;
-                continue;
-            }
-
-            // Periodic health metrics logging
+            // Periodic health metrics logging (all nodes)
             if last_health_check.elapsed() >= health_check_interval {
                 let app_ctx = self.get_attached_app_context();
                 if let Err(e) = HealthMonitor::log_metrics(self, app_ctx).await {
@@ -121,8 +227,9 @@ impl JobsManager {
                 last_health_check = Instant::now();
             }
 
-            // Periodic stream eviction job creation (leader-only)
-            if eviction_interval_secs > 0
+            // Periodic stream eviction job creation (leader-only - creates jobs for all nodes)
+            if is_leader
+                && eviction_interval_secs > 0
                 && last_stream_eviction.elapsed() >= stream_eviction_interval
             {
                 let app_ctx = self.get_attached_app_context();
@@ -132,235 +239,483 @@ impl JobsManager {
                 last_stream_eviction = Instant::now();
             }
 
-            // Poll for next job
+            // Poll for next job (all nodes poll for jobs)
             match self.poll_next().await {
-                Ok(Some(job)) => {
+                Ok(Some((job, job_node))) => {
                     // TODO: Implement concurrency control (semaphore with max_concurrent)
                     // For now, process jobs sequentially
-                    if let Err(e) = self.execute_job(job).await {
+                    // Pass is_leader to execute_job for two-phase execution
+                    if let Err(e) = self.execute_job(job, job_node, is_leader).await {
                         log::error!("Job execution failed critically: {}", e);
                         // Sleep briefly to avoid tight loop on persistent errors
                         sleep(Duration::from_secs(1)).await;
                     }
-                }
+                },
                 Ok(None) => {
                     // No jobs available, sleep briefly
                     sleep(Duration::from_millis(100)).await;
-                }
+                },
                 Err(e) => {
                     log::error!("Failed to poll for next job: {}", e);
                     sleep(Duration::from_secs(1)).await;
-                }
+                },
             }
         }
 
         Ok(())
     }
 
-    /// Poll for next job to execute
+    /// Poll for next per-node job entry to execute
     ///
     /// Finds the next queued job with idempotency check.
     ///
     /// # Returns
     /// Next job to execute, or None if no jobs available
-    async fn poll_next(&self) -> Result<Option<Job>, KalamDbError> {
-        // Query for jobs with status=Queued or New, ordered by created_at ASC
-        // Use limit=1 to fetch only the next job efficiently
-        let filter = JobFilter {
-            statuses: Some(vec![JobStatus::New, JobStatus::Queued]),
-            sort_by: Some(JobSortField::CreatedAt),
-            sort_order: Some(SortOrder::Asc),
-            limit: Some(1),
-            ..Default::default()
+    async fn poll_next(&self) -> Result<Option<(Job, JobNode)>, KalamDbError> {
+        let statuses = vec![JobStatus::New, JobStatus::Queued, JobStatus::Retrying];
+        let nodes = self
+            .job_nodes_provider
+            .list_for_node_with_statuses_async(&self.node_id, &statuses, 1)
+            .await
+            .into_kalamdb_error("Failed to list job_nodes")?;
+
+        let Some(job_node) = nodes.into_iter().next() else {
+            return Ok(None);
         };
 
-        let jobs = self.list_jobs(filter).await?;
+        let Some(job) = self.get_job(&job_node.job_id).await? else {
+            self.update_job_node_status(
+                &job_node.job_id,
+                JobStatus::Failed,
+                Some("Job not found for job_node".to_string()),
+            )
+            .await?;
+            return Ok(None);
+        };
 
-        Ok(jobs.into_iter().next())
+        if matches!(job.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled) {
+            self.update_job_node_status(&job_node.job_id, job.status, None)
+                .await?;
+            return Ok(None);
+        }
+
+        Ok(Some((job, job_node)))
     }
 
-    /// Execute a single job
+    /// Execute a single job with two-phase distributed model
     ///
-    /// Dispatches job to appropriate executor via JobRegistry.
-    async fn execute_job(&self, mut job: Job) -> Result<(), KalamDbError> {
+    /// **Phase 1 - Local Work (ALL nodes)**:
+    /// - RocksDB flush, local cache eviction, compaction
+    /// - Runs on every node in the cluster
+    ///
+    /// **Phase 2 - Leader Actions (ONLY leader)**:
+    /// - Parquet upload to external storage, manifest updates
+    /// - Only runs on leader for jobs with `has_leader_actions() == true`
+    ///
+    /// # Arguments
+    /// * `job` - Job to execute
+    /// * `is_leader` - Whether this node is currently the cluster leader
+    async fn execute_job(
+        &self,
+        job: Job,
+        _job_node: JobNode,
+        is_leader: bool,
+    ) -> Result<(), KalamDbError> {
         let job_id = job.job_id.clone();
+        let job_type = job.job_type;
 
-        // Mark job as Running
-        job.status = JobStatus::Running;
-        job.started_at = Some(chrono::Utc::now().timestamp_millis());
-        job.updated_at = chrono::Utc::now().timestamp_millis();
+        // Claim per-node job entry
+        self.claim_job_node(&job_id).await?;
 
-        self.update_job_async(job.clone()).await?;
+        // Mark job as Running (leader only)
+        if is_leader {
+            self.mark_job_running(&job_id).await?;
+        }
 
-        self.log_job_event(&job_id, &Level::Debug, "Job started");
+        self.log_job_event(&job_id, &Level::Debug, "Job started (local phase)");
 
-        // Execute job using registry (handles deserialization and validation)
         let app_ctx = self.get_attached_app_context();
 
-        // Execute job with robust error handling (do not tear down run loop on executor error)
-        let decision = match self.job_registry.execute(app_ctx, &job).await {
-            Ok(d) => d,
-            Err(e) => {
-                // Mark job as failed and continue processing other jobs
-                let now_ms = chrono::Utc::now().timestamp_millis();
-                job.status = JobStatus::Failed;
-                job.message = Some(format!("Executor error: {}", e));
-                job.exception_trace = None;
-                job.updated_at = now_ms;
-                job.finished_at = Some(now_ms);
-
-                self.update_job_async(job.clone()).await.map_err(|err| {
-                    KalamDbError::io_message(format!(
-                        "Failed to fail job after executor error: {}",
-                        err
-                    ))
-                })?;
-
-                self.log_job_event(
-                    &job_id,
-                    &Level::Error,
-                    &format!("Job failed with executor error: {}", e),
-                );
-
-                // Return Ok to keep the run loop alive
-                return Ok(());
+        // ============================================
+        // Phase 1: Execute LOCAL work (runs on ALL nodes)
+        // ============================================
+        let local_decision = if job_type.has_local_work() {
+            match self.job_registry.execute_local(app_ctx.clone(), &job).await {
+                Ok(d) => d,
+                Err(e) => {
+                    let error_msg = format!("Local executor error: {}", e);
+                    self.update_job_node_status(&job_id, JobStatus::Failed, Some(error_msg.clone()))
+                        .await?;
+                    if is_leader {
+                        if let Err(err) = self.mark_job_failed(&job_id, error_msg.clone()).await {
+                            log::error!(
+                                "[{}] Failed to mark job as failed via Raft: {}",
+                                job_id,
+                                err
+                            );
+                        }
+                    }
+                    self.log_job_event(
+                        &job_id,
+                        &Level::Error,
+                        &format!("Job failed in local phase: {}", e),
+                    );
+                    return Ok(());
+                },
+            }
+        } else {
+            JobDecision::Completed {
+                message: Some("No local work required".to_string()),
             }
         };
 
-        // Handle execution result
-        log::debug!("[{}] Handling execution result", job_id);
-        match decision {
+        // Handle local phase result
+        match &local_decision {
             JobDecision::Completed { message } => {
-                log::debug!("[{}] Matched JobDecision::Completed", job_id);
-                // Manually update job to completed state
-                let now_ms = chrono::Utc::now().timestamp_millis();
-                job.status = JobStatus::Completed;
-                job.message = message.clone();
-                job.updated_at = now_ms;
-                job.finished_at = Some(now_ms);
+                self.update_job_node_status(&job_id, JobStatus::Completed, None)
+                    .await?;
+                self.log_job_event(
+                    &job_id,
+                    &Level::Debug,
+                    &format!("Local phase completed: {}", message.as_deref().unwrap_or("ok")),
+                );
+            },
+            JobDecision::Failed { message, .. } => {
+                self.update_job_node_status(&job_id, JobStatus::Failed, Some(message.clone()))
+                    .await?;
+                if is_leader {
+                    if let Err(err) = self.mark_job_failed(&job_id, message.clone()).await {
+                        log::error!(
+                            "[{}] Failed to mark job as failed via Raft: {}",
+                            job_id,
+                            err
+                        );
+                    }
+                }
+                self.log_job_event(&job_id, &Level::Error, &format!("Job failed in local phase: {}", message));
+                return Ok(());
+            },
+            JobDecision::Retry { message, exception_trace, backoff_ms } => {
+                // Handle retry for local phase
+                return self
+                    .handle_job_retry(&job, message, exception_trace.clone(), *backoff_ms, is_leader)
+                    .await;
+            },
+        }
 
-                log::debug!("[{}] About to call update_job_async with status={:?}", job_id, job.status);
-                if let Err(e) = self.update_job_async(job.clone()).await {
-                    log::error!("[{}] Failed to update job status to Completed: {}", job_id, e);
+        // ============================================
+        // Phase 2: Execute LEADER actions (ONLY on leader)
+        // ============================================
+        if is_leader {
+            let node_ids = self.active_cluster_node_ids();
+            let quorum_result = self
+                .wait_for_job_nodes_quorum(
+                    &job_id,
+                    &node_ids,
+                    Duration::from_secs(JOB_NODE_QUORUM_TIMEOUT_SECS),
+                )
+                .await?;
+
+            match quorum_result {
+                JobNodeQuorumResult::Failed { failed_nodes } => {
+                    let reason = format!(
+                        "Local phase failed on nodes: {}",
+                        failed_nodes
+                            .iter()
+                            .map(|id| id.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                    self.mark_job_failed(&job_id, reason).await?;
+                    return Ok(());
+                },
+                JobNodeQuorumResult::TimedOut { completed, total } => {
+                    self.log_job_event(
+                        &job_id,
+                        &Level::Warn,
+                        &format!(
+                            "Quorum timeout (completed {}/{}); proceeding with leader actions",
+                            completed, total
+                        ),
+                    );
+                },
+                JobNodeQuorumResult::QuorumReached { completed, total } => {
+                    self.log_job_event(
+                        &job_id,
+                        &Level::Debug,
+                        &format!("Quorum reached (completed {}/{})", completed, total),
+                    );
+                },
+            }
+
+            if job_type.has_leader_actions() {
+                self.log_job_event(&job_id, &Level::Debug, "Executing leader phase");
+
+                let leader_decision = match self.job_registry.execute_leader(app_ctx, &job).await {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let error_msg = format!("Leader executor error: {}", e);
+                        if let Err(err) = self.mark_job_failed(&job_id, error_msg.clone()).await {
+                            log::error!("[{}] Failed to mark job as failed via Raft: {}", job_id, err);
+                        }
+                        self.log_job_event(
+                            &job_id,
+                            &Level::Error,
+                            &format!("Job failed in leader phase: {}", e),
+                        );
+                        return Ok(());
+                    },
+                };
+
+                match leader_decision {
+                    JobDecision::Completed { message } => {
+                        if let Err(e) = self.mark_job_completed(&job_id, message.clone()).await {
+                            log::error!("[{}] Failed to mark job as completed via Raft: {}", job_id, e);
+                            return Err(KalamDbError::Other(format!(
+                                "Failed to update job status to Completed: {}",
+                                e
+                            )));
+                        }
+                        self.log_job_event(
+                            &job_id,
+                            &Level::Debug,
+                            &format!("Job completed (leader phase): {}", message.unwrap_or_default()),
+                        );
+                    },
+                    JobDecision::Failed { message, .. } => {
+                        if let Err(err) = self.mark_job_failed(&job_id, message.clone()).await {
+                            log::error!("[{}] Failed to mark job as failed via Raft: {}", job_id, err);
+                        }
+                        self.log_job_event(&job_id, &Level::Error, &format!("Job failed in leader phase: {}", message));
+                    },
+                    JobDecision::Retry { message, exception_trace, backoff_ms } => {
+                        return self
+                            .handle_job_retry(&job, &message, exception_trace, backoff_ms, is_leader)
+                            .await;
+                    },
+                }
+            } else if let JobDecision::Completed { message } = local_decision {
+                if let Err(e) = self.mark_job_completed(&job_id, message.clone()).await {
+                    log::error!("[{}] Failed to mark job as completed via Raft: {}", job_id, e);
                     return Err(KalamDbError::Other(format!(
                         "Failed to update job status to Completed: {}",
                         e
                     )));
                 }
-                log::debug!("[{}] update_job_async returned Ok", job_id);
-
                 self.log_job_event(
                     &job_id,
                     &Level::Debug,
                     &format!("Job completed: {}", message.unwrap_or_default()),
                 );
             }
-            JobDecision::Retry {
-                message,
-                exception_trace,
-                backoff_ms,
-            } => {
-                // Check if can retry
-                if job.retry_count < job.max_retries {
-                    job.retry_count += 1;
-                    job.status = JobStatus::Retrying;
-                    job.exception_trace = exception_trace.clone();
-                    job.updated_at = chrono::Utc::now().timestamp_millis();
-
-                    self.update_job_async(job.clone()).await
-                        .into_kalamdb_error("Failed to retry job")?;
-
-                    self.log_job_event(
-                        &job_id,
-                        &Level::Warn,
-                        &format!(
-                            "Job retry {}/{}, waiting {}ms: {}",
-                            job.retry_count, job.max_retries, backoff_ms, message
-                        ),
-                    );
-
-                    // Sleep before retry
-                    sleep(Duration::from_millis(backoff_ms)).await;
-                } else {
-                    // Max retries exceeded, mark as failed
-                    let now_ms = chrono::Utc::now().timestamp_millis();
-                    job.status = JobStatus::Failed;
-                    job.message = Some("Max retries exceeded".to_string());
-                    job.exception_trace = exception_trace;
-                    job.updated_at = now_ms;
-                    job.finished_at = Some(now_ms);
-
-                    self.update_job_async(job.clone()).await
-                        .into_kalamdb_error("Failed to fail job")?;
-
-                    self.log_job_event(&job_id, &Level::Error, "Job failed: max retries exceeded");
-                }
-            }
-            JobDecision::Failed {
-                message,
-                exception_trace,
-            } => {
-                // Manually update job to failed state
-                let now_ms = chrono::Utc::now().timestamp_millis();
-                job.status = JobStatus::Failed;
-                job.message = Some(message.clone());
-                job.exception_trace = exception_trace.clone();
-                job.updated_at = now_ms;
-                job.finished_at = Some(now_ms);
-
-                self.update_job_async(job.clone()).await
-                    .into_kalamdb_error("Failed to fail job")?;
-
-                self.log_job_event(&job_id, &Level::Error, &format!("Job failed: {}", message));
-            }
         }
 
         Ok(())
+    }
+
+    /// Handle job retry logic
+    async fn handle_job_retry(
+        &self,
+        job: &Job,
+        message: &str,
+        exception_trace: Option<String>,
+        backoff_ms: u64,
+        is_leader: bool,
+    ) -> Result<(), KalamDbError> {
+        let mut updated_job = job.clone();
+        let job_id = &job.job_id;
+
+        if updated_job.retry_count < updated_job.max_retries {
+            updated_job.retry_count += 1;
+            updated_job.status = JobStatus::Retrying;
+            updated_job.exception_trace = exception_trace;
+            updated_job.updated_at = chrono::Utc::now().timestamp_millis();
+
+            if is_leader {
+                self.update_job_async(updated_job.clone())
+                    .await
+                    .into_kalamdb_error("Failed to retry job")?;
+            }
+
+            self.update_job_node_status(
+                job_id,
+                JobStatus::Retrying,
+                Some(message.to_string()),
+            )
+            .await?;
+
+            self.log_job_event(
+                job_id,
+                &Level::Warn,
+                &format!(
+                    "Job retry {}/{}, waiting {}ms: {}",
+                    updated_job.retry_count, updated_job.max_retries, backoff_ms, message
+                ),
+            );
+
+            // Sleep before retry
+            sleep(Duration::from_millis(backoff_ms)).await;
+
+            self.update_job_node_status(job_id, JobStatus::Queued, None).await?;
+        } else {
+            if is_leader {
+                self.mark_job_failed(job_id, "Max retries exceeded".to_string())
+                    .await
+                    .into_kalamdb_error("Failed to fail job")?;
+            }
+
+            self.update_job_node_status(
+                job_id,
+                JobStatus::Failed,
+                Some("Max retries exceeded".to_string()),
+            )
+            .await?;
+
+            self.log_job_event(job_id, &Level::Error, "Job failed: max retries exceeded");
+        }
+
+        Ok(())
+    }
+
+    async fn wait_for_job_nodes_quorum(
+        &self,
+        job_id: &JobId,
+        node_ids: &[NodeId],
+        timeout: Duration,
+    ) -> Result<JobNodeQuorumResult, KalamDbError> {
+        let total = node_ids.len().max(1);
+        let quorum = total / 2 + 1;
+        let start = Instant::now();
+
+        loop {
+            let mut completed = 0;
+            let mut failed_nodes = Vec::new();
+
+            for node_id in node_ids {
+                if let Some(node) = self
+                    .job_nodes_provider
+                    .get_job_node_async(job_id, node_id)
+                    .await
+                    .into_kalamdb_error("Failed to get job_node")?
+                {
+                    match node.status {
+                        JobStatus::Completed => completed += 1,
+                        JobStatus::Failed | JobStatus::Cancelled => {
+                            failed_nodes.push(node_id.clone());
+                        },
+                        _ => {},
+                    }
+                }
+            }
+
+            if !failed_nodes.is_empty() {
+                return Ok(JobNodeQuorumResult::Failed { failed_nodes });
+            }
+
+            if completed >= quorum {
+                return Ok(JobNodeQuorumResult::QuorumReached { completed, total });
+            }
+
+            if start.elapsed() >= timeout {
+                return Ok(JobNodeQuorumResult::TimedOut { completed, total });
+            }
+
+            sleep(Duration::from_millis(JOB_NODE_QUORUM_POLL_MS)).await;
+        }
     }
 
     /// Handle leader failover by recovering orphaned jobs
     ///
     /// Called when this node becomes the leader in cluster mode.
     async fn handle_leader_failover(&self) {
-        use std::collections::HashSet;
-        use crate::jobs::leader_failover::LeaderFailoverHandler;
-        
         let app_ctx = self.get_attached_app_context();
-        
-        // Get active nodes from cluster info
-        let cluster_info = app_ctx.executor().get_cluster_info();
-        let active_nodes: HashSet<_> = cluster_info
-            .nodes
-            .iter()
-            .filter(|n| matches!(n.status, kalamdb_raft::NodeStatus::Active))
-            .map(|n| n.node_id.clone())
-            .collect();
-        
-        // Create leader guard
-        let job_guard = LeaderOnlyJobGuard::new(app_ctx.executor().clone());
-        
-        // Create failover handler
-        let failover_handler = LeaderFailoverHandler::new(
-            job_guard,
-            self.jobs_provider.clone(),
-            active_nodes,
-        );
-        
-        // Perform failover recovery
-        match failover_handler.on_become_leader().await {
-            Ok(report) => {
-                if !report.is_empty() {
-                    log::info!(
-                        "[JobLoop] Failover recovery: {} requeued, {} failed, {} continued",
-                        report.requeued.len(),
-                        report.marked_failed.len(),
-                        report.continued.len()
-                    );
-                }
-            }
+
+        let filter = JobFilter {
+            status: Some(JobStatus::Running),
+            ..Default::default()
+        };
+
+        let jobs = match self.list_jobs(filter).await {
+            Ok(jobs) => jobs,
             Err(e) => {
-                log::error!("[JobLoop] Failover recovery failed: {}", e);
+                log::error!("[JobLoop] Failed to list running jobs for leader failover: {}", e);
+                return;
+            },
+        };
+
+        for job in jobs {
+            if let Err(e) = self.resume_leader_actions(job).await {
+                log::error!("[JobLoop] Failed to resume leader actions: {}", e);
             }
         }
+    }
+
+    async fn resume_leader_actions(&self, job: Job) -> Result<(), KalamDbError> {
+        let job_id = job.job_id.clone();
+
+        let node_ids = self.active_cluster_node_ids();
+        let quorum_result = self
+            .wait_for_job_nodes_quorum(
+                &job_id,
+                &node_ids,
+                Duration::from_secs(JOB_NODE_QUORUM_TIMEOUT_SECS),
+            )
+            .await?;
+
+        match quorum_result {
+            JobNodeQuorumResult::Failed { failed_nodes } => {
+                let reason = format!(
+                    "Local phase failed on nodes: {}",
+                    failed_nodes
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                self.mark_job_failed(&job_id, reason).await?;
+                return Ok(());
+            },
+            JobNodeQuorumResult::TimedOut { completed, total } => {
+                self.log_job_event(
+                    &job_id,
+                    &Level::Warn,
+                    &format!(
+                        "Quorum timeout (completed {}/{}); proceeding with leader actions",
+                        completed, total
+                    ),
+                );
+            },
+            JobNodeQuorumResult::QuorumReached { completed, total } => {
+                self.log_job_event(
+                    &job_id,
+                    &Level::Debug,
+                    &format!("Quorum reached (completed {}/{})", completed, total),
+                );
+            },
+        }
+
+        if job.job_type.has_leader_actions() {
+            let app_ctx = self.get_attached_app_context();
+            let leader_decision = self.job_registry.execute_leader(app_ctx, &job).await?;
+
+            match leader_decision {
+                JobDecision::Completed { message } => {
+                    self.mark_job_completed(&job_id, message).await?;
+                },
+                JobDecision::Failed { message, .. } => {
+                    self.mark_job_failed(&job_id, message).await?;
+                },
+                JobDecision::Retry { message, exception_trace, backoff_ms } => {
+                    return self
+                        .handle_job_retry(&job, &message, exception_trace, backoff_ms, true)
+                        .await;
+                },
+            }
+        } else {
+            self.mark_job_completed(&job_id, Some("Local work completed".to_string()))
+                .await?;
+        }
+
+        Ok(())
     }
 }

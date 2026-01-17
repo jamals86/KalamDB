@@ -1,6 +1,5 @@
 //! Flush-related SQL tests over the real HTTP SQL API.
 
-
 use kalam_link::models::ResponseStatus;
 use tokio::time::{sleep, Duration, Instant};
 
@@ -20,10 +19,8 @@ async fn test_flush_table_persists_job_over_http() -> anyhow::Result<()> {
     let resp = server.execute_sql(&create_table).await?;
     assert_eq!(resp.status, ResponseStatus::Success, "CREATE TABLE failed");
 
-    let insert_sql = format!(
-        "INSERT INTO {}.logs (log_id, message) VALUES ('log1', 'Test message')",
-        ns
-    );
+    let insert_sql =
+        format!("INSERT INTO {}.logs (log_id, message) VALUES ('log1', 'Test message')", ns);
     let resp = server.execute_sql(&insert_sql).await?;
     assert_eq!(resp.status, ResponseStatus::Success, "INSERT failed");
 
@@ -35,7 +32,9 @@ async fn test_flush_table_persists_job_over_http() -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let resp = server
-            .execute_sql("SELECT job_type, status, parameters FROM system.jobs WHERE job_type = 'flush'")
+            .execute_sql(
+                "SELECT job_type, status, parameters FROM system.jobs WHERE job_type = 'flush'",
+            )
             .await?;
         assert_eq!(resp.status, ResponseStatus::Success);
         let rows = resp.results[0].rows_as_maps();

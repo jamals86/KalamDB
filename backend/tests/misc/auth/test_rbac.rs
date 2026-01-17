@@ -2,7 +2,6 @@
 //!
 //! Verifies role-based access control behavior using SQL executor paths.
 
-
 use super::test_support::{fixtures, QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::models::{Role, UserId};
@@ -30,12 +29,7 @@ async fn test_user_role_own_tables_access_and_isolation() {
     );
     let resp = server.execute_sql_as_user(&create, u1.as_str()).await;
     println!("create user table resp = {:?}", resp);
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Success,
-        "create user table resp: {:?}",
-        resp
-    );
+    assert_eq!(resp.status, ResponseStatus::Success, "create user table resp: {:?}", resp);
 
     // Insert a row as u1
     let ins = format!("INSERT INTO {}.notes (id, content) VALUES (1, 'hi')", ns);
@@ -53,16 +47,12 @@ async fn test_user_role_own_tables_access_and_isolation() {
     // Read as u2 → per-user isolation should show 0 rows
     let resp = server.execute_sql_as_user(&sel, u2.as_str()).await;
     assert_eq!(resp.status, ResponseStatus::Success);
-    let total = resp
-        .results
-        .first()
-        .and_then(|r| r.rows.as_ref())
-        .map(|v| v.len())
-        .unwrap_or(0);
+    let total = resp.results.first().and_then(|r| r.rows.as_ref()).map(|v| v.len()).unwrap_or(0);
     assert_eq!(total, 0, "u2 should not see u1 data");
 }
 
-#[actix_web::test]async fn test_service_role_cross_user_access() {
+#[actix_web::test]
+async fn test_service_role_cross_user_access() {
     let server = TestServer::new().await;
     let ns = "rbac_service";
     let svc = insert_user(&server, "svc", Role::Service).await;
@@ -76,32 +66,16 @@ async fn test_user_role_own_tables_access_and_isolation() {
         ns
     );
     let resp = server.execute_sql_as_user(&create, alice.as_str()).await;
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Success,
-        "user should be able to create table"
-    );
+    assert_eq!(resp.status, ResponseStatus::Success, "user should be able to create table");
 
-    let insert_alice = format!(
-        "INSERT INTO {}.orders (id, content) VALUES (1, 'alice note')",
-        ns
-    );
-    let insert_bob = format!(
-        "INSERT INTO {}.orders (id, content) VALUES (2, 'bob note')",
-        ns
-    );
-    server
-        .execute_sql_as_user(&insert_alice, alice.as_str())
-        .await;
+    let insert_alice = format!("INSERT INTO {}.orders (id, content) VALUES (1, 'alice note')", ns);
+    let insert_bob = format!("INSERT INTO {}.orders (id, content) VALUES (2, 'bob note')", ns);
+    server.execute_sql_as_user(&insert_alice, alice.as_str()).await;
     server.execute_sql_as_user(&insert_bob, bob.as_str()).await;
 
     let select = format!("SELECT content FROM {}.orders ORDER BY content", ns);
     let resp = server.execute_sql_as_user(&select, svc.as_str()).await;
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Success,
-        "service select should succeed"
-    );
+    assert_eq!(resp.status, ResponseStatus::Success, "service select should succeed");
 
     let rows = resp.results[0].rows_as_maps();
     let contents: std::collections::HashSet<_> = rows
@@ -128,27 +102,16 @@ async fn test_service_role_flush_operations() {
         ns
     );
     let resp = server.execute_sql_as_user(&create, svc.as_str()).await;
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Success,
-        "service should create user table"
-    );
+    assert_eq!(resp.status, ResponseStatus::Success, "service should create user table");
 
     for i in 0..3 {
-        let insert = format!(
-            "INSERT INTO {}.events (id, message) VALUES ({}, 'msg {}')",
-            ns, i, i
-        );
+        let insert = format!("INSERT INTO {}.events (id, message) VALUES ({}, 'msg {}')", ns, i, i);
         server.execute_sql_as_user(&insert, user.as_str()).await;
     }
 
     let flush = format!("STORAGE FLUSH TABLE {}.events", ns);
     let resp = server.execute_sql_as_user(&flush, svc.as_str()).await;
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Success,
-        "service flush should succeed"
-    );
+    assert_eq!(resp.status, ResponseStatus::Success, "service flush should succeed");
     assert!(resp
         .results
         .first()
@@ -164,11 +127,7 @@ async fn test_service_role_cannot_manage_users() {
 
     let sql = "CREATE USER 'managed' WITH PASSWORD 'StrongPass123!' ROLE user";
     let resp = server.execute_sql_as_user(sql, svc.as_str()).await;
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Error,
-        "service should not manage users"
-    );
+    assert_eq!(resp.status, ResponseStatus::Error, "service should not manage users");
 }
 
 #[actix_web::test]
@@ -182,11 +141,7 @@ async fn test_user_cannot_manage_users() {
     if resp.status != ResponseStatus::Error {
         eprintln!("Unexpected status for user create: {:?}", resp);
     }
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Error,
-        "user should be forbidden to manage users"
-    );
+    assert_eq!(resp.status, ResponseStatus::Error, "user should be forbidden to manage users");
 }
 
 #[actix_web::test]
@@ -208,13 +163,8 @@ async fn test_system_role_all_access_smoke() {
     let sys = insert_user(&server, "sys", Role::System).await;
 
     // System can perform namespace admin operations
-    let resp = server
-        .execute_sql_as_user("CREATE NAMESPACE rbac_sys_ns", sys.as_str())
-        .await;
-    eprintln!(
-        "System CREATE NAMESPACE resp: status={} error={:?}",
-        resp.status, resp.error
-    );
+    let resp = server.execute_sql_as_user("CREATE NAMESPACE rbac_sys_ns", sys.as_str()).await;
+    eprintln!("System CREATE NAMESPACE resp: status={} error={:?}", resp.status, resp.error);
     assert_eq!(resp.status, ResponseStatus::Success);
 
     // CREATE USER should work

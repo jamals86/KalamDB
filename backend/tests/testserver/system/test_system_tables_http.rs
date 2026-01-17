@@ -1,10 +1,9 @@
 //! System tables smoke coverage over the real HTTP SQL API.
 
-
-use kalam_link::models::ResponseStatus;
-use kalamdb_commons::UserName;
 use super::test_support::flush::flush_table_and_wait;
 use super::test_support::http_server::HttpTestServer;
+use kalam_link::models::ResponseStatus;
+use kalamdb_commons::UserName;
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
     let password = "UserPass123!";

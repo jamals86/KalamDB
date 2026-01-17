@@ -135,10 +135,7 @@ impl RecordBatchBuilder {
     /// # Arguments
     /// * `data` - Vector of optional i64 values in **milliseconds**
     pub fn add_timestamp_micros_column(&mut self, data: Vec<Option<i64>>) -> &mut Self {
-        let micros: Vec<Option<i64>> = data
-            .into_iter()
-            .map(|ts| ts.map(|ms| ms * 1000))
-            .collect();
+        let micros: Vec<Option<i64>> = data.into_iter().map(|ts| ts.map(|ms| ms * 1000)).collect();
         self.push_array(Arc::new(TimestampMicrosecondArray::from(micros)))
     }
 
@@ -241,9 +238,7 @@ mod tests {
         let mut builder = RecordBatchBuilder::new(schema);
 
         // Only add 2 columns when schema expects 3
-        builder
-            .add_string_column(vec![Some("id1")])
-            .add_int64_column(vec![Some(100)]);
+        builder.add_string_column(vec![Some("id1")]).add_int64_column(vec![Some(100)]);
 
         assert!(builder.build().is_err());
     }
@@ -260,11 +255,8 @@ mod tests {
         builder.add_timestamp_micros_column(vec![Some(1000)]); // 1000ms = 1000000μs
 
         let batch = builder.build().unwrap();
-        let ts_array = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<TimestampMicrosecondArray>()
-            .unwrap();
+        let ts_array =
+            batch.column(0).as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
 
         assert_eq!(ts_array.value(0), 1000000); // Converted to microseconds
     }

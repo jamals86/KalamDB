@@ -3,7 +3,6 @@
 //! Tests error message clarity, validation logic, and graceful failure modes.
 //! These tests ensure users get helpful feedback when things go wrong.
 
-
 use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::Role;
@@ -22,10 +21,7 @@ async fn syntax_error_messages_are_clear() {
     let error_msg = error.message.to_lowercase();
     // The error should at least indicate something went wrong
     // (actual message might be "No handler for UNKNOWN" or "syntax error" depending on parser)
-    assert!(
-        !error_msg.is_empty(),
-        "Should have an error message for invalid syntax"
-    );
+    assert!(!error_msg.is_empty(), "Should have an error message for invalid syntax");
     println!("Syntax error message: {}", error.message);
 
     // Missing FROM clause
@@ -94,7 +90,9 @@ async fn invalid_namespace_name_rejected() {
 async fn table_without_primary_key_rejected() {
     let server = TestServer::new().await;
 
-    let resp = server.execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_nopk", "root").await;
+    let resp = server
+        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_nopk", "root")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     // Try to create table without PRIMARY KEY
@@ -124,7 +122,9 @@ async fn table_without_primary_key_rejected() {
 async fn null_constraint_violation_detected() {
     let server = TestServer::new().await;
 
-    let resp = server.execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_null", "root").await;
+    let resp = server
+        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_null", "root")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -167,7 +167,9 @@ async fn null_constraint_violation_detected() {
 async fn flush_on_stream_table_rejected() {
     let server = TestServer::new().await;
 
-    let resp = server.execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_stream", "root").await;
+    let resp = server
+        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_stream", "root")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     // Create a STREAM table
@@ -183,9 +185,7 @@ async fn flush_on_stream_table_rejected() {
 
     // Try to FLUSH a STREAM table (should fail)
     let _user_id = server.create_user("user1_stream", "Pass123!", Role::User).await;
-    let resp = server
-        .execute_sql("STORAGE FLUSH TABLE app_stream.events")
-        .await;
+    let resp = server.execute_sql("STORAGE FLUSH TABLE app_stream.events").await;
 
     // Should fail - FLUSH doesn't make sense for STREAM tables
     assert_eq!(resp.status, ResponseStatus::Error);
@@ -202,7 +202,9 @@ async fn flush_on_stream_table_rejected() {
 async fn user_isolation_in_user_tables() {
     let server = TestServer::new().await;
 
-    let resp = server.execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_isolation", "root").await;
+    let resp = server
+        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_isolation", "root")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -233,11 +235,7 @@ async fn user_isolation_in_user_tables() {
 
     assert_eq!(resp.status, ResponseStatus::Success);
     if let Some(rows) = resp.results.first().and_then(|r| r.rows.as_ref()) {
-        assert_eq!(
-            rows.len(),
-            0,
-            "User2 should not see User1's data in USER table"
-        );
+        assert_eq!(rows.len(), 0, "User2 should not see User1's data in USER table");
     }
 
     // User1 can still see their own data
@@ -256,7 +254,9 @@ async fn user_isolation_in_user_tables() {
 async fn duplicate_primary_key_rejected() {
     let server = TestServer::new().await;
 
-    let resp = server.execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_dupkey", "root").await;
+    let resp = server
+        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_dupkey", "root")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -330,7 +330,9 @@ async fn drop_nonexistent_table_error_is_clear() {
 async fn invalid_data_type_in_insert_rejected() {
     let server = TestServer::new().await;
 
-    let resp = server.execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_datatype", "root").await;
+    let resp = server
+        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_datatype", "root")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -367,7 +369,9 @@ async fn invalid_data_type_in_insert_rejected() {
 async fn select_invalid_column_error_is_clear() {
     let server = TestServer::new().await;
 
-    let resp = server.execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_selcol", "root").await;
+    let resp = server
+        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_selcol", "root")
+        .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -410,9 +414,7 @@ async fn permission_denied_error_is_clear() {
     let server = TestServer::new().await;
 
     // Create regular user (not DBA)
-    let user_id = server
-        .create_user("regularuser", "Pass123!", Role::User)
-        .await;
+    let user_id = server.create_user("regularuser", "Pass123!", Role::User).await;
 
     // Try to create namespace as regular user (requires DBA or System role)
     let resp = server

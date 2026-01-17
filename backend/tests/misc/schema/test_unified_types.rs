@@ -15,19 +15,13 @@ fn test_all_kalambdata_types_convert_to_arrow_losslessly() {
         (KalamDataType::Float, ArrowDataType::Float32),
         (KalamDataType::Double, ArrowDataType::Float64),
         (KalamDataType::Text, ArrowDataType::Utf8),
-        (
-            KalamDataType::Timestamp,
-            ArrowDataType::Timestamp(TimeUnit::Microsecond, None),
-        ),
+        (KalamDataType::Timestamp, ArrowDataType::Timestamp(TimeUnit::Microsecond, None)),
         (KalamDataType::Date, ArrowDataType::Date32),
         (
             KalamDataType::DateTime,
             ArrowDataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
         ),
-        (
-            KalamDataType::Time,
-            ArrowDataType::Time64(TimeUnit::Microsecond),
-        ),
+        (KalamDataType::Time, ArrowDataType::Time64(TimeUnit::Microsecond)),
         // Note: Json maps to Utf8 (same as Text), so roundtrip will return Text
         // This is expected - we can't distinguish them in Arrow
         (KalamDataType::Json, ArrowDataType::Utf8),
@@ -92,20 +86,13 @@ fn test_embedding_dimensions_work_correctly() {
                     "Element type should be Float32"
                 );
                 assert!(!field.is_nullable(), "Elements should not be nullable");
-            }
-            _ => panic!(
-                "EMBEDDING should convert to FixedSizeList, got {:?}",
-                arrow_type
-            ),
+            },
+            _ => panic!("EMBEDDING should convert to FixedSizeList, got {:?}", arrow_type),
         }
 
         // Roundtrip test
         let roundtrip = KalamDataType::from_arrow_type(&arrow_type).expect("Should roundtrip");
-        assert_eq!(
-            roundtrip, kalam_type,
-            "EMBEDDING({}) should roundtrip correctly",
-            dim
-        );
+        assert_eq!(roundtrip, kalam_type, "EMBEDDING({}) should roundtrip correctly", dim);
     }
 
     println!(

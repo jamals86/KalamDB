@@ -51,7 +51,9 @@ pub async fn handle_next_batch(
 
             info!(
                 "Sending batch {}: {} rows, has_more={}",
-                batch_num, result.rows.len(), result.has_more
+                batch_num,
+                result.rows.len(),
+                result.has_more
             );
 
             // Convert Row objects to HashMap
@@ -69,7 +71,7 @@ pub async fn handle_next_batch(
                         )
                         .await
                         .map_err(|_| "Failed to send error message".to_string());
-                    }
+                    },
                 }
             }
 
@@ -80,10 +82,11 @@ pub async fn handle_next_batch(
             );
             let _ = send_json(session, &msg).await;
             Ok(())
-        }
+        },
         Err(e) => {
-            let _ = send_error(session, subscription_id, "BATCH_FETCH_FAILED", &e.to_string()).await;
+            let _ =
+                send_error(session, subscription_id, "BATCH_FETCH_FAILED", &e.to_string()).await;
             Ok(())
-        }
+        },
     }
 }

@@ -145,16 +145,13 @@ impl RateLimiter {
     /// Returns true if allowed, false if rate limit exceeded
     pub fn check_query_rate(&self, user_id: &UserId) -> bool {
         let user_key = user_id.as_str().to_string();
-        let mut bucket = self
-            .user_query_buckets
-            .entry(user_key)
-            .or_insert_with(|| {
-                TokenBucket::new(
-                    self.config.max_queries_per_user,
-                    self.config.max_queries_per_user,
-                    self.config.window,
-                )
-            });
+        let mut bucket = self.user_query_buckets.entry(user_key).or_insert_with(|| {
+            TokenBucket::new(
+                self.config.max_queries_per_user,
+                self.config.max_queries_per_user,
+                self.config.window,
+            )
+        });
 
         bucket.try_consume(1)
     }
@@ -173,10 +170,7 @@ impl RateLimiter {
     /// Increment user subscription count
     pub fn increment_subscription(&self, user_id: &UserId) {
         let user_key = user_id.as_str().to_string();
-        let mut count = self
-            .user_subscription_counts
-            .entry(user_key)
-            .or_insert(0);
+        let mut count = self.user_subscription_counts.entry(user_key).or_insert(0);
         *count += 1;
     }
 
@@ -191,10 +185,8 @@ impl RateLimiter {
     /// Check if a connection can send a message
     /// Returns true if allowed, false if rate limit exceeded
     pub fn check_message_rate(&self, connection_id: &ConnectionId) -> bool {
-        let mut bucket = self
-            .connection_message_buckets
-            .entry(connection_id.clone())
-            .or_insert_with(|| {
+        let mut bucket =
+            self.connection_message_buckets.entry(connection_id.clone()).or_insert_with(|| {
                 TokenBucket::new(
                     self.config.max_messages_per_connection,
                     self.config.max_messages_per_connection,
@@ -222,12 +214,8 @@ impl RateLimiter {
             }
         };
 
-        let subscription_count = {
-            self.user_subscription_counts
-                .get(&user_key)
-                .map(|count| *count)
-                .unwrap_or(0)
-        };
+        let subscription_count =
+            { self.user_subscription_counts.get(&user_key).map(|count| *count).unwrap_or(0) };
 
         (available_queries, subscription_count)
     }
@@ -385,15 +373,14 @@ impl ConnectionGuard {
             }
         }
 
-        let mut state = self
-            .ip_states
-            .entry(ip)
-            .or_insert_with(|| IpState::new(&self.config));
+        let mut state = self.ip_states.entry(ip).or_insert_with(|| IpState::new(&self.config));
 
         // Check if IP is banned
         if let Some(banned_until) = state.banned_until {
             if Instant::now() < banned_until {
-                return ConnectionGuardResult::Banned { until: banned_until };
+                return ConnectionGuardResult::Banned {
+                    until: banned_until,
+                };
             } else {
                 // Ban expired, clear it
                 state.banned_until = None;
@@ -440,15 +427,14 @@ impl ConnectionGuard {
             return ConnectionGuardResult::Allowed;
         }
 
-        let mut state = self
-            .ip_states
-            .entry(ip)
-            .or_insert_with(|| IpState::new(&self.config));
+        let mut state = self.ip_states.entry(ip).or_insert_with(|| IpState::new(&self.config));
 
         // Check if IP is banned
         if let Some(banned_until) = state.banned_until {
             if Instant::now() < banned_until {
-                return ConnectionGuardResult::Banned { until: banned_until };
+                return ConnectionGuardResult::Banned {
+                    until: banned_until,
+                };
             } else {
                 state.banned_until = None;
             }
@@ -494,10 +480,7 @@ impl ConnectionGuard {
 
     /// Get the current connection count for an IP
     pub fn get_connection_count(&self, ip: IpAddr) -> u32 {
-        self.ip_states
-            .get(&ip)
-            .map(|s| s.active_connections)
-            .unwrap_or(0)
+        self.ip_states.get(&ip).map(|s| s.active_connections).unwrap_or(0)
     }
 
     /// Check if an IP is currently banned
@@ -511,10 +494,7 @@ impl ConnectionGuard {
 
     /// Manually ban an IP (for external threat detection)
     pub fn ban_ip(&self, ip: IpAddr, duration: Duration) {
-        let mut state = self
-            .ip_states
-            .entry(ip)
-            .or_insert_with(|| IpState::new(&self.config));
+        let mut state = self.ip_states.entry(ip).or_insert_with(|| IpState::new(&self.config));
 
         state.banned_until = Some(Instant::now() + duration);
         state.violation_count += 10; // Treat manual ban as significant violation
@@ -571,11 +551,8 @@ impl ConnectionGuard {
             .iter()
             .filter(|entry| entry.banned_until.map(|t| now < t).unwrap_or(false))
             .count();
-        let total_connections: u32 = self
-            .ip_states
-            .iter()
-            .map(|entry| entry.active_connections)
-            .sum();
+        let total_connections: u32 =
+            self.ip_states.iter().map(|entry| entry.active_connections).sum();
         let total_violations: u32 = self.ip_states.iter().map(|entry| entry.violation_count).sum();
 
         ConnectionGuardStats {
@@ -757,10 +734,7 @@ mod tests {
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
 
         // Should allow normal requests
-        assert_eq!(
-            guard.check_request(ip, Some(1000)),
-            ConnectionGuardResult::Allowed
-        );
+        assert_eq!(guard.check_request(ip, Some(1000)), ConnectionGuardResult::Allowed);
     }
 
     #[test]
@@ -792,10 +766,7 @@ mod tests {
 
         // Third should fail
         let result = guard.register_connection(ip);
-        assert!(matches!(
-            result,
-            ConnectionGuardResult::TooManyConnections { .. }
-        ));
+        assert!(matches!(result, ConnectionGuardResult::TooManyConnections { .. }));
 
         // After unregistering one, should succeed again
         guard.unregister_connection(ip);
@@ -817,10 +788,7 @@ mod tests {
         }
 
         // 6th should fail
-        assert_eq!(
-            guard.check_request(ip, None),
-            ConnectionGuardResult::RateLimitExceeded
-        );
+        assert_eq!(guard.check_request(ip, None), ConnectionGuardResult::RateLimitExceeded);
     }
 
     #[test]

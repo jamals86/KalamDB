@@ -78,9 +78,7 @@ impl ScalarUDFImpl for UuidV7Function {
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
         if !args.args.is_empty() {
-            return Err(DataFusionError::Plan(
-                "UUID_V7() takes no arguments".to_string(),
-            ));
+            return Err(DataFusionError::Plan("UUID_V7() takes no arguments".to_string()));
         }
         let uuid_str = self.generate_uuid();
         let array = StringArray::from(vec![uuid_str.as_str()]);
@@ -149,11 +147,7 @@ mod tests {
         // Generate 10000 UUIDs and ensure no duplicates
         for _ in 0..10000 {
             let uuid = func_impl.generate_uuid();
-            assert!(
-                uuids.insert(uuid.clone()),
-                "Duplicate UUID detected: {}",
-                uuid
-            );
+            assert!(uuids.insert(uuid.clone()), "Duplicate UUID detected: {}", uuid);
         }
     }
 
@@ -169,12 +163,7 @@ mod tests {
 
         // UUIDv7 should be lexicographically ordered by time
         // (timestamp is in the first 48 bits)
-        assert!(
-            uuid1 < uuid2,
-            "UUIDv7 should be time-ordered: {} < {}",
-            uuid1,
-            uuid2
-        );
+        assert!(uuid1 < uuid2, "UUIDv7 should be time-ordered: {} < {}", uuid1, uuid2);
     }
 
     #[test]

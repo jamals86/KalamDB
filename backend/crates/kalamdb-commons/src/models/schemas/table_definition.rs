@@ -223,14 +223,9 @@ impl TableDefinition {
     ) -> Result<Self, String> {
         let columns_sorted = Self::validate_and_sort_columns(columns)?;
         let now = Utc::now();
-        
+
         // Compute next_column_id as max(column_id) + 1
-        let next_column_id = columns_sorted
-            .iter()
-            .map(|c| c.column_id)
-            .max()
-            .unwrap_or(0)
-            + 1;
+        let next_column_id = columns_sorted.iter().map(|c| c.column_id).max().unwrap_or(0) + 1;
 
         Ok(Self {
             namespace_id,
@@ -267,14 +262,7 @@ impl TableDefinition {
             TableType::System => TableOptions::system(),
         };
 
-        Self::new(
-            namespace_id,
-            table_name,
-            table_type,
-            columns,
-            table_options,
-            table_comment,
-        )
+        Self::new(namespace_id, table_name, table_type, columns, table_options, table_comment)
     }
 
     /// Validate and sort columns by ordinal_position
@@ -291,10 +279,7 @@ impl TableDefinition {
                 ));
             }
             if !positions.insert(col.ordinal_position) {
-                return Err(format!(
-                    "Duplicate ordinal_position {}",
-                    col.ordinal_position
-                ));
+                return Err(format!("Duplicate ordinal_position {}", col.ordinal_position));
             }
         }
 
@@ -326,15 +311,16 @@ impl TableDefinition {
             .map(|col| {
                 let arrow_type = col.data_type.to_arrow_type()?;
                 let mut field = Field::new(&col.column_name, arrow_type, col.is_nullable);
-                
+
                 // Store KalamDataType in metadata for lossless round-trip conversion
                 let kalam_type_json = serde_json::to_string(&col.data_type)
                     .unwrap_or_else(|_| "\"Text\"".to_string());
-                let metadata = std::collections::HashMap::from([
-                    ("kalam_data_type".to_string(), kalam_type_json),
-                ]);
+                let metadata = std::collections::HashMap::from([(
+                    "kalam_data_type".to_string(),
+                    kalam_type_json,
+                )]);
                 field = field.with_metadata(metadata);
-                
+
                 Ok(field)
             })
             .collect();
@@ -366,23 +352,14 @@ impl TableDefinition {
 
     /// Get fully qualified table name (namespace.table)
     pub fn qualified_name(&self) -> String {
-        format!(
-            "{}.{}",
-            self.namespace_id.as_str(),
-            self.table_name.as_str()
-        )
+        format!("{}.{}", self.namespace_id.as_str(), self.table_name.as_str())
     }
 
     /// Add a column (for ALTER TABLE ADD COLUMN)
     /// The column must have column_id == self.next_column_id
     pub fn add_column(&mut self, column: ColumnDefinition) -> Result<(), String> {
         // Validate ordinal_position is next available
-        let max_ordinal = self
-            .columns
-            .iter()
-            .map(|c| c.ordinal_position)
-            .max()
-            .unwrap_or(0);
+        let max_ordinal = self.columns.iter().map(|c| c.ordinal_position).max().unwrap_or(0);
         if column.ordinal_position != max_ordinal + 1 {
             return Err(format!(
                 "New column must have ordinal_position {}, got {}",
@@ -808,10 +785,7 @@ mod tests {
         assert_eq!(decoded.columns.len(), table.columns.len());
         assert_eq!(decoded.table_options, table.table_options);
         assert_eq!(decoded.table_comment, table.table_comment);
-        assert_eq!(
-            decoded.columns[1].default_value,
-            table.columns[1].default_value
-        );
+        assert_eq!(decoded.columns[1].default_value, table.columns[1].default_value);
     }
 
     #[test]

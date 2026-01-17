@@ -3,8 +3,8 @@
 //! Handles dispatching change notifications to subscribed clients,
 //! including filtering based on WHERE clauses stored in SubscriptionState.
 
-use super::filter_eval::matches as filter_matches;
 use super::connections_manager::{ConnectionsManager, SubscriptionHandle};
+use super::filter_eval::matches as filter_matches;
 use super::types::{ChangeNotification, ChangeType};
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
@@ -43,7 +43,7 @@ fn apply_projections<'a>(row: &'a Row, projections: &Option<Arc<Vec<String>>>) -
                 .filter_map(|col| row.values.get(col).map(|v| (col.clone(), v.clone())))
                 .collect();
             Cow::Owned(Row::new(filtered_values))
-        }
+        },
     }
 }
 
@@ -81,8 +81,18 @@ impl NotificationService {
                     .registry
                     .get_subscriptions_for_table(&task.user_id, &task.table_id);
                 if handles.is_empty() {
+                    log::debug!(
+                        "NotificationWorker: No subscriptions for user={}, table={} (skipping notification)",
+                        task.user_id, task.table_id
+                    );
                     continue;
                 }
+                log::debug!(
+                    "NotificationWorker: Found {} subscriptions for user={}, table={}",
+                    handles.len(),
+                    task.user_id,
+                    task.table_id
+                );
 
                 if let Err(e) = notify_service
                     .notify_table_change_with_handles(
@@ -93,11 +103,7 @@ impl NotificationService {
                     )
                     .await
                 {
-                    log::warn!(
-                        "Failed to notify subscribers for table {}: {}",
-                        task.table_id,
-                        e
-                    );
+                    log::warn!("Failed to notify subscribers for table {}: {}", task.table_id, e);
                 }
             }
         });
@@ -134,10 +140,7 @@ impl NotificationService {
 
     /// Get current timestamp in milliseconds
     fn current_timestamp_ms() -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64
     }
 
     /// Increment the changes counter for a live query
@@ -230,15 +233,11 @@ impl NotificationService {
                             live_id
                         );
                         false
-                    }
+                    },
                     Err(e) => {
-                        log::error!(
-                            "Filter evaluation error for live_id={}: {}",
-                            live_id,
-                            e
-                        );
+                        log::error!("Filter evaluation error for live_id={}: {}", live_id, e);
                         false
-                    }
+                    },
                 }
             } else {
                 true
@@ -259,7 +258,7 @@ impl NotificationService {
                         Ok(json) => {
                             full_row_json = Some(json.clone());
                             json
-                        }
+                        },
                         Err(e) => {
                             log::error!(
                                 "Failed to convert row to JSON for live_id={}: {}",
@@ -267,7 +266,7 @@ impl NotificationService {
                                 e
                             );
                             continue;
-                        }
+                        },
                     },
                 }
             } else {
@@ -278,13 +277,9 @@ impl NotificationService {
                 match row_to_json_map(&projected_row_data) {
                     Ok(json) => json,
                     Err(e) => {
-                        log::error!(
-                            "Failed to convert row to JSON for live_id={}: {}",
-                            live_id,
-                            e
-                        );
+                        log::error!("Failed to convert row to JSON for live_id={}: {}", live_id, e);
                         continue;
-                    }
+                    },
                 }
             };
 
@@ -296,7 +291,7 @@ impl NotificationService {
                             Ok(json) => {
                                 full_old_json = Some(json.clone());
                                 Some(json)
-                            }
+                            },
                             Err(e) => {
                                 log::error!(
                                     "Failed to convert old row to JSON for live_id={}: {}",
@@ -304,7 +299,7 @@ impl NotificationService {
                                     e
                                 );
                                 continue;
-                            }
+                            },
                         },
                     }
                 } else {
@@ -318,7 +313,7 @@ impl NotificationService {
                                 e
                             );
                             continue;
-                        }
+                        },
                     }
                 }
             } else {
@@ -329,23 +324,20 @@ impl NotificationService {
             // Compute live_id string once to avoid 4 allocations per notification
             let live_id_str = live_id.to_string();
             let notification = match change_notification.change_type {
-                ChangeType::Insert => kalamdb_commons::Notification::insert(
-                    live_id_str,
-                    vec![row_json],
-                ),
+                ChangeType::Insert => {
+                    kalamdb_commons::Notification::insert(live_id_str, vec![row_json])
+                },
                 ChangeType::Update => kalamdb_commons::Notification::update(
                     live_id_str,
                     vec![row_json],
                     vec![old_json.unwrap_or_else(std::collections::HashMap::new)],
                 ),
-                ChangeType::Delete => kalamdb_commons::Notification::delete(
-                    live_id_str,
-                    vec![row_json],
-                ),
-                ChangeType::Flush => kalamdb_commons::Notification::insert(
-                    live_id_str,
-                    vec![row_json],
-                ),
+                ChangeType::Delete => {
+                    kalamdb_commons::Notification::delete(live_id_str, vec![row_json])
+                },
+                ChangeType::Flush => {
+                    kalamdb_commons::Notification::insert(live_id_str, vec![row_json])
+                },
             };
 
             // Send notification through channel (non-blocking, bounded)
@@ -358,13 +350,13 @@ impl NotificationService {
                             "Notification channel full for live_id={}, dropping notification",
                             live_id
                         );
-                    }
+                    },
                     TrySendError::Closed(_) => {
                         log::debug!(
                             "Notification channel closed for live_id={}, connection likely disconnected",
                             live_id
                         );
-                    }
+                    },
                 }
             }
 

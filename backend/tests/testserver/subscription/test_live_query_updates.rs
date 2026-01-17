@@ -1,6 +1,5 @@
 //! Integration test for Live Query UPDATE detection via WebSocket
 
-
 use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;
 use tokio::time::Duration;

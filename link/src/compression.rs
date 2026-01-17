@@ -16,21 +16,21 @@ pub fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, DecompressError> {
     if data.len() < 18 {
         return Err(DecompressError::TooShort);
     }
-    
+
     // Verify gzip magic bytes
     if !is_gzip(data) {
         return Err(DecompressError::NotGzip);
     }
-    
+
     // Gzip format:
     // - 10 byte header (magic, method, flags, mtime, xfl, os)
     // - Optional extra fields based on flags
     // - Compressed data (DEFLATE)
     // - 8 byte trailer (CRC32, original size)
-    
+
     let flags = data[3];
     let mut pos = 10;
-    
+
     // Skip extra field if present (FEXTRA flag = 0x04)
     if flags & 0x04 != 0 {
         if pos + 2 > data.len() {
@@ -39,7 +39,7 @@ pub fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, DecompressError> {
         let xlen = u16::from_le_bytes([data[pos], data[pos + 1]]) as usize;
         pos += 2 + xlen;
     }
-    
+
     // Skip original filename if present (FNAME flag = 0x08)
     if flags & 0x08 != 0 {
         while pos < data.len() && data[pos] != 0 {
@@ -47,7 +47,7 @@ pub fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, DecompressError> {
         }
         pos += 1; // Skip null terminator
     }
-    
+
     // Skip comment if present (FCOMMENT flag = 0x10)
     if flags & 0x10 != 0 {
         while pos < data.len() && data[pos] != 0 {
@@ -55,19 +55,19 @@ pub fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, DecompressError> {
         }
         pos += 1; // Skip null terminator
     }
-    
+
     // Skip CRC16 if present (FHCRC flag = 0x02)
     if flags & 0x02 != 0 {
         pos += 2;
     }
-    
+
     if pos >= data.len() - 8 {
         return Err(DecompressError::InvalidHeader);
     }
-    
+
     // The deflate data is between header and 8-byte trailer
     let deflate_data = &data[pos..data.len() - 8];
-    
+
     // Decompress using miniz_oxide
     miniz_oxide::inflate::decompress_to_vec_zlib(deflate_data)
         .or_else(|_| {

@@ -32,9 +32,7 @@ fn test_cli_jwt_credentials_stored_securely() {
         Some(server_url().to_string()),
     );
 
-    store
-        .set_credentials(&creds)
-        .expect("Failed to store credentials");
+    store.set_credentials(&creds).expect("Failed to store credentials");
 
     // Verify file exists
     let creds_path = temp_dir.path().join("credentials.toml");
@@ -50,11 +48,7 @@ fn test_cli_jwt_credentials_stored_securely() {
         // Extract permission bits (last 9 bits)
         let perms = mode & 0o777;
 
-        assert_eq!(
-            perms, 0o600,
-            "Credentials file should have 0600 permissions, got: {:o}",
-            perms
-        );
+        assert_eq!(perms, 0o600, "Credentials file should have 0600 permissions, got: {:o}", perms);
 
         println!("✓ Credentials file has secure permissions: {:o}", perms);
     }
@@ -68,7 +62,7 @@ fn test_cli_jwt_credentials_stored_securely() {
     assert!(file_contents.contains("username = \"alice\""));
     assert!(file_contents.contains("expires_at = "));
     assert!(file_contents.contains("server_url = "));
-    
+
     // Should NOT contain password field
     assert!(!file_contents.contains("password"), "Should NOT store password, only JWT token");
 
@@ -96,9 +90,7 @@ fn test_cli_multiple_instances() {
             "2025-12-31T23:59:59Z".to_string(),
             Some(server_url.to_string()),
         );
-        store
-            .set_credentials(&creds)
-            .expect("Failed to store credentials");
+        store.set_credentials(&creds).expect("Failed to store credentials");
     }
 
     // Verify all instances are stored
@@ -140,9 +132,7 @@ fn test_cli_credential_rotation() {
         Some("https://prod.example.com".to_string()),
     );
 
-    store
-        .set_credentials(&creds_v1)
-        .expect("Failed to store initial credentials");
+    store.set_credentials(&creds_v1).expect("Failed to store initial credentials");
 
     // Retrieve initial credentials
     let retrieved_v1 = store
@@ -161,9 +151,7 @@ fn test_cli_credential_rotation() {
         Some("https://prod.example.com".to_string()),
     );
 
-    store
-        .set_credentials(&creds_v2)
-        .expect("Failed to update credentials");
+    store.set_credentials(&creds_v2).expect("Failed to update credentials");
 
     // Retrieve updated credentials
     let retrieved = store
@@ -189,14 +177,9 @@ fn test_cli_delete_credentials() {
     let (mut store, _temp_dir) = create_temp_store();
 
     // Store JWT credentials
-    let creds = Credentials::new(
-        "temp_instance".to_string(),
-        "some_jwt_token".to_string(),
-    );
+    let creds = Credentials::new("temp_instance".to_string(), "some_jwt_token".to_string());
 
-    store
-        .set_credentials(&creds)
-        .expect("Failed to store credentials");
+    store.set_credentials(&creds).expect("Failed to store credentials");
 
     // Verify it exists
     assert!(store
@@ -205,9 +188,7 @@ fn test_cli_delete_credentials() {
         .is_some());
 
     // Delete credentials
-    store
-        .delete_credentials("temp_instance")
-        .expect("Failed to delete credentials");
+    store.delete_credentials("temp_instance").expect("Failed to delete credentials");
 
     // Verify it's gone
     assert!(store
@@ -237,9 +218,7 @@ fn test_cli_credentials_with_server_url() {
         Some("https://db.example.com:8080".to_string()),
     );
 
-    store
-        .set_credentials(&creds)
-        .expect("Failed to store credentials");
+    store.set_credentials(&creds).expect("Failed to store credentials");
 
     // Retrieve and verify
     let retrieved = store
@@ -264,14 +243,9 @@ fn test_cli_empty_store() {
     assert_eq!(instances.len(), 0, "Empty store should have no instances");
 
     // Get non-existent credentials
-    let creds = store
-        .get_credentials("nonexistent")
-        .expect("Failed to get credentials");
+    let creds = store.get_credentials("nonexistent").expect("Failed to get credentials");
 
-    assert!(
-        creds.is_none(),
-        "Non-existent credentials should return None"
-    );
+    assert!(creds.is_none(), "Non-existent credentials should return None");
 
     println!("✓ Empty credential store behaves correctly");
 }
@@ -291,9 +265,7 @@ fn test_cli_credential_expiry_check() {
         Some(server_url().to_string()),
     );
 
-    store
-        .set_credentials(&expired_creds)
-        .expect("Failed to store credentials");
+    store.set_credentials(&expired_creds).expect("Failed to store credentials");
 
     // Retrieve and check expiry
     let retrieved = store
@@ -312,9 +284,7 @@ fn test_cli_credential_expiry_check() {
         Some(server_url().to_string()),
     );
 
-    store
-        .set_credentials(&valid_creds)
-        .expect("Failed to store credentials");
+    store.set_credentials(&valid_creds).expect("Failed to store credentials");
 
     let retrieved = store
         .get_credentials("valid_instance")
@@ -367,7 +337,10 @@ fn test_cli_save_credentials_creates_file() {
     if !output.status.success() {
         eprintln!("CLI failed. stdout: {}, stderr: {}", stdout, stderr);
         // Don't fail test if password is not set or account is locked
-        if stderr.contains("password") || stderr.contains("credentials") || stderr.contains("locked") {
+        if stderr.contains("password")
+            || stderr.contains("credentials")
+            || stderr.contains("locked")
+        {
             eprintln!("⚠️  Root password may not be set or account is locked. Skipping test.");
             return;
         }
@@ -384,7 +357,9 @@ fn test_cli_save_credentials_creates_file() {
             eprintln!("⚠️  No JWT token in credentials file (root password may not be set). Skipping test.");
         }
     } else {
-        eprintln!("⚠️  Credentials file not created (root password may not be set). Skipping test.");
+        eprintln!(
+            "⚠️  Credentials file not created (root password may not be set). Skipping test."
+        );
     }
 }
 
@@ -436,7 +411,10 @@ fn test_cli_credentials_loaded_in_session() {
             eprintln!("⚠️  Root password may not be set. Skipping test.");
         }
     } else {
-        eprintln!("⚠️  Test skipped - root password may not be set or credentials expired. stderr: {}", stderr);
+        eprintln!(
+            "⚠️  Test skipped - root password may not be set or credentials expired. stderr: {}",
+            stderr
+        );
     }
 }
 
@@ -468,7 +446,8 @@ fn test_cli_uses_jwt_for_requests() {
             if !stderr.contains("Login failed") {
                 assert!(
                     !stderr.contains("basic auth"),
-                    "Should NOT use basic auth after successful login. stderr: {}", stderr
+                    "Should NOT use basic auth after successful login. stderr: {}",
+                    stderr
                 );
             }
             println!("✓ Requests use JWT token authentication");
@@ -494,29 +473,23 @@ fn test_cli_show_credentials_command() {
     // Note: Uses empty password for root (default test configuration)
     let mut cmd = create_cli_command_with_root_auth();
     with_credentials_path(&mut cmd, &creds_path);
-    let _ = cmd
-        .arg("--save-credentials")
-        .arg("--command")
-        .arg("SELECT 1")
-        .output();
+    let _ = cmd.arg("--save-credentials").arg("--command").arg("SELECT 1").output();
 
     // Now test --show-credentials
     let mut cmd = create_cli_command();
     with_credentials_path(&mut cmd, &creds_path);
-    let output = cmd
-        .arg("--show-credentials")
-        .output()
-        .expect("Failed to run CLI");
+    let output = cmd.arg("--show-credentials").output().expect("Failed to run CLI");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Should show credential info
     assert!(
-        stdout.contains("Stored Credentials") || 
-        stdout.contains("Instance:") ||
-        stdout.contains("JWT Token:") ||
-        stdout.contains("local"),
-        "Should display stored credentials. stdout: {}", stdout
+        stdout.contains("Stored Credentials")
+            || stdout.contains("Instance:")
+            || stdout.contains("JWT Token:")
+            || stdout.contains("local"),
+        "Should display stored credentials. stdout: {}",
+        stdout
     );
 
     println!("✓ Show credentials command works");
@@ -547,10 +520,7 @@ fn test_cli_list_instances_command() {
 
     let mut cmd = create_cli_command();
     with_credentials_path(&mut cmd, &creds_path);
-    let output = cmd
-        .arg("--list-instances")
-        .output()
-        .expect("Failed to run CLI");
+    let output = cmd.arg("--list-instances").output().expect("Failed to run CLI");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("local"), "Should list local instance. stdout: {}", stdout);
@@ -624,7 +594,8 @@ fn test_cli_delete_credentials_command() {
 
     assert!(
         stdout.contains("Deleted") || stdout.contains("deleted") || stdout.contains("removed"),
-        "Should confirm deletion. stdout: {}", stdout
+        "Should confirm deletion. stdout: {}",
+        stdout
     );
 
     // Verify credentials are gone
@@ -640,10 +611,11 @@ fn test_cli_delete_credentials_command() {
     let show_stdout = String::from_utf8_lossy(&show_output.stdout);
 
     assert!(
-        show_stdout.contains("No credentials") || 
-        show_stdout.contains("not found") ||
-        !show_stdout.contains("JWT Token:"),
-        "Should show no credentials after deletion. stdout: {}", show_stdout
+        show_stdout.contains("No credentials")
+            || show_stdout.contains("not found")
+            || !show_stdout.contains("JWT Token:"),
+        "Should show no credentials after deletion. stdout: {}",
+        show_stdout
     );
 
     println!("✓ Delete credentials command works");

@@ -339,7 +339,8 @@ pub fn verify_parquet_files_exist(
     if parquet_files.len() < expected_min {
         return Err(format!(
             "Found {} Parquet files but expected at least {}",
-            parquet_files.len(), expected_min
+            parquet_files.len(),
+            expected_min
         ));
     }
 
@@ -397,7 +398,8 @@ pub async fn wait_for_parquet_files(
     max_wait: Duration,
     expected_min: usize,
 ) -> Result<Vec<PathBuf>, String> {
-    let storage_path = resolve_user_table_storage_path(server, namespace, table_name, Some(user_id));
+    let storage_path =
+        resolve_user_table_storage_path(server, namespace, table_name, Some(user_id));
     let start = std::time::Instant::now();
     let check_interval = Duration::from_millis(100);
 
@@ -449,7 +451,11 @@ fn resolve_user_table_storage_path(
 }
 
 /// Resolve storage path for shared table (based on storage registry templates)
-fn resolve_shared_table_storage_path(server: &TestServer, namespace: &str, table_name: &str) -> PathBuf {
+fn resolve_shared_table_storage_path(
+    server: &TestServer,
+    namespace: &str,
+    table_name: &str,
+) -> PathBuf {
     let storage_id = StorageId::new("local");
     let storage = server
         .app_context
@@ -462,9 +468,7 @@ fn resolve_shared_table_storage_path(server: &TestServer, namespace: &str, table
     let template = storage.shared_tables_template.clone();
 
     // Replace template variables
-    let path = template
-        .replace("{namespace}", namespace)
-        .replace("{tableName}", table_name);
+    let path = template.replace("{namespace}", namespace).replace("{tableName}", table_name);
 
     PathBuf::from(base_directory).join(path)
 }

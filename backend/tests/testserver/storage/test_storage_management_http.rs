@@ -6,7 +6,6 @@
 //! - Template validation
 //! - Prevent dropping in-use storage
 
-
 use kalam_link::models::ResponseStatus;
 use tokio::time::Duration;
 

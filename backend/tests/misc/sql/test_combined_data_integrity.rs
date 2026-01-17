@@ -16,7 +16,6 @@
 //! - Query and verify ALL rows are returned correctly
 //! - Test various SQL operations (COUNT, SUM, AVG, WHERE, ORDER BY, etc.)
 
-
 use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
 use std::collections::HashMap;
@@ -51,11 +50,7 @@ async fn test_01_combined_data_count_and_select() {
     );
 
     let response = server.execute_sql_as_user(&create_sql, user_id).await;
-    assert_eq!(
-        response.status,
-        ResponseStatus::Success,
-        "Failed to create table"
-    );
+    assert_eq!(response.status, ResponseStatus::Success, "Failed to create table");
 
     // Insert first batch of 10 rows (these will be flushed to Parquet)
     println!("Inserting first batch of 10 rows (to be flushed)...");
@@ -114,11 +109,7 @@ async fn test_01_combined_data_count_and_select() {
         );
         for parquet_file in &flush_result.parquet_files {
             let file_path = PathBuf::from(parquet_file);
-            assert!(
-                file_path.exists(),
-                "Parquet file should exist: {}",
-                parquet_file
-            );
+            assert!(file_path.exists(), "Parquet file should exist: {}", parquet_file);
             println!("  ✓ Parquet file exists: {}", parquet_file);
         }
     }
@@ -156,15 +147,8 @@ async fn test_01_combined_data_count_and_select() {
     );
     let rows = count_response.results[0].rows_as_maps();
     let total = rows[0].get("total").and_then(|v| v.as_i64()).unwrap_or(0);
-    assert_eq!(
-        total, 15,
-        "Should have 15 total rows (10 flushed + 5 buffered), got {}",
-        total
-    );
-    println!(
-        "  ✓ Count verified: {} total rows (10 Parquet + 5 RocksDB)",
-        total
-    );
+    assert_eq!(total, 15, "Should have 15 total rows (10 flushed + 5 buffered), got {}", total);
+    println!("  ✓ Count verified: {} total rows (10 Parquet + 5 RocksDB)", total);
 
     // Query all data with ORDER BY - verify correct order across both sources
     println!("Querying all data with ORDER BY...");
@@ -294,10 +278,7 @@ async fn test_02_combined_data_aggregations() {
         )
         .await;
     let rows = sum_response.results[0].rows_as_maps();
-    let total_qty = rows[0]
-        .get("total_qty")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
+    let total_qty = rows[0].get("total_qty").and_then(|v| v.as_i64()).unwrap_or(0);
     let expected_qty: i64 = (1..=30).map(|i| i * 2).sum();
     assert_eq!(total_qty, expected_qty, "SUM(quantity) should match");
     println!("  ✓ SUM(quantity): {}", total_qty);
@@ -305,23 +286,14 @@ async fn test_02_combined_data_aggregations() {
     // Test AVG
     let avg_response = server
         .execute_sql_as_user(
-            &format!(
-                "SELECT AVG(price) as avg_price FROM {}.{}",
-                namespace, table_name
-            ),
+            &format!("SELECT AVG(price) as avg_price FROM {}.{}", namespace, table_name),
             user_id,
         )
         .await;
     let rows = avg_response.results[0].rows_as_maps();
-    let avg_price = rows[0]
-        .get("avg_price")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.0);
+    let avg_price = rows[0].get("avg_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let expected_avg = (1..=30).map(|i| 10.0 + i as f64).sum::<f64>() / 30.0;
-    assert!(
-        (avg_price - expected_avg).abs() < 0.1,
-        "AVG(price) should be close to expected"
-    );
+    assert!((avg_price - expected_avg).abs() < 0.1, "AVG(price) should be close to expected");
     println!("  ✓ AVG(price): {:.2}", avg_price);
 
     // Test MIN and MAX
@@ -598,11 +570,7 @@ async fn test_04_combined_data_integrity_verification() {
         let value = row.get("value").and_then(|v| v.as_f64()).unwrap();
 
         if let Some((expected_data, expected_value)) = expected_data.get(&record_id) {
-            assert_eq!(
-                data, expected_data,
-                "Data should match for record {}",
-                record_id
-            );
+            assert_eq!(data, expected_data, "Data should match for record {}", record_id);
             assert!(
                 (value - expected_value).abs() < 0.001,
                 "Value should match for record {}",
@@ -751,36 +719,20 @@ async fn test_06_soft_delete_operations() {
     println!("Soft deleting task1...");
     let delete1 = server
         .execute_sql_as_user(
-            &format!(
-                "DELETE FROM {}.{} WHERE task_id = 'task1'",
-                namespace, table_name
-            ),
+            &format!("DELETE FROM {}.{} WHERE task_id = 'task1'", namespace, table_name),
             user_id,
         )
         .await;
-    assert_eq!(
-        delete1.status,
-        ResponseStatus::Success,
-        "Delete failed: {:?}",
-        delete1
-    );
+    assert_eq!(delete1.status, ResponseStatus::Success, "Delete failed: {:?}", delete1);
 
     println!("Soft deleting task2...");
     let delete2 = server
         .execute_sql_as_user(
-            &format!(
-                "DELETE FROM {}.{} WHERE task_id = 'task2'",
-                namespace, table_name
-            ),
+            &format!("DELETE FROM {}.{} WHERE task_id = 'task2'", namespace, table_name),
             user_id,
         )
         .await;
-    assert_eq!(
-        delete2.status,
-        ResponseStatus::Success,
-        "Delete failed: {:?}",
-        delete2
-    );
+    assert_eq!(delete2.status, ResponseStatus::Success, "Delete failed: {:?}", delete2);
 
     // Query should only show 3 tasks (task3, task4, task5)
     println!("Querying after soft deletes...");
@@ -799,10 +751,7 @@ async fn test_06_soft_delete_operations() {
     // Verify the correct tasks are visible
     let tasks_response = server
         .execute_sql_as_user(
-            &format!(
-                "SELECT task_id FROM {}.{} ORDER BY task_id",
-                namespace, table_name
-            ),
+            &format!("SELECT task_id FROM {}.{} ORDER BY task_id", namespace, table_name),
             user_id,
         )
         .await;
@@ -811,12 +760,7 @@ async fn test_06_soft_delete_operations() {
     assert_eq!(rows.len(), 3);
     let task_ids: Vec<String> = rows
         .iter()
-        .map(|r| {
-            r.get("task_id")
-                .and_then(|v| v.as_str())
-                .unwrap()
-                .to_string()
-        })
+        .map(|r| r.get("task_id").and_then(|v| v.as_str()).unwrap().to_string())
         .collect();
     assert_eq!(task_ids, vec!["task3", "task4", "task5"]);
     println!("  ✓ Correct tasks visible: {:?}", task_ids);

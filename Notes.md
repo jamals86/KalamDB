@@ -999,10 +999,145 @@ make sure the backend compiles after this
 
 60) Make a new crate which has struct's which link and backend has them in common
 
+62) the crate kalamdb-core is taking long to compile i guess we can remove some of the code from inside and divide it into multiple crates for better compile times and also better code organization
+
+63) all cluster commands should be only dba or root:
+            ["CLUSTER", "STATUS", ..] | ["CLUSTER", "LS", ..] => {
+                // Read-only, allowed for all users
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterList))
+            }
+
+64) check this case:
+- I have a cliuster which has 3 nodes
+- The ;eader perform a flushing to external storage
+- The other followers will not flush since they are followers
+- The data which is in rocksdb stays there forever since followers never flush
+- So we need to make sure followers also flush their data when the leader flushes but without copying the files to external storage since only the leader should do that
+- Each Job should have in it if the executor is a leader then for leader only we copy the manifest/parquet files to external storage otherwise we just flush the rocksdb data to free memory and not copy files
+- So in this subject the jobs will run in all nodes in the cluster not only in the leader node
+- But we should also make a boolean inside JobType which indicate if this JobType is for leader only
+
+Complete job list (what they do + storage copy/deletion + leader-only notes):
+
+Flush (JobType::Flush)
+Writes Parquet files + manifest updates (object store + rename), then compacts RocksDB. This is the only job that creates/writes data files today.
+Source: flush.rs:80-179 and users.rs:150-219.
+Leader-only today via job loop.
+
+Cleanup (JobType::Cleanup)
+Deletes table data + removes Parquet files + invalidates manifest cache + removes metadata.
+Source: cleanup.rs:66-166.
+Leader-only today.
+
+Compact (JobType::Compact)
+RocksDB compaction (tombstone cleanup). No external file writes.
+Source: compact.rs:64-142.
+Leader-only today.
+
+JobCleanup (JobType::JobCleanup)
+Deletes old rows from system.jobs (job history retention).
+Source: job_cleanup.rs:52-109.
+Leader-only today.
+
+ManifestEviction (JobType::ManifestEviction)
+Evicts stale manifest cache entries (RAM + RocksDB).
+Source: manifest_eviction.rs:68-157.
+Leader-only today.
+
+Retention (JobType::Retention)
+Placeholder; intended to delete expired soft-deleted rows (no implementation yet).
+Source: retention.rs:70-154.
+Leader-only today.
+
+StreamEviction (JobType::StreamEviction)
+Deletes old stream logs (TTL).
+Source: stream_eviction.rs:98-214.
+Leader-only today.
+
+UserCleanup (JobType::UserCleanup)
+Placeholder; intended to cascade-delete user data/tokens/ACLs.
+Source: user_cleanup.rs:54-121.
+Leader-only today.
+
+Backup (JobType::Backup)
+Placeholder; intended to export data + upload to external storage.
+Source: backup.rs:60-117.
+Leader-only today.
+
+Restore (JobType::Restore)
+Placeholder; intended to download + restore from external storage.
+Source: restore.rs:60-115.
+Leader-only today.
+
+Short answer: no, followers won’t automatically clean their local RocksDB data under the current design.
+Details:
+Job history cleanup (JobCleanupExecutor) deletes directly via the jobs provider store, not via a Raft command. So only the leader deletes those rows locally. See job_cleanup.rs:78-99 and the direct store deletes in jobs_provider.rs:447-514.
+Result: followers do not delete their local system.jobs history.
+Flush/compaction: only the leader runs flush and compaction jobs today. Followers won’t write Parquet, won’t compact, and won’t purge their local RocksDB data. See the leader-only job loop in runner.rs:70-169 and flush executor behavior in flush.rs:80-179.
+So if your goal is “followers also flush/compact locally but don’t upload,” that does not happen in the current design.
+
+Leader-only actions:
+Flush → external storage copy + manifest update (single source of truth).
+Cleanup → delete Parquet trees + metadata removal (avoid double-delete).
+Backup / Restore (external storage operations, global state).
+Job history cleanup if job records are owned by meta Raft (single authoritative ledger).
+Manifest eviction if it mutates the shared manifest store (not just local cache).
+
+Actions that should run on all nodes:
+RocksDB compaction (each node owns its local RocksDB files).
+Local cache eviction (if cache is node-local only).
+Stream eviction if streams are node-local storage.
+
+also we need to cover the failover we once implemented:
+
+**Current behavior (leader-only + failover):**
+- Only the Meta-group leader runs the job loop (`run_loop()`). Followers sleep and wait for leadership changes. See runner.rs.
+- When a job is about to run, it’s marked “Running” by issuing a Raft `ClaimJob` command (`mark_job_running()`). See runner.rs.
+- On success or failure, the leader writes terminal state via Raft (`CompleteJob` / `FailJob`). See runner.rs and runner.rs.
+- When a new leader is elected, it runs failover recovery: scans `Running` jobs and requeues or fails them based on job type and whether the owning node is offline or timed out. See leader_failover.rs.
+- The “release” during requeue is done via `LeaderOnlyJobGuard::release_job()`, which sends a Raft `ReleaseJob` command. See leader_guard.rs.
+
+**What’s implemented for “move to other nodes”:**
+- There is no direct “move” while a leader is healthy. Jobs are leader-only. 
+- Jobs are “moved” only during leader failover: `LeaderFailoverHandler` requeues `Running` jobs if the previous owner is offline or timed out. See leader_failover.rs.
+
+**Is it good?**
+- **Strengths:** leader-only execution, Raft-backed state transitions, explicit orphan recovery, job-type-based requeue safety.
+- **Gaps/risks:** 
+  - `mark_job_running()` issues `ClaimJob` but doesn’t check for “already claimed” or failed claim. That can allow duplicate work on edge cases. Compare with `LeaderOnlyJobGuard::claim_job()` logic. See leader_guard.rs.
+  - Failover scans *all* jobs to find `Running` (no filtered query). This can be expensive as the table grows. See leader_failover.rs.
+  - Requeue uses `ReleaseJob` but doesn’t explicitly set status back to `Queued` here; it relies on Raft command behavior.
+  - The job loop is sequential (TODO for concurrency), which can bottleneck recovery. See runner.rs.
+
+**Possible improvements (low risk):**
+- Use `LeaderOnlyJobGuard::claim_job()` and only execute if claim succeeds, handling “already claimed”.
+- Add a filtered query for `Running` jobs in failover instead of scanning all jobs.
+- Add job “lease/heartbeat” updates and requeue after lease expiry (more robust than fixed timeout).
+- Implement concurrency control to avoid long recovery windows.
+
+now i want you to create a plan to implement the job system to run on all nodes at once in the cluster, and the jobs which needs a leader only action the actions needed by the leader will be performed only by the leader, if it failed then the new leader will be left off and do it again
+i guess we need to add a new column to the jobs table to track each node the status of the job and if its running/failed/completed its like a hashmap<nodeId, JobStatus> do you think its a good design here?
 
 
 
+65) Create a real-world penetration test which target the cluster and each time target a different node with a real cases of real users how they chat with each others using the kalamdb
 
 
+66) instead of setting appContxt after that construct it with appcontext from the constructor
+pub struct SubscriptionService {
+then we dont need to keep checking if appcontext is there and also no need for setters
+find other places where we have the same and change it
+also pub struct LiveQueryManager {
 
+67) global appcontext shouldnt be used anymore, since we now rely on the appcontext being passed over where needed
+static APP_CONTEXT: Lazy<StdRwLock<Option<Arc<AppContext>>>> = Lazy::new(|| StdRwLock::new(None));
+
+68) node_id should always be read from Appcontext not passed from outside
+
+69) with the jobs being running can you confirm if i query now select * from system.jobs do i see a row per node in the cluster and each jobid has a separate id? and do the jobs run for all nodes in parallel who triggers them? does each node trigger himself? or rely on the leader to do the triggering for it?
+i think we need to have a scheduler one which runs on the leader and awaken all the other nodes when its tirggering, also i think each node should 
+
+70) MetaCommand::ClaimJobNode and MetaCommand::UpdateJobNode is so similar can't we keep only Update?
+
+71) Is it better to use macros for MetaCommand and other commands to make the code runs faster and more clear?
 

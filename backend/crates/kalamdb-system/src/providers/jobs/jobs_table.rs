@@ -180,8 +180,30 @@ impl JobsTableSchema {
             ),
             ColumnDefinition::new(
                 13,
-                "error_message",
+                "leader_node_id",
                 13,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Node ID that performed leader actions (if any)".to_string()),
+            ),
+            ColumnDefinition::new(
+                14,
+                "leader_status",
+                14,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Status of leader-only actions (running, completed, failed)".to_string()),
+            ),
+            ColumnDefinition::new(
+                15,
+                "error_message",
+                15,
                 KalamDataType::Text,
                 true,
                 false,
@@ -224,9 +246,7 @@ impl JobsTableSchema {
 
     /// Get the column family name in RocksDB
     pub fn column_family_name() -> &'static str {
-        SystemTable::Jobs
-            .column_family_name()
-            .expect("Jobs is a table, not a view")
+        SystemTable::Jobs.column_family_name().expect("Jobs is a table, not a view")
     }
 
     /// Get the partition key for storage
@@ -243,9 +263,10 @@ mod tests {
     #[test]
     fn test_jobs_table_schema() {
         let schema = JobsTableSchema::schema();
-        // Schema is built from TableDefinition which has 13 columns
+        // Schema is built from TableDefinition which has 15 columns
         // (namespace_id and table_name were removed - now stored in parameters JSON)
-        assert_eq!(schema.fields().len(), 13);
+        // Added: leader_node_id (col 13) and leader_status (col 14) for distributed job execution
+        assert_eq!(schema.fields().len(), 15);
 
         // Verify columns are ordered by ordinal_position (from TableDefinition)
         assert_eq!(schema.field(0).name(), "job_id"); // ordinal 1
@@ -259,9 +280,7 @@ mod tests {
         assert_eq!(JobsTableSchema::table_name(), "jobs");
         assert_eq!(
             JobsTableSchema::column_family_name(),
-            SystemTable::Jobs
-                .column_family_name()
-                .expect("Jobs is a table, not a view")
+            SystemTable::Jobs.column_family_name().expect("Jobs is a table, not a view")
         );
     }
 

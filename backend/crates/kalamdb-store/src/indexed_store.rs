@@ -322,7 +322,7 @@ where
         for filter in filters {
             if let Some((idx, prefix)) = self.find_index_for_filter(filter) {
                 match &best {
-                    Some((_best_idx, best_prefix)) if best_prefix.len() >= prefix.len() => {}
+                    Some((_best_idx, best_prefix)) if best_prefix.len() >= prefix.len() => {},
                     _ => best = Some((idx, prefix)),
                 }
             }
@@ -849,9 +849,11 @@ where
         limit: Option<usize>,
     ) -> Result<Vec<(K, V)>> {
         let store = self.clone();
-        tokio::task::spawn_blocking(move || store.scan_by_index(index_idx, prefix.as_deref(), limit))
-            .await
-            .map_err(|e| StorageError::Other(format!("spawn_blocking error: {}", e)))?
+        tokio::task::spawn_blocking(move || {
+            store.scan_by_index(index_idx, prefix.as_deref(), limit)
+        })
+        .await
+        .map_err(|e| StorageError::Other(format!("spawn_blocking error: {}", e)))?
     }
 
     /// Async version of `get()` from EntityStore.
@@ -900,14 +902,14 @@ pub fn extract_string_equality(filter: &Expr) -> Option<(&str, &str)> {
             match (binary.left.as_ref(), binary.right.as_ref()) {
                 (Expr::Column(col), Expr::Literal(ScalarValue::Utf8(Some(val)), _)) => {
                     return Some((col.name.as_str(), val.as_str()));
-                }
+                },
                 (Expr::Literal(ScalarValue::Utf8(Some(val)), _), Expr::Column(col)) => {
                     return Some((col.name.as_str(), val.as_str()));
-                }
-                _ => {}
+                },
+                _ => {},
             }
             None
-        }
+        },
         _ => None,
     }
 }
@@ -924,14 +926,14 @@ pub fn extract_i64_equality(filter: &Expr) -> Option<(&str, i64)> {
             match (binary.left.as_ref(), binary.right.as_ref()) {
                 (Expr::Column(col), Expr::Literal(ScalarValue::Int64(Some(val)), _)) => {
                     return Some((col.name.as_str(), *val));
-                }
+                },
                 (Expr::Literal(ScalarValue::Int64(Some(val)), _), Expr::Column(col)) => {
                     return Some((col.name.as_str(), *val));
-                }
-                _ => {}
+                },
+                _ => {},
             }
             None
-        }
+        },
         _ => None,
     }
 }
@@ -1007,6 +1009,8 @@ mod tests {
                 None
             },
             node_id: NodeId::from(1u64),
+            leader_node_id: None,
+            leader_status: None,
             queue: None,
             priority: None,
         }
@@ -1015,11 +1019,8 @@ mod tests {
     #[test]
     fn test_insert_creates_entity_and_index() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        let store = IndexedEntityStore::new(
-            backend.clone(),
-            "test_jobs",
-            vec![Arc::new(TestStatusIndex)],
-        );
+        let store =
+            IndexedEntityStore::new(backend.clone(), "test_jobs", vec![Arc::new(TestStatusIndex)]);
 
         let job = create_test_job("job1", JobStatus::Running);
         store.insert(&job.job_id, &job).unwrap();
@@ -1038,11 +1039,8 @@ mod tests {
     #[test]
     fn test_update_changes_index_entry() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        let store = IndexedEntityStore::new(
-            backend.clone(),
-            "test_jobs",
-            vec![Arc::new(TestStatusIndex)],
-        );
+        let store =
+            IndexedEntityStore::new(backend.clone(), "test_jobs", vec![Arc::new(TestStatusIndex)]);
 
         // Insert with Running status
         let mut job = create_test_job("job1", JobStatus::Running);
@@ -1067,11 +1065,8 @@ mod tests {
     #[test]
     fn test_delete_removes_entity_and_index() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        let store = IndexedEntityStore::new(
-            backend.clone(),
-            "test_jobs",
-            vec![Arc::new(TestStatusIndex)],
-        );
+        let store =
+            IndexedEntityStore::new(backend.clone(), "test_jobs", vec![Arc::new(TestStatusIndex)]);
 
         let job = create_test_job("job1", JobStatus::Running);
         store.insert(&job.job_id, &job).unwrap();
@@ -1091,11 +1086,8 @@ mod tests {
     #[test]
     fn test_scan_by_index_with_multiple_statuses() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        let store = IndexedEntityStore::new(
-            backend.clone(),
-            "test_jobs",
-            vec![Arc::new(TestStatusIndex)],
-        );
+        let store =
+            IndexedEntityStore::new(backend.clone(), "test_jobs", vec![Arc::new(TestStatusIndex)]);
 
         // Insert jobs with different statuses
         let job1 = create_test_job("job1", JobStatus::Running);
@@ -1122,11 +1114,8 @@ mod tests {
     #[tokio::test]
     async fn test_async_operations() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        let store = IndexedEntityStore::new(
-            backend.clone(),
-            "test_jobs",
-            vec![Arc::new(TestStatusIndex)],
-        );
+        let store =
+            IndexedEntityStore::new(backend.clone(), "test_jobs", vec![Arc::new(TestStatusIndex)]);
 
         let job = create_test_job("job1", JobStatus::Running);
         let job_id = job.job_id.clone();

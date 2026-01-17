@@ -78,10 +78,7 @@ impl TypedStatementHandler<CompactAllTablesStatement> for CompactAllTablesHandle
         _statement: &CompactAllTablesStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        if !matches!(
-            context.user_role(),
-            Role::Service | Role::Dba | Role::System
-        ) {
+        if !matches!(context.user_role(), Role::Service | Role::Dba | Role::System) {
             return Err(KalamDbError::Unauthorized(
                 "STORAGE COMPACT ALL requires Service, DBA, or System role".to_string(),
             ));

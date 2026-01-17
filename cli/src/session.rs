@@ -11,7 +11,10 @@ use crate::CLI_VERSION;
 use clap::ValueEnum;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
-use kalam_link::{AuthProvider, ConnectionOptions, KalamLinkClient, KalamLinkTimeouts, SubscriptionConfig, SubscriptionOptions, TimestampFormatter};
+use kalam_link::{
+    AuthProvider, ConnectionOptions, KalamLinkClient, KalamLinkTimeouts, SubscriptionConfig,
+    SubscriptionOptions, TimestampFormatter,
+};
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
@@ -32,7 +35,20 @@ use std::io::IsTerminal;
 use tokio::io::AsyncReadExt;
 
 // Fallback system tables for autocomplete when the server does not return them
-const SYSTEM_TABLES: &[&str] = &["users", "jobs", "namespaces", "storages", "live_queries", "tables", "audit_logs", "manifest", "stats", "settings", "server_logs", "cluster"];
+const SYSTEM_TABLES: &[&str] = &[
+    "users",
+    "jobs",
+    "namespaces",
+    "storages",
+    "live_queries",
+    "tables",
+    "audit_logs",
+    "manifest",
+    "stats",
+    "settings",
+    "server_logs",
+    "cluster",
+];
 
 #[cfg(unix)]
 struct TerminalRawModeGuard {
@@ -259,7 +275,7 @@ impl CLISession {
             .as_ref()
             .map(|opts| opts.create_formatter())
             .unwrap_or_else(|| ConnectionOptions::default().create_formatter());
-        
+
         // Build client with connection options if provided
         let mut builder = KalamLinkClient::builder()
             .base_url(&server_url)
@@ -267,11 +283,11 @@ impl CLISession {
             .max_retries(3)
             .auth(auth.clone())
             .timeouts(timeouts.clone());
-        
+
         if let Some(opts) = connection_options {
             builder = builder.connection_options(opts);
         }
-        
+
         let client = builder.build()?;
 
         // Try to fetch server info from health check (sanitize empty strings to None)
@@ -399,7 +415,8 @@ impl CLISession {
                 // Show timing if query took significant time
                 if elapsed.as_millis() >= self.loading_threshold_ms as u128 {
                     let timing = format!("⏱  Time: {:.3} ms", elapsed.as_secs_f64() * 1000.0);
-                    let is_machine_format = matches!(self.format, OutputFormat::Json | OutputFormat::Csv);
+                    let is_machine_format =
+                        matches!(self.format, OutputFormat::Json | OutputFormat::Csv);
                     if self.color {
                         if is_machine_format {
                             eprintln!("{}", timing.dimmed());
@@ -414,11 +431,11 @@ impl CLISession {
                 }
 
                 Ok(())
-            }
+            },
             Err(e) => {
                 // Don't print error here - let caller handle it
                 Err(e.into())
-            }
+            },
         }
     }
 
@@ -446,15 +463,9 @@ impl CLISession {
             return Ok(None);
         }
 
-        let message = row_map
-            .get("message")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let message = row_map.get("message").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-        let ws_url = row_map
-            .get("ws_url")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let ws_url = row_map.get("ws_url").and_then(|v| v.as_str()).map(|s| s.to_string());
 
         let subscription_value = row_map.get("subscription").ok_or_else(|| {
             CLIError::ParseError("Missing subscription metadata in server response".into())
@@ -464,22 +475,24 @@ impl CLISession {
             CLIError::ParseError("Subscription metadata must be a JSON object".into())
         })?;
 
-        let sql = subscription_obj
-            .get("sql")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                CLIError::ParseError("Subscription metadata does not include SQL query".into())
-            })?;
+        let sql = subscription_obj.get("sql").and_then(|v| v.as_str()).ok_or_else(|| {
+            CLIError::ParseError("Subscription metadata does not include SQL query".into())
+        })?;
 
         // Extract or generate subscription ID
         let sub_id = subscription_obj
             .get("id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("sub_{}", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()));
+            .unwrap_or_else(|| {
+                format!(
+                    "sub_{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos()
+                )
+            });
 
         let mut config = SubscriptionConfig::new(sub_id, sql);
 
@@ -512,10 +525,7 @@ impl CLISession {
             .trim_start_matches("ws://")
             .trim_start_matches("wss://");
 
-        let host = without_scheme
-            .split(['/', '?'])
-            .next()
-            .unwrap_or(without_scheme);
+        let host = without_scheme.split(['/', '?']).next().unwrap_or(without_scheme);
 
         if host.is_empty() {
             "localhost".to_string()
@@ -563,10 +573,9 @@ impl CLISession {
         };
 
         // Use cluster_name for cluster mode, instance for saved connections, or "local" as fallback
-        let display_name = self.cluster_name.as_deref()
-            .or(self.instance.as_deref())
-            .unwrap_or("local");
-        
+        let display_name =
+            self.cluster_name.as_deref().or(self.instance.as_deref()).unwrap_or("local");
+
         let brand_with_profile = if use_colors_in_prompt {
             format!("{}{}", brand, format!("[{}]", display_name).dimmed())
         } else {
@@ -574,11 +583,7 @@ impl CLISession {
         };
 
         let identity = if use_colors_in_prompt {
-            format!(
-                "{}{}",
-                self.username.cyan(),
-                format!("@{}", self.server_host).dimmed()
-            )
+            format!("{}{}", self.username.cyan(), format!("@{}", self.server_host).dimmed())
         } else {
             format!("{}@{}", self.username, self.server_host)
         };
@@ -789,12 +794,12 @@ impl CLISession {
                             if let Err(e) = self.execute_command(command).await {
                                 eprintln!("{}", format!("✗ {}", e).red());
                             }
-                        }
+                        },
                         Err(e) => {
                             eprintln!("{}", format!("✗ {}", e).red());
-                        }
+                        },
                     }
-                }
+                },
                 Err(ReadlineError::Interrupted) => {
                     // Clear any accumulated command on Ctrl+C
                     if !accumulated_command.is_empty() {
@@ -804,15 +809,15 @@ impl CLISession {
                         println!("{}", "Use \\quit or \\q to exit".dimmed());
                     }
                     continue;
-                }
+                },
                 Err(ReadlineError::Eof) => {
                     println!("\n{}", "Goodbye!".cyan());
                     break;
-                }
+                },
                 Err(err) => {
                     eprintln!("{}", format!("✗ {}", err).red());
                     break;
-                }
+                },
             }
         }
 
@@ -838,9 +843,7 @@ impl CLISession {
         println!(
             "{}{}{}",
             "║        ".bright_blue().bold(),
-            "🗄️  Kalam CLI - Interactive Database Terminal"
-                .white()
-                .bold(),
+            "🗄️  Kalam CLI - Interactive Database Terminal".white().bold(),
             "       ║".bright_blue().bold()
         );
         println!(
@@ -856,35 +859,18 @@ impl CLISession {
                 .bold()
         );
         println!();
-        println!(
-            "  {}  {}",
-            "📡".dimmed(),
-            format!("Connected to: {}", self.server_url).cyan()
-        );
-        println!(
-            "  {}  {}",
-            "👤".dimmed(),
-            format!("User: {}", self.username).cyan()
-        );
+        println!("  {}  {}", "📡".dimmed(), format!("Connected to: {}", self.server_url).cyan());
+        println!("  {}  {}", "👤".dimmed(), format!("User: {}", self.username).cyan());
 
         if let Some(ref version) = self.server_version {
-            println!(
-                "  {}  {}",
-                "🏷️ ".dimmed(),
-                format!("Server version: {}", version).dimmed()
-            );
+            println!("  {}  {}", "🏷️ ".dimmed(), format!("Server version: {}", version).dimmed());
         }
 
         // Show CLI version with build info
         println!(
             "  {}  {}",
             "📚".dimmed(),
-            format!(
-                "CLI version: {} (built: {})",
-                CLI_VERSION,
-                env!("BUILD_DATE")
-            )
-            .dimmed()
+            format!("CLI version: {} (built: {})", CLI_VERSION, env!("BUILD_DATE")).dimmed()
         );
 
         println!(
@@ -969,19 +955,13 @@ impl CLISession {
                 let ns_idx = result.schema.iter().position(|f| f.name == "namespace_id");
 
                 for row in rows {
-                    let name_opt = table_name_idx
-                        .and_then(|idx| row.get(idx))
-                        .and_then(|v| v.as_str());
-                    let ns_opt = ns_idx
-                        .and_then(|idx| row.get(idx))
-                        .and_then(|v| v.as_str());
+                    let name_opt =
+                        table_name_idx.and_then(|idx| row.get(idx)).and_then(|v| v.as_str());
+                    let ns_opt = ns_idx.and_then(|idx| row.get(idx)).and_then(|v| v.as_str());
                     if let Some(name) = name_opt {
                         table_names.push(name.to_string());
                         if let Some(ns) = ns_opt {
-                            ns_map
-                                .entry(ns.to_string())
-                                .or_default()
-                                .push(name.to_string());
+                            ns_map.entry(ns.to_string()).or_default().push(name.to_string());
                         }
                     }
                 }
@@ -1005,22 +985,17 @@ impl CLISession {
                     let schema_idx = result.schema.iter().position(|f| f.name == "table_schema");
 
                     for row in rows {
-                        let name_opt = table_name_idx
-                            .and_then(|idx| row.get(idx))
-                            .and_then(|v| v.as_str());
-                        let schema_opt = schema_idx
-                            .and_then(|idx| row.get(idx))
-                            .and_then(|v| v.as_str());
+                        let name_opt =
+                            table_name_idx.and_then(|idx| row.get(idx)).and_then(|v| v.as_str());
+                        let schema_opt =
+                            schema_idx.and_then(|idx| row.get(idx)).and_then(|v| v.as_str());
                         if let (Some(name), Some(schema)) = (name_opt, schema_opt) {
                             // Add to table_names if not already present
                             if !table_names.contains(&name.to_string()) {
                                 table_names.push(name.to_string());
                             }
                             // Add to ns_map for namespace.table autocomplete
-                            ns_map
-                                .entry(schema.to_string())
-                                .or_default()
-                                .push(name.to_string());
+                            ns_map.entry(schema.to_string()).or_default().push(name.to_string());
                             // Add namespace if not already present
                             if !namespaces.contains(&schema.to_string()) {
                                 namespaces.push(schema.to_string());
@@ -1095,15 +1070,14 @@ impl CLISession {
 
                     // Find column indices in schema
                     let table_name_idx = result.schema.iter().position(|f| f.name == "table_name");
-                    let column_name_idx = result.schema.iter().position(|f| f.name == "column_name");
+                    let column_name_idx =
+                        result.schema.iter().position(|f| f.name == "column_name");
 
                     for row in rows {
-                        let table_opt = table_name_idx
-                            .and_then(|idx| row.get(idx))
-                            .and_then(|v| v.as_str());
-                        let column_opt = column_name_idx
-                            .and_then(|idx| row.get(idx))
-                            .and_then(|v| v.as_str());
+                        let table_opt =
+                            table_name_idx.and_then(|idx| row.get(idx)).and_then(|v| v.as_str());
+                        let column_opt =
+                            column_name_idx.and_then(|idx| row.get(idx)).and_then(|v| v.as_str());
                         if let (Some(table), Some(column)) = (table_opt, column_opt) {
                             column_map
                                 .entry(table.to_string())
@@ -1137,16 +1111,11 @@ impl CLISession {
         let sql_upper = sql.to_uppercase();
 
         // Find OPTIONS keyword (case-insensitive)
-        let options_idx = sql_upper
-            .rfind(" OPTIONS ")
-            .or_else(|| sql_upper.rfind(" OPTIONS("));
+        let options_idx = sql_upper.rfind(" OPTIONS ").or_else(|| sql_upper.rfind(" OPTIONS("));
 
         let Some(idx) = options_idx else {
             // No OPTIONS found - return SQL as-is with default options
-            return (
-                sql.to_string(),
-                Some(SubscriptionOptions::default()),
-            );
+            return (sql.to_string(), Some(SubscriptionOptions::default()));
         };
 
         // Split SQL at OPTIONS
@@ -1180,19 +1149,13 @@ impl CLISession {
                 if let Ok(last_rows) = value.parse::<u32>() {
                     return Some(SubscriptionOptions::new().with_last_rows(last_rows));
                 } else {
-                    eprintln!(
-                        "Warning: Invalid last_rows value '{}', using default",
-                        value
-                    );
+                    eprintln!("Warning: Invalid last_rows value '{}', using default", value);
                 }
             } else if key.to_lowercase() == "batch_size" {
                 if let Ok(batch_size) = value.parse::<usize>() {
                     return Some(SubscriptionOptions::new().with_batch_size(batch_size));
                 } else {
-                    eprintln!(
-                        "Warning: Invalid batch_size value '{}', using default",
-                        value
-                    );
+                    eprintln!("Warning: Invalid batch_size value '{}', using default", value);
                 }
             } else {
                 eprintln!("Warning: Unknown option '{}', ignoring", key);
@@ -1218,7 +1181,7 @@ impl CLISession {
             }
             match buf[0] {
                 3 | b'q' | b'Q' => break, // Ctrl+C or q
-                _ => {}
+                _ => {},
             }
         }
     }
@@ -1242,10 +1205,7 @@ impl CLISession {
         let mut subscription = self.client.subscribe_with_config(config).await?;
 
         if self.animations {
-            eprintln!(
-                "Subscription established (ID: {})",
-                subscription.subscription_id()
-            );
+            eprintln!("Subscription established (ID: {})", subscription.subscription_id());
         }
 
         // On unix TTYs, SIGINT can be intercepted by the readline layer.
@@ -1379,7 +1339,11 @@ impl CLISession {
     ///
     /// If timeout is Some, the subscription will exit after the specified duration
     /// once initial data has been received. This is useful for testing.
-    async fn run_subscription_with_timeout(&mut self, config: SubscriptionConfig, timeout: Option<std::time::Duration>) -> Result<()> {
+    async fn run_subscription_with_timeout(
+        &mut self,
+        config: SubscriptionConfig,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<()> {
         let sql_display = config.sql.clone();
         let ws_url_display = config.ws_url.clone();
         let requested_id = config.id.clone();
@@ -1403,10 +1367,7 @@ impl CLISession {
         let mut subscription = self.client.subscribe_with_config(config).await?;
 
         if self.animations {
-            eprintln!(
-                "Subscription established (ID: {})",
-                subscription.subscription_id()
-            );
+            eprintln!("Subscription established (ID: {})", subscription.subscription_id());
         }
 
         // Unix TTY path: raw-mode key cancel (Ctrl+C byte / 'q')
@@ -1426,11 +1387,18 @@ impl CLISession {
                                 if self.animations {
                                     eprintln!("\n⏱ Subscription timeout reached");
                                 }
-                                let close_res = tokio::time::timeout(Duration::from_secs(2), subscription.close()).await;
+                                let close_res = tokio::time::timeout(
+                                    Duration::from_secs(2),
+                                    subscription.close(),
+                                )
+                                .await;
                                 if let Err(_) = close_res {
                                     eprintln!("Warning: Timed out while closing subscription; exiting anyway");
                                 } else if let Ok(Err(e)) = close_res {
-                                    eprintln!("Warning: Failed to close subscription cleanly: {}", e);
+                                    eprintln!(
+                                        "Warning: Failed to close subscription cleanly: {}",
+                                        e
+                                    );
                                 }
                                 break;
                             }
@@ -1532,9 +1500,13 @@ impl CLISession {
                             eprintln!("\n⏱ Subscription timeout reached");
                         }
                         // Close subscription gracefully, but don't hang forever.
-                        let close_res = tokio::time::timeout(Duration::from_secs(2), subscription.close()).await;
+                        let close_res =
+                            tokio::time::timeout(Duration::from_secs(2), subscription.close())
+                                .await;
                         if let Err(_) = close_res {
-                            eprintln!("Warning: Timed out while closing subscription; exiting anyway");
+                            eprintln!(
+                                "Warning: Timed out while closing subscription; exiting anyway"
+                            );
                         } else if let Ok(Err(e)) = close_res {
                             eprintln!("Warning: Failed to close subscription cleanly: {}", e);
                         }
@@ -1592,7 +1564,7 @@ impl CLISession {
                                 println!("\nSubscription failed - returning to CLI prompt");
                                 break;
                             }
-                            
+
                             // Check if initial data is complete (batch with has_more=false)
                             match &event {
                                 kalam_link::ChangeEvent::InitialDataBatch { batch_control, .. } => {
@@ -1607,7 +1579,7 @@ impl CLISession {
                                 }
                                 _ => {}
                             }
-                            
+
                             self.display_change_event(&sql_display, &event);
                         }
                         Some(Err(e)) => {
@@ -1669,7 +1641,7 @@ impl CLISession {
                         schema.len()
                     );
                 }
-            }
+            },
             kalam_link::ChangeEvent::InitialDataBatch {
                 subscription_id,
                 rows,
@@ -1713,7 +1685,7 @@ impl CLISession {
                         println!("  {}", formatted);
                     }
                 }
-            }
+            },
 
             kalam_link::ChangeEvent::Insert {
                 subscription_id,
@@ -1726,10 +1698,7 @@ impl CLISession {
                             timestamp, subscription_id
                         );
                     } else {
-                        println!(
-                            "[{}] INSERT [{}] (no row payload)",
-                            timestamp, subscription_id
-                        );
+                        println!("[{}] INSERT [{}] (no row payload)", timestamp, subscription_id);
                     }
                 } else {
                     for row in rows {
@@ -1744,7 +1713,7 @@ impl CLISession {
                         }
                     }
                 }
-            }
+            },
             kalam_link::ChangeEvent::Update {
                 subscription_id,
                 rows,
@@ -1758,10 +1727,7 @@ impl CLISession {
                             timestamp, subscription_id
                         );
                     } else {
-                        println!(
-                            "[{}] UPDATE [{}] (no row payload)",
-                            timestamp, subscription_id
-                        );
+                        println!("[{}] UPDATE [{}] (no row payload)", timestamp, subscription_id);
                     }
                 } else {
                     for idx in 0..max_len {
@@ -1786,7 +1752,7 @@ impl CLISession {
                         }
                     }
                 }
-            }
+            },
             kalam_link::ChangeEvent::Delete {
                 subscription_id,
                 old_rows,
@@ -1798,10 +1764,7 @@ impl CLISession {
                             timestamp, subscription_id
                         );
                     } else {
-                        println!(
-                            "[{}] DELETE [{}] (no row payload)",
-                            timestamp, subscription_id
-                        );
+                        println!("[{}] DELETE [{}] (no row payload)", timestamp, subscription_id);
                     }
                 } else {
                     for row in old_rows {
@@ -1816,7 +1779,7 @@ impl CLISession {
                         }
                     }
                 }
-            }
+            },
             kalam_link::ChangeEvent::Error {
                 subscription_id,
                 code,
@@ -1828,32 +1791,23 @@ impl CLISession {
                         timestamp, subscription_id, code, message
                     );
                 } else {
-                    eprintln!(
-                        "[{}] ERROR [{}] {}: {}",
-                        timestamp, subscription_id, code, message
-                    );
+                    eprintln!("[{}] ERROR [{}] {}: {}", timestamp, subscription_id, code, message);
                 }
-            }
+            },
             kalam_link::ChangeEvent::Unknown { raw } => {
                 // Log unknown payloads at debug level only - these are typically
                 // system messages that don't need user attention
                 if self.color {
-                    eprintln!(
-                        "\x1b[90m[{}] DEBUG: Unrecognized message type\x1b[0m",
-                        timestamp
-                    );
+                    eprintln!("\x1b[90m[{}] DEBUG: Unrecognized message type\x1b[0m", timestamp);
                 } else {
                     eprintln!("[{}] DEBUG: Unrecognized message type", timestamp);
                 }
                 // Only show details in verbose mode
                 #[cfg(debug_assertions)]
-                eprintln!(
-                    "  Payload: {}",
-                    serde_json::to_string(&raw).unwrap_or_default()
-                );
+                eprintln!("  Payload: {}", serde_json::to_string(&raw).unwrap_or_default());
                 #[cfg(not(debug_assertions))]
                 let _ = raw; // Suppress unused warning in release builds
-            }
+            },
         }
     }
 
@@ -1895,7 +1849,8 @@ impl CLISession {
                             if row.len() >= 7 {
                                 // Extract cluster_id from first row only
                                 if cluster_name.is_empty() {
-                                    cluster_name = row[0].as_str().unwrap_or("standalone").to_string();
+                                    cluster_name =
+                                        row[0].as_str().unwrap_or("standalone").to_string();
                                 }
                                 let node_id = row[1].as_u64().unwrap_or(0);
                                 let role = row[2].as_str().unwrap_or("unknown").to_string();
@@ -1938,7 +1893,7 @@ impl CLISession {
                     current_node,
                     nodes,
                 })
-            }
+            },
             Err(_) => None,
         }
     }
@@ -1969,7 +1924,8 @@ impl CLISession {
     /// Set color mode
     pub fn set_color(&mut self, enabled: bool) {
         self.color = enabled;
-        self.formatter = OutputFormatter::new(self.format, enabled, self.timestamp_formatter.clone());
+        self.formatter =
+            OutputFormatter::new(self.format, enabled, self.timestamp_formatter.clone());
     }
 
     /// Show stored credentials for current instance
@@ -1995,7 +1951,11 @@ impl CLISession {
                     };
                     println!("  JWT Token: {}", token_preview.dimmed());
                     if let Some(ref expires) = creds.expires_at {
-                        let expired_marker = if creds.is_expired() { " (EXPIRED)".red().to_string() } else { "".to_string() };
+                        let expired_marker = if creds.is_expired() {
+                            " (EXPIRED)".red().to_string()
+                        } else {
+                            "".to_string()
+                        };
                         println!("  Expires: {}{}", expires.green(), expired_marker);
                     }
                     if let Some(ref server_url) = creds.server_url {
@@ -2011,27 +1971,24 @@ impl CLISession {
                             .dimmed()
                     );
                     #[cfg(unix)]
-                    println!(
-                        "{}",
-                        "  File permissions: 0600 (owner read/write only)".dimmed()
-                    );
-                }
+                    println!("{}", "  File permissions: 0600 (owner read/write only)".dimmed());
+                },
                 Ok(None) => {
                     println!("{}", "No credentials stored for this instance".yellow());
                     println!("Use --username and --password to login and store credentials");
-                }
+                },
                 Err(e) => {
                     eprintln!("{} {}", "Error loading credentials:".red(), e);
-                }
+                },
             },
             (None, _) => {
                 println!("{}", "Credential management not available".yellow());
                 println!("Instance name not set for this session");
-            }
+            },
             (_, None) => {
                 println!("{}", "Credential store not available".yellow());
                 println!("Credential storage was not initialized for this session");
-            }
+            },
         }
     }
 
@@ -2047,9 +2004,9 @@ impl CLISession {
             (Some(instance), Some(store)) => {
                 // Perform login to get JWT token
                 println!("{}", "Logging in...".dimmed());
-                
+
                 let login_result = self.client.login(&username, &password).await;
-                
+
                 match login_result {
                     Ok(login_response) => {
                         let creds = Credentials::with_details(
@@ -2077,18 +2034,13 @@ impl CLISession {
                                 .dimmed()
                         );
                         #[cfg(unix)]
-                        println!(
-                            "{}",
-                            "  File permissions: 0600 (owner read/write only)".dimmed()
-                        );
+                        println!("{}", "  File permissions: 0600 (owner read/write only)".dimmed());
 
                         Ok(())
-                    }
-                    Err(e) => {
-                        Err(CLIError::ConfigurationError(format!("Login failed: {}", e)))
-                    }
+                    },
+                    Err(e) => Err(CLIError::ConfigurationError(format!("Login failed: {}", e))),
                 }
-            }
+            },
             (None, _) => Err(CLIError::ConfigurationError(
                 "Instance name not set for this session".to_string(),
             )),
@@ -2117,7 +2069,7 @@ impl CLISession {
                 );
 
                 Ok(())
-            }
+            },
             (None, _) => Err(CLIError::ConfigurationError(
                 "Instance name not set for this session".to_string(),
             )),
@@ -2139,12 +2091,19 @@ impl CLISession {
     ///
     /// If timeout is Some, the subscription will exit after the specified duration
     /// once initial data has been received. This is useful for testing.
-    pub async fn subscribe_with_timeout(&mut self, query: &str, timeout: Option<std::time::Duration>) -> Result<()> {
+    pub async fn subscribe_with_timeout(
+        &mut self,
+        query: &str,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<()> {
         // Generate subscription ID
-        let sub_id = format!("sub_{}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos());
+        let sub_id = format!(
+            "sub_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
         let config = SubscriptionConfig::new(sub_id, query);
         self.run_subscription_with_timeout(config, timeout).await
     }
@@ -2190,14 +2149,9 @@ struct SqlHighlighter {
 
 impl SqlHighlighter {
     fn new(color_enabled: bool) -> Self {
-        let keywords = SQL_KEYWORDS
-            .iter()
-            .map(|kw| kw.to_ascii_uppercase())
-            .collect::<HashSet<_>>();
-        let types = SQL_TYPES
-            .iter()
-            .map(|kw| kw.to_ascii_uppercase())
-            .collect::<HashSet<_>>();
+        let keywords =
+            SQL_KEYWORDS.iter().map(|kw| kw.to_ascii_uppercase()).collect::<HashSet<_>>();
+        let types = SQL_TYPES.iter().map(|kw| kw.to_ascii_uppercase()).collect::<HashSet<_>>();
 
         Self {
             keywords,
@@ -2469,9 +2423,8 @@ mod tests {
     #[test]
     fn test_extract_subscribe_options_with_options_and_semicolon() {
         // Test OPTIONS parsing with semicolon
-        let (sql, options) = CLISession::extract_subscribe_options(
-            "SELECT * FROM table OPTIONS (last_rows=50);"
-        );
+        let (sql, options) =
+            CLISession::extract_subscribe_options("SELECT * FROM table OPTIONS (last_rows=50);");
         assert_eq!(sql, "SELECT * FROM table");
         assert!(options.is_some());
     }

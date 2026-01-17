@@ -28,31 +28,31 @@ impl PathResolver {
         shard: Option<u32>,
     ) -> Result<String, KalamDbError> {
         let template = &data.storage_path_template;
-        
+
         // Fast path: no substitutions needed
         let needs_user_sub = user_id.is_some() && template.contains("{userId}");
         let needs_shard_sub = shard.is_some() && template.contains("{shard}");
-        
+
         let relative: Cow<'_, str> = if !needs_user_sub && !needs_shard_sub {
             // No dynamic placeholders to substitute - avoid clone
             Cow::Borrowed(template.as_str())
         } else {
             let mut result = template.clone();
-            
+
             // Substitute {userId} placeholder
             if let Some(uid) = user_id {
                 if needs_user_sub {
                     result = result.replace("{userId}", uid.as_str());
                 }
             }
-            
+
             // Substitute {shard} placeholder
             if let Some(shard_num) = shard {
                 if needs_shard_sub {
                     result = result.replace("{shard}", &format!("shard_{}", shard_num));
                 }
             }
-            
+
             Cow::Owned(result)
         };
 
@@ -96,7 +96,7 @@ impl PathResolver {
     }
 
     /// Resolve base directory from storage configuration.
-    /// 
+    ///
     /// This is a hot path - storage registry lookup is cached.
     #[inline]
     fn resolve_base_directory(
@@ -107,19 +107,17 @@ impl PathResolver {
         let default_base = storage_registry.default_storage_path();
 
         match storage_id {
-            Some(sid) => {
-                match storage_registry.get_storage(sid) {
-                    Ok(Some(storage)) => {
-                        let trimmed = storage.base_directory.trim();
-                        if trimmed.is_empty() {
-                            Ok(default_base.to_string())
-                        } else {
-                            Ok(trimmed.to_string())
-                        }
+            Some(sid) => match storage_registry.get_storage(sid) {
+                Ok(Some(storage)) => {
+                    let trimmed = storage.base_directory.trim();
+                    if trimmed.is_empty() {
+                        Ok(default_base.to_string())
+                    } else {
+                        Ok(trimmed.to_string())
                     }
-                    _ => Ok(default_base.to_string()),
-                }
-            }
+                },
+                _ => Ok(default_base.to_string()),
+            },
             None => Ok(default_base.to_string()),
         }
     }
@@ -134,21 +132,14 @@ impl PathResolver {
             || base_dir.starts_with("az://")
             || base_dir.starts_with("azure://")
         {
-            format!(
-                "{}/{}",
-                base_dir.trim_end_matches('/'),
-                relative.trim_start_matches('/')
-            )
+            format!("{}/{}", base_dir.trim_end_matches('/'), relative.trim_start_matches('/'))
         } else {
-            std::path::PathBuf::from(base_dir)
-                .join(relative)
-                .to_string_lossy()
-                .into_owned()
+            std::path::PathBuf::from(base_dir).join(relative).to_string_lossy().into_owned()
         }
     }
 
     /// Resolve partial storage path template for a table.
-    /// 
+    ///
     /// This is called during table registration (not on every query), so optimization
     /// is less critical here than in get_relative_storage_path.
     pub fn resolve_storage_path_template(
@@ -158,15 +149,12 @@ impl PathResolver {
         storage_id: &StorageId,
     ) -> Result<String, KalamDbError> {
         // Fetch storage configuration from registry (cached)
-        let storage = app_ctx
-            .storage_registry()
-            .get_storage(storage_id)?
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Storage '{}' not found while resolving path template",
-                    storage_id.as_str()
-                ))
-            })?;
+        let storage = app_ctx.storage_registry().get_storage(storage_id)?.ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Storage '{}' not found while resolving path template",
+                storage_id.as_str()
+            ))
+        })?;
 
         let raw_template: Cow<'_, str> = match table_type {
             TableType::User => Cow::Borrowed(&storage.user_tables_template),
@@ -186,7 +174,7 @@ impl PathResolver {
     }
 
     /// Normalize legacy placeholder variants to canonical names.
-    /// 
+    ///
     /// Uses early-exit optimization: only performs replacements if legacy placeholders are detected.
     #[inline]
     fn normalize_template_placeholders(template: &str) -> Cow<'_, str> {
@@ -217,7 +205,7 @@ impl PathResolver {
                 .replace("{user_id}", "{userId}")
                 .replace("{user-id}", "{userId}")
                 .replace("{shard_id}", "{shard}")
-                .replace("{shard-id}", "{shard}")
+                .replace("{shard-id}", "{shard}"),
         )
     }
 }

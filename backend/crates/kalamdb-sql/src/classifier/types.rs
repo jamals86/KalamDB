@@ -15,10 +15,10 @@ impl std::fmt::Display for StatementClassificationError {
         match self {
             StatementClassificationError::Unauthorized(msg) => {
                 write!(f, "Unauthorized statement: {}", msg)
-            }
+            },
             StatementClassificationError::InvalidSql { sql, message } => {
                 write!(f, "Invalid SQL '{}': {}", sql, message)
-            }
+            },
         }
     }
 }

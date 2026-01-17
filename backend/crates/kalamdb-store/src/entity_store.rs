@@ -52,12 +52,13 @@ use bincode::serde::{decode_from_slice, encode_to_vec};
 use kalamdb_commons::{
     schemas::TableDefinition,
     system::{
-        AuditLogEntry, Job, LiveQuery, ManifestCacheEntry, Namespace, Storage as SystemStorage,
-        User,
+        AuditLogEntry, Job, JobNode, LiveQuery, ManifestCacheEntry, Namespace,
+        Storage as SystemStorage, User,
     },
     StorageKey, UserId,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 /// Directional scanning for entity stores
@@ -149,7 +150,31 @@ impl KSerializable for ManifestCacheEntry {}
 
 impl KSerializable for AuditLogEntry {}
 
-impl KSerializable for Job {}
+impl KSerializable for Job {
+    fn encode(&self) -> Result<Vec<u8>> {
+        let config = standard();
+        encode_to_vec(self, config)
+            .map_err(|e| StorageError::SerializationError(format!("bincode encode failed: {}", e)))
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self> {
+        let config = standard();
+        match decode_from_slice(bytes, config) {
+            Ok((entity, _)) => Ok(entity),
+            Err(err) => {
+                // Backward-compat: allow JSON-encoded job rows from older formats.
+                serde_json::from_slice(bytes).map_err(|json_err| {
+                    StorageError::SerializationError(format!(
+                        "bincode decode failed: {} (json decode also failed: {})",
+                        err, json_err
+                    ))
+                })
+            }
+        }
+    }
+}
+
+impl KSerializable for JobNode {}
 
 impl KSerializable for LiveQuery {}
 
@@ -174,8 +199,7 @@ where
         start_key: Option<&K>,
         direction: ScanDirection,
         limit: usize,
-    ) -> Result<EntityIterator<K, V>>
-    {
+    ) -> Result<EntityIterator<K, V>> {
         if limit == 0 {
             return Ok(Box::new(Vec::<Result<(K, V)>>::new().into_iter()));
         }
@@ -185,12 +209,12 @@ where
             ScanDirection::Newer => {
                 let start_bytes = start_key.map(|k| next_storage_key_bytes(&k.storage_key()));
                 let iter =
-                    self.backend()
-                        .scan(&partition, None, start_bytes.as_deref(), Some(limit))?;
+                    self.backend().scan(&partition, None, start_bytes.as_deref(), Some(limit))?;
 
                 let mut rows = Vec::new();
                 for (key_bytes, value_bytes) in iter {
-                    let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
+                    let key = K::from_storage_key(&key_bytes)
+                        .map_err(StorageError::SerializationError)?;
                     let entity = self.deserialize(&value_bytes)?;
                     rows.push(Ok((key, entity)));
                     if rows.len() >= limit {
@@ -199,11 +223,11 @@ where
                 }
 
                 Ok(Box::new(rows.into_iter()))
-            }
+            },
             ScanDirection::Older => {
                 let start_bytes = start_key.map(|k| k.storage_key());
                 let iter = self.backend().scan(&partition, None, None, None)?;
-                let mut collected: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+                let mut collected: VecDeque<(Vec<u8>, Vec<u8>)> = VecDeque::with_capacity(limit);
 
                 for (key_bytes, value_bytes) in iter {
                     if let Some(start) = &start_bytes {
@@ -211,25 +235,22 @@ where
                             break;
                         }
                     }
-                    collected.push((key_bytes, value_bytes));
+                    if collected.len() == limit {
+                        collected.pop_front();
+                    }
+                    collected.push_back((key_bytes, value_bytes));
                 }
 
-                // Keep only the closest `limit` rows before the start key.
-                if collected.len() > limit {
-                    let drain_end = collected.len() - limit;
-                    collected.drain(0..drain_end);
-                }
-
-                collected.reverse();
                 let mut rows = Vec::with_capacity(collected.len());
-                for (key_bytes, value_bytes) in collected {
-                    let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
+                for (key_bytes, value_bytes) in collected.into_iter().rev() {
+                    let key = K::from_storage_key(&key_bytes)
+                        .map_err(StorageError::SerializationError)?;
                     let entity = self.deserialize(&value_bytes)?;
                     rows.push(Ok((key, entity)));
                 }
 
                 Ok(Box::new(rows.into_iter()))
-            }
+            },
         }
     }
 
@@ -255,8 +276,7 @@ where
         // Collect results to avoid lifetime issues
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
-            let key = K::from_storage_key(&key_bytes)
-                .map_err(StorageError::SerializationError)?;
+            let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
             let value = V::decode(&value_bytes)?;
             results.push(Ok((key, value)));
         }
@@ -388,9 +408,7 @@ where
     /// ```
     fn scan_prefix(&self, prefix: &K) -> Result<Vec<(Vec<u8>, V)>> {
         let partition = Partition::new(self.partition());
-        let iter = self
-            .backend()
-            .scan(&partition, Some(&prefix.storage_key()), None, None)?;
+        let iter = self.backend().scan(&partition, Some(&prefix.storage_key()), None, None)?;
 
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
@@ -454,9 +472,7 @@ where
         limit: usize,
     ) -> Result<Vec<(Vec<u8>, V)>> {
         let partition = Partition::new(self.partition());
-        let iter = self
-            .backend()
-            .scan(&partition, prefix, start_key, Some(limit))?;
+        let iter = self.backend().scan(&partition, prefix, start_key, Some(limit))?;
 
         let mut results = Vec::with_capacity(limit);
         for (key_bytes, value_bytes) in iter {
@@ -483,9 +499,7 @@ where
         }
 
         let partition = Partition::new(self.partition());
-        let iter = self
-            .backend()
-            .scan(&partition, prefix, start_key, Some(limit))?;
+        let iter = self.backend().scan(&partition, prefix, start_key, Some(limit))?;
 
         let mut keys = Vec::with_capacity(limit);
         for (key_bytes, _) in iter {
@@ -515,9 +529,8 @@ where
         match direction {
             ScanDirection::Newer => {
                 let start_bytes = start_key.map(|k| next_storage_key_bytes(&k.storage_key()));
-                let iter = self
-                    .backend()
-                    .scan(&partition, None, start_bytes.as_deref(), Some(limit))?;
+                let iter =
+                    self.backend().scan(&partition, None, start_bytes.as_deref(), Some(limit))?;
 
                 let mut keys = Vec::with_capacity(limit);
                 for (key_bytes, _) in iter {
@@ -530,7 +543,7 @@ where
                 }
 
                 Ok(keys)
-            }
+            },
             ScanDirection::Older => {
                 let start_bytes = start_key.map(|k| k.storage_key());
                 let iter = self.backend().scan(&partition, None, None, None)?;
@@ -557,7 +570,7 @@ where
                     keys.push(key);
                 }
                 Ok(keys)
-            }
+            },
         }
     }
 }
@@ -757,7 +770,7 @@ where
             Some(TableAccess::Private) => false, // Owner-only, not cross-user
             Some(TableAccess::Restricted) => {
                 matches!(user_role, Role::Service | Role::Dba | Role::System)
-            }
+            },
         }
     }
 }

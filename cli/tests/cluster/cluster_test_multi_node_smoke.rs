@@ -12,7 +12,9 @@ use std::time::Duration;
 /// Test: Basic CRUD operations work from any node
 #[test]
 fn cluster_test_smoke_crud_any_node() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Smoke CRUD from Any Node ===\n");
 
@@ -30,7 +32,7 @@ fn cluster_test_smoke_crud_any_node() {
                 // Might fail on follower if write routing not implemented
                 println!("    ⚠ CREATE NAMESPACE: {}", e);
                 continue;
-            }
+            },
         }
 
         // Create table
@@ -46,53 +48,41 @@ fn cluster_test_smoke_crud_any_node() {
                 println!("    ⚠ CREATE TABLE: {}", e);
                 let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
                 continue;
-            }
+            },
         }
 
         // Insert data
         match execute_on_node(
             url,
-            &format!(
-                "INSERT INTO {}.test_tbl (id, value) VALUES (1, 'test_value')",
-                namespace
-            ),
+            &format!("INSERT INTO {}.test_tbl (id, value) VALUES (1, 'test_value')", namespace),
         ) {
             Ok(_) => println!("    ✓ INSERT succeeded"),
             Err(e) => println!("    ⚠ INSERT: {}", e),
         }
 
         // Read data
-        match execute_on_node(
-            url,
-            &format!("SELECT * FROM {}.test_tbl", namespace),
-        ) {
+        match execute_on_node(url, &format!("SELECT * FROM {}.test_tbl", namespace)) {
             Ok(result) => {
                 if result.contains("test_value") {
                     println!("    ✓ SELECT succeeded and returned data");
                 } else {
                     println!("    ⚠ SELECT returned no data");
                 }
-            }
+            },
             Err(e) => println!("    ⚠ SELECT: {}", e),
         }
 
         // Update data
         match execute_on_node(
             url,
-            &format!(
-                "UPDATE {}.test_tbl SET value = 'updated_value' WHERE id = 1",
-                namespace
-            ),
+            &format!("UPDATE {}.test_tbl SET value = 'updated_value' WHERE id = 1", namespace),
         ) {
             Ok(_) => println!("    ✓ UPDATE succeeded"),
             Err(e) => println!("    ⚠ UPDATE: {}", e),
         }
 
         // Delete data
-        match execute_on_node(
-            url,
-            &format!("DELETE FROM {}.test_tbl WHERE id = 1", namespace),
-        ) {
+        match execute_on_node(url, &format!("DELETE FROM {}.test_tbl WHERE id = 1", namespace)) {
             Ok(_) => println!("    ✓ DELETE succeeded"),
             Err(e) => println!("    ⚠ DELETE: {}", e),
         }
@@ -108,7 +98,9 @@ fn cluster_test_smoke_crud_any_node() {
 /// Test: System table queries work from any node
 #[test]
 fn cluster_test_smoke_system_tables_any_node() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: System Table Queries from Any Node ===\n");
 
@@ -128,10 +120,10 @@ fn cluster_test_smoke_system_tables_any_node() {
             match execute_on_node(url, query) {
                 Ok(_) => {
                     println!("    ✓ {} query succeeded", table_name);
-                }
+                },
                 Err(e) => {
                     println!("    ✗ {} query failed: {}", table_name, e);
-                }
+                },
             }
         }
     }
@@ -142,7 +134,9 @@ fn cluster_test_smoke_system_tables_any_node() {
 /// Test: Table types work from any node
 #[test]
 fn cluster_test_smoke_table_types_any_node() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Table Types from Any Node ===\n");
 
@@ -157,10 +151,7 @@ fn cluster_test_smoke_table_types_any_node() {
     // Create different table types
     execute_on_node(
         &urls[0],
-        &format!(
-            "CREATE USER TABLE {}.user_tbl (id BIGINT PRIMARY KEY, data STRING)",
-            namespace
-        ),
+        &format!("CREATE USER TABLE {}.user_tbl (id BIGINT PRIMARY KEY, data STRING)", namespace),
     )
     .expect("Failed to create user table");
 
@@ -207,13 +198,17 @@ fn cluster_test_smoke_table_types_any_node() {
             match execute_on_node(url, &query) {
                 Ok(result) if result.contains(table_name) => {
                     println!("    ✓ {} visible", table_name);
-                }
+                },
                 Ok(result) => {
-                    println!("    ⚠ {} not found: {}", table_name, result.chars().take(100).collect::<String>());
-                }
+                    println!(
+                        "    ⚠ {} not found: {}",
+                        table_name,
+                        result.chars().take(100).collect::<String>()
+                    );
+                },
                 Err(e) => {
                     println!("    ✗ {} query failed: {}", table_name, e);
-                }
+                },
             }
         }
     }
@@ -227,7 +222,9 @@ fn cluster_test_smoke_table_types_any_node() {
 /// Test: User authentication works from any node
 #[test]
 fn cluster_test_smoke_auth_any_node() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Authentication from Any Node ===\n");
 
@@ -243,10 +240,7 @@ fn cluster_test_smoke_auth_any_node() {
     let test_user = format!("smoke_user_{}", rand::random::<u32>());
     execute_on_node(
         &urls[0],
-        &format!(
-            "CREATE USER {} WITH PASSWORD 'smoke_test_password' ROLE 'user'",
-            test_user
-        ),
+        &format!("CREATE USER {} WITH PASSWORD 'smoke_test_password' ROLE 'user'", test_user),
     )
     .expect("Failed to create user");
 
@@ -259,21 +253,22 @@ fn cluster_test_smoke_auth_any_node() {
 
     // Verify user exists and can be queried from all nodes
     for (node_idx, url) in urls.iter().enumerate() {
-        let query = format!(
-            "SELECT username FROM system.users WHERE username = '{}'",
-            test_user
-        );
+        let query = format!("SELECT username FROM system.users WHERE username = '{}'", test_user);
 
         match execute_on_node(url, &query) {
             Ok(result) if result.contains(&test_user) => {
                 println!("  ✓ Node {} can see user", node_idx);
-            }
+            },
             Ok(result) => {
-                println!("  ⚠ Node {} doesn't see user: {}", node_idx, result.chars().take(100).collect::<String>());
-            }
+                println!(
+                    "  ⚠ Node {} doesn't see user: {}",
+                    node_idx,
+                    result.chars().take(100).collect::<String>()
+                );
+            },
             Err(e) => {
                 println!("  ✗ Node {} query failed: {}", node_idx, e);
-            }
+            },
         }
     }
 
@@ -286,7 +281,9 @@ fn cluster_test_smoke_auth_any_node() {
 /// Test: Complex queries work from any node
 #[test]
 fn cluster_test_smoke_complex_queries_any_node() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Complex Queries from Any Node ===\n");
 
@@ -353,10 +350,10 @@ fn cluster_test_smoke_complex_queries_any_node() {
             match execute_on_node(url, query) {
                 Ok(_) => {
                     println!("    ✓ {} query succeeded", query_type);
-                }
+                },
                 Err(e) => {
                     println!("    ✗ {} query failed: {}", query_type, e);
-                }
+                },
             }
         }
     }
@@ -370,7 +367,9 @@ fn cluster_test_smoke_complex_queries_any_node() {
 /// Test: Writes succeed from leader only (or routing works)
 #[test]
 fn cluster_test_smoke_write_routing() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Write Routing Verification ===\n");
 
@@ -383,20 +382,19 @@ fn cluster_test_smoke_write_routing() {
     );
 
     let leader_url = match cluster_result {
-        Ok(response) => {
-            response.results
-                .first()
-                .and_then(|r| r.rows.as_ref())
-                .and_then(|rows| rows.first())
-                .and_then(|row| row.get(1))
-                .map(|v| {
-                    let extracted = extract_typed_value(v);
-                    match extracted {
-                        Value::String(s) => s,
-                        other => other.to_string().trim_matches('"').to_string(),
-                    }
-                })
-        }
+        Ok(response) => response
+            .results
+            .first()
+            .and_then(|r| r.rows.as_ref())
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get(1))
+            .map(|v| {
+                let extracted = extract_typed_value(v);
+                match extracted {
+                    Value::String(s) => s,
+                    other => other.to_string().trim_matches('"').to_string(),
+                }
+            }),
         Err(_) => None,
     };
 
@@ -411,7 +409,7 @@ fn cluster_test_smoke_write_routing() {
     // Test writes from each node
     for (node_idx, url) in urls.iter().enumerate() {
         let ns = format!("{}_{}", namespace, node_idx);
-        
+
         match execute_on_node(url, &format!("CREATE NAMESPACE {}", ns)) {
             Ok(_) => {
                 if let Some(ref leader) = leader_url {
@@ -425,18 +423,21 @@ fn cluster_test_smoke_write_routing() {
                 }
                 // Cleanup
                 let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", ns));
-            }
+            },
             Err(e) => {
                 if let Some(ref leader) = leader_url {
                     if url != leader {
-                        println!("  ⚠ Node {} (follower): write failed (expected if no routing): {}", node_idx, e);
+                        println!(
+                            "  ⚠ Node {} (follower): write failed (expected if no routing): {}",
+                            node_idx, e
+                        );
                     } else {
                         println!("  ✗ Node {} (leader): write failed: {}", node_idx, e);
                     }
                 } else {
                     println!("  ⚠ Node {}: write failed: {}", node_idx, e);
                 }
-            }
+            },
         }
     }
 

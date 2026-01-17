@@ -9,8 +9,8 @@
 //! - [`KalamTypeConfig`]: OpenRaft type configuration for KalamDB
 //! - [`KalamNode`]: Node information for cluster membership
 
-mod types;
 mod raft_store;
+mod types;
 
+pub use raft_store::{KalamLogReader, KalamRaftStorage, KalamSnapshotBuilder, StoredSnapshot};
 pub use types::{KalamNode, KalamTypeConfig};
-pub use raft_store::{KalamRaftStorage, KalamLogReader, KalamSnapshotBuilder, StoredSnapshot};

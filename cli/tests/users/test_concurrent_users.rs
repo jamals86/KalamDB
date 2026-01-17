@@ -78,21 +78,14 @@ fn test_concurrent_users_isolation() {
             "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
             username, password
         )) {
-            eprintln!(
-                "⚠️  Failed to create user {}: {}. Skipping test.",
-                username, e
-            );
+            eprintln!("⚠️  Failed to create user {}: {}. Skipping test.", username, e);
             cleanup(namespace, &user_credentials);
             return;
         }
 
         user_credentials.push((username, password));
     }
-    println!(
-        "✅ {} users created ({:.2?})",
-        NUM_USERS,
-        user_creation_start.elapsed()
-    );
+    println!("✅ {} users created ({:.2?})", NUM_USERS, user_creation_start.elapsed());
 
     // Insert data concurrently for all users
     println!("⏱  Starting concurrent inserts...");
@@ -135,11 +128,11 @@ fn test_concurrent_users_isolation() {
                             total_server_time += server;
                             server_samples += 1;
                         }
-                    }
+                    },
                     Err(e) => {
                         eprintln!("⚠️  Batch insert failed for {}: {}", user, e);
                         return Err(format!("{}", e));
-                    }
+                    },
                 }
             }
 
@@ -168,7 +161,7 @@ fn test_concurrent_users_isolation() {
                     server_times.push(s);
                 }
                 cli_times.push(cli_ms);
-            }
+            },
             Err(e) => panic!("⚠️  Thread failed: {}", e),
         }
     }
@@ -229,7 +222,7 @@ fn test_concurrent_users_isolation() {
                 eprintln!("⚠️  SELECT failed for {}: {}", username, e);
                 cleanup(namespace, &user_credentials);
                 return;
-            }
+            },
         };
 
         if let Some(s) = timing.server_time_ms {
@@ -241,15 +234,14 @@ fn test_concurrent_users_isolation() {
         let row_count = timing
             .output
             .lines()
-            .filter(|l| l.contains("│") && l.contains(|c: char| c.is_ascii_digit()) && !l.contains("─"))
+            .filter(|l| {
+                l.contains("│") && l.contains(|c: char| c.is_ascii_digit()) && !l.contains("─")
+            })
             .count();
 
         // Verify count
         if row_count != ROWS_PER_USER {
-            eprintln!(
-                "❌ User {} got {} rows, expected {}",
-                username, row_count, ROWS_PER_USER
-            );
+            eprintln!("❌ User {} got {} rows, expected {}", username, row_count, ROWS_PER_USER);
             eprintln!("Output:\n{}", timing.output);
             cleanup(namespace, &user_credentials);
             panic!("Row count mismatch for {}", username);
@@ -279,10 +271,7 @@ fn test_concurrent_users_isolation() {
     cleanup(namespace, &user_credentials);
 
     let total_time = test_start.elapsed();
-    println!(
-        "\n🎉 Test PASSED - All {} users correctly isolated",
-        NUM_USERS
-    );
+    println!("\n🎉 Test PASSED - All {} users correctly isolated", NUM_USERS);
     println!("   Total time: {:.2?}", total_time);
     println!("   Breakdown:");
     println!(

@@ -31,7 +31,7 @@ fn test_hot_cold_storage_data_integrity() {
     // === Setup: Create namespace and table ===
     execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
         .expect("CREATE NAMESPACE failed");
-    
+
     execute_sql(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY,
@@ -50,12 +50,9 @@ fn test_hot_cold_storage_data_integrity() {
     .expect("Initial INSERT failed");
 
     // === Phase 2: SELECT from hot storage and verify ===
-    let result = execute_sql(&format!(
-        "SELECT * FROM {} ORDER BY id",
-        full_table_name
-    ))
-    .expect("SELECT from hot storage failed");
-    
+    let result = execute_sql(&format!("SELECT * FROM {} ORDER BY id", full_table_name))
+        .expect("SELECT from hot storage failed");
+
     assert!(result.contains("Alice"), "Alice should exist in hot storage");
     assert!(result.contains("100"), "Alice's value should be 100");
     assert!(result.contains("Bob"), "Bob should exist in hot storage");
@@ -64,19 +61,13 @@ fn test_hot_cold_storage_data_integrity() {
     assert!(result.contains("300"), "Charlie's value should be 300");
 
     // === Phase 3: UPDATE in hot storage ===
-    execute_sql(&format!(
-        "UPDATE {} SET value = 150 WHERE id = 1",
-        full_table_name
-    ))
-    .expect("UPDATE in hot storage failed");
+    execute_sql(&format!("UPDATE {} SET value = 150 WHERE id = 1", full_table_name))
+        .expect("UPDATE in hot storage failed");
 
     // === Phase 4: SELECT and verify UPDATE in hot storage ===
-    let result = execute_sql(&format!(
-        "SELECT value FROM {} WHERE id = 1",
-        full_table_name
-    ))
-    .expect("SELECT after UPDATE failed");
-    
+    let result = execute_sql(&format!("SELECT value FROM {} WHERE id = 1", full_table_name))
+        .expect("SELECT after UPDATE failed");
+
     assert!(result.contains("150"), "Alice's value should be updated to 150 in hot storage");
 
     // === Phase 5: FLUSH to cold storage ===
@@ -97,7 +88,7 @@ fn test_hot_cold_storage_data_integrity() {
         execute_sql,
     )
     .expect("SELECT from cold storage failed");
-    
+
     assert!(result.contains("Alice"), "Alice should exist in cold storage after flush");
     assert!(result.contains("150"), "Alice's updated value (150) should persist after flush");
     assert!(result.contains("Bob"), "Bob should exist in cold storage after flush");
@@ -113,48 +104,51 @@ fn test_hot_cold_storage_data_integrity() {
     .expect("INSERT after flush failed");
 
     // === Phase 8: SELECT and verify new data appears with old data ===
-    let result = execute_sql(&format!(
-        "SELECT * FROM {} ORDER BY id",
-        full_table_name
-    ))
-    .expect("SELECT after post-flush INSERT failed");
-    
+    let result = execute_sql(&format!("SELECT * FROM {} ORDER BY id", full_table_name))
+        .expect("SELECT after post-flush INSERT failed");
+
     assert!(result.contains("Alice"), "Alice should still exist from cold storage");
     assert!(result.contains("150"), "Alice's value should still be 150");
     assert!(result.contains("David"), "David should exist from hot storage");
     assert!(result.contains("400"), "David's value should be 400");
 
     // === Phase 9: UPDATE data that exists in cold storage ===
-    execute_sql(&format!(
-        "UPDATE {} SET value = 250 WHERE id = 2",
-        full_table_name
-    ))
-    .expect("UPDATE on cold storage row failed");
+    execute_sql(&format!("UPDATE {} SET value = 250 WHERE id = 2", full_table_name))
+        .expect("UPDATE on cold storage row failed");
 
     // === Phase 10: SELECT and verify UPDATE worked on cold storage data ===
-    let result = execute_sql(&format!(
-        "SELECT value FROM {} WHERE id = 2",
-        full_table_name
-    ))
-    .expect("SELECT after UPDATE on cold row failed");
-    
-    assert!(result.contains("250"), "Bob's value should be updated to 250 even though original was in cold storage");
+    let result = execute_sql(&format!("SELECT value FROM {} WHERE id = 2", full_table_name))
+        .expect("SELECT after UPDATE on cold row failed");
+
+    assert!(
+        result.contains("250"),
+        "Bob's value should be updated to 250 even though original was in cold storage"
+    );
 
     // === Phase 11: Verify all data in final state ===
-    let result = execute_sql(&format!(
-        "SELECT * FROM {} ORDER BY id",
-        full_table_name
-    ))
-    .expect("Final SELECT failed");
-    
-    assert!(result.contains("Alice") && result.contains("150"), "Alice should have value 150");
-    assert!(result.contains("Bob") && result.contains("250"), "Bob should have updated value 250");
-    assert!(result.contains("Charlie") && result.contains("300"), "Charlie should have value 300");
-    assert!(result.contains("David") && result.contains("400"), "David should have value 400");
+    let result = execute_sql(&format!("SELECT * FROM {} ORDER BY id", full_table_name))
+        .expect("Final SELECT failed");
+
+    assert!(
+        result.contains("Alice") && result.contains("150"),
+        "Alice should have value 150"
+    );
+    assert!(
+        result.contains("Bob") && result.contains("250"),
+        "Bob should have updated value 250"
+    );
+    assert!(
+        result.contains("Charlie") && result.contains("300"),
+        "Charlie should have value 300"
+    );
+    assert!(
+        result.contains("David") && result.contains("400"),
+        "David should have value 400"
+    );
 
     // === Cleanup ===
     let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    
+
     println!("✅ Hot/cold storage data integrity test passed!");
 }
 
@@ -173,7 +167,7 @@ fn test_duplicate_primary_key_insert_fails() {
     // === Setup: Create namespace and table ===
     execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
         .expect("CREATE NAMESPACE failed");
-    
+
     execute_sql(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY,
@@ -184,40 +178,37 @@ fn test_duplicate_primary_key_insert_fails() {
     .expect("CREATE TABLE failed");
 
     // === Test 1: Insert initial row ===
-    let result = execute_sql(&format!(
-        "INSERT INTO {} (id, name) VALUES (1, 'Alice')",
-        full_table_name
-    ));
-    
+    let result =
+        execute_sql(&format!("INSERT INTO {} (id, name) VALUES (1, 'Alice')", full_table_name));
+
     assert!(result.is_ok(), "First INSERT should succeed");
 
     // === Test 2: Attempt to insert duplicate primary key (hot storage) ===
-    let result = execute_sql(&format!(
-        "INSERT INTO {} (id, name) VALUES (1, 'Bob')",
-        full_table_name
-    ));
-    
+    let result =
+        execute_sql(&format!("INSERT INTO {} (id, name) VALUES (1, 'Bob')", full_table_name));
+
     assert!(result.is_err(), "INSERT with duplicate primary key should fail in hot storage");
     if let Err(e) = result {
         let error_msg = e.to_string().to_lowercase();
         // Should contain some indication of duplicate/constraint violation
         assert!(
-            error_msg.contains("duplicate") 
-            || error_msg.contains("constraint") 
-            || error_msg.contains("unique")
-            || error_msg.contains("already exists"),
-            "Error message should indicate duplicate key violation, got: {}", e
+            error_msg.contains("duplicate")
+                || error_msg.contains("constraint")
+                || error_msg.contains("unique")
+                || error_msg.contains("already exists"),
+            "Error message should indicate duplicate key violation, got: {}",
+            e
         );
     }
 
     // === Test 3: Verify original data is unchanged ===
-    let result = execute_sql(&format!(
-        "SELECT name FROM {} WHERE id = 1",
-        full_table_name
-    ))
-    .expect("SELECT after duplicate insert attempt failed");
-    
-    assert!(result.contains("Alice"), "Original data should remain 'Alice', not changed to 'Bob'");
+    let result = execute_sql(&format!("SELECT name FROM {} WHERE id = 1", full_table_name))
+        .expect("SELECT after duplicate insert attempt failed");
+
+    assert!(
+        result.contains("Alice"),
+        "Original data should remain 'Alice', not changed to 'Bob'"
+    );
 
     // === Test 4: FLUSH to cold storage ===
     execute_sql(&format!("STORAGE FLUSH TABLE {}", full_table_name))
@@ -226,43 +217,40 @@ fn test_duplicate_primary_key_insert_fails() {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // === Test 5: Attempt to insert duplicate primary key (cold storage) ===
-    let result = execute_sql(&format!(
-        "INSERT INTO {} (id, name) VALUES (1, 'Charlie')",
-        full_table_name
-    ));
-    
-    assert!(result.is_err(), "INSERT with duplicate primary key should fail even with cold storage");
+    let result =
+        execute_sql(&format!("INSERT INTO {} (id, name) VALUES (1, 'Charlie')", full_table_name));
+
+    assert!(
+        result.is_err(),
+        "INSERT with duplicate primary key should fail even with cold storage"
+    );
     if let Err(e) = result {
         let error_msg = e.to_string().to_lowercase();
         assert!(
-            error_msg.contains("duplicate") 
-            || error_msg.contains("constraint") 
-            || error_msg.contains("unique")
-            || error_msg.contains("already exists"),
-            "Error message should indicate duplicate key violation in cold storage, got: {}", e
+            error_msg.contains("duplicate")
+                || error_msg.contains("constraint")
+                || error_msg.contains("unique")
+                || error_msg.contains("already exists"),
+            "Error message should indicate duplicate key violation in cold storage, got: {}",
+            e
         );
     }
 
     // === Test 6: Verify UPDATE works on same row ===
-    let result = execute_sql(&format!(
-        "UPDATE {} SET name = 'Alice Updated' WHERE id = 1",
-        full_table_name
-    ));
-    
+    let result =
+        execute_sql(&format!("UPDATE {} SET name = 'Alice Updated' WHERE id = 1", full_table_name));
+
     assert!(result.is_ok(), "UPDATE should work on existing primary key");
 
     // === Test 7: Verify UPDATE took effect ===
-    let result = execute_sql(&format!(
-        "SELECT name FROM {} WHERE id = 1",
-        full_table_name
-    ))
-    .expect("SELECT after UPDATE failed");
-    
+    let result = execute_sql(&format!("SELECT name FROM {} WHERE id = 1", full_table_name))
+        .expect("SELECT after UPDATE failed");
+
     assert!(result.contains("Alice Updated"), "Name should be updated to 'Alice Updated'");
 
     // === Cleanup ===
     let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    
+
     println!("✅ Duplicate primary key constraint test passed!");
 }
 
@@ -281,7 +269,7 @@ fn test_update_operations_hot_and_cold() {
     // === Setup ===
     execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
         .expect("CREATE NAMESPACE failed");
-    
+
     execute_sql(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY,
@@ -300,28 +288,16 @@ fn test_update_operations_hot_and_cold() {
     .expect("INSERT failed");
 
     // === Test 1: UPDATE multiple rows in hot storage (one at a time with explicit values) ===
-    execute_sql(&format!(
-        "UPDATE {} SET count = 15 WHERE id = 1",
-        full_table_name
-    ))
-    .expect("UPDATE row 1 failed");
-    execute_sql(&format!(
-        "UPDATE {} SET count = 25 WHERE id = 2",
-        full_table_name
-    ))
-    .expect("UPDATE row 2 failed");
-    execute_sql(&format!(
-        "UPDATE {} SET count = 35 WHERE id = 3",
-        full_table_name
-    ))
-    .expect("UPDATE row 3 failed");
+    execute_sql(&format!("UPDATE {} SET count = 15 WHERE id = 1", full_table_name))
+        .expect("UPDATE row 1 failed");
+    execute_sql(&format!("UPDATE {} SET count = 25 WHERE id = 2", full_table_name))
+        .expect("UPDATE row 2 failed");
+    execute_sql(&format!("UPDATE {} SET count = 35 WHERE id = 3", full_table_name))
+        .expect("UPDATE row 3 failed");
 
-    let result = execute_sql(&format!(
-        "SELECT * FROM {} ORDER BY id",
-        full_table_name
-    ))
-    .expect("SELECT after UPDATE failed");
-    
+    let result = execute_sql(&format!("SELECT * FROM {} ORDER BY id", full_table_name))
+        .expect("SELECT after UPDATE failed");
+
     assert!(result.contains("15"), "First row count should be 15");
     assert!(result.contains("25"), "Second row count should be 25");
     assert!(result.contains("35"), "Third row count should be 35");
@@ -339,16 +315,13 @@ fn test_update_operations_hot_and_cold() {
     ))
     .expect("UPDATE specific row in cold storage failed");
 
-    let result = execute_sql(&format!(
-        "SELECT * FROM {} WHERE id = 2",
-        full_table_name
-    ))
-    .expect("SELECT after cold storage UPDATE failed");
-    
+    let result = execute_sql(&format!("SELECT * FROM {} WHERE id = 2", full_table_name))
+        .expect("SELECT after cold storage UPDATE failed");
+
     assert!(result.contains("completed"), "Status should be updated to 'completed'");
     assert!(result.contains("100"), "Count should be updated to 100");
 
-// === Test 4: Insert new row and UPDATE specific rows by ID ===
+    // === Test 4: Insert new row and UPDATE specific rows by ID ===
     execute_sql(&format!(
         "INSERT INTO {} (id, status, count) VALUES (4, 'new', 40)",
         full_table_name
@@ -356,24 +329,15 @@ fn test_update_operations_hot_and_cold() {
     .expect("INSERT new row failed");
 
     // Archive rows 3 and 4 explicitly by ID
-    execute_sql(&format!(
-        "UPDATE {} SET status = 'archived' WHERE id = 3",
-        full_table_name
-    ))
-    .expect("UPDATE row 3 to archived failed");
-    
-    execute_sql(&format!(
-        "UPDATE {} SET status = 'archived' WHERE id = 4",
-        full_table_name
-    ))
-    .expect("UPDATE row 4 to archived failed");
+    execute_sql(&format!("UPDATE {} SET status = 'archived' WHERE id = 3", full_table_name))
+        .expect("UPDATE row 3 to archived failed");
 
-    let result = execute_sql(&format!(
-        "SELECT * FROM {} ORDER BY id",
-        full_table_name
-    ))
-    .expect("SELECT final state failed");
-    
+    execute_sql(&format!("UPDATE {} SET status = 'archived' WHERE id = 4", full_table_name))
+        .expect("UPDATE row 4 to archived failed");
+
+    let result = execute_sql(&format!("SELECT * FROM {} ORDER BY id", full_table_name))
+        .expect("SELECT final state failed");
+
     // Row 1 should be 'active', Row 2 should be 'completed'
     assert!(result.contains("active"), "Row 1 should still be 'active'");
     assert!(result.contains("completed"), "Row 2 should still be 'completed'");
@@ -383,6 +347,6 @@ fn test_update_operations_hot_and_cold() {
 
     // === Cleanup ===
     let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    
+
     println!("✅ UPDATE operations on hot and cold storage test passed!");
 }

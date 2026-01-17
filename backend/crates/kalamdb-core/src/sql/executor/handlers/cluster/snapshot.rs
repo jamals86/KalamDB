@@ -4,7 +4,9 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::{ExecutionContext, ExecutionResult, ScalarValue, StatementHandler};
+use crate::sql::executor::handlers::{
+    ExecutionContext, ExecutionResult, ScalarValue, StatementHandler,
+};
 use kalamdb_raft::RaftExecutor;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::sync::Arc;
@@ -40,7 +42,7 @@ impl StatementHandler for ClusterSnapshotHandler {
         let executor = self.app_context.executor();
         let Some(raft_executor) = executor.as_any().downcast_ref::<RaftExecutor>() else {
             return Err(KalamDbError::InvalidOperation(
-                "CLUSTER SNAPSHOT requires cluster mode (Raft executor not available)".to_string()
+                "CLUSTER SNAPSHOT requires cluster mode (Raft executor not available)".to_string(),
             ));
         };
 
@@ -64,7 +66,8 @@ impl StatementHandler for ClusterSnapshotHandler {
         let mut message = format!(
             "Cluster snapshot completed: {}/{} snapshots triggered successfully\n\
              Snapshots directory: {}",
-            success_count, total_count,
+            success_count,
+            total_count,
             snapshots_dir.display()
         );
 
@@ -78,9 +81,8 @@ impl StatementHandler for ClusterSnapshotHandler {
         }
 
         // Add snapshot index info for successfully triggered groups
-        let snapshots_with_idx: Vec<_> = results.iter()
-            .filter(|r| r.success && r.snapshot_index.is_some())
-            .collect();
+        let snapshots_with_idx: Vec<_> =
+            results.iter().filter(|r| r.success && r.snapshot_index.is_some()).collect();
 
         if !snapshots_with_idx.is_empty() {
             message.push_str("\n\nSnapshot indices:");
@@ -90,7 +92,8 @@ impl StatementHandler for ClusterSnapshotHandler {
                 }
             }
             if snapshots_with_idx.len() > 5 {
-                message.push_str(&format!("\n  ... and {} more groups", snapshots_with_idx.len() - 5));
+                message
+                    .push_str(&format!("\n  ... and {} more groups", snapshots_with_idx.len() - 5));
             }
         }
 

@@ -99,7 +99,11 @@ pub struct Cli {
     pub timeout: u64,
 
     /// Connection timeout in seconds (TCP + TLS handshake, default: 10)
-    #[arg(long = "connection-timeout", value_name = "SECONDS", default_value_t = 10)]
+    #[arg(
+        long = "connection-timeout",
+        value_name = "SECONDS",
+        default_value_t = 10
+    )]
     pub connection_timeout: u64,
 
     /// Receive timeout in seconds (default: 30)
@@ -139,12 +143,20 @@ pub struct Cli {
 
     /// Subscription timeout in seconds (0 = no timeout, default: 0)
     /// After receiving initial data, subscription will exit after this duration
-    #[arg(long = "subscription-timeout", value_name = "SECONDS", default_value_t = 0)]
+    #[arg(
+        long = "subscription-timeout",
+        value_name = "SECONDS",
+        default_value_t = 0
+    )]
     pub subscription_timeout: u64,
 
     /// Initial data timeout in seconds (0 = no timeout, default: 30)
     /// Maximum time to wait for initial data batch after subscribing
-    #[arg(long = "initial-data-timeout", value_name = "SECONDS", default_value_t = 30)]
+    #[arg(
+        long = "initial-data-timeout",
+        value_name = "SECONDS",
+        default_value_t = 30
+    )]
     pub initial_data_timeout: u64,
 
     /// Use fast timeout preset (optimized for local development)

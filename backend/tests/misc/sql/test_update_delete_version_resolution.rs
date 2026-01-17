@@ -11,7 +11,6 @@
 //! - T067: Nanosecond collision test → verify +1ns increment
 //! - T068: Performance regression test → query latency with multiple versions
 
-
 use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
 use std::sync::Arc;
@@ -80,16 +79,8 @@ async fn test_update_in_fast_storage() {
         )
         .await;
 
-    println!(
-        "Query response: status={:?}, error={:?}",
-        response.status, response.error
-    );
-    assert_eq!(
-        response.status,
-        ResponseStatus::Success,
-        "Query failed: {:?}",
-        response.error
-    );
+    println!("Query response: status={:?}, error={:?}", response.status, response.error);
+    assert_eq!(response.status, ResponseStatus::Success, "Query failed: {:?}", response.error);
     let rows = response.results[0].rows_as_maps();
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
@@ -169,11 +160,7 @@ async fn test_update_in_parquet() {
     );
     assert_eq!(response.status, ResponseStatus::Success);
     let rows = response.results[0].rows_as_maps();
-    assert_eq!(
-        rows.len(),
-        1,
-        "Should return exactly 1 row (latest version)"
-    );
+    assert_eq!(rows.len(), 1, "Should return exactly 1 row (latest version)");
     let row = &rows[0];
     assert_eq!(
         row.get("quantity").unwrap().as_i64().unwrap(),
@@ -333,11 +320,7 @@ async fn test_multi_version_query() {
 
     assert_eq!(response.status, ResponseStatus::Success);
     let rows = response.results[0].rows_as_maps();
-    assert_eq!(
-        rows.len(),
-        1,
-        "Should return exactly 1 row (latest version)"
-    );
+    assert_eq!(rows.len(), 1, "Should return exactly 1 row (latest version)");
     let row = &rows[0];
     assert_eq!(
         row.get("value").unwrap().as_i64().unwrap(),
@@ -452,11 +435,7 @@ async fn test_delete_in_parquet() {
 
     assert_eq!(response.status, ResponseStatus::Success);
     let rows = response.results[0].rows_as_maps();
-    assert_eq!(
-        rows.len(),
-        0,
-        "Deleted record should be excluded from query"
-    );
+    assert_eq!(rows.len(), 0, "Deleted record should be excluded from query");
 
     println!("✅ T065: DELETE in Parquet creates new deleted version correctly");
 }
@@ -518,10 +497,7 @@ async fn test_concurrent_updates() {
         }
     }
 
-    assert_eq!(
-        success_count, 10,
-        "All 10 concurrent updates should succeed"
-    );
+    assert_eq!(success_count, 10, "All 10 concurrent updates should succeed");
 
     // Query should return some final value (1-10)
     let response = server
@@ -598,10 +574,7 @@ async fn test_nanosecond_collision_handling() {
     let rows = response.results[0].rows_as_maps();
     assert_eq!(rows.len(), 1);
     let final_iteration = rows[0].get("iteration").unwrap().as_i64().unwrap();
-    assert_eq!(
-        final_iteration, 20,
-        "Should return latest iteration despite rapid updates"
-    );
+    assert_eq!(final_iteration, 20, "Should return latest iteration despite rapid updates");
 
     println!("✅ T067: Nanosecond collision handling works correctly");
 }
@@ -639,10 +612,7 @@ async fn test_query_performance_with_multiple_versions() {
     // Insert initial version
     server
         .execute_sql_as_user(
-            &format!(
-                "INSERT INTO {}.{} (id, version) VALUES ('rec1', 0)",
-                namespace, table
-            ),
+            &format!("INSERT INTO {}.{} (id, version) VALUES ('rec1', 0)", namespace, table),
             "user1",
         )
         .await;
@@ -651,10 +621,7 @@ async fn test_query_performance_with_multiple_versions() {
     for _ in 0..3 {
         server
             .execute_sql_as_user(
-                &format!(
-                    "SELECT id, version FROM {}.{} WHERE id = 'rec1'",
-                    namespace, table
-                ),
+                &format!("SELECT id, version FROM {}.{} WHERE id = 'rec1'", namespace, table),
                 "user1",
             )
             .await;
@@ -666,10 +633,7 @@ async fn test_query_performance_with_multiple_versions() {
         let start = std::time::Instant::now();
         server
             .execute_sql_as_user(
-                &format!(
-                    "SELECT id, version FROM {}.{} WHERE id = 'rec1'",
-                    namespace, table
-                ),
+                &format!("SELECT id, version FROM {}.{} WHERE id = 'rec1'", namespace, table),
                 "user1",
             )
             .await;
@@ -689,10 +653,7 @@ async fn test_query_performance_with_multiple_versions() {
         let start = std::time::Instant::now();
         server
             .execute_sql_as_user(
-                &format!(
-                    "UPDATE {}.{} SET version = {} WHERE id = 'rec1'",
-                    namespace, table, i
-                ),
+                &format!("UPDATE {}.{} SET version = {} WHERE id = 'rec1'", namespace, table, i),
                 "user1",
             )
             .await;
@@ -709,10 +670,7 @@ async fn test_query_performance_with_multiple_versions() {
     let start = std::time::Instant::now();
     server
         .execute_sql_as_user(
-            &format!(
-                "SELECT id, version FROM {}.{} WHERE id = 'rec1'",
-                namespace, table
-            ),
+            &format!("SELECT id, version FROM {}.{} WHERE id = 'rec1'", namespace, table),
             "user1",
         )
         .await;
@@ -725,10 +683,7 @@ async fn test_query_performance_with_multiple_versions() {
         let start = std::time::Instant::now();
         server
             .execute_sql_as_user(
-                &format!(
-                    "UPDATE {}.{} SET version = {} WHERE id = 'rec1'",
-                    namespace, table, i
-                ),
+                &format!("UPDATE {}.{} SET version = {} WHERE id = 'rec1'", namespace, table, i),
                 "user1",
             )
             .await;
@@ -745,10 +700,7 @@ async fn test_query_performance_with_multiple_versions() {
     let start = std::time::Instant::now();
     server
         .execute_sql_as_user(
-            &format!(
-                "SELECT id, version FROM {}.{} WHERE id = 'rec1'",
-                namespace, table
-            ),
+            &format!("SELECT id, version FROM {}.{} WHERE id = 'rec1'", namespace, table),
             "user1",
         )
         .await;
@@ -756,10 +708,8 @@ async fn test_query_performance_with_multiple_versions() {
 
     // Performance assertion: 10 versions should be within a reasonable bound
     // Allow extra headroom for filesystem variance in CI.
-    let max_allowed_10 = std::cmp::max(
-        baseline_duration.mul_f32(10.0),
-        std::time::Duration::from_millis(500),
-    );
+    let max_allowed_10 =
+        std::cmp::max(baseline_duration.mul_f32(10.0), std::time::Duration::from_millis(500));
     assert!(
         duration_10_versions <= max_allowed_10,
         "10 versions query ({:?}) should be ≤ 5× baseline ({:?}), max allowed: {:?}",
@@ -769,10 +719,8 @@ async fn test_query_performance_with_multiple_versions() {
     );
 
     // Performance assertion: 100 versions should be within a reasonable bound
-    let max_allowed_100 = std::cmp::max(
-        baseline_duration.mul_f32(40.0),
-        std::time::Duration::from_millis(2000),
-    );
+    let max_allowed_100 =
+        std::cmp::max(baseline_duration.mul_f32(40.0), std::time::Duration::from_millis(2000));
     assert!(
         duration_100_versions <= max_allowed_100,
         "100 versions query ({:?}) should be ≤ 20× baseline ({:?}), max allowed: {:?}",

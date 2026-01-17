@@ -47,40 +47,40 @@ impl fmt::Display for RegistryError {
         match self {
             RegistryError::TableNotFound { namespace, table } => {
                 write!(f, "Table not found: {}.{}", namespace, table)
-            }
+            },
             RegistryError::StorageNotFound { storage_id } => {
                 write!(f, "Storage not found: {}", storage_id)
-            }
+            },
             RegistryError::SchemaConversion { message } => {
                 write!(f, "Schema conversion error: {}", message)
-            }
+            },
             RegistryError::SchemaError(message) => {
                 write!(f, "Schema error: {}", message)
-            }
+            },
             RegistryError::ArrowError { message } => {
                 write!(f, "Arrow error: {}", message)
-            }
+            },
             RegistryError::DataFusionError { message } => {
                 write!(f, "DataFusion error: {}", message)
-            }
+            },
             RegistryError::StorageError { message } => {
                 write!(f, "Storage error: {}", message)
-            }
+            },
             RegistryError::InvalidConfig { message } => {
                 write!(f, "Invalid configuration: {}", message)
-            }
+            },
             RegistryError::CacheFailed { message } => {
                 write!(f, "Cache operation failed: {}", message)
-            }
+            },
             RegistryError::ViewError { message } => {
                 write!(f, "View error: {}", message)
-            }
+            },
             RegistryError::InvalidOperation(message) => {
                 write!(f, "Invalid operation: {}", message)
-            }
+            },
             RegistryError::Other(message) => {
                 write!(f, "{}", message)
-            }
+            },
         }
     }
 }

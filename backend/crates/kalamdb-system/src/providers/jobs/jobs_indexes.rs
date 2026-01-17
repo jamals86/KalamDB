@@ -2,8 +2,8 @@
 //!
 //! This module defines secondary indexes for the system.jobs table.
 
-use kalamdb_commons::system::Job;
 use crate::StoragePartition;
+use kalamdb_commons::system::Job;
 use kalamdb_commons::{JobId, JobStatus};
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
@@ -40,12 +40,9 @@ impl IndexDefinition<JobId, Job> for JobStatusCreatedAtIndex {
         Some(key)
     }
 
-    fn filter_to_prefix(
-        &self,
-        filter: &datafusion::logical_expr::Expr,
-    ) -> Option<Vec<u8>> {
+    fn filter_to_prefix(&self, filter: &datafusion::logical_expr::Expr) -> Option<Vec<u8>> {
         use kalamdb_store::extract_string_equality;
-        
+
         if let Some((col, val)) = extract_string_equality(filter) {
             if col == "status" {
                 if let Some(status) = parse_job_status(val) {
@@ -132,6 +129,7 @@ mod tests {
             job_id: JobId::new(id),
             job_type: JobType::Flush,
             status,
+            leader_status: None,
             parameters: Some(r#"{"namespace_id":"default","table_name":"events"}"#.to_string()),
             message: None,
             exception_trace: None,
@@ -156,6 +154,7 @@ mod tests {
                 None
             },
             node_id: NodeId::from(1u64),
+            leader_node_id: None,
             queue: None,
             priority: None,
         }

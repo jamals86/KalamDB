@@ -147,23 +147,14 @@ impl QueryCache {
     }
 
     /// Create a new query cache with custom TTL and max entries
-    pub fn with_config_and_max_entries(
-        ttl_config: QueryCacheTtlConfig,
-        max_entries: u64,
-    ) -> Self {
+    pub fn with_config_and_max_entries(ttl_config: QueryCacheTtlConfig, max_entries: u64) -> Self {
         let expiry = QueryCacheExpiry {
             ttl_config: ttl_config.clone(),
         };
 
-        let cache = Cache::builder()
-            .max_capacity(max_entries)
-            .expire_after(expiry)
-            .build();
+        let cache = Cache::builder().max_capacity(max_entries).expire_after(expiry).build();
 
-        Self {
-            cache,
-            ttl_config,
-        }
+        Self { cache, ttl_config }
     }
 
     /// Get TTL for a specific query key (useful for debugging/stats)
@@ -185,9 +176,7 @@ impl QueryCache {
     pub fn get<T: Clone + Send + Sync + 'static>(&self, key: &QueryCacheKey) -> Option<Arc<T>> {
         self.cache.get(key).and_then(|any_arc| {
             // Downcast Arc<dyn Any> → Arc<T>
-            (any_arc as Arc<dyn Any + Send + Sync>)
-                .downcast::<T>()
-                .ok()
+            (any_arc as Arc<dyn Any + Send + Sync>).downcast::<T>().ok()
         })
     }
 
@@ -204,7 +193,9 @@ impl QueryCache {
         self.cache.invalidate(&QueryCacheKey::AllTables);
         // Also remove individual table entries by iterating
         // Note: moka iterator returns Arc-wrapped keys
-        let keys_to_remove: Vec<_> = self.cache.iter()
+        let keys_to_remove: Vec<_> = self
+            .cache
+            .iter()
             .filter(|(k, _)| matches!(&**k, QueryCacheKey::Table(_)))
             .map(|(k, _)| (*k).clone())
             .collect();
@@ -217,7 +208,9 @@ impl QueryCache {
     pub fn invalidate_namespaces(&self) {
         self.cache.invalidate(&QueryCacheKey::AllNamespaces);
         // Also remove individual namespace entries
-        let keys_to_remove: Vec<_> = self.cache.iter()
+        let keys_to_remove: Vec<_> = self
+            .cache
+            .iter()
             .filter(|(k, _)| matches!(&**k, QueryCacheKey::Namespace(_)))
             .map(|(k, _)| (*k).clone())
             .collect();
@@ -478,26 +471,11 @@ mod tests {
 
         let cache = QueryCache::with_config(config);
 
-        assert_eq!(
-            cache.get_ttl(&QueryCacheKey::AllTables),
-            Duration::from_secs(60)
-        );
-        assert_eq!(
-            cache.get_ttl(&QueryCacheKey::AllNamespaces),
-            Duration::from_secs(120)
-        );
-        assert_eq!(
-            cache.get_ttl(&QueryCacheKey::AllLiveQueries),
-            Duration::from_secs(10)
-        );
-        assert_eq!(
-            cache.get_ttl(&QueryCacheKey::AllStorages),
-            Duration::from_secs(300)
-        );
-        assert_eq!(
-            cache.get_ttl(&QueryCacheKey::AllJobs),
-            Duration::from_secs(30)
-        );
+        assert_eq!(cache.get_ttl(&QueryCacheKey::AllTables), Duration::from_secs(60));
+        assert_eq!(cache.get_ttl(&QueryCacheKey::AllNamespaces), Duration::from_secs(120));
+        assert_eq!(cache.get_ttl(&QueryCacheKey::AllLiveQueries), Duration::from_secs(10));
+        assert_eq!(cache.get_ttl(&QueryCacheKey::AllStorages), Duration::from_secs(300));
+        assert_eq!(cache.get_ttl(&QueryCacheKey::AllJobs), Duration::from_secs(30));
         assert_eq!(
             cache.get_ttl(&QueryCacheKey::Table("users".to_string())),
             Duration::from_secs(90)
@@ -574,11 +552,7 @@ mod tests {
 
         let stats = cache.stats();
         // Should have at most 5 entries due to capacity limit
-        assert!(
-            stats.entry_count <= 5,
-            "Expected at most 5 entries, got {}",
-            stats.entry_count
-        );
+        assert!(stats.entry_count <= 5, "Expected at most 5 entries, got {}", stats.entry_count);
     }
 
     #[test]

@@ -9,60 +9,54 @@ pub enum ApplierError {
     /// Command validation failed
     #[error("Validation error: {0}")]
     Validation(String),
-    
+
     /// Failed to serialize command
     #[error("Serialization error: {0}")]
     Serialization(String),
-    
+
     /// Failed to deserialize command
     #[error("Deserialization error: {0}")]
     Deserialization(String),
-    
+
     /// No leader available for the Raft group
     #[error("No leader available for Raft group")]
     NoLeader,
-    
+
     /// Need to forward to leader (cluster mode)
     #[error("Forward to leader: {leader_id}")]
     ForwardToLeader {
         leader_id: u64,
         leader_addr: Option<String>,
     },
-    
+
     /// Error forwarding to leader
     #[error("Forward error: {0}")]
     Forward(String),
-    
+
     /// Raft consensus error
     #[error("Raft error: {0}")]
     Raft(String),
-    
+
     /// Command execution failed
     #[error("Execution error: {0}")]
     Execution(String),
-    
+
     /// Resource not found
     #[error("{resource_type} not found: {id}")]
-    NotFound {
-        resource_type: String,
-        id: String,
-    },
-    
+    NotFound { resource_type: String, id: String },
+
     /// Resource already exists
     #[error("{resource_type} already exists: {id}")]
-    AlreadyExists {
-        resource_type: String,
-        id: String,
-    },
-    
+    AlreadyExists { resource_type: String, id: String },
+
     /// Authorization failed
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
-    
+
     /// Internal error
     #[error("Internal error: {0}")]
     Internal(String),
-    
+
     /// Timeout
     #[error("Timeout: {0}")]
     Timeout(String),
@@ -76,7 +70,7 @@ impl ApplierError {
             id: id.to_string(),
         }
     }
-    
+
     /// Create an already exists error
     pub fn already_exists(resource_type: impl Into<String>, id: impl fmt::Display) -> Self {
         Self::AlreadyExists {
@@ -109,14 +103,14 @@ impl From<ApplierError> for crate::error::KalamDbError {
             ApplierError::Validation(msg) => crate::error::KalamDbError::InvalidOperation(msg),
             ApplierError::NotFound { resource_type, id } => {
                 crate::error::KalamDbError::NotFound(format!("{} {}", resource_type, id))
-            }
+            },
             ApplierError::AlreadyExists { resource_type, id } => {
                 crate::error::KalamDbError::AlreadyExists(format!("{} {}", resource_type, id))
-            }
+            },
             ApplierError::Unauthorized(msg) => crate::error::KalamDbError::Unauthorized(msg),
             ApplierError::NoLeader => {
                 crate::error::KalamDbError::ExecutionError("No Raft leader available".to_string())
-            }
+            },
             other => crate::error::KalamDbError::ExecutionError(other.to_string()),
         }
     }

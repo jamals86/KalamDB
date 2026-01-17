@@ -13,6 +13,7 @@ repository.workspace = true
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-filestore = { path = "../kalamdb-filestore" }
+kalamdb-observability = { path = "../kalamdb-observability" }
 kalamdb-raft = { path = "../kalamdb-raft" }
 kalamdb-sharding = { path = "../kalamdb-sharding" }
 kalamdb-sql = { path = "../kalamdb-sql" }
@@ -56,9 +57,6 @@ chrono = { workspace = true }
 
 # Logging
 log = { workspace = true }
-
-# System monitoring
-sysinfo = { workspace = true }
 
 # Object store (for cached ObjectStore instances)
 object_store = { workspace = true }

@@ -25,7 +25,9 @@ fn get_row_count(url: &str, table: &str) -> i64 {
 /// Test: All nodes have identical row counts after workload
 #[test]
 fn cluster_test_final_row_count_consistency() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Final Row Count Consistency ===\n");
 
@@ -39,11 +41,7 @@ fn cluster_test_final_row_count_consistency() {
         .expect("Failed to create namespace");
 
     // Create multiple tables
-    let tables = vec![
-        ("table_a", 100),
-        ("table_b", 50),
-        ("table_c", 200),
-    ];
+    let tables = vec![("table_a", 100), ("table_b", 50), ("table_c", 200)];
 
     for (table_name, row_count) in &tables {
         execute_on_node(
@@ -69,7 +67,9 @@ fn cluster_test_final_row_count_consistency() {
                     &urls[0],
                     &format!(
                         "INSERT INTO {}.{} (id, value) VALUES {}",
-                        namespace, table_name, values.join(", ")
+                        namespace,
+                        table_name,
+                        values.join(", ")
                     ),
                 )
                 .expect("Failed to insert batch");
@@ -81,7 +81,9 @@ fn cluster_test_final_row_count_consistency() {
                 &urls[0],
                 &format!(
                     "INSERT INTO {}.{} (id, value) VALUES {}",
-                    namespace, table_name, values.join(", ")
+                    namespace,
+                    table_name,
+                    values.join(", ")
                 ),
             )
             .expect("Failed to insert remaining");
@@ -95,7 +97,7 @@ fn cluster_test_final_row_count_consistency() {
     // Verify all nodes have identical counts for each table
     for (table_name, expected_count) in &tables {
         let full_table = format!("{}.{}", namespace, table_name);
-        
+
         let mut consistent = false;
         for attempt in 0..20 {
             let mut counts: Vec<i64> = Vec::new();
@@ -106,10 +108,7 @@ fn cluster_test_final_row_count_consistency() {
             let all_match = counts.iter().all(|c| *c == *expected_count as i64);
             if all_match {
                 consistent = true;
-                println!(
-                    "  ✓ {} has {} rows on all nodes",
-                    table_name, expected_count
-                );
+                println!("  ✓ {} has {} rows on all nodes", table_name, expected_count);
                 break;
             }
 
@@ -135,7 +134,9 @@ fn cluster_test_final_row_count_consistency() {
 /// Test: System metadata is identical after multiple DDL operations
 #[test]
 fn cluster_test_final_metadata_consistency() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Final Metadata Consistency ===\n");
 
@@ -157,10 +158,7 @@ fn cluster_test_final_metadata_consistency() {
         for i in 0..2 {
             execute_on_node(
                 &urls[0],
-                &format!(
-                    "CREATE SHARED TABLE {}.tbl_{} (id BIGINT PRIMARY KEY)",
-                    ns, i
-                ),
+                &format!("CREATE SHARED TABLE {}.tbl_{} (id BIGINT PRIMARY KEY)", ns, i),
             )
             .expect("Failed to create table");
         }
@@ -190,8 +188,8 @@ fn cluster_test_final_metadata_consistency() {
                     if ns_set.len() >= namespaces.len() {
                         break;
                     }
-                }
-                Err(_) => {}
+                },
+                Err(_) => {},
             }
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -202,20 +200,14 @@ fn cluster_test_final_metadata_consistency() {
     // All nodes should see all namespaces
     let reference = &ns_results[0];
     for (i, ns_set) in ns_results.iter().enumerate().skip(1) {
-        assert_eq!(
-            ns_set, reference,
-            "Node {} has different namespace set",
-            i
-        );
+        assert_eq!(ns_set, reference, "Node {} has different namespace set", i);
     }
     println!("  ✓ Namespace metadata consistent");
 
     // Verify table counts per namespace
     for ns in &namespaces {
-        let tbl_query = format!(
-            "SELECT count(*) as count FROM system.tables WHERE namespace_id = '{}'",
-            ns
-        );
+        let tbl_query =
+            format!("SELECT count(*) as count FROM system.tables WHERE namespace_id = '{}'", ns);
 
         let mut table_counts: Vec<i64> = Vec::new();
         for url in &urls {
@@ -245,7 +237,9 @@ fn cluster_test_final_metadata_consistency() {
 /// Test: All data is consistent after mixed read/write workload
 #[test]
 fn cluster_test_final_mixed_workload_consistency() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Final Consistency After Mixed Workload ===\n");
 
@@ -288,7 +282,8 @@ fn cluster_test_final_mixed_workload_consistency() {
             &urls[0],
             &format!(
                 "INSERT INTO {}.workload_data (id, status, counter, updated_at) VALUES {}",
-                namespace, values.join(", ")
+                namespace,
+                values.join(", ")
             ),
         )
         .expect("Failed to insert batch");
@@ -322,11 +317,8 @@ fn cluster_test_final_mixed_workload_consistency() {
 
     println!("  Phase 4: Deletes...");
     // Delete IDs >= 180
-    execute_on_node(
-        &urls[0],
-        &format!("DELETE FROM {}.workload_data WHERE id >= 180", namespace),
-    )
-    .expect("Failed to delete");
+    execute_on_node(&urls[0], &format!("DELETE FROM {}.workload_data WHERE id >= 180", namespace))
+        .expect("Failed to delete");
 
     println!("  Phase 5: More inserts...");
     // Insert new rows
@@ -347,14 +339,11 @@ fn cluster_test_final_mixed_workload_consistency() {
 
     // Verify final state is identical on all nodes
     let full_table = format!("{}.workload_data", namespace);
-    
+
     // Expected: 180 (0-179) + 20 (300-319) = 200 rows
     let expected_rows = 200;
 
-    let query = format!(
-        "SELECT id, status, counter, updated_at FROM {} ORDER BY id",
-        full_table
-    );
+    let query = format!("SELECT id, status, counter, updated_at FROM {} ORDER BY id", full_table);
 
     let mut all_data: Vec<String> = Vec::new();
     for (i, url) in urls.iter().enumerate() {
@@ -367,8 +356,8 @@ fn cluster_test_final_mixed_workload_consistency() {
                     if count == expected_rows {
                         break;
                     }
-                }
-                Err(_) => {}
+                },
+                Err(_) => {},
             }
             std::thread::sleep(Duration::from_millis(300));
         }
@@ -397,10 +386,7 @@ fn cluster_test_final_mixed_workload_consistency() {
     for (i, url) in urls.iter().enumerate() {
         let count = get_row_count(url, &full_table);
         if count != expected_rows {
-            println!(
-                "  ⚠ Node {} has {} rows, expected {}",
-                i, count, expected_rows
-            );
+            println!("  ⚠ Node {} has {} rows, expected {}", i, count, expected_rows);
             consistent = false;
         } else {
             println!("  ✓ Node {} has {} rows", i, count);
@@ -411,9 +397,18 @@ fn cluster_test_final_mixed_workload_consistency() {
 
     // Verify specific aggregates are consistent
     let agg_queries = vec![
-        ("Count active", format!("SELECT count(*) as cnt FROM {} WHERE status = 'active'", full_table)),
-        ("Count updated", format!("SELECT count(*) as cnt FROM {} WHERE status = 'updated'", full_table)),
-        ("Count new", format!("SELECT count(*) as cnt FROM {} WHERE status = 'new'", full_table)),
+        (
+            "Count active",
+            format!("SELECT count(*) as cnt FROM {} WHERE status = 'active'", full_table),
+        ),
+        (
+            "Count updated",
+            format!("SELECT count(*) as cnt FROM {} WHERE status = 'updated'", full_table),
+        ),
+        (
+            "Count new",
+            format!("SELECT count(*) as cnt FROM {} WHERE status = 'new'", full_table),
+        ),
         ("Sum counter", format!("SELECT sum(counter) as total FROM {}", full_table)),
     ];
 
@@ -443,7 +438,9 @@ fn cluster_test_final_mixed_workload_consistency() {
 /// (Simulated by querying system.cluster and verifying all nodes respond)
 #[test]
 fn cluster_test_final_cluster_health_consistency() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Cluster Health Consistency ===\n");
 
@@ -458,10 +455,10 @@ fn cluster_test_final_cluster_health_consistency() {
             Ok(result) => {
                 cluster_views.push(result.clone());
                 println!("  Node {} sees cluster: {} chars", i, result.len());
-            }
+            },
             Err(e) => {
                 panic!("Node {} failed to query cluster: {}", i, e);
-            }
+            },
         }
     }
 
@@ -469,11 +466,7 @@ fn cluster_test_final_cluster_health_consistency() {
     let leader_query = "SELECT count(*) as leaders FROM system.cluster WHERE is_leader = true";
     for (i, url) in urls.iter().enumerate() {
         let leader_count = query_count_on_url(url, leader_query);
-        assert_eq!(
-            leader_count, 1,
-            "Node {} sees {} leaders, expected 1",
-            i, leader_count
-        );
+        assert_eq!(leader_count, 1, "Node {} sees {} leaders, expected 1", i, leader_count);
     }
     println!("  ✓ All nodes agree on single leader");
 
@@ -500,7 +493,9 @@ fn cluster_test_final_cluster_health_consistency() {
 /// Test: Empty tables are consistent (edge case)
 #[test]
 fn cluster_test_final_empty_table_consistency() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Empty Table Consistency ===\n");
 
@@ -539,20 +534,11 @@ fn cluster_test_final_empty_table_consistency() {
     }
 
     // Now insert one row, then delete it
-    execute_on_node(
-        &urls[0],
-        &format!(
-            "INSERT INTO {} (id, data) VALUES (1, 'temp')",
-            full_table
-        ),
-    )
-    .expect("Failed to insert");
+    execute_on_node(&urls[0], &format!("INSERT INTO {} (id, data) VALUES (1, 'temp')", full_table))
+        .expect("Failed to insert");
 
-    execute_on_node(
-        &urls[0],
-        &format!("DELETE FROM {} WHERE id = 1", full_table),
-    )
-    .expect("Failed to delete");
+    execute_on_node(&urls[0], &format!("DELETE FROM {} WHERE id = 1", full_table))
+        .expect("Failed to delete");
 
     std::thread::sleep(Duration::from_millis(1000));
 

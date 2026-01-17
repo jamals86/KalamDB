@@ -6,11 +6,11 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::providers::base::BaseTableProvider; // Phase 13.6: Bring trait methods into scope
-use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::handlers::dml::mod_helpers::{
     coerce_scalar_to_type, extract_pk_from_where_pair, scalar_from_placeholder,
     scalar_from_sql_value,
 };
+use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
@@ -19,13 +19,13 @@ use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
 use kalamdb_raft::{DataResponse, SharedDataCommand, UserDataCommand};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
-use std::collections::BTreeMap;
 use sqlparser::ast::{
     AssignmentTarget, BinaryOperator, Expr as SqlExpr, Ident, ObjectNamePart,
     Statement as SqlStatementAst, TableFactor, UnaryOperator,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
+use std::collections::BTreeMap;
 
 /// Handler for UPDATE statements
 ///
@@ -51,7 +51,9 @@ impl Default for UpdateHandler {
 #[cfg(not(test))]
 impl Default for UpdateHandler {
     fn default() -> Self {
-        panic!("UpdateHandler::default() is for tests only; use UpdateHandler::new(Arc<AppContext>)")
+        panic!(
+            "UpdateHandler::default() is for tests only; use UpdateHandler::new(Arc<AppContext>)"
+        )
     }
 }
 
@@ -99,9 +101,7 @@ impl StatementHandler for UpdateHandler {
             .map(|c| (c.column_name.clone(), c.data_type.clone()))
             .collect();
 
-        let needs_row = assignments
-            .iter()
-            .any(|(_, expr)| Self::expr_needs_row(expr));
+        let needs_row = assignments.iter().any(|(_, expr)| Self::expr_needs_row(expr));
 
         // T153: Use effective user_id for impersonation support (Phase 7)
         let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
@@ -121,9 +121,8 @@ impl StatementHandler for UpdateHandler {
                     KalamDbError::InvalidOperation("User table provider not found".into())
                 })?;
 
-                if let Some(provider) = provider_arc
-                    .as_any()
-                    .downcast_ref::<crate::providers::UserTableProvider>()
+                if let Some(provider) =
+                    provider_arc.as_any().downcast_ref::<crate::providers::UserTableProvider>()
                 {
                     // T064: Get actual PK column name from provider instead of assuming "id"
                     let pk_column = provider.primary_key_field_name();
@@ -136,8 +135,11 @@ impl StatementHandler for UpdateHandler {
                     // PK filter is required for update operations
                     if let Some(id_value) = id_value_opt {
                         let current_row = if needs_row {
-                            let pk_scalar =
-                                self.token_to_scalar_value(&id_value, &params, col_types.get(pk_column))?;
+                            let pk_scalar = self.token_to_scalar_value(
+                                &id_value,
+                                &params,
+                                col_types.get(pk_column),
+                            )?;
                             let (_row_id, row) = provider
                                 .find_by_pk(effective_user_id, &pk_scalar)?
                                 .ok_or_else(|| {
@@ -194,7 +196,7 @@ impl StatementHandler for UpdateHandler {
                         "Cached provider type mismatch for user table".into(),
                     ))
                 }
-            }
+            },
             kalamdb_commons::schemas::TableType::Shared => {
                 // Check write permissions for Shared tables
                 use kalamdb_auth::rbac::can_write_shared_table;
@@ -221,9 +223,8 @@ impl StatementHandler for UpdateHandler {
                     KalamDbError::InvalidOperation("Shared table provider not found".into())
                 })?;
 
-                if let Some(provider) = provider_arc
-                    .as_any()
-                    .downcast_ref::<crate::providers::SharedTableProvider>()
+                if let Some(provider) =
+                    provider_arc.as_any().downcast_ref::<crate::providers::SharedTableProvider>()
                 {
                     let pk_column = provider.primary_key_field_name();
 
@@ -231,17 +232,14 @@ impl StatementHandler for UpdateHandler {
                         self.extract_row_id_for_column(&where_pair, pk_column, &params)?
                     {
                         let current_row = if needs_row {
-                            let (_row_id, row) = crate::providers::base::find_row_by_pk(
-                                provider,
-                                None,
-                                &id_value,
-                            )?
-                            .ok_or_else(|| {
-                                KalamDbError::NotFound(format!(
-                                    "Row with {}={} not found",
-                                    pk_column, id_value
-                                ))
-                            })?;
+                            let (_row_id, row) =
+                                crate::providers::base::find_row_by_pk(provider, None, &id_value)?
+                                    .ok_or_else(|| {
+                                        KalamDbError::NotFound(format!(
+                                            "Row with {}={} not found",
+                                            pk_column, id_value
+                                        ))
+                                    })?;
                             Some(row.fields)
                         } else {
                             None
@@ -271,11 +269,8 @@ impl StatementHandler for UpdateHandler {
                                 ))
                             })?;
                         // Phase 20: Always route through Raft (single-node or cluster)
-                        let rows_affected = self.execute_update_via_raft(
-                            &table_id,
-                            &id_value,
-                            updates,
-                        ).await?;
+                        let rows_affected =
+                            self.execute_update_via_raft(&table_id, &id_value, updates).await?;
                         Ok(ExecutionResult::Updated { rows_affected })
                     } else {
                         Err(KalamDbError::InvalidOperation(format!(
@@ -288,13 +283,13 @@ impl StatementHandler for UpdateHandler {
                         "Cached provider type mismatch for shared table".into(),
                     ))
                 }
-            }
-            kalamdb_commons::schemas::TableType::Stream => Err(
-                KalamDbError::InvalidOperation("UPDATE not supported for STREAM tables".into()),
-            ),
-            kalamdb_commons::schemas::TableType::System => Err(
-                KalamDbError::InvalidOperation("Cannot UPDATE SYSTEM tables".into()),
-            ),
+            },
+            kalamdb_commons::schemas::TableType::Stream => {
+                Err(KalamDbError::InvalidOperation("UPDATE not supported for STREAM tables".into()))
+            },
+            kalamdb_commons::schemas::TableType::System => {
+                Err(KalamDbError::InvalidOperation("Cannot UPDATE SYSTEM tables".into()))
+            },
         }
     }
 
@@ -304,7 +299,7 @@ impl StatementHandler for UpdateHandler {
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         use crate::sql::executor::helpers::guards::block_anonymous_write;
-        
+
         if !matches!(statement.kind(), SqlStatementKind::Update(_)) {
             return Err(KalamDbError::InvalidOperation(
                 "UpdateHandler received wrong statement kind".into(),
@@ -339,17 +334,12 @@ impl UpdateHandler {
         sql: &str,
         default_namespace: &NamespaceId,
     ) -> Result<
-        (
-            NamespaceId,
-            TableName,
-            Vec<(String, SqlExpr)>,
-            Option<(String, String)>,
-        ),
+        (NamespaceId, TableName, Vec<(String, SqlExpr)>, Option<(String, String)>),
         KalamDbError,
     > {
         let dialect = GenericDialect {};
-        let mut stmts = Parser::parse_sql(&dialect, sql)
-            .into_invalid_operation("Invalid UPDATE syntax")?;
+        let mut stmts =
+            Parser::parse_sql(&dialect, sql).into_invalid_operation("Invalid UPDATE syntax")?;
         let stmt = stmts
             .pop()
             .ok_or_else(|| KalamDbError::InvalidOperation("Empty UPDATE statement".into()))?;
@@ -375,55 +365,50 @@ impl UpdateHandler {
                             [table] => (default_namespace.clone(), TableName::new(table.clone())),
                             [ns, table] => {
                                 (NamespaceId::new(ns.clone()), TableName::new(table.clone()))
-                            }
+                            },
                             _ => {
                                 return Err(KalamDbError::InvalidOperation(
                                     "Invalid UPDATE table reference".into(),
                                 ))
-                            }
+                            },
                         }
-                    }
+                    },
                     _ => {
                         return Err(KalamDbError::InvalidOperation(
                             "Unsupported UPDATE target (only base tables allowed)".into(),
                         ))
-                    }
+                    },
                 };
 
                 let mut assigns = Vec::new();
                 for assign in assignments {
                     let col = match assign.target {
-                        AssignmentTarget::ColumnName(obj_name) => {
-                            obj_name
-                                .0
-                                .iter()
-                                .filter_map(ObjectNamePart::as_ident)
-                                .map(|id| id.value.clone())
-                                .next_back()
-                                .ok_or_else(|| {
-                                    KalamDbError::InvalidOperation(
-                                        "Invalid column name in assignment".into(),
-                                    )
-                                })?
-                        }
+                        AssignmentTarget::ColumnName(obj_name) => obj_name
+                            .0
+                            .iter()
+                            .filter_map(ObjectNamePart::as_ident)
+                            .map(|id| id.value.clone())
+                            .next_back()
+                            .ok_or_else(|| {
+                                KalamDbError::InvalidOperation(
+                                    "Invalid column name in assignment".into(),
+                                )
+                            })?,
                         AssignmentTarget::Tuple(_) => {
                             return Err(KalamDbError::InvalidOperation(
                                 "Tuple assignments are not supported".into(),
                             ))
-                        }
+                        },
                     };
                     assigns.push((col, assign.value));
                 }
 
-                let where_pair = selection.and_then(|expr| Self::extract_pk_filter_from_expr(&expr));
+                let where_pair =
+                    selection.and_then(|expr| Self::extract_pk_filter_from_expr(&expr));
 
                 (ns, tbl, assigns, where_pair)
-            }
-            _ => {
-                return Err(KalamDbError::InvalidOperation(
-                    "Expected UPDATE statement".into(),
-                ))
-            }
+            },
+            _ => return Err(KalamDbError::InvalidOperation("Expected UPDATE statement".into())),
         };
 
         Ok((ns, tbl, assigns, where_pair))
@@ -434,21 +419,27 @@ impl UpdateHandler {
     fn extract_pk_filter_from_expr(expr: &SqlExpr) -> Option<(String, String)> {
         match expr {
             // Simple equality: id = value
-            SqlExpr::BinaryOp { left, op: BinaryOperator::Eq, right } => {
-                match left.as_ref() {
-                    SqlExpr::Identifier(ident) => Some((ident.value.clone(), right.to_string())),
-                    SqlExpr::CompoundIdentifier(idents) => idents
-                        .last()
-                        .map(|Ident { value, .. }| (value.clone(), right.to_string())),
-                    _ => None,
-                }
-            }
+            SqlExpr::BinaryOp {
+                left,
+                op: BinaryOperator::Eq,
+                right,
+            } => match left.as_ref() {
+                SqlExpr::Identifier(ident) => Some((ident.value.clone(), right.to_string())),
+                SqlExpr::CompoundIdentifier(idents) => {
+                    idents.last().map(|Ident { value, .. }| (value.clone(), right.to_string()))
+                },
+                _ => None,
+            },
             // Compound condition with AND: try to find PK filter in either side
-            SqlExpr::BinaryOp { left, op: BinaryOperator::And, right } => {
+            SqlExpr::BinaryOp {
+                left,
+                op: BinaryOperator::And,
+                right,
+            } => {
                 // Try left side first, then right side
                 Self::extract_pk_filter_from_expr(left)
                     .or_else(|| Self::extract_pk_filter_from_expr(right))
-            }
+            },
             // Parenthesized expression: unwrap and recurse
             SqlExpr::Nested(inner) => Self::extract_pk_filter_from_expr(inner),
             _ => None,
@@ -544,7 +535,7 @@ impl UpdateHandler {
             SqlExpr::Identifier(_) | SqlExpr::CompoundIdentifier(_) => true,
             SqlExpr::BinaryOp { left, right, .. } => {
                 Self::expr_needs_row(left) || Self::expr_needs_row(right)
-            }
+            },
             SqlExpr::UnaryOp { expr, .. } => Self::expr_needs_row(expr),
             SqlExpr::Nested(inner) => Self::expr_needs_row(inner),
             SqlExpr::Cast { expr, .. } => Self::expr_needs_row(expr),
@@ -568,21 +559,16 @@ impl UpdateHandler {
                         ident.value
                     ))
                 })?;
-                row.values
-                    .get(&ident.value)
-                    .cloned()
-                    .ok_or_else(|| {
-                        KalamDbError::InvalidOperation(format!(
-                            "Column '{}' not found in current row",
-                            ident.value
-                        ))
-                    })?
-            }
+                row.values.get(&ident.value).cloned().ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Column '{}' not found in current row",
+                        ident.value
+                    ))
+                })?
+            },
             SqlExpr::CompoundIdentifier(idents) => {
-                let col = idents
-                    .last()
-                    .map(|Ident { value, .. }| value.clone())
-                    .ok_or_else(|| {
+                let col =
+                    idents.last().map(|Ident { value, .. }| value.clone()).ok_or_else(|| {
                         KalamDbError::InvalidOperation(
                             "Invalid compound identifier in update expression".into(),
                         )
@@ -599,12 +585,12 @@ impl UpdateHandler {
                         col
                     ))
                 })?
-            }
+            },
             SqlExpr::BinaryOp { left, op, right } => {
                 let left_val = self.expr_to_scalar_value(left, params, current_row, None)?;
                 let right_val = self.expr_to_scalar_value(right, params, current_row, None)?;
                 self.apply_numeric_binary_op(op.clone(), left_val, right_val)?
-            }
+            },
             SqlExpr::UnaryOp { op, expr } => {
                 let inner = self.expr_to_scalar_value(expr, params, current_row, None)?;
                 match op {
@@ -619,28 +605,28 @@ impl UpdateHandler {
                                 inner
                             )));
                         }
-                    }
+                    },
                     UnaryOperator::Plus => inner,
                     _ => {
                         return Err(KalamDbError::InvalidOperation(format!(
                             "Unsupported unary operator {:?} in UPDATE expression",
                             op
                         )))
-                    }
+                    },
                 }
-            }
+            },
             SqlExpr::Nested(inner) => {
                 self.expr_to_scalar_value(inner, params, current_row, None)?
-            }
+            },
             SqlExpr::Cast { expr, .. } => {
                 self.expr_to_scalar_value(expr, params, current_row, None)?
-            }
+            },
             _ => {
                 return Err(KalamDbError::InvalidOperation(format!(
                     "Unsupported UPDATE expression: {}",
                     expr
                 )))
-            }
+            },
         };
 
         if let Some(target) = target_type {
@@ -669,13 +655,13 @@ impl UpdateHandler {
             BinaryOperator::Plus
             | BinaryOperator::Minus
             | BinaryOperator::Multiply
-            | BinaryOperator::Divide => {}
+            | BinaryOperator::Divide => {},
             _ => {
                 return Err(KalamDbError::InvalidOperation(format!(
                     "Unsupported binary operator {:?} in UPDATE expression",
                     op
                 )))
-            }
+            },
         }
 
         if let (Some(l), Some(r)) = (left_int, right_int) {
@@ -780,10 +766,9 @@ impl UpdateHandler {
             filter: Some(pk_value.to_string()),
         };
 
-        let response = executor
-            .execute_user_data(user_id, cmd)
-            .await
-            .map_err(|e| KalamDbError::InvalidOperation(format!("Raft user update failed: {}", e)))?;
+        let response = executor.execute_user_data(user_id, cmd).await.map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Raft user update failed: {}", e))
+        })?;
 
         match response {
             DataResponse::RowsAffected(n) => Ok(n),

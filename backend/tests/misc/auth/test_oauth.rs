@@ -7,10 +7,9 @@
 //! - OAuth subject matching
 //! - Auto-provisioning disabled by default
 
-
 use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{AuthType, Role, models::ConnectionInfo};
+use kalamdb_commons::{models::ConnectionInfo, AuthType, Role};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static UNIQUE_USER_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -25,9 +24,7 @@ async fn test_oauth_google_success() {
     let server = TestServer::new().await;
     let admin_username = "test_admin";
     let admin_password = "AdminPass123!";
-    let admin_id = server
-        .create_user(admin_username, admin_password, Role::System)
-        .await;
+    let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
     let admin_id_str = admin_id.as_str();
 
     let oauth_username = unique_username("oauth_alice");
@@ -71,9 +68,7 @@ async fn test_oauth_user_password_rejected() {
     let server = TestServer::new().await;
     let admin_username = "test_admin";
     let admin_password = "AdminPass123!";
-    let admin_id = server
-        .create_user(admin_username, admin_password, Role::System)
-        .await;
+    let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
     let admin_id_str = admin_id.as_str();
 
     let oauth_username = unique_username("oauth_bob");
@@ -105,10 +100,7 @@ async fn test_oauth_user_password_rejected() {
 
     let result = authenticate(auth_request, &connection_info, &user_repo).await;
 
-    assert!(
-        result.is_err(),
-        "OAuth user should not be able to authenticate with password"
-    );
+    assert!(result.is_err(), "OAuth user should not be able to authenticate with password");
 
     // Verify the error message mentions OAuth
     let err = result.err().unwrap();
@@ -121,9 +113,7 @@ async fn test_oauth_subject_matching() {
     let server = TestServer::new().await;
     let admin_username = "test_admin";
     let admin_password = "AdminPass123!";
-    let admin_id = server
-        .create_user(admin_username, admin_password, Role::System)
-        .await;
+    let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
     let admin_id_str = admin_id.as_str();
 
     let user1_name = unique_username("oauth_user1");
@@ -147,14 +137,8 @@ async fn test_oauth_subject_matching() {
 
     // Verify both users exist with different subjects
     let users_provider = server.app_context.system_tables().users();
-    let user1 = users_provider
-        .get_user_by_username(user1_name.as_str())
-        .unwrap()
-        .unwrap();
-    let user2 = users_provider
-        .get_user_by_username(user2_name.as_str())
-        .unwrap()
-        .unwrap();
+    let user1 = users_provider.get_user_by_username(user1_name.as_str()).unwrap().unwrap();
+    let user2 = users_provider.get_user_by_username(user2_name.as_str()).unwrap().unwrap();
 
     let auth_data1: serde_json::Value =
         serde_json::from_str(user1.auth_data.as_ref().unwrap()).unwrap();
@@ -172,7 +156,7 @@ async fn test_oauth_subject_matching() {
 #[tokio::test]
 async fn test_oauth_auto_provision_disabled_by_default() {
     // OAuth auto-provisioning is controlled via configuration
-    // The unified authentication module uses `kalamdb_auth::authenticate()` 
+    // The unified authentication module uses `kalamdb_auth::authenticate()`
     // which validates OAuth tokens and users through the user repository
     // This test verifies that OAuth users without auto-provisioning enabled
     // will not be automatically created
@@ -190,9 +174,7 @@ async fn test_oauth_user_missing_fields() {
     let server = TestServer::new().await;
     let admin_username = "test_admin";
     let admin_password = "AdminPass123!";
-    let admin_id = server
-        .create_user(admin_username, admin_password, Role::System)
-        .await;
+    let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
     let admin_id_str = admin_id.as_str();
 
     // Try to create OAuth user without subject (should fail)
@@ -227,9 +209,7 @@ async fn test_oauth_azure_provider() {
     let server = TestServer::new().await;
     let admin_username = "test_admin";
     let admin_password = "AdminPass123!";
-    let admin_id = server
-        .create_user(admin_username, admin_password, Role::System)
-        .await;
+    let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
     let admin_id_str = admin_id.as_str();
 
     let oauth_username = unique_username("oauth_charlie");
@@ -251,10 +231,7 @@ async fn test_oauth_azure_provider() {
 
     // Verify user was created with Azure provider
     let users_provider = server.app_context.system_tables().users();
-    let user = users_provider
-        .get_user_by_username(oauth_username.as_str())
-        .unwrap()
-        .unwrap();
+    let user = users_provider.get_user_by_username(oauth_username.as_str()).unwrap().unwrap();
     let auth_data: serde_json::Value =
         serde_json::from_str(user.auth_data.as_ref().unwrap()).unwrap();
 

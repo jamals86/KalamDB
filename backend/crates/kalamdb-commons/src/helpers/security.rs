@@ -24,7 +24,7 @@
 /// ```
 pub fn redact_sensitive_sql(sql: &str) -> String {
     // Fast path: check if SQL contains any password-related keywords
-    let sql_upper = sql.to_uppercase();
+    let sql_upper = sql.to_ascii_uppercase();
     if !sql_upper.contains("PASSWORD") && !sql_upper.contains("IDENTIFIED") {
         return sql.to_string();
     }
@@ -47,7 +47,7 @@ fn redact_pattern(sql: &str, pattern: &str, quotes: &[char]) -> String {
     let sql_upper = sql.to_uppercase();
 
     // Find pattern case-insensitively
-    if let Some(pattern_pos) = sql_upper.find(&pattern.to_uppercase()) {
+    if let Some(pattern_pos) = sql_upper.find(&pattern.to_ascii_uppercase()) {
         let after_pattern = pattern_pos + pattern.len();
         if after_pattern < sql.len() {
             let remainder = &sql[after_pattern..];

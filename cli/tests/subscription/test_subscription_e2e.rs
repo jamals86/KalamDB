@@ -40,7 +40,7 @@ fn test_cli_subscription_initial_and_changes() {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
             return;
-        }
+        },
     };
 
     // Expect an InitialDataBatch event with 1 row

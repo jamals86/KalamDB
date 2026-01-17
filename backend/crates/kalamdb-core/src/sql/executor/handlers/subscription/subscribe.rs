@@ -36,7 +36,7 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
         } else {
             statement.namespace.clone()
         };
-        
+
         // Generate a subscription id (actual registration happens over WebSocket handshake)
         let subscription_id = format!(
             "sub-{}-{}-{}",
@@ -52,11 +52,7 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
             // Replace table reference in the query
             statement.select_query.replace(
                 &format!("FROM {}", statement.table_name.as_str()),
-                &format!(
-                    "FROM {}.{}",
-                    effective_namespace.as_str(),
-                    statement.table_name.as_str()
-                ),
+                &format!("FROM {}.{}", effective_namespace.as_str(), statement.table_name.as_str()),
             )
         } else {
             statement.select_query.clone()
@@ -67,11 +63,7 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
         let audit_entry = audit::log_query_operation(
             context,
             "SUBSCRIBE",
-            &format!(
-                "{}.{}",
-                effective_namespace.as_str(),
-                statement.table_name.as_str()
-            ),
+            &format!("{}.{}", effective_namespace.as_str(), statement.table_name.as_str()),
             0.0, // Duration is negligible for registration
             None,
         );

@@ -91,9 +91,7 @@ pub fn parse_stream_key(key: &str) -> Result<(i64, String)> {
     if parts.len() != 2 {
         anyhow::bail!("Invalid stream key format: {}", key);
     }
-    let timestamp_ms = parts[0]
-        .parse::<i64>()
-        .context("Failed to parse timestamp")?;
+    let timestamp_ms = parts[0].parse::<i64>().context("Failed to parse timestamp")?;
     Ok((timestamp_ms, parts[1].to_string()))
 }
 

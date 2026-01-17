@@ -57,18 +57,10 @@ impl TypedStatementHandler<FlushTableStatement> for FlushTableHandler {
 
         // Create a flush job via JobsManager (async execution handled in background loop)
         let job_manager = self.app_context.job_manager();
-        let idempotency_key = format!(
-            "flush-{}-{}",
-            statement.namespace.as_str(),
-            statement.table_name.as_str()
-        );
+        let idempotency_key =
+            format!("flush-{}-{}", statement.namespace.as_str(), statement.table_name.as_str());
         let job_id: JobId = job_manager
-            .create_job_typed(
-                JobType::Flush,
-                params,
-                Some(idempotency_key),
-                None,
-            )
+            .create_job_typed(JobType::Flush, params, Some(idempotency_key), None)
             .await?;
 
         Ok(ExecutionResult::Success {
@@ -88,10 +80,7 @@ impl TypedStatementHandler<FlushTableStatement> for FlushTableHandler {
     ) -> Result<(), KalamDbError> {
         use kalamdb_commons::Role;
         // Allow Service, DBA, and System roles to flush tables
-        if !matches!(
-            context.user_role(),
-            Role::Service | Role::Dba | Role::System
-        ) {
+        if !matches!(context.user_role(), Role::Service | Role::Dba | Role::System) {
             return Err(KalamDbError::Unauthorized(
                 "STORAGE FLUSH TABLE requires Service, DBA, or System role".to_string(),
             ));

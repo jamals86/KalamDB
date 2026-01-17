@@ -17,9 +17,9 @@
 //! - With configurable `max_subscriptions_per_user` (default: 10-100), prefix scan is O(1)
 //! - No extra write overhead from maintaining a secondary index
 
+use crate::StoragePartition;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::{LiveQueryId, TableId};
-use crate::StoragePartition;
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
 
@@ -55,10 +55,7 @@ impl IndexDefinition<LiveQueryId, LiveQuery> for TableIdIndex {
         Some(key)
     }
 
-    fn filter_to_prefix(
-        &self,
-        _filter: &datafusion::logical_expr::Expr,
-    ) -> Option<Vec<u8>> {
+    fn filter_to_prefix(&self, _filter: &datafusion::logical_expr::Expr) -> Option<Vec<u8>> {
         // This filter is more complex (two columns), skip for now
         None
     }
@@ -85,11 +82,8 @@ mod tests {
     use kalamdb_commons::{NamespaceId, NodeId, TableName, UserId};
 
     fn create_test_live_query() -> (LiveQueryId, LiveQuery) {
-        let live_id = LiveQueryId::new(
-            UserId::new("user123"),
-            ConnectionId::new("conn456"),
-            "sub789",
-        );
+        let live_id =
+            LiveQueryId::new(UserId::new("user123"), ConnectionId::new("conn456"), "sub789");
         let lq = LiveQuery {
             live_id: live_id.clone(),
             connection_id: "conn456".to_string(),
@@ -115,7 +109,7 @@ mod tests {
         let index = TableIdIndex;
 
         let key = index.extract_key(&live_id, &lq).expect("Should extract key");
-        
+
         // Should start with namespace:table + null separator
         assert!(key.starts_with(b"default:messages\x00"));
         // Should end with the live_id bytes

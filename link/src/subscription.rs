@@ -12,6 +12,7 @@ use crate::{
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::collections::VecDeque;
+use std::time::Duration;
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{
@@ -21,7 +22,6 @@ use tokio_tungstenite::{
         protocol::Message,
     },
 };
-use std::time::Duration;
 
 type WebSocketStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -55,9 +55,7 @@ fn resolve_ws_url(base_url: &str, override_url: Option<&str>) -> String {
     }
 
     let normalized = base_url.trim_end_matches('/');
-    let ws_base = normalized
-        .replace("http://", "ws://")
-        .replace("https://", "wss://");
+    let ws_base = normalized.replace("http://", "ws://").replace("https://", "wss://");
     format!("{}/v1/ws", ws_base)
 }
 
@@ -67,7 +65,7 @@ fn build_request_url(ws_url: &str, auth: &AuthProvider) -> String {
             // For HTTP Basic Auth, we'll send via Authorization header instead of query params
             // This is more secure than exposing credentials in the URL
             ws_url.to_string()
-        }
+        },
         AuthProvider::JwtToken(token) => append_query(ws_url, "token", token),
         AuthProvider::None => ws_url.to_string(),
     }
@@ -100,7 +98,7 @@ fn apply_ws_auth_headers(
                 ))
             })?;
             request.headers_mut().insert(AUTHORIZATION, header_value);
-        }
+        },
         AuthProvider::JwtToken(token) => {
             let value = format!("Bearer {}", token);
             let header_value = HeaderValue::from_str(&value).map_err(|e| {
@@ -110,8 +108,8 @@ fn apply_ws_auth_headers(
                 ))
             })?;
             request.headers_mut().insert(AUTHORIZATION, header_value);
-        }
-        AuthProvider::None => {}
+        },
+        AuthProvider::None => {},
     }
 
     Ok(())
@@ -141,7 +139,7 @@ async fn send_auth_and_wait(
             return Err(KalamLinkError::AuthenticationError(
                 "Authentication required for WebSocket subscriptions".to_string(),
             ));
-        }
+        },
     };
 
     // Send Authenticate message with credentials
@@ -150,12 +148,9 @@ async fn send_auth_and_wait(
         KalamLinkError::WebSocketError(format!("Failed to serialize auth message: {}", e))
     })?;
 
-    ws_stream
-        .send(Message::Text(payload.into()))
-        .await
-        .map_err(|e| {
-            KalamLinkError::WebSocketError(format!("Failed to send auth message: {}", e))
-        })?;
+    ws_stream.send(Message::Text(payload.into())).await.map_err(|e| {
+        KalamLinkError::WebSocketError(format!("Failed to send auth message: {}", e))
+    })?;
 
     // Wait for AuthSuccess or AuthError response with configured timeout
     let response = tokio::time::timeout(auth_timeout, ws_stream.next()).await;
@@ -164,29 +159,32 @@ async fn send_auth_and_wait(
         Ok(Some(Ok(Message::Text(text)))) => {
             // Parse as ServerMessage to check for auth response
             match serde_json::from_str::<ServerMessage>(&text) {
-                Ok(ServerMessage::AuthSuccess { user_id: _, role: _ }) => {
+                Ok(ServerMessage::AuthSuccess {
+                    user_id: _,
+                    role: _,
+                }) => {
                     // Authentication successful
                     Ok(())
-                }
+                },
                 Ok(ServerMessage::AuthError { message }) => {
                     Err(KalamLinkError::AuthenticationError(format!(
                         "WebSocket authentication failed: {}",
                         message
                     )))
-                }
+                },
                 Ok(other) => {
                     // Unexpected message type
                     Err(KalamLinkError::WebSocketError(format!(
                         "Unexpected response during authentication: {:?}",
                         other
                     )))
-                }
+                },
                 Err(e) => Err(KalamLinkError::WebSocketError(format!(
                     "Failed to parse auth response: {}",
                     e
                 ))),
             }
-        }
+        },
         Ok(Some(Ok(Message::Close(_)))) => Err(KalamLinkError::WebSocketError(
             "Connection closed during authentication".to_string(),
         )),
@@ -304,7 +302,7 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
                                 .collect(),
                         },
                     }
-                }
+                },
                 ServerMessage::Error {
                     subscription_id,
                     code,
@@ -313,10 +311,10 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
                     subscription_id,
                     code,
                     message,
-                }
+                },
             };
             Ok(Some(event))
-        }
+        },
         Err(e) => {
             // If strict parsing fails, check if it's a ping/pong which might not match ServerMessage structure
             // or just return error.
@@ -328,10 +326,9 @@ fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
                 "Failed to parse message as ServerMessage: {}",
                 e
             )))
-        }
+        },
     }
 }
-
 
 pub struct SubscriptionManager {
     ws_stream: WebSocketStream,
@@ -401,22 +398,19 @@ impl SubscriptionManager {
                         } else {
                             format!("WebSocket HTTP error {}: {}", code, body_text)
                         }
-                    }
+                    },
                 };
                 return Err(KalamLinkError::WebSocketError(message));
-            }
+            },
             Ok(Err(e)) => {
-                return Err(KalamLinkError::WebSocketError(format!(
-                    "Connection failed: {}",
-                    e
-                )));
-            }
+                return Err(KalamLinkError::WebSocketError(format!("Connection failed: {}", e)));
+            },
             Err(_) => {
                 return Err(KalamLinkError::TimeoutError(format!(
                     "Connection timeout ({:?})",
                     timeouts.connection_timeout
                 )));
-            }
+            },
         };
 
         let mut ws_stream = ws_stream;
@@ -424,7 +418,7 @@ impl SubscriptionManager {
         // Send authentication message and wait for AuthSuccess
         // (WebSocket protocol requires explicit Authenticate message even with HTTP headers)
         send_auth_and_wait(&mut ws_stream, auth, timeouts.auth_timeout).await?;
-        
+
         // Use the provided subscription ID (now required)
         let subscription_id = id;
 
@@ -495,7 +489,7 @@ impl SubscriptionManager {
                                     if !self.is_loading {
                                         self.flush_buffered_changes();
                                     }
-                                }
+                                },
                                 ChangeEvent::InitialDataBatch {
                                     ref batch_control, ..
                                 } => {
@@ -504,7 +498,7 @@ impl SubscriptionManager {
                                     if !self.is_loading {
                                         self.flush_buffered_changes();
                                     }
-                                }
+                                },
                                 ChangeEvent::Insert { .. }
                                 | ChangeEvent::Update { .. }
                                 | ChangeEvent::Delete { .. } => {
@@ -513,16 +507,16 @@ impl SubscriptionManager {
                                     } else {
                                         self.event_queue.push_back(event);
                                     }
-                                }
+                                },
                                 _ => {
                                     self.event_queue.push_back(event);
-                                }
+                                },
                             }
-                        }
+                        },
                         Ok(None) => continue,
                         Err(e) => return Some(Err(e)),
                     }
-                }
+                },
                 Some(Ok(Message::Binary(data))) => {
                     // Binary messages are gzip-compressed JSON
                     let text = match crate::compression::decompress_gzip(&data) {
@@ -533,14 +527,14 @@ impl SubscriptionManager {
                                     "Invalid UTF-8 in decompressed message: {}",
                                     e
                                 ))));
-                            }
+                            },
                         },
                         Err(e) => {
                             return Some(Err(KalamLinkError::WebSocketError(format!(
                                 "Failed to decompress message: {}",
                                 e
                             ))));
-                        }
+                        },
                     };
 
                     match parse_message(&text) {
@@ -576,7 +570,7 @@ impl SubscriptionManager {
                                     if !self.is_loading {
                                         self.flush_buffered_changes();
                                     }
-                                }
+                                },
                                 ChangeEvent::InitialDataBatch {
                                     ref batch_control, ..
                                 } => {
@@ -585,7 +579,7 @@ impl SubscriptionManager {
                                     if !self.is_loading {
                                         self.flush_buffered_changes();
                                     }
-                                }
+                                },
                                 ChangeEvent::Insert { .. }
                                 | ChangeEvent::Update { .. }
                                 | ChangeEvent::Delete { .. } => {
@@ -594,42 +588,42 @@ impl SubscriptionManager {
                                     } else {
                                         self.event_queue.push_back(event);
                                     }
-                                }
+                                },
                                 _ => {
                                     self.event_queue.push_back(event);
-                                }
+                                },
                             }
-                        }
+                        },
                         Ok(None) => continue,
                         Err(e) => return Some(Err(e)),
                     }
-                }
+                },
                 Some(Ok(Message::Close(_))) => {
                     // WebSocket closed normally
                     return None;
-                }
+                },
                 Some(Ok(Message::Ping(payload))) => {
                     // Reply to ping to keep connection alive
                     if let Err(e) = self.ws_stream.send(Message::Pong(payload)).await {
                         return Some(Err(KalamLinkError::WebSocketError(e.to_string())));
                     }
                     continue;
-                }
+                },
                 Some(Ok(Message::Pong(_))) => {
                     // Keepalive response
                     continue;
-                }
+                },
                 Some(Ok(Message::Frame(_))) => {
                     // Raw frame - ignore
                     continue;
-                }
+                },
                 Some(Err(e)) => {
                     return Some(Err(KalamLinkError::WebSocketError(e.to_string())));
-                }
+                },
                 None => {
                     // Stream ended
                     return None;
-                }
+                },
             }
         }
     }
@@ -694,14 +688,8 @@ mod tests {
 
     #[test]
     fn test_ws_url_conversion() {
-        assert_eq!(
-            resolve_ws_url("http://localhost:3000", None),
-            "ws://localhost:3000/v1/ws"
-        );
-        assert_eq!(
-            resolve_ws_url("https://api.example.com", None),
-            "wss://api.example.com/v1/ws"
-        );
+        assert_eq!(resolve_ws_url("http://localhost:3000", None), "ws://localhost:3000/v1/ws");
+        assert_eq!(resolve_ws_url("https://api.example.com", None), "wss://api.example.com/v1/ws");
         assert_eq!(
             resolve_ws_url("http://localhost:3000", Some("ws://override/ws")),
             "ws://override/ws"

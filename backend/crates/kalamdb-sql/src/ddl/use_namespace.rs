@@ -64,10 +64,7 @@ impl UseNamespaceStatement {
         };
 
         // Remove quotes if present
-        let namespace_name = namespace_name
-            .trim_matches('\'')
-            .trim_matches('"')
-            .trim_matches('`');
+        let namespace_name = namespace_name.trim_matches('\'').trim_matches('"').trim_matches('`');
 
         Ok(Self {
             namespace: NamespaceId::new(namespace_name),

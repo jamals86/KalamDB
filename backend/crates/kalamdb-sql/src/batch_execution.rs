@@ -100,7 +100,7 @@ pub fn split_statements(sql: &str) -> Result<Vec<String>, BatchParseError> {
                 in_single_quote = !in_single_quote;
                 current.push(ch);
                 continue;
-            }
+            },
             '"' if !in_single_quote && !in_backtick => {
                 if in_double_quote && chars.peek() == Some(&'"') {
                     current.push(ch);
@@ -110,12 +110,12 @@ pub fn split_statements(sql: &str) -> Result<Vec<String>, BatchParseError> {
                 in_double_quote = !in_double_quote;
                 current.push(ch);
                 continue;
-            }
+            },
             '`' if !in_single_quote && !in_double_quote => {
                 in_backtick = !in_backtick;
                 current.push(ch);
                 continue;
-            }
+            },
             ';' if !(in_single_quote || in_double_quote || in_backtick) => {
                 let stmt = current.trim();
                 if !stmt.is_empty() {
@@ -123,23 +123,19 @@ pub fn split_statements(sql: &str) -> Result<Vec<String>, BatchParseError> {
                 }
                 current.clear();
                 continue;
-            }
+            },
             _ => {
                 current.push(ch);
-            }
+            },
         }
     }
 
     if in_single_quote || in_double_quote || in_backtick {
-        return Err(BatchParseError::new(
-            "Unterminated quoted string in SQL batch",
-        ));
+        return Err(BatchParseError::new("Unterminated quoted string in SQL batch"));
     }
 
     if in_block_comment {
-        return Err(BatchParseError::new(
-            "Unterminated block comment in SQL batch",
-        ));
+        return Err(BatchParseError::new("Unterminated block comment in SQL batch"));
     }
 
     if !current.trim().is_empty() {

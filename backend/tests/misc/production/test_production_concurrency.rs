@@ -3,7 +3,6 @@
 //! Tests concurrent access patterns, contention handling, and race conditions.
 //! These tests ensure KalamDB handles multiple simultaneous operations safely.
 
-
 use super::test_support::{QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::Role;
@@ -14,9 +13,7 @@ async fn concurrent_inserts_same_user_table() {
     let server = TestServer::new().await;
 
     // Setup
-    let resp = server
-        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_ins")
-        .await;
+    let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_ins").await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -44,9 +41,7 @@ async fn concurrent_inserts_same_user_table() {
                     "INSERT INTO app_concurrent_ins.events (id, data) VALUES ({}, 'writer_{}_row_{}')",
                     row_id, writer_id, i
                 );
-                let resp = server_clone
-                    .execute_sql_as_user(&sql, user_id_clone.as_str())
-                    .await;
+                let resp = server_clone.execute_sql_as_user(&sql, user_id_clone.as_str()).await;
 
                 assert_eq!(
                     resp.status,
@@ -73,11 +68,7 @@ async fn concurrent_inserts_same_user_table() {
         .await;
 
     assert_eq!(resp.status, ResponseStatus::Success);
-    let rows = resp
-        .results
-        .first()
-        .map(|r| r.rows_as_maps())
-        .unwrap_or_default();
+    let rows = resp.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
     if let Some(row) = rows.first() {
         let count = row.get("count").unwrap().as_i64().unwrap();
         assert_eq!(count, 50, "Should have 50 rows from concurrent inserts");
@@ -90,9 +81,7 @@ async fn concurrent_select_queries() {
     let server = TestServer::new().await;
 
     // Setup with data
-    let resp = server
-        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_sel")
-        .await;
+    let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_sel").await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -109,10 +98,8 @@ async fn concurrent_select_queries() {
 
     // Insert test data
     for i in 0..20 {
-        let sql = format!(
-            "INSERT INTO app_concurrent_sel.data (id, value) VALUES ({}, 'value{}')",
-            i, i
-        );
+        let sql =
+            format!("INSERT INTO app_concurrent_sel.data (id, value) VALUES ({}, 'value{}')", i, i);
         let resp = server.execute_sql_as_user(&sql, user_id.as_str()).await;
         assert_eq!(resp.status, ResponseStatus::Success);
     }
@@ -132,11 +119,7 @@ async fn concurrent_select_queries() {
                 .await;
 
             assert_eq!(resp.status, ResponseStatus::Success);
-            let rows = resp
-                .results
-                .first()
-                .map(|r| r.rows_as_maps())
-                .unwrap_or_default();
+            let rows = resp.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
             if let Some(row) = rows.first() {
                 let count = row.get("count").unwrap().as_i64().unwrap();
                 assert_eq!(count, 20, "All readers should see 20 rows");
@@ -152,7 +135,7 @@ async fn concurrent_select_queries() {
 }
 
 /// Verify duplicate PRIMARY KEY handling under concurrency
-/// 
+///
 /// NOTE: This test is ignored because atomic PK constraint enforcement
 /// under concurrent inserts requires database-level locking or transactions,
 /// which is not yet implemented. The current implementation has a TOCTOU race
@@ -162,9 +145,7 @@ async fn concurrent_select_queries() {
 async fn concurrent_duplicate_primary_key_handling() {
     let server = TestServer::new().await;
 
-    let resp = server
-        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_pk")
-        .await;
+    let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_pk").await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -190,9 +171,7 @@ async fn concurrent_duplicate_primary_key_handling() {
                 "INSERT INTO app_concurrent_pk.items (id, data) VALUES (1, 'writer_{}')",
                 writer_id
             );
-            server_clone
-                .execute_sql_as_user(&sql, user_id_clone.as_str())
-                .await
+            server_clone.execute_sql_as_user(&sql, user_id_clone.as_str()).await
         });
         handles.push(handle);
     }
@@ -210,14 +189,8 @@ async fn concurrent_duplicate_primary_key_handling() {
     }
 
     // Exactly ONE should succeed, the others should fail with duplicate key error
-    assert_eq!(
-        success_count, 1,
-        "Exactly one concurrent insert should succeed"
-    );
-    assert_eq!(
-        error_count, 2,
-        "Two concurrent inserts should fail with duplicate key"
-    );
+    assert_eq!(success_count, 1, "Exactly one concurrent insert should succeed");
+    assert_eq!(error_count, 2, "Two concurrent inserts should fail with duplicate key");
 
     // Verify only one row exists
     let resp = server
@@ -230,10 +203,7 @@ async fn concurrent_duplicate_primary_key_handling() {
     if let Some(result) = resp.results.first() {
         let rows = result.rows_as_maps();
         let count = rows[0].get("count").unwrap().as_i64().unwrap();
-        assert_eq!(
-            count, 1,
-            "Should have exactly 1 row despite concurrent attempts"
-        );
+        assert_eq!(count, 1, "Should have exactly 1 row despite concurrent attempts");
     }
 }
 
@@ -242,9 +212,7 @@ async fn concurrent_duplicate_primary_key_handling() {
 async fn concurrent_updates_same_row() {
     let server = TestServer::new().await;
 
-    let resp = server
-        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_upd")
-        .await;
+    let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_upd").await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -275,13 +243,9 @@ async fn concurrent_updates_same_row() {
         let user_id_clone = user_id.clone();
 
         let handle = tokio::spawn(async move {
-            let sql = format!(
-                "UPDATE app_concurrent_upd.counter SET value = {} WHERE id = 1",
-                i * 10
-            );
-            server_clone
-                .execute_sql_as_user(&sql, user_id_clone.as_str())
-                .await
+            let sql =
+                format!("UPDATE app_concurrent_upd.counter SET value = {} WHERE id = 1", i * 10);
+            server_clone.execute_sql_as_user(&sql, user_id_clone.as_str()).await
         });
         handles.push(handle);
     }
@@ -318,9 +282,7 @@ async fn concurrent_updates_same_row() {
 async fn concurrent_deletes() {
     let server = TestServer::new().await;
 
-    let resp = server
-        .execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_del")
-        .await;
+    let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_del").await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -337,10 +299,8 @@ async fn concurrent_deletes() {
 
     // Insert 10 rows
     for i in 0..10 {
-        let sql = format!(
-            "INSERT INTO app_concurrent_del.temp (id, data) VALUES ({}, 'data{}')",
-            i, i
-        );
+        let sql =
+            format!("INSERT INTO app_concurrent_del.temp (id, data) VALUES ({}, 'data{}')", i, i);
         let resp = server.execute_sql_as_user(&sql, user_id.as_str()).await;
         assert_eq!(resp.status, ResponseStatus::Success);
     }
@@ -354,17 +314,10 @@ async fn concurrent_deletes() {
         let handle = tokio::spawn(async move {
             // Each deleter tries to delete specific rows
             let sql1 = format!("DELETE FROM app_concurrent_del.temp WHERE id = {}", i * 2);
-            let resp1 = server_clone
-                .execute_sql_as_user(&sql1, user_id_clone.as_str())
-                .await;
+            let resp1 = server_clone.execute_sql_as_user(&sql1, user_id_clone.as_str()).await;
 
-            let sql2 = format!(
-                "DELETE FROM app_concurrent_del.temp WHERE id = {}",
-                i * 2 + 1
-            );
-            let resp2 = server_clone
-                .execute_sql_as_user(&sql2, user_id_clone.as_str())
-                .await;
+            let sql2 = format!("DELETE FROM app_concurrent_del.temp WHERE id = {}", i * 2 + 1);
+            let resp2 = server_clone.execute_sql_as_user(&sql2, user_id_clone.as_str()).await;
 
             (resp1, resp2)
         });
@@ -385,14 +338,8 @@ async fn concurrent_deletes() {
     }
 
     // At least some deletes should succeed
-    println!(
-        "Concurrent deletes: {} successful operations",
-        success_count
-    );
-    assert!(
-        success_count > 0,
-        "At least some concurrent deletes should succeed"
-    );
+    println!("Concurrent deletes: {} successful operations", success_count);
+    assert!(success_count > 0, "At least some concurrent deletes should succeed");
 
     // Verify rows were deleted (may not be all 10 due to races)
     let resp = server
@@ -408,9 +355,6 @@ async fn concurrent_deletes() {
         println!("Rows remaining after concurrent deletes: {}", count);
         // We just verify the count is non-negative and the operations completed
         // The exact count depends on deletion order and timing
-        assert!(
-            (0..=10).contains(&count),
-            "Row count should be between 0 and 10"
-        );
+        assert!((0..=10).contains(&count), "Row count should be between 0 and 10");
     }
 }

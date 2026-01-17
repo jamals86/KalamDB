@@ -187,10 +187,7 @@ impl BatchSubscriptionListener {
             runtime.block_on(async move {
                 let client = match KalamLinkClient::builder()
                     .base_url(server_url())
-                    .auth(AuthProvider::basic_auth(
-                        "root".to_string(),
-                        root_password().to_string(),
-                    ))
+                    .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
                     .timeouts(
                         KalamLinkTimeouts::builder()
                             .connection_timeout_secs(5)
@@ -207,7 +204,7 @@ impl BatchSubscriptionListener {
                     Err(e) => {
                         let _ = event_tx.send(format!("ERROR: Failed to create client: {}", e));
                         return;
-                    }
+                    },
                 };
 
                 // Generate unique subscription ID
@@ -230,7 +227,7 @@ impl BatchSubscriptionListener {
                     Err(e) => {
                         let _ = event_tx.send(format!("ERROR: Failed to subscribe: {}", e));
                         return;
-                    }
+                    },
                 };
 
                 let mut stop_rx = stop_rx;
@@ -278,7 +275,7 @@ impl BatchSubscriptionListener {
             Ok(line) => Ok(Some(ParsedEvent::parse(&line))),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 Err("Timeout waiting for subscription event".into())
-            }
+            },
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Ok(None),
         }
     }
@@ -293,14 +290,16 @@ impl BatchSubscriptionListener {
                 Ok(Some(event)) => {
                     // Only check InitialDataBatch for ready status, not Ack
                     let is_ready = match &event {
-                        ParsedEvent::InitialDataBatch { batch_control, .. } => !batch_control.has_more,
+                        ParsedEvent::InitialDataBatch { batch_control, .. } => {
+                            !batch_control.has_more
+                        },
                         _ => false,
                     };
                     events.push(event);
                     if is_ready {
                         break;
                     }
-                }
+                },
                 Ok(None) => break,
                 Err(_) => continue,
             }
@@ -340,18 +339,13 @@ fn smoke_batch_control_single_batch() {
     create_namespace(&namespace);
 
     // Create table
-    let create_sql = format!(
-        "CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE = 'USER')",
-        full
-    );
+    let create_sql =
+        format!("CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE = 'USER')", full);
     execute_sql_as_root_via_client(&create_sql).expect("create table should succeed");
 
     // Insert a few rows (less than batch size, so single batch)
     for i in 1..=5 {
-        let insert_sql = format!(
-            "INSERT INTO {} (id, name) VALUES ({}, 'name_{}')",
-            full, i, i
-        );
+        let insert_sql = format!("INSERT INTO {} (id, name) VALUES ({}, 'name_{}')", full, i, i);
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
 
@@ -359,8 +353,8 @@ fn smoke_batch_control_single_batch() {
 
     // Subscribe
     let query = format!("SELECT * FROM {}", full);
-    let mut listener = start_subscription_with_config(&query, None)
-        .expect("subscription should start");
+    let mut listener =
+        start_subscription_with_config(&query, None).expect("subscription should start");
 
     // Collect events
     let events = listener.collect_batches_until_ready(Duration::from_secs(30));
@@ -371,7 +365,8 @@ fn smoke_batch_control_single_batch() {
     }
 
     // Verify we got an Ack event
-    let ack_events: Vec<_> = events.iter().filter(|e| matches!(e, ParsedEvent::Ack { .. })).collect();
+    let ack_events: Vec<_> =
+        events.iter().filter(|e| matches!(e, ParsedEvent::Ack { .. })).collect();
     assert!(!ack_events.is_empty(), "Should receive Ack event");
 
     // Verify the Ack has correct batch_control
@@ -379,12 +374,17 @@ fn smoke_batch_control_single_batch() {
         assert_eq!(batch_control.batch_num, 0, "First batch should be batch_num=0");
         // For small data sets, has_more should be false (all data fits in one batch)
         // Note: has_more depends on whether the data fit in the batch size
-        println!("[TEST] Ack batch_control: batch_num={}, has_more={}, status={}",
-            batch_control.batch_num, batch_control.has_more, batch_control.status);
+        println!(
+            "[TEST] Ack batch_control: batch_num={}, has_more={}, status={}",
+            batch_control.batch_num, batch_control.has_more, batch_control.status
+        );
     }
 
     // Verify we got initial data batch
-    let batch_events: Vec<_> = events.iter().filter(|e| matches!(e, ParsedEvent::InitialDataBatch { .. })).collect();
+    let batch_events: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, ParsedEvent::InitialDataBatch { .. }))
+        .collect();
     assert!(!batch_events.is_empty(), "Should receive InitialDataBatch event");
 
     // Verify final batch has has_more=false and status=ready
@@ -427,7 +427,10 @@ fn smoke_batch_control_multi_batch() {
     for i in 1..=total_rows {
         let insert_sql = format!(
             "INSERT INTO {} (id, data, value) VALUES ({}, 'row_data_{}', {})",
-            full, i, i, i * 10
+            full,
+            i,
+            i,
+            i * 10
         );
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
@@ -437,8 +440,8 @@ fn smoke_batch_control_multi_batch() {
     // Subscribe with small batch size to force multiple batches
     let query = format!("SELECT * FROM {}", full);
     let options = SubscriptionOptions::default().with_batch_size(5);
-    let mut listener = start_subscription_with_config(&query, Some(options))
-        .expect("subscription should start");
+    let mut listener =
+        start_subscription_with_config(&query, Some(options)).expect("subscription should start");
 
     // Collect all events
     let events = listener.collect_batches_until_ready(Duration::from_secs(60));
@@ -446,14 +449,19 @@ fn smoke_batch_control_multi_batch() {
     println!("[TEST] Received {} events total", events.len());
 
     // Extract batch events only
-    let batch_events: Vec<_> = events.iter()
+    let batch_events: Vec<_> = events
+        .iter()
         .filter(|e| matches!(e, ParsedEvent::InitialDataBatch { .. }))
         .collect();
 
     println!("[TEST] Received {} InitialDataBatch events", batch_events.len());
 
     // Verify we got multiple batches
-    assert!(batch_events.len() >= 2, "Should receive at least 2 batch events for {} rows with batch_size=5", total_rows);
+    assert!(
+        batch_events.len() >= 2,
+        "Should receive at least 2 batch events for {} rows with batch_size=5",
+        total_rows
+    );
 
     // Verify batch_num sequence is correct (should increment)
     let mut last_batch_num: Option<u32> = None;
@@ -468,7 +476,8 @@ fn smoke_batch_control_multi_batch() {
                 assert!(
                     batch_control.batch_num > last || batch_control.batch_num == 0,
                     "batch_num should increment or be 0 for first batch. Got {} after {}",
-                    batch_control.batch_num, last
+                    batch_control.batch_num,
+                    last
                 );
             }
             last_batch_num = Some(batch_control.batch_num);
@@ -512,18 +521,16 @@ fn smoke_batch_control_empty_table() {
     create_namespace(&namespace);
 
     // Create table but don't insert any rows
-    let create_sql = format!(
-        "CREATE TABLE {} (id INT PRIMARY KEY, data VARCHAR) WITH (TYPE = 'USER')",
-        full
-    );
+    let create_sql =
+        format!("CREATE TABLE {} (id INT PRIMARY KEY, data VARCHAR) WITH (TYPE = 'USER')", full);
     execute_sql_as_root_via_client(&create_sql).expect("create table should succeed");
 
     std::thread::sleep(Duration::from_millis(300));
 
     // Subscribe to empty table
     let query = format!("SELECT * FROM {}", full);
-    let mut listener = start_subscription_with_config(&query, None)
-        .expect("subscription should start");
+    let mut listener =
+        start_subscription_with_config(&query, None).expect("subscription should start");
 
     // Collect events
     let events = listener.collect_batches_until_ready(Duration::from_secs(30));
@@ -534,7 +541,8 @@ fn smoke_batch_control_empty_table() {
     }
 
     // For empty table, we should get Ack with has_more=false and status=ready
-    let ack_events: Vec<_> = events.iter().filter(|e| matches!(e, ParsedEvent::Ack { .. })).collect();
+    let ack_events: Vec<_> =
+        events.iter().filter(|e| matches!(e, ParsedEvent::Ack { .. })).collect();
     assert!(!ack_events.is_empty(), "Should receive Ack event for empty table");
 
     if let ParsedEvent::Ack { batch_control, .. } = &ack_events[0] {
@@ -577,7 +585,10 @@ fn smoke_batch_control_data_ordering() {
     for i in 1..=total_rows {
         let insert_sql = format!(
             "INSERT INTO {} (id, seq, label) VALUES ({}, {}, 'item_{}')",
-            full, i, i * 100, i
+            full,
+            i,
+            i * 100,
+            i
         );
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
@@ -587,14 +598,15 @@ fn smoke_batch_control_data_ordering() {
     // Subscribe with small batch size
     let query = format!("SELECT * FROM {} ORDER BY id", full);
     let options = SubscriptionOptions::default().with_batch_size(5);
-    let mut listener = start_subscription_with_config(&query, Some(options))
-        .expect("subscription should start");
+    let mut listener =
+        start_subscription_with_config(&query, Some(options)).expect("subscription should start");
 
     // Collect events
     let events = listener.collect_batches_until_ready(Duration::from_secs(60));
 
     // Count total initial data events
-    let batch_events: Vec<_> = events.iter()
+    let batch_events: Vec<_> = events
+        .iter()
         .filter(|e| matches!(e, ParsedEvent::InitialDataBatch { .. }))
         .collect();
 

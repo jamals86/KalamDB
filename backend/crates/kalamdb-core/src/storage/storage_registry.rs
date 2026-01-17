@@ -69,7 +69,10 @@ impl StorageRegistry {
     /// * `Ok(Some(Arc<StorageCached>))` - Storage found (cached or freshly loaded)
     /// * `Ok(None)` - Storage not found
     /// * `Err` - Database error
-    pub fn get_cached(&self, storage_id: &StorageId) -> Result<Option<Arc<StorageCached>>, KalamDbError> {
+    pub fn get_cached(
+        &self,
+        storage_id: &StorageId,
+    ) -> Result<Option<Arc<StorageCached>>, KalamDbError> {
         // Fast path: check cache
         if let Some(cached) = self.cache.get(storage_id) {
             return Ok(Some(Arc::clone(&cached)));
@@ -102,7 +105,10 @@ impl StorageRegistry {
     /// * `Ok(Some(Arc<Storage>))` - Storage found
     /// * `Ok(None)` - Storage not found
     /// * `Err` - Database error
-    pub fn get_storage(&self, storage_id: &StorageId) -> Result<Option<Arc<Storage>>, KalamDbError> {
+    pub fn get_storage(
+        &self,
+        storage_id: &StorageId,
+    ) -> Result<Option<Arc<Storage>>, KalamDbError> {
         Ok(self.get_cached(storage_id)?.map(|c| Arc::clone(&c.storage)))
     }
 
@@ -117,7 +123,10 @@ impl StorageRegistry {
     /// # Returns
     /// * `Ok(Arc<dyn ObjectStore>)` - ObjectStore instance
     /// * `Err` - Storage not found or ObjectStore build failed
-    pub fn get_object_store(&self, storage_id: &StorageId) -> Result<Arc<dyn ObjectStore>, KalamDbError> {
+    pub fn get_object_store(
+        &self,
+        storage_id: &StorageId,
+    ) -> Result<Arc<dyn ObjectStore>, KalamDbError> {
         let cached = self.get_cached(storage_id)?.ok_or_else(|| {
             KalamDbError::InvalidOperation(format!(
                 "Storage '{}' not found in registry",
@@ -147,13 +156,19 @@ impl StorageRegistry {
     }
 
     /// Backward compatible helper that accepts a raw storage ID string.
-    pub fn get_storage_config(&self, storage_id: &str) -> Result<Option<Arc<Storage>>, KalamDbError> {
+    pub fn get_storage_config(
+        &self,
+        storage_id: &str,
+    ) -> Result<Option<Arc<Storage>>, KalamDbError> {
         let storage_id = StorageId::from(storage_id);
         self.get_storage(&storage_id)
     }
 
     /// Get ObjectStore by raw storage ID string (convenience method)
-    pub fn get_object_store_by_id(&self, storage_id: &str) -> Result<Arc<dyn ObjectStore>, KalamDbError> {
+    pub fn get_object_store_by_id(
+        &self,
+        storage_id: &str,
+    ) -> Result<Arc<dyn ObjectStore>, KalamDbError> {
         let storage_id = StorageId::from(storage_id);
         self.get_object_store(&storage_id)
     }
@@ -301,7 +316,7 @@ impl StorageRegistry {
                             .to_string(),
                     ))
                 }
-            }
+            },
             (None, Some(_)) => Err(KalamDbError::InvalidOperation(
                 "Shared table template: {namespace} is required".to_string(),
             )),
@@ -332,7 +347,7 @@ impl StorageRegistry {
                 return Err(KalamDbError::InvalidOperation(
                     "User table template: {userId} is required".to_string(),
                 ))
-            }
+            },
         };
 
         // Rule 2: Enforce ordering
@@ -402,12 +417,8 @@ mod tests {
         let registry = create_mock_registry();
 
         // Valid shared table templates
-        assert!(registry
-            .validate_template("{namespace}/{tableName}", false)
-            .is_ok());
-        assert!(registry
-            .validate_template("{namespace}/tables/{tableName}", false)
-            .is_ok());
+        assert!(registry.validate_template("{namespace}/{tableName}", false).is_ok());
+        assert!(registry.validate_template("{namespace}/tables/{tableName}", false).is_ok());
     }
 
     #[test]
@@ -415,9 +426,7 @@ mod tests {
         let registry = create_mock_registry();
 
         // Invalid: {tableName} before {namespace}
-        assert!(registry
-            .validate_template("{tableName}/{namespace}", false)
-            .is_err());
+        assert!(registry.validate_template("{tableName}/{namespace}", false).is_err());
     }
 
     #[test]
@@ -425,9 +434,7 @@ mod tests {
         let registry = create_mock_registry();
 
         // Valid user table templates
-        assert!(registry
-            .validate_template("{namespace}/{tableName}/{userId}", true)
-            .is_ok());
+        assert!(registry.validate_template("{namespace}/{tableName}/{userId}", true).is_ok());
         assert!(registry
             .validate_template("{namespace}/{tableName}/{shard}/{userId}", true)
             .is_ok());
@@ -438,9 +445,7 @@ mod tests {
         let registry = create_mock_registry();
 
         // Invalid: {userId} missing
-        assert!(registry
-            .validate_template("{namespace}/{tableName}", true)
-            .is_err());
+        assert!(registry.validate_template("{namespace}/{tableName}", true).is_err());
     }
 
     #[test]
@@ -448,9 +453,7 @@ mod tests {
         let registry = create_mock_registry();
 
         // Invalid: {userId} before {tableName}
-        assert!(registry
-            .validate_template("{namespace}/{userId}/{tableName}", true)
-            .is_err());
+        assert!(registry.validate_template("{namespace}/{userId}/{tableName}", true).is_err());
 
         // Invalid: {shard} before {tableName}
         assert!(registry
@@ -473,15 +476,10 @@ mod tests {
             .expect("Failed to create RocksDB directory for storage registry tests");
 
         let db_path_string = db_path.to_string_lossy().into_owned();
-        TEST_DIRS
-            .lock()
-            .expect("Temp dir mutex poisoned")
-            .push(temp_dir);
+        TEST_DIRS.lock().expect("Temp dir mutex poisoned").push(temp_dir);
 
         let db_init = RocksDbInit::with_defaults(db_path_string);
-        let db = db_init
-            .open()
-            .expect("Failed to open RocksDB for storage registry tests");
+        let db = db_init.open().expect("Failed to open RocksDB for storage registry tests");
 
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));

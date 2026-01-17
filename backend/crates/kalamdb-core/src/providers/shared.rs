@@ -86,10 +86,7 @@ impl SharedTableProvider {
             .expect("Failed to get Arrow schema from registry during provider creation");
 
         // Create PK index for efficient lookups
-        let pk_index = SharedTablePkIndex::new(
-            core.table_id(),
-            &primary_key_field_name,
-        );
+        let pk_index = SharedTablePkIndex::new(core.table_id(), &primary_key_field_name);
 
         Self {
             core,
@@ -150,10 +147,7 @@ impl SharedTableProvider {
             return Ok(None);
         }
 
-        if let Some((row_id, row)) = results
-            .into_iter()
-            .max_by_key(|(row_id, _)| row_id.as_i64())
-        {
+        if let Some((row_id, row)) = results.into_iter().max_by_key(|(row_id, _)| row_id.as_i64()) {
             if row._deleted {
                 Ok(None)
             } else {
@@ -163,7 +157,6 @@ impl SharedTableProvider {
             Ok(None)
         }
     }
-
 }
 
 impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider {
@@ -231,10 +224,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         )?;
 
         if exists_in_cold {
-            log::trace!(
-                "[SharedTableProvider] PK {} exists in cold storage",
-                id_value
-            );
+            log::trace!("[SharedTableProvider] PK {} exists in cold storage", id_value);
             // Load the actual row_id from cold storage so DML (DELETE/UPDATE) can target it
             if let Some((row_id, _row)) = base::find_row_by_pk(self, None, id_value)? {
                 return Ok(Some(row_id));
@@ -247,12 +237,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     }
 
     fn insert(&self, _user_id: &UserId, row_data: Row) -> Result<SharedTableRowId, KalamDbError> {
-        ensure_manifest_ready(
-            &self.core,
-            self.core.table_type(),
-            None,
-            "SharedTableProvider",
-        )?;
+        ensure_manifest_ready(&self.core, self.core.table_type(), None, "SharedTableProvider")?;
 
         // IGNORE user_id parameter - no RLS for shared tables
         base::ensure_unique_pk_value(self, None, &row_data)?;
@@ -304,12 +289,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         }
 
         // Ensure manifest is ready
-        ensure_manifest_ready(
-            &self.core,
-            self.core.table_type(),
-            None,
-            "SharedTableProvider",
-        )?;
+        ensure_manifest_ready(&self.core, self.core.table_type(), None, "SharedTableProvider")?;
 
         // Coerce rows to match schema types
         let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
@@ -324,7 +304,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         for row_data in &coerced_rows {
             if let Some(pk_value) = row_data.get(pk_name) {
                 if !matches!(pk_value, ScalarValue::Null) {
-                    let pk_str = crate::providers::unified_dml::extract_user_pk_value(row_data, pk_name)?;
+                    let pk_str =
+                        crate::providers::unified_dml::extract_user_pk_value(row_data, pk_name)?;
                     pk_values_to_check.push(pk_str);
                 }
             }
@@ -337,8 +318,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 // Small batch: individual O(1) lookups are efficient
                 for pk_str in &pk_values_to_check {
                     let prefix = self.pk_index.build_pk_prefix(pk_str);
-                    if self.store.exists_by_index(0, &prefix)
-                        .into_kalamdb_error("PK index check failed")? 
+                    if self
+                        .store
+                        .exists_by_index(0, &prefix)
+                        .into_kalamdb_error("PK index check failed")?
                     {
                         return Err(KalamDbError::AlreadyExists(format!(
                             "Primary key violation: value '{}' already exists in column '{}'",
@@ -354,7 +337,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                     .collect();
 
                 // Use empty common prefix for shared tables (no user scoping)
-                let existing = self.store.exists_batch_by_index(0, &[], &prefixes)
+                let existing = self
+                    .store
+                    .exists_batch_by_index(0, &[], &prefixes)
                     .into_kalamdb_error("Batch PK index check failed")?;
 
                 if !existing.is_empty() {
@@ -417,7 +402,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
         // Single atomic RocksDB WriteBatch for ALL rows
         self.store.insert_batch(&entries).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to batch insert shared table rows: {}", e))
+            KalamDbError::InvalidOperation(format!(
+                "Failed to batch insert shared table rows: {}",
+                e
+            ))
         })?;
 
         log::debug!(
@@ -469,7 +457,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Validate PK update (check if new PK value already exists)
         base::validate_pk_update(self, None, &updates, &pk_value_scalar)?;
 
-        // Resolve latest per PK - first try hot storage (O(1) via PK index), 
+        // Resolve latest per PK - first try hot storage (O(1) via PK index),
         // then fall back to cold storage (Parquet scan)
         let (_latest_key, latest_row) = if let Some(result) = self.find_by_pk(&pk_value_scalar)? {
             result
@@ -604,9 +592,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             (None, None)
         };
 
-        let keep_deleted = filter
-            .map(base::filter_uses_deleted_column)
-            .unwrap_or(false);
+        let keep_deleted = filter.map(base::filter_uses_deleted_column).unwrap_or(false);
 
         // NO user_id extraction - shared tables scan ALL rows
         let kvs = self.scan_with_version_resolution_to_kvs(
@@ -671,7 +657,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                     Err(err) => {
                         log::warn!("Skipping invalid SeqId key bytes: {}", err);
                         None
-                    }
+                    },
                 }
             })
             .collect();

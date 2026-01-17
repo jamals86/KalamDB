@@ -10,13 +10,13 @@
 //! for data groups.
 
 use chrono::{DateTime, Utc};
+use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::{
     ConnectionId, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, StorageId,
     TableName, UserId,
 };
-use kalamdb_commons::models::schemas::TableType;
-use kalamdb_commons::TableId;
 use kalamdb_commons::types::User;
+use kalamdb_commons::TableId;
 use serde::{Deserialize, Serialize};
 
 /// Commands for the unified metadata Raft group
@@ -31,22 +31,18 @@ pub enum MetaCommand {
     // =========================================================================
     // Namespace Operations (was in SystemCommand)
     // =========================================================================
-    
     /// Create a new namespace
     CreateNamespace {
         namespace_id: NamespaceId,
         created_by: Option<UserId>,
     },
-    
+
     /// Delete a namespace
-    DeleteNamespace {
-        namespace_id: NamespaceId,
-    },
+    DeleteNamespace { namespace_id: NamespaceId },
 
     // =========================================================================
     // Table Operations (was in SystemCommand)
     // =========================================================================
-    
     /// Create a new table
     CreateTable {
         table_id: TableId,
@@ -54,46 +50,36 @@ pub enum MetaCommand {
         /// Serialized TableDefinition
         schema_json: String,
     },
-    
+
     /// Alter an existing table
     AlterTable {
         table_id: TableId,
         schema_json: String,
     },
-    
+
     /// Drop a table
-    DropTable {
-        table_id: TableId,
-    },
+    DropTable { table_id: TableId },
 
     // =========================================================================
     // Storage Operations (was in SystemCommand)
     // =========================================================================
-    
     /// Register a storage backend
     RegisterStorage {
         storage_id: StorageId,
         config_json: String,
     },
-    
+
     /// Unregister a storage backend
-    UnregisterStorage {
-        storage_id: StorageId,
-    },
+    UnregisterStorage { storage_id: StorageId },
 
     // =========================================================================
     // User Operations (was in UsersCommand)
     // =========================================================================
-    
     /// Create a new user
-    CreateUser {
-        user: User,
-    },
+    CreateUser { user: User },
 
     /// Update user information
-    UpdateUser {
-        user: User,
-    },
+    UpdateUser { user: User },
 
     /// Soft-delete a user
     DeleteUser {
@@ -117,7 +103,6 @@ pub enum MetaCommand {
     // =========================================================================
     // Job Operations (was in JobsCommand)
     // =========================================================================
-    
     /// Create a new job
     CreateJob {
         job_id: JobId,
@@ -131,6 +116,30 @@ pub enum MetaCommand {
         priority: Option<i32>,
         node_id: NodeId,
         created_at: DateTime<Utc>,
+    },
+
+    /// Create a per-node job entry
+    CreateJobNode {
+        job_id: JobId,
+        node_id: NodeId,
+        status: JobStatus,
+        created_at: DateTime<Utc>,
+    },
+
+    /// Claim a per-node job entry
+    ClaimJobNode {
+        job_id: JobId,
+        node_id: NodeId,
+        claimed_at: DateTime<Utc>,
+    },
+
+    /// Update per-node job status
+    UpdateJobNodeStatus {
+        job_id: JobId,
+        node_id: NodeId,
+        status: JobStatus,
+        error_message: Option<String>,
+        updated_at: DateTime<Utc>,
     },
 
     /// Claim a job for execution (leader-only)
@@ -185,14 +194,11 @@ pub enum MetaCommand {
     },
 
     /// Delete a scheduled job
-    DeleteSchedule {
-        schedule_id: String,
-    },
+    DeleteSchedule { schedule_id: String },
 
     // =========================================================================
     // Live Query Operations (cluster-wide replication)
     // =========================================================================
-
     /// Register a live query subscription (replicated across cluster)
     CreateLiveQuery {
         live_id: LiveQueryId,
@@ -234,14 +240,26 @@ impl MetaCommand {
             Self::CreateNamespace { .. } | Self::DeleteNamespace { .. } => "namespace",
             Self::CreateTable { .. } | Self::AlterTable { .. } | Self::DropTable { .. } => "table",
             Self::RegisterStorage { .. } | Self::UnregisterStorage { .. } => "storage",
-            Self::CreateUser { .. } | Self::UpdateUser { .. } | Self::DeleteUser { .. } 
-                | Self::RecordLogin { .. } | Self::SetUserLocked { .. } => "user",
-            Self::CreateJob { .. } | Self::ClaimJob { .. } | Self::UpdateJobStatus { .. }
-                | Self::CompleteJob { .. } | Self::FailJob { .. } | Self::ReleaseJob { .. }
-                | Self::CancelJob { .. } => "job",
+            Self::CreateUser { .. }
+            | Self::UpdateUser { .. }
+            | Self::DeleteUser { .. }
+            | Self::RecordLogin { .. }
+            | Self::SetUserLocked { .. } => "user",
+            Self::CreateJob { .. }
+            | Self::CreateJobNode { .. }
+            | Self::ClaimJob { .. }
+            | Self::ClaimJobNode { .. }
+            | Self::UpdateJobStatus { .. }
+            | Self::UpdateJobNodeStatus { .. }
+            | Self::CompleteJob { .. }
+            | Self::FailJob { .. }
+            | Self::ReleaseJob { .. }
+            | Self::CancelJob { .. } => "job",
             Self::CreateSchedule { .. } | Self::DeleteSchedule { .. } => "schedule",
-            Self::CreateLiveQuery { .. } | Self::UpdateLiveQuery { .. } 
-                | Self::DeleteLiveQuery { .. } | Self::DeleteLiveQueriesByConnection { .. } => "live_query",
+            Self::CreateLiveQuery { .. }
+            | Self::UpdateLiveQuery { .. }
+            | Self::DeleteLiveQuery { .. }
+            | Self::DeleteLiveQueriesByConnection { .. } => "live_query",
         }
     }
 }
@@ -251,30 +269,30 @@ impl MetaCommand {
 pub enum MetaResponse {
     #[default]
     Ok,
-    
+
     // === Generic response (preserves original success message) ===
     Message {
         message: String,
     },
-    
+
     // === Namespace responses ===
     NamespaceCreated {
         namespace_id: NamespaceId,
         message: String,
     },
-    
+
     // === Table responses ===
     TableCreated {
         table_id: TableId,
         message: String,
     },
-    
+
     // === User responses ===
     UserCreated {
         user_id: UserId,
         message: String,
     },
-    
+
     // === Job responses ===
     JobCreated {
         job_id: JobId,
@@ -285,13 +303,13 @@ pub enum MetaResponse {
         node_id: NodeId,
         message: String,
     },
-    
+
     // === Live Query responses ===
     LiveQueryCreated {
         live_id: LiveQueryId,
         message: String,
     },
-    
+
     // === Error ===
     Error {
         message: String,
@@ -301,14 +319,16 @@ pub enum MetaResponse {
 impl MetaResponse {
     /// Create an error response with the given message
     pub fn error(msg: impl Into<String>) -> Self {
-        Self::Error { message: msg.into() }
+        Self::Error {
+            message: msg.into(),
+        }
     }
 
     /// Returns true if this is not an error response
     pub fn is_ok(&self) -> bool {
         !matches!(self, Self::Error { .. })
     }
-    
+
     /// Get the error message if this is an error response
     pub fn error_message(&self) -> Option<&str> {
         match self {
@@ -316,7 +336,7 @@ impl MetaResponse {
             _ => None,
         }
     }
-    
+
     /// Get the message from any response variant
     pub fn get_message(&self) -> String {
         match self {
@@ -336,9 +356,9 @@ impl MetaResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{AuthType, Role, StorageMode};
     use kalamdb_commons::models::UserName;
-    
+    use kalamdb_commons::{AuthType, Role, StorageMode};
+
     fn test_user() -> User {
         User {
             id: UserId::from("test_user"),
@@ -359,21 +379,19 @@ mod tests {
             deleted_at: None,
         }
     }
-    
+
     #[test]
     fn test_meta_command_category() {
-        let cmd = MetaCommand::CreateNamespace { 
-            namespace_id: NamespaceId::new("test".to_string()), 
+        let cmd = MetaCommand::CreateNamespace {
+            namespace_id: NamespaceId::new("test".to_string()),
             created_by: None,
         };
         assert_eq!(cmd.category(), "namespace");
-        
-        let cmd = MetaCommand::CreateUser { 
-            user: test_user(),
-        };
+
+        let cmd = MetaCommand::CreateUser { user: test_user() };
         assert_eq!(cmd.category(), "user");
     }
-    
+
     #[test]
     fn test_meta_response_is_ok() {
         assert!(MetaResponse::Ok.is_ok());

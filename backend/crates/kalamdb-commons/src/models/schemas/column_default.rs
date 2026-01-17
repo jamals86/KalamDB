@@ -5,8 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value as JsonValue;
 
 /// Represents the default value for a column
-#[derive(Debug, Clone, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum ColumnDefault {
     /// No default value - column must be specified in INSERT
     #[default]
@@ -56,7 +55,6 @@ impl<'de> Deserialize<'de> for ColumnDefault {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum ColumnDefaultRepr {
     None,
@@ -84,7 +82,7 @@ impl From<ColumnDefaultRepr> for ColumnDefault {
             ColumnDefaultRepr::Literal(json) => ColumnDefault::Literal(json),
             ColumnDefaultRepr::FunctionCall { name, args } => {
                 ColumnDefault::FunctionCall { name, args }
-            }
+            },
         }
     }
 }
@@ -107,7 +105,7 @@ impl From<&ColumnDefault> for StoredColumnDefault {
                     name: name.clone(),
                     args: serialized_args,
                 }
-            }
+            },
         }
     }
 }
@@ -121,7 +119,7 @@ impl TryFrom<StoredColumnDefault> for ColumnDefault {
             StoredColumnDefault::Literal(json) => {
                 let parsed = serde_json::from_str(&json)?;
                 Ok(ColumnDefault::Literal(parsed))
-            }
+            },
             StoredColumnDefault::FunctionCall { name, args } => {
                 let mut parsed_args = Vec::with_capacity(args.len());
                 for arg in args {
@@ -131,7 +129,7 @@ impl TryFrom<StoredColumnDefault> for ColumnDefault {
                     name,
                     args: parsed_args,
                 })
-            }
+            },
         }
     }
 }
@@ -173,9 +171,9 @@ impl ColumnDefault {
                     JsonValue::String(s) => format!("'{}'", s.replace('\'', "''")),
                     JsonValue::Array(_) | JsonValue::Object(_) => {
                         format!("'{}'", value.to_string().replace('\'', "''"))
-                    }
+                    },
                 }
-            }
+            },
             ColumnDefault::FunctionCall { name, args } => {
                 if args.is_empty() {
                     format!("{}()", name.to_uppercase())
@@ -190,7 +188,7 @@ impl ColumnDefault {
                         .join(", ");
                     format!("{}({})", name.to_uppercase(), args_str)
                 }
-            }
+            },
         }
     }
 }

@@ -34,7 +34,8 @@ fn smoke_test_snowflake_id_default() {
     println!("🧪 Testing SNOWFLAKE_ID() DEFAULT: {}", full_table);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -58,10 +59,7 @@ fn smoke_test_snowflake_id_default() {
     // Insert rows WITHOUT specifying ID (should auto-generate)
     println!("📝 Inserting 5 rows without specifying ID...");
     for i in 1..=5 {
-        let insert_sql = format!(
-            "INSERT INTO {} (content) VALUES ('Message {}')",
-            full_table, i
-        );
+        let insert_sql = format!("INSERT INTO {} (content) VALUES ('Message {}')", full_table, i);
         execute_sql_as_root_via_client(&insert_sql)
             .unwrap_or_else(|e| panic!("Failed to insert row {}: {}", i, e));
         // Small delay to ensure IDs are time-ordered
@@ -118,7 +116,8 @@ fn smoke_test_uuid_v7_default() {
     println!("🧪 Testing UUID_V7() DEFAULT: {}", full_table);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -157,18 +156,13 @@ fn smoke_test_uuid_v7_default() {
     println!("✅ Inserted 3 sessions");
 
     // Query and verify UUIDs
-    let select_sql = format!(
-        "SELECT session_id, user_id FROM {} ORDER BY created_at",
-        full_table
-    );
-    let output = execute_sql_as_root_via_client_json(&select_sql).expect("Failed to query sessions");
+    let select_sql = format!("SELECT session_id, user_id FROM {} ORDER BY created_at", full_table);
+    let output =
+        execute_sql_as_root_via_client_json(&select_sql).expect("Failed to query sessions");
 
     println!("Query output:\n{}", output);
 
-    assert!(
-        output.contains("\"session_id\""),
-        "Expected session_id column in output"
-    );
+    assert!(output.contains("\"session_id\""), "Expected session_id column in output");
     assert!(
         output.contains("user_1") && output.contains("user_3"),
         "Expected all 3 users in output"
@@ -208,7 +202,8 @@ fn smoke_test_ulid_default() {
     println!("🧪 Testing ULID() DEFAULT: {}", full_table);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -246,22 +241,13 @@ fn smoke_test_ulid_default() {
     println!("✅ Inserted 3 events");
 
     // Query and verify ULIDs
-    let select_sql = format!(
-        "SELECT event_id, event_type FROM {} ORDER BY created_at",
-        full_table
-    );
+    let select_sql = format!("SELECT event_id, event_type FROM {} ORDER BY created_at", full_table);
     let output = execute_sql_as_root_via_client_json(&select_sql).expect("Failed to query events");
 
     println!("Query output:\n{}", output);
 
-    assert!(
-        output.contains("\"event_id\""),
-        "Expected event_id column in output"
-    );
-    assert!(
-        output.contains("user_action"),
-        "Expected event_type in output"
-    );
+    assert!(output.contains("\"event_id\""), "Expected event_id column in output");
+    assert!(output.contains("user_action"), "Expected event_type in output");
 
     // ULID should NOT have hyphens (vs UUID which has 4 hyphens)
     // We can't easily verify 26-char length without JSON parsing, but we can check it's present
@@ -292,7 +278,8 @@ fn smoke_test_current_user_default() {
     println!("🧪 Testing CURRENT_USER() DEFAULT: {}", full_table);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -329,18 +316,13 @@ fn smoke_test_current_user_default() {
     println!("✅ Inserted 2 documents");
 
     // Query and verify created_by is set
-    let select_sql = format!(
-        "SELECT title, created_by FROM {} ORDER BY doc_id",
-        full_table
-    );
-    let output = execute_sql_as_root_via_client_json(&select_sql).expect("Failed to query documents");
+    let select_sql = format!("SELECT title, created_by FROM {} ORDER BY doc_id", full_table);
+    let output =
+        execute_sql_as_root_via_client_json(&select_sql).expect("Failed to query documents");
 
     println!("Query output:\n{}", output);
 
-    assert!(
-        output.contains("\"created_by\""),
-        "Expected created_by column in output"
-    );
+    assert!(output.contains("\"created_by\""), "Expected created_by column in output");
     assert!(
         output.contains("Document 1") && output.contains("Document 2"),
         "Expected both documents in output"
@@ -377,7 +359,8 @@ fn smoke_test_all_custom_functions_combined() {
     println!("🧪 Testing all custom functions combined: {}", full_table);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -403,10 +386,7 @@ fn smoke_test_all_custom_functions_combined() {
     println!("✅ Created table with SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER, NOW defaults");
 
     // Insert row specifying ONLY title (all other columns auto-generated)
-    let insert_sql = format!(
-        "INSERT INTO {} (title) VALUES ('Test Document')",
-        full_table
-    );
+    let insert_sql = format!("INSERT INTO {} (title) VALUES ('Test Document')", full_table);
     execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
 
     println!("✅ Inserted 1 row with only title specified");
@@ -421,22 +401,10 @@ fn smoke_test_all_custom_functions_combined() {
     println!("Query output:\n{}", output);
 
     // Verify all columns exist
-    assert!(
-        output.contains("\"snowflake_id\""),
-        "Expected snowflake_id column"
-    );
-    assert!(
-        output.contains("\"uuid_field\""),
-        "Expected uuid_field column"
-    );
-    assert!(
-        output.contains("\"ulid_field\""),
-        "Expected ulid_field column"
-    );
-    assert!(
-        output.contains("\"created_by\""),
-        "Expected created_by column"
-    );
+    assert!(output.contains("\"snowflake_id\""), "Expected snowflake_id column");
+    assert!(output.contains("\"uuid_field\""), "Expected uuid_field column");
+    assert!(output.contains("\"ulid_field\""), "Expected ulid_field column");
+    assert!(output.contains("\"created_by\""), "Expected created_by column");
     assert!(output.contains("Test Document"), "Expected title in output");
 
     println!("✅ Verified all custom function defaults work together");

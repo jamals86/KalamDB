@@ -56,7 +56,7 @@ pub use kalamdb_commons::{StoragePartition, SystemTable};
 
 // Re-export all providers
 pub use providers::{
-    AuditLogsTableProvider, InMemoryChecker, JobsTableProvider, 
-    LiveQueriesTableProvider, ManifestTableProvider, NamespacesTableProvider, 
+    AuditLogsTableProvider, InMemoryChecker, JobNodesTableProvider, JobsTableProvider,
+    LiveQueriesTableProvider, ManifestTableProvider, NamespacesTableProvider,
     StoragesTableProvider, TablesTableProvider, UsersTableProvider,
 };

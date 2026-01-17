@@ -46,7 +46,7 @@ pub async fn execute_create_namespace(
     let name = stmt.name.as_str();
 
     // Validate namespace name
-    Namespace::validate_name(name)?;
+    kalamdb_sql::validation::validate_namespace_name(name).map_err(|e| e.to_string())?;
 
     // Check if namespace already exists
     let namespace_id = NamespaceId::new(name);
@@ -114,12 +114,9 @@ pub async fn execute_drop_namespace(
                 let message = format!("Namespace '{}' does not exist", name);
                 return Ok(ExecutionResult::Success { message });
             } else {
-                return Err(KalamDbError::NotFound(format!(
-                    "Namespace '{}' not found",
-                    name
-                )));
+                return Err(KalamDbError::NotFound(format!("Namespace '{}' not found", name)));
             }
-        }
+        },
     };
 
     // Check if namespace has tables
@@ -169,7 +166,7 @@ mod tests {
             ExecutionResult::Success { message } => {
                 assert!(message.contains("test_ns_mod"));
                 assert!(message.contains("created successfully"));
-            }
+            },
             _ => panic!("Expected Success result"),
         }
     }
@@ -193,7 +190,7 @@ mod tests {
         match result2.unwrap() {
             ExecutionResult::Success { message } => {
                 assert!(message.contains("already exists"));
-            }
+            },
             _ => panic!("Expected Success result"),
         }
     }
@@ -206,9 +203,7 @@ mod tests {
 
         // Create namespace first
         let create_sql = "CREATE NAMESPACE test_drop_ns_mod";
-        execute_create_namespace(&app_ctx, &session, create_sql, &ctx)
-            .await
-            .unwrap();
+        execute_create_namespace(&app_ctx, &session, create_sql, &ctx).await.unwrap();
 
         // Drop it
         let drop_sql = "DROP NAMESPACE test_drop_ns_mod";
@@ -218,7 +213,7 @@ mod tests {
         match result.unwrap() {
             ExecutionResult::Success { message } => {
                 assert!(message.contains("dropped successfully"));
-            }
+            },
             _ => panic!("Expected Success result"),
         }
     }

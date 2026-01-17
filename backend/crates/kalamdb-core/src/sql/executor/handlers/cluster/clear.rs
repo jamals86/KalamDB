@@ -4,7 +4,9 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::{ExecutionContext, ExecutionResult, ScalarValue, StatementHandler};
+use crate::sql::executor::handlers::{
+    ExecutionContext, ExecutionResult, ScalarValue, StatementHandler,
+};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::sync::Arc;
 
@@ -38,7 +40,7 @@ impl StatementHandler for ClusterClearHandler {
         // Get snapshot directory from config
         let config = self.app_context.config();
         let snapshots_dir = config.storage.resolved_snapshots_dir();
-        
+
         if !snapshots_dir.exists() {
             return Ok(ExecutionResult::Success {
                 message: format!(
@@ -47,18 +49,18 @@ impl StatementHandler for ClusterClearHandler {
                 ),
             });
         }
-        
+
         // Count files before clearing
         let mut total_files = 0;
         let mut total_size: u64 = 0;
         let mut cleared_files = 0;
         let mut cleared_size: u64 = 0;
         let mut errors = Vec::new();
-        
+
         // Keep the most recent snapshot per group (based on max_snapshots_to_keep config)
         // For now, we'll just report what would be cleared without actually deleting
         // since OpenRaft manages its own snapshot lifecycle
-        
+
         // Walk the snapshots directory
         if let Ok(entries) = std::fs::read_dir(&snapshots_dir) {
             for entry in entries.flatten() {
@@ -70,24 +72,26 @@ impl StatementHandler for ClusterClearHandler {
                             .flatten()
                             .filter(|e| e.path().extension().map_or(false, |ext| ext == "bin"))
                             .collect();
-                        
+
                         // Sort by modification time (newest first)
                         snapshots.sort_by_key(|e| {
                             std::cmp::Reverse(
-                                e.metadata().ok().and_then(|m| m.modified().ok())
-                                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                                e.metadata()
+                                    .ok()
+                                    .and_then(|m| m.modified().ok())
+                                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
                             )
                         });
-                        
-                        let max_to_keep = config.cluster.as_ref()
-                            .map(|c| c.max_snapshots_to_keep)
-                            .unwrap_or(3) as usize;
-                        
+
+                        let max_to_keep =
+                            config.cluster.as_ref().map(|c| c.max_snapshots_to_keep).unwrap_or(3)
+                                as usize;
+
                         for (i, snapshot) in snapshots.iter().enumerate() {
                             let size = snapshot.metadata().ok().map(|m| m.len()).unwrap_or(0);
                             total_files += 1;
                             total_size += size;
-                            
+
                             // Delete snapshots beyond the keep limit
                             if i >= max_to_keep {
                                 match std::fs::remove_file(snapshot.path()) {
@@ -95,10 +99,14 @@ impl StatementHandler for ClusterClearHandler {
                                         cleared_files += 1;
                                         cleared_size += size;
                                         log::debug!("Cleared old snapshot: {:?}", snapshot.path());
-                                    }
+                                    },
                                     Err(e) => {
-                                        errors.push(format!("{}: {}", snapshot.path().display(), e));
-                                    }
+                                        errors.push(format!(
+                                            "{}: {}",
+                                            snapshot.path().display(),
+                                            e
+                                        ));
+                                    },
                                 }
                             }
                         }
@@ -106,7 +114,7 @@ impl StatementHandler for ClusterClearHandler {
                 }
             }
         }
-        
+
         // Build response message
         let mut message = format!(
             "Cluster clear completed\n\
@@ -119,7 +127,7 @@ impl StatementHandler for ClusterClearHandler {
             cleared_files,
             cleared_size as f64 / 1024.0 / 1024.0
         );
-        
+
         if !errors.is_empty() {
             message.push_str(&format!("\n\nErrors ({}):", errors.len()));
             for error in errors.iter().take(5) {
@@ -129,10 +137,13 @@ impl StatementHandler for ClusterClearHandler {
                 message.push_str(&format!("\n  ... and {} more errors", errors.len() - 5));
             }
         }
-        
-        log::info!("CLUSTER CLEAR completed: {} files cleared, {:.2} MB freed", 
-            cleared_files, cleared_size as f64 / 1024.0 / 1024.0);
-        
+
+        log::info!(
+            "CLUSTER CLEAR completed: {} files cleared, {:.2} MB freed",
+            cleared_files,
+            cleared_size as f64 / 1024.0 / 1024.0
+        );
+
         Ok(ExecutionResult::Success { message })
     }
 }

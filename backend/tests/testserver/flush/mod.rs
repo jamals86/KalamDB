@@ -11,7 +11,7 @@
 pub(super) mod test_support;
 
 // Flush Tests
-mod test_flush_policy_verification_http;
 mod test_flush_jobs_http;
+mod test_flush_policy_verification_http;
 mod test_flush_unregistered_suite_http;
 mod test_pk_uniqueness_hot_cold_http;

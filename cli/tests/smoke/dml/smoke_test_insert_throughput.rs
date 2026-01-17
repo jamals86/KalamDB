@@ -10,10 +10,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 // Test configuration
-const SINGLE_INSERT_COUNT: usize = 100;        // Single-row inserts to test
-const BATCH_SIZE: usize = 100;                 // Rows per batch insert
-const BATCH_COUNT: usize = 10;                 // Number of batch inserts
-const PARALLEL_WORKERS: usize = 10;            // Concurrent insert workers
+const SINGLE_INSERT_COUNT: usize = 100; // Single-row inserts to test
+const BATCH_SIZE: usize = 100; // Rows per batch insert
+const BATCH_COUNT: usize = 10; // Number of batch inserts
+const PARALLEL_WORKERS: usize = 10; // Concurrent insert workers
 const PARALLEL_INSERTS_PER_WORKER: usize = 50; // Inserts per worker
 
 #[ntest::timeout(180000)]
@@ -67,7 +67,7 @@ fn smoke_test_insert_throughput_single() {
                 if failed <= 3 {
                     eprintln!("Insert {} failed: {}", i, e);
                 }
-            }
+            },
         }
     }
 
@@ -85,17 +85,18 @@ fn smoke_test_insert_throughput_single() {
     println!("  Failed: {}", failed);
     println!("  Total time: {:.2?}", elapsed);
     println!("  ⚡ Throughput: {:.2} inserts/sec", inserts_per_sec);
-    println!("  Average latency: {:.2}ms per insert", elapsed.as_millis() as f64 / successful as f64);
+    println!(
+        "  Average latency: {:.2}ms per insert",
+        elapsed.as_millis() as f64 / successful as f64
+    );
     println!("────────────────────────────────────────────────────────\n");
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 
-    assert!(
-        successful > 0,
-        "Expected at least some successful inserts, got 0"
-    );
+    assert!(successful > 0, "Expected at least some successful inserts, got 0");
 }
 
 #[ntest::timeout(180000)]
@@ -149,13 +150,13 @@ fn smoke_test_insert_throughput_batched() {
             Ok(_) => {
                 successful_batches += 1;
                 total_rows += BATCH_SIZE;
-            }
+            },
             Err(e) => {
                 failed_batches += 1;
                 if failed_batches <= 3 {
                     eprintln!("Batch {} failed: {}", batch_num, e);
                 }
-            }
+            },
         }
     }
 
@@ -180,17 +181,18 @@ fn smoke_test_insert_throughput_batched() {
     println!("  Total time: {:.2?}", elapsed);
     println!("  ⚡ Row throughput: {:.2} rows/sec", rows_per_sec);
     println!("  ⚡ Batch throughput: {:.2} batches/sec", batches_per_sec);
-    println!("  Average latency: {:.2}ms per batch", elapsed.as_millis() as f64 / successful_batches as f64);
+    println!(
+        "  Average latency: {:.2}ms per batch",
+        elapsed.as_millis() as f64 / successful_batches as f64
+    );
     println!("────────────────────────────────────────────────────────\n");
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 
-    assert!(
-        total_rows > 0,
-        "Expected at least some rows inserted, got 0"
-    );
+    assert!(total_rows > 0, "Expected at least some rows inserted, got 0");
 }
 
 #[ntest::timeout(180000)]
@@ -281,7 +283,10 @@ fn smoke_test_insert_throughput_parallel() {
     println!("  Failed: {}", total_fail);
     println!("  Total time: {:.2?}", elapsed);
     println!("  ⚡ Throughput: {:.2} inserts/sec", inserts_per_sec);
-    println!("  Average latency: {:.2}ms per insert", elapsed.as_millis() as f64 / total_success.max(1) as f64);
+    println!(
+        "  Average latency: {:.2}ms per insert",
+        elapsed.as_millis() as f64 / total_success.max(1) as f64
+    );
     println!("\n  Per-worker breakdown:");
     for (worker_id, success, fail) in &worker_results {
         println!("    Worker {}: {} success, {} failed", worker_id, success, fail);
@@ -290,12 +295,10 @@ fn smoke_test_insert_throughput_parallel() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", *full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 
-    assert!(
-        total_success > 0,
-        "Expected at least some successful inserts, got 0"
-    );
+    assert!(total_success > 0, "Expected at least some successful inserts, got 0");
 }
 
 /// Combined benchmark that runs all tests and provides a summary
@@ -441,12 +444,19 @@ fn smoke_test_insert_throughput_summary() {
     );
     println!("└────────────────────────────────────────────────────────────┘");
     println!();
-    println!("📊 Batched inserts are {:.1}x faster than single-row inserts", batch_rate / single_rate);
-    println!("📊 Parallel inserts are {:.1}x faster than single-row inserts", parallel_rate / single_rate);
+    println!(
+        "📊 Batched inserts are {:.1}x faster than single-row inserts",
+        batch_rate / single_rate
+    );
+    println!(
+        "📊 Parallel inserts are {:.1}x faster than single-row inserts",
+        parallel_rate / single_rate
+    );
     println!();
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 
     println!("=== Insert Throughput Benchmark Complete ===\n");
 }

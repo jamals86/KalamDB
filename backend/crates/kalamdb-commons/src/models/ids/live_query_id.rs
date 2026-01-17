@@ -12,10 +12,10 @@ use crate::models::{ConnectionId, UserId};
 use crate::StorageKey;
 
 /// Unique identifier for live query subscriptions.
-/// 
+///
 /// Composite key containing user, connection, and subscription information.
 /// Format when serialized: {user_id}-{connection_id}-{subscription_id}
-/// 
+///
 /// ## Memory Safety
 /// Uses a pre-computed `cached_string` to provide zero-allocation `AsRef<str>` access.
 /// This avoids the previous `Box::leak` pattern which caused memory leaks (~48MB/24h).
@@ -54,7 +54,9 @@ impl<Context> Decode<Context> for LiveQueryId {
 
 // Custom bincode BorrowDecode implementation that populates cached_string
 impl<'de, Context> BorrowDecode<'de, Context> for LiveQueryId {
-    fn borrow_decode<D: BorrowDecoder<'de, Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
+    fn borrow_decode<D: BorrowDecoder<'de, Context = Context>>(
+        decoder: &mut D,
+    ) -> Result<Self, DecodeError> {
         let user_id = UserId::borrow_decode(decoder)?;
         let connection_id = ConnectionId::borrow_decode(decoder)?;
         let subscription_id = String::borrow_decode(decoder)?;
@@ -76,7 +78,7 @@ impl<'de> Deserialize<'de> for LiveQueryId {
             connection_id: ConnectionId,
             subscription_id: String,
         }
-        
+
         let helper = LiveQueryIdHelper::deserialize(deserializer)?;
         Ok(LiveQueryId::new(helper.user_id, helper.connection_id, helper.subscription_id))
     }
@@ -111,12 +113,8 @@ impl LiveQueryId {
     ) -> Self {
         let subscription_id = subscription_id.into();
         // Pre-compute the string representation once
-        let cached_string = format!(
-            "{}-{}-{}",
-            user_id.as_str(),
-            connection_id.as_str(),
-            subscription_id
-        );
+        let cached_string =
+            format!("{}-{}-{}", user_id.as_str(), connection_id.as_str(), subscription_id);
         Self {
             user_id,
             connection_id,
@@ -141,7 +139,7 @@ impl LiveQueryId {
         let user_id = UserId::new(user.unwrap().to_string());
         let connection_id = ConnectionId::new(connection.unwrap().to_string());
         let subscription_id = subscription.unwrap().to_string();
-        
+
         Ok(Self::new(user_id, connection_id, subscription_id))
     }
 
@@ -170,13 +168,13 @@ impl LiveQueryId {
     pub fn connection_id(&self) -> &ConnectionId {
         &self.connection_id
     }
-    
+
     pub fn subscription_id(&self) -> &str {
         &self.subscription_id
     }
 
     /// Creates a prefix key for scanning all live queries for a user+connection.
-    /// 
+    ///
     /// Used by `delete_by_connection_id` for efficient range deletion.
     /// Format: "{user_id}-{connection_id}-"
     pub fn user_connection_prefix(user_id: &UserId, connection_id: &ConnectionId) -> String {
@@ -184,14 +182,13 @@ impl LiveQueryId {
     }
 
     /// Creates a prefix key for scanning all live queries for a user.
-    /// 
+    ///
     /// Used for getting all live queries belonging to a user.
     /// Format: "{user_id}-"
     pub fn user_prefix(user_id: &UserId) -> String {
         format!("{}-", user_id.as_str())
     }
 }
-
 
 impl fmt::Display for LiveQueryId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

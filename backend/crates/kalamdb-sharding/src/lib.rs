@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
 
 // Re-export GroupId and related types
-pub use group_id::{GroupId, DEFAULT_USER_SHARDS, DEFAULT_SHARED_SHARDS};
+pub use group_id::{GroupId, DEFAULT_SHARED_SHARDS, DEFAULT_USER_SHARDS};
 // Re-export cluster config types for shared consumption
 pub use kalamdb_configs::{ClusterConfig, PeerConfig};
 

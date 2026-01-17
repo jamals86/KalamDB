@@ -157,14 +157,14 @@ impl From<kalamdb_store::StorageError> for KalamDbError {
             kalamdb_store::StorageError::IoError(msg) => KalamDbError::io_message(msg),
             kalamdb_store::StorageError::SerializationError(msg) => {
                 KalamDbError::SerializationError(msg)
-            }
+            },
             kalamdb_store::StorageError::Unsupported(msg) => KalamDbError::InvalidOperation(msg),
             kalamdb_store::StorageError::UniqueConstraintViolation(msg) => {
                 KalamDbError::AlreadyExists(msg)
-            }
+            },
             kalamdb_store::StorageError::LockPoisoned(msg) => {
                 KalamDbError::Other(format!("Lock poisoned: {}", msg))
-            }
+            },
             kalamdb_store::StorageError::Other(msg) => KalamDbError::Other(msg),
         }
     }
@@ -177,29 +177,29 @@ impl From<kalamdb_filestore::FilestoreError> for KalamDbError {
             kalamdb_filestore::FilestoreError::Io(e) => KalamDbError::Io(e),
             kalamdb_filestore::FilestoreError::Arrow(e) => {
                 KalamDbError::Other(format!("Arrow error: {}", e))
-            }
+            },
             kalamdb_filestore::FilestoreError::Parquet(msg) => {
                 KalamDbError::Other(format!("Parquet error: {}", msg))
-            }
+            },
             kalamdb_filestore::FilestoreError::Path(msg) => {
                 KalamDbError::Other(format!("Path error: {}", msg))
-            }
+            },
             kalamdb_filestore::FilestoreError::PathTraversal(msg) => {
                 KalamDbError::InvalidOperation(format!("Security: Path traversal blocked: {}", msg))
-            }
+            },
             kalamdb_filestore::FilestoreError::BatchNotFound(msg) => KalamDbError::NotFound(msg),
             kalamdb_filestore::FilestoreError::InvalidBatchFile(msg) => {
                 KalamDbError::InvalidOperation(format!("Invalid batch file: {}", msg))
-            }
+            },
             kalamdb_filestore::FilestoreError::Serialization(e) => {
                 KalamDbError::SerializationError(e.to_string())
-            }
+            },
             kalamdb_filestore::FilestoreError::Config(msg) => {
                 KalamDbError::InvalidOperation(format!("Storage config error: {}", msg))
-            }
+            },
             kalamdb_filestore::FilestoreError::ObjectStore(msg) => {
                 KalamDbError::Other(format!("ObjectStore error: {}", msg))
-            }
+            },
             kalamdb_filestore::FilestoreError::Other(msg) => KalamDbError::Other(msg),
         }
     }
@@ -225,40 +225,40 @@ impl From<crate::schema_registry::error::RegistryError> for KalamDbError {
         match err {
             crate::schema_registry::error::RegistryError::TableNotFound { namespace, table } => {
                 KalamDbError::TableNotFound(format!("{}.{}", namespace, table))
-            }
+            },
             crate::schema_registry::error::RegistryError::StorageNotFound { storage_id } => {
                 KalamDbError::NotFound(format!("Storage not found: {}", storage_id))
-            }
+            },
             crate::schema_registry::error::RegistryError::SchemaConversion { message } => {
                 KalamDbError::SchemaError(message)
-            }
+            },
             crate::schema_registry::error::RegistryError::SchemaError(msg) => {
                 KalamDbError::SchemaError(msg)
-            }
+            },
             crate::schema_registry::error::RegistryError::ArrowError { message } => {
                 KalamDbError::Other(format!("Registry Arrow error: {}", message))
-            }
+            },
             crate::schema_registry::error::RegistryError::DataFusionError { message } => {
                 KalamDbError::Other(format!("Registry DataFusion error: {}", message))
-            }
+            },
             crate::schema_registry::error::RegistryError::StorageError { message } => {
                 KalamDbError::Other(format!("Registry storage error: {}", message))
-            }
+            },
             crate::schema_registry::error::RegistryError::InvalidConfig { message } => {
                 KalamDbError::ConfigError(message)
-            }
+            },
             crate::schema_registry::error::RegistryError::CacheFailed { message } => {
                 KalamDbError::Other(format!("Cache failed: {}", message))
-            }
+            },
             crate::schema_registry::error::RegistryError::ViewError { message } => {
                 KalamDbError::Other(format!("View error: {}", message))
-            }
+            },
             crate::schema_registry::error::RegistryError::InvalidOperation(msg) => {
                 KalamDbError::InvalidOperation(msg)
-            }
+            },
             crate::schema_registry::error::RegistryError::Other(msg) => {
                 KalamDbError::Other(format!("Registry error: {}", msg))
-            }
+            },
         }
     }
 }
@@ -269,21 +269,21 @@ impl From<kalamdb_system::SystemError> for KalamDbError {
         match err {
             kalamdb_system::SystemError::Storage(msg) => {
                 KalamDbError::Other(format!("System table storage error: {}", msg))
-            }
+            },
             kalamdb_system::SystemError::NotFound(msg) => KalamDbError::NotFound(msg),
             kalamdb_system::SystemError::AlreadyExists(msg) => KalamDbError::AlreadyExists(msg),
             kalamdb_system::SystemError::InvalidOperation(msg) => {
                 KalamDbError::InvalidOperation(msg)
-            }
+            },
             kalamdb_system::SystemError::SerializationError(msg) => {
                 KalamDbError::SerializationError(msg)
-            }
+            },
             kalamdb_system::SystemError::DataFusion(msg) => {
                 KalamDbError::Other(format!("DataFusion error: {}", msg))
-            }
+            },
             kalamdb_system::SystemError::Arrow(e) => {
                 KalamDbError::Other(format!("Arrow error: {}", e))
-            }
+            },
             kalamdb_system::SystemError::Other(msg) => KalamDbError::Other(msg),
         }
     }
@@ -295,27 +295,30 @@ impl From<crate::live::error::LiveError> for KalamDbError {
         match err {
             crate::live::error::LiveError::InvalidOperation(msg) => {
                 KalamDbError::InvalidOperation(msg)
-            }
+            },
             crate::live::error::LiveError::NotFound(msg) => KalamDbError::NotFound(msg),
             crate::live::error::LiveError::Storage(msg) => {
                 KalamDbError::Other(format!("Live query storage error: {}", msg))
-            }
+            },
             crate::live::error::LiveError::SerializationError(msg) => {
                 KalamDbError::SerializationError(msg)
-            }
+            },
             crate::live::error::LiveError::InvalidSql(msg) => KalamDbError::InvalidSql(msg),
             crate::live::error::LiveError::System(msg) => {
                 KalamDbError::Other(format!("Live query system error: {}", msg))
-            }
+            },
             crate::live::error::LiveError::LiveQueryNotFound { live_id } => {
                 KalamDbError::NotFound(format!("Live query not found: {}", live_id))
-            }
+            },
             crate::live::error::LiveError::ConnectionNotFound { connection_id } => {
                 KalamDbError::NotFound(format!("Connection not found: {}", connection_id))
-            }
+            },
             crate::live::error::LiveError::InvalidSubscription { reason, field } => {
-                KalamDbError::InvalidOperation(format!("Invalid subscription '{}': {}", field, reason))
-            }
+                KalamDbError::InvalidOperation(format!(
+                    "Invalid subscription '{}': {}",
+                    field, reason
+                ))
+            },
             crate::live::error::LiveError::DuplicateSubscription {
                 subscription_id,
                 connection_id,
@@ -325,7 +328,7 @@ impl From<crate::live::error::LiveError> for KalamDbError {
             )),
             crate::live::error::LiveError::InvalidQuery { query, reason } => {
                 KalamDbError::InvalidOperation(format!("Invalid query '{}': {}", query, reason))
-            }
+            },
             crate::live::error::LiveError::TableAccessDenied {
                 namespace,
                 table,
@@ -339,7 +342,7 @@ impl From<crate::live::error::LiveError> for KalamDbError {
                     "Failed to compile filter '{}': {}",
                     filter, reason
                 ))
-            }
+            },
             crate::live::error::LiveError::SubscriptionLimitExceeded {
                 connection_id,
                 current,
@@ -679,7 +682,7 @@ impl From<kalamdb_tables::TableError> for KalamDbError {
             TableError::Serialization(msg) => KalamDbError::SerializationError(msg),
             TableError::DataFusion(msg) => {
                 KalamDbError::Other(format!("DataFusion error: {}", msg))
-            }
+            },
             TableError::Arrow(e) => KalamDbError::Other(format!("Arrow error: {}", e)),
             TableError::Filestore(msg) => KalamDbError::Other(format!("Filestore error: {}", msg)),
             TableError::SchemaError(msg) => KalamDbError::SchemaError(msg),
@@ -710,10 +713,7 @@ mod tests {
             size: 2_000_000,
             max: 1_048_576,
         };
-        assert_eq!(
-            err.to_string(),
-            "Message too large: 2000000 bytes (max: 1048576 bytes)"
-        );
+        assert_eq!(err.to_string(), "Message too large: 2000000 bytes (max: 1048576 bytes)");
     }
 
     #[test]
@@ -743,28 +743,19 @@ mod tests {
     #[test]
     fn test_schema_version_not_found_error() {
         let err = KalamDbError::schema_version_not_found("messages", 3);
-        assert_eq!(
-            err.to_string(),
-            "Schema version not found: table=messages, version=3"
-        );
+        assert_eq!(err.to_string(), "Schema version not found: table=messages, version=3");
     }
 
     #[test]
     fn test_invalid_schema_evolution_error() {
         let err = KalamDbError::invalid_schema_evolution("cannot drop required column");
-        assert_eq!(
-            err.to_string(),
-            "Invalid schema evolution: cannot drop required column"
-        );
+        assert_eq!(err.to_string(), "Invalid schema evolution: cannot drop required column");
     }
 
     #[test]
     fn test_column_family_not_found_error() {
         let err = ColumnFamilyError::not_found("user_table:messages");
-        assert_eq!(
-            err.to_string(),
-            "Column family not found: user_table:messages"
-        );
+        assert_eq!(err.to_string(), "Column family not found: user_table:messages");
     }
 
     #[test]
@@ -779,9 +770,6 @@ mod tests {
             expected: "abc123".to_string(),
             actual: "def456".to_string(),
         };
-        assert_eq!(
-            err.to_string(),
-            "Checksum mismatch: expected=abc123, actual=def456"
-        );
+        assert_eq!(err.to_string(), "Checksum mismatch: expected=abc123, actual=def456");
     }
 }

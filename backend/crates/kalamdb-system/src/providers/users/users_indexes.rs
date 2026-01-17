@@ -2,9 +2,9 @@
 //!
 //! This module defines secondary indexes for the system.users table.
 
+use crate::StoragePartition;
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;
-use crate::StoragePartition;
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
 
@@ -31,10 +31,7 @@ impl IndexDefinition<UserId, User> for UserUsernameIndex {
         Some(username_lower.into_bytes())
     }
 
-    fn filter_to_prefix(
-        &self,
-        filter: &datafusion::logical_expr::Expr,
-    ) -> Option<Vec<u8>> {
+    fn filter_to_prefix(&self, filter: &datafusion::logical_expr::Expr) -> Option<Vec<u8>> {
         use datafusion::logical_expr::Expr;
         use datafusion::scalar::ScalarValue;
         use kalamdb_store::extract_string_equality;
@@ -51,10 +48,15 @@ impl IndexDefinition<UserId, User> for UserUsernameIndex {
         if let Expr::Like(like_expr) = filter {
             if let Expr::Column(col) = like_expr.expr.as_ref() {
                 if col.name == "username" {
-                    if let Expr::Literal(ScalarValue::Utf8(Some(pattern)), _) = like_expr.pattern.as_ref() {
+                    if let Expr::Literal(ScalarValue::Utf8(Some(pattern)), _) =
+                        like_expr.pattern.as_ref()
+                    {
                         // Check if pattern is a simple prefix match (ends with %)
-                        if pattern.ends_with('%') && !pattern[..pattern.len()-1].contains('%') && !pattern[..pattern.len()-1].contains('_') {
-                            let prefix = &pattern[..pattern.len()-1];
+                        if pattern.ends_with('%')
+                            && !pattern[..pattern.len() - 1].contains('%')
+                            && !pattern[..pattern.len() - 1].contains('_')
+                        {
+                            let prefix = &pattern[..pattern.len() - 1];
                             return Some(prefix.to_lowercase().into_bytes());
                         }
                     }
@@ -89,10 +91,7 @@ impl IndexDefinition<UserId, User> for UserRoleIndex {
         Some(key.into_bytes())
     }
 
-    fn filter_to_prefix(
-        &self,
-        filter: &datafusion::logical_expr::Expr,
-    ) -> Option<Vec<u8>> {
+    fn filter_to_prefix(&self, filter: &datafusion::logical_expr::Expr) -> Option<Vec<u8>> {
         use kalamdb_store::extract_string_equality;
 
         if let Some((col, val)) = extract_string_equality(filter) {
@@ -106,17 +105,14 @@ impl IndexDefinition<UserId, User> for UserRoleIndex {
 
 /// Create the default set of indexes for the users table.
 pub fn create_users_indexes() -> Vec<Arc<dyn IndexDefinition<UserId, User>>> {
-    vec![
-        Arc::new(UserUsernameIndex),
-        Arc::new(UserRoleIndex),
-    ]
+    vec![Arc::new(UserUsernameIndex), Arc::new(UserRoleIndex)]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use kalamdb_commons::models::UserName;
-use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
+    use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
 
     fn create_test_user(id: &str, username: &str, role: Role) -> User {
         User {
@@ -168,10 +164,7 @@ use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
     fn test_create_users_indexes() {
         let indexes = create_users_indexes();
         assert_eq!(indexes.len(), 2);
-        assert_eq!(
-            indexes[0].partition(),
-            StoragePartition::SystemUsersUsernameIdx.name()
-        );
+        assert_eq!(indexes[0].partition(), StoragePartition::SystemUsersUsernameIdx.name());
         assert_eq!(indexes[1].partition(), StoragePartition::SystemUsersRoleIdx.name());
     }
 }

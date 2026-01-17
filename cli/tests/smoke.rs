@@ -25,18 +25,18 @@ mod common;
 mod chat_ai_example_smoke;
 #[path = "smoke/usecases/smoke_test_all_datatypes.rs"]
 mod smoke_test_all_datatypes;
+#[path = "smoke/usecases/smoke_test_batch_control.rs"]
+mod smoke_test_batch_control;
 #[path = "smoke/usecases/smoke_test_core_operations.rs"]
 mod smoke_test_core_operations;
 #[path = "smoke/usecases/smoke_test_custom_functions.rs"]
 mod smoke_test_custom_functions;
-#[path = "smoke/usecases/smoke_test_timing_output.rs"]
-mod smoke_test_timing_output;
 #[path = "smoke/usecases/smoke_test_int64_precision.rs"]
 mod smoke_test_int64_precision;
-#[path = "smoke/usecases/smoke_test_batch_control.rs"]
-mod smoke_test_batch_control;
 #[path = "smoke/usecases/smoke_test_schema_history.rs"]
 mod smoke_test_schema_history;
+#[path = "smoke/usecases/smoke_test_timing_output.rs"]
+mod smoke_test_timing_output;
 #[path = "smoke/usecases/smoke_test_websocket_capacity.rs"]
 mod smoke_test_websocket_capacity;
 
@@ -73,16 +73,16 @@ mod smoke_test_flush_operations;
 mod smoke_test_flush_pk_integrity;
 
 // Storage tests
-#[path = "smoke/storage/smoke_test_storage_templates.rs"]
-mod smoke_test_storage_templates;
 #[path = "smoke/storage/smoke_test_storage_compact.rs"]
 mod smoke_test_storage_compact;
+#[path = "smoke/storage/smoke_test_storage_templates.rs"]
+mod smoke_test_storage_templates;
 
 // DDL tests
-#[path = "smoke/ddl/smoke_test_ddl_alter.rs"]
-mod smoke_test_ddl_alter;
 #[path = "smoke/ddl/smoke_test_alter_with_data.rs"]
 mod smoke_test_alter_with_data;
+#[path = "smoke/ddl/smoke_test_ddl_alter.rs"]
+mod smoke_test_ddl_alter;
 
 // DML tests
 #[path = "smoke/dml/smoke_test_dml_extended.rs"]
@@ -103,3 +103,5 @@ mod smoke_test_queries_benchmark;
 mod smoke_test_system_and_users;
 #[path = "smoke/system/smoke_test_system_tables_extended.rs"]
 mod smoke_test_system_tables_extended;
+#[path = "smoke/system/smoke_test_cleanup_job.rs"]
+mod smoke_test_cleanup_job;

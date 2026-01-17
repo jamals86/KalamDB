@@ -2,9 +2,9 @@
 //!
 //! This module provides a SystemTableStore<AuditLogId, AuditLogEntry> wrapper for the system.audit_log table.
 
+use crate::SystemTable;
 use kalamdb_commons::models::AuditLogId;
 use kalamdb_commons::system::AuditLogEntry;
-use crate::SystemTable;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
@@ -71,10 +71,10 @@ mod tests {
         let entry = create_test_audit_entry("audit_001", "user.create", 1730000000000);
 
         // Put entry
-        EntityStore::put(&store, &audit_id, &entry).unwrap();
+        store.put(&audit_id, &entry).unwrap();
 
         // Get entry
-        let retrieved = EntityStore::get(&store, &audit_id).unwrap();
+        let retrieved = store.get(&audit_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.audit_id, audit_id);
@@ -94,11 +94,11 @@ mod tests {
                 "user.update",
                 1730000000000 + (i as i64 * 1000),
             );
-            EntityStore::put(&store, &audit_id, &entry).unwrap();
+            store.put(&audit_id, &entry).unwrap();
         }
 
         // Verify all entries exist
-        let entries = EntityStore::scan_all(&store, None, None, None).unwrap();
+        let entries = store.scan_all(None, None, None).unwrap();
         assert_eq!(entries.len(), 3);
     }
 
@@ -114,11 +114,11 @@ mod tests {
                 "user.delete",
                 1730000000000 + (i as i64 * 1000),
             );
-            EntityStore::put(&store, &audit_id, &entry).unwrap();
+            store.put(&audit_id, &entry).unwrap();
         }
 
         // Scan all
-        let entries = EntityStore::scan_all(&store, None, None, None).unwrap();
+        let entries = store.scan_all(None, None, None).unwrap();
         assert_eq!(entries.len(), 5);
 
         // Verify actions
@@ -137,11 +137,11 @@ mod tests {
         for (i, &ts) in timestamps.iter().enumerate() {
             let audit_id = AuditLogId::new(format!("audit_{:03}", i + 1));
             let entry = create_test_audit_entry(&format!("audit_{:03}", i + 1), "test.action", ts);
-            EntityStore::put(&store, &audit_id, &entry).unwrap();
+            store.put(&audit_id, &entry).unwrap();
         }
 
         // Scan all entries
-        let mut entries = EntityStore::scan_all(&store, None, None, None).unwrap();
+        let mut entries = store.scan_all(None, None, None).unwrap();
         assert_eq!(entries.len(), 3);
 
         // Sort by timestamp to verify ordering capability
@@ -170,7 +170,7 @@ mod tests {
                             "concurrent.write",
                             1730000000000 + (thread_id as i64 * 1000) + i,
                         );
-                        EntityStore::put(&*store_clone, &audit_id, &entry).unwrap();
+                        store_clone.put(&audit_id, &entry).unwrap();
                     }
                 })
             })
@@ -182,7 +182,7 @@ mod tests {
         }
 
         // Verify all 100 entries were written
-        let entries = EntityStore::scan_all(&*store, None, None, None).unwrap();
+        let entries = store.scan_all(None, None, None).unwrap();
         assert_eq!(entries.len(), 100);
     }
 

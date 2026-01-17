@@ -8,6 +8,7 @@ members = [
     "backend/crates/kalamdb-sharding",
     "backend/crates/kalamdb-system",
     "backend/crates/kalamdb-tables",
+    "backend/crates/kalamdb-observability",
     "backend/crates/kalamdb-core",
     "backend/crates/kalamdb-sql",
     "backend/crates/kalamdb-store",

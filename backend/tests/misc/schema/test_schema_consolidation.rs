@@ -56,11 +56,7 @@ async fn test_schema_store_persistence() {
             .expect("Failed to get schema")
             .unwrap_or_else(|| panic!("Schema not found for {}", table_name));
 
-        assert!(
-            !schema.columns.is_empty(),
-            "Table {} should have columns",
-            table_name
-        );
+        assert!(!schema.columns.is_empty(), "Table {} should have columns", table_name);
         // Note: schema_history may be empty for system tables initialized without explicit versioning
         // This is acceptable - versioning is tracked separately
 
@@ -142,10 +138,7 @@ async fn test_schema_versioning() {
 
     // If schema history exists, verify it
     if !schema.schema_history.is_empty() {
-        assert_eq!(
-            schema.schema_history[0].version, 1,
-            "First version should be 1"
-        );
+        assert_eq!(schema.schema_history[0].version, 1, "First version should be 1");
         println!(
             "✅ Schema versioning: {} versions, current version {}",
             schema.schema_history.len(),
@@ -194,11 +187,7 @@ async fn test_all_system_tables_have_schemas() {
             .expect("Failed to get schema")
             .unwrap_or_else(|| panic!("Schema not found for {}", table_name));
 
-        assert!(
-            !schema.columns.is_empty(),
-            "Table {} should have columns",
-            table_name
-        );
+        assert!(!schema.columns.is_empty(), "Table {} should have columns", table_name);
 
         // Verify each column has required metadata
         for (idx, col) in schema.columns.iter().enumerate() {
@@ -218,11 +207,7 @@ async fn test_all_system_tables_have_schemas() {
             );
         }
 
-        println!(
-            "✅ system.{} has {} columns",
-            table_name,
-            schema.columns.len()
-        );
+        println!("✅ system.{} has {} columns", table_name, schema.columns.len());
     }
 }
 
@@ -252,16 +237,8 @@ async fn test_internal_api_schema_matches_describe_table() {
 
     // Verify the API schema has expected structure
     assert!(!api_schema.columns.is_empty(), "Schema should have columns");
-    assert_eq!(
-        api_schema.table_name.as_str(),
-        "users",
-        "Table name should be 'users'"
-    );
-    assert_eq!(
-        api_schema.namespace_id.as_str(),
-        "system",
-        "Namespace should be 'system'"
-    );
+    assert_eq!(api_schema.table_name.as_str(), "users", "Table name should be 'users'");
+    assert_eq!(api_schema.namespace_id.as_str(), "system", "Namespace should be 'system'");
 
     // Verify all columns have correct ordinal positions (1-indexed)
     for (idx, column) in api_schema.columns.iter().enumerate() {
@@ -275,9 +252,7 @@ async fn test_internal_api_schema_matches_describe_table() {
     }
 
     // Verify the schema can convert to Arrow schema
-    let arrow_schema = api_schema
-        .to_arrow_schema()
-        .expect("Should convert to Arrow schema");
+    let arrow_schema = api_schema.to_arrow_schema().expect("Should convert to Arrow schema");
     assert_eq!(
         arrow_schema.fields().len(),
         api_schema.columns.len(),
@@ -412,15 +387,8 @@ async fn test_cache_invalidation_on_alter_table() {
         .expect("Failed to get schema after update")
         .expect("Schema should exist after update");
 
-    assert_eq!(
-        cached.columns.len(),
-        3,
-        "Should have 3 columns after update"
-    );
-    assert_eq!(
-        cached.columns[2].column_name, "email",
-        "New column should be 'email'"
-    );
+    assert_eq!(cached.columns.len(), 3, "Should have 3 columns after update");
+    assert_eq!(cached.columns[2].column_name, "email", "New column should be 'email'");
 
     // 7. Verify subsequent read comes from fresh cache (cached should equal a new read)
     let cached_again = schema_store

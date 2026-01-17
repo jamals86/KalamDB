@@ -109,10 +109,7 @@ impl SubscribeStatement {
         let (sql_without_options, options) = Self::extract_options_clause(sql)?;
 
         // Check if user provided custom SELECT query
-        let select_sql = if sql_without_options
-            .to_uppercase()
-            .contains("SUBSCRIBE TO SELECT")
-        {
+        let select_sql = if sql_without_options.to_uppercase().contains("SUBSCRIBE TO SELECT") {
             // Format: SUBSCRIBE TO SELECT columns FROM table [WHERE ...]
             // Just strip "SUBSCRIBE TO " prefix (case-insensitive)
             let upper = sql_without_options.to_uppercase();
@@ -130,9 +127,7 @@ impl SubscribeStatement {
         // Normalize certain function call syntaxes that sqlparser sees as keywords
         // e.g., PostgreSQL treats CURRENT_USER as a special keyword (no parentheses)
         let current_user_re = regex::Regex::new(r"(?i)CURRENT_USER\s*\(\s*\)").unwrap();
-        let select_sql = current_user_re
-            .replace_all(&select_sql, "CURRENT_USER")
-            .into_owned();
+        let select_sql = current_user_re.replace_all(&select_sql, "CURRENT_USER").into_owned();
 
         // Parse the SELECT statement using sqlparser
         let dialect = PostgreSqlDialect {};
@@ -261,7 +256,10 @@ impl SubscribeStatement {
     ///
     /// # Returns
     /// (namespace, table_name) tuple
-    fn extract_namespace_table(name: &ObjectName, default_namespace: &str) -> DdlResult<(String, String)> {
+    fn extract_namespace_table(
+        name: &ObjectName,
+        default_namespace: &str,
+    ) -> DdlResult<(String, String)> {
         let parts: Vec<String> = name
             .0
             .iter()
@@ -277,10 +275,7 @@ impl SubscribeStatement {
             // Unqualified table name: use default namespace
             Ok((default_namespace.to_string(), parts[0].clone()))
         } else {
-            Err(format!(
-                "Invalid table reference: expected [namespace.]table, got {}",
-                name
-            ))
+            Err(format!("Invalid table reference: expected [namespace.]table, got {}", name))
         }
     }
 
@@ -316,15 +311,13 @@ impl SubscribeStatement {
 /// Unknown options are rejected with an error to catch typos early.
 fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscriptionOptions> {
     use kalamdb_commons::ids::SeqId;
-    
+
     let options_str = options_str.trim();
 
     // Expect options wrapped in parentheses
     if !options_str.starts_with('(') || !options_str.ends_with(')') {
-        return Err(
-            "OPTIONS clause must be wrapped in parentheses, e.g., OPTIONS (last_rows=10)"
-                .to_string(),
-        );
+        return Err("OPTIONS clause must be wrapped in parentheses, e.g., OPTIONS (last_rows=10)"
+            .to_string());
     }
 
     let inner = &options_str[1..options_str.len() - 1].trim();
@@ -350,23 +343,23 @@ fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscriptionOptions> 
                             .parse::<u32>()
                             .map_err(|_| format!("Invalid last_rows value: {}", value))?,
                     );
-                }
+                },
                 "batch_size" => {
                     batch_size = Some(
                         value
                             .parse::<usize>()
                             .map_err(|_| format!("Invalid batch_size value: {}", value))?,
                     );
-                }
+                },
                 "from_seq_id" => {
                     let seq_val = value
                         .parse::<i64>()
                         .map_err(|_| format!("Invalid from_seq_id value: {}", value))?;
                     from_seq_id = Some(SeqId::new(seq_val));
-                }
+                },
                 _ => {
                     return Err(format!("Unknown subscription option: '{}'. Valid options are: last_rows, batch_size, from_seq_id", key));
-                }
+                },
             }
         } else {
             return Err(format!("Invalid option format: '{}'. Expected key=value", part));
@@ -413,10 +406,7 @@ mod tests {
             SubscribeStatement::parse("SUBSCRIBE TO app.messages WHERE user_id = 'alice'").unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
-        assert_eq!(
-            stmt.select_query,
-            "SELECT * FROM app.messages WHERE user_id = 'alice'"
-        );
+        assert_eq!(stmt.select_query, "SELECT * FROM app.messages WHERE user_id = 'alice'");
     }
 
     #[test]
@@ -437,10 +427,7 @@ mod tests {
         .unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
-        assert_eq!(
-            stmt.select_query,
-            "SELECT * FROM app.messages WHERE user_id = 'alice'"
-        );
+        assert_eq!(stmt.select_query, "SELECT * FROM app.messages WHERE user_id = 'alice'");
         assert_eq!(stmt.options.last_rows, Some(20));
     }
 
@@ -485,10 +472,7 @@ mod tests {
         .unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("chat"));
         assert_eq!(stmt.table_name, TableName::from("typing_events"));
-        assert_eq!(
-            stmt.select_query,
-            "SELECT event_type FROM chat.typing_events"
-        );
+        assert_eq!(stmt.select_query, "SELECT event_type FROM chat.typing_events");
         assert_eq!(stmt.options.last_rows, Some(20));
     }
 
@@ -523,10 +507,7 @@ mod tests {
     fn test_to_select_sql_with_where() {
         let stmt =
             SubscribeStatement::parse("SUBSCRIBE TO app.messages WHERE user_id = 'alice'").unwrap();
-        assert_eq!(
-            stmt.to_select_sql(),
-            "SELECT * FROM app.messages WHERE user_id = 'alice'"
-        );
+        assert_eq!(stmt.to_select_sql(), "SELECT * FROM app.messages WHERE user_id = 'alice'");
     }
 
     #[test]
@@ -572,10 +553,8 @@ mod tests {
 
     #[test]
     fn test_parse_subscribe_with_batch_size() {
-        let stmt = SubscribeStatement::parse(
-            "SUBSCRIBE TO app.messages OPTIONS (batch_size=500)",
-        )
-        .unwrap();
+        let stmt = SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (batch_size=500)")
+            .unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.select_query, "SELECT * FROM app.messages");
@@ -588,10 +567,9 @@ mod tests {
     fn test_parse_subscribe_with_from_seq_id() {
         use kalamdb_commons::ids::SeqId;
 
-        let stmt = SubscribeStatement::parse(
-            "SUBSCRIBE TO app.messages OPTIONS (from_seq_id=12345)",
-        )
-        .unwrap();
+        let stmt =
+            SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (from_seq_id=12345)")
+                .unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.options.from_seq_id, Some(SeqId::new(12345)));
@@ -622,19 +600,15 @@ mod tests {
         .unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
-        assert_eq!(
-            stmt.select_query,
-            "SELECT * FROM app.messages WHERE user_id = 'alice'"
-        );
+        assert_eq!(stmt.select_query, "SELECT * FROM app.messages WHERE user_id = 'alice'");
         assert_eq!(stmt.options.last_rows, Some(50));
         assert_eq!(stmt.options.batch_size, Some(25));
     }
 
     #[test]
     fn test_parse_subscribe_invalid_batch_size() {
-        let result = SubscribeStatement::parse(
-            "SUBSCRIBE TO app.messages OPTIONS (batch_size=abc)",
-        );
+        let result =
+            SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (batch_size=abc)");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid batch_size value"));
     }
@@ -650,9 +624,8 @@ mod tests {
 
     #[test]
     fn test_parse_subscribe_unknown_option() {
-        let result = SubscribeStatement::parse(
-            "SUBSCRIBE TO app.messages OPTIONS (unknown_option=123)",
-        );
+        let result =
+            SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (unknown_option=123)");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.contains("Unknown subscription option"));
@@ -665,10 +638,8 @@ mod tests {
         use kalamdb_commons::ids::SeqId;
 
         // Negative seq_id should be valid (might be used for special cases)
-        let stmt = SubscribeStatement::parse(
-            "SUBSCRIBE TO app.messages OPTIONS (from_seq_id=-1)",
-        )
-        .unwrap();
+        let stmt = SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (from_seq_id=-1)")
+            .unwrap();
         assert_eq!(stmt.options.from_seq_id, Some(SeqId::new(-1)));
     }
 

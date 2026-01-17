@@ -202,14 +202,9 @@ pub enum WebSocketMessage {
 #[serde(tag = "method", rename_all = "snake_case")]
 pub enum WsAuthCredentials {
     /// Username and password authentication
-    Basic {
-        username: String,
-        password: String,
-    },
+    Basic { username: String, password: String },
     /// JWT token authentication
-    Jwt {
-        token: String,
-    },
+    Jwt { token: String },
     // Future auth methods can be added here:
     // ApiKey { key: String },
     // OAuth { provider: String, token: String },
@@ -449,7 +444,6 @@ pub enum ChangeType {
     Flush,
 }
 
-
 impl WebSocketMessage {
     /// Create a subscription acknowledgement message with batch control and schema
     pub fn subscription_ack(
@@ -509,7 +503,11 @@ impl BatchControl {
         Self {
             batch_num: 0,
             has_more,
-            status: if has_more { BatchStatus::Loading } else { BatchStatus::Ready },
+            status: if has_more {
+                BatchStatus::Loading
+            } else {
+                BatchStatus::Ready
+            },
             last_seq_id: None,
             snapshot_end_seq: None,
         }
@@ -524,7 +522,11 @@ impl BatchControl {
         Self {
             batch_num,
             has_more,
-            status: if has_more { BatchStatus::LoadingBatch } else { BatchStatus::Ready },
+            status: if has_more {
+                BatchStatus::LoadingBatch
+            } else {
+                BatchStatus::Ready
+            },
             last_seq_id: None,
             snapshot_end_seq: None,
         }
@@ -538,7 +540,11 @@ impl BatchControl {
         snapshot_end_seq: Option<SeqId>,
     ) -> Self {
         let status = if batch_num == 0 {
-            if has_more { BatchStatus::Loading } else { BatchStatus::Ready }
+            if has_more {
+                BatchStatus::Loading
+            } else {
+                BatchStatus::Ready
+            }
         } else if has_more {
             BatchStatus::LoadingBatch
         } else {
@@ -606,23 +612,23 @@ mod tests {
     fn create_test_row(id: i64, message: &str) -> Row {
         let mut values = BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int64(Some(id)));
-        values.insert(
-            "message".to_string(),
-            ScalarValue::Utf8(Some(message.to_string())),
-        );
+        values.insert("message".to_string(), ScalarValue::Utf8(Some(message.to_string())));
         Row::new(values)
     }
-    
+
     fn row_to_test_json(row: &Row) -> HashMap<String, JsonValue> {
         // Simple conversion for tests - convert ScalarValue to JSON
-        row.values.iter().map(|(k, v)| {
-            let json_val = match v {
-                ScalarValue::Int64(Some(i)) => JsonValue::String(i.to_string()),
-                ScalarValue::Utf8(Some(s)) => JsonValue::String(s.clone()),
-                _ => JsonValue::Null,
-            };
-            (k.clone(), json_val)
-        }).collect()
+        row.values
+            .iter()
+            .map(|(k, v)| {
+                let json_val = match v {
+                    ScalarValue::Int64(Some(i)) => JsonValue::String(i.to_string()),
+                    ScalarValue::Utf8(Some(s)) => JsonValue::String(s.clone()),
+                    _ => JsonValue::Null,
+                };
+                (k.clone(), json_val)
+            })
+            .collect()
     }
 
     #[test]
@@ -701,7 +707,8 @@ mod tests {
         let new_row_json = row_to_test_json(&new_row);
         let old_row_json = row_to_test_json(&old_row);
 
-        let notification = Notification::update("sub-1".to_string(), vec![new_row_json], vec![old_row_json]);
+        let notification =
+            Notification::update("sub-1".to_string(), vec![new_row_json], vec![old_row_json]);
 
         let json = serde_json::to_string(&notification).unwrap();
         assert!(json.contains("update"));

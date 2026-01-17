@@ -31,8 +31,9 @@
 //! println!("Active handles: {}", stats.active_handles);
 //! ```
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use log::{debug, warn};
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Global file handle tracker
 static TRACKER: FileHandleTracker = FileHandleTracker::new();
@@ -97,10 +98,11 @@ impl FileHandleTracker {
 /// # Arguments
 /// * `context` - Description of what's opening the file (e.g., "parquet_reader")
 /// * `path` - Path being opened (for logging)
-pub fn record_open(context: &str, path: &str) {
+pub fn record_open<P: AsRef<Path>>(context: &str, path: P) {
+    let path = path.as_ref();
     let new_count = TRACKER.active_handles.fetch_add(1, Ordering::SeqCst) + 1;
     TRACKER.total_opened.fetch_add(1, Ordering::Relaxed);
-    
+
     // Update peak if needed
     let mut current_peak = TRACKER.peak_handles.load(Ordering::Relaxed);
     while new_count > current_peak {
@@ -118,7 +120,7 @@ pub fn record_open(context: &str, path: &str) {
     debug!(
         "[FILE_HANDLE] OPEN: context={}, path={}, active={}, total_opened={}",
         context,
-        path,
+        path.display(),
         new_count,
         TRACKER.total_opened.load(Ordering::Relaxed)
     );
@@ -127,7 +129,9 @@ pub fn record_open(context: &str, path: &str) {
     if new_count > 1000 {
         warn!(
             "[FILE_HANDLE] HIGH HANDLE COUNT: {} handles open (context={}, path={})",
-            new_count, context, path
+            new_count,
+            context,
+            path.display()
         );
     }
 }
@@ -137,14 +141,15 @@ pub fn record_open(context: &str, path: &str) {
 /// # Arguments
 /// * `context` - Description of what's closing the file
 /// * `path` - Path being closed (for logging)
-pub fn record_close(context: &str, path: &str) {
+pub fn record_close<P: AsRef<Path>>(context: &str, path: P) {
+    let path = path.as_ref();
     let old_count = TRACKER.active_handles.fetch_sub(1, Ordering::SeqCst);
     TRACKER.total_closed.fetch_add(1, Ordering::Relaxed);
 
     debug!(
         "[FILE_HANDLE] CLOSE: context={}, path={}, active={}, total_closed={}",
         context,
-        path,
+        path.display(),
         old_count.saturating_sub(1),
         TRACKER.total_closed.load(Ordering::Relaxed)
     );
@@ -153,7 +158,8 @@ pub fn record_close(context: &str, path: &str) {
     if old_count == 0 {
         warn!(
             "[FILE_HANDLE] UNDERFLOW: Closed more files than opened! context={}, path={}",
-            context, path
+            context,
+            path.display()
         );
     }
 }
@@ -165,7 +171,7 @@ pub fn check_for_leaks() -> Option<i64> {
     let opened = TRACKER.total_opened.load(Ordering::Relaxed) as i64;
     let closed = TRACKER.total_closed.load(Ordering::Relaxed) as i64;
     let diff = opened - closed;
-    
+
     if diff != 0 {
         Some(diff)
     } else {
@@ -183,12 +189,9 @@ pub fn log_stats_summary() {
         stats.total_closed,
         stats.peak_handles
     );
-    
+
     if let Some(leak_count) = check_for_leaks() {
-        warn!(
-            "[FILE_HANDLE] POTENTIAL LEAK: {} unclosed handles detected",
-            leak_count
-        );
+        warn!("[FILE_HANDLE] POTENTIAL LEAK: {} unclosed handles detected", leak_count);
     }
 }
 
@@ -237,7 +240,7 @@ mod tests {
         for i in 0..5 {
             record_open("test", &format!("/path/{}", i));
         }
-        
+
         let stats = FileHandleTracker::stats();
         assert_eq!(stats.peak_handles, 5);
 

@@ -32,32 +32,28 @@ impl UserName {
     fn validate(name: &str) -> Result<(), UserNameValidationError> {
         // Check for empty name
         if name.is_empty() {
-            return Err(UserNameValidationError(
-                "Username cannot be empty".to_string(),
-            ));
+            return Err(UserNameValidationError("Username cannot be empty".to_string()));
         }
-        
+
         // Check for SQL injection characters
         if name.contains('\'') || name.contains('"') || name.contains(';') {
             return Err(UserNameValidationError(
                 "Username cannot contain quotes or semicolons".to_string(),
             ));
         }
-        
+
         // Check for path traversal
         if name.contains("..") || name.contains('/') || name.contains('\\') {
             return Err(UserNameValidationError(
                 "Username cannot contain path traversal characters".to_string(),
             ));
         }
-        
+
         // Check for null bytes
         if name.contains('\0') {
-            return Err(UserNameValidationError(
-                "Username cannot contain null bytes".to_string(),
-            ));
+            return Err(UserNameValidationError("Username cannot contain null bytes".to_string()));
         }
-        
+
         Ok(())
     }
 
@@ -68,7 +64,7 @@ impl UserName {
     pub fn new(name: impl Into<String>) -> Self {
         Self::try_new(name).expect("UserName contains invalid characters")
     }
-    
+
     /// Creates a new UserName from a string, returning an error if validation fails.
     pub fn try_new(name: impl Into<String>) -> Result<Self, UserNameValidationError> {
         let name = name.into();
@@ -138,9 +134,7 @@ impl StorageKey for UserName {
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
-        String::from_utf8(bytes.to_vec())
-            .map(UserName)
-            .map_err(|e| e.to_string())
+        String::from_utf8(bytes.to_vec()).map(UserName).map_err(|e| e.to_string())
     }
 }
 

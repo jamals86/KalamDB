@@ -7,7 +7,7 @@ impl SqlStatement {
     /// Extract AS USER 'user_id' clause from SQL if present
     /// Returns (cleaned_sql, optional_user_id)
     pub(crate) fn extract_as_user(sql: &str) -> (String, Option<UserId>) {
-        let upper = sql.to_uppercase();
+        let upper = sql.to_ascii_uppercase();
 
         // Find "AS USER 'user_id'" or "AS USER \"user_id\"" pattern
         if let Some(as_user_pos) = upper.find(" AS USER ") {
@@ -42,9 +42,15 @@ impl SqlStatement {
                 ""
             };
 
-            let cleaned_sql = format!("{} {}", before_as_user.trim(), after_as_user_clause.trim())
-                .trim()
-                .to_string();
+            let before_trimmed = before_as_user.trim();
+            let after_trimmed = after_as_user_clause.trim();
+            let mut cleaned_sql =
+                String::with_capacity(before_trimmed.len() + after_trimmed.len() + 1);
+            cleaned_sql.push_str(before_trimmed);
+            if !after_trimmed.is_empty() {
+                cleaned_sql.push(' ');
+                cleaned_sql.push_str(after_trimmed);
+            }
             let user_id = UserId::from(user_id_str.to_string());
 
             (cleaned_sql, Some(user_id))
@@ -58,10 +64,7 @@ impl SqlStatement {
     where
         F: FnOnce() -> Option<SqlStatementKind>,
     {
-        Self::new(
-            sql.to_string(),
-            parser().unwrap_or(SqlStatementKind::Unknown),
-        )
+        Self::new(sql.to_string(), parser().unwrap_or(SqlStatementKind::Unknown))
     }
 
     /// Classify and parse SQL statement with default namespace
@@ -103,25 +106,21 @@ impl SqlStatement {
         // Use sqlparser's tokenizer to get the first keyword (skips comments automatically)
         let dialect = sqlparser::dialect::GenericDialect {};
         let mut tokenizer = sqlparser::tokenizer::Tokenizer::new(&dialect, sql);
-        
-        // Pre-compute fallback data only once (lazy via Option)
-        let fallback_data = || -> (String, Vec<String>) {
-            let sql_upper = sql.trim().to_uppercase();
-            let words: Vec<String> = sql_upper.split_whitespace().map(|s| s.to_string()).collect();
-            (sql_upper, words)
-        };
-        
-        let tokens = match tokenizer.tokenize() {
-            Ok(t) => t,
-            Err(_) => {
-                // If tokenization fails, use simple whitespace split as fallback
-                let (_, fallback_words) = fallback_data();
-                if fallback_words.is_empty() {
+        let tokens = tokenizer.tokenize().ok();
+        let mut fallback_words: Option<Vec<String>> = None;
+        let tokens = match tokens {
+            Some(tokens) => tokens,
+            None => {
+                let mut sql_upper = sql.trim().to_string();
+                sql_upper.make_ascii_uppercase();
+                let words: Vec<String> =
+                    sql_upper.split_whitespace().map(|s| s.to_string()).collect();
+                if words.is_empty() {
                     return Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown));
                 }
-                // Continue with simple word-based matching
-                vec![]
-            }
+                fallback_words = Some(words);
+                Vec::new()
+            },
         };
 
         // Get first non-whitespace, non-comment token
@@ -129,18 +128,32 @@ impl SqlStatement {
             tokens
                 .iter()
                 .find_map(|tok| match tok {
-                    sqlparser::tokenizer::Token::Word(w) => Some(w.value.to_uppercase()),
+                    sqlparser::tokenizer::Token::Word(w) => Some(w.value.to_ascii_uppercase()),
                     _ => None,
                 })
                 .unwrap_or_else(|| {
-                    // Fallback to simple parsing
-                    let (_, fallback_words) = fallback_data();
-                    fallback_words.first().cloned().unwrap_or_default()
+                    if fallback_words.is_none() {
+                        let mut sql_upper = sql.trim().to_string();
+                        sql_upper.make_ascii_uppercase();
+                        fallback_words =
+                            Some(sql_upper.split_whitespace().map(|s| s.to_string()).collect());
+                    }
+                    fallback_words
+                        .as_ref()
+                        .and_then(|words| words.first().cloned())
+                        .unwrap_or_default()
                 })
         } else {
-            // Fallback to simple parsing
-            let (_, fallback_words) = fallback_data();
-            fallback_words.first().cloned().unwrap_or_default()
+            if fallback_words.is_none() {
+                let mut sql_upper = sql.trim().to_string();
+                sql_upper.make_ascii_uppercase();
+                fallback_words =
+                    Some(sql_upper.split_whitespace().map(|s| s.to_string()).collect());
+            }
+            fallback_words
+                .as_ref()
+                .and_then(|words| words.first().cloned())
+                .unwrap_or_default()
         };
 
         // Build words list from non-comment tokens for pattern matching
@@ -148,13 +161,12 @@ impl SqlStatement {
             tokens
                 .iter()
                 .filter_map(|tok| match tok {
-                    sqlparser::tokenizer::Token::Word(w) => Some(w.value.to_uppercase()),
+                    sqlparser::tokenizer::Token::Word(w) => Some(w.value.to_ascii_uppercase()),
                     _ => None,
                 })
                 .collect()
         } else {
-            let (_, fallback_words) = fallback_data();
-            fallback_words
+            fallback_words.take().unwrap_or_default()
         };
         let word_refs: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
 
@@ -184,7 +196,7 @@ impl SqlStatement {
                         SqlStatementKind::Insert(crate::ddl::InsertStatement),
                     ))
                 };
-            }
+            },
             "DELETE" => {
                 // T151: Extract AS USER clause from DELETE statement (Phase 7)
                 let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
@@ -200,7 +212,7 @@ impl SqlStatement {
                         SqlStatementKind::Delete(crate::ddl::DeleteStatement),
                     ))
                 };
-            }
+            },
             "UPDATE" => {
                 // T151: Extract AS USER clause from UPDATE statement (Phase 7)
                 let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
@@ -216,8 +228,8 @@ impl SqlStatement {
                         SqlStatementKind::Update(crate::ddl::UpdateStatement),
                     ))
                 };
-            }
-            _ => {}
+            },
+            _ => {},
         }
 
         // Check multi-word prefixes and parse DDL statements
@@ -231,11 +243,9 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::wrap(sql, || {
-                    CreateNamespaceStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::CreateNamespace)
+                    CreateNamespaceStatement::parse(sql).ok().map(SqlStatementKind::CreateNamespace)
                 }))
-            }
+            },
             ["ALTER", "NAMESPACE", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -244,11 +254,9 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::wrap(sql, || {
-                    AlterNamespaceStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::AlterNamespace)
+                    AlterNamespaceStatement::parse(sql).ok().map(SqlStatementKind::AlterNamespace)
                 }))
-            }
+            },
             ["DROP", "NAMESPACE", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -257,42 +265,34 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::wrap(sql, || {
-                    DropNamespaceStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::DropNamespace)
+                    DropNamespaceStatement::parse(sql).ok().map(SqlStatementKind::DropNamespace)
                 }))
-            }
+            },
             ["SHOW", "NAMESPACES", ..] => {
                 // Read-only, allowed for all users
                 Ok(Self::wrap(sql, || {
-                    ShowNamespacesStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::ShowNamespaces)
+                    ShowNamespacesStatement::parse(sql).ok().map(SqlStatementKind::ShowNamespaces)
                 }))
-            }
+            },
 
             // USE NAMESPACE / USE / SET NAMESPACE - switch default schema
             ["USE", "NAMESPACE", ..] | ["SET", "NAMESPACE", ..] => {
                 // Allowed for all users (actual table access is checked per-query)
                 Ok(Self::wrap(sql, || {
-                    UseNamespaceStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::UseNamespace)
+                    UseNamespaceStatement::parse(sql).ok().map(SqlStatementKind::UseNamespace)
                 }))
-            }
+            },
             ["USE", ..] => {
                 // USE <name> shorthand (must not be USE NAMESPACE which is handled above)
                 // Check it's not "USE NAMESPACE" which would have matched above
                 if word_refs.len() >= 2 && word_refs[1] != "NAMESPACE" {
                     Ok(Self::wrap(sql, || {
-                        UseNamespaceStatement::parse(sql)
-                            .ok()
-                            .map(SqlStatementKind::UseNamespace)
+                        UseNamespaceStatement::parse(sql).ok().map(SqlStatementKind::UseNamespace)
                     }))
                 } else {
                     Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown))
                 }
-            }
+            },
 
             // Storage operations - require admin
             ["CREATE", "STORAGE", ..] => {
@@ -303,11 +303,9 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::wrap(sql, || {
-                    CreateStorageStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::CreateStorage)
+                    CreateStorageStatement::parse(sql).ok().map(SqlStatementKind::CreateStorage)
                 }))
-            }
+            },
             ["ALTER", "STORAGE", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -316,11 +314,9 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::wrap(sql, || {
-                    AlterStorageStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::AlterStorage)
+                    AlterStorageStatement::parse(sql).ok().map(SqlStatementKind::AlterStorage)
                 }))
-            }
+            },
             ["DROP", "STORAGE", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -329,27 +325,20 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::wrap(sql, || {
-                    DropStorageStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::DropStorage)
+                    DropStorageStatement::parse(sql).ok().map(SqlStatementKind::DropStorage)
                 }))
-            }
+            },
             ["SHOW", "STORAGES", ..] => {
                 // Read-only, allowed for all users
                 Ok(Self::wrap(sql, || {
-                    ShowStoragesStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::ShowStorages)
+                    ShowStoragesStatement::parse(sql).ok().map(SqlStatementKind::ShowStorages)
                 }))
-            }
+            },
 
             // View operations - DataFusion compatibility (authorization handled in handler)
             _ if is_create_view(&word_refs) => {
                 match CreateViewStatement::parse(sql, default_namespace) {
-                    Ok(stmt) => Ok(Self::new(
-                        sql.to_string(),
-                        SqlStatementKind::CreateView(stmt),
-                    )),
+                    Ok(stmt) => Ok(Self::new(sql.to_string(), SqlStatementKind::CreateView(stmt))),
                     Err(e) => {
                         log::error!(
                             target: "sql::parse",
@@ -361,9 +350,9 @@ impl SqlStatement {
                             sql: sql.to_string(),
                             message: format!("Invalid CREATE VIEW statement: {}", e),
                         })
-                    }
+                    },
                 }
-            }
+            },
 
             // Table operations - authorization deferred to table ownership checks
             ["CREATE", "USER", "TABLE", ..]
@@ -372,10 +361,7 @@ impl SqlStatement {
             | ["CREATE", "TABLE", ..] => {
                 // Parse CREATE TABLE statement with detailed error logging
                 match CreateTableStatement::parse(sql, default_namespace.as_str()) {
-                    Ok(stmt) => Ok(Self::new(
-                        sql.to_string(),
-                        SqlStatementKind::CreateTable(stmt),
-                    )),
+                    Ok(stmt) => Ok(Self::new(sql.to_string(), SqlStatementKind::CreateTable(stmt))),
                     Err(e) => {
                         log::error!(
                             target: "sql::parse",
@@ -388,9 +374,9 @@ impl SqlStatement {
                             sql: sql.to_string(),
                             message: format!("Invalid CREATE TABLE statement: {}", e),
                         })
-                    }
+                    },
                 }
-            }
+            },
             ["ALTER", "TABLE", ..]
             | ["ALTER", "USER", "TABLE", ..]
             | ["ALTER", "SHARED", "TABLE", ..]
@@ -410,27 +396,21 @@ impl SqlStatement {
             ["SHOW", "TABLES", ..] => {
                 // Read-only, allowed for all users
                 Ok(Self::wrap(sql, || {
-                    ShowTablesStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::ShowTables)
+                    ShowTablesStatement::parse(sql).ok().map(SqlStatementKind::ShowTables)
                 }))
-            }
+            },
             ["DESCRIBE", "TABLE", ..] | ["DESC", "TABLE", ..] => {
                 // Read-only, allowed for all users
                 Ok(Self::wrap(sql, || {
-                    DescribeTableStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::DescribeTable)
+                    DescribeTableStatement::parse(sql).ok().map(SqlStatementKind::DescribeTable)
                 }))
-            }
+            },
             ["SHOW", "STATS", ..] => {
                 // Read-only, allowed for all users
                 Ok(Self::wrap(sql, || {
-                    ShowTableStatsStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::ShowStats)
+                    ShowTableStatsStatement::parse(sql).ok().map(SqlStatementKind::ShowStats)
                 }))
-            }
+            },
 
             // Storage maintenance operations - authorization deferred to table ownership checks
             ["STORAGE", "FLUSH", "ALL", ..] => Ok(Self::wrap(sql, || {
@@ -439,9 +419,7 @@ impl SqlStatement {
                     .map(SqlStatementKind::FlushAllTables)
             })),
             ["STORAGE", "FLUSH", "TABLE", ..] => Ok(Self::wrap(sql, || {
-                FlushTableStatement::parse(sql)
-                    .ok()
-                    .map(SqlStatementKind::FlushTable)
+                FlushTableStatement::parse(sql).ok().map(SqlStatementKind::FlushTable)
             })),
             ["STORAGE", "COMPACT", "ALL", ..] => Ok(Self::wrap(sql, || {
                 CompactAllTablesStatement::parse_with_default(sql, default_namespace)
@@ -449,26 +427,20 @@ impl SqlStatement {
                     .map(SqlStatementKind::CompactAllTables)
             })),
             ["STORAGE", "COMPACT", "TABLE", ..] => Ok(Self::wrap(sql, || {
-                CompactTableStatement::parse(sql)
-                    .ok()
-                    .map(SqlStatementKind::CompactTable)
+                CompactTableStatement::parse(sql).ok().map(SqlStatementKind::CompactTable)
             })),
             ["SHOW", "MANIFEST"] => {
                 // SHOW MANIFEST command for inspecting manifest cache
                 Ok(Self::wrap(sql, || {
-                    ShowManifestStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::ShowManifest)
+                    ShowManifestStatement::parse(sql).ok().map(SqlStatementKind::ShowManifest)
                 }))
-            }
+            },
             ["SHOW", "MANIFEST", "CACHE", ..] => {
                 // Legacy alias for SHOW MANIFEST - backwards compatibility
                 Ok(Self::wrap(sql, || {
-                    ShowManifestStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::ShowManifest)
+                    ShowManifestStatement::parse(sql).ok().map(SqlStatementKind::ShowManifest)
                 }))
-            }
+            },
 
             // Job management - require admin
             ["KILL", "JOB", ..] => {
@@ -478,18 +450,14 @@ impl SqlStatement {
                             .to_string(),
                     ));
                 }
-                Ok(Self::wrap(sql, || {
-                    parse_job_command(sql).ok().map(SqlStatementKind::KillJob)
-                }))
-            }
+                Ok(Self::wrap(sql, || parse_job_command(sql).ok().map(SqlStatementKind::KillJob)))
+            },
             ["KILL", "LIVE", "QUERY", ..] => {
                 // Users can kill their own live queries
                 Ok(Self::wrap(sql, || {
-                    KillLiveQueryStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::KillLiveQuery)
+                    KillLiveQueryStatement::parse(sql).ok().map(SqlStatementKind::KillLiveQuery)
                 }))
-            }
+            },
 
             // Cluster operations - require admin (except CLUSTER LIST which is read-only)
             ["CLUSTER", "SNAPSHOT", ..] => {
@@ -500,7 +468,7 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterSnapshot))
-            }
+            },
             ["CLUSTER", "PURGE", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -525,7 +493,7 @@ impl SqlStatement {
                 let is_upto = |token: &sqlparser::tokenizer::Token| match token {
                     sqlparser::tokenizer::Token::Word(word) => {
                         word.value.eq_ignore_ascii_case("upto")
-                    }
+                    },
                     _ => false,
                 };
 
@@ -554,7 +522,7 @@ impl SqlStatement {
                 };
 
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterPurge(upto)))
-            }
+            },
             ["CLUSTER", "TRIGGER", "ELECTION", ..] | ["CLUSTER", "TRIGGER-ELECTION", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -563,7 +531,7 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterTriggerElection))
-            }
+            },
             ["CLUSTER", "TRANSFER", "LEADER", node_id, ..]
             | ["CLUSTER", "TRANSFER-LEADER", node_id, ..] => {
                 if !is_admin {
@@ -578,11 +546,8 @@ impl SqlStatement {
                         message: "CLUSTER TRANSFER-LEADER requires a numeric node id".to_string(),
                     }
                 })?;
-                Ok(Self::new(
-                    sql.to_string(),
-                    SqlStatementKind::ClusterTransferLeader(node_id),
-                ))
-            }
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterTransferLeader(node_id)))
+            },
             ["CLUSTER", "STEPDOWN", ..] | ["CLUSTER", "STEP-DOWN", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -591,7 +556,7 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterStepdown))
-            }
+            },
             ["CLUSTER", "CLEAR", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -600,15 +565,15 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterClear))
-            }
+            },
             ["CLUSTER", "LIST", ..] => {
                 // Read-only, allowed for all users
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterList))
-            }
-            ["CLUSTER", "STATUS", ..] => {
+            },
+            ["CLUSTER", "STATUS", ..] | ["CLUSTER", "LS", ..] => {
                 // Read-only, allowed for all users
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterList))
-            }
+            },
             ["CLUSTER", "JOIN", addr, ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -617,7 +582,7 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterJoin(addr.to_string())))
-            }
+            },
             ["CLUSTER", "JOIN"] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -626,12 +591,8 @@ impl SqlStatement {
                     ));
                 }
 
-                let addr = sql
-                    .split_whitespace()
-                    .nth(2)
-                    .unwrap_or("")
-                    .trim_end_matches(';')
-                    .to_string();
+                let addr =
+                    sql.split_whitespace().nth(2).unwrap_or("").trim_end_matches(';').to_string();
 
                 if addr.is_empty() {
                     return Err(StatementClassificationError::InvalidSql {
@@ -641,7 +602,7 @@ impl SqlStatement {
                 }
 
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterJoin(addr)))
-            }
+            },
             ["CLUSTER", "LEAVE", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -650,27 +611,20 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterLeave))
-            }
+            },
 
             // Transaction control (no parsing needed - just markers)
-            ["BEGIN", ..] | ["START", "TRANSACTION", ..] => Ok(Self::new(
-                sql.to_string(),
-                SqlStatementKind::BeginTransaction,
-            )),
-            ["COMMIT", ..] => Ok(Self::new(
-                sql.to_string(),
-                SqlStatementKind::CommitTransaction,
-            )),
-            ["ROLLBACK", ..] => Ok(Self::new(
-                sql.to_string(),
-                SqlStatementKind::RollbackTransaction,
-            )),
+            ["BEGIN", ..] | ["START", "TRANSACTION", ..] => {
+                Ok(Self::new(sql.to_string(), SqlStatementKind::BeginTransaction))
+            },
+            ["COMMIT", ..] => Ok(Self::new(sql.to_string(), SqlStatementKind::CommitTransaction)),
+            ["ROLLBACK", ..] => {
+                Ok(Self::new(sql.to_string(), SqlStatementKind::RollbackTransaction))
+            },
 
             // Live query subscriptions - allowed for all users
             ["SUBSCRIBE", "TO", ..] => Ok(Self::wrap(sql, || {
-                SubscribeStatement::parse(sql)
-                    .ok()
-                    .map(SqlStatementKind::Subscribe)
+                SubscribeStatement::parse(sql).ok().map(SqlStatementKind::Subscribe)
             })),
 
             // User management - require admin (except ALTER USER for self)
@@ -682,19 +636,15 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::wrap(sql, || {
-                    CreateUserStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::CreateUser)
+                    CreateUserStatement::parse(sql).ok().map(SqlStatementKind::CreateUser)
                 }))
-            }
+            },
             ["ALTER", "USER", ..] => {
                 // Authorization deferred to handler (users can alter their own account)
                 Ok(Self::wrap(sql, || {
-                    AlterUserStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::AlterUser)
+                    AlterUserStatement::parse(sql).ok().map(SqlStatementKind::AlterUser)
                 }))
-            }
+            },
             ["DROP", "USER", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -703,11 +653,9 @@ impl SqlStatement {
                     ));
                 }
                 Ok(Self::wrap(sql, || {
-                    DropUserStatement::parse(sql)
-                        .ok()
-                        .map(SqlStatementKind::DropUser)
+                    DropUserStatement::parse(sql).ok().map(SqlStatementKind::DropUser)
                 }))
-            }
+            },
 
             // DataFusion Meta Commands - Admin only
             // These commands are passed directly to DataFusion for parsing and execution.
@@ -720,11 +668,8 @@ impl SqlStatement {
                             .to_string(),
                     ));
                 }
-                Ok(Self::new(
-                    sql.to_string(),
-                    SqlStatementKind::DataFusionMetaCommand,
-                ))
-            }
+                Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
+            },
             ["SET", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -732,11 +677,8 @@ impl SqlStatement {
                             .to_string(),
                     ));
                 }
-                Ok(Self::new(
-                    sql.to_string(),
-                    SqlStatementKind::DataFusionMetaCommand,
-                ))
-            }
+                Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
+            },
             ["SHOW", "COLUMNS", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -744,49 +686,34 @@ impl SqlStatement {
                             .to_string(),
                     ));
                 }
-                Ok(Self::new(
-                    sql.to_string(),
-                    SqlStatementKind::DataFusionMetaCommand,
-                ))
-            }
+                Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
+            },
             ["SHOW", "ALL", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
-                        "Admin privileges (DBA or System role) required for SHOW ALL"
-                            .to_string(),
+                        "Admin privileges (DBA or System role) required for SHOW ALL".to_string(),
                     ));
                 }
-                Ok(Self::new(
-                    sql.to_string(),
-                    SqlStatementKind::DataFusionMetaCommand,
-                ))
-            }
+                Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
+            },
             // DESCRIBE <table> or DESC <table> (without TABLE keyword) - DataFusion style
             // Note: DESCRIBE TABLE is handled above as KalamDB custom command
             ["DESCRIBE", next, ..] if *next != "TABLE" => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
-                        "Admin privileges (DBA or System role) required for DESCRIBE"
-                            .to_string(),
+                        "Admin privileges (DBA or System role) required for DESCRIBE".to_string(),
                     ));
                 }
-                Ok(Self::new(
-                    sql.to_string(),
-                    SqlStatementKind::DataFusionMetaCommand,
-                ))
-            }
+                Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
+            },
             ["DESC", next, ..] if *next != "TABLE" => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
-                        "Admin privileges (DBA or System role) required for DESC"
-                            .to_string(),
+                        "Admin privileges (DBA or System role) required for DESC".to_string(),
                     ));
                 }
-                Ok(Self::new(
-                    sql.to_string(),
-                    SqlStatementKind::DataFusionMetaCommand,
-                ))
-            }
+                Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
+            },
 
             // Unknown
             _ => Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown)),
@@ -842,9 +769,10 @@ impl SqlStatement {
             ),
 
             // User management requires admin privileges (except for self-modification in ALTER USER)
-            SqlStatementKind::CreateUser(_) | SqlStatementKind::DropUser(_) => Err(
-                "Admin privileges (DBA or System role) required for user management".to_string(),
-            ),
+            SqlStatementKind::CreateUser(_) | SqlStatementKind::DropUser(_) => {
+                Err("Admin privileges (DBA or System role) required for user management"
+                    .to_string())
+            },
 
             // ALTER USER allowed for self (changing own password), admin for others
             // The actual target user check is deferred to execute_alter_user method
@@ -853,10 +781,10 @@ impl SqlStatement {
             // Namespace DDL requires admin privileges
             SqlStatementKind::CreateNamespace(_)
             | SqlStatementKind::AlterNamespace(_)
-            | SqlStatementKind::DropNamespace(_) => Err(
-                "Admin privileges (DBA or System role) required for namespace operations"
-                    .to_string(),
-            ),
+            | SqlStatementKind::DropNamespace(_) => {
+                Err("Admin privileges (DBA or System role) required for namespace operations"
+                    .to_string())
+            },
 
             // Read-only operations on system tables are allowed for all authenticated users
             SqlStatementKind::ShowNamespaces(_)
@@ -880,7 +808,7 @@ impl SqlStatement {
                 // Users can only create/modify/drop tables they own
                 // Admin users can operate on any table (already returned above)
                 Ok(())
-            }
+            },
 
             // SELECT, INSERT, UPDATE, DELETE - defer to table access control
             SqlStatementKind::Select
@@ -891,7 +819,7 @@ impl SqlStatement {
                 // User tables are filtered by user_id in UserTableProvider
                 // Shared tables enforce access control based on access_level
                 Ok(())
-            }
+            },
 
             // Subscriptions, transactions, and other operations allowed for all users
             SqlStatementKind::Subscribe(_)
@@ -908,7 +836,7 @@ impl SqlStatement {
                 // Unknown statements will fail in execute anyway
                 // Allow them through so we can return a better error message
                 Ok(())
-            }
+            },
         }
     }
 }
@@ -922,10 +850,7 @@ fn is_create_view(tokens: &[&str]) -> bool {
         return false;
     };
 
-    tokens[1..view_pos].iter().all(|token| {
-        matches!(
-            *token,
-            "OR" | "REPLACE" | "TEMP" | "TEMPORARY" | "MATERIALIZED"
-        )
-    })
+    tokens[1..view_pos]
+        .iter()
+        .all(|token| matches!(*token, "OR" | "REPLACE" | "TEMP" | "TEMPORARY" | "MATERIALIZED"))
 }

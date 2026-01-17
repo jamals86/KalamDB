@@ -39,8 +39,8 @@ mod namespace;
 mod storage;
 mod user;
 
-use std::sync::Arc;
 use crate::app_context::AppContext;
+use std::sync::Arc;
 
 pub use ddl::DdlExecutor;
 pub use dml::DmlExecutor;
@@ -86,32 +86,32 @@ impl CommandExecutorImpl {
             app_context,
         }
     }
-    
+
     /// Get the DDL executor
     pub fn ddl(&self) -> &DdlExecutor {
         &self.ddl
     }
-    
+
     /// Get the DML executor
     pub fn dml(&self) -> &DmlExecutor {
         &self.dml
     }
-    
+
     /// Get the namespace executor
     pub fn namespace(&self) -> &NamespaceExecutor {
         &self.namespace
     }
-    
+
     /// Get the storage executor
     pub fn storage(&self) -> &StorageExecutor {
         &self.storage
     }
-    
+
     /// Get the user executor
     pub fn user(&self) -> &UserExecutor {
         &self.user
     }
-    
+
     /// Get the app context
     pub fn app_context(&self) -> &Arc<AppContext> {
         &self.app_context

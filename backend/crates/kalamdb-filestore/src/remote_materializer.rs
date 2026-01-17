@@ -104,36 +104,26 @@ async fn download_file_streaming(
 ) -> Result<()> {
     // Ensure parent directory exists
     if let Some(parent) = local_path.parent() {
-        fs::create_dir_all(parent)
-            .await
-            .map_err(FilestoreError::Io)?;
+        fs::create_dir_all(parent).await.map_err(FilestoreError::Io)?;
     }
 
     // Get object as stream
-    let result = store
-        .get(key)
-        .await
-        .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+    let result = store.get(key).await.map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
 
     // Stream to local file
-    let path_str = local_path.to_string_lossy().to_string();
-    record_open("remote_materializer", &path_str);
-    
-    let mut file = fs::File::create(local_path)
-        .await
-        .map_err(FilestoreError::Io)?;
+    record_open("remote_materializer", local_path);
+
+    let mut file = fs::File::create(local_path).await.map_err(FilestoreError::Io)?;
 
     let mut stream = result.into_stream();
     while let Some(chunk) = stream.next().await {
         let bytes: Bytes = chunk.map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
-        file.write_all(&bytes)
-            .await
-            .map_err(FilestoreError::Io)?;
+        file.write_all(&bytes).await.map_err(FilestoreError::Io)?;
     }
 
     file.flush().await.map_err(FilestoreError::Io)?;
     drop(file); // Explicitly close file
-    record_close("remote_materializer", &path_str);
+    record_close("remote_materializer", local_path);
 
     Ok(())
 }
@@ -146,18 +136,12 @@ async fn make_temp_dir(remote_prefix: &str) -> Result<PathBuf> {
     dir.push("parquet_cache");
 
     // Create a readable hint from the URL
-    let hint: String = remote_prefix
-        .replace("://", "_")
-        .replace('/', "_")
-        .chars()
-        .take(60)
-        .collect();
+    let hint: String =
+        remote_prefix.replace("://", "_").replace('/', "_").chars().take(60).collect();
 
     dir.push(format!("{}-{}", ts, hint));
 
-    fs::create_dir_all(&dir)
-        .await
-        .map_err(FilestoreError::Io)?;
+    fs::create_dir_all(&dir).await.map_err(FilestoreError::Io)?;
 
     Ok(dir)
 }

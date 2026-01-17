@@ -68,7 +68,7 @@ fn smoke_int64_precision_preserved_as_string() {
     // Extract typed values from the response (server returns {"Int64": "value"} format)
     let seq_value = first_row.get("_seq").expect("Expected _seq column");
     let seq_value = extract_typed_value(seq_value);
-    
+
     // Verify _seq is a string (since it's a Snowflake ID exceeding JS_MAX_SAFE_INTEGER)
     assert!(
         seq_value.is_string(),
@@ -78,9 +78,7 @@ fn smoke_int64_precision_preserved_as_string() {
 
     // Verify the string value is a valid numeric
     let seq_str = seq_value.as_str().expect("_seq should be a string");
-    let seq_parsed: u64 = seq_str
-        .parse()
-        .expect("_seq string should be a valid number");
+    let seq_parsed: u64 = seq_str.parse().expect("_seq string should be a valid number");
     assert!(
         seq_parsed > JS_MAX_SAFE_INTEGER as u64,
         "_seq should exceed JS_MAX_SAFE_INTEGER, got: {}",
@@ -90,7 +88,7 @@ fn smoke_int64_precision_preserved_as_string() {
     // Extract and verify big_value
     let big_value = first_row.get("big_value").expect("Expected big_value column");
     let big_value = extract_typed_value(big_value);
-    
+
     // Verify big_value is also a string (since we inserted a value > JS_MAX_SAFE_INTEGER)
     assert!(
         big_value.is_string(),
@@ -99,9 +97,8 @@ fn smoke_int64_precision_preserved_as_string() {
     );
 
     let big_value_str = big_value.as_str().expect("big_value should be a string");
-    let big_value_parsed: i64 = big_value_str
-        .parse()
-        .expect("big_value string should be a valid number");
+    let big_value_parsed: i64 =
+        big_value_str.parse().expect("big_value string should be a valid number");
     assert_eq!(
         big_value_parsed,
         JS_MAX_SAFE_INTEGER + 1000,
@@ -111,16 +108,9 @@ fn smoke_int64_precision_preserved_as_string() {
     // Verify content is still a regular string (after extracting from typed format)
     let content = first_row.get("content").expect("Expected content column");
     let content = extract_typed_value(content);
-    assert_eq!(
-        content.as_str(),
-        Some("test_precision"),
-        "content should be 'test_precision'"
-    );
+    assert_eq!(content.as_str(), Some("test_precision"), "content should be 'test_precision'");
 
-    println!(
-        "✓ Int64 precision test passed: _seq={}, big_value={}",
-        seq_str, big_value_str
-    );
+    println!("✓ Int64 precision test passed: _seq={}, big_value={}", seq_str, big_value_str);
 
     // Cleanup
     execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table)).ok();
@@ -183,9 +173,7 @@ fn smoke_int64_small_values_remain_numbers() {
     let first_row = &rows[0];
 
     // With typed JSON format, ALL Int64 values are strings (for consistency)
-    let small_val = first_row
-        .get("small_value")
-        .expect("Expected small_value column");
+    let small_val = first_row.get("small_value").expect("Expected small_value column");
     let small_val = extract_typed_value(small_val);
     assert!(
         small_val.is_string(),
@@ -195,10 +183,7 @@ fn smoke_int64_small_values_remain_numbers() {
 
     let small_str = small_val.as_str().expect("small_value should be a string");
     let parsed_value: i64 = small_str.parse().expect("small_value string should parse as i64");
-    assert_eq!(
-        parsed_value, small_value,
-        "small_value should preserve value correctly"
-    );
+    assert_eq!(parsed_value, small_value, "small_value should preserve value correctly");
 
     println!(
         "✓ Small Int64 test passed: small_value={} (as string for consistency)",
@@ -277,16 +262,10 @@ fn smoke_int64_edge_case_exactly_max_safe() {
     );
     let at_limit_str = at_limit.as_str().expect("at_limit should be a string");
     let at_limit_parsed: i64 = at_limit_str.parse().expect("at_limit should parse");
-    assert_eq!(
-        at_limit_parsed,
-        JS_MAX_SAFE_INTEGER,
-        "at_limit value mismatch"
-    );
+    assert_eq!(at_limit_parsed, JS_MAX_SAFE_INTEGER, "at_limit value mismatch");
 
     // Verify over_limit is a string (just over MAX_SAFE_INTEGER)
-    let over_limit = first_row
-        .get("over_limit")
-        .expect("Expected over_limit column");
+    let over_limit = first_row.get("over_limit").expect("Expected over_limit column");
     let over_limit = extract_typed_value(over_limit);
     assert!(
         over_limit.is_string(),
@@ -295,11 +274,7 @@ fn smoke_int64_edge_case_exactly_max_safe() {
     );
     let over_limit_str = over_limit.as_str().expect("over_limit should be a string");
     let over_limit_parsed: i64 = over_limit_str.parse().expect("over_limit should parse");
-    assert_eq!(
-        over_limit_parsed,
-        JS_MAX_SAFE_INTEGER + 1,
-        "over_limit value mismatch"
-    );
+    assert_eq!(over_limit_parsed, JS_MAX_SAFE_INTEGER + 1, "over_limit value mismatch");
 
     println!(
         "✓ Edge case test passed: at_limit={} (string), over_limit={} (string)",
@@ -380,16 +355,10 @@ fn smoke_int64_negative_large_values() {
     );
     let neg_safe_str = neg_safe.as_str().expect("neg_safe should be a string");
     let neg_safe_parsed: i64 = neg_safe_str.parse().expect("neg_safe should parse");
-    assert_eq!(
-        neg_safe_parsed,
-        min_safe,
-        "neg_safe value mismatch"
-    );
+    assert_eq!(neg_safe_parsed, min_safe, "neg_safe value mismatch");
 
     // Verify neg_unsafe is a string
-    let neg_unsafe = first_row
-        .get("neg_unsafe")
-        .expect("Expected neg_unsafe column");
+    let neg_unsafe = first_row.get("neg_unsafe").expect("Expected neg_unsafe column");
     let neg_unsafe = extract_typed_value(neg_unsafe);
     assert!(
         neg_unsafe.is_string(),
@@ -398,11 +367,7 @@ fn smoke_int64_negative_large_values() {
     );
     let neg_unsafe_str = neg_unsafe.as_str().expect("neg_unsafe should be a string");
     let neg_unsafe_parsed: i64 = neg_unsafe_str.parse().expect("neg_unsafe should parse");
-    assert_eq!(
-        neg_unsafe_parsed,
-        min_safe - 1,
-        "neg_unsafe value mismatch"
-    );
+    assert_eq!(neg_unsafe_parsed, min_safe - 1, "neg_unsafe value mismatch");
 
     println!(
         "✓ Negative large value test passed: neg_safe={} (string), neg_unsafe={} (string)",

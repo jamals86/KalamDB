@@ -8,7 +8,6 @@
 //! - System user can authenticate from localhost
 //! - System user credentials are generated securely
 
-
 use super::test_support::TestServer;
 use kalamdb_commons::constants::AuthConstants;
 use kalamdb_commons::{AuthType, Role, UserId};
@@ -29,32 +28,19 @@ async fn test_init_creates_system_user() {
         .expect("System user should exist");
 
     // Verify user properties
-    assert_eq!(
-        user.username.as_str(),
-        AuthConstants::DEFAULT_SYSTEM_USERNAME
-    );
+    assert_eq!(user.username.as_str(), AuthConstants::DEFAULT_SYSTEM_USERNAME);
     assert_eq!(
         user.auth_type,
         AuthType::Internal,
         "System user should have 'internal' auth type"
     );
-    assert_eq!(
-        user.role,
-        Role::System,
-        "System user should have 'system' role"
-    );
+    assert_eq!(user.role, Role::System, "System user should have 'system' role");
 
     // Verify password hash is set (not empty)
-    assert!(
-        !user.password_hash.is_empty(),
-        "System user should have password hash"
-    );
+    assert!(!user.password_hash.is_empty(), "System user should have password hash");
 
     // Verify user is not deleted
-    assert!(
-        user.deleted_at.is_none(),
-        "System user should not be deleted"
-    );
+    assert!(user.deleted_at.is_none(), "System user should not be deleted");
 
     println!("✓ System user created successfully on bootstrap");
     println!("  Username: {}", user.username);
@@ -108,14 +94,8 @@ async fn test_system_user_has_metadata() {
         .expect("System user should exist");
 
     // Verify timestamps are set
-    assert!(
-        user.created_at > 0,
-        "System user should have created_at timestamp"
-    );
-    assert!(
-        user.updated_at > 0,
-        "System user should have updated_at timestamp"
-    );
+    assert!(user.created_at > 0, "System user should have created_at timestamp");
+    assert!(user.updated_at > 0, "System user should have updated_at timestamp");
 
     // Verify email is set (can be empty or a default)
     // Email is optional for system users

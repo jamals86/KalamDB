@@ -2,7 +2,6 @@
 //!
 //! Tests that SELECT * returns columns in ordinal_position order
 
-
 use super::test_support::TestServer;
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableType};
@@ -44,9 +43,7 @@ async fn test_select_star_returns_columns_in_ordinal_order() {
     .expect("Failed to create table definition");
 
     // Create namespace first
-    server
-        .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
-        .await;
+    server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
 
     // Store the table definition using system tables provider
     server
@@ -77,9 +74,7 @@ async fn test_select_star_returns_columns_in_ordinal_order() {
     assert_eq!(retrieved.columns[3].ordinal_position, 4);
 
     // Verify Arrow schema has columns in the same order
-    let arrow_schema = retrieved
-        .to_arrow_schema()
-        .expect("Failed to convert to Arrow schema");
+    let arrow_schema = retrieved.to_arrow_schema().expect("Failed to convert to Arrow schema");
     assert_eq!(arrow_schema.fields().len(), 4);
     assert_eq!(arrow_schema.field(0).name(), "id");
     assert_eq!(arrow_schema.field(1).name(), "name");
@@ -100,9 +95,7 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
     let table_id = TableId::new(test_namespace.clone(), table_name.clone());
 
     // Create namespace first
-    server
-        .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
-        .await;
+    server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
 
     // Create initial table with 2 columns
     let initial_columns = vec![
@@ -128,9 +121,7 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
 
     // Simulate ALTER TABLE ADD COLUMN
     let new_column = ColumnDefinition::simple(3, "email", 3, KalamDataType::Text);
-    table_def
-        .add_column(new_column)
-        .expect("Failed to add column");
+    table_def.add_column(new_column).expect("Failed to add column");
 
     server
         .app_context
@@ -166,9 +157,7 @@ async fn test_alter_table_drop_column_preserves_ordinals() {
     let table_id = TableId::new(test_namespace.clone(), table_name.clone());
 
     // Create namespace first
-    server
-        .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
-        .await;
+    server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
 
     // Create table with 4 columns
     let initial_columns = vec![
@@ -195,9 +184,7 @@ async fn test_alter_table_drop_column_preserves_ordinals() {
         .expect("Failed to create table");
 
     // Simulate ALTER TABLE DROP COLUMN email (position 3)
-    table_def
-        .drop_column("email")
-        .expect("Failed to drop column");
+    table_def.drop_column("email").expect("Failed to drop column");
 
     server
         .app_context
@@ -256,11 +243,7 @@ async fn test_system_tables_have_correct_column_ordering() {
     ];
 
     // Verify Arrow schema matches expected column order
-    assert_eq!(
-        arrow_schema.fields().len(),
-        expected_columns.len(),
-        "Column count mismatch"
-    );
+    assert_eq!(arrow_schema.fields().len(), expected_columns.len(), "Column count mismatch");
 
     for (idx, expected_name) in expected_columns.iter().enumerate() {
         let field = arrow_schema.field(idx);

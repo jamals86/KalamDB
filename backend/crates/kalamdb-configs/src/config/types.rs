@@ -51,28 +51,28 @@ pub struct CorsSettings {
     /// Empty list = same as ["*"] (allow any origin)
     #[serde(default)]
     pub allowed_origins: Vec<String>,
-    
+
     /// Allowed HTTP methods. Default: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
     #[serde(default = "default_cors_methods")]
     pub allowed_methods: Vec<String>,
-    
+
     /// Allowed HTTP headers. Use ["*"] for any header.
     /// Default: ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
     #[serde(default = "default_cors_headers")]
     pub allowed_headers: Vec<String>,
-    
+
     /// Headers to expose to the browser. Default: []
     #[serde(default)]
     pub expose_headers: Vec<String>,
-    
+
     /// Allow credentials (cookies, authorization headers). Default: true
     #[serde(default = "default_true")]
     pub allow_credentials: bool,
-    
+
     /// Preflight cache max age in seconds. Default: 3600 (1 hour)
     #[serde(default = "default_cors_max_age")]
     pub max_age: u64,
-    
+
     /// Allow requests without Origin header. Default: false
     #[serde(default)]
     pub allow_private_network: bool,
@@ -81,7 +81,7 @@ pub struct CorsSettings {
 fn default_cors_methods() -> Vec<String> {
     vec![
         "GET".to_string(),
-        "POST".to_string(), 
+        "POST".to_string(),
         "PUT".to_string(),
         "DELETE".to_string(),
         "PATCH".to_string(),
@@ -123,20 +123,20 @@ pub struct SecuritySettings {
     /// CORS configuration
     #[serde(default)]
     pub cors: CorsSettings,
-    
+
     /// Allowed WebSocket origins for connection validation
     /// If empty, falls back to CORS allowed_origins
     #[serde(default)]
     pub allowed_ws_origins: Vec<String>,
-    
+
     /// Maximum WebSocket message size in bytes (default: 1MB)
     #[serde(default = "default_max_ws_message_size")]
     pub max_ws_message_size: usize,
-    
+
     /// Enable strict origin checking for WebSocket (reject requests with no Origin header)
     #[serde(default)]
     pub strict_ws_origin_check: bool,
-    
+
     /// Maximum request body size in bytes (default: 10MB)
     #[serde(default = "default_max_request_body_size")]
     pub max_request_body_size: usize,

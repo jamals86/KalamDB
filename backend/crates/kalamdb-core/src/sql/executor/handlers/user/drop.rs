@@ -35,10 +35,7 @@ impl TypedStatementHandler<DropUserStatement> for DropUserHandler {
                     message: format!("User '{}' does not exist (skipped)", statement.username),
                 });
             }
-            return Err(KalamDbError::NotFound(format!(
-                "User '{}' not found",
-                statement.username
-            )));
+            return Err(KalamDbError::NotFound(format!("User '{}' not found", statement.username)));
         }
         let user = existing.unwrap();
 

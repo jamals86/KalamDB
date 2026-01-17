@@ -2,8 +2,7 @@
 
 use crate::models::{
     ids::{LiveQueryId, NamespaceId, UserId},
-    NodeId,
-    TableName,
+    NodeId, TableName,
 };
 use crate::types::LiveQueryStatus;
 use bincode::{Decode, Encode};
@@ -68,9 +67,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct LiveQuery {
     // 8-byte aligned fields first (i64, String/pointer types)
-    pub created_at: i64,         // Unix timestamp in milliseconds
-    pub last_update: i64,        // Unix timestamp in milliseconds
-    pub last_ping_at: i64,       // Unix timestamp in milliseconds (for heartbeat/failover)
+    pub created_at: i64,   // Unix timestamp in milliseconds
+    pub last_update: i64,  // Unix timestamp in milliseconds
+    pub last_ping_at: i64, // Unix timestamp in milliseconds (for heartbeat/failover)
     pub changes: i64,
     pub live_id: LiveQueryId, // Format: {user_id}-{unique_conn_id}-{table_name}-{subscription_id}
     pub connection_id: String,

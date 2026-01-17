@@ -55,70 +55,75 @@ impl MemoryStreamLogStore {
     ) -> Result<()> {
         self.ensure_table(table_id)?;
         let key = self.make_key(row_id);
-        let mut data = self.data.write().map_err(|e| {
-            StreamLogError::Io(format!("Failed to acquire write lock: {}", e))
-        })?;
-        data.insert(key, StreamLogRecord::Delete { row_id: row_id.clone() });
+        let mut data = self
+            .data
+            .write()
+            .map_err(|e| StreamLogError::Io(format!("Failed to acquire write lock: {}", e)))?;
+        data.insert(
+            key,
+            StreamLogRecord::Delete {
+                row_id: row_id.clone(),
+            },
+        );
         Ok(())
     }
 
     /// Delete old logs before a given timestamp and return count of deleted entries.
     pub fn delete_old_logs_with_count(&self, before_time: u64) -> Result<usize> {
-        let mut data = self.data.write().map_err(|e| {
-            StreamLogError::Io(format!("Failed to acquire write lock: {}", e))
-        })?;
-        
-        let keys_to_remove: Vec<RowKey> = data
-            .keys()
-            .filter(|(_, ts, _)| *ts < before_time)
-            .cloned()
-            .collect();
-        
+        let mut data = self
+            .data
+            .write()
+            .map_err(|e| StreamLogError::Io(format!("Failed to acquire write lock: {}", e)))?;
+
+        let keys_to_remove: Vec<RowKey> =
+            data.keys().filter(|(_, ts, _)| *ts < before_time).cloned().collect();
+
         let count = keys_to_remove.len();
         for key in keys_to_remove {
             data.remove(&key);
         }
-        
+
         Ok(count)
     }
 
     /// Check if there are any logs before a given timestamp.
     pub fn has_logs_before(&self, before_time: u64) -> Result<bool> {
-        let data = self.data.read().map_err(|e| {
-            StreamLogError::Io(format!("Failed to acquire read lock: {}", e))
-        })?;
-        
+        let data = self
+            .data
+            .read()
+            .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
+
         Ok(data.keys().any(|(_, ts, _)| *ts < before_time))
     }
 
     /// List all unique user IDs in the store.
     pub fn list_user_ids(&self) -> Result<Vec<UserId>> {
-        let data = self.data.read().map_err(|e| {
-            StreamLogError::Io(format!("Failed to acquire read lock: {}", e))
-        })?;
-        
-        let users: HashSet<String> = data
-            .keys()
-            .map(|(user_id, _, _)| user_id.clone())
-            .collect();
-        
+        let data = self
+            .data
+            .read()
+            .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
+
+        let users: HashSet<String> = data.keys().map(|(user_id, _, _)| user_id.clone()).collect();
+
         Ok(users.into_iter().map(|s| UserId::new(s)).collect())
     }
 
     /// Clear all data from the store.
     pub fn clear(&self) -> Result<()> {
-        let mut data = self.data.write().map_err(|e| {
-            StreamLogError::Io(format!("Failed to acquire write lock: {}", e))
-        })?;
+        let mut data = self
+            .data
+            .write()
+            .map_err(|e| StreamLogError::Io(format!("Failed to acquire write lock: {}", e)))?;
         data.clear();
         Ok(())
     }
 
     /// Get the current number of records in the store.
     pub fn len(&self) -> Result<usize> {
-        let data = self.data.read().map_err(|e| {
-            StreamLogError::Io(format!("Failed to acquire read lock: {}", e))
-        })?;
+        let data = self
+            .data
+            .read()
+            .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
         Ok(data.len())
     }
 
@@ -152,9 +157,10 @@ impl MemoryStreamLogStore {
         end_time: u64,
         limit: usize,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
-        let data = self.data.read().map_err(|e| {
-            StreamLogError::Io(format!("Failed to acquire read lock: {}", e))
-        })?;
+        let data = self
+            .data
+            .read()
+            .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
 
         let user_str = user_id.as_str().to_string();
         let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
@@ -178,14 +184,14 @@ impl MemoryStreamLogStore {
                     if results.len() >= limit {
                         break;
                     }
-                }
+                },
                 StreamLogRecord::Delete { row_id: _ } => {
                     deleted.insert(seq_bytes.clone());
                     // Remove from results if already added
                     results.retain(|(existing_id, _)| {
                         existing_id.seq().as_i64().to_le_bytes().to_vec() != *seq_bytes
                     });
-                }
+                },
             }
         }
 
@@ -197,9 +203,10 @@ impl MemoryStreamLogStore {
         user_id: &UserId,
         limit: usize,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
-        let data = self.data.read().map_err(|e| {
-            StreamLogError::Io(format!("Failed to acquire read lock: {}", e))
-        })?;
+        let data = self
+            .data
+            .read()
+            .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
 
         let user_str = user_id.as_str().to_string();
         let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
@@ -220,10 +227,10 @@ impl MemoryStreamLogStore {
                     if results.len() >= limit {
                         break;
                     }
-                }
+                },
                 StreamLogRecord::Delete { row_id: _ } => {
                     deleted.insert(seq_bytes.clone());
-                }
+                },
             }
         }
 
@@ -239,9 +246,10 @@ impl StreamLogStore for MemoryStreamLogStore {
         rows: HashMap<StreamTableRowId, StreamTableRow>,
     ) -> Result<()> {
         self.ensure_table(table_id)?;
-        let mut data = self.data.write().map_err(|e| {
-            StreamLogError::Io(format!("Failed to acquire write lock: {}", e))
-        })?;
+        let mut data = self
+            .data
+            .write()
+            .map_err(|e| StreamLogError::Io(format!("Failed to acquire write lock: {}", e)))?;
 
         for (row_id, row) in rows {
             let key = self.make_key(&row_id);
@@ -355,7 +363,7 @@ mod tests {
         let user_id = UserId::new("user-1");
 
         // Create rows with different timestamps
-        let seq1 = SeqId::new(100);  // ts ~0
+        let seq1 = SeqId::new(100); // ts ~0
         let seq2 = SeqId::new(1000000); // ts ~238
         let seq3 = SeqId::new(5000000); // ts ~1192
 
@@ -401,7 +409,8 @@ mod tests {
         assert!(store.has_logs_before(now_ms.saturating_sub(60 * 60 * 1000)).unwrap());
 
         // Delete logs older than 1 hour
-        let deleted = store.delete_old_logs_with_count(now_ms.saturating_sub(60 * 60 * 1000)).unwrap();
+        let deleted =
+            store.delete_old_logs_with_count(now_ms.saturating_sub(60 * 60 * 1000)).unwrap();
         assert!(deleted >= 1);
 
         // Should have only the new row left
@@ -419,17 +428,11 @@ mod tests {
         let seq = SeqId::new(1000);
 
         let mut rows1 = HashMap::new();
-        rows1.insert(
-            StreamTableRowId::new(user1.clone(), seq),
-            build_row(&user1, seq),
-        );
+        rows1.insert(StreamTableRowId::new(user1.clone(), seq), build_row(&user1, seq));
         store.append_rows(&table_id, &user1, rows1).unwrap();
 
         let mut rows2 = HashMap::new();
-        rows2.insert(
-            StreamTableRowId::new(user2.clone(), seq),
-            build_row(&user2, seq),
-        );
+        rows2.insert(StreamTableRowId::new(user2.clone(), seq), build_row(&user2, seq));
         store.append_rows(&table_id, &user2, rows2).unwrap();
 
         let users = store.list_user_ids().unwrap();

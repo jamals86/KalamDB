@@ -9,11 +9,11 @@ use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -107,7 +107,7 @@ impl ManifestTableProvider {
 
             let cache_key_str = cache_key.to_string();
             let is_hot = self.is_in_memory(&cache_key_str);
-            
+
             // Serialize manifest_json before moving entry fields
             let manifest_json_str = entry.manifest_json();
 
@@ -117,7 +117,7 @@ impl ManifestTableProvider {
             scopes.push(Some(scope.unwrap().to_string()));
             etags.push(entry.etag);
             last_refreshed_vals.push(Some(entry.last_refreshed * 1000)); // Convert to milliseconds
-            // last_accessed = last_refreshed (moka manages TTI internally, we can't get actual access time)
+                                                                         // last_accessed = last_refreshed (moka manages TTI internally, we can't get actual access time)
             last_accessed_vals.push(Some(entry.last_refreshed * 1000));
             in_memory_vals.push(Some(is_hot));
             source_paths.push(Some(entry.source_path));
@@ -226,7 +226,7 @@ mod tests {
 
         use super::super::manifest_store::ManifestCacheKey;
         let key = ManifestCacheKey::from("ns1:tbl1:shared");
-        EntityStore::put(&provider.store, &key, &entry).unwrap();
+        provider.store.put(&key, &entry).unwrap();
 
         let batch = provider.scan_to_record_batch().unwrap();
         assert_eq!(batch.num_rows(), 1);

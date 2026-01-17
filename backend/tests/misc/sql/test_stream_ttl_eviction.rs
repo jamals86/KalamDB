@@ -39,11 +39,7 @@ async fn test_stream_table_ttl_eviction_with_select() {
     let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
         &table_id,
         StreamTableStoreConfig {
-            base_dir: temp_dir
-                .path()
-                .join("streams")
-                .join("test")
-                .join("test_events"),
+            base_dir: temp_dir.path().join("streams").join("test").join("test_events"),
             shard_router: ShardRouter::default_config(),
             ttl_seconds: Some(1),
         },
@@ -60,12 +56,8 @@ async fn test_stream_table_ttl_eviction_with_select() {
     // Initialize AppContext and TableProviderCore
     let node_id = kalamdb_commons::NodeId::new(1);
     let config = kalamdb_configs::ServerConfig::default();
-    let app_ctx = AppContext::init(
-        backend.clone(),
-        node_id,
-        "/tmp/kalamdb-test".to_string(),
-        config,
-    );
+    let app_ctx =
+        AppContext::init(backend.clone(), node_id, "/tmp/kalamdb-test".to_string(), config);
     let core = Arc::new(TableProviderCore::from_app_context(
         &app_ctx,
         table_id.clone(),
@@ -116,10 +108,9 @@ async fn test_stream_table_ttl_eviction_with_select() {
         None,
     )
     .expect("Failed to build TableDefinition");
-    app_ctx.schema_registry().insert(
-        table_id.clone(),
-        Arc::new(CachedTableData::new(Arc::new(table_def))),
-    );
+    app_ctx
+        .schema_registry()
+        .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
 
     let provider = Arc::new(StreamTableProvider::new(
         core.clone(),
@@ -129,11 +120,8 @@ async fn test_stream_table_ttl_eviction_with_select() {
     ));
 
     // Create per-user SessionContext with user injected
-    let exec_ctx = ExecutionContext::new(
-        UserId::new("u1"),
-        Role::User,
-        app_ctx.base_session_context(),
-    );
+    let exec_ctx =
+        ExecutionContext::new(UserId::new("u1"), Role::User, app_ctx.base_session_context());
     let ctx = exec_ctx.create_session_with_user();
     ctx.register_table("test_events", provider.clone())
         .expect("Failed to register table");
@@ -158,21 +146,12 @@ async fn test_stream_table_ttl_eviction_with_select() {
     }))
     .unwrap();
 
-    provider
-        .insert(&UserId::new("u1"), event1)
-        .expect("Failed to insert event1");
-    provider
-        .insert(&UserId::new("u1"), event2)
-        .expect("Failed to insert event2");
-    provider
-        .insert(&UserId::new("u1"), event3)
-        .expect("Failed to insert event3");
+    provider.insert(&UserId::new("u1"), event1).expect("Failed to insert event1");
+    provider.insert(&UserId::new("u1"), event2).expect("Failed to insert event2");
+    provider.insert(&UserId::new("u1"), event3).expect("Failed to insert event3");
 
     // STEP 1: Verify SELECT works - should return 3 rows
-    let df = ctx
-        .sql("SELECT * FROM test_events")
-        .await
-        .expect("Failed to execute SELECT");
+    let df = ctx.sql("SELECT * FROM test_events").await.expect("Failed to execute SELECT");
     let results = df.collect().await.expect("Failed to collect results");
 
     assert_eq!(results.len(), 1, "Expected 1 batch");
@@ -208,11 +187,7 @@ async fn test_stream_table_select_with_projection() {
     let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
         &table_id,
         StreamTableStoreConfig {
-            base_dir: temp_dir
-                .path()
-                .join("streams")
-                .join("test")
-                .join("events_proj"),
+            base_dir: temp_dir.path().join("streams").join("test").join("events_proj"),
             shard_router: ShardRouter::default_config(),
             ttl_seconds: Some(60),
         },
@@ -229,12 +204,8 @@ async fn test_stream_table_select_with_projection() {
     // Initialize AppContext and TableProviderCore
     let node_id = kalamdb_commons::NodeId::new(1);
     let config = kalamdb_configs::ServerConfig::default();
-    let app_ctx = AppContext::init(
-        backend.clone(),
-        node_id,
-        "/tmp/kalamdb-test".to_string(),
-        config,
-    );
+    let app_ctx =
+        AppContext::init(backend.clone(), node_id, "/tmp/kalamdb-test".to_string(), config);
     let core = Arc::new(TableProviderCore::from_app_context(
         &app_ctx,
         table_id.clone(),
@@ -285,10 +256,9 @@ async fn test_stream_table_select_with_projection() {
         None,
     )
     .expect("Failed to build TableDefinition");
-    app_ctx.schema_registry().insert(
-        table_id.clone(),
-        Arc::new(CachedTableData::new(Arc::new(table_def))),
-    );
+    app_ctx
+        .schema_registry()
+        .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
 
     let provider = Arc::new(StreamTableProvider::new(
         core.clone(),
@@ -298,11 +268,8 @@ async fn test_stream_table_select_with_projection() {
     ));
 
     // Create per-user SessionContext
-    let exec_ctx = ExecutionContext::new(
-        UserId::new("u1"),
-        Role::User,
-        app_ctx.base_session_context(),
-    );
+    let exec_ctx =
+        ExecutionContext::new(UserId::new("u1"), Role::User, app_ctx.base_session_context());
     let ctx = exec_ctx.create_session_with_user();
     ctx.register_table("events_proj", provider.clone())
         .expect("Failed to register table");
@@ -315,9 +282,7 @@ async fn test_stream_table_select_with_projection() {
     }))
     .unwrap();
 
-    provider
-        .insert(&UserId::new("u1"), event1)
-        .expect("Failed to insert event");
+    provider.insert(&UserId::new("u1"), event1).expect("Failed to insert event");
 
     // Test projection (SELECT specific columns)
     let df = ctx
@@ -344,11 +309,7 @@ async fn test_stream_table_select_with_limit() {
     let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
         &table_id,
         StreamTableStoreConfig {
-            base_dir: temp_dir
-                .path()
-                .join("streams")
-                .join("test")
-                .join("events_limit"),
+            base_dir: temp_dir.path().join("streams").join("test").join("events_limit"),
             shard_router: ShardRouter::default_config(),
             ttl_seconds: Some(60),
         },
@@ -364,12 +325,8 @@ async fn test_stream_table_select_with_limit() {
     // Initialize AppContext and TableProviderCore
     let node_id = kalamdb_commons::NodeId::new(1);
     let config = kalamdb_configs::ServerConfig::default();
-    let app_ctx = AppContext::init(
-        backend.clone(),
-        node_id,
-        "/tmp/kalamdb-test".to_string(),
-        config,
-    );
+    let app_ctx =
+        AppContext::init(backend.clone(), node_id, "/tmp/kalamdb-test".to_string(), config);
     let core = Arc::new(TableProviderCore::from_app_context(
         &app_ctx,
         table_id.clone(),
@@ -409,10 +366,9 @@ async fn test_stream_table_select_with_limit() {
         None,
     )
     .expect("Failed to build TableDefinition");
-    app_ctx.schema_registry().insert(
-        table_id.clone(),
-        Arc::new(CachedTableData::new(Arc::new(table_def))),
-    );
+    app_ctx
+        .schema_registry()
+        .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
 
     let provider = Arc::new(StreamTableProvider::new(
         core.clone(),
@@ -421,11 +377,8 @@ async fn test_stream_table_select_with_limit() {
         "event_id".to_string(),
     ));
 
-    let exec_ctx = ExecutionContext::new(
-        UserId::new("u1"),
-        Role::User,
-        app_ctx.base_session_context(),
-    );
+    let exec_ctx =
+        ExecutionContext::new(UserId::new("u1"), Role::User, app_ctx.base_session_context());
     let ctx = exec_ctx.create_session_with_user();
     ctx.register_table("events_limit", provider.clone())
         .expect("Failed to register table");
@@ -437,9 +390,7 @@ async fn test_stream_table_select_with_limit() {
             "value": i * 100
         }))
         .unwrap();
-        provider
-            .insert(&UserId::new("u1"), event)
-            .expect("Failed to insert event");
+        provider.insert(&UserId::new("u1"), event).expect("Failed to insert event");
     }
 
     // Test LIMIT

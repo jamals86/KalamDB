@@ -56,7 +56,7 @@ pub fn intern(s: &str) -> Arc<str> {
             let key = vacant.key().clone();
             vacant.insert(());
             key
-        }
+        },
     }
 }
 
@@ -131,6 +131,7 @@ pub fn clear() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
 
     #[test]
     fn test_intern_same_string_returns_same_arc() {
@@ -181,8 +182,6 @@ mod tests {
 
     #[test]
     fn test_concurrent_interning() {
-        use std::thread;
-
         let handles: Vec<_> = (0..10)
             .map(|i| {
                 thread::spawn(move || {

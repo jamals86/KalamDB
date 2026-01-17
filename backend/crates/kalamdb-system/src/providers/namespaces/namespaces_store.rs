@@ -65,10 +65,10 @@ mod tests {
         let namespace = create_test_namespace("app", "app");
 
         // Put namespace
-        EntityStore::put(&store, &namespace_id, &namespace).unwrap();
+        store.put(&namespace_id, &namespace).unwrap();
 
         // Get namespace
-        let retrieved = EntityStore::get(&store, &namespace_id).unwrap();
+        let retrieved = store.get(&namespace_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.namespace_id, namespace_id);
@@ -82,11 +82,11 @@ mod tests {
         let namespace = create_test_namespace("app", "app");
 
         // Put then delete
-        EntityStore::put(&store, &namespace_id, &namespace).unwrap();
-        EntityStore::delete(&store, &namespace_id).unwrap();
+        store.put(&namespace_id, &namespace).unwrap();
+        store.delete(&namespace_id).unwrap();
 
         // Verify deleted
-        let retrieved = EntityStore::get(&store, &namespace_id).unwrap();
+        let retrieved = store.get(&namespace_id).unwrap();
         assert!(retrieved.is_none());
     }
 
@@ -98,11 +98,11 @@ mod tests {
         for i in 1..=3 {
             let namespace_id = NamespaceId::new(format!("ns{}", i));
             let namespace = create_test_namespace(&format!("ns{}", i), &format!("namespace{}", i));
-            EntityStore::put(&store, &namespace_id, &namespace).unwrap();
+            store.put(&namespace_id, &namespace).unwrap();
         }
 
         // Scan all
-        let namespaces = EntityStore::scan_all(&store, None, None, None).unwrap();
+        let namespaces = store.scan_all(None, None, None).unwrap();
         assert_eq!(namespaces.len(), 3);
     }
 

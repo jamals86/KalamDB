@@ -19,17 +19,17 @@ use super::users_indexes::create_users_indexes;
 use super::UsersTableSchema;
 use crate::error::{SystemError, SystemResultExt};
 use crate::system_table_trait::SystemTableProviderExt;
+use crate::{StoragePartition, SystemTable};
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::User;
-use crate::{StoragePartition, SystemTable};
+use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::{StorageKey, UserId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
@@ -64,9 +64,7 @@ impl UsersTableProvider {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         let store = IndexedEntityStore::new(
             backend,
-            SystemTable::Users
-                .column_family_name()
-                .expect("Users is a table, not a view"),
+            SystemTable::Users.column_family_name().expect("Users is a table, not a view"),
             create_users_indexes(),
         );
         Self { store }
@@ -88,12 +86,10 @@ impl UsersTableProvider {
             .store
             .find_index_by_partition(StoragePartition::SystemUsersUsernameIdx.name())
             .ok_or_else(|| {
-                SystemError::Other(
-                    format!(
-                        "Missing expected index partition: {}",
-                        StoragePartition::SystemUsersUsernameIdx.name()
-                    ),
-                )
+                SystemError::Other(format!(
+                    "Missing expected index partition: {}",
+                    StoragePartition::SystemUsersUsernameIdx.name()
+                ))
             })?;
         let username_key = user.username.as_str().to_lowercase();
         let existing = self
@@ -109,9 +105,7 @@ impl UsersTableProvider {
         }
 
         // Insert user - indexes are managed automatically
-        self.store
-            .insert(&user.id, &user)
-            .into_system_error("insert user error")
+        self.store.insert(&user.id, &user).into_system_error("insert user error")
     }
 
     /// Update an existing user.
@@ -128,10 +122,7 @@ impl UsersTableProvider {
         // Check if user exists
         let existing = self.store.get(&user.id)?;
         if existing.is_none() {
-            return Err(SystemError::NotFound(format!(
-                "User not found: {}",
-                user.id
-            )));
+            return Err(SystemError::NotFound(format!("User not found: {}", user.id)));
         }
 
         let existing_user = existing.unwrap();
@@ -142,12 +133,10 @@ impl UsersTableProvider {
                 .store
                 .find_index_by_partition(StoragePartition::SystemUsersUsernameIdx.name())
                 .ok_or_else(|| {
-                    SystemError::Other(
-                        format!(
-                            "Missing expected index partition: {}",
-                            StoragePartition::SystemUsersUsernameIdx.name()
-                        ),
-                    )
+                    SystemError::Other(format!(
+                        "Missing expected index partition: {}",
+                        StoragePartition::SystemUsersUsernameIdx.name()
+                    ))
                 })?;
             let username_key = user.username.as_str().to_lowercase();
             let conflicts = self
@@ -187,9 +176,7 @@ impl UsersTableProvider {
         user.deleted_at = Some(chrono::Utc::now().timestamp_millis());
 
         // Update user with deleted_at
-        self.store
-            .update(user_id, &user)
-            .into_system_error("update user error")
+        self.store.update(user_id, &user).into_system_error("update user error")
     }
 
     /// Get a user by ID.
@@ -217,12 +204,10 @@ impl UsersTableProvider {
             .store
             .find_index_by_partition(StoragePartition::SystemUsersUsernameIdx.name())
             .ok_or_else(|| {
-                SystemError::Other(
-                    format!(
-                        "Missing expected index partition: {}",
-                        StoragePartition::SystemUsersUsernameIdx.name()
-                    ),
-                )
+                SystemError::Other(format!(
+                    "Missing expected index partition: {}",
+                    StoragePartition::SystemUsersUsernameIdx.name()
+                ))
             })?;
 
         // Username index key is lowercase username
@@ -338,7 +323,6 @@ impl TableProvider for UsersTableProvider {
         // but DataFusion must still apply them for correctness.
         Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
     }
-    
 
     async fn scan(
         &self,
@@ -364,11 +348,11 @@ impl TableProvider for UsersTableProvider {
                                 match binary.op {
                                     Operator::Eq => {
                                         prefix = Some(UserId::new(s));
-                                    }
+                                    },
                                     Operator::Gt | Operator::GtEq => {
                                         start_key = Some(UserId::new(s));
-                                    }
-                                    _ => {}
+                                    },
+                                    _ => {},
                                 }
                             }
                         }
@@ -404,9 +388,7 @@ impl TableProvider for UsersTableProvider {
             );
             self.store
                 .scan_all(limit, prefix.as_ref(), start_key.as_ref())
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to scan users: {}", e))
-                })?
+                .map_err(|e| DataFusionError::Execution(format!("Failed to scan users: {}", e)))?
         };
 
         let batch = self.create_batch(users).map_err(|e| {
@@ -492,20 +474,14 @@ mod tests {
         provider.create_user(user).unwrap();
 
         // Update user
-        let mut updated = provider
-            .get_user_by_id(&UserId::new("user1"))
-            .unwrap()
-            .unwrap();
+        let mut updated = provider.get_user_by_id(&UserId::new("user1")).unwrap().unwrap();
         updated.email = Some("newemail@example.com".to_string());
         updated.updated_at = 2000;
 
         provider.update_user(updated).unwrap();
 
         // Verify update
-        let retrieved = provider
-            .get_user_by_id(&UserId::new("user1"))
-            .unwrap()
-            .unwrap();
+        let retrieved = provider.get_user_by_id(&UserId::new("user1")).unwrap().unwrap();
         assert_eq!(retrieved.email, Some("newemail@example.com".to_string()));
         assert_eq!(retrieved.updated_at, 2000);
     }
@@ -518,10 +494,7 @@ mod tests {
         provider.create_user(user).unwrap();
 
         // Update username
-        let mut updated = provider
-            .get_user_by_id(&UserId::new("user1"))
-            .unwrap()
-            .unwrap();
+        let mut updated = provider.get_user_by_id(&UserId::new("user1")).unwrap().unwrap();
         updated.username = UserName::new("bob");
 
         provider.update_user(updated).unwrap();
@@ -545,10 +518,7 @@ mod tests {
         provider.delete_user(&UserId::new("user1")).unwrap();
 
         // Verify deleted_at is set
-        let retrieved = provider
-            .get_user_by_id(&UserId::new("user1"))
-            .unwrap()
-            .unwrap();
+        let retrieved = provider.get_user_by_id(&UserId::new("user1")).unwrap().unwrap();
         assert!(retrieved.deleted_at.is_some());
     }
 

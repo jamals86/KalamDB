@@ -14,7 +14,6 @@
 //! 3. Verify correct results are returned
 //! 4. Measure performance to ensure O(1) lookup behavior
 
-
 use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::models::{ConnectionId, UserName};
@@ -105,10 +104,7 @@ async fn test_system_users_username_index() {
     assert_eq!(response2.status, ResponseStatus::Success);
     let rows2 = response2.results[0].rows_as_maps();
     assert_eq!(rows2.len(), 1);
-    assert_eq!(
-        rows2[0].get("user_id").unwrap().as_str().unwrap(),
-        format!("{}_10", id_prefix)
-    );
+    assert_eq!(rows2[0].get("user_id").unwrap().as_str().unwrap(), format!("{}_10", id_prefix));
     assert_eq!(
         rows2[0].get("username").unwrap().as_str().unwrap(),
         format!("{}_10", user_prefix)
@@ -172,6 +168,7 @@ async fn test_system_jobs_status_index() {
             job_id: JobId::new(&format!("{}_{}", job_prefix, i)),
             job_type: JobType::Unknown,
             status,
+            leader_status: None,
             parameters: Some(format!(r#"{{"table":"test_{}", "iteration":{}}}"#, i, i)),
             message: None,
             exception_trace: None,
@@ -193,6 +190,7 @@ async fn test_system_jobs_status_index() {
                 None
             },
             node_id: NodeId::from(1u64),
+            leader_node_id: None,
             queue: None,
             priority: None,
         };
@@ -206,10 +204,8 @@ async fn test_system_jobs_status_index() {
     }
 
     // First verify we have data
-    let verify_query = format!(
-        "SELECT COUNT(*) AS total FROM system.jobs WHERE job_id LIKE '{}%'",
-        job_prefix
-    );
+    let verify_query =
+        format!("SELECT COUNT(*) AS total FROM system.jobs WHERE job_id LIKE '{}%'", job_prefix);
     let verify_response = server.execute_sql(&verify_query).await;
     assert_eq!(verify_response.status, ResponseStatus::Success);
     let verify_rows = verify_response.results[0].rows_as_maps();

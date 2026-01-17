@@ -100,10 +100,7 @@ impl FileCredentialStore {
             if let Some(config_dir) = dirs::config_dir() {
                 config_dir.join("kalamdb").join("credentials.toml")
             } else if let Some(home_dir) = dirs::home_dir() {
-                home_dir
-                    .join(".config")
-                    .join("kalamdb")
-                    .join("credentials.toml")
+                home_dir.join(".config").join("kalamdb").join("credentials.toml")
             } else {
                 PathBuf::from(".kalamdb").join("credentials.toml")
             }
@@ -158,14 +155,15 @@ impl FileCredentialStore {
             // Extract just the core error message without all the TOML parser details
             let error_msg = e.to_string();
             let simple_error = if error_msg.contains("missing field") {
-                error_msg.lines()
+                error_msg
+                    .lines()
                     .find(|line| line.contains("missing field"))
                     .unwrap_or("Invalid format")
                     .trim()
             } else {
                 "Invalid TOML format"
             };
-            
+
             let msg = format!(
                 "\n╭─ Corrupted Credentials File\n\
                  │\n\
@@ -406,14 +404,8 @@ mod tests {
     fn test_file_store_overwrite() {
         let (mut store, _temp_dir) = create_temp_store();
 
-        let creds1 = Credentials::new(
-            "local".to_string(),
-            "old_token".to_string(),
-        );
-        let creds2 = Credentials::new(
-            "local".to_string(),
-            "new_token".to_string(),
-        );
+        let creds1 = Credentials::new("local".to_string(), "old_token".to_string());
+        let creds2 = Credentials::new("local".to_string(), "new_token".to_string());
 
         store.set_credentials(&creds1).unwrap();
         store.set_credentials(&creds2).unwrap();
@@ -429,10 +421,7 @@ mod tests {
 
         let (mut store, _temp_dir) = create_temp_store();
 
-        let creds = Credentials::new(
-            "local".to_string(),
-            "test_token".to_string(),
-        );
+        let creds = Credentials::new("local".to_string(), "test_token".to_string());
         store.set_credentials(&creds).unwrap();
 
         // Check file permissions are 0600

@@ -11,8 +11,8 @@ use anyhow::Result;
 use futures_util::StreamExt;
 use kalam_link::models::{ChangeEvent, QueryResponse, ResponseStatus};
 use kalam_link::SubscriptionManager;
-use kalamdb_commons::Role;
 use kalamdb_commons::models::UserRowId;
+use kalamdb_commons::Role;
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -51,22 +51,24 @@ pub fn get_first_i64(resp: &QueryResponse, column: &str) -> Option<i64> {
 
 /// Create a user if they don't exist and return their user_id
 /// Returns Ok(user_id) whether user was created or already existed
-pub async fn ensure_user_exists(server: &HttpTestServer, username: &str, password: &str, role: &Role) -> Result<String> {
+pub async fn ensure_user_exists(
+    server: &HttpTestServer,
+    username: &str,
+    password: &str,
+    role: &Role,
+) -> Result<String> {
     // Try to create user using proper CREATE USER syntax
-    let sql = format!(
-        "CREATE USER '{}' WITH PASSWORD '{}' ROLE '{}'",
-        username, password, role
-    );
+    let sql = format!("CREATE USER '{}' WITH PASSWORD '{}' ROLE '{}'", username, password, role);
     let _resp = server.execute_sql(&sql).await;
     // Ignore errors - user might already exist or command might not be supported
-    
+
     // Look up the user_id - use rows_as_maps for easier extraction
     let lookup_sql = format!("SELECT user_id FROM system.users WHERE username = '{}'", username);
     let resp = server.execute_sql(&lookup_sql).await?;
-    
+
     // Use rows_as_maps which handles Arrow type unwrapping
     let rows = resp.rows_as_maps();
-    
+
     if let Some(row) = rows.first() {
         if let Some(user_id_val) = row.get("user_id") {
             // Handle both direct strings and Arrow-wrapped strings
@@ -74,10 +76,10 @@ pub async fn ensure_user_exists(server: &HttpTestServer, username: &str, passwor
                 JsonValue::String(s) => s.clone(),
                 JsonValue::Object(map) if map.contains_key("Utf8") => {
                     map.get("Utf8").and_then(|v| v.as_str()).unwrap_or("").to_string()
-                }
+                },
                 _ => user_id_val.as_str().unwrap_or("").to_string(),
             };
-            
+
             if !user_id_str.is_empty() {
                 // Cache the user_id in the server for link_client to use
                 server.cache_user_id(username, &user_id_str);
@@ -86,7 +88,7 @@ pub async fn ensure_user_exists(server: &HttpTestServer, username: &str, passwor
             }
         }
     }
-    
+
     // If we can't find the user_id, fail loudly instead of using a fallback
     anyhow::bail!(
         "Failed to get user_id for user '{}'. Query returned: {:?}",
@@ -104,7 +106,11 @@ pub async fn create_test_users(server: &HttpTestServer, users: &[(&str, &Role)])
 }
 
 /// Create a user and return a link client configured for that user
-pub async fn create_user_and_client(server: &HttpTestServer, username: &str, role: &Role) -> Result<kalam_link::KalamLinkClient> {
+pub async fn create_user_and_client(
+    server: &HttpTestServer,
+    username: &str,
+    role: &Role,
+) -> Result<kalam_link::KalamLinkClient> {
     let user_id = ensure_user_exists(server, username, "test123", role).await?;
     server.cache_user_password(username, "test123");
     Ok(server.link_client_with_id(&user_id, username, role))
@@ -112,23 +118,14 @@ pub async fn create_user_and_client(server: &HttpTestServer, username: &str, rol
 
 /// Assert QueryResponse was successful
 pub fn assert_query_success(resp: &QueryResponse, context: &str) {
-    assert!(
-        resp.success(),
-        "{}: expected success, got error: {:?}",
-        context,
-        resp.error
-    );
+    assert!(resp.success(), "{}: expected success, got error: {:?}", context, resp.error);
 }
 
 /// Assert QueryResponse has expected row count
 pub fn assert_query_row_count(resp: &QueryResponse, expected: usize, context: &str) {
     assert_query_success(resp, context);
     let actual = resp.row_count();
-    assert_eq!(
-        actual, expected,
-        "{}: expected {} rows, got {}",
-        context, expected, actual
-    );
+    assert_eq!(actual, expected, "{}: expected {} rows, got {}", context, expected, actual);
 }
 
 // =============================================================================
@@ -148,17 +145,8 @@ pub fn assert_success(resp: &QueryResponse, context: &str) {
 
 /// Assert that a SQL response failed with an expected error message substring
 pub fn assert_error_contains(resp: &QueryResponse, expected: &str, context: &str) {
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Error,
-        "{}: expected error, got success",
-        context
-    );
-    let msg = resp
-        .error
-        .as_ref()
-        .map(|e| e.message.as_str())
-        .unwrap_or("");
+    assert_eq!(resp.status, ResponseStatus::Error, "{}: expected error, got success", context);
+    let msg = resp.error.as_ref().map(|e| e.message.as_str()).unwrap_or("");
     assert!(
         msg.to_lowercase().contains(&expected.to_lowercase()),
         "{}: expected error containing '{}', got '{}'",
@@ -172,24 +160,14 @@ pub fn assert_error_contains(resp: &QueryResponse, expected: &str, context: &str
 pub fn assert_row_count(resp: &QueryResponse, expected: usize, context: &str) {
     assert_success(resp, context);
     let actual = resp.row_count();
-    assert_eq!(
-        actual, expected,
-        "{}: expected {} rows, got {}",
-        context, expected, actual
-    );
+    assert_eq!(actual, expected, "{}: expected {} rows, got {}", context, expected, actual);
 }
 
 /// Assert minimum row count in a SQL response
 pub fn assert_min_row_count(resp: &QueryResponse, min: usize, context: &str) {
     assert_success(resp, context);
     let actual = resp.row_count();
-    assert!(
-        actual >= min,
-        "{}: expected at least {} rows, got {}",
-        context,
-        min,
-        actual
-    );
+    assert!(actual >= min, "{}: expected at least {} rows, got {}", context, min, actual);
 }
 
 /// Get all rows as vectors of JSON values from a QueryResponse
@@ -264,22 +242,12 @@ pub async fn assert_user_isolation(
 
     // User A should only see their own data
     for uid in &user_ids_a {
-        assert!(
-            uid == user_a || uid.is_empty(),
-            "User {} saw data from user {}",
-            user_a,
-            uid
-        );
+        assert!(uid == user_a || uid.is_empty(), "User {} saw data from user {}", user_a, uid);
     }
 
     // User B should only see their own data
     for uid in &user_ids_b {
-        assert!(
-            uid == user_b || uid.is_empty(),
-            "User {} saw data from user {}",
-            user_b,
-            uid
-        );
+        assert!(uid == user_b || uid.is_empty(), "User {} saw data from user {}", user_b, uid);
     }
 
     Ok(())
@@ -304,7 +272,7 @@ pub async fn wait_for_ack(
                 ..
             }))) => {
                 return Ok((subscription_id, total_rows as usize));
-            }
+            },
             Ok(Some(Ok(_))) => continue,
             Ok(Some(Err(e))) => return Err(anyhow::anyhow!("Subscription error: {:?}", e)),
             Ok(None) => return Err(anyhow::anyhow!("Subscription stream ended")),
@@ -336,7 +304,7 @@ pub async fn drain_initial_data(
                 if !batch_control.has_more {
                     break;
                 }
-            }
+            },
             Ok(Some(Ok(_))) => break, // Non-initial event means initial data is done
             Ok(Some(Err(e))) => return Err(anyhow::anyhow!("Subscription error: {:?}", e)),
             Ok(None) => break,
@@ -360,10 +328,11 @@ pub async fn wait_for_inserts(
         match timeout(Duration::from_millis(100), subscription.next()).await {
             Ok(Some(Ok(ChangeEvent::Insert { rows, .. }))) => {
                 all_rows.extend(rows);
-            }
-            Ok(Some(Ok(ChangeEvent::Ack { .. }))) | Ok(Some(Ok(ChangeEvent::InitialDataBatch { .. }))) => {
+            },
+            Ok(Some(Ok(ChangeEvent::Ack { .. })))
+            | Ok(Some(Ok(ChangeEvent::InitialDataBatch { .. }))) => {
                 continue;
-            }
+            },
             Ok(Some(Ok(_))) => continue,
             Ok(Some(Err(e))) => return Err(anyhow::anyhow!("Subscription error: {:?}", e)),
             Ok(None) => break,
@@ -395,7 +364,7 @@ pub async fn wait_for_updates(
         match timeout(Duration::from_millis(100), subscription.next()).await {
             Ok(Some(Ok(ChangeEvent::Update { rows, .. }))) => {
                 all_rows.extend(rows);
-            }
+            },
             Ok(Some(Ok(_))) => continue,
             Ok(Some(Err(e))) => return Err(anyhow::anyhow!("Subscription error: {:?}", e)),
             Ok(None) => break,
@@ -427,7 +396,7 @@ pub async fn wait_for_deletes(
         match timeout(Duration::from_millis(100), subscription.next()).await {
             Ok(Some(Ok(ChangeEvent::Delete { old_rows, .. }))) => {
                 all_rows.extend(old_rows);
-            }
+            },
             Ok(Some(Ok(_))) => continue,
             Ok(Some(Err(e))) => return Err(anyhow::anyhow!("Subscription error: {:?}", e)),
             Ok(None) => break,
@@ -480,11 +449,7 @@ pub async fn wait_for_flush_complete(
 }
 
 /// Trigger flush and wait for completion
-pub async fn flush_and_wait(
-    server: &HttpTestServer,
-    ns: &str,
-    table: &str,
-) -> Result<()> {
+pub async fn flush_and_wait(server: &HttpTestServer, ns: &str, table: &str) -> Result<()> {
     test_support::flush::flush_table_and_wait(server, ns, table).await
 }
 
@@ -594,10 +559,7 @@ pub async fn wait_for_job_terminal(
     let deadline = Instant::now() + timeout_duration;
 
     while Instant::now() < deadline {
-        let sql = format!(
-            "SELECT status FROM system.jobs WHERE job_id = '{}'",
-            job_id
-        );
+        let sql = format!("SELECT status FROM system.jobs WHERE job_id = '{}'", job_id);
         let resp = server.execute_sql(&sql).await?;
 
         if resp.status == ResponseStatus::Success {
@@ -607,8 +569,8 @@ pub async fn wait_for_job_terminal(
                         match status {
                             "completed" | "failed" | "cancelled" => {
                                 return Ok(status.to_string());
-                            }
-                            _ => {}
+                            },
+                            _ => {},
                         }
                     }
                 }
@@ -618,10 +580,7 @@ pub async fn wait_for_job_terminal(
         sleep(Duration::from_millis(100)).await;
     }
 
-    Err(anyhow::anyhow!(
-        "Timed out waiting for job {} to reach terminal state",
-        job_id
-    ))
+    Err(anyhow::anyhow!("Timed out waiting for job {} to reach terminal state", job_id))
 }
 
 /// Assert job completed successfully
@@ -632,11 +591,7 @@ pub async fn assert_job_completed(
 ) -> Result<()> {
     let status = wait_for_job_terminal(server, job_id, timeout_duration).await?;
     if status != "completed" {
-        return Err(anyhow::anyhow!(
-            "Expected job {} to be completed, got {}",
-            job_id,
-            status
-        ));
+        return Err(anyhow::anyhow!("Expected job {} to be completed, got {}", job_id, status));
     }
     Ok(())
 }
@@ -649,11 +604,7 @@ pub async fn assert_job_failed(
 ) -> Result<()> {
     let status = wait_for_job_terminal(server, job_id, timeout_duration).await?;
     if status != "failed" {
-        return Err(anyhow::anyhow!(
-            "Expected job {} to be failed, got {}",
-            job_id,
-            status
-        ));
+        return Err(anyhow::anyhow!("Expected job {} to be failed, got {}", job_id, status));
     }
     Ok(())
 }
@@ -682,7 +633,8 @@ where
 
     let mut results = Vec::new();
     for handle in handles {
-        results.push(handle.await.unwrap_or_else(|e| Err(anyhow::anyhow!("Task panicked: {:?}", e))));
+        results
+            .push(handle.await.unwrap_or_else(|e| Err(anyhow::anyhow!("Task panicked: {:?}", e))));
     }
     results
 }

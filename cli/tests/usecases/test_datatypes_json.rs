@@ -36,11 +36,7 @@ fn test_datatypes_json_preservation() {
     );
 
     let result = common::execute_sql_as_root_via_cli(&create_sql);
-    assert!(
-        result.is_ok(),
-        "Should create table successfully: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Should create table successfully: {:?}", result.err());
 
     // Insert test data
     // Note: Using a fixed timestamp for easier verification
@@ -50,20 +46,12 @@ fn test_datatypes_json_preservation() {
         namespace, table_name, timestamp_str
     );
     let result = common::execute_sql_as_root_via_cli(&insert_sql);
-    assert!(
-        result.is_ok(),
-        "Should insert data successfully: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Should insert data successfully: {:?}", result.err());
 
     // Query the data using JSON output format
     let select_sql = format!("SELECT * FROM {}.{}", namespace, table_name);
     let result = common::execute_sql_as_root_via_cli_json(&select_sql);
-    assert!(
-        result.is_ok(),
-        "Should query data successfully: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Should query data successfully: {:?}", result.err());
 
     let output = result.unwrap();
     println!("Query output: {}", output);
@@ -72,8 +60,7 @@ fn test_datatypes_json_preservation() {
     let json: Value = parse_cli_json_output(&output).expect("Failed to parse JSON output");
 
     // Navigate to results[0].rows[0] using the new schema-based format
-    let rows = get_rows_as_hashmaps(&json)
-        .expect("Failed to get rows from JSON response");
+    let rows = get_rows_as_hashmaps(&json).expect("Failed to get rows from JSON response");
 
     assert!(!rows.is_empty(), "Should return at least one row");
     let row = rows.first().expect("Should have a first row");
@@ -115,8 +102,9 @@ fn test_datatypes_json_preservation() {
     // Timestamp
     // Timestamp is returned as Arrow JSON with TimestampMicrosecond type
     let col_timestamp = row.get("col_timestamp").expect("Missing col_timestamp");
-    let col_timestamp = extract_arrow_value(col_timestamp).expect("Failed to extract col_timestamp");
-    
+    let col_timestamp =
+        extract_arrow_value(col_timestamp).expect("Failed to extract col_timestamp");
+
     // Timestamp is returned as an object with timezone and value fields
     if let Some(obj) = col_timestamp.as_object() {
         let value = obj.get("value").expect("Timestamp should have value field");
@@ -130,10 +118,7 @@ fn test_datatypes_json_preservation() {
     } else if col_timestamp.is_string() {
         // Fallback: string representation
         let ts_val = col_timestamp.as_str().unwrap();
-        assert!(
-            ts_val.contains("2023-01-01"),
-            "Timestamp should contain date part"
-        );
+        assert!(ts_val.contains("2023-01-01"), "Timestamp should contain date part");
     } else if col_timestamp.is_number() {
         // Fallback: numeric epoch
         let ts_micros = col_timestamp.as_i64().expect("Timestamp should be i64");

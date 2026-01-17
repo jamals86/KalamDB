@@ -206,10 +206,7 @@ fn test_bloom_filter_for_composite_primary_key() {
         .position(|col| col.column_path().string() == "user_id")
         .expect("user_id column should exist");
     assert!(
-        row_group
-            .column(user_id_idx)
-            .bloom_filter_offset()
-            .is_some(),
+        row_group.column(user_id_idx).bloom_filter_offset().is_some(),
         "user_id (PRIMARY KEY part 1) should have Bloom filter"
     );
 
@@ -220,10 +217,7 @@ fn test_bloom_filter_for_composite_primary_key() {
         .position(|col| col.column_path().string() == "order_id")
         .expect("order_id column should exist");
     assert!(
-        row_group
-            .column(order_id_idx)
-            .bloom_filter_offset()
-            .is_some(),
+        row_group.column(order_id_idx).bloom_filter_offset().is_some(),
         "order_id (PRIMARY KEY part 2) should have Bloom filter"
     );
 
@@ -268,7 +262,7 @@ fn test_bloom_filter_default_behavior() {
         Field::new("_seq", DataType::Int64, false),
     ]));
 
-    // Create batch with 1024 rows 
+    // Create batch with 1024 rows
     let num_rows = 1024;
     let ids: Vec<i64> = (0..num_rows as i64).collect();
     let seqs: Vec<i64> = (0..num_rows as i64).map(|i| i * 1000000).collect();

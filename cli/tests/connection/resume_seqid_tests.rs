@@ -5,14 +5,14 @@
 //!
 //! NOTE: These are unit tests that don't require a running server.
 
-use kalam_link::{SubscriptionOptions, SeqId};
+use kalam_link::{SeqId, SubscriptionOptions};
 
 /// Test creating subscription options with from_seq_id
 #[test]
 fn test_subscription_with_from_seq_id() {
     let seq = SeqId::from(12345i64);
     let opts = SubscriptionOptions::new().with_from_seq_id(seq);
-    
+
     assert_eq!(opts.from_seq_id, Some(SeqId::from(12345i64)));
     assert!(opts.has_resume_seq_id());
 }
@@ -21,7 +21,7 @@ fn test_subscription_with_from_seq_id() {
 #[test]
 fn test_from_seq_id_initially_none() {
     let opts = SubscriptionOptions::new();
-    
+
     assert!(opts.from_seq_id.is_none());
     assert!(!opts.has_resume_seq_id());
 }
@@ -30,18 +30,16 @@ fn test_from_seq_id_initially_none() {
 #[test]
 fn test_update_from_seq_id() {
     // Initial subscription with batch_size
-    let opts = SubscriptionOptions::new()
-        .with_batch_size(50)
-        .with_last_rows(10);
-    
+    let opts = SubscriptionOptions::new().with_batch_size(50).with_last_rows(10);
+
     assert!(opts.from_seq_id.is_none());
-    
+
     // After receiving events, create updated options for reconnect
     let reconnect_opts = opts.clone().with_from_seq_id(SeqId::from(5000i64));
-    
+
     // Original unchanged
     assert!(opts.from_seq_id.is_none());
-    
+
     // New options have from_seq_id
     assert_eq!(reconnect_opts.from_seq_id, Some(SeqId::from(5000i64)));
     // Other fields preserved
@@ -55,7 +53,7 @@ fn test_seq_id_comparison() {
     let seq1 = SeqId::from(1000i64);
     let seq2 = SeqId::from(2000i64);
     let seq3 = SeqId::from(3000i64);
-    
+
     // SeqId should be comparable for determining "newer" events
     assert!(seq1 < seq2);
     assert!(seq2 < seq3);
@@ -67,7 +65,7 @@ fn test_seq_id_comparison() {
 fn test_seq_id_value_extraction() {
     let seq = SeqId::from(999999i64);
     let opts = SubscriptionOptions::new().with_from_seq_id(seq);
-    
+
     // Verify we can get the value back
     if let Some(resume_seq) = opts.from_seq_id {
         let raw_value: i64 = resume_seq.into();
@@ -82,7 +80,7 @@ fn test_seq_id_value_extraction() {
 fn test_seq_id_zero() {
     let seq = SeqId::from(0i64);
     let opts = SubscriptionOptions::new().with_from_seq_id(seq);
-    
+
     // Zero is a valid seq_id (means resume from the very beginning)
     assert!(opts.has_resume_seq_id());
     assert_eq!(opts.from_seq_id, Some(SeqId::from(0i64)));
@@ -93,9 +91,9 @@ fn test_seq_id_zero() {
 fn test_large_seq_id() {
     let large_seq = SeqId::from(i64::MAX);
     let opts = SubscriptionOptions::new().with_from_seq_id(large_seq);
-    
+
     assert!(opts.has_resume_seq_id());
-    
+
     if let Some(seq) = opts.from_seq_id {
         let raw: i64 = seq.into();
         assert_eq!(raw, i64::MAX);
@@ -108,9 +106,9 @@ fn test_negative_seq_id() {
     // Negative seq_ids might be used for special cases (e.g., -1 = start from latest)
     let neg_seq = SeqId::from(-1i64);
     let opts = SubscriptionOptions::new().with_from_seq_id(neg_seq);
-    
+
     assert!(opts.has_resume_seq_id());
-    
+
     if let Some(seq) = opts.from_seq_id {
         let raw: i64 = seq.into();
         assert_eq!(raw, -1i64);
@@ -124,9 +122,9 @@ fn test_clone_preserves_from_seq_id() {
         .with_batch_size(100)
         .with_last_rows(50)
         .with_from_seq_id(SeqId::from(42i64));
-    
+
     let cloned = opts.clone();
-    
+
     assert_eq!(cloned.batch_size, Some(100));
     assert_eq!(cloned.last_rows, Some(50));
     assert_eq!(cloned.from_seq_id, Some(SeqId::from(42i64)));
@@ -139,26 +137,26 @@ fn test_batch_resumption_scenario() {
     // Initial subscription
     let mut opts = SubscriptionOptions::new().with_batch_size(100);
     let mut last_received_seq: Option<SeqId> = None;
-    
+
     // Simulate receiving batch 1 (seq 0-99)
     last_received_seq = Some(SeqId::from(99i64));
-    
+
     // Simulate receiving batch 2 (seq 100-199)
     last_received_seq = Some(SeqId::from(199i64));
-    
+
     // Simulate receiving batch 3 (seq 200-299)
     last_received_seq = Some(SeqId::from(299i64));
-    
+
     // Simulate disconnect
-    
+
     // On reconnect, we resume from 299
     if let Some(seq) = last_received_seq {
         opts = opts.with_from_seq_id(seq);
     }
-    
+
     assert!(opts.has_resume_seq_id());
     assert_eq!(opts.from_seq_id, Some(SeqId::from(299i64)));
-    
+
     // Server should send events starting from seq > 299
 }
 
@@ -168,7 +166,7 @@ fn test_has_resume_seq_id_helper() {
     // Without from_seq_id
     let opts1 = SubscriptionOptions::new();
     assert!(!opts1.has_resume_seq_id());
-    
+
     // With from_seq_id
     let opts2 = SubscriptionOptions::new().with_from_seq_id(SeqId::from(1i64));
     assert!(opts2.has_resume_seq_id());
@@ -181,12 +179,12 @@ fn test_from_seq_id_with_other_options() {
         .with_batch_size(200)
         .with_last_rows(10)
         .with_from_seq_id(SeqId::from(500i64));
-    
+
     // All options should be set
     assert_eq!(opts.batch_size, Some(200));
     assert_eq!(opts.last_rows, Some(10));
     assert_eq!(opts.from_seq_id, Some(SeqId::from(500i64)));
-    
+
     // Should be resuming
     assert!(opts.has_resume_seq_id());
 }
@@ -197,20 +195,20 @@ fn test_from_seq_id_with_other_options() {
 fn test_last_rows_vs_from_seq_id() {
     // When from_seq_id is set, last_rows is typically ignored by the server
     // This test documents that behavior expectation
-    
+
     let opts_last_rows = SubscriptionOptions::new().with_last_rows(100);
     let opts_from_seq = SubscriptionOptions::new().with_from_seq_id(SeqId::from(50i64));
     let opts_both = SubscriptionOptions::new()
         .with_last_rows(100)
         .with_from_seq_id(SeqId::from(50i64));
-    
+
     // Both can be set, but semantically from_seq_id takes precedence
     assert_eq!(opts_last_rows.last_rows, Some(100));
     assert!(!opts_last_rows.has_resume_seq_id());
-    
+
     assert!(opts_from_seq.has_resume_seq_id());
     assert!(opts_from_seq.last_rows.is_none());
-    
+
     // When both set, from_seq_id indicates resumption
     assert!(opts_both.has_resume_seq_id());
     // But last_rows is also set (server decides which to use)

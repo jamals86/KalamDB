@@ -147,7 +147,7 @@ fn test_chat_simulation_memory_leak() {
                     Err(e) => {
                         eprintln!("❌ Failed to start msg subscription: {}", e);
                         return;
-                    }
+                    },
                 };
 
                 // User subscribes to stream events
@@ -161,7 +161,7 @@ fn test_chat_simulation_memory_leak() {
                         eprintln!("❌ Failed to start stream subscription: {}", e);
                         let _ = msg_sub.stop();
                         return;
-                    }
+                    },
                 };
 
                 // User sends messages
@@ -205,10 +205,7 @@ fn test_chat_simulation_memory_leak() {
     println!("✅ Simulation complete. Cleaning up...");
     cleanup(&namespace, &user_credentials);
 
-    println!(
-        "🎉 Test PASSED - Chat simulation finished in {:.2?}",
-        test_start.elapsed()
-    );
+    println!("🎉 Test PASSED - Chat simulation finished in {:.2?}", test_start.elapsed());
 }
 
 fn setup_chat_tables(namespace: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -256,5 +253,6 @@ fn cleanup(namespace: &str, creds: &[(String, String)]) {
     for (username, _) in creds {
         let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", username));
     }
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }

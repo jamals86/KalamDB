@@ -106,7 +106,11 @@ impl IndexDefinition<SharedTableRowId, SharedTableRow> for SharedTablePkIndex {
         vec![&self.pk_field_name]
     }
 
-    fn extract_key(&self, primary_key: &SharedTableRowId, entity: &SharedTableRow) -> Option<Vec<u8>> {
+    fn extract_key(
+        &self,
+        primary_key: &SharedTableRowId,
+        entity: &SharedTableRow,
+    ) -> Option<Vec<u8>> {
         // Get the PK field value from the row
         let pk_value = entity.fields.get(&self.pk_field_name)?;
 
@@ -167,10 +171,7 @@ mod tests {
     fn create_test_row(seq: i64, id_value: i64) -> (SharedTableRowId, SharedTableRow) {
         let mut values = BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int64(Some(id_value)));
-        values.insert(
-            "name".to_string(),
-            ScalarValue::Utf8(Some("Test".to_string())),
-        );
+        values.insert("name".to_string(), ScalarValue::Utf8(Some("Test".to_string())));
 
         let key = SeqId::new(seq);
         let row = SharedTableRow {

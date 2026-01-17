@@ -2,9 +2,9 @@
 //!
 //! These tests cover utility functions and error scenarios in flush operations.
 
-use kalamdb_core::providers::flush::base::{helpers, FlushJobResult, FlushMetadata, TableFlush};
-use kalamdb_core::error::KalamDbError;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use kalamdb_core::error::KalamDbError;
+use kalamdb_core::providers::flush::base::{helpers, FlushJobResult, FlushMetadata, TableFlush};
 use std::sync::Arc;
 
 #[test]

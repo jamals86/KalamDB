@@ -17,44 +17,62 @@ fn verify_data_identical_with_retry(
     urls: &[String],
     sql: &str,
     expected_rows: usize,
-    _max_retries: usize,
+    max_retries: usize,
 ) -> Result<(), String> {
-    let mut all_data: Vec<Vec<String>> = Vec::new();
+    let mut last_err: Option<String> = None;
 
-    for url in urls {
-        let rows = fetch_normalized_rows(url, sql).unwrap_or_default();
-        all_data.push(rows);
-    }
+    for _ in 0..=max_retries {
+        let mut all_data: Vec<Vec<String>> = Vec::new();
 
-    let reference = &all_data[0];
-    if reference.len() != expected_rows {
-        return Err(format!(
-            "Row counts don't match expected {}. Counts: {:?}",
-            expected_rows,
-            all_data.iter().map(|d| d.len()).collect::<Vec<_>>()
-        ));
-    }
-
-    for (i, data) in all_data.iter().enumerate().skip(1) {
-        if data != reference {
-            let ref_set: HashSet<_> = reference.iter().collect();
-            let data_set: HashSet<_> = data.iter().collect();
-            let missing: Vec<_> = ref_set.difference(&data_set).collect();
-            let extra: Vec<_> = data_set.difference(&ref_set).collect();
-            return Err(format!(
-                "Node {} differs. Missing: {:?}, Extra: {:?}",
-                i, missing, extra
-            ));
+        for url in urls {
+            let rows = fetch_normalized_rows(url, sql).unwrap_or_default();
+            all_data.push(rows);
         }
+
+        let reference = &all_data[0];
+        if reference.len() != expected_rows {
+            last_err = Some(format!(
+                "Row counts don't match expected {}. Counts: {:?}",
+                expected_rows,
+                all_data.iter().map(|d| d.len()).collect::<Vec<_>>()
+            ));
+            std::thread::sleep(Duration::from_millis(200));
+            continue;
+        }
+
+        let mut mismatch: Option<String> = None;
+        for (i, data) in all_data.iter().enumerate().skip(1) {
+            if data != reference {
+                let ref_set: HashSet<_> = reference.iter().collect();
+                let data_set: HashSet<_> = data.iter().collect();
+                let missing: Vec<_> = ref_set.difference(&data_set).collect();
+                let extra: Vec<_> = data_set.difference(&ref_set).collect();
+                mismatch = Some(format!(
+                    "Node {} differs. Missing: {:?}, Extra: {:?}",
+                    i, missing, extra
+                ));
+                break;
+            }
+        }
+
+        if let Some(err) = mismatch {
+            last_err = Some(err);
+            std::thread::sleep(Duration::from_millis(200));
+            continue;
+        }
+
+        return Ok(());
     }
 
-    Ok(())
+    Err(last_err.unwrap_or_else(|| "Data verification failed".to_string()))
 }
 
 /// Test: Inserted rows are byte-for-byte identical across all nodes
 #[test]
 fn cluster_test_table_identity_inserts() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Table Identity - Inserts ===\n");
 
@@ -107,18 +125,16 @@ fn cluster_test_table_identity_inserts() {
     }
 
     // Verify data is identical on all nodes
-    let query = format!(
-        "SELECT id, name, score, active FROM {}.identity_test ORDER BY id",
-        namespace
-    );
+    let query =
+        format!("SELECT id, name, score, active FROM {}.identity_test ORDER BY id", namespace);
 
     match verify_data_identical_with_retry(&urls, &query, test_data.len(), 20) {
         Ok(_) => {
             println!("  ✓ All {} rows are identical across all nodes", test_data.len());
-        }
+        },
         Err(e) => {
             panic!("Table identity verification failed: {}", e);
-        }
+        },
     }
 
     // Cleanup
@@ -130,7 +146,9 @@ fn cluster_test_table_identity_inserts() {
 /// Test: Updates propagate identically to all nodes
 #[test]
 fn cluster_test_table_identity_updates() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Table Identity - Updates ===\n");
 
@@ -184,31 +202,28 @@ fn cluster_test_table_identity_updates() {
     }
 
     // Verify updates are identical on all nodes
-    let query = format!(
-        "SELECT id, value, counter FROM {}.update_test ORDER BY id",
-        namespace
-    );
+    let query = format!("SELECT id, value, counter FROM {}.update_test ORDER BY id", namespace);
 
     match verify_data_identical_with_retry(&urls, &query, 10, 20) {
         Ok(_) => {
             // Also verify the actual values
             let data = fetch_normalized_rows(&urls[0], &query).expect("Failed to fetch data");
-            
+
             // Check that first 5 rows have "updated" value
             for row in data.iter().take(5) {
                 assert!(row.contains("updated"), "Row should be updated: {}", row);
             }
-            
+
             // Check that last 5 rows still have "initial" value
             for row in data.iter().skip(5) {
                 assert!(row.contains("initial"), "Row should be initial: {}", row);
             }
-            
+
             println!("  ✓ Updates correctly applied and identical across all nodes");
-        }
+        },
         Err(e) => {
             panic!("Table identity verification failed after update: {}", e);
-        }
+        },
     }
 
     // Cleanup
@@ -220,7 +235,9 @@ fn cluster_test_table_identity_updates() {
 /// Test: Deletes are reflected identically on all nodes
 #[test]
 fn cluster_test_table_identity_deletes() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Table Identity - Deletes ===\n");
 
@@ -270,14 +287,11 @@ fn cluster_test_table_identity_deletes() {
         &format!("DELETE FROM {}.delete_test WHERE category = 'even'", namespace),
     )
     .expect("Failed to delete");
-    
+
     std::thread::sleep(Duration::from_millis(1500));
 
     // Verify only odd rows remain on all nodes
-    let query = format!(
-        "SELECT id, category FROM {}.delete_test ORDER BY id",
-        namespace
-    );
+    let query = format!("SELECT id, category FROM {}.delete_test ORDER BY id", namespace);
 
     match verify_data_identical_with_retry(&urls, &query, 10, 20) {
         Ok(_) => {
@@ -288,10 +302,10 @@ fn cluster_test_table_identity_deletes() {
                 assert!(!row.contains("even"), "No even rows should remain: {}", row);
             }
             println!("  ✓ Deletes correctly applied and identical across all nodes");
-        }
+        },
         Err(e) => {
             panic!("Table identity verification failed after delete: {}", e);
-        }
+        },
     }
 
     // Cleanup
@@ -303,7 +317,9 @@ fn cluster_test_table_identity_deletes() {
 /// Test: Mixed operations result in identical final state
 #[test]
 fn cluster_test_table_identity_mixed_operations() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Table Identity - Mixed Operations ===\n");
 
@@ -360,11 +376,8 @@ fn cluster_test_table_identity_mixed_operations() {
 
     // Phase 3: Delete some rows
     println!("  Phase 3: Deleting rows with id >= 40...");
-    execute_on_node(
-        &urls[0],
-        &format!("DELETE FROM {}.mixed_test WHERE id >= 40", namespace),
-    )
-    .expect("Failed to delete");
+    execute_on_node(&urls[0], &format!("DELETE FROM {}.mixed_test WHERE id >= 40", namespace))
+        .expect("Failed to delete");
     std::thread::sleep(Duration::from_millis(300));
 
     // Phase 4: Insert new rows
@@ -386,10 +399,7 @@ fn cluster_test_table_identity_mixed_operations() {
     for i in 100..110 {
         execute_on_node(
             &urls[0],
-            &format!(
-                "UPDATE {}.mixed_test SET version = 3 WHERE id = {}",
-                namespace, i
-            ),
+            &format!("UPDATE {}.mixed_test SET version = 3 WHERE id = {}", namespace, i),
         )
         .expect("Failed to update");
     }
@@ -399,20 +409,17 @@ fn cluster_test_table_identity_mixed_operations() {
     // Actually: 50 initial - 10 deleted (40-49) + 10 new (100-109) = 50 rows
     let expected_rows = 50;
 
-    let query = format!(
-        "SELECT id, status, version FROM {}.mixed_test ORDER BY id",
-        namespace
-    );
+    let query = format!("SELECT id, status, version FROM {}.mixed_test ORDER BY id", namespace);
 
     match verify_data_identical_with_retry(&urls, &query, expected_rows, 30) {
         Ok(_) => {
             let data = fetch_normalized_rows(&urls[0], &query).expect("Failed to fetch data");
-            
+
             // Verify expected state
             let mut updated_count = 0;
             let mut created_count = 0;
             let mut new_count = 0;
-            
+
             for row in &data {
                 if row.contains("updated") {
                     updated_count += 1;
@@ -422,24 +429,28 @@ fn cluster_test_table_identity_mixed_operations() {
                     new_count += 1;
                 }
             }
-            
-            println!("  Final state: {} updated, {} created, {} new", updated_count, created_count, new_count);
+
+            println!(
+                "  Final state: {} updated, {} created, {} new",
+                updated_count, created_count, new_count
+            );
             assert_eq!(updated_count, 25, "Expected 25 updated rows");
             assert_eq!(created_count, 15, "Expected 15 created rows (25-39)");
             assert_eq!(new_count, 10, "Expected 10 new rows");
-            
+
             println!("  ✓ Mixed operations resulted in correct identical state");
-        }
+        },
         Err(e) => {
             // Print detailed info for debugging
             for (i, url) in urls.iter().enumerate() {
                 let count_query = format!("SELECT count(*) as count FROM {}.mixed_test", namespace);
-                if let Ok(count) = query_count_on_url(url, &count_query).to_string().parse::<i64>() {
+                if let Ok(count) = query_count_on_url(url, &count_query).to_string().parse::<i64>()
+                {
                     println!("  Node {} has {} rows", i, count);
                 }
             }
             panic!("Table identity verification failed after mixed operations: {}", e);
-        }
+        },
     }
 
     // Cleanup
@@ -451,7 +462,9 @@ fn cluster_test_table_identity_mixed_operations() {
 /// Test: Large batch operations are replicated identically
 #[test]
 fn cluster_test_table_identity_large_batch() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Table Identity - Large Batch ===\n");
 
@@ -481,9 +494,9 @@ fn cluster_test_table_identity_large_batch() {
     // Insert 500 rows in batches
     let total_rows = 500;
     let batch_size = 50;
-    
+
     println!("  Inserting {} rows in batches of {}...", total_rows, batch_size);
-    
+
     for batch_start in (0..total_rows).step_by(batch_size) {
         let mut values = Vec::new();
         for i in batch_start..(batch_start + batch_size).min(total_rows) {
@@ -498,24 +511,21 @@ fn cluster_test_table_identity_large_batch() {
             ),
         )
         .expect("Failed to insert batch");
-        
+
         // Small delay between batches
         std::thread::sleep(Duration::from_millis(50));
     }
 
     // Verify all rows are identical on all nodes
-    let query = format!(
-        "SELECT id, data FROM {}.batch_test ORDER BY id",
-        namespace
-    );
+    let query = format!("SELECT id, data FROM {}.batch_test ORDER BY id", namespace);
 
     match verify_data_identical_with_retry(&urls, &query, total_rows, 30) {
         Ok(_) => {
             println!("  ✓ All {} rows are identical across all nodes", total_rows);
-        }
+        },
         Err(e) => {
             panic!("Large batch identity verification failed: {}", e);
-        }
+        },
     }
 
     // Cleanup
@@ -527,7 +537,9 @@ fn cluster_test_table_identity_large_batch() {
 /// Test: User table data is properly partitioned and replicated
 #[test]
 fn cluster_test_table_identity_user_tables() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Table Identity - User Tables ===\n");
 
@@ -543,10 +555,7 @@ fn cluster_test_table_identity_user_tables() {
 
     execute_on_node(
         &urls[0],
-        &format!(
-            "CREATE USER TABLE {}.user_data (id BIGINT PRIMARY KEY, item STRING)",
-            namespace
-        ),
+        &format!("CREATE USER TABLE {}.user_data (id BIGINT PRIMARY KEY, item STRING)", namespace),
     )
     .expect("Failed to create user table");
 
@@ -560,10 +569,7 @@ fn cluster_test_table_identity_user_tables() {
     for user in &users {
         execute_on_node(
             &urls[0],
-            &format!(
-                "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
-                user, user_password
-            ),
+            &format!("CREATE USER {} WITH PASSWORD '{}' ROLE 'user'", user, user_password),
         )
         .expect(&format!("Failed to create user {}", user));
     }
@@ -593,10 +599,7 @@ fn cluster_test_table_identity_user_tables() {
 
     // Verify data consistency for each user across all nodes
     for (user_idx, user) in users.iter().enumerate() {
-        let query = format!(
-            "SELECT id, item FROM {}.user_data ORDER BY id",
-            namespace
-        );
+        let query = format!("SELECT id, item FROM {}.user_data ORDER BY id", namespace);
 
         let mut all_data: Vec<Vec<String>> = Vec::new();
         for url in &urls {
@@ -605,7 +608,7 @@ fn cluster_test_table_identity_user_tables() {
                 Err(e) => {
                     println!("  ⚠ Failed to query user {} on node: {}", user, e);
                     all_data.push(Vec::new());
-                }
+                },
             }
         }
 

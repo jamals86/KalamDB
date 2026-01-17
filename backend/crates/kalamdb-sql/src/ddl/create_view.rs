@@ -62,10 +62,7 @@ impl CreateViewStatement {
                 }
 
                 let (namespace_id, view_name) = resolve_object_name(&name, default_namespace)?;
-                let column_names = columns
-                    .into_iter()
-                    .map(|col| col.name.value)
-                    .collect();
+                let column_names = columns.into_iter().map(|col| col.name.value).collect();
                 let query_sql = query.to_string();
 
                 Ok(Self {
@@ -77,7 +74,7 @@ impl CreateViewStatement {
                     query_sql,
                     original_sql: sql.trim().to_string(),
                 })
-            }
+            },
             _ => Err("Expected CREATE VIEW statement".to_string()),
         }
     }
@@ -126,10 +123,7 @@ mod tests {
 
         assert_eq!(stmt.namespace_id.as_str(), "analytics");
         assert_eq!(stmt.view_name.as_str(), "session_counts");
-        assert_eq!(
-            stmt.query_sql.to_uppercase(),
-            "SELECT COUNT(*) FROM SHARED.SESSIONS"
-        );
+        assert_eq!(stmt.query_sql.to_uppercase(), "SELECT COUNT(*) FROM SHARED.SESSIONS");
     }
 
     #[test]

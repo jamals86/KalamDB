@@ -126,10 +126,8 @@ impl JobExecutor for StreamEvictionExecutor {
             Some(p) => p,
             None => return Ok(false),
         };
-        let stream_provider = provider_arc
-            .as_any()
-            .downcast_ref::<StreamTableProvider>()
-            .ok_or_else(|| {
+        let stream_provider =
+            provider_arc.as_any().downcast_ref::<StreamTableProvider>().ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Cached provider for {} is not a StreamTableProvider",
                     params.table_id
@@ -138,14 +136,12 @@ impl JobExecutor for StreamEvictionExecutor {
         let store = stream_provider.store_arc();
         let (cutoff_ms, _cutoff_seq) = compute_cutoff_window(params.ttl_seconds)?;
 
-        store
-            .has_logs_before(cutoff_ms)
-            .map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to scan stream logs during pre-validation: {}",
-                    e
-                ))
-            })
+        store.has_logs_before(cutoff_ms).map_err(|e| {
+            KalamDbError::InvalidOperation(format!(
+                "Failed to scan stream logs during pre-validation: {}",
+                e
+            ))
+        })
     }
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
@@ -186,12 +182,10 @@ impl JobExecutor for StreamEvictionExecutor {
                         table_id
                     )),
                 });
-            }
+            },
         };
-        let stream_provider = provider_arc
-            .as_any()
-            .downcast_ref::<StreamTableProvider>()
-            .ok_or_else(|| {
+        let stream_provider =
+            provider_arc.as_any().downcast_ref::<StreamTableProvider>().ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Cached provider for {} is not a StreamTableProvider",
                     table_id
@@ -199,10 +193,7 @@ impl JobExecutor for StreamEvictionExecutor {
             })?;
         let store = stream_provider.store_arc();
         let deleted_count = store.delete_old_logs(cutoff_ms).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to delete old stream logs: {}",
-                e
-            ))
+            KalamDbError::InvalidOperation(format!("Failed to delete old stream logs: {}", e))
         })?;
 
         if deleted_count == 0 {
@@ -267,6 +258,7 @@ mod tests {
             job_id: JobId::new(id),
             job_type,
             status: kalamdb_commons::JobStatus::Running,
+            leader_status: None,
             parameters: None,
             message: None,
             exception_trace: None,
@@ -280,6 +272,7 @@ mod tests {
             started_at: Some(now),
             finished_at: None,
             node_id: NodeId::from(1u64),
+            leader_node_id: None,
             queue: None,
             priority: None,
         }
@@ -295,10 +288,8 @@ mod tests {
 
     fn setup_stream_table(app_ctx: &Arc<AppContext>) -> StreamTestHarness {
         let namespace = NamespaceId::new("chat_stream_jobs");
-        let table_name_value = format!(
-            "typing_events_{}",
-            Utc::now().timestamp_nanos_opt().unwrap_or(0)
-        );
+        let table_name_value =
+            format!("typing_events_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
         let tbl = TableName::new(&table_name_value);
         let table_id = TableId::new(namespace.clone(), tbl.clone());
 
@@ -335,10 +326,9 @@ mod tests {
         )
         .expect("table definition");
 
-        app_ctx.schema_registry().insert(
-            table_id.clone(),
-            Arc::new(CachedTableData::new(Arc::new(table_def))),
-        );
+        app_ctx
+            .schema_registry()
+            .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
 
         let stream_temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
@@ -358,12 +348,8 @@ mod tests {
             table_id.clone(),
             TableType::Stream,
         ));
-        let provider = Arc::new(StreamTableProvider::new(
-            core,
-            stream_store,
-            Some(1),
-            "event_id".to_string(),
-        ));
+        let provider =
+            Arc::new(StreamTableProvider::new(core, stream_store, Some(1), "event_id".to_string()));
         let provider_trait: Arc<dyn TableProvider> = provider.clone();
         app_ctx
             .schema_registry()
@@ -438,27 +424,17 @@ mod tests {
         // Insert a couple of rows
         let user = UserId::new("user-ttl");
         provider
-            .insert(
-                &user,
-                json_to_row(&json!({"event_id": "evt1", "payload": "hello"})).unwrap(),
-            )
+            .insert(&user, json_to_row(&json!({"event_id": "evt1", "payload": "hello"})).unwrap())
             .expect("insert evt1");
         provider
-            .insert(
-                &user,
-                json_to_row(&json!({"event_id": "evt2", "payload": "world"})).unwrap(),
-            )
+            .insert(&user, json_to_row(&json!({"event_id": "evt2", "payload": "world"})).unwrap())
             .expect("insert evt2");
 
         // Wait for TTL to make them eligible for eviction
         // Need to wait longer than TTL to ensure Snowflake timestamp is old enough
         sleep(Duration::from_millis(1500)).await;
 
-        let mut job = make_job(
-            "SE-evict",
-            JobType::StreamEviction,
-            harness.namespace.as_str(),
-        );
+        let mut job = make_job("SE-evict", JobType::StreamEviction, harness.namespace.as_str());
         job.parameters = Some(
             json!({
                 "namespace_id": harness.namespace.as_str(),
@@ -484,16 +460,13 @@ mod tests {
         match decision {
             JobDecision::Completed { message } => {
                 assert!(message.unwrap().contains("Evicted"));
-            }
+            },
             other => panic!("Expected Completed decision, got {:?}", other),
         }
 
-        let remaining_rows = harness
-            .provider
-            .store_arc()
-            .scan_all(None)
-            .expect("scan store after eviction");
-        
+        let remaining_rows =
+            harness.provider.store_arc().scan_all(None).expect("scan store after eviction");
+
         assert_eq!(remaining_rows.len(), 0, "All expired rows should be removed");
     }
 
@@ -506,10 +479,7 @@ mod tests {
         let user = UserId::new("user-prevalidate-no-expired");
         harness
             .provider
-            .insert(
-                &user,
-                json_to_row(&json!({"event_id": "evt1", "payload": "fresh"})).unwrap(),
-            )
+            .insert(&user, json_to_row(&json!({"event_id": "evt1", "payload": "fresh"})).unwrap())
             .expect("insert fresh row");
 
         let params = StreamEvictionParams {
@@ -520,10 +490,8 @@ mod tests {
         };
 
         let executor = StreamEvictionExecutor::new();
-        let should_run = executor
-            .pre_validate(&app_ctx, &params)
-            .await
-            .expect("pre_validate execution");
+        let should_run =
+            executor.pre_validate(&app_ctx, &params).await.expect("pre_validate execution");
 
         assert!(!should_run, "No expired rows should skip job creation");
     }
@@ -537,10 +505,7 @@ mod tests {
         let user = UserId::new("user-prevalidate-expired");
         harness
             .provider
-            .insert(
-                &user,
-                json_to_row(&json!({"event_id": "evt1", "payload": "expired"})).unwrap(),
-            )
+            .insert(&user, json_to_row(&json!({"event_id": "evt1", "payload": "expired"})).unwrap())
             .expect("insert expired row");
 
         sleep(Duration::from_millis(1200)).await;
@@ -553,10 +518,8 @@ mod tests {
         };
 
         let executor = StreamEvictionExecutor::new();
-        let should_run = executor
-            .pre_validate(&app_ctx, &params)
-            .await
-            .expect("pre_validate execution");
+        let should_run =
+            executor.pre_validate(&app_ctx, &params).await.expect("pre_validate execution");
 
         assert!(should_run, "Expired rows should trigger job creation");
     }

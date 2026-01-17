@@ -5,8 +5,8 @@
 
 use super::ManifestService;
 use crate::error::KalamDbError;
-use crate::schema_registry::PathResolver;
 use crate::schema_registry::cached_table_data::CachedTableData;
+use crate::schema_registry::PathResolver;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute;
 use datafusion::arrow::compute::kernels::aggregate::{max_string, min_string};
@@ -49,14 +49,12 @@ impl FlushManifestHelper {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), KalamDbError> {
-        self.manifest_service
-            .mark_syncing(table_id, user_id)
-            .map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to mark manifest as syncing for {}: {}",
-                    table_id, e
-                ))
-            })
+        self.manifest_service.mark_syncing(table_id, user_id).map_err(|e| {
+            KalamDbError::Other(format!(
+                "Failed to mark manifest as syncing for {}: {}",
+                table_id, e
+            ))
+        })
     }
 
     /// Get next batch number for a table/scope by reading manifest
@@ -77,7 +75,7 @@ impl FlushManifestHelper {
                     manifest.last_sequence_number + 1
                 };
                 Ok(next_batch)
-            }
+            },
             Err(_) => Ok(0), // No manifest exists yet, start with batch 0
         }
     }
@@ -111,7 +109,7 @@ impl FlushManifestHelper {
         indexed_columns: &[(u64, String)],
     ) -> HashMap<u64, ColumnStats> {
         let mut stats = HashMap::new();
-        
+
         for (column_id, column_name) in indexed_columns {
             // Skip _seq system column (handled separately)
             if column_name == SystemColumnNames::SEQ {
@@ -143,84 +141,84 @@ impl FlushManifestHelper {
                     compute::min(arr).map(|v| serde_json::json!(v)),
                     compute::max(arr).map(|v| serde_json::json!(v)),
                 )
-            }
+            },
             DataType::Int16 => {
                 let arr = array.as_any().downcast_ref::<Int16Array>().unwrap();
                 (
                     compute::min(arr).map(|v| serde_json::json!(v)),
                     compute::max(arr).map(|v| serde_json::json!(v)),
                 )
-            }
+            },
             DataType::Int32 => {
                 let arr = array.as_any().downcast_ref::<Int32Array>().unwrap();
                 (
                     compute::min(arr).map(|v| serde_json::json!(v)),
                     compute::max(arr).map(|v| serde_json::json!(v)),
                 )
-            }
+            },
             DataType::Int64 => {
                 let arr = array.as_any().downcast_ref::<Int64Array>().unwrap();
                 (
                     compute::min(arr).map(|v| serde_json::json!(v)),
                     compute::max(arr).map(|v| serde_json::json!(v)),
                 )
-            }
+            },
             DataType::UInt8 => {
                 let arr = array.as_any().downcast_ref::<UInt8Array>().unwrap();
                 (
                     compute::min(arr).map(|v| serde_json::json!(v)),
                     compute::max(arr).map(|v| serde_json::json!(v)),
                 )
-            }
+            },
             DataType::UInt16 => {
                 let arr = array.as_any().downcast_ref::<UInt16Array>().unwrap();
                 (
                     compute::min(arr).map(|v| serde_json::json!(v)),
                     compute::max(arr).map(|v| serde_json::json!(v)),
                 )
-            }
+            },
             DataType::UInt32 => {
                 let arr = array.as_any().downcast_ref::<UInt32Array>().unwrap();
                 (
                     compute::min(arr).map(|v| serde_json::json!(v)),
                     compute::max(arr).map(|v| serde_json::json!(v)),
                 )
-            }
+            },
             DataType::UInt64 => {
                 let arr = array.as_any().downcast_ref::<UInt64Array>().unwrap();
                 (
                     compute::min(arr).map(|v| serde_json::json!(v)),
                     compute::max(arr).map(|v| serde_json::json!(v)),
                 )
-            }
+            },
             DataType::Float32 => {
                 let arr = array.as_any().downcast_ref::<Float32Array>().unwrap();
                 (
                     compute::min(arr).map(|v| serde_json::json!(v)),
                     compute::max(arr).map(|v| serde_json::json!(v)),
                 )
-            }
+            },
             DataType::Float64 => {
                 let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
                 (
                     compute::min(arr).map(|v| serde_json::json!(v)),
                     compute::max(arr).map(|v| serde_json::json!(v)),
                 )
-            }
+            },
             DataType::Utf8 => {
                 let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
                 (
                     min_string(arr).map(|v| serde_json::json!(v)),
                     max_string(arr).map(|v| serde_json::json!(v)),
                 )
-            }
+            },
             DataType::LargeUtf8 => {
                 let arr = array.as_any().downcast_ref::<LargeStringArray>().unwrap();
                 (
                     min_string(arr).map(|v| serde_json::json!(v)),
                     max_string(arr).map(|v| serde_json::json!(v)),
                 )
-            }
+            },
             DataType::Boolean => {
                 let _arr = array.as_any().downcast_ref::<BooleanArray>().unwrap();
                 // Boolean min/max is not directly supported by compute::min/max in older arrow versions?
@@ -231,7 +229,7 @@ impl FlushManifestHelper {
                 // If all true, min=true. If all false, max=false.
                 // Let's skip boolean stats for now or implement simple check.
                 (None, None)
-            }
+            },
             _ => (None, None), // Unsupported types for stats
         }
     }
@@ -314,27 +312,24 @@ impl FlushManifestHelper {
             })?;
 
         // Flush manifest to disk (Cold Store persistence)
-        self.manifest_service
-            .flush_manifest(table_id, user_id)
-            .map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to flush manifest for {} (user_id={:?}): {}",
-                    table_id,
-                    user_id.map(|u| u.as_str()),
-                    e
-                ))
-            })?;
+        self.manifest_service.flush_manifest(table_id, user_id).map_err(|e| {
+            KalamDbError::Other(format!(
+                "Failed to flush manifest for {} (user_id={:?}): {}",
+                table_id,
+                user_id.map(|u| u.as_str()),
+                e
+            ))
+        })?;
 
         // Update cache with manifest path using PathResolver
         let manifest_path = match cached {
             Some(cached) => PathResolver::get_manifest_relative_path(cached, user_id, None)?,
             None => {
                 // Fallback to legacy format if table not in registry (shouldn't happen in normal flow)
-                let scope_str = user_id
-                    .map(|u| u.as_str().to_string())
-                    .unwrap_or_else(|| "shared".to_string());
+                let scope_str =
+                    user_id.map(|u| u.as_str().to_string()).unwrap_or_else(|| "shared".to_string());
                 format!("{}/{}/manifest.json", table_id, scope_str)
-            }
+            },
         };
 
         // ManifestService now handles all caching internally
@@ -371,18 +366,9 @@ mod tests {
 
     #[test]
     fn test_generate_batch_filename() {
-        assert_eq!(
-            FlushManifestHelper::generate_batch_filename(0),
-            "batch-0.parquet"
-        );
-        assert_eq!(
-            FlushManifestHelper::generate_batch_filename(42),
-            "batch-42.parquet"
-        );
-        assert_eq!(
-            FlushManifestHelper::generate_batch_filename(999),
-            "batch-999.parquet"
-        );
+        assert_eq!(FlushManifestHelper::generate_batch_filename(0), "batch-0.parquet");
+        assert_eq!(FlushManifestHelper::generate_batch_filename(42), "batch-42.parquet");
+        assert_eq!(FlushManifestHelper::generate_batch_filename(999), "batch-999.parquet");
     }
 
     #[test]
@@ -395,11 +381,9 @@ mod tests {
         let seq_array = Int64Array::from(vec![100, 200, 150, 175]);
         let data_array = StringArray::from(vec!["a", "b", "c", "d"]);
 
-        let batch = RecordBatch::try_new(
-            schema,
-            vec![StdArc::new(seq_array), StdArc::new(data_array)],
-        )
-        .unwrap();
+        let batch =
+            RecordBatch::try_new(schema, vec![StdArc::new(seq_array), StdArc::new(data_array)])
+                .unwrap();
 
         let (min, max) = FlushManifestHelper::extract_seq_range(&batch);
         assert_eq!(min, 100);
@@ -423,11 +407,8 @@ mod tests {
 
     #[test]
     fn test_extract_seq_range_missing_column() {
-        let schema = StdArc::new(Schema::new(vec![Field::new(
-            "other_column",
-            DataType::Int64,
-            false,
-        )]));
+        let schema =
+            StdArc::new(Schema::new(vec![Field::new("other_column", DataType::Int64, false)]));
         let col_array = Int64Array::from(vec![1, 2, 3]);
         let batch = RecordBatch::try_new(schema, vec![StdArc::new(col_array)]).unwrap();
 
@@ -498,13 +479,14 @@ mod tests {
         ]));
         let id_array = Int32Array::from(vec![1, 2, 3]);
         let seq_array = Int64Array::from(vec![10, 20, 30]);
-        let batch = RecordBatch::try_new(
-            schema,
-            vec![StdArc::new(id_array), StdArc::new(seq_array)],
-        )
-        .unwrap();
+        let batch =
+            RecordBatch::try_new(schema, vec![StdArc::new(id_array), StdArc::new(seq_array)])
+                .unwrap();
 
-        let indexed_columns = vec![(1u64, "id".to_string()), (2u64, SystemColumnNames::SEQ.to_string())];
+        let indexed_columns = vec![
+            (1u64, "id".to_string()),
+            (2u64, SystemColumnNames::SEQ.to_string()),
+        ];
         let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
 
         // Should only have stats for "id", not "_seq"
@@ -549,11 +531,7 @@ mod tests {
     fn test_extract_column_stats_empty_batch() {
         use datafusion::arrow::array::Int32Array;
 
-        let schema = StdArc::new(Schema::new(vec![Field::new(
-            "id",
-            DataType::Int32,
-            false,
-        )]));
+        let schema = StdArc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
         let id_array = Int32Array::from(vec![] as Vec<i32>);
         let batch = RecordBatch::try_new(schema, vec![StdArc::new(id_array)]).unwrap();
 
@@ -572,11 +550,7 @@ mod tests {
     fn test_extract_column_stats_all_nulls() {
         use datafusion::arrow::array::Int32Array;
 
-        let schema = StdArc::new(Schema::new(vec![Field::new(
-            "value",
-            DataType::Int32,
-            true,
-        )]));
+        let schema = StdArc::new(Schema::new(vec![Field::new("value", DataType::Int32, true)]));
         let array = Int32Array::from(vec![None, None, None]);
         let batch = RecordBatch::try_new(schema, vec![StdArc::new(array)]).unwrap();
 
@@ -599,11 +573,9 @@ mod tests {
         ]));
         let f32_array = Float32Array::from(vec![Some(1.5), Some(2.5), Some(0.5)]);
         let f64_array = Float64Array::from(vec![Some(10.5), Some(20.5), Some(5.5)]);
-        let batch = RecordBatch::try_new(
-            schema,
-            vec![StdArc::new(f32_array), StdArc::new(f64_array)],
-        )
-        .unwrap();
+        let batch =
+            RecordBatch::try_new(schema, vec![StdArc::new(f32_array), StdArc::new(f64_array)])
+                .unwrap();
 
         let indexed_columns = vec![(1u64, "f32_col".to_string()), (2u64, "f64_col".to_string())];
         let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
@@ -618,22 +590,10 @@ mod tests {
     #[test]
     fn test_generate_temp_filename() {
         // Test temp filename generation for atomic flush pattern
-        assert_eq!(
-            FlushManifestHelper::generate_temp_filename(0),
-            "batch-0.parquet.tmp"
-        );
-        assert_eq!(
-            FlushManifestHelper::generate_temp_filename(1),
-            "batch-1.parquet.tmp"
-        );
-        assert_eq!(
-            FlushManifestHelper::generate_temp_filename(42),
-            "batch-42.parquet.tmp"
-        );
-        assert_eq!(
-            FlushManifestHelper::generate_temp_filename(999),
-            "batch-999.parquet.tmp"
-        );
+        assert_eq!(FlushManifestHelper::generate_temp_filename(0), "batch-0.parquet.tmp");
+        assert_eq!(FlushManifestHelper::generate_temp_filename(1), "batch-1.parquet.tmp");
+        assert_eq!(FlushManifestHelper::generate_temp_filename(42), "batch-42.parquet.tmp");
+        assert_eq!(FlushManifestHelper::generate_temp_filename(999), "batch-999.parquet.tmp");
     }
 
     #[test]
@@ -644,10 +604,7 @@ mod tests {
             let final_name = FlushManifestHelper::generate_batch_filename(batch_num);
 
             // Temp should be final + ".tmp"
-            assert!(
-                temp.ends_with(".tmp"),
-                "Temp filename should end with .tmp"
-            );
+            assert!(temp.ends_with(".tmp"), "Temp filename should end with .tmp");
             assert_eq!(
                 temp,
                 format!("{}.tmp", final_name),
@@ -665,7 +622,7 @@ mod tests {
                 .and_then(|s| s.strip_suffix(".parquet"))
                 .and_then(|s| s.parse().ok())
                 .expect("Should parse batch number from final");
-            
+
             assert_eq!(temp_num, final_num);
             assert_eq!(temp_num, batch_num);
         }
@@ -675,20 +632,20 @@ mod tests {
     fn test_atomic_flush_filename_pattern() {
         // Test the complete filename pattern for atomic flush
         let batch_number = 5u64;
-        
+
         let temp_filename = FlushManifestHelper::generate_temp_filename(batch_number);
         let final_filename = FlushManifestHelper::generate_batch_filename(batch_number);
 
         // Verify temp filename pattern
         assert_eq!(temp_filename, "batch-5.parquet.tmp");
-        
-        // Verify final filename pattern  
+
+        // Verify final filename pattern
         assert_eq!(final_filename, "batch-5.parquet");
 
         // Verify the rename path: temp -> final
         let temp_path = format!("myns/mytable/{}", temp_filename);
         let final_path = format!("myns/mytable/{}", final_filename);
-        
+
         assert_eq!(temp_path, "myns/mytable/batch-5.parquet.tmp");
         assert_eq!(final_path, "myns/mytable/batch-5.parquet");
     }

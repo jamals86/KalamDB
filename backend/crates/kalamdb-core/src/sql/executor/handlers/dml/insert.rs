@@ -13,10 +13,10 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::default_evaluator::evaluate_default;
-use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::handlers::dml::mod_helpers::{
     coerce_scalar_to_type, function_expr_to_scalar, scalar_from_placeholder, scalar_from_sql_value,
 };
+use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
@@ -56,7 +56,9 @@ impl Default for InsertHandler {
 #[cfg(not(test))]
 impl Default for InsertHandler {
     fn default() -> Self {
-        panic!("InsertHandler::default() is for tests only; use InsertHandler::new(Arc<AppContext>)")
+        panic!(
+            "InsertHandler::default() is for tests only; use InsertHandler::new(Arc<AppContext>)"
+        )
     }
 }
 
@@ -92,16 +94,13 @@ impl StatementHandler for InsertHandler {
         let table_name_owned = table_name.clone();
         let table_id = TableId::new(namespace_owned.clone(), table_name_owned.clone());
         let schema_registry = self.app_context.schema_registry();
-        
+
         // Single lookup: get_table_if_exists returns None if table doesn't exist
         // This is more efficient than calling table_exists + get_table_if_exists
         let table_def = schema_registry
             .get_table_if_exists(self.app_context.as_ref(), &table_id)?
             .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Table '{}' does not exist",
-                    table_id
-                ))
+                KalamDbError::InvalidOperation(format!("Table '{}' does not exist", table_id))
             })?;
 
         // T163: Reject AS USER on Shared tables (Phase 7)
@@ -132,7 +131,7 @@ impl StatementHandler for InsertHandler {
                     && !col_def.default_value.is_none()
             })
             .collect();
-        
+
         let sys_cols = self.app_context.system_columns_service();
 
         // Create a map of column name to type for fast lookup
@@ -233,7 +232,7 @@ impl StatementHandler for InsertHandler {
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         use crate::sql::executor::helpers::guards::block_anonymous_write;
-        
+
         if !matches!(statement.kind(), SqlStatementKind::Insert(_)) {
             return Err(KalamDbError::InvalidOperation(
                 "InsertHandler received wrong statement kind".into(),
@@ -274,19 +273,14 @@ impl InsertHandler {
         default_namespace: &NamespaceId,
     ) -> Result<(NamespaceId, TableName, Vec<String>, Vec<Vec<Expr>>), KalamDbError> {
         let dialect = GenericDialect {};
-        let stmts = Parser::parse_sql(&dialect, sql)
-            .into_invalid_operation("SQL parse error")?;
+        let stmts = Parser::parse_sql(&dialect, sql).into_invalid_operation("SQL parse error")?;
 
         if stmts.is_empty() {
-            return Err(KalamDbError::InvalidOperation(
-                "No SQL statement found".into(),
-            ));
+            return Err(KalamDbError::InvalidOperation("No SQL statement found".into()));
         }
 
         let Statement::Insert(insert) = &stmts[0] else {
-            return Err(KalamDbError::InvalidOperation(
-                "Expected INSERT statement".into(),
-            ));
+            return Err(KalamDbError::InvalidOperation("Expected INSERT statement".into()));
         };
 
         // Extract table name from TableObject
@@ -303,33 +297,21 @@ impl InsertHandler {
                 return Err(KalamDbError::InvalidOperation(
                     "Unsupported table reference type".into(),
                 ))
-            }
+            },
         };
 
         let (namespace, table_name) = match table_parts.len() {
-            1 => (
-                default_namespace.clone(),
-                TableName::new(table_parts[0].clone()),
-            ),
-            2 => (
-                NamespaceId::new(table_parts[0].clone()),
-                TableName::new(table_parts[1].clone()),
-            ),
+            1 => (default_namespace.clone(), TableName::new(table_parts[0].clone())),
+            2 => (NamespaceId::new(table_parts[0].clone()), TableName::new(table_parts[1].clone())),
             _ => return Err(KalamDbError::InvalidOperation("Invalid table name".into())),
         };
 
         // Extract columns
-        let columns: Vec<String> = insert
-            .columns
-            .iter()
-            .map(|ident| ident.value.clone())
-            .collect();
+        let columns: Vec<String> = insert.columns.iter().map(|ident| ident.value.clone()).collect();
 
         // Extract VALUES rows
         let Some(ref source) = insert.source else {
-            return Err(KalamDbError::InvalidOperation(
-                "INSERT missing VALUES clause".into(),
-            ));
+            return Err(KalamDbError::InvalidOperation("INSERT missing VALUES clause".into()));
         };
 
         let rows = match source.body.as_ref() {
@@ -338,7 +320,7 @@ impl InsertHandler {
                 return Err(KalamDbError::InvalidOperation(
                     "Only VALUES clause supported for INSERT".into(),
                 ))
-            }
+            },
         };
 
         Ok((namespace, table_name, columns, rows))
@@ -356,17 +338,14 @@ impl InsertHandler {
             Expr::Value(val_with_span) => scalar_from_sql_value(&val_with_span.value, params),
             Expr::Identifier(ident) if ident.value.starts_with('$') => {
                 scalar_from_placeholder(&ident.value, params)
-            }
-            Expr::Function(func) => function_expr_to_scalar(
-                func,
-                params,
-                user_id,
-                self.app_context.as_ref(),
-            ),
+            },
+            Expr::Function(func) => {
+                function_expr_to_scalar(func, params, user_id, self.app_context.as_ref())
+            },
             _ => {
                 // For other expressions, convert to string (fallback)
                 Ok(ScalarValue::Utf8(Some(expr.to_string())))
-            }
+            },
         }?;
 
         if let Some(target) = target_type {
@@ -375,8 +354,6 @@ impl InsertHandler {
             Ok(value)
         }
     }
-
-    
 
     /// Execute native INSERT using UserTableInsertHandler
     ///
@@ -394,14 +371,8 @@ impl InsertHandler {
         let table_options = table_def.table_options.clone();
 
         // Always route through Raft for consistency (single-node or cluster)
-        self.execute_insert_via_raft(
-            table_id,
-            table_type,
-            &table_options,
-            user_id,
-            role,
-            rows,
-        ).await
+        self.execute_insert_via_raft(table_id, table_type, &table_options, user_id, role, rows)
+            .await
     }
 
     /// Execute INSERT via Raft consensus for cluster replication
@@ -417,10 +388,10 @@ impl InsertHandler {
         role: kalamdb_commons::Role,
         rows: Vec<Row>,
     ) -> Result<usize, KalamDbError> {
-        use kalamdb_raft::{UserDataCommand, SharedDataCommand, DataResponse};
-        
+        use kalamdb_raft::{DataResponse, SharedDataCommand, UserDataCommand};
+
         let row_count = rows.len();
-        
+
         let executor = self.app_context.executor();
 
         match table_type {
@@ -431,11 +402,11 @@ impl InsertHandler {
                     user_id: user_id.clone(),
                     rows,
                 };
-                
-                let response = executor.execute_user_data(&user_id, cmd)
-                    .await
-                    .map_err(|e| KalamDbError::InvalidOperation(format!("Raft insert failed: {}", e)))?;
-                
+
+                let response = executor.execute_user_data(&user_id, cmd).await.map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Raft insert failed: {}", e))
+                })?;
+
                 // Response contains the number of affected rows
                 match response {
                     DataResponse::RowsAffected(n) => Ok(n),
@@ -443,7 +414,7 @@ impl InsertHandler {
                     DataResponse::Error { message } => Err(KalamDbError::InvalidOperation(message)),
                     _ => Ok(row_count),
                 }
-            }
+            },
             TableType::Shared => {
                 // Validate write permissions for shared tables
                 use kalamdb_auth::rbac::can_write_shared_table;
@@ -469,18 +440,18 @@ impl InsertHandler {
                     table_id: table_id.clone(),
                     rows: rows.clone(),
                 };
-                
-                let response = executor.execute_shared_data(cmd)
-                    .await
-                    .map_err(|e| KalamDbError::InvalidOperation(format!("Raft insert failed: {}", e)))?;
-                
+
+                let response = executor.execute_shared_data(cmd).await.map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Raft insert failed: {}", e))
+                })?;
+
                 match response {
                     DataResponse::RowsAffected(n) => Ok(n),
                     DataResponse::Ok => Ok(row_count),
                     DataResponse::Error { message } => Err(KalamDbError::InvalidOperation(message)),
                     _ => Ok(row_count),
                 }
-            }
+            },
             TableType::Stream => {
                 let cmd = UserDataCommand::Insert {
                     required_meta_index: 0, // Stamped by executor
@@ -489,10 +460,9 @@ impl InsertHandler {
                     rows,
                 };
 
-                let response = executor
-                    .execute_user_data(&user_id, cmd)
-                    .await
-                    .map_err(|e| KalamDbError::InvalidOperation(format!("Raft insert failed: {}", e)))?;
+                let response = executor.execute_user_data(&user_id, cmd).await.map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Raft insert failed: {}", e))
+                })?;
 
                 match response {
                     DataResponse::RowsAffected(n) => Ok(n),
@@ -500,14 +470,14 @@ impl InsertHandler {
                     DataResponse::Error { message } => Err(KalamDbError::InvalidOperation(message)),
                     _ => Ok(row_count),
                 }
-            }
+            },
             TableType::System => {
                 // System tables should not be written to through normal INSERT
                 Err(KalamDbError::Unauthorized(format!(
                     "Cannot INSERT into system table '{}'",
                     table_id
                 )))
-            }
+            },
         }
     }
 }

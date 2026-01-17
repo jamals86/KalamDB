@@ -37,7 +37,12 @@ impl FileStreamLogStore {
         let ts = row_id.seq().timestamp_millis();
         let window_start = self.window_start_ms(ts);
         let path = self.log_path(user_id, window_start);
-        self.append_record(&path, StreamLogRecord::Delete { row_id: row_id.clone() })
+        self.append_record(
+            &path,
+            StreamLogRecord::Delete {
+                row_id: row_id.clone(),
+            },
+        )
     }
 
     pub fn delete_old_logs_with_count(&self, before_time: u64) -> Result<usize> {
@@ -153,14 +158,12 @@ impl FileStreamLogStore {
                     .and_then(|v| v.with_second(0))
                     .and_then(|v| v.with_nanosecond(0));
                 truncated.map(|v| v.timestamp_millis() as u64).unwrap_or(ts_ms)
-            }
+            },
             StreamTimeBucket::Day => {
-                let truncated = dt
-                    .date_naive()
-                    .and_hms_opt(0, 0, 0)
-                    .map(|naive| Utc.from_utc_datetime(&naive));
+                let truncated =
+                    dt.date_naive().and_hms_opt(0, 0, 0).map(|naive| Utc.from_utc_datetime(&naive));
                 truncated.map(|v| v.timestamp_millis() as u64).unwrap_or(ts_ms)
-            }
+            },
             StreamTimeBucket::Week => {
                 let weekday = dt.weekday().num_days_from_monday() as i64;
                 let date = dt.date_naive() - chrono::Duration::days(weekday);
@@ -168,14 +171,14 @@ impl FileStreamLogStore {
                 naive
                     .map(|v| Utc.from_utc_datetime(&v).timestamp_millis() as u64)
                     .unwrap_or(ts_ms)
-            }
+            },
             StreamTimeBucket::Month => {
                 let naive = chrono::NaiveDate::from_ymd_opt(dt.year(), dt.month(), 1)
                     .and_then(|d| d.and_hms_opt(0, 0, 0));
                 naive
                     .map(|v| Utc.from_utc_datetime(&v).timestamp_millis() as u64)
                     .unwrap_or(ts_ms)
-            }
+            },
         }
     }
 
@@ -195,12 +198,7 @@ impl FileStreamLogStore {
     fn log_path(&self, user_id: &UserId, window_start_ms: u64) -> PathBuf {
         let bucket_folder = self.bucket_folder(window_start_ms);
         let shard = self.config.shard_router.route_stream_user(user_id).folder_name();
-        let user_dir = self
-            .config
-            .base_dir
-            .join(bucket_folder)
-            .join(shard)
-            .join(user_id.as_str());
+        let user_dir = self.config.base_dir.join(bucket_folder).join(shard).join(user_id.as_str());
         user_dir.join(format!("{}.log", window_start_ms))
     }
 
@@ -222,8 +220,7 @@ impl FileStreamLogStore {
         let len = payload.len() as u32;
         file.write_all(&len.to_le_bytes())
             .map_err(|e| StreamLogError::Io(e.to_string()))?;
-        file.write_all(&payload)
-            .map_err(|e| StreamLogError::Io(e.to_string()))?;
+        file.write_all(&payload).map_err(|e| StreamLogError::Io(e.to_string()))?;
         file.flush().map_err(|e| StreamLogError::Io(e.to_string()))?;
         Ok(())
     }
@@ -235,19 +232,17 @@ impl FileStreamLogStore {
         loop {
             let mut len_buf = [0u8; 4];
             match reader.read_exact(&mut len_buf) {
-                Ok(_) => {}
+                Ok(_) => {},
                 Err(err) => {
                     if err.kind() == std::io::ErrorKind::UnexpectedEof {
                         break;
                     }
                     return Err(StreamLogError::Io(err.to_string()));
-                }
+                },
             }
             let len = u32::from_le_bytes(len_buf) as usize;
             let mut payload = vec![0u8; len];
-            reader
-                .read_exact(&mut payload)
-                .map_err(|e| StreamLogError::Io(e.to_string()))?;
+            reader.read_exact(&mut payload).map_err(|e| StreamLogError::Io(e.to_string()))?;
             let (record, _) = bincode::serde::decode_from_slice::<StreamLogRecord, _>(
                 &payload,
                 bincode::config::standard(),
@@ -319,11 +314,11 @@ impl FileStreamLogStore {
                         if results.len() >= limit {
                             return Ok(results);
                         }
-                    }
+                    },
                     StreamLogRecord::Delete { row_id } => {
                         deleted.insert(row_id.clone());
                         results.retain(|(existing_id, _)| existing_id != &row_id);
-                    }
+                    },
                 }
             }
         }
@@ -358,10 +353,10 @@ impl FileStreamLogStore {
                         if results.len() >= limit {
                             return Ok(results);
                         }
-                    }
+                    },
                     StreamLogRecord::Delete { row_id } => {
                         deleted.insert(row_id);
-                    }
+                    },
                 }
             }
         }
@@ -445,8 +440,8 @@ mod tests {
     }
 
     fn seq_from_timestamp(ts_ms: u64) -> SeqId {
-        let id = SnowflakeGenerator::max_id_for_timestamp(ts_ms)
-            .expect("max_id_for_timestamp failed");
+        let id =
+            SnowflakeGenerator::max_id_for_timestamp(ts_ms).expect("max_id_for_timestamp failed");
         SeqId::new(id)
     }
 
@@ -476,7 +471,7 @@ mod tests {
                 naive
                     .map(|v| chrono::Utc.from_utc_datetime(&v).timestamp_millis() as u64)
                     .unwrap_or(ts_ms)
-            }
+            },
             StreamTimeBucket::Month => chrono::NaiveDate::from_ymd_opt(dt.year(), dt.month(), 1)
                 .and_then(|d| d.and_hms_opt(0, 0, 0))
                 .map(|v| chrono::Utc.from_utc_datetime(&v).timestamp_millis() as u64)
@@ -534,9 +529,7 @@ mod tests {
         rows.insert(old_id.clone(), build_row(&user_id, old_seq));
         rows.insert(new_id.clone(), build_row(&user_id, new_seq));
 
-        store
-            .append_rows(&table_id, &user_id, rows)
-            .expect("append_rows failed");
+        store.append_rows(&table_id, &user_id, rows).expect("append_rows failed");
 
         let shard_folder = shard_router.route_stream_user(&user_id).folder_name();
         let old_window = window_start_ms(bucket, old_ts);
@@ -573,10 +566,7 @@ mod tests {
         assert!(new_path.exists(), "expected new log file to remain");
 
         let old_bucket_dir = base_dir.join(old_bucket);
-        assert!(
-            !old_bucket_dir.exists(),
-            "expected old bucket directory to be removed"
-        );
+        assert!(!old_bucket_dir.exists(), "expected old bucket directory to be removed");
         assert!(base_dir.exists(), "expected base dir to remain");
 
         let _ = fs::remove_dir_all(&base_dir);

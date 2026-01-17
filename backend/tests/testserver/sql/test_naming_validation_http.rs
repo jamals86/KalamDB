@@ -1,6 +1,5 @@
 //! Naming validation tests over the real HTTP SQL API.
 
-
 use kalam_link::models::ResponseStatus;
 
 #[tokio::test]

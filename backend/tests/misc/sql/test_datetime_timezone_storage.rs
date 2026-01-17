@@ -58,10 +58,7 @@ fn test_timezone_conversion_examples() {
     // To display in NY time again, app must know the timezone separately
     let ny_offset = FixedOffset::west_opt(5 * 3600).unwrap();
     let displayed_in_ny = utc.with_timezone(&ny_offset);
-    println!(
-        "Displayed in NY (requires separate tz info): {}",
-        displayed_in_ny
-    );
+    println!("Displayed in NY (requires separate tz info): {}", displayed_in_ny);
 
     // CONCLUSION: KalamDB's DateTime stores UTC timestamp + UTC timezone marker
     // Original timezone offset (+02:00, -05:00, etc.) is LOST

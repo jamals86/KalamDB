@@ -71,7 +71,7 @@ impl ToArrowType for KalamDataType {
             KalamDataType::DateTime => {
                 // DateTime with timezone stored as Timestamp (microsecond precision) UTC
                 ArrowDataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()))
-            }
+            },
             KalamDataType::Time => ArrowDataType::Time64(TimeUnit::Microsecond),
             KalamDataType::Json => ArrowDataType::Utf8, // JSON stored as UTF-8 string
             KalamDataType::Bytes => ArrowDataType::Binary,
@@ -79,15 +79,15 @@ impl ToArrowType for KalamDataType {
                 // EMBEDDING(N) → FixedSizeList<Float32>
                 let field = Field::new("item", ArrowDataType::Float32, false);
                 ArrowDataType::FixedSizeList(std::sync::Arc::new(field), *dim as i32)
-            }
+            },
             KalamDataType::Uuid => {
                 // UUID → FixedSizeBinary(16)
                 ArrowDataType::FixedSizeBinary(16)
-            }
+            },
             KalamDataType::Decimal { precision, scale } => {
                 // DECIMAL → Decimal128
                 ArrowDataType::Decimal128(*precision, *scale as i8)
-            }
+            },
             KalamDataType::SmallInt => ArrowDataType::Int16,
         };
 
@@ -124,7 +124,7 @@ impl FromArrowType for KalamDataType {
                     precision: *precision,
                     scale: *scale as u8,
                 }
-            }
+            },
             ArrowDataType::FixedSizeList(field, size) => {
                 // FixedSizeList<Float32> → EMBEDDING
                 if matches!(field.data_type(), ArrowDataType::Float32) {
@@ -133,16 +133,10 @@ impl FromArrowType for KalamDataType {
                     }
                     KalamDataType::Embedding(*size as usize)
                 } else {
-                    return Err(ArrowConversionError::UnsupportedArrowType(
-                        arrow_type.clone(),
-                    ));
+                    return Err(ArrowConversionError::UnsupportedArrowType(arrow_type.clone()));
                 }
-            }
-            _ => {
-                return Err(ArrowConversionError::UnsupportedArrowType(
-                    arrow_type.clone(),
-                ))
-            }
+            },
+            _ => return Err(ArrowConversionError::UnsupportedArrowType(arrow_type.clone())),
         };
 
         Ok(kalam_type)
@@ -277,17 +271,11 @@ mod tests {
         // Timestamp without timezone (microsecond precision)
         let ts = KalamDataType::Timestamp;
         let arrow = ts.to_arrow_type().unwrap();
-        assert!(matches!(
-            arrow,
-            ArrowDataType::Timestamp(TimeUnit::Microsecond, None)
-        ));
+        assert!(matches!(arrow, ArrowDataType::Timestamp(TimeUnit::Microsecond, None)));
 
         // DateTime with timezone (microsecond precision UTC)
         let dt = KalamDataType::DateTime;
         let arrow_dt = dt.to_arrow_type().unwrap();
-        assert!(matches!(
-            arrow_dt,
-            ArrowDataType::Timestamp(TimeUnit::Microsecond, Some(_))
-        ));
+        assert!(matches!(arrow_dt, ArrowDataType::Timestamp(TimeUnit::Microsecond, Some(_))));
     }
 }

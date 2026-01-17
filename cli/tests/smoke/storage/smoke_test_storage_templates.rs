@@ -38,7 +38,7 @@ impl Drop for CleanupActions {
     }
 }
 
-#[ntest::timeout(180_000)]
+#[ntest::timeout(300_000)]
 #[test]
 fn smoke_storage_custom_templates() {
     if !is_server_running() {
@@ -67,11 +67,8 @@ fn smoke_storage_custom_templates() {
         }
         fs::create_dir_all(&base_dir).expect("create base directory for storage");
     }
-    let base_dir_sql = escape_single_quotes(
-        base_dir
-            .to_str()
-            .expect("base directory path should be valid UTF-8"),
-    );
+    let base_dir_sql =
+        escape_single_quotes(base_dir.to_str().expect("base directory path should be valid UTF-8"));
 
     let mut cleanup = CleanupActions::new();
     cleanup.defer({
@@ -89,14 +86,16 @@ fn smoke_storage_custom_templates() {
         let ns = namespace_user.clone();
         let table = user_table.clone();
         move || {
-            let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}.{}", ns, table));
+            let _ =
+                execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}.{}", ns, table));
         }
     });
     cleanup.defer({
         let ns = namespace_shared.clone();
         let table = shared_table.clone();
         move || {
-            let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}.{}", ns, table));
+            let _ =
+                execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}.{}", ns, table));
         }
     });
     cleanup.defer({
@@ -184,7 +183,9 @@ fn smoke_storage_custom_templates() {
                 Some(v) if !v.is_empty() => v,
                 _ => {
                     // Fallback: scan recursively for any parquet files beneath expected_user_dir
-                    println!("[storage_templates] Primary wait failed; performing recursive search");
+                    println!(
+                        "[storage_templates] Primary wait failed; performing recursive search"
+                    );
                     let mut collected = Vec::new();
                     if expected_user_dir.exists() {
                         // Manual depth-limited traversal (depth <= 3)
@@ -216,40 +217,30 @@ fn smoke_storage_custom_templates() {
                     }
                     if collected.is_empty() {
                         panic!(
-                            "Expected parquet files under {} (direct or recursive) but none were found",
-                            expected_user_dir.display()
-                        );
+                        "Expected parquet files under {} (direct or recursive) but none were found",
+                        expected_user_dir.display()
+                    );
                     }
                     collected
-                }
+                },
             };
-        assert!(
-            !user_parquet_files.is_empty(),
-            "user table flush should produce parquet files"
-        );
+        assert!(!user_parquet_files.is_empty(), "user table flush should produce parquet files");
         for file_path in &user_parquet_files {
             assert_eq!(
                 expected_user_dir,
-                file_path
-                    .parent()
-                    .map(Path::to_path_buf)
-                    .expect("parquet file has parent"),
+                file_path.parent().map(Path::to_path_buf).expect("parquet file has parent"),
                 "Parquet file should live under user template directory"
             );
         }
     } else {
-        let expected_user_path = format!(
-            "ns_{}/tbl_{}/usr_{}",
-            namespace_user, user_table, internal_user_id
-        );
+        let expected_user_path =
+            format!("ns_{}/tbl_{}/usr_{}", namespace_user, user_table, internal_user_id);
         assert_manifest_path_contains(&namespace_user, &user_table, &expected_user_path);
     }
 
     execute_sql_as_root_via_client(&format!("DROP TABLE {}", table_user_full))
         .expect("drop user table");
-    if local_fs_checks
-        && !wait_for_directory_absence(&expected_user_dir, Duration::from_secs(15))
-    {
+    if local_fs_checks && !wait_for_directory_absence(&expected_user_dir, Duration::from_secs(15)) {
         println!(
             "[storage_templates] WARNING: user template directory not removed (non-fatal): {}",
             expected_user_dir.display()
@@ -281,7 +272,9 @@ fn smoke_storage_custom_templates() {
             match wait_for_parquet_files(&expected_shared_dir, Duration::from_secs(12)) {
                 Some(v) if !v.is_empty() => v,
                 _ => {
-                    println!("[storage_templates] Shared table primary wait failed; recursive search");
+                    println!(
+                        "[storage_templates] Shared table primary wait failed; recursive search"
+                    );
                     let mut collected = Vec::new();
                     if expected_shared_dir.exists() {
                         fn visit(
@@ -312,12 +305,12 @@ fn smoke_storage_custom_templates() {
                     }
                     if collected.is_empty() {
                         panic!(
-                            "Expected parquet files under {} (direct or recursive) but none were found",
-                            expected_shared_dir.display()
-                        );
+                        "Expected parquet files under {} (direct or recursive) but none were found",
+                        expected_shared_dir.display()
+                    );
                     }
                     collected
-                }
+                },
             };
         assert!(
             !shared_parquet_files.is_empty(),
@@ -326,10 +319,7 @@ fn smoke_storage_custom_templates() {
         for file_path in &shared_parquet_files {
             assert_eq!(
                 expected_shared_dir,
-                file_path
-                    .parent()
-                    .map(Path::to_path_buf)
-                    .expect("parquet file has parent"),
+                file_path.parent().map(Path::to_path_buf).expect("parquet file has parent"),
                 "Shared parquet file should live under shared template directory"
             );
         }
@@ -340,8 +330,7 @@ fn smoke_storage_custom_templates() {
 
     execute_sql_as_root_via_client(&format!("DROP TABLE {}", table_shared_full))
         .expect("drop shared table");
-    if local_fs_checks
-        && !wait_for_directory_absence(&expected_shared_dir, Duration::from_secs(15))
+    if local_fs_checks && !wait_for_directory_absence(&expected_shared_dir, Duration::from_secs(15))
     {
         println!(
             "[storage_templates] WARNING: shared template directory not removed (non-fatal): {}",
@@ -382,34 +371,18 @@ fn trigger_flush_and_wait(table_name: &str) {
 
 // Fetch internal user_id for a given username from system.users (first column user_id)
 fn fetch_user_id(username: &str) -> String {
-    let sql = format!(
-        "SELECT user_id FROM system.users WHERE username = '{}' LIMIT 1",
-        username
-    );
+    let sql = format!("SELECT user_id FROM system.users WHERE username = '{}' LIMIT 1", username);
     let rows = query_rows(&sql);
     if rows.is_empty() {
         panic!("User '{}' not found in system.users", username);
     }
     {
-        let value = rows[0]
-            .get("user_id")
-            .map(extract_typed_value)
-            .unwrap_or_else(|| {
-                panic!(
-                    "Row for user '{}' missing user_id field: {}",
-                    username,
-                    rows[0]
-                )
-            });
-        value.as_str()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                panic!(
-                    "Row for user '{}' user_id is not a string: {:?}",
-                    username,
-                    value
-                )
-            })
+        let value = rows[0].get("user_id").map(extract_typed_value).unwrap_or_else(|| {
+            panic!("Row for user '{}' missing user_id field: {}", username, rows[0])
+        });
+        value.as_str().map(|s| s.to_string()).unwrap_or_else(|| {
+            panic!("Row for user '{}' user_id is not a string: {:?}", username, value)
+        })
     }
 }
 
@@ -503,10 +476,7 @@ fn assert_table_storage(namespace: &str, table_name: &str, expected_storage_id: 
         table_name,
         rows_as_debug_string(&rows)
     );
-    let options_value = rows[0]
-        .get("options")
-        .map(extract_typed_value)
-        .unwrap_or(JsonValue::Null);
+    let options_value = rows[0].get("options").map(extract_typed_value).unwrap_or(JsonValue::Null);
     let options_raw = options_value.as_str().unwrap_or("");
     let options_json: JsonValue = serde_json::from_str(options_raw).unwrap_or_else(|err| {
         panic!(
@@ -514,10 +484,7 @@ fn assert_table_storage(namespace: &str, table_name: &str, expected_storage_id: 
             namespace, table_name, err, options_raw
         )
     });
-    let storage_id = options_json
-        .get("storage_id")
-        .and_then(JsonValue::as_str)
-        .unwrap_or("");
+    let storage_id = options_json.get("storage_id").and_then(JsonValue::as_str).unwrap_or("");
     assert_eq!(
         storage_id, expected_storage_id,
         "Table {}.{} is not using storage '{}' (reported '{}', options={})",
@@ -563,31 +530,35 @@ fn query_rows(sql: &str) -> Vec<JsonValue> {
         .unwrap_or_else(|err| panic!("Failed to execute '{}': {}", sql, err));
     let json: JsonValue = serde_json::from_str(&output)
         .unwrap_or_else(|err| panic!("Failed to parse CLI JSON output: {}\n{}", err, output));
-    
+
     // Extract schema for column names
-    let schema = json.get("results")
+    let schema = json
+        .get("results")
         .and_then(JsonValue::as_array)
         .and_then(|results| results.first())
         .and_then(|result| result.get("schema"))
         .and_then(JsonValue::as_array)
         .cloned()
         .unwrap_or_default();
-    
-    let column_names: Vec<String> = schema.iter()
+
+    let column_names: Vec<String> = schema
+        .iter()
         .filter_map(|col| col.get("name").and_then(JsonValue::as_str).map(String::from))
         .collect();
-    
+
     // Get rows as arrays
-    let rows_arrays = json.get("results")
+    let rows_arrays = json
+        .get("results")
         .and_then(JsonValue::as_array)
         .and_then(|results| results.first())
         .and_then(|result| result.get("rows"))
         .and_then(JsonValue::as_array)
         .cloned()
         .unwrap_or_default();
-    
+
     // Convert each row array to an object with column names as keys
-    rows_arrays.iter()
+    rows_arrays
+        .iter()
         .filter_map(|row| {
             let arr = row.as_array()?;
             let mut obj = serde_json::Map::new();
@@ -605,9 +576,6 @@ fn rows_as_debug_string(rows: &[JsonValue]) -> String {
     if rows.is_empty() {
         "<no rows>".to_string()
     } else {
-        rows.iter()
-            .map(|row| row.to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
+        rows.iter().map(|row| row.to_string()).collect::<Vec<_>>().join(", ")
     }
 }

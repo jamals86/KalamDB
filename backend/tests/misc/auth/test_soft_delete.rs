@@ -6,7 +6,6 @@
 //! - Deleted data can be recovered
 //! - _deleted field is accessible when explicitly selected
 
-
 use super::test_support::{fixtures, QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
 
@@ -53,7 +52,11 @@ async fn test_soft_delete_hides_rows() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    assert_eq!(response.results[0].rows.as_ref().map(|r| r.len()).unwrap_or(0), 2, "Should have 2 tasks");
+    assert_eq!(
+        response.results[0].rows.as_ref().map(|r| r.len()).unwrap_or(0),
+        2,
+        "Should have 2 tasks"
+    );
 
     // Delete task1 (soft delete)
     let response = server
@@ -168,7 +171,10 @@ async fn test_deleted_field_default_false() {
 
     // Select with _deleted column
     let response = server
-        .execute_sql_as_user("SELECT id, title, _deleted FROM test_soft_deleted_field.tasks", "user1")
+        .execute_sql_as_user(
+            "SELECT id, title, _deleted FROM test_soft_deleted_field.tasks",
+            "user1",
+        )
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -176,11 +182,7 @@ async fn test_deleted_field_default_false() {
     assert_eq!(rows.len(), 1);
 
     let deleted_value = rows[0].get("_deleted").unwrap().as_bool();
-    assert_eq!(
-        deleted_value,
-        Some(false),
-        "_deleted should default to false for new rows"
-    );
+    assert_eq!(deleted_value, Some(false), "_deleted should default to false for new rows");
 
     println!("✅ _deleted field defaults to false");
 }
@@ -235,10 +237,7 @@ async fn test_multiple_deletes() {
     let rows = response.results[0].rows_as_maps();
     assert_eq!(rows.len(), 3, "Should have 3 tasks after deleting 2");
 
-    let ids: Vec<&str> = rows
-        .iter()
-        .map(|r| r.get("id").unwrap().as_str().unwrap())
-        .collect();
+    let ids: Vec<&str> = rows.iter().map(|r| r.get("id").unwrap().as_str().unwrap()).collect();
 
     assert_eq!(ids, vec!["task1", "task3", "task5"]);
 
@@ -353,16 +352,18 @@ async fn test_count_excludes_deleted_rows() {
     if rows.is_empty() {
         panic!("No result rows returned for COUNT(*)");
     }
-    let count_val = rows[0].get("count")
+    let count_val = rows[0]
+        .get("count")
         .or_else(|| rows[0].get("COUNT(*)"))
         .or_else(|| {
-             // Fallback to searching for ANY key that contains 'count' (case independent)
-             rows[0].iter()
-                 .find(|(k, _)| k.to_lowercase() == "count" || k.contains("COUNT(*)"))
-                 .map(|(_, v)| v)
+            // Fallback to searching for ANY key that contains 'count' (case independent)
+            rows[0]
+                .iter()
+                .find(|(k, _)| k.to_lowercase() == "count" || k.contains("COUNT(*)"))
+                .map(|(_, v)| v)
         })
         .expect(&format!("Missing count column. Available columns: {:?}", rows[0].keys()));
-    
+
     let count = match count_val {
         serde_json::Value::Number(n) => n.as_i64().unwrap(),
         serde_json::Value::String(s) => s.parse::<i64>().expect("Count string is not a valid i64"),
@@ -388,18 +389,25 @@ async fn test_count_excludes_deleted_rows() {
     if rows.is_empty() {
         panic!("No result rows returned for COUNT(*) after delete");
     }
-    let count_val = rows[0].get("count")
+    let count_val = rows[0]
+        .get("count")
         .or_else(|| rows[0].get("COUNT(*)"))
         .or_else(|| {
-             rows[0].iter()
-                 .find(|(k, _)| k.to_lowercase() == "count" || k.contains("COUNT(*)"))
-                 .map(|(_, v)| v)
+            rows[0]
+                .iter()
+                .find(|(k, _)| k.to_lowercase() == "count" || k.contains("COUNT(*)"))
+                .map(|(_, v)| v)
         })
-        .expect(&format!("Missing count column after delete. Available columns: {:?}", rows[0].keys()));
-    
+        .expect(&format!(
+            "Missing count column after delete. Available columns: {:?}",
+            rows[0].keys()
+        ));
+
     let count = match count_val {
         serde_json::Value::Number(n) => n.as_i64().unwrap(),
-        serde_json::Value::String(s) => s.parse::<i64>().expect("Count string after delete is not a valid i64"),
+        serde_json::Value::String(s) => {
+            s.parse::<i64>().expect("Count string after delete is not a valid i64")
+        },
         _ => panic!("Unexpected count value type after delete: {:?}", count_val),
     };
     assert_eq!(count, 3, "Should count 3 tasks after soft delete");

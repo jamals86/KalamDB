@@ -59,8 +59,8 @@ fn smoke_test_00_parallel_query_burst() {
     );
 
     let max_id_sql = format!("SELECT COALESCE(MAX(id), -1) AS max_id FROM {}", full_table_name);
-    let max_id_output = execute_sql_as_root_via_client_json(&max_id_sql)
-        .expect("MAX(id) query should succeed");
+    let max_id_output =
+        execute_sql_as_root_via_client_json(&max_id_sql).expect("MAX(id) query should succeed");
     let max_id = extract_scalar(&max_id_output, "max_id");
     // next_id is MAX(id) + 1, or 0 if table is empty
     let next_id = if max_id < 0 { 0 } else { (max_id + 1) as usize };
@@ -88,7 +88,8 @@ fn smoke_test_00_parallel_query_burst() {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            let insert_sql = format!("INSERT INTO {} (id, value) VALUES {}", full_table_name, values);
+            let insert_sql =
+                format!("INSERT INTO {} (id, value) VALUES {}", full_table_name, values);
             execute_sql_as_root_via_client(&insert_sql).expect("INSERT chunk should succeed");
             inserted += batch_size;
         }
@@ -117,7 +118,7 @@ fn smoke_test_00_parallel_query_burst() {
 
     let select_sql = Arc::new(format!("SELECT * FROM {}", full_table_name));
     let overall_start = Instant::now();
-    
+
     // Use std threads with the client-based execution to run parallel queries
     // Each thread uses the shared tokio runtime from execute_sql_as_root_via_client
     let mut handles = Vec::with_capacity(PARALLEL_QUERIES);
@@ -128,12 +129,9 @@ fn smoke_test_00_parallel_query_burst() {
 
         handles.push(std::thread::spawn(move || {
             let launch = Instant::now();
-            let offset = launch
-                .checked_duration_since(suite_start)
-                .unwrap_or_default();
+            let offset = launch.checked_duration_since(suite_start).unwrap_or_default();
             // Use client-based execution instead of CLI subprocess
-            let result = execute_sql_as_root_via_client(&sql_clone)
-                .map_err(|e| format!("{}", e));
+            let result = execute_sql_as_root_via_client(&sql_clone).map_err(|e| format!("{}", e));
             let duration = launch.elapsed();
             (idx, result, offset, duration)
         }));
@@ -163,18 +161,11 @@ fn smoke_test_00_parallel_query_burst() {
         durations.push(duration);
     }
 
-    let max_duration = durations
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or_default();
+    let max_duration = durations.iter().copied().max().unwrap_or_default();
     let avg_duration = if durations.is_empty() {
         Duration::from_secs(0)
     } else {
-        let total_ns: u128 = durations
-            .iter()
-            .map(|d| d.as_nanos())
-            .sum();
+        let total_ns: u128 = durations.iter().map(|d| d.as_nanos()).sum();
         Duration::from_nanos((total_ns / durations.len() as u128) as u64)
     };
 
@@ -204,18 +195,20 @@ fn extract_scalar(json_output: &str, field: &str) -> i64 {
 
     let rows = get_rows_as_hashmaps(&value)
         .unwrap_or_else(|| panic!("JSON response missing rows: {}", json_output));
-    let first_row = rows.first()
+    let first_row = rows
+        .first()
         .unwrap_or_else(|| panic!("JSON response has no rows: {}", json_output));
-    let field_value = first_row.get(field)
+    let field_value = first_row
+        .get(field)
         .unwrap_or_else(|| panic!("JSON response missing field '{}': {}", field, json_output));
-    
+
     let field_value = extract_typed_value(field_value);
-    
+
     // Handle both number and string representations (large ints are serialized as strings for JS safety)
     match &field_value {
-        Value::Number(n) => n.as_i64().unwrap_or_else(|| {
-            panic!("Field '{}' is not a valid i64: {}", field, json_output)
-        }),
+        Value::Number(n) => n
+            .as_i64()
+            .unwrap_or_else(|| panic!("Field '{}' is not a valid i64: {}", field, json_output)),
         Value::String(s) => s.parse::<i64>().unwrap_or_else(|_| {
             panic!("Field '{}' string is not a valid i64: {}", field, json_output)
         }),

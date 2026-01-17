@@ -8,7 +8,6 @@
 //! - Shared table PK index: INSERT 100 rows → UPDATE by PK → verify O(1) lookup
 //! - Performance comparison: Update with many rows vs few rows should have similar latency
 
-
 use super::test_support::{fixtures, QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
 use std::time::Instant;
@@ -462,10 +461,7 @@ async fn test_user_table_pk_index_delete() {
     // Measure DELETE by PK latency with 300 rows
     let start_300 = Instant::now();
     let delete_response = server
-        .execute_sql_as_user(
-            "DELETE FROM delete_test_ns.items WHERE id = 150",
-            "delete_user",
-        )
+        .execute_sql_as_user("DELETE FROM delete_test_ns.items WHERE id = 150", "delete_user")
         .await;
     let latency_300_rows = start_300.elapsed();
 
@@ -478,10 +474,7 @@ async fn test_user_table_pk_index_delete() {
 
     // Verify the delete worked
     let select_response = server
-        .execute_sql_as_user(
-            "SELECT id FROM delete_test_ns.items WHERE id = 150",
-            "delete_user",
-        )
+        .execute_sql_as_user("SELECT id FROM delete_test_ns.items WHERE id = 150", "delete_user")
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
     let rows = select_response.results[0].rows_as_maps();
@@ -503,10 +496,7 @@ async fn test_user_table_pk_index_delete() {
     // Measure DELETE by PK latency with ~1500 rows
     let start_1500 = Instant::now();
     let delete_response = server
-        .execute_sql_as_user(
-            "DELETE FROM delete_test_ns.items WHERE id = 750",
-            "delete_user",
-        )
+        .execute_sql_as_user("DELETE FROM delete_test_ns.items WHERE id = 750", "delete_user")
         .await;
     let latency_1500_rows = start_1500.elapsed();
 
@@ -609,20 +599,10 @@ async fn test_user_table_pk_index_update_after_flush() {
 
     // Flush the table to Parquet (cold storage)
     let flush_result = execute_flush_synchronously(&server, "flush_update_ns", "user_items").await;
-    assert!(
-        flush_result.is_ok(),
-        "Flush failed: {:?}",
-        flush_result.err()
-    );
+    assert!(flush_result.is_ok(), "Flush failed: {:?}", flush_result.err());
     let flush_stats = flush_result.unwrap();
-    println!(
-        "✅ Flushed {} rows to cold storage",
-        flush_stats.rows_flushed
-    );
-    assert!(
-        flush_stats.rows_flushed > 0,
-        "Expected rows to be flushed"
-    );
+    println!("✅ Flushed {} rows to cold storage", flush_stats.rows_flushed);
+    assert!(flush_stats.rows_flushed > 0, "Expected rows to be flushed");
 
     // Update a row that is now in cold storage
     let update_response = server
@@ -638,13 +618,10 @@ async fn test_user_table_pk_index_update_after_flush() {
         update_response.error
     );
     println!("📊 UPDATE response: rows_affected={:?}", update_response.results);
-    
+
     // Debug: Check COUNT in a separate query
     let total_count = server
-        .execute_sql_as_user(
-            "SELECT COUNT(*) as cnt FROM flush_update_ns.user_items",
-            "flush_user",
-        )
+        .execute_sql_as_user("SELECT COUNT(*) as cnt FROM flush_update_ns.user_items", "flush_user")
         .await;
     println!("📊 Total COUNT: {:?}", total_count.results);
 
@@ -657,7 +634,7 @@ async fn test_user_table_pk_index_update_after_flush() {
         )
         .await;
     println!("📊 COUNT result: {:?}", count_response.results);
-    
+
     // Debug: Query with _deleted filter to see ALL versions (hot + cold, including tombstones)
     let all_with_deleted = server
         .execute_sql_as_user(
@@ -665,7 +642,10 @@ async fn test_user_table_pk_index_update_after_flush() {
             "flush_user",
         )
         .await;
-    println!("📊 ALL rows (deleted filter): {:?}", all_with_deleted.results.first().and_then(|r| r.rows.as_ref()).map(|r| r.len()));
+    println!(
+        "📊 ALL rows (deleted filter): {:?}",
+        all_with_deleted.results.first().and_then(|r| r.rows.as_ref()).map(|r| r.len())
+    );
 
     // Check the highest _seq value to see if UPDATE created a new version
     let max_seq = server
@@ -690,11 +670,7 @@ async fn test_user_table_pk_index_update_after_flush() {
     let value = rows[0].get("value").unwrap().as_i64().unwrap();
     let seq = rows[0].get("_seq");
     println!("📊 value={}, _seq={:?}", value, seq);
-    assert_eq!(
-        value,
-        9999,
-        "Expected updated value 9999"
-    );
+    assert_eq!(value, 9999, "Expected updated value 9999");
 
     // Also verify that other rows are still accessible
     let select_other = server
@@ -775,20 +751,10 @@ async fn test_shared_table_pk_index_update_after_flush() {
     // Flush the table to Parquet (cold storage)
     let flush_result =
         execute_shared_flush_synchronously(&server, "flush_shared_ns", "products").await;
-    assert!(
-        flush_result.is_ok(),
-        "Shared table flush failed: {:?}",
-        flush_result.err()
-    );
+    assert!(flush_result.is_ok(), "Shared table flush failed: {:?}", flush_result.err());
     let flush_stats = flush_result.unwrap();
-    println!(
-        "✅ Flushed {} rows to cold storage (shared table)",
-        flush_stats.rows_flushed
-    );
-    assert!(
-        flush_stats.rows_flushed > 0,
-        "Expected rows to be flushed"
-    );
+    println!("✅ Flushed {} rows to cold storage (shared table)", flush_stats.rows_flushed);
+    assert!(flush_stats.rows_flushed > 0, "Expected rows to be flushed");
 
     // Update a row that is now in cold storage
     let update_response = server
@@ -901,33 +867,21 @@ async fn test_user_table_pk_index_isolation() {
 
     // Verify Alice's update worked
     let alice_select = server
-        .execute_sql_as_user(
-            "SELECT id, secret FROM isolation_ns.user_data WHERE id = 5",
-            "alice",
-        )
+        .execute_sql_as_user("SELECT id, secret FROM isolation_ns.user_data WHERE id = 5", "alice")
         .await;
     assert_eq!(alice_select.status, ResponseStatus::Success);
     let rows = alice_select.results[0].rows_as_maps();
     assert_eq!(rows.len(), 1);
-    assert_eq!(
-        rows[0].get("secret").unwrap().as_str().unwrap(),
-        "alice_updated"
-    );
+    assert_eq!(rows[0].get("secret").unwrap().as_str().unwrap(), "alice_updated");
 
     // Verify Bob's row id=5 is unchanged
     let bob_select = server
-        .execute_sql_as_user(
-            "SELECT id, secret FROM isolation_ns.user_data WHERE id = 5",
-            "bob",
-        )
+        .execute_sql_as_user("SELECT id, secret FROM isolation_ns.user_data WHERE id = 5", "bob")
         .await;
     assert_eq!(bob_select.status, ResponseStatus::Success);
     let rows = bob_select.results[0].rows_as_maps();
     assert_eq!(rows.len(), 1);
-    assert_eq!(
-        rows[0].get("secret").unwrap().as_str().unwrap(),
-        "bob_secret_5"
-    );
+    assert_eq!(rows[0].get("secret").unwrap().as_str().unwrap(), "bob_secret_5");
 
     // Bob updates his row id=5
     let update_response = server
@@ -945,30 +899,18 @@ async fn test_user_table_pk_index_isolation() {
 
     // Verify Bob's update worked and Alice's is still correct
     let alice_select = server
-        .execute_sql_as_user(
-            "SELECT id, secret FROM isolation_ns.user_data WHERE id = 5",
-            "alice",
-        )
+        .execute_sql_as_user("SELECT id, secret FROM isolation_ns.user_data WHERE id = 5", "alice")
         .await;
     assert_eq!(alice_select.status, ResponseStatus::Success);
     let rows = alice_select.results[0].rows_as_maps();
-    assert_eq!(
-        rows[0].get("secret").unwrap().as_str().unwrap(),
-        "alice_updated"
-    );
+    assert_eq!(rows[0].get("secret").unwrap().as_str().unwrap(), "alice_updated");
 
     let bob_select = server
-        .execute_sql_as_user(
-            "SELECT id, secret FROM isolation_ns.user_data WHERE id = 5",
-            "bob",
-        )
+        .execute_sql_as_user("SELECT id, secret FROM isolation_ns.user_data WHERE id = 5", "bob")
         .await;
     assert_eq!(bob_select.status, ResponseStatus::Success);
     let rows = bob_select.results[0].rows_as_maps();
-    assert_eq!(
-        rows[0].get("secret").unwrap().as_str().unwrap(),
-        "bob_updated"
-    );
+    assert_eq!(rows[0].get("secret").unwrap().as_str().unwrap(), "bob_updated");
 
     println!("✅ User table PK index provides correct user isolation");
 }

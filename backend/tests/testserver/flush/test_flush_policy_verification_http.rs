@@ -6,15 +6,16 @@
 //! - tests/integration/flush/test_automatic_flushing_comprehensive.rs
 //! - tests/integration/flush/test_flush_operations.rs
 
-
-use kalam_link::models::ResponseStatus;
-use kalamdb_commons::UserName;
 use super::test_support::flush::{
     count_parquet_files_for_table, flush_table_and_wait, wait_for_parquet_files_for_table,
     wait_for_parquet_files_for_user_table,
 };
-use super::test_support::jobs::{extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent};
 use super::test_support::http_server::HttpTestServer;
+use super::test_support::jobs::{
+    extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent,
+};
+use kalam_link::models::ResponseStatus;
+use kalamdb_commons::UserName;
 use tokio::time::Duration;
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<(String, String)> {

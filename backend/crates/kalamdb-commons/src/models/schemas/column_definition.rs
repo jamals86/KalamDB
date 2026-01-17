@@ -312,7 +312,7 @@ mod tests {
         let col1 = ColumnDefinition::simple(42, "old_name", 1, KalamDataType::Text);
         let mut col2 = col1.clone();
         col2.column_name = "new_name".to_string();
-        
+
         // Even with different names, column_id should be the same
         assert_eq!(col1.column_id, col2.column_id);
         assert_eq!(col1.column_id, 42);

@@ -63,7 +63,7 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String>
         // Otherwise, leave unsupported so callers can surface a friendly error
         _ => {
             return Err(format!("Unsupported data type: {:?}", sql_type));
-        }
+        },
     };
 
     Ok(dtype)
@@ -90,10 +90,7 @@ fn map_custom_type(name: &ObjectName, modifiers: &[String]) -> Result<DataType, 
 
             let dim_str = &modifiers[0];
             let dim = dim_str.parse::<usize>().map_err(|_| {
-                format!(
-                    "EMBEDDING dimension must be a positive integer, got '{}'",
-                    dim_str
-                )
+                format!("EMBEDDING dimension must be a positive integer, got '{}'", dim_str)
             })?;
 
             // Validate dimension is within allowed range (1-8192)
@@ -101,22 +98,15 @@ fn map_custom_type(name: &ObjectName, modifiers: &[String]) -> Result<DataType, 
                 return Err("EMBEDDING dimension must be at least 1".to_string());
             }
             if dim > 8192 {
-                return Err(format!(
-                    "EMBEDDING dimension must be at most 8192 (found {})",
-                    dim
-                ));
+                return Err(format!("EMBEDDING dimension must be at most 8192 (found {})", dim));
             }
 
             // Return FixedSizeList<Float32> to match KalamDataType::Embedding Arrow conversion
             DataType::FixedSizeList(
-                std::sync::Arc::new(arrow::datatypes::Field::new(
-                    "item",
-                    DataType::Float32,
-                    false,
-                )),
+                std::sync::Arc::new(arrow::datatypes::Field::new("item", DataType::Float32, false)),
                 dim as i32,
             )
-        }
+        },
 
         // PostgreSQL serial aliases
         "serial" | "serial4" => DataType::Int32,
@@ -134,7 +124,7 @@ fn map_custom_type(name: &ObjectName, modifiers: &[String]) -> Result<DataType, 
         other if other.ends_with("text") || other.ends_with("string") => DataType::Utf8,
         other => {
             return Err(format!("Unsupported custom data type '{}'", other));
-        }
+        },
     };
 
     Ok(dtype)
@@ -147,44 +137,28 @@ mod tests {
 
     fn custom(name: &str) -> SQLDataType {
         SQLDataType::Custom(
-            ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(
-                Ident::new(name),
-            )]),
+            ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(Ident::new(name))]),
             vec![],
         )
     }
 
     fn custom_with_size(name: &str, size: i32) -> SQLDataType {
         SQLDataType::Custom(
-            ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(
-                Ident::new(name),
-            )]),
+            ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(Ident::new(name))]),
             vec![size.to_string()],
         )
     }
 
     #[test]
     fn maps_postgres_serial_types() {
-        assert_eq!(
-            map_sql_type_to_arrow(&custom("serial")).unwrap(),
-            DataType::Int32
-        );
-        assert_eq!(
-            map_sql_type_to_arrow(&custom("serial8")).unwrap(),
-            DataType::Int64
-        );
-        assert_eq!(
-            map_sql_type_to_arrow(&custom("smallserial")).unwrap(),
-            DataType::Int16
-        );
+        assert_eq!(map_sql_type_to_arrow(&custom("serial")).unwrap(), DataType::Int32);
+        assert_eq!(map_sql_type_to_arrow(&custom("serial8")).unwrap(), DataType::Int64);
+        assert_eq!(map_sql_type_to_arrow(&custom("smallserial")).unwrap(), DataType::Int16);
     }
 
     #[test]
     fn maps_unsigned_variants() {
-        assert_eq!(
-            map_sql_type_to_arrow(&SQLDataType::UnsignedInteger).unwrap(),
-            DataType::UInt32
-        );
+        assert_eq!(map_sql_type_to_arrow(&SQLDataType::UnsignedInteger).unwrap(), DataType::UInt32);
     }
 
     #[test]
@@ -204,7 +178,7 @@ mod tests {
                     assert_eq!(field.data_type(), &DataType::Float32);
                     assert_eq!(field.name(), "item");
                     assert!(!field.is_nullable());
-                }
+                },
                 _ => panic!("Expected FixedSizeList, got {:?}", result),
             }
         }
@@ -328,10 +302,7 @@ pub fn format_mysql_error(error_code: u16, sqlstate: &str, message: &str) -> Str
 /// assert_eq!(msg, "ERROR 1146 (42S02): Table 'db.users' doesn't exist");
 /// ```
 pub fn format_mysql_table_not_found(database: &str, table_name: &str) -> String {
-    format!(
-        "ERROR 1146 (42S02): Table '{}.{}' doesn't exist",
-        database, table_name
-    )
+    format!("ERROR 1146 (42S02): Table '{}.{}' doesn't exist", database, table_name)
 }
 
 /// Format a column not found error in MySQL style
@@ -345,10 +316,7 @@ pub fn format_mysql_table_not_found(database: &str, table_name: &str) -> String 
 /// assert_eq!(msg, "ERROR 1054 (42S22): Unknown column 'age' in 'field list'");
 /// ```
 pub fn format_mysql_column_not_found(column_name: &str) -> String {
-    format!(
-        "ERROR 1054 (42S22): Unknown column '{}' in 'field list'",
-        column_name
-    )
+    format!("ERROR 1054 (42S22): Unknown column '{}' in 'field list'", column_name)
 }
 
 /// Format a syntax error in MySQL style
@@ -382,18 +350,12 @@ mod error_formatting_tests {
 
     #[test]
     fn test_postgres_column_not_found() {
-        assert_eq!(
-            format_postgres_column_not_found("age"),
-            "ERROR: column \"age\" does not exist"
-        );
+        assert_eq!(format_postgres_column_not_found("age"), "ERROR: column \"age\" does not exist");
     }
 
     #[test]
     fn test_postgres_syntax_error() {
-        assert_eq!(
-            format_postgres_syntax_error("FROM"),
-            "ERROR: syntax error at or near \"FROM\""
-        );
+        assert_eq!(format_postgres_syntax_error("FROM"), "ERROR: syntax error at or near \"FROM\"");
     }
 
     #[test]

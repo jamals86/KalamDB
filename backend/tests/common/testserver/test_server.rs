@@ -4,15 +4,15 @@
 //! but backed by the shared HttpTestServer instance.
 
 use super::http_server::{self, HttpTestServer};
+use datafusion::prelude::SessionContext;
 use kalam_link::models::{ErrorDetail, QueryResponse, ResponseStatus};
+use kalamdb_api::repositories::CoreUsersRepo;
+use kalamdb_auth::UserRepository;
 use kalamdb_commons::constants::AuthConstants;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId, UserName};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::SqlExecutor;
-use datafusion::prelude::SessionContext;
-use kalamdb_auth::UserRepository;
 use std::sync::Arc;
-use kalamdb_api::repositories::CoreUsersRepo;
 
 /// Test server instance backed by the shared HTTP server.
 #[derive(Clone)]
@@ -33,14 +33,12 @@ impl TestServer {
 
         // Ensure root/system user has a password hash for auth tests
         let system_user_id = UserId::new(AuthConstants::DEFAULT_ROOT_USER_ID);
-        if let Ok(Some(mut user)) = app_context
-            .system_tables()
-            .users()
-            .get_user_by_id(&system_user_id)
+        if let Ok(Some(mut user)) =
+            app_context.system_tables().users().get_user_by_id(&system_user_id)
         {
             if user.password_hash.is_empty() {
-                user.password_hash = bcrypt::hash("admin", bcrypt::DEFAULT_COST)
-                    .unwrap_or_default();
+                user.password_hash =
+                    bcrypt::hash("admin", bcrypt::DEFAULT_COST).unwrap_or_default();
                 user.updated_at = chrono::Utc::now().timestamp_millis();
                 let _ = app_context.system_tables().users().update_user(user);
             }
@@ -58,9 +56,7 @@ impl TestServer {
     pub async fn execute_sql(&self, sql: &str) -> QueryResponse {
         let root_id = UserId::new(AuthConstants::DEFAULT_ROOT_USER_ID);
         let root_name = UserName::new(AuthConstants::DEFAULT_SYSTEM_USERNAME);
-        let token = self
-            .http
-            .create_jwt_token_with_id(&root_id, &root_name, &Role::System);
+        let token = self.http.create_jwt_token_with_id(&root_id, &root_name, &Role::System);
         let auth_header = format!("Bearer {}", token);
 
         match self.http.execute_sql_with_auth(sql, &auth_header).await {
@@ -95,8 +91,8 @@ impl TestServer {
         } else if let Ok(Some(user)) = users_provider.get_user_by_username(user_id) {
             user.role
         } else {
-            let password_hash = bcrypt::hash("test123", bcrypt::DEFAULT_COST)
-                .unwrap_or_else(|_| String::new());
+            let password_hash =
+                bcrypt::hash("test123", bcrypt::DEFAULT_COST).unwrap_or_else(|_| String::new());
             let user = kalamdb_commons::system::User {
                 id: user_id_obj.clone(),
                 username: user_id.into(),
@@ -120,9 +116,7 @@ impl TestServer {
         };
 
         let username = UserName::new(user_id);
-        let token = self
-            .http
-            .create_jwt_token_with_id(&user_id_obj, &username, &role);
+        let token = self.http.create_jwt_token_with_id(&user_id_obj, &username, &role);
         let auth_header = format!("Bearer {}", token);
 
         match self.http.execute_sql_with_auth(sql, &auth_header).await {

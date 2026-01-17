@@ -57,13 +57,12 @@ pub use raft::{ProviderMetaApplier, ProviderSharedDataApplier, ProviderUserDataA
 
 use std::sync::Arc;
 
+use crate::app_context::AppContext;
+
 /// Create the unified Raft applier
 ///
-/// The applier is created without AppContext - call `set_app_context()`
-/// after AppContext is fully initialized.
-///
 /// All commands flow through Raft (even in single-node mode).
-pub fn create_applier() -> Arc<dyn UnifiedApplier> {
+pub fn create_applier(app_context: Arc<AppContext>) -> Arc<dyn UnifiedApplier> {
     log::debug!("Creating RaftApplier (unified Raft mode)");
-    Arc::new(RaftApplier::new())
+    Arc::new(RaftApplier::new(app_context))
 }

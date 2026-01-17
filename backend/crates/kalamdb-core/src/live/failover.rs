@@ -71,18 +71,16 @@ impl LiveQueryFailoverHandler {
     /// This should be called periodically (e.g., every 60 seconds).
     /// Only the leader should perform cleanup to avoid conflicts.
     pub async fn cleanup_stale_subscriptions(&self) -> Result<CleanupReport, KalamDbError> {
-        log::debug!(
-            "[LiveFailover] Scanning for stale subscriptions from offline nodes..."
-        );
+        log::debug!("[LiveFailover] Scanning for stale subscriptions from offline nodes...");
 
         let mut report = CleanupReport::default();
         let now_ms = Utc::now().timestamp_millis();
         let stale_threshold = now_ms - (STALE_SUBSCRIPTION_TIMEOUT_SECS * 1000);
 
         // Get all active subscriptions
-        let subscriptions = self.live_queries_provider
-            .list_all_active()
-            .map_err(|e| KalamDbError::io_message(format!("Failed to list subscriptions: {}", e)))?;
+        let subscriptions = self.live_queries_provider.list_all_active().map_err(|e| {
+            KalamDbError::io_message(format!("Failed to list subscriptions: {}", e))
+        })?;
 
         for sub in subscriptions {
             // Skip our own subscriptions
@@ -138,25 +136,25 @@ impl LiveQueryFailoverHandler {
     /// Clean up subscriptions for a specific failed node
     ///
     /// Called when a node is detected as offline.
-    pub async fn cleanup_node_subscriptions(&self, failed_node_id: NodeId) -> Result<Vec<LiveQueryId>, KalamDbError> {
+    pub async fn cleanup_node_subscriptions(
+        &self,
+        failed_node_id: NodeId,
+    ) -> Result<Vec<LiveQueryId>, KalamDbError> {
         log::info!(
             "[LiveFailover] Cleaning up all subscriptions from failed node {}",
             failed_node_id
         );
 
         // Get subscriptions for the failed node
-        let subscriptions = self.live_queries_provider
-            .list_by_node(failed_node_id.clone())
-            .map_err(|e| KalamDbError::io_message(format!("Failed to list node subscriptions: {}", e)))?;
+        let subscriptions =
+            self.live_queries_provider.list_by_node(failed_node_id.clone()).map_err(|e| {
+                KalamDbError::io_message(format!("Failed to list node subscriptions: {}", e))
+            })?;
 
         let mut cleaned = Vec::new();
         for sub in subscriptions {
             if let Err(e) = self.cleanup_subscription(&sub).await {
-                log::error!(
-                    "[LiveFailover] Failed to cleanup subscription {}: {}",
-                    sub.live_id,
-                    e
-                );
+                log::error!("[LiveFailover] Failed to cleanup subscription {}: {}", sub.live_id, e);
             } else {
                 cleaned.push(sub.live_id);
             }
@@ -206,9 +204,7 @@ pub struct CleanupReport {
 impl CleanupReport {
     /// Check if any action was taken
     pub fn is_empty(&self) -> bool {
-        self.cleaned_up.is_empty()
-            && self.stale_from_active.is_empty()
-            && self.failed.is_empty()
+        self.cleaned_up.is_empty() && self.stale_from_active.is_empty() && self.failed.is_empty()
     }
 
     /// Total number of subscriptions processed

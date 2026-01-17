@@ -67,10 +67,7 @@ fn test_cli_color_output() {
         .arg("SELECT 'color' as test");
 
     let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "Color command (default) should succeed"
-    );
+    assert!(output.status.success(), "Color command (default) should succeed");
 
     // Test with color disabled
     let mut cmd = create_cli_command();
@@ -108,10 +105,7 @@ fn test_cli_session_timeout() {
         .arg("SELECT 1");
 
     let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "Should execute command successfully"
-    );
+    assert!(output.status.success(), "Should execute command successfully");
 }
 
 /// T062: Test command history (up/down arrows)
@@ -142,10 +136,7 @@ fn test_cli_tab_completion() {
 
     let output = cmd.output().unwrap();
 
-    assert!(
-        output.status.success(),
-        "CLI should support interactive mode with completion"
-    );
+    assert!(output.status.success(), "CLI should support interactive mode with completion");
 }
 
 /// T068: Test verbose output mode
@@ -197,10 +188,7 @@ color = true
     assert!(config_path.exists(), "Config file should be created");
 
     let content = fs::read_to_string(&config_path).unwrap();
-    assert!(
-        content.contains(server_url()),
-        "Config should contain URL"
-    );
+    assert!(content.contains(server_url()), "Config should contain URL");
 }
 
 /// T048: Test loading config file

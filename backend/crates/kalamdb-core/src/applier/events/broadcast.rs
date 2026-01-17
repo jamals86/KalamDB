@@ -1,7 +1,7 @@
 //! Event Broadcaster - Distributes events to registered handlers
 
-use std::sync::Arc;
 use parking_lot::RwLock;
+use std::sync::Arc;
 
 use super::{DatabaseEvent, EventEmitter, EventHandler};
 
@@ -16,17 +16,17 @@ impl EventBroadcaster {
             handlers: RwLock::new(Vec::new()),
         }
     }
-    
+
     /// Register an event handler
     pub fn register(&self, handler: Arc<dyn EventHandler>) {
         self.handlers.write().push(handler);
     }
-    
+
     /// Unregister all handlers (for shutdown)
     pub fn clear(&self) {
         self.handlers.write().clear();
     }
-    
+
     /// Get the number of registered handlers
     pub fn handler_count(&self) -> usize {
         self.handlers.read().len()
@@ -76,7 +76,7 @@ impl EventHandler for LiveQueryEventHandler {
     fn handle(&self, event: &DatabaseEvent) {
         (self.callback)(event);
     }
-    
+
     fn is_interested(&self, event: &DatabaseEvent) -> bool {
         // Interested in DML events for live query updates
         matches!(
@@ -112,7 +112,7 @@ impl EventHandler for AuditEventHandler {
     fn handle(&self, event: &DatabaseEvent) {
         (self.callback)(event);
     }
-    
+
     fn is_interested(&self, event: &DatabaseEvent) -> bool {
         // Interested in DDL and user events for audit logging
         matches!(

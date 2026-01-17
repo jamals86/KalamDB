@@ -7,10 +7,7 @@ use crate::common::*;
 #[test]
 fn smoke_shared_table_crud() {
     if !is_server_running() {
-        println!(
-            "Skipping smoke_shared_table_crud: server not running at {}",
-            server_url()
-        );
+        println!("Skipping smoke_shared_table_crud: server not running at {}", server_url());
         return;
     }
 
@@ -39,10 +36,7 @@ fn smoke_shared_table_crud() {
     execute_sql_as_root_via_client(&create_sql).expect("create shared table should succeed");
 
     // 2) Insert rows
-    let ins1 = format!(
-        "INSERT INTO {} (name, status) VALUES ('alpha', 'new')",
-        full
-    );
+    let ins1 = format!("INSERT INTO {} (name, status) VALUES ('alpha', 'new')", full);
     let ins2 = format!("INSERT INTO {} (name, status) VALUES ('beta', 'new')", full);
     execute_sql_as_root_via_client(&ins1).expect("insert alpha should succeed");
     execute_sql_as_root_via_client(&ins2).expect("insert beta should succeed");
@@ -50,24 +44,19 @@ fn smoke_shared_table_crud() {
     // 3) SELECT and verify both rows present
     let sel_all = format!("SELECT * FROM {}", full);
     let out = execute_sql_as_root_via_client(&sel_all).expect("select should succeed");
-    assert!(
-        out.contains("alpha"),
-        "expected 'alpha' in results: {}",
-        out
-    );
+    assert!(out.contains("alpha"), "expected 'alpha' in results: {}", out);
     assert!(out.contains("beta"), "expected 'beta' in results: {}", out);
 
     // 4) Retrieve ids for rows we will mutate (backend requires primary key equality for UPDATE/DELETE)
     // Use JSON output for reliable parsing
-    let id_sel = format!(
-        "SELECT id, name FROM {} WHERE name IN ('alpha','beta') ORDER BY name",
-        full
-    );
-    let id_out_json = execute_sql_as_root_via_client_json(&id_sel).expect("id select should succeed");
+    let id_sel =
+        format!("SELECT id, name FROM {} WHERE name IN ('alpha','beta') ORDER BY name", full);
+    let id_out_json =
+        execute_sql_as_root_via_client_json(&id_sel).expect("id select should succeed");
 
     // Parse JSON response to extract IDs
-    let json_value: serde_json::Value = serde_json::from_str(&id_out_json)
-        .expect("Failed to parse JSON response");
+    let json_value: serde_json::Value =
+        serde_json::from_str(&id_out_json).expect("Failed to parse JSON response");
     let rows = json_value
         .get("results")
         .and_then(|v| v.as_array())
@@ -108,11 +97,7 @@ fn smoke_shared_table_crud() {
     // 7) SELECT non-deleted rows and verify contents reflect changes
     let out2 = execute_sql_as_root_via_client(&sel_all).expect("second select should succeed");
     assert!(out2.contains("beta"), "expected 'beta' to remain: {}", out2);
-    assert!(
-        out2.contains("done"),
-        "expected updated status 'done': {}",
-        out2
-    );
+    assert!(out2.contains("done"), "expected updated status 'done': {}", out2);
 
     // 8) DROP TABLE and verify selecting fails
     let drop_sql = format!("DROP TABLE {}", full);
@@ -120,10 +105,7 @@ fn smoke_shared_table_crud() {
 
     let select_after_drop = execute_sql_via_client(&sel_all);
     match select_after_drop {
-        Ok(s) => panic!(
-            "expected failure selecting dropped table, got output: {}",
-            s
-        ),
+        Ok(s) => panic!("expected failure selecting dropped table, got output: {}", s),
         Err(e) => {
             let msg = e.to_string().to_lowercase();
             assert!(
@@ -133,6 +115,6 @@ fn smoke_shared_table_crud() {
                 "unexpected error selecting dropped table: {}",
                 msg
             );
-        }
+        },
     }
 }

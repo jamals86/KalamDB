@@ -13,9 +13,8 @@
 //! **Phase 4 - User Story 2**: Token-Based Authentication
 //! Task IDs: T059-T064 (Integration tests for JWT auth)
 
-
-use actix_web::{test, web, App};
 use super::test_support::{auth_helper, TestServer};
+use actix_web::{test, web, App};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use kalamdb_api::repositories::user_repo::CoreUsersRepo;
 use kalamdb_auth::jwt_auth::{JwtClaims as AuthJwtClaims, KALAMDB_ISSUER};
@@ -98,9 +97,8 @@ async fn test_jwt_auth_success() {
         .to_request();
 
     // Initialize app with authentication middleware
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
-        server.app_context.system_tables().users(),
-    ));
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.clone()))
@@ -158,9 +156,8 @@ async fn test_jwt_auth_expired_token() {
         .to_request();
 
     // Initialize app
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
-        server.app_context.system_tables().users(),
-    ));
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.clone()))
@@ -176,11 +173,7 @@ async fn test_jwt_auth_expired_token() {
     let resp = test::call_service(&app, req).await;
 
     // Should be 401 Unauthorized for expired token
-    assert_eq!(
-        resp.status(),
-        401,
-        "Expected 401 Unauthorized for expired JWT token"
-    );
+    assert_eq!(resp.status(), 401, "Expected 401 Unauthorized for expired JWT token");
 
     println!("✓ Expired JWT token correctly rejected with 401");
 }
@@ -212,9 +205,8 @@ async fn test_jwt_auth_invalid_signature() {
         .to_request();
 
     // Initialize app
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
-        server.app_context.system_tables().users(),
-    ));
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.clone()))
@@ -230,11 +222,7 @@ async fn test_jwt_auth_invalid_signature() {
     let resp = test::call_service(&app, req).await;
 
     // Should be 401 Unauthorized for invalid signature
-    assert_eq!(
-        resp.status(),
-        401,
-        "Expected 401 Unauthorized for invalid JWT signature"
-    );
+    assert_eq!(resp.status(), 401, "Expected 401 Unauthorized for invalid JWT signature");
 
     println!("✓ Invalid JWT signature correctly rejected with 401");
 }
@@ -266,9 +254,8 @@ async fn test_jwt_auth_untrusted_issuer() {
         .to_request();
 
     // Initialize app
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
-        server.app_context.system_tables().users(),
-    ));
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.clone()))
@@ -284,11 +271,7 @@ async fn test_jwt_auth_untrusted_issuer() {
     let resp = test::call_service(&app, req).await;
 
     // Should be 401 Unauthorized for untrusted issuer
-    assert_eq!(
-        resp.status(),
-        401,
-        "Expected 401 Unauthorized for untrusted JWT issuer"
-    );
+    assert_eq!(resp.status(), 401, "Expected 401 Unauthorized for untrusted JWT issuer");
 
     println!("✓ Untrusted JWT issuer correctly rejected with 401");
 }
@@ -335,9 +318,8 @@ async fn test_jwt_auth_missing_sub_claim() {
         .to_request();
 
     // Initialize app
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
-        server.app_context.system_tables().users(),
-    ));
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(server.app_context.clone()))
@@ -354,11 +336,7 @@ async fn test_jwt_auth_missing_sub_claim() {
 
     // Should be 400 Bad Request for JWT missing 'sub' claim (malformed token)
     // Note: 400 is more appropriate than 401 because the token format is invalid
-    assert_eq!(
-        resp.status(),
-        400,
-        "Expected 400 Bad Request for JWT missing 'sub' claim"
-    );
+    assert_eq!(resp.status(), 400, "Expected 400 Bad Request for JWT missing 'sub' claim");
 
     println!("✓ JWT with missing 'sub' claim correctly rejected with 400");
 }

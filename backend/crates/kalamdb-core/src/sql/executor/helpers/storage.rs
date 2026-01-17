@@ -87,8 +87,8 @@ pub async fn execute_create_storage(
 
     // Validate credentials JSON (if provided)
     let normalized_credentials = if let Some(raw) = stmt.credentials.as_ref() {
-        let value: serde_json::Value = serde_json::from_str(raw)
-            .into_invalid_operation("Invalid credentials JSON")?;
+        let value: serde_json::Value =
+            serde_json::from_str(raw).into_invalid_operation("Invalid credentials JSON")?;
 
         if !value.is_object() {
             return Err(KalamDbError::InvalidOperation(
@@ -96,8 +96,10 @@ pub async fn execute_create_storage(
             ));
         }
 
-        Some(serde_json::to_string(&value)
-            .into_invalid_operation("Failed to normalize credentials JSON")?)
+        Some(
+            serde_json::to_string(&value)
+                .into_invalid_operation("Failed to normalize credentials JSON")?,
+        )
     } else {
         None
     };
@@ -153,14 +155,20 @@ fn validate_storage_path(path: &str) -> Result<(), KalamDbError> {
     // Block sensitive directories
     let path_lower = path.to_lowercase();
     let sensitive_prefixes = [
-        "/etc/", "/root/", "/var/log/", "/proc/", "/sys/",
-        "c:\\windows", "c:/windows",
+        "/etc/",
+        "/root/",
+        "/var/log/",
+        "/proc/",
+        "/sys/",
+        "c:\\windows",
+        "c:/windows",
     ];
     for prefix in &sensitive_prefixes {
         if path_lower.starts_with(prefix) {
-            return Err(KalamDbError::InvalidOperation(
-                format!("Storage path cannot be in sensitive directory: {}", prefix),
-            ));
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Storage path cannot be in sensitive directory: {}",
+                prefix
+            )));
         }
     }
 
@@ -177,10 +185,8 @@ pub fn ensure_filesystem_directory(path: &str) -> Result<(), KalamDbError> {
     }
 
     let dir = std::path::Path::new(trimmed);
-    std::fs::create_dir_all(dir).into_kalamdb_error(&format!(
-        "Failed to create storage directory '{}'",
-        dir.display()
-    ))?;
+    std::fs::create_dir_all(dir)
+        .into_kalamdb_error(&format!("Failed to create storage directory '{}'", dir.display()))?;
     Ok(())
 }
 
@@ -225,7 +231,7 @@ mod tests {
             ExecutionResult::Success { message } => {
                 assert!(message.contains("test_storage"));
                 assert!(message.contains("created successfully"));
-            }
+            },
             _ => panic!("Expected Success result"),
         }
     }
@@ -255,7 +261,7 @@ mod tests {
         match result2.unwrap_err() {
             KalamDbError::InvalidOperation(msg) => {
                 assert!(msg.contains("already exists"));
-            }
+            },
             _ => panic!("Expected InvalidOperation error"),
         }
     }

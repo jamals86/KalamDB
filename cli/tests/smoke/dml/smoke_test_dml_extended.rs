@@ -33,7 +33,8 @@ fn smoke_test_multi_row_insert() {
     println!("🧪 Testing multi-row INSERT");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -71,11 +72,7 @@ fn smoke_test_multi_row_insert() {
     let select_sql = format!("SELECT COUNT(*) as total FROM {}", full_table);
     let output = execute_sql_as_root_via_client(&select_sql).expect("Failed to count rows");
 
-    assert!(
-        output.contains('4'),
-        "Expected 4 rows after multi-row INSERT, got: {}",
-        output
-    );
+    assert!(output.contains('4'), "Expected 4 rows after multi-row INSERT, got: {}", output);
 
     // Verify specific data
     let select_names = format!("SELECT name FROM {} ORDER BY name", full_table);
@@ -112,7 +109,8 @@ fn smoke_test_soft_delete_user_table() {
     println!("🧪 Testing soft DELETE for USER table");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -129,10 +127,8 @@ fn smoke_test_soft_delete_user_table() {
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
 
     // Insert test data
-    let insert_sql = format!(
-        r#"INSERT INTO {} (name) VALUES ('Alice'), ('Bob'), ('Charlie')"#,
-        full_table
-    );
+    let insert_sql =
+        format!(r#"INSERT INTO {} (name) VALUES ('Alice'), ('Bob'), ('Charlie')"#, full_table);
     execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert data");
 
     println!("✅ Inserted 3 rows");
@@ -161,7 +157,8 @@ fn smoke_test_soft_delete_user_table() {
 
     // Verify Bob not in default SELECT
     let select_all = format!("SELECT name FROM {} ORDER BY name", full_table);
-    let all_output = execute_sql_as_root_via_client_json(&select_all).expect("Failed to select all");
+    let all_output =
+        execute_sql_as_root_via_client_json(&select_all).expect("Failed to select all");
 
     assert!(
         !all_output.contains("Bob"),
@@ -207,7 +204,8 @@ fn smoke_test_soft_delete_shared_table() {
     println!("🧪 Testing soft DELETE for SHARED table");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -240,10 +238,7 @@ fn smoke_test_soft_delete_shared_table() {
     let count_sql = format!("SELECT COUNT(*) as total FROM {}", full_table);
     let count_output = execute_sql_as_root_via_client(&count_sql).expect("Failed to count");
 
-    assert!(
-        count_output.contains('1'),
-        "Expected 1 row after soft delete in SHARED table"
-    );
+    assert!(count_output.contains('1'), "Expected 1 row after soft delete in SHARED table");
 
     println!("✅ Verified SHARED table uses soft delete");
 }
@@ -269,7 +264,8 @@ fn smoke_test_hard_delete_stream_table() {
     println!("🧪 Testing hard DELETE for STREAM table");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -329,10 +325,7 @@ fn smoke_test_hard_delete_stream_table() {
         !all_output.contains("click"),
         "Expected click events to be physically removed from STREAM table"
     );
-    assert!(
-        all_output.contains("hover"),
-        "Expected hover event still exists"
-    );
+    assert!(all_output.contains("hover"), "Expected hover event still exists");
 
     println!("✅ Verified STREAM table uses hard delete (rows physically removed)");
 }
@@ -360,7 +353,8 @@ fn smoke_test_aggregation_queries() {
     println!("🧪 Testing aggregation queries");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -399,10 +393,7 @@ fn smoke_test_aggregation_queries() {
     // Test SUM
     let sum_query = format!("SELECT SUM(amount) as total_amount FROM {}", full_table);
     let sum_output = execute_sql_as_root_via_client(&sum_query).expect("Failed to SUM");
-    assert!(
-        sum_output.contains("150"),
-        "Expected SUM(amount) = 150 (10+20+30+40+50)"
-    );
+    assert!(sum_output.contains("150"), "Expected SUM(amount) = 150 (10+20+30+40+50)");
 
     println!("✅ COUNT and SUM work");
 
@@ -411,7 +402,8 @@ fn smoke_test_aggregation_queries() {
         "SELECT category, COUNT(*) as count FROM {} GROUP BY category ORDER BY category",
         full_table
     );
-    let group_output = execute_sql_as_root_via_client(&group_count).expect("Failed to GROUP BY COUNT");
+    let group_output =
+        execute_sql_as_root_via_client(&group_count).expect("Failed to GROUP BY COUNT");
 
     assert!(
         group_output.contains('A') && group_output.contains('2'),
@@ -429,7 +421,8 @@ fn smoke_test_aggregation_queries() {
         "SELECT category, SUM(amount) as total FROM {} GROUP BY category ORDER BY category",
         full_table
     );
-    let group_sum_output = execute_sql_as_root_via_client(&group_sum).expect("Failed to GROUP BY SUM");
+    let group_sum_output =
+        execute_sql_as_root_via_client(&group_sum).expect("Failed to GROUP BY SUM");
 
     assert!(
         group_sum_output.contains('A') && group_sum_output.contains("30"),
@@ -447,7 +440,8 @@ fn smoke_test_aggregation_queries() {
         "SELECT AVG(amount) as avg, MIN(amount) as min, MAX(amount) as max FROM {}",
         full_table
     );
-    let stats_output = execute_sql_as_root_via_client(&stats_query).expect("Failed to compute stats");
+    let stats_output =
+        execute_sql_as_root_via_client(&stats_query).expect("Failed to compute stats");
 
     assert!(
         stats_output.contains("30") || stats_output.contains("avg"),
@@ -482,7 +476,8 @@ fn smoke_test_multi_row_update() {
     println!("🧪 Testing multi-row UPDATE (PK-based updates)");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -515,21 +510,17 @@ fn smoke_test_multi_row_update() {
     // UPDATE requires PK filter for user tables - update each pending row individually
     // This is by design: user tables require row-level updates via PK
     for id in [1001, 1002, 1003] {
-        let update_sql = format!(
-            "UPDATE {} SET status = 'active' WHERE id = {}",
-            full_table, id
-        );
+        let update_sql = format!("UPDATE {} SET status = 'active' WHERE id = {}", full_table, id);
         execute_sql_as_root_via_client(&update_sql).expect("Failed to UPDATE row");
     }
 
     println!("✅ Updated all pending rows to active (via PK-based updates)");
 
     // Verify all pending rows updated
-    let count_active = format!(
-        "SELECT COUNT(*) as total FROM {} WHERE status = 'active'",
-        full_table
-    );
-    let active_output = execute_sql_as_root_via_client(&count_active).expect("Failed to count active");
+    let count_active =
+        format!("SELECT COUNT(*) as total FROM {} WHERE status = 'active'", full_table);
+    let active_output =
+        execute_sql_as_root_via_client(&count_active).expect("Failed to count active");
 
     assert!(
         active_output.contains('3'),
@@ -537,10 +528,8 @@ fn smoke_test_multi_row_update() {
     );
 
     // Verify no pending rows remain
-    let count_pending = format!(
-        "SELECT COUNT(*) as total FROM {} WHERE status = 'pending'",
-        full_table
-    );
+    let count_pending =
+        format!("SELECT COUNT(*) as total FROM {} WHERE status = 'pending'", full_table);
     let pending_output =
         execute_sql_as_root_via_client(&count_pending).expect("Failed to count pending");
 

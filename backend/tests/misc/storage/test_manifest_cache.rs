@@ -43,9 +43,7 @@ fn test_get_or_load_cache_miss() {
     let table = TableName::new("products");
     let table_id = TableId::new(namespace.clone(), table.clone());
 
-    let result = service
-        .get_or_load(&table_id, Some(&UserId::from("u_123")))
-        .unwrap();
+    let result = service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap();
     assert!(result.is_none(), "Expected cache miss to return None");
 }
 
@@ -70,18 +68,14 @@ fn test_get_or_load_cache_hit() {
         .unwrap();
 
     // First read should hit hot cache
-    let result1 = service
-        .get_or_load(&table_id, Some(&UserId::from("u_123")))
-        .unwrap();
+    let result1 = service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap();
     assert!(result1.is_some(), "Expected cache hit");
     let entry1 = result1.unwrap();
     assert_eq!(entry1.etag, Some("etag-v1".to_string()));
     assert_eq!(entry1.sync_state, SyncState::InSync);
 
     // Second read should also hit hot cache (last_accessed updated)
-    let result2 = service
-        .get_or_load(&table_id, Some(&UserId::from("u_123")))
-        .unwrap();
+    let result2 = service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap();
     assert!(result2.is_some(), "Expected cache hit on second read");
 
     // Verify entry is in hot cache
@@ -121,10 +115,7 @@ fn test_validate_freshness_stale() {
         .unwrap();
 
     // Entry should be fresh initially
-    assert!(
-        service.validate_freshness(&table_id, None).unwrap(),
-        "Entry should be fresh"
-    );
+    assert!(service.validate_freshness(&table_id, None).unwrap(), "Entry should be fresh");
 
     // Simulate TTL expiration by manually marking entry as stale
     // (In production, this would happen when is_stale() returns true after TTL)
@@ -153,18 +144,13 @@ fn test_update_after_flush_atomic_write() {
         .unwrap();
 
     // Verify entry exists in cache
-    let result = service
-        .get_or_load(&table_id, Some(&UserId::from("u_456")))
-        .unwrap();
+    let result = service.get_or_load(&table_id, Some(&UserId::from("u_456"))).unwrap();
     assert!(result.is_some(), "Entry should be cached");
 
     let entry = result.unwrap();
     assert_eq!(entry.etag, Some("etag-abc123".to_string()));
     assert_eq!(entry.sync_state, SyncState::InSync);
-    assert_eq!(
-        entry.source_path,
-        "s3://bucket/ns1/orders/u_456/manifest.json"
-    );
+    assert_eq!(entry.source_path, "s3://bucket/ns1/orders/u_456/manifest.json");
 
     // Verify manifest is valid
     let manifest = &entry.manifest;
@@ -242,16 +228,8 @@ fn test_show_manifest_returns_all_entries() {
 
     // Add multiple entries
     let entries = vec![
-        (
-            NamespaceId::new("ns1"),
-            TableName::new("products"),
-            Some("u_123"),
-        ),
-        (
-            NamespaceId::new("ns1"),
-            TableName::new("orders"),
-            Some("u_456"),
-        ),
+        (NamespaceId::new("ns1"), TableName::new("products"), Some("u_123")),
+        (NamespaceId::new("ns1"), TableName::new("orders"), Some("u_456")),
         (NamespaceId::new("ns2"), TableName::new("sales"), None),
     ];
 
@@ -317,20 +295,14 @@ fn test_cache_eviction_and_repopulation() {
         .unwrap();
 
     // Verify entry exists
-    let result1 = service
-        .get_or_load(&table_id, Some(&UserId::from("u_789")))
-        .unwrap();
+    let result1 = service.get_or_load(&table_id, Some(&UserId::from("u_789"))).unwrap();
     assert!(result1.is_some(), "Entry should be cached");
 
     // Evict (invalidate) the entry
-    service
-        .invalidate(&table_id, Some(&UserId::from("u_789")))
-        .unwrap();
+    service.invalidate(&table_id, Some(&UserId::from("u_789"))).unwrap();
 
     // Verify entry is gone
-    let result2 = service
-        .get_or_load(&table_id, Some(&UserId::from("u_789")))
-        .unwrap();
+    let result2 = service.get_or_load(&table_id, Some(&UserId::from("u_789"))).unwrap();
     assert!(result2.is_none(), "Entry should be evicted");
 
     // Re-populate cache (simulating reload from S3)
@@ -346,16 +318,10 @@ fn test_cache_eviction_and_repopulation() {
         .unwrap();
 
     // Verify entry is back with new ETag
-    let result3 = service
-        .get_or_load(&table_id, Some(&UserId::from("u_789")))
-        .unwrap();
+    let result3 = service.get_or_load(&table_id, Some(&UserId::from("u_789"))).unwrap();
     assert!(result3.is_some(), "Entry should be re-populated");
     let entry = result3.unwrap();
-    assert_eq!(
-        entry.etag,
-        Some("etag-v2".to_string()),
-        "Should have new ETag"
-    );
+    assert_eq!(entry.etag, Some("etag-v2".to_string()), "Should have new ETag");
 }
 
 // Additional test: Clear all cache entries
@@ -379,11 +345,7 @@ fn test_clear_all_entries() {
     // Clear all
     service.clear().unwrap();
 
-    assert_eq!(
-        service.count().unwrap(),
-        0,
-        "Should have 0 entries after clear"
-    );
+    assert_eq!(service.count().unwrap(), 0, "Should have 0 entries after clear");
 }
 
 // Additional test: Multiple updates to same cache key
@@ -406,10 +368,7 @@ fn test_multiple_updates_same_key() {
         )
         .unwrap();
 
-    let entry1 = service
-        .get_or_load(&table_id, Some(&UserId::from("u_123")))
-        .unwrap()
-        .unwrap();
+    let entry1 = service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap().unwrap();
     assert_eq!(entry1.etag, Some("etag-v1".to_string()));
 
     // Second update (same key, new ETag)
@@ -424,19 +383,12 @@ fn test_multiple_updates_same_key() {
         )
         .unwrap();
 
-    let entry2 = service
-        .get_or_load(&table_id, Some(&UserId::from("u_123")))
-        .unwrap()
-        .unwrap();
+    let entry2 = service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap().unwrap();
     assert_eq!(entry2.etag, Some("etag-v2".to_string()));
     assert_eq!(entry2.source_path, "path2");
 
     // Should still have only 1 entry
-    assert_eq!(
-        service.count().unwrap(),
-        1,
-        "Should have 1 entry (updated, not duplicated)"
-    );
+    assert_eq!(service.count().unwrap(), 1, "Should have 1 entry (updated, not duplicated)");
 }
 
 // Test invalidate_table removes all entries for a table across all users
@@ -483,11 +435,7 @@ fn test_invalidate_table_removes_all_user_entries() {
         .unwrap();
 
     // Verify 3 entries exist
-    assert_eq!(
-        service.count().unwrap(),
-        3,
-        "Should have 3 entries before invalidate_table"
-    );
+    assert_eq!(service.count().unwrap(), 3, "Should have 3 entries before invalidate_table");
 
     // Verify hot cache has entries
     assert!(service.is_in_hot_cache(&table_id, Some(&UserId::from("user1"))));
@@ -513,25 +461,12 @@ fn test_invalidate_table_removes_all_user_entries() {
     );
 
     // Verify entries are removed from RocksDB
-    assert_eq!(
-        service.count().unwrap(),
-        0,
-        "Should have 0 entries after invalidate_table"
-    );
+    assert_eq!(service.count().unwrap(), 0, "Should have 0 entries after invalidate_table");
 
     // get_or_load should return None for all users
-    assert!(service
-        .get_or_load(&table_id, Some(&UserId::from("user1")))
-        .unwrap()
-        .is_none());
-    assert!(service
-        .get_or_load(&table_id, Some(&UserId::from("user2")))
-        .unwrap()
-        .is_none());
-    assert!(service
-        .get_or_load(&table_id, Some(&UserId::from("user3")))
-        .unwrap()
-        .is_none());
+    assert!(service.get_or_load(&table_id, Some(&UserId::from("user1"))).unwrap().is_none());
+    assert!(service.get_or_load(&table_id, Some(&UserId::from("user2"))).unwrap().is_none());
+    assert!(service.get_or_load(&table_id, Some(&UserId::from("user3"))).unwrap().is_none());
 }
 
 // Test invalidate_table only removes entries for the target table
@@ -570,38 +505,22 @@ fn test_invalidate_table_preserves_other_tables() {
         .unwrap();
 
     // Verify 2 entries exist
-    assert_eq!(
-        service.count().unwrap(),
-        2,
-        "Should have 2 entries before invalidate"
-    );
+    assert_eq!(service.count().unwrap(), 2, "Should have 2 entries before invalidate");
 
     // Invalidate only products table
     let invalidated = service.invalidate_table(&table_id1).unwrap();
     assert_eq!(invalidated, 1, "Should have invalidated 1 entry");
 
     // products table should be gone
-    assert!(service
-        .get_or_load(&table_id1, Some(&UserId::from("user1")))
-        .unwrap()
-        .is_none());
+    assert!(service.get_or_load(&table_id1, Some(&UserId::from("user1"))).unwrap().is_none());
 
     // orders table should still exist
-    let orders_entry = service
-        .get_or_load(&table_id2, Some(&UserId::from("user1")))
-        .unwrap();
-    assert!(
-        orders_entry.is_some(),
-        "orders table entry should still exist"
-    );
+    let orders_entry = service.get_or_load(&table_id2, Some(&UserId::from("user1"))).unwrap();
+    assert!(orders_entry.is_some(), "orders table entry should still exist");
     assert_eq!(orders_entry.unwrap().etag, Some("etag-orders".to_string()));
 
     // Verify 1 entry remains
-    assert_eq!(
-        service.count().unwrap(),
-        1,
-        "Should have 1 entry after invalidate"
-    );
+    assert_eq!(service.count().unwrap(), 1, "Should have 1 entry after invalidate");
 }
 
 // Test invalidate_table with shared table (no user_id)
@@ -698,10 +617,7 @@ fn test_tiered_eviction_shared_tables_stay_longer() {
     // (some eviction must have occurred due to weight limit)
     // This is a probabilistic test - moka may not evict synchronously
     println!("Shared table in cache: {}", shared_in_cache);
-    println!(
-        "Cache entry count: {}",
-        service.count().unwrap_or_default()
-    );
+    println!("Cache entry count: {}", service.count().unwrap_or_default());
 
     // The key assertion: if eviction happened, shared table should still be there
     // because it has lower weight (higher priority to stay)

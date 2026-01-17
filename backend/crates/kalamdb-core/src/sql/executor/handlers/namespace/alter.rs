@@ -53,8 +53,10 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
         }
 
         // Serialize back to string
-        namespace.options = Some(serde_json::to_string(&current_options)
-            .into_invalid_operation("Failed to serialize options")?);
+        namespace.options = Some(
+            serde_json::to_string(&current_options)
+                .into_invalid_operation("Failed to serialize options")?,
+        );
 
         // Save updated namespace
         namespaces_provider.update_namespace(namespace)?;
@@ -81,10 +83,10 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         use crate::sql::executor::helpers::guards::block_anonymous_write;
-        
+
         // T050: Block anonymous users from DDL operations
         block_anonymous_write(context, "ALTER NAMESPACE")?;
-        
+
         require_admin(context, "alter namespace")
     }
 }

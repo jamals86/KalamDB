@@ -34,7 +34,7 @@ fn query_count_with_retry(base_url: &str, sql: &str) -> i64 {
             Err(err) => {
                 last_err = Some(err);
                 std::thread::sleep(Duration::from_millis(200));
-            }
+            },
         }
     }
 
@@ -49,7 +49,9 @@ fn query_count_with_retry(base_url: &str, sql: &str) -> i64 {
 /// Verifies that system table changes replicate quickly to all nodes.
 #[test]
 fn cluster_test_metadata_replication_timing() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Metadata Replication Timing ===\n");
 
@@ -88,15 +90,9 @@ fn cluster_test_metadata_replication_timing() {
     let elapsed = start.elapsed();
 
     if all_replicated {
-        println!(
-            "  ✓ Namespace replicated to all nodes in {:?}",
-            elapsed
-        );
+        println!("  ✓ Namespace replicated to all nodes in {:?}", elapsed);
     } else {
-        panic!(
-            "Namespace not replicated to all nodes after {:?}",
-            elapsed
-        );
+        panic!("Namespace not replicated to all nodes after {:?}", elapsed);
     }
 
     // Cleanup
@@ -110,7 +106,9 @@ fn cluster_test_metadata_replication_timing() {
 /// Verifies that operations are applied in the correct order across nodes.
 #[test]
 fn cluster_test_operation_ordering() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Operation Ordering ===\n");
 
@@ -164,10 +162,7 @@ fn cluster_test_operation_ordering() {
     for (i, url) in urls.iter().enumerate() {
         let result = execute_on_node(
             url,
-            &format!(
-                "SELECT id, seq FROM {}.ordered_data ORDER BY id LIMIT 5",
-                namespace
-            ),
+            &format!("SELECT id, seq FROM {}.ordered_data ORDER BY id LIMIT 5", namespace),
         )
         .expect("Query failed");
 
@@ -192,7 +187,9 @@ fn cluster_test_operation_ordering() {
 /// Verifies that concurrent writes are properly serialized.
 #[test]
 fn cluster_test_concurrent_writes() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Concurrent Writes ===\n");
 
@@ -257,10 +254,7 @@ fn cluster_test_concurrent_writes() {
     for (i, url) in urls.iter().enumerate() {
         let count = query_count_with_retry(
             url,
-            &format!(
-                "SELECT count(*) as count FROM {}.concurrent_data",
-                namespace
-            ),
+            &format!("SELECT count(*) as count FROM {}.concurrent_data", namespace),
         );
         counts.push(count);
         println!("  Node {} has {} rows", i, count);
@@ -269,11 +263,7 @@ fn cluster_test_concurrent_writes() {
     // All nodes should have the same count
     let first_count = counts[0];
     for (i, count) in counts.iter().enumerate() {
-        assert_eq!(
-            *count, first_count,
-            "Node {} has {} rows, expected {}",
-            i, count, first_count
-        );
+        assert_eq!(*count, first_count, "Node {} has {} rows, expected {}", i, count, first_count);
     }
 
     // Cleanup
@@ -285,7 +275,9 @@ fn cluster_test_concurrent_writes() {
 /// Test: Cluster info is consistent across nodes
 #[test]
 fn cluster_test_cluster_info_consistency() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Cluster Info Consistency ===\n");
 
@@ -297,12 +289,16 @@ fn cluster_test_cluster_info_consistency() {
         let result = execute_on_node(url, "SELECT cluster_id FROM system.cluster LIMIT 1");
         match result {
             Ok(resp) => {
-                println!("  Node {} cluster info: {}", i, resp.chars().take(100).collect::<String>());
+                println!(
+                    "  Node {} cluster info: {}",
+                    i,
+                    resp.chars().take(100).collect::<String>()
+                );
                 cluster_ids.push(resp);
-            }
+            },
             Err(e) => {
                 println!("  ✗ Node {} failed: {}", i, e);
-            }
+            },
         }
     }
 

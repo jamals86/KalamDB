@@ -7,10 +7,11 @@
 //! a single struct for cleaner AppContext API.
 
 use super::providers::{
-    AuditLogsTableProvider, AuditLogsTableSchema, JobsTableProvider, JobsTableSchema,
-    LiveQueriesTableProvider, LiveQueriesTableSchema, ManifestTableProvider, ManifestTableSchema,
-    NamespacesTableProvider, NamespacesTableSchema, StoragesTableProvider, StoragesTableSchema,
-    TablesTableProvider, TablesTableSchema, UsersTableProvider, UsersTableSchema,
+    AuditLogsTableProvider, AuditLogsTableSchema, JobNodesTableProvider, JobNodesTableSchema,
+    JobsTableProvider, JobsTableSchema, LiveQueriesTableProvider, LiveQueriesTableSchema,
+    ManifestTableProvider, ManifestTableSchema, NamespacesTableProvider, NamespacesTableSchema,
+    StoragesTableProvider, StoragesTableSchema, TablesTableProvider, TablesTableSchema,
+    UsersTableProvider, UsersTableSchema,
 };
 // SchemaRegistry will be passed as Arc parameter from kalamdb-core
 use datafusion::arrow::datatypes::SchemaRef;
@@ -25,7 +26,7 @@ use std::sync::{Arc, RwLock};
 ///
 /// Provides centralized access to all system.* tables.
 /// Used by AppContext to eliminate 10 individual provider fields.
-/// 
+///
 /// Note: information_schema.tables and information_schema.columns are provided
 /// by DataFusion's built-in information_schema support (enabled via .with_information_schema(true)).
 #[derive(Debug)]
@@ -33,6 +34,7 @@ pub struct SystemTablesRegistry {
     // ===== system.* tables (EntityStore-based) =====
     users: Arc<UsersTableProvider>,
     jobs: Arc<JobsTableProvider>,
+    job_nodes: Arc<JobNodesTableProvider>,
     namespaces: Arc<NamespacesTableProvider>,
     storages: Arc<StoragesTableProvider>,
     live_queries: Arc<LiveQueriesTableProvider>,
@@ -79,6 +81,7 @@ impl SystemTablesRegistry {
             // EntityStore-based providers
             users: Arc::new(UsersTableProvider::new(storage_backend.clone())),
             jobs: Arc::new(JobsTableProvider::new(storage_backend.clone())),
+            job_nodes: Arc::new(JobNodesTableProvider::new(storage_backend.clone())),
             namespaces: Arc::new(NamespacesTableProvider::new(storage_backend.clone())),
             storages: Arc::new(StoragesTableProvider::new(storage_backend.clone())),
             live_queries: Arc::new(LiveQueriesTableProvider::new(storage_backend.clone())),
@@ -89,10 +92,10 @@ impl SystemTablesRegistry {
             manifest: Arc::new(ManifestTableProvider::new(storage_backend)),
 
             // Virtual tables
-            stats: RwLock::new(None), // Will be wired by kalamdb-core
-            settings: RwLock::new(None), // Will be wired by kalamdb-core
+            stats: RwLock::new(None),       // Will be wired by kalamdb-core
+            settings: RwLock::new(None),    // Will be wired by kalamdb-core
             server_logs: RwLock::new(None), // Will be wired by kalamdb-core (dev only)
-            cluster: RwLock::new(None), // Initialized via set_cluster_provider()
+            cluster: RwLock::new(None),     // Initialized via set_cluster_provider()
             cluster_groups: RwLock::new(None), // Initialized via set_cluster_groups_provider()
 
             system_definitions: OnceCell::new(),
@@ -109,6 +112,7 @@ impl SystemTablesRegistry {
                 (SystemTable::Storages, StoragesTableSchema::definition()),
                 (SystemTable::LiveQueries, LiveQueriesTableSchema::definition()),
                 (SystemTable::Jobs, JobsTableSchema::definition()),
+                (SystemTable::JobNodes, JobNodesTableSchema::definition()),
                 (SystemTable::AuditLog, AuditLogsTableSchema::definition()),
                 (SystemTable::Manifest, ManifestTableSchema::definition()),
             ];
@@ -136,6 +140,7 @@ impl SystemTablesRegistry {
                 (SystemTable::Storages, StoragesTableSchema::schema()),
                 (SystemTable::LiveQueries, LiveQueriesTableSchema::schema()),
                 (SystemTable::Jobs, JobsTableSchema::schema()),
+                (SystemTable::JobNodes, JobNodesTableSchema::schema()),
                 (SystemTable::AuditLog, AuditLogsTableSchema::schema()),
                 (SystemTable::Manifest, ManifestTableSchema::schema()),
             ]
@@ -159,6 +164,11 @@ impl SystemTablesRegistry {
     /// Get the system.jobs provider
     pub fn jobs(&self) -> Arc<JobsTableProvider> {
         self.jobs.clone()
+    }
+
+    /// Get the system.job_nodes provider
+    pub fn job_nodes(&self) -> Arc<JobNodesTableProvider> {
+        self.job_nodes.clone()
     }
 
     /// Get the system.namespaces provider
@@ -253,78 +263,43 @@ impl SystemTablesRegistry {
     /// Returns tuples of (table_name, provider) for DataFusion schema registration.
     pub fn all_system_providers(&self) -> Vec<(SystemTable, Arc<dyn TableProvider>)> {
         let mut providers = vec![
+            (SystemTable::Users, self.users.clone() as Arc<dyn TableProvider>),
+            (SystemTable::Jobs, self.jobs.clone() as Arc<dyn TableProvider>),
             (
-                SystemTable::Users,
-                self.users.clone() as Arc<dyn TableProvider>,
+                SystemTable::JobNodes,
+                self.job_nodes.clone() as Arc<dyn TableProvider>,
             ),
-            (
-                SystemTable::Jobs,
-                self.jobs.clone() as Arc<dyn TableProvider>,
-            ),
-            (
-                SystemTable::Namespaces,
-                self.namespaces.clone() as Arc<dyn TableProvider>,
-            ),
-            (
-                SystemTable::Storages,
-                self.storages.clone() as Arc<dyn TableProvider>,
-            ),
-            (
-                SystemTable::LiveQueries,
-                self.live_queries.clone() as Arc<dyn TableProvider>,
-            ),
-            (
-                SystemTable::Tables,
-                self.tables.clone() as Arc<dyn TableProvider>,
-            ),
-            (
-                SystemTable::AuditLog,
-                self.audit_logs.clone() as Arc<dyn TableProvider>,
-            ),
-            (
-                SystemTable::Manifest,
-                self.manifest.clone() as Arc<dyn TableProvider>,
-            ),
+            (SystemTable::Namespaces, self.namespaces.clone() as Arc<dyn TableProvider>),
+            (SystemTable::Storages, self.storages.clone() as Arc<dyn TableProvider>),
+            (SystemTable::LiveQueries, self.live_queries.clone() as Arc<dyn TableProvider>),
+            (SystemTable::Tables, self.tables.clone() as Arc<dyn TableProvider>),
+            (SystemTable::AuditLog, self.audit_logs.clone() as Arc<dyn TableProvider>),
+            (SystemTable::Manifest, self.manifest.clone() as Arc<dyn TableProvider>),
         ];
 
         // Add stats if initialized (virtual view from kalamdb-core)
         if let Some(stats) = self.stats.read().unwrap().clone() {
-            providers.push((
-                SystemTable::Stats,
-                stats as Arc<dyn TableProvider>,
-            ));
+            providers.push((SystemTable::Stats, stats as Arc<dyn TableProvider>));
         }
 
         // Add settings if initialized (virtual view from kalamdb-core)
         if let Some(settings) = self.settings.read().unwrap().clone() {
-            providers.push((
-                SystemTable::Settings,
-                settings as Arc<dyn TableProvider>,
-            ));
+            providers.push((SystemTable::Settings, settings as Arc<dyn TableProvider>));
         }
 
         // Add server_logs if initialized
         if let Some(server_logs) = self.server_logs.read().unwrap().clone() {
-            providers.push((
-                SystemTable::ServerLogs,
-                server_logs as Arc<dyn TableProvider>,
-            ));
+            providers.push((SystemTable::ServerLogs, server_logs as Arc<dyn TableProvider>));
         }
 
         // Add cluster if initialized (virtual table showing OpenRaft metrics)
         if let Some(cluster) = self.cluster.read().unwrap().clone() {
-            providers.push((
-                SystemTable::Cluster,
-                cluster as Arc<dyn TableProvider>,
-            ));
+            providers.push((SystemTable::Cluster, cluster as Arc<dyn TableProvider>));
         }
 
         // Add cluster_groups if initialized (virtual table showing per-group OpenRaft metrics)
         if let Some(cluster_groups) = self.cluster_groups.read().unwrap().clone() {
-            providers.push((
-                SystemTable::ClusterGroups,
-                cluster_groups as Arc<dyn TableProvider>,
-            ));
+            providers.push((SystemTable::ClusterGroups, cluster_groups as Arc<dyn TableProvider>));
         }
 
         providers

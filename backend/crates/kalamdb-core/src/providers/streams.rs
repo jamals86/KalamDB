@@ -144,7 +144,6 @@ impl StreamTableProvider {
     pub fn store_arc(&self) -> Arc<StreamTableStore> {
         self.store.clone()
     }
-
 }
 
 impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider {
@@ -346,15 +345,12 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         let mut next_start_seq = start_seq;
 
         loop {
-            let raw = self
-                .store
-                .scan_user(user_id, next_start_seq, scan_limit)
-                .map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to scan stream table hot storage: {}",
-                        e
-                    ))
-                })?;
+            let raw = self.store.scan_user(user_id, next_start_seq, scan_limit).map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to scan stream table hot storage: {}",
+                    e
+                ))
+            })?;
             if raw.is_empty() {
                 break;
             }
@@ -377,7 +373,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                     Some(ttl) => {
                         let ts = row._seq.timestamp_millis();
                         ts + ttl > now_ms
-                    }
+                    },
                 };
 
                 if keep {

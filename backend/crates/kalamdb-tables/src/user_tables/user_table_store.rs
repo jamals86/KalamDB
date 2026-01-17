@@ -74,10 +74,8 @@ pub fn new_user_table_store(
     backend: Arc<dyn StorageBackend>,
     table_id: &TableId,
 ) -> UserTableStore {
-    let name = partition_name(
-        kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX,
-        table_id,
-    );
+    let name =
+        partition_name(kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX, table_id);
     ensure_partition(&backend, &name);
     UserTableStore::new(backend, name)
 }
@@ -103,16 +101,11 @@ pub fn new_indexed_user_table_store(
     table_id: &TableId,
     pk_field_name: &str,
 ) -> UserTableIndexedStore {
-    let name = partition_name(
-        kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX,
-        table_id,
-    );
+    let name =
+        partition_name(kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX, table_id);
     ensure_partition(&backend, &name);
 
-    let pk_index = create_user_table_pk_index(
-        table_id,
-        pk_field_name,
-    );
+    let pk_index = create_user_table_pk_index(table_id, pk_field_name);
     let index_partition_name = format!("user_{}_pk_idx", table_id);
     ensure_partition(&backend, &index_partition_name);
     new_indexed_store_with_pk(backend, name, vec![pk_index])
@@ -122,17 +115,18 @@ pub fn new_indexed_user_table_store(
 mod tests {
     use super::*;
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::{UserId, ids::SeqId, models::{NamespaceId, TableId, TableName, rows::Row}};
+    use kalamdb_commons::{
+        ids::SeqId,
+        models::{rows::Row, NamespaceId, TableId, TableName},
+        UserId,
+    };
     use kalamdb_store::test_utils::InMemoryBackend;
     use std::collections::BTreeMap;
 
     fn create_test_store() -> UserTableStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
         let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
-        new_user_table_store(
-            backend,
-            &table_id,
-        )
+        new_user_table_store(backend, &table_id)
     }
 
     fn create_test_row(user_id: &str, seq: i64) -> UserTableRow {
@@ -216,13 +210,7 @@ mod tests {
         store.put(&key2, &row2).unwrap();
 
         // Both exist independently
-        assert_eq!(
-            store.get(&key1).unwrap().unwrap().user_id,
-            UserId::new("user1")
-        );
-        assert_eq!(
-            store.get(&key2).unwrap().unwrap().user_id,
-            UserId::new("user2")
-        );
+        assert_eq!(store.get(&key1).unwrap().unwrap().user_id, UserId::new("user1"));
+        assert_eq!(store.get(&key2).unwrap().unwrap().user_id, UserId::new("user2"));
     }
 }

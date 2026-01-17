@@ -44,7 +44,7 @@ fn resolve_config(storage: &Storage) -> Result<StorageLocationConfig> {
                 StorageType::Azure => StorageLocationConfig::Azure(Default::default()),
                 StorageType::Filesystem => StorageLocationConfig::Local(Default::default()),
             })
-        }
+        },
         Err(e) => Err(FilestoreError::Config(e.to_string())),
     }
 }
@@ -58,7 +58,7 @@ fn build_local(storage: &Storage) -> Result<Arc<dyn ObjectStore>> {
     }
 
     let path = PathBuf::from(base);
-    
+
     // Ensure the directory exists before canonicalizing
     // LocalFileSystem::new_with_prefix requires an absolute path that exists
     if !path.exists() {
@@ -110,9 +110,7 @@ fn build_s3(
         builder = builder.with_token(token);
     }
 
-    let store = builder
-        .build()
-        .map_err(|e| FilestoreError::Config(format!("S3: {e}")))?;
+    let store = builder.build().map_err(|e| FilestoreError::Config(format!("S3: {e}")))?;
 
     wrap_with_prefix(store, &prefix)
 }
@@ -129,9 +127,7 @@ fn build_gcs(
         builder = builder.with_service_account_key(sa);
     }
 
-    let store = builder
-        .build()
-        .map_err(|e| FilestoreError::Config(format!("GCS: {e}")))?;
+    let store = builder.build().map_err(|e| FilestoreError::Config(format!("GCS: {e}")))?;
 
     wrap_with_prefix(store, &prefix)
 }
@@ -155,17 +151,12 @@ fn build_azure(
         let query_pairs: Vec<(String, String)> = sas
             .trim_start_matches('?')
             .split('&')
-            .filter_map(|pair| {
-                pair.split_once('=')
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
-            })
+            .filter_map(|pair| pair.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
             .collect();
         builder = builder.with_sas_authorization(query_pairs);
     }
 
-    let store = builder
-        .build()
-        .map_err(|e| FilestoreError::Config(format!("Azure: {e}")))?;
+    let store = builder.build().map_err(|e| FilestoreError::Config(format!("Azure: {e}")))?;
 
     wrap_with_prefix(store, &prefix)
 }
@@ -191,7 +182,10 @@ fn parse_remote_url(url: &str, schemes: &[&str]) -> Result<(String, String)> {
 }
 
 /// Wrap a store with a PrefixStore if prefix is non-empty.
-fn wrap_with_prefix<T: ObjectStore + 'static>(store: T, prefix: &str) -> Result<Arc<dyn ObjectStore>> {
+fn wrap_with_prefix<T: ObjectStore + 'static>(
+    store: T,
+    prefix: &str,
+) -> Result<Arc<dyn ObjectStore>> {
     let prefix = prefix.trim_matches('/');
     if prefix.is_empty() {
         Ok(Arc::new(store) as Arc<dyn ObjectStore>)
@@ -338,7 +332,7 @@ mod tests {
 
         let result = object_key_for_path(&storage, "namespace1/table1/file.parquet");
         assert!(result.is_ok());
-        
+
         let key = result.unwrap();
         assert_eq!(key.as_ref(), "namespace1/table1/file.parquet");
     }
@@ -366,7 +360,7 @@ mod tests {
 
         let result = object_key_for_path(&storage, "/namespace1/table1/file.parquet");
         assert!(result.is_ok());
-        
+
         let key = result.unwrap();
         // Should strip leading slash
         assert_eq!(key.as_ref(), "namespace1/table1/file.parquet");
@@ -395,7 +389,7 @@ mod tests {
 
         let result = object_key_for_path(&storage, "");
         assert!(result.is_ok());
-        
+
         let key = result.unwrap();
         assert_eq!(key.as_ref(), "");
     }
@@ -409,8 +403,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_deep_prefix() {
-        let (bucket, prefix) =
-            parse_remote_url("s3://my-bucket/a/b/c/d/e", &["s3://"]).unwrap();
+        let (bucket, prefix) = parse_remote_url("s3://my-bucket/a/b/c/d/e", &["s3://"]).unwrap();
         assert_eq!(bucket, "my-bucket");
         assert_eq!(prefix, "a/b/c/d/e");
     }

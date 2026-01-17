@@ -48,7 +48,7 @@ pub fn generate_storage_key(
         TableType::User => {
             let user_id = user_id.expect("user_id required for user tables");
             StorageKeyType::User(UserTableRowId::new(user_id, seq))
-        }
+        },
         TableType::Shared => StorageKeyType::Shared(seq),
         _ => panic!("Unsupported table type for generate_storage_key"),
     }
@@ -73,7 +73,7 @@ mod tests {
                 // Verify storage key format
                 let bytes = user_key.storage_key();
                 assert_eq!(bytes[0], 5); // "user1" = 5 bytes
-            }
+            },
             _ => panic!("Expected User key"),
         }
     }
@@ -91,7 +91,7 @@ mod tests {
                 // Verify storage key is just SeqId bytes
                 let bytes = shared_key.storage_key();
                 assert_eq!(bytes.len(), 8); // i64 = 8 bytes
-            }
+            },
             _ => panic!("Expected Shared key"),
         }
     }

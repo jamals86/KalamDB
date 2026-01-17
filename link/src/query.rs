@@ -37,7 +37,10 @@ impl QueryExecutor {
         // Very conservative: only retry simple, read-only statements.
         // Avoid retrying DDL/DML (CREATE/INSERT/UPDATE/DELETE/...) because
         // a request might succeed server-side but time out client-side.
-        matches!(Self::first_keyword(sql).as_deref(), Some("SELECT" | "SHOW" | "DESCRIBE" | "EXPLAIN"))
+        matches!(
+            Self::first_keyword(sql).as_deref(),
+            Some("SELECT" | "SHOW" | "DESCRIBE" | "EXPLAIN")
+        )
     }
 
     fn first_keyword(sql: &str) -> Option<String> {
@@ -105,7 +108,7 @@ impl QueryExecutor {
         let mut retries: u32 = 0;
         let max_retries = self.max_retries;
         let retry_safe_sql = Self::is_retry_safe_sql(sql);
-        
+
         // Log query start
         let sql_preview = if sql.len() > 80 {
             format!("{}...", &sql[..80])
@@ -149,22 +152,20 @@ impl QueryExecutor {
                         let parse_start = Instant::now();
                         let mut query_response: QueryResponse = response.json().await?;
                         let parse_duration_ms = parse_start.elapsed().as_millis();
-                        
+
                         // Enforce stable column ordering where applicable
                         normalize_query_response(sql, &mut query_response);
-                        
+
                         let total_duration_ms = overall_start.elapsed().as_millis();
                         debug!(
                             "[LINK_QUERY] Success: http_ms={} parse_ms={} total_ms={}",
                             http_duration_ms, parse_duration_ms, total_duration_ms
                         );
-                        
+
                         return Ok(query_response);
                     } else {
-                        let error_text = response
-                            .text()
-                            .await
-                            .unwrap_or_else(|_| "Unknown error".to_string());
+                        let error_text =
+                            response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
 
                         // SECURITY: Authentication/Authorization errors (4xx) must return an error,
                         // not Ok with error status. This prevents CLI from exiting with success code
@@ -203,7 +204,7 @@ impl QueryExecutor {
                             message: error_message,
                         });
                     }
-                }
+                },
                 Err(e) if retry_safe_sql && retries < max_retries && Self::is_retriable(&e) => {
                     let http_duration_ms = attempt_start.elapsed().as_millis();
                     warn!(
@@ -217,7 +218,7 @@ impl QueryExecutor {
                     tokio::time::sleep(tokio::time::Duration::from_millis(100 * retries as u64))
                         .await;
                     continue;
-                }
+                },
                 Err(e) => {
                     let http_duration_ms = attempt_start.elapsed().as_millis();
                     warn!(
@@ -227,7 +228,7 @@ impl QueryExecutor {
                         overall_start.elapsed().as_millis()
                     );
                     return Err(e.into());
-                }
+                },
             }
         }
     }

@@ -80,7 +80,6 @@ pub trait StreamTableStoreExt {
 
 impl StreamTableStoreExt for StreamTableStore {
     fn scan_all_stream(&self) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, TableError> {
-        self.scan_all(None)
-            .map_err(|e| TableError::Storage(e.to_string()))
+        self.scan_all(None).map_err(|e| TableError::Storage(e.to_string()))
     }
 }

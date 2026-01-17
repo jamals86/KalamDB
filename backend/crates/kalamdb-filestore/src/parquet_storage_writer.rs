@@ -218,14 +218,10 @@ fn serialize_to_parquet(
             .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
 
         for batch in batches {
-            writer
-                .write(&batch)
-                .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
+            writer.write(&batch).map_err(|e| FilestoreError::Parquet(e.to_string()))?;
         }
 
-        writer
-            .close()
-            .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
+        writer.close().map_err(|e| FilestoreError::Parquet(e.to_string()))?;
     }
 
     Ok(Bytes::from(buffer))
@@ -238,18 +234,12 @@ fn zstd_level() -> ZstdLevel {
 }
 
 fn sort_batches_by_seq(batches: Vec<RecordBatch>) -> Result<Vec<RecordBatch>> {
-    batches
-        .into_iter()
-        .map(sort_record_batch_by_seq)
-        .collect()
+    batches.into_iter().map(sort_record_batch_by_seq).collect()
 }
 
 fn sort_record_batch_by_seq(batch: RecordBatch) -> Result<RecordBatch> {
-    let Some(seq_idx) = batch
-        .schema()
-        .fields()
-        .iter()
-        .position(|f| f.name() == SystemColumnNames::SEQ)
+    let Some(seq_idx) =
+        batch.schema().fields().iter().position(|f| f.name() == SystemColumnNames::SEQ)
     else {
         return Ok(batch);
     };
@@ -537,11 +527,9 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![Field::new("value", DataType::Int64, false)]));
 
         let values: Vec<i64> = (0..50_000).collect();
-        let batch = RecordBatch::try_new(
-            Arc::clone(&schema),
-            vec![Arc::new(Int64Array::from(values))],
-        )
-        .unwrap();
+        let batch =
+            RecordBatch::try_new(Arc::clone(&schema), vec![Arc::new(Int64Array::from(values))])
+                .unwrap();
 
         let file_path = "test/large.parquet";
 
@@ -550,10 +538,7 @@ mod tests {
         assert!(result.is_ok());
 
         let write_result = result.unwrap();
-        assert!(
-            write_result.size_bytes > 50_000,
-            "Large file should have substantial size"
-        );
+        assert!(write_result.size_bytes > 50_000, "Large file should have substantial size");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
@@ -586,7 +571,7 @@ mod tests {
         };
 
         let (schema, batches) = make_test_batch();
-        
+
         // Deep nested path
         let file_path = "deep/nested/path/to/file.parquet";
 

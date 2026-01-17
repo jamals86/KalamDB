@@ -39,20 +39,14 @@ async fn test_parameter_limits_from_config() {
     let too_many_params: Vec<ScalarValue> = (0..51).map(|i| ScalarValue::Int32(Some(i))).collect();
     let result = validate_parameters(&too_many_params, &limits);
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Parameter count exceeds limit"));
+    assert!(result.unwrap_err().to_string().contains("Parameter count exceeds limit"));
 
     // Test exceeding size limit
     let large_string = "a".repeat(600_000); // 600KB > 512KB limit
     let large_params = vec![ScalarValue::Utf8(Some(large_string))];
     let result = validate_parameters(&large_params, &limits);
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("size exceeds limit"));
+    assert!(result.unwrap_err().to_string().contains("size exceeds limit"));
 }
 
 #[tokio::test]

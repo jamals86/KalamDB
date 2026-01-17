@@ -60,15 +60,13 @@ impl CreateViewHandler {
 
         if catalog.schema(namespace.as_str()).is_none() {
             let schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-            catalog
-                .register_schema(namespace.as_str(), schema)
-                .map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to register namespace schema '{}': {}",
-                        namespace.as_str(),
-                        e
-                    ))
-                })?;
+            catalog.register_schema(namespace.as_str(), schema).map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to register namespace schema '{}': {}",
+                    namespace.as_str(),
+                    e
+                ))
+            })?;
         }
 
         Ok(())
@@ -98,9 +96,7 @@ impl TypedStatementHandler<CreateViewStatement> for CreateViewHandler {
         })?;
 
         // DataFusion returns a DataFrame for DDL; collecting executes the command
-        df.collect()
-            .await
-            .into_execution_error("Failed to create view")?;
+        df.collect().await.into_execution_error("Failed to create view")?;
 
         Ok(ExecutionResult::Success {
             message: format!(
@@ -144,30 +140,18 @@ mod tests {
         )
         .expect("parse view");
 
-        let exec_ctx = ExecutionContext::new(
-            UserId::new("tester"),
-            Role::Dba,
-            app_ctx.base_session_context(),
-        );
+        let exec_ctx =
+            ExecutionContext::new(UserId::new("tester"), Role::Dba, app_ctx.base_session_context());
 
-        handler
-            .execute(stmt, vec![], &exec_ctx)
-            .await
-            .expect("create view executed");
+        handler.execute(stmt, vec![], &exec_ctx).await.expect("create view executed");
 
         let session = exec_ctx.create_session_with_user();
-        let df = session
-            .sql("SELECT value FROM default.test_view")
-            .await
-            .expect("select view");
+        let df = session.sql("SELECT value FROM default.test_view").await.expect("select view");
         let batches = df.collect().await.expect("collect view");
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].num_rows(), 1);
         let column = batches[0].column(0);
-        let values = column
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .expect("int64 array");
+        let values = column.as_any().downcast_ref::<Int64Array>().expect("int64 array");
         assert_eq!(values.value(0), 1);
     }
 

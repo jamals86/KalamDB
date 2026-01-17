@@ -1,9 +1,10 @@
 //! Shared table lifecycle tests over the real HTTP SQL API.
 
-
-use kalam_link::models::ResponseStatus;
 use super::test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_table};
-use super::test_support::jobs::{extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent};
+use super::test_support::jobs::{
+    extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent,
+};
+use kalam_link::models::ResponseStatus;
 use tokio::time::Duration;
 
 #[tokio::test]

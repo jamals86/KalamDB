@@ -46,30 +46,24 @@ mod tests;
 pub use batch_manager::ObjectStoreBatchManager;
 pub use cleanup::delete_parquet_tree_for_table;
 pub use error::{FilestoreError, Result};
+pub use file_handle_diagnostics::{
+    check_for_leaks, log_stats_summary, record_close, record_open, FileHandleStats,
+    FileHandleTracker,
+};
 pub use manifest_ops::{manifest_exists, read_manifest_json, write_manifest_json};
 pub use object_store_factory::{build_object_store, is_remote_url, object_key_for_path};
 pub use object_store_ops::{
-    delete_file, delete_file_sync,
-    delete_prefix, delete_prefix_sync,
-    head_file, head_file_sync,
-    list_files, list_files_sync,
-    prefix_exists, prefix_exists_sync,
-    read_file, read_file_sync,
-    rename_file, rename_file_sync,
-    write_file, write_file_sync,
-    FileMetadata,
+    delete_file, delete_file_sync, delete_prefix, delete_prefix_sync, head_file, head_file_sync,
+    list_files, list_files_sync, prefix_exists, prefix_exists_sync, read_file, read_file_sync,
+    rename_file, rename_file_sync, write_file, write_file_sync, FileMetadata,
 };
 pub use parquet_reader_ops::{
-    read_parquet_batches, read_parquet_batches_sync,
-    read_parquet_schema, read_parquet_schema_sync,
+    read_parquet_batches, read_parquet_batches_sync, read_parquet_schema, read_parquet_schema_sync,
 };
 pub use parquet_storage_writer::{
-    write_parquet_to_storage, write_parquet_to_storage_sync, 
-    write_parquet_with_store, write_parquet_with_store_sync,
-    ParquetWriteResult,
+    write_parquet_to_storage, write_parquet_to_storage_sync, write_parquet_with_store,
+    write_parquet_with_store_sync, ParquetWriteResult,
 };
-pub use remote_materializer::{materialize_remote_parquet_dir, materialize_remote_parquet_dir_sync};
-pub use file_handle_diagnostics::{
-    FileHandleTracker, FileHandleStats, 
-    record_open, record_close, check_for_leaks, log_stats_summary,
+pub use remote_materializer::{
+    materialize_remote_parquet_dir, materialize_remote_parquet_dir_sync,
 };

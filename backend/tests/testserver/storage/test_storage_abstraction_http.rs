@@ -3,7 +3,6 @@
 //! These tests intentionally go through the real HTTP API (`/v1/api/sql`) using the
 //! near-production server wiring from `tests/testserver/commons`.
 
-
 use kalam_link::models::ResponseStatus;
 use std::path::PathBuf;
 

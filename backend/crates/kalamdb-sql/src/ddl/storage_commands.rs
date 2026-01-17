@@ -88,13 +88,13 @@ impl CreateStorageStatement {
         // Extract TYPE (unquoted keyword)
         let storage_type = extract_keyword_value(&normalized, "TYPE")?;
         match storage_type.as_str() {
-            "filesystem" | "s3" | "gcs" | "azure" => {}
+            "filesystem" | "s3" | "gcs" | "azure" => {},
             other => {
                 return Err(format!(
                     "Invalid storage type '{}'. Must be 'filesystem', 's3', 'gcs', or 'azure'",
                     other
                 ))
-            }
+            },
         }
 
         // Extract NAME (optional); default to storage_id when omitted
@@ -121,11 +121,11 @@ impl CreateStorageStatement {
                     } else {
                         format!("s3://{}", bucket)
                     }
-                }
+                },
                 Err(_) => {
                     // Fall back to BASE_DIRECTORY
                     extract_quoted_keyword_value(&normalized, "BASE_DIRECTORY")?
-                }
+                },
             }
         } else {
             extract_quoted_keyword_value(&normalized, "BASE_DIRECTORY")?
@@ -235,9 +235,8 @@ impl AlterStorageStatement {
         let pattern = format!("SET {}", keyword.to_uppercase());
         let sql_upper = sql.to_uppercase();
 
-        let start_pos = sql_upper
-            .find(&pattern)
-            .ok_or_else(|| format!("SET {} not found", keyword))?;
+        let start_pos =
+            sql_upper.find(&pattern).ok_or_else(|| format!("SET {} not found", keyword))?;
 
         // Extract from position after "SET "
         let after_set = &sql[start_pos + 4..]; // Skip "SET "
@@ -324,16 +323,10 @@ mod tests {
         assert_eq!(stmt.storage_id, StorageId::local());
         assert_eq!(stmt.storage_type, StorageType::Filesystem);
         assert_eq!(stmt.storage_name, "Local Storage");
-        assert_eq!(
-            stmt.description,
-            Some("Local filesystem storage".to_string())
-        );
+        assert_eq!(stmt.description, Some("Local filesystem storage".to_string()));
         assert_eq!(stmt.base_directory, "/data/storage");
         assert_eq!(stmt.shared_tables_template, "{namespace}/{tableName}/");
-        assert_eq!(
-            stmt.user_tables_template,
-            "{namespace}/{tableName}/{userId}/"
-        );
+        assert_eq!(stmt.user_tables_template, "{namespace}/{tableName}/{userId}/");
         assert_eq!(stmt.credentials, None);
     }
 

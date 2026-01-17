@@ -50,12 +50,9 @@ pub async fn create_session(
         (None, Some(host)) => format!("http://{}:{}", host, cli.port),
         (None, None) => {
             // Try to get from stored credentials first
-            if let Some(creds) = credential_store
-                .get_credentials(&cli.instance)
-                .map_err(|e| {
-                    CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
-                })?
-            {
+            if let Some(creds) = credential_store.get_credentials(&cli.instance).map_err(|e| {
+                CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
+            })? {
                 let creds_url = creds.get_server_url();
                 // If credentials have a valid URL (starts with http), use it
                 // Otherwise use default localhost:8080
@@ -73,7 +70,7 @@ pub async fn create_session(
                     .and_then(|s| s.url.clone())
                     .unwrap_or_else(|| "http://localhost:8080".to_string())
             }
-        }
+        },
     };
 
     // Helper function to check if URL is localhost
@@ -103,7 +100,7 @@ pub async fn create_session(
                     eprintln!("Warning: Could not create client for login: {}", e);
                 }
                 return None;
-            }
+            },
         };
 
         match temp_client.login(username, password).await {
@@ -115,13 +112,13 @@ pub async fn create_session(
                     );
                 }
                 Some(response)
-            }
+            },
             Err(e) => {
                 if verbose {
                     eprintln!("Warning: Login failed: {}", e);
                 }
                 None
-            }
+            },
         }
     }
 
@@ -140,10 +137,12 @@ pub async fn create_session(
     } else if let Some(username) = cli.username.clone() {
         // --username provided: login to get JWT token
         let password = cli.password.clone().unwrap_or_default();
-        
-        if let Some(login_response) = try_login(&server_url, &username, &password, cli.verbose).await {
+
+        if let Some(login_response) =
+            try_login(&server_url, &username, &password, cli.verbose).await
+        {
             let authenticated_user = login_response.user.username.clone();
-            
+
             // Only save credentials if --save-credentials flag is set
             if cli.save_credentials {
                 let new_creds = Credentials::with_details(
@@ -153,7 +152,7 @@ pub async fn create_session(
                     login_response.expires_at.clone(),
                     Some(server_url.clone()),
                 );
-                
+
                 if let Err(e) = credential_store.set_credentials(&new_creds) {
                     if cli.verbose {
                         eprintln!("Warning: Could not save credentials: {}", e);
@@ -162,11 +161,15 @@ pub async fn create_session(
                     eprintln!("Saved JWT token for instance '{}'", cli.instance);
                 }
             }
-            
+
             if cli.verbose {
                 eprintln!("Using JWT token for user '{}'", authenticated_user);
             }
-            (AuthProvider::jwt_token(login_response.access_token), Some(authenticated_user), false)
+            (
+                AuthProvider::jwt_token(login_response.access_token),
+                Some(authenticated_user),
+                false,
+            )
         } else {
             // Fallback to basic auth if login fails
             if cli.verbose {
@@ -189,11 +192,14 @@ pub async fn create_session(
                 cli.instance
             )));
         }
-        
+
         let stored_username = creds.username.clone();
         if cli.verbose {
             if let Some(ref user) = stored_username {
-                eprintln!("Using stored JWT token for user '{}' (instance: {})", user, cli.instance);
+                eprintln!(
+                    "Using stored JWT token for user '{}' (instance: {})",
+                    user, cli.instance
+                );
             } else {
                 eprintln!("Using stored JWT token for instance '{}'", cli.instance);
             }
@@ -203,12 +209,18 @@ pub async fn create_session(
         // Auto-authenticate with root user for localhost connections
         let username = "root".to_string();
         let password = "".to_string();
-        
-        if let Some(login_response) = try_login(&server_url, &username, &password, cli.verbose).await {
+
+        if let Some(login_response) =
+            try_login(&server_url, &username, &password, cli.verbose).await
+        {
             if cli.verbose {
                 eprintln!("Auto-authenticated as root for localhost connection");
             }
-            (AuthProvider::jwt_token(login_response.access_token), Some(login_response.user.username), false)
+            (
+                AuthProvider::jwt_token(login_response.access_token),
+                Some(login_response.user.username),
+                false,
+            )
         } else {
             if cli.verbose {
                 eprintln!("Auto-login failed, using basic auth for localhost connection");

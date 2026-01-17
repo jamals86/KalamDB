@@ -1,6 +1,6 @@
+use super::{KTableRow, Row};
 use crate::ids::SeqId;
 use crate::models::UserId;
-use super::{KTableRow, Row};
 use serde::{Deserialize, Serialize};
 
 /// User table row data

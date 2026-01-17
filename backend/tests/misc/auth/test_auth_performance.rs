@@ -12,10 +12,9 @@
 //! - p99 latency: <200ms for cached auth, <500ms for uncached
 //! - Cache hit rate: >95% for repeated authentications
 
-
-use actix_web::{test, web, App};
 use super::test_support::{auth_helper, TestServer};
-use kalamdb_commons::{Role, models::ConnectionInfo};
+use actix_web::{test, web, App};
+use kalamdb_commons::{models::ConnectionInfo, Role};
 use std::time::{Duration, Instant};
 
 /// Performance benchmark for Basic Auth authentication
@@ -88,21 +87,9 @@ async fn benchmark_basic_auth_performance() {
     println!("  p99 latency: {:.2}ms", p99.as_millis());
 
     // Performance assertions
-    assert!(
-        p50 < Duration::from_millis(100),
-        "p50 latency too high: {:?}",
-        p50
-    );
-    assert!(
-        p95 < Duration::from_millis(200),
-        "p95 latency too high: {:?}",
-        p95
-    );
-    assert!(
-        p99 < Duration::from_millis(500),
-        "p99 latency too high: {:?}",
-        p99
-    );
+    assert!(p50 < Duration::from_millis(100), "p50 latency too high: {:?}", p50);
+    assert!(p95 < Duration::from_millis(200), "p95 latency too high: {:?}", p95);
+    assert!(p99 < Duration::from_millis(500), "p99 latency too high: {:?}", p99);
 }
 
 /// Performance benchmark for JWT authentication
@@ -182,21 +169,9 @@ async fn benchmark_jwt_auth_performance() {
     println!("  p99 latency: {:.2}ms", p99.as_millis());
 
     // Performance assertions
-    assert!(
-        p50 < Duration::from_millis(100),
-        "p50 latency too high: {:?}",
-        p50
-    );
-    assert!(
-        p95 < Duration::from_millis(200),
-        "p95 latency too high: {:?}",
-        p95
-    );
-    assert!(
-        p99 < Duration::from_millis(500),
-        "p99 latency too high: {:?}",
-        p99
-    );
+    assert!(p50 < Duration::from_millis(100), "p50 latency too high: {:?}", p50);
+    assert!(p95 < Duration::from_millis(200), "p95 latency too high: {:?}", p95);
+    assert!(p99 < Duration::from_millis(500), "p99 latency too high: {:?}", p99);
 }
 
 /// Test cache effectiveness by comparing first request vs cached requests
@@ -280,14 +255,8 @@ async fn test_auth_cache_effectiveness() {
     let avg_cached_time = cached_latencies.iter().sum::<Duration>() / cached_latencies.len() as u32;
 
     println!("Cache Effectiveness Test:");
-    println!(
-        "  First request (cache miss): {:.2}ms",
-        first_request_time.as_millis()
-    );
-    println!(
-        "  Average cached requests: {:.2}ms",
-        avg_cached_time.as_millis()
-    );
+    println!("  First request (cache miss): {:.2}ms", first_request_time.as_millis());
+    println!("  Average cached requests: {:.2}ms", avg_cached_time.as_millis());
     println!(
         "  Cache speedup: {:.1}x",
         first_request_time.as_millis() as f64 / avg_cached_time.as_millis() as f64
@@ -323,9 +292,8 @@ async fn test_concurrent_auth_load() {
     }
 
     // Create user repository adapter
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
-        server.app_context.system_tables().users(),
-    ));
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
 
     // Concurrent authentication test
     let num_concurrent_requests = 50;

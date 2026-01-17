@@ -7,7 +7,9 @@ use crate::common::*;
 #[test]
 fn smoke_test_core_operations() {
     // Fail fast with clear error if server not running
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     println!("\n=== Starting Core Operations Smoke Test ===\n");
 
@@ -83,10 +85,8 @@ fn test_namespace_operations() {
 
     // SELECT from system.namespaces to verify
     println!("  Verifying namespace in system.namespaces");
-    let select_sql = format!(
-        "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '{}'",
-        ns_name
-    );
+    let select_sql =
+        format!("SELECT namespace_id FROM system.namespaces WHERE namespace_id = '{}'", ns_name);
     let result = execute_sql_as_root_via_client(&select_sql)
         .expect("SELECT from system.namespaces should succeed");
 
@@ -105,10 +105,8 @@ fn test_namespace_operations() {
     println!("    ✓ Namespace dropped");
 
     // Verify namespace is removed or marked as deleted
-    let verify_sql = format!(
-        "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '{}'",
-        ns_name
-    );
+    let verify_sql =
+        format!("SELECT namespace_id FROM system.namespaces WHERE namespace_id = '{}'", ns_name);
     let result =
         execute_sql_as_root_via_client(&verify_sql).expect("SELECT after DROP should succeed");
 
@@ -134,21 +132,16 @@ fn test_user_operations() {
 
     // CREATE USER
     println!("  Creating user: {}", username);
-    let create_sql = format!(
-        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
-        username, password
-    );
+    let create_sql = format!("CREATE USER {} WITH PASSWORD '{}' ROLE 'user'", username, password);
     execute_sql_as_root_via_client(&create_sql).expect("CREATE USER should succeed");
     println!("    ✓ User created");
 
     // SELECT from system.users to verify
     println!("  Verifying user in system.users");
-    let select_sql = format!(
-        "SELECT username, role FROM system.users WHERE username = '{}'",
-        username
-    );
-    let result =
-        execute_sql_as_root_via_client(&select_sql).expect("SELECT from system.users should succeed");
+    let select_sql =
+        format!("SELECT username, role FROM system.users WHERE username = '{}'", username);
+    let result = execute_sql_as_root_via_client(&select_sql)
+        .expect("SELECT from system.users should succeed");
 
     assert!(
         result.contains(&username) && (result.contains("user") || result.contains("(1 row)")),
@@ -165,10 +158,8 @@ fn test_user_operations() {
     println!("    ✓ User dropped");
 
     // Verify user is removed or soft-deleted
-    let verify_sql = format!(
-        "SELECT username, deleted_at FROM system.users WHERE username = '{}'",
-        username
-    );
+    let verify_sql =
+        format!("SELECT username, deleted_at FROM system.users WHERE username = '{}'", username);
     let result =
         execute_sql_as_root_via_client(&verify_sql).expect("SELECT after DROP should succeed");
 
@@ -238,8 +229,8 @@ fn test_storage_operations() {
                 "SELECT storage_id FROM system.storages WHERE storage_id = '{}'",
                 storage_name
             );
-            let result =
-                execute_sql_as_root_via_client(&verify_sql).expect("SELECT after DROP should succeed");
+            let result = execute_sql_as_root_via_client(&verify_sql)
+                .expect("SELECT after DROP should succeed");
 
             assert!(
                 result.contains("(0 rows)") || !result.contains(&storage_name),
@@ -250,14 +241,11 @@ fn test_storage_operations() {
             println!("    ✓ Storage removed from system.storages");
 
             println!("  ✅ Storage operations completed successfully\n");
-        }
+        },
         Err(e) => {
-            println!(
-                "    ⚠️  Storage operations not fully implemented yet: {}",
-                e
-            );
+            println!("    ⚠️  Storage operations not fully implemented yet: {}", e);
             println!("    Skipping storage verification\n");
-        }
+        },
     }
 }
 
@@ -285,10 +273,8 @@ fn test_flush_operations() {
 
     // Insert test data
     println!("  Inserting test data");
-    let insert_sql = format!(
-        "INSERT INTO {} (id, value) VALUES (1, 'test_value')",
-        full_table_name
-    );
+    let insert_sql =
+        format!("INSERT INTO {} (id, value) VALUES (1, 'test_value')", full_table_name);
     execute_sql_as_root_via_client(&insert_sql).expect("INSERT should succeed");
     println!("    ✓ Test data inserted");
 
@@ -301,14 +287,11 @@ fn test_flush_operations() {
         Ok(output) => {
             println!("    ✓ STORAGE FLUSH TABLE executed");
             println!("    Output: {}", output);
-        }
+        },
         Err(e) => {
             // Note: system.jobs may have serialization issues, so flush might fail
-            println!(
-                "    ⚠️  STORAGE FLUSH TABLE failed (may be due to jobs table issues): {}",
-                e
-            );
-        }
+            println!("    ⚠️  STORAGE FLUSH TABLE failed (may be due to jobs table issues): {}", e);
+        },
     }
 
     // Test 5b: STORAGE FLUSH ALL
@@ -339,10 +322,10 @@ fn test_flush_operations() {
                                 } else {
                                     println!("      ⚠️  Job {} not yet in system.jobs", job_id);
                                 }
-                            }
+                            },
                             Err(e) => {
                                 println!("      ⚠️  Unable to query system.jobs: {}", e);
-                            }
+                            },
                         }
                     }
                 } else {
@@ -351,13 +334,10 @@ fn test_flush_operations() {
             } else {
                 println!("    ⚠️  Could not parse job IDs from output");
             }
-        }
+        },
         Err(e) => {
-            println!(
-                "    ⚠️  STORAGE FLUSH ALL failed (may be due to jobs table issues): {}",
-                e
-            );
-        }
+            println!("    ⚠️  STORAGE FLUSH ALL failed (may be due to jobs table issues): {}", e);
+        },
     }
 
     // Cleanup: Drop namespace (cascade will remove tables)

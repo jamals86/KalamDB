@@ -84,7 +84,7 @@ impl Credentials {
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = &self.expires_at {
             if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(expires_at) {
-                return exp < chrono::Utc::now()
+                return exp < chrono::Utc::now();
             }
         }
         false
@@ -212,8 +212,7 @@ impl CredentialStore for MemoryCredentialStore {
     }
 
     fn set_credentials(&mut self, credentials: &Credentials) -> Result<()> {
-        self.credentials
-            .insert(credentials.instance.clone(), credentials.clone());
+        self.credentials.insert(credentials.instance.clone(), credentials.clone());
         Ok(())
     }
 
@@ -299,10 +298,7 @@ mod tests {
         assert!(!store.has_credentials("local").unwrap());
 
         // Store credentials
-        let creds = Credentials::new(
-            "local".to_string(),
-            "jwt_token_here".to_string(),
-        );
+        let creds = Credentials::new("local".to_string(), "jwt_token_here".to_string());
         store.set_credentials(&creds).unwrap();
 
         // Retrieve credentials
@@ -371,14 +367,8 @@ mod tests {
     fn test_memory_store_overwrite() {
         let mut store = MemoryCredentialStore::new();
 
-        let creds1 = Credentials::new(
-            "local".to_string(),
-            "old_token".to_string(),
-        );
-        let creds2 = Credentials::new(
-            "local".to_string(),
-            "new_token".to_string(),
-        );
+        let creds1 = Credentials::new("local".to_string(), "old_token".to_string());
+        let creds2 = Credentials::new("local".to_string(), "new_token".to_string());
 
         store.set_credentials(&creds1).unwrap();
         store.set_credentials(&creds2).unwrap();

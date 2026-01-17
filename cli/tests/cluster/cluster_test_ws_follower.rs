@@ -4,7 +4,7 @@
 
 use crate::cluster_common::*;
 use crate::common::*;
-use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts, ChangeEvent};
+use kalam_link::{AuthProvider, ChangeEvent, KalamLinkClient, KalamLinkTimeouts};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -16,10 +16,7 @@ fn parse_cluster_nodes() -> (String, String) {
     )
     .expect("Failed to query system.cluster");
 
-    let result = response
-        .results
-        .first()
-        .expect("Missing cluster result");
+    let result = response.results.first().expect("Missing cluster result");
     let rows = result.rows.as_ref().expect("Missing cluster rows");
 
     let mut leader_url: Option<String> = None;
@@ -57,10 +54,7 @@ fn parse_cluster_nodes() -> (String, String) {
 fn create_ws_client(base_url: &str) -> KalamLinkClient {
     KalamLinkClient::builder()
         .base_url(base_url)
-        .auth(AuthProvider::basic_auth(
-            "root".to_string(),
-            root_password().to_string(),
-        ))
+        .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
         .timeouts(
             KalamLinkTimeouts::builder()
                 .connection_timeout_secs(5)
@@ -77,7 +71,9 @@ fn create_ws_client(base_url: &str) -> KalamLinkClient {
 
 #[test]
 fn cluster_test_ws_follower_receives_leader_changes() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: WebSocket Follower Receives Leader Changes ===\n");
 
@@ -89,19 +85,14 @@ fn cluster_test_ws_follower_receives_leader_changes() {
     let table = "ws_follow";
     let full = format!("{}.{}", namespace, table);
 
-    let _ = execute_on_node(
-        &leader_url,
-        &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace),
-    );
+    let _ =
+        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     // Use USER TABLE - subscriptions only work on USER/STREAM tables
     execute_on_node(
         &leader_url,
-        &format!(
-            "CREATE USER TABLE {} (id BIGINT PRIMARY KEY, value TEXT)",
-            full
-        ),
+        &format!("CREATE USER TABLE {} (id BIGINT PRIMARY KEY, value TEXT)", full),
     )
     .expect("Failed to create table");
 
@@ -113,76 +104,64 @@ fn cluster_test_ws_follower_receives_leader_changes() {
 
     let query = format!("SELECT * FROM {}", full);
     let insert_value = "follower_event";
-    let insert_sql = format!(
-        "INSERT INTO {} (id, value) VALUES (1, '{}')",
-        full, insert_value
-    );
+    let insert_sql = format!("INSERT INTO {} (id, value) VALUES (1, '{}')", full, insert_value);
 
-    cluster_runtime()
-        .block_on(async {
-            let follower_client = create_ws_client(&follower_url);
-            let leader_client = create_ws_client(&leader_url);
+    cluster_runtime().block_on(async {
+        let follower_client = create_ws_client(&follower_url);
+        let leader_client = create_ws_client(&leader_url);
 
-            let mut subscription = follower_client
-                .subscribe(&query)
-                .await
-                .expect("Failed to subscribe on follower");
+        let mut subscription = follower_client
+            .subscribe(&query)
+            .await
+            .expect("Failed to subscribe on follower");
 
-            leader_client
-                .execute_query(&insert_sql, None, None)
-                .await
-                .expect("Failed to insert on leader");
+        leader_client
+            .execute_query(&insert_sql, None, None)
+            .await
+            .expect("Failed to insert on leader");
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
-            let mut received = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        let mut received = false;
 
-            while tokio::time::Instant::now() < deadline {
-                let remaining = deadline
-                    .checked_duration_since(tokio::time::Instant::now())
-                    .unwrap_or_default();
-                let wait = std::cmp::min(remaining, Duration::from_secs(2));
+        while tokio::time::Instant::now() < deadline {
+            let remaining =
+                deadline.checked_duration_since(tokio::time::Instant::now()).unwrap_or_default();
+            let wait = std::cmp::min(remaining, Duration::from_secs(2));
 
-                match tokio::time::timeout(wait, subscription.next()).await {
-                    Ok(Some(Ok(event))) => {
-                        match event {
-                            ChangeEvent::Insert { rows, .. } => {
-                                for row in rows {
-                                    if let Some(obj) = row.as_object() {
-                                        if let Some(Value::String(val)) = obj.get("value") {
-                                            if val == insert_value {
-                                                received = true;
-                                                break;
-                                            }
-                                        }
+            match tokio::time::timeout(wait, subscription.next()).await {
+                Ok(Some(Ok(event))) => match event {
+                    ChangeEvent::Insert { rows, .. } => {
+                        for row in rows {
+                            if let Some(obj) = row.as_object() {
+                                if let Some(Value::String(val)) = obj.get("value") {
+                                    if val == insert_value {
+                                        received = true;
+                                        break;
                                     }
                                 }
                             }
-                            ChangeEvent::Error { code, message, .. } => {
-                                panic!("Subscription error: {} - {}", code, message);
-                            }
-                            _ => {}
                         }
-                    }
-                    Ok(Some(Err(err))) => panic!("Subscription error: {}", err),
-                    Ok(None) => break,
-                    Err(_) => {}
-                }
-
-                if received {
-                    break;
-                }
+                    },
+                    ChangeEvent::Error { code, message, .. } => {
+                        panic!("Subscription error: {} - {}", code, message);
+                    },
+                    _ => {},
+                },
+                Ok(Some(Err(err))) => panic!("Subscription error: {}", err),
+                Ok(None) => break,
+                Err(_) => {},
             }
 
-            assert!(
-                received,
-                "Follower did not receive leader insert event via WebSocket"
-            );
-        });
+            if received {
+                break;
+            }
+        }
 
-    let _ = execute_on_node(
-        &leader_url,
-        &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace),
-    );
+        assert!(received, "Follower did not receive leader insert event via WebSocket");
+    });
+
+    let _ =
+        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 
     println!("\n  ✅ WebSocket follower delivery test passed\n");
 }

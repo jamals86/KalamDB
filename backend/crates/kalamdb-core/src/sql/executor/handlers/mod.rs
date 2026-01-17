@@ -19,8 +19,9 @@ use crate::error::KalamDbError;
 use kalamdb_sql::statement_classifier::SqlStatement;
 
 // Typed handlers organized by category
-pub mod dml;
+pub mod cluster;
 pub mod compact;
+pub mod dml;
 pub mod flush;
 pub mod jobs;
 pub mod namespace;
@@ -29,7 +30,6 @@ pub mod subscription;
 pub mod system;
 pub mod table;
 pub mod typed;
-pub mod cluster;
 pub mod user;
 pub mod view;
 

@@ -1,6 +1,5 @@
 //! Integration test for Live Query INSERT detection via WebSocket
 
-
 use futures_util::StreamExt;
 use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;

@@ -34,9 +34,7 @@ pub fn parse_where_clause(where_clause: &str) -> Result<Expr, KalamDbError> {
     })?;
 
     if statements.is_empty() {
-        return Err(KalamDbError::InvalidOperation(
-            "Empty WHERE clause".to_string(),
-        ));
+        return Err(KalamDbError::InvalidOperation("Empty WHERE clause".to_string()));
     }
 
     // Extract WHERE expression from parsed SELECT
@@ -45,14 +43,10 @@ pub fn parse_where_clause(where_clause: &str) -> Result<Expr, KalamDbError> {
             if let Some(selection) = &query.body.as_select().and_then(|s| s.selection.as_ref()) {
                 Ok((*selection).clone())
             } else {
-                Err(KalamDbError::InvalidOperation(
-                    "No WHERE clause found".to_string(),
-                ))
+                Err(KalamDbError::InvalidOperation("No WHERE clause found".to_string()))
             }
-        }
-        _ => Err(KalamDbError::InvalidOperation(
-            "Invalid WHERE clause syntax".to_string(),
-        )),
+        },
+        _ => Err(KalamDbError::InvalidOperation("Invalid WHERE clause syntax".to_string())),
     }
 }
 
@@ -92,7 +86,7 @@ fn evaluate_expr(expr: &Expr, row_data: &Row, depth: usize) -> Result<bool, Kala
                     return Ok(false);
                 }
                 evaluate_expr(right, row_data, depth + 1)
-            }
+            },
             BinaryOperator::Or => {
                 // Short-circuit: if left is true, skip right evaluation
                 let left_result = evaluate_expr(left, row_data, depth + 1)?;
@@ -100,35 +94,32 @@ fn evaluate_expr(expr: &Expr, row_data: &Row, depth: usize) -> Result<bool, Kala
                     return Ok(true);
                 }
                 evaluate_expr(right, row_data, depth + 1)
-            }
+            },
             BinaryOperator::Eq => evaluate_comparison(left, right, row_data, scalars_equal),
             BinaryOperator::NotEq => {
                 evaluate_comparison(left, right, row_data, |a, b| !scalars_equal(a, b))
-            }
+            },
             BinaryOperator::Lt => {
                 let left_value = extract_value(left, row_data)?;
                 let right_value = extract_value(right, row_data)?;
                 compare_numeric(&left_value, &right_value, "<")
-            }
+            },
             BinaryOperator::Gt => {
                 let left_value = extract_value(left, row_data)?;
                 let right_value = extract_value(right, row_data)?;
                 compare_numeric(&left_value, &right_value, ">")
-            }
+            },
             BinaryOperator::LtEq => {
                 let left_value = extract_value(left, row_data)?;
                 let right_value = extract_value(right, row_data)?;
                 compare_numeric(&left_value, &right_value, "<=")
-            }
+            },
             BinaryOperator::GtEq => {
                 let left_value = extract_value(left, row_data)?;
                 let right_value = extract_value(right, row_data)?;
                 compare_numeric(&left_value, &right_value, ">=")
-            }
-            _ => Err(KalamDbError::InvalidOperation(format!(
-                "Unsupported operator: {:?}",
-                op
-            ))),
+            },
+            _ => Err(KalamDbError::InvalidOperation(format!("Unsupported operator: {:?}", op))),
         },
 
         // Parentheses: (expression)
@@ -139,11 +130,10 @@ fn evaluate_expr(expr: &Expr, row_data: &Row, depth: usize) -> Result<bool, Kala
             datafusion::sql::sqlparser::ast::UnaryOperator::Not => {
                 let result = evaluate_expr(expr, row_data, depth + 1)?;
                 Ok(!result)
-            }
-            _ => Err(KalamDbError::InvalidOperation(format!(
-                "Unsupported unary operator: {:?}",
-                op
-            ))),
+            },
+            _ => {
+                Err(KalamDbError::InvalidOperation(format!("Unsupported unary operator: {:?}", op)))
+            },
         },
 
         _ => Err(KalamDbError::InvalidOperation(format!(
@@ -219,12 +209,7 @@ fn compare_numeric(
         ">" => left_num > right_num,
         "<=" => left_num <= right_num,
         ">=" => left_num >= right_num,
-        _ => {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "Unknown operator: {}",
-                op
-            )))
-        }
+        _ => return Err(KalamDbError::InvalidOperation(format!("Unknown operator: {}", op))),
     })
 }
 
@@ -244,13 +229,13 @@ fn extract_value(expr: &Expr, row_data: &Row) -> Result<ScalarValue, KalamDbErro
                     column_name
                 ))
             })
-        }
+        },
 
         // Literal value: convert to ScalarValue
         Expr::Value(v) => match &v.value {
             Value::SingleQuotedString(s) | Value::DoubleQuotedString(s) => {
                 Ok(ScalarValue::Utf8(Some(s.clone())))
-            }
+            },
             Value::Number(n, _) => {
                 // Try parsing as i64 first, then f64
                 if let Ok(i) = n.parse::<i64>() {
@@ -258,18 +243,12 @@ fn extract_value(expr: &Expr, row_data: &Row) -> Result<ScalarValue, KalamDbErro
                 } else if let Ok(f) = n.parse::<f64>() {
                     Ok(ScalarValue::Float64(Some(f)))
                 } else {
-                    Err(KalamDbError::InvalidOperation(format!(
-                        "Invalid number: {}",
-                        n
-                    )))
+                    Err(KalamDbError::InvalidOperation(format!("Invalid number: {}", n)))
                 }
-            }
+            },
             Value::Boolean(b) => Ok(ScalarValue::Boolean(Some(*b))),
             Value::Null => Ok(ScalarValue::Null),
-            _ => Err(KalamDbError::InvalidOperation(format!(
-                "Unsupported literal type: {:?}",
-                v
-            ))),
+            _ => Err(KalamDbError::InvalidOperation(format!("Unsupported literal type: {:?}", v))),
         },
 
         _ => Err(KalamDbError::InvalidOperation(format!(
@@ -286,10 +265,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn to_row(value: serde_json::Value) -> Row {
-        let object = value
-            .as_object()
-            .expect("test rows must be JSON objects")
-            .clone();
+        let object = value.as_object().expect("test rows must be JSON objects").clone();
 
         let mut values = BTreeMap::new();
         for (key, value) in object {
@@ -306,7 +282,7 @@ mod tests {
                     } else {
                         panic!("unsupported numeric literal in test row")
                     }
-                }
+                },
                 serde_json::Value::String(s) => ScalarValue::Utf8(Some(s)),
                 other => panic!("unsupported value in test row: {:?}", other),
             };
@@ -382,9 +358,8 @@ mod tests {
 
     #[test]
     fn test_complex_filter() {
-        let expr =
-            parse_where_clause("(user_id = 'user1' OR user_id = 'user2') AND read = false")
-                .unwrap();
+        let expr = parse_where_clause("(user_id = 'user1' OR user_id = 'user2') AND read = false")
+            .unwrap();
 
         let matching_row1 = to_row(json!({"user_id": "user1", "read": false}));
         assert!(matches(&expr, &matching_row1).unwrap());

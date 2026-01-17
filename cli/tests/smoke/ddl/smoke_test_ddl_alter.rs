@@ -33,7 +33,8 @@ fn smoke_test_alter_table_add_column() {
     println!("🧪 Testing ALTER TABLE ADD COLUMN");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -71,12 +72,12 @@ fn smoke_test_alter_table_add_column() {
                 println!("⚠️  ALTER TABLE ADD COLUMN not yet implemented - skipping test");
                 return;
             }
-        }
+        },
         Err(e) => {
             println!("⚠️  ALTER TABLE ADD COLUMN not yet implemented - skipping test");
             println!("   Error: {:?}", e);
             return;
-        }
+        },
     }
     std::thread::sleep(Duration::from_millis(200));
 
@@ -94,19 +95,14 @@ fn smoke_test_alter_table_add_column() {
 
     let output = output_result.unwrap();
 
-    assert!(
-        output.contains("\"age\""),
-        "Expected 'age' column in output"
-    );
+    assert!(output.contains("\"age\""), "Expected 'age' column in output");
     assert!(output.contains("Alice"), "Expected existing row in output");
 
     println!("✅ Verified new column exists and old data preserved");
 
     // Add column with DEFAULT value
-    let alter_with_default = format!(
-        "ALTER TABLE {} ADD COLUMN status TEXT DEFAULT 'active'",
-        full_table
-    );
+    let alter_with_default =
+        format!("ALTER TABLE {} ADD COLUMN status TEXT DEFAULT 'active'", full_table);
     execute_sql_as_root_via_client(&alter_with_default).expect("Failed to add column with DEFAULT");
 
     // Insert new row and verify DEFAULT applied
@@ -116,10 +112,7 @@ fn smoke_test_alter_table_add_column() {
     let select_sql2 = format!("SELECT name, status FROM {} WHERE name = 'Bob'", full_table);
     let output2 = execute_sql_as_root_via_client_json(&select_sql2).expect("Failed to query");
 
-    assert!(
-        output2.contains("active"),
-        "Expected DEFAULT value 'active' for new column"
-    );
+    assert!(output2.contains("active"), "Expected DEFAULT value 'active' for new column");
 
     println!("✅ Verified ADD COLUMN with DEFAULT works");
 }
@@ -145,7 +138,8 @@ fn smoke_test_alter_table_drop_column() {
     println!("🧪 Testing ALTER TABLE DROP COLUMN");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -187,8 +181,8 @@ fn smoke_test_alter_table_drop_column() {
 
     // Verify column no longer exists
     let select_sql = format!("SELECT * FROM {}", full_table);
-    let output =
-        execute_sql_as_root_via_client_json(&select_sql).expect("Failed to query after DROP COLUMN");
+    let output = execute_sql_as_root_via_client_json(&select_sql)
+        .expect("Failed to query after DROP COLUMN");
 
     assert!(
         !output.contains("\"email\""),
@@ -222,7 +216,8 @@ fn smoke_test_alter_table_modify_column() {
     println!("🧪 Testing ALTER TABLE MODIFY COLUMN");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -245,10 +240,7 @@ fn smoke_test_alter_table_modify_column() {
     execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
 
     // Modify column to NOT NULL (should work if data exists)
-    let alter_sql = format!(
-        "ALTER TABLE {} MODIFY COLUMN content TEXT NOT NULL",
-        full_table
-    );
+    let alter_sql = format!("ALTER TABLE {} MODIFY COLUMN content TEXT NOT NULL", full_table);
 
     // Note: This might fail if backend doesn't support MODIFY COLUMN yet
     match execute_sql_as_root_via_client(&alter_sql) {
@@ -265,11 +257,11 @@ fn smoke_test_alter_table_modify_column() {
             );
 
             println!("✅ Verified NOT NULL constraint enforced");
-        }
+        },
         Err(e) => {
             println!("⚠️  MODIFY COLUMN not yet implemented: {}", e);
             println!("TODO: Implement ALTER TABLE MODIFY COLUMN support");
-        }
+        },
     }
 }
 
@@ -293,7 +285,8 @@ fn smoke_test_alter_shared_table_access_level() {
     println!("🧪 Testing ALTER TABLE SET TBLPROPERTIES (ACCESS_LEVEL)");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -316,20 +309,16 @@ fn smoke_test_alter_shared_table_access_level() {
     println!("✅ Created SHARED table with ACCESS_LEVEL='PUBLIC'");
 
     // Alter access level to RESTRICTED
-    let alter_sql = format!(
-        "ALTER TABLE {} SET TBLPROPERTIES (ACCESS_LEVEL = 'RESTRICTED')",
-        full_table
-    );
+    let alter_sql =
+        format!("ALTER TABLE {} SET TBLPROPERTIES (ACCESS_LEVEL = 'RESTRICTED')", full_table);
 
     match execute_sql_as_root_via_client(&alter_sql) {
         Ok(_) => {
             println!("✅ Changed ACCESS_LEVEL to RESTRICTED");
 
             // Verify in system.tables
-            let query_sql = format!(
-                "SELECT options FROM system.tables WHERE table_name = '{}'",
-                table
-            );
+            let query_sql =
+                format!("SELECT options FROM system.tables WHERE table_name = '{}'", table);
             let output = execute_sql_as_root_via_client_json(&query_sql)
                 .expect("Failed to query system.tables");
 
@@ -341,11 +330,11 @@ fn smoke_test_alter_shared_table_access_level() {
             );
 
             println!("✅ Verified ACCESS_LEVEL updated in system.tables");
-        }
+        },
         Err(e) => {
             println!("⚠️  SET TBLPROPERTIES not yet implemented: {}", e);
             println!("TODO: Implement ALTER TABLE SET TBLPROPERTIES for SHARED tables");
-        }
+        },
     }
 }
 
@@ -369,7 +358,8 @@ fn smoke_test_alter_add_not_null_without_default_error() {
     println!("🧪 Testing error: ADD NOT NULL column without DEFAULT");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -392,10 +382,7 @@ fn smoke_test_alter_add_not_null_without_default_error() {
     println!("✅ Created table with existing data");
 
     // Try to add NOT NULL column without DEFAULT (should fail)
-    let alter_sql = format!(
-        "ALTER TABLE {} ADD COLUMN required_field TEXT NOT NULL",
-        full_table
-    );
+    let alter_sql = format!("ALTER TABLE {} ADD COLUMN required_field TEXT NOT NULL", full_table);
     let alter_result = execute_sql_as_root_via_client(&alter_sql);
 
     match alter_result {
@@ -409,7 +396,7 @@ fn smoke_test_alter_add_not_null_without_default_error() {
                 "Expected error message about NOT NULL requiring DEFAULT, got: {}",
                 e
             );
-        }
+        },
         Ok(output) => {
             let output_lower = output.to_lowercase();
             assert!(
@@ -417,7 +404,7 @@ fn smoke_test_alter_add_not_null_without_default_error() {
                 "Expected error when adding NOT NULL column without DEFAULT, got success: {}",
                 output
             );
-        }
+        },
     }
 
     println!("✅ Verified error when adding NOT NULL column without DEFAULT to non-empty table");
@@ -443,7 +430,8 @@ fn smoke_test_alter_system_columns_error() {
     println!("🧪 Testing error: Cannot ALTER system columns");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -468,19 +456,16 @@ fn smoke_test_alter_system_columns_error() {
     match drop_result {
         Err(e) => {
             println!("✅ DROP _updated failed as expected: {}", e);
-        }
+        },
         Ok(output) => {
             let output_lower = output.to_lowercase();
             if output_lower.contains("error") || output_lower.contains("system") {
                 println!("✅ DROP _updated failed as expected");
             } else {
-                println!(
-                    "⚠️  DROP _updated should fail (system column), but got: {}",
-                    output
-                );
+                println!("⚠️  DROP _updated should fail (system column), but got: {}", output);
                 println!("TODO: Enforce protection of system columns in ALTER TABLE");
             }
-        }
+        },
     }
 
     // Try to DROP _deleted (should fail)
@@ -490,18 +475,15 @@ fn smoke_test_alter_system_columns_error() {
     match drop_result2 {
         Err(e) => {
             println!("✅ DROP _deleted failed as expected: {}", e);
-        }
+        },
         Ok(output) => {
             let output_lower = output.to_lowercase();
             if output_lower.contains("error") || output_lower.contains("system") {
                 println!("✅ DROP _deleted failed as expected");
             } else {
-                println!(
-                    "⚠️  DROP _deleted should fail (system column), but got: {}",
-                    output
-                );
+                println!("⚠️  DROP _deleted should fail (system column), but got: {}", output);
             }
-        }
+        },
     }
 
     println!("✅ Verified system columns are protected from ALTER operations");

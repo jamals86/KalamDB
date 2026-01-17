@@ -79,7 +79,10 @@ impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
 }
 
 /// Build a RecordBatch for system.tables-like view from definitions
-fn build_tables_batch(provider_schema: SchemaRef, tables: Vec<TableDefinition>) -> Result<RecordBatch, KalamDbError> {
+fn build_tables_batch(
+    provider_schema: SchemaRef,
+    tables: Vec<TableDefinition>,
+) -> Result<RecordBatch, KalamDbError> {
     let mut table_ids = StringBuilder::new();
     let mut table_names = StringBuilder::new();
     let mut namespaces = StringBuilder::new();
@@ -109,18 +112,12 @@ fn build_tables_batch(provider_schema: SchemaRef, tables: Vec<TableDefinition>) 
             Arc::new(namespaces.finish()) as ArrayRef,
             Arc::new(table_types.finish()) as ArrayRef,
             Arc::new(TimestampMicrosecondArray::from(
-                created_ats
-                    .into_iter()
-                    .map(|ts| ts.map(|ms| ms * 1000))
-                    .collect::<Vec<_>>(),
+                created_ats.into_iter().map(|ts| ts.map(|ms| ms * 1000)).collect::<Vec<_>>(),
             )) as ArrayRef,
             Arc::new(Int32Array::from(schema_versions)) as ArrayRef,
             Arc::new(table_comments.finish()) as ArrayRef,
             Arc::new(TimestampMicrosecondArray::from(
-                updated_ats
-                    .into_iter()
-                    .map(|ts| ts.map(|ms| ms * 1000))
-                    .collect::<Vec<_>>(),
+                updated_ats.into_iter().map(|ts| ts.map(|ms| ms * 1000)).collect::<Vec<_>>(),
             )) as ArrayRef,
         ],
     )

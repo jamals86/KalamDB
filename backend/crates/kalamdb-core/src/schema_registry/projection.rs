@@ -112,7 +112,7 @@ pub fn project_batch(
                             field_name, e
                         ))
                     })?
-                }
+                },
             };
 
             new_columns.push(typed_nulls);
@@ -180,7 +180,7 @@ fn types_compatible(old_type: &DataType, new_type: &DataType) -> bool {
         // Timestamp precision changes (same unit)
         (DataType::Timestamp(old_unit, old_tz), DataType::Timestamp(new_unit, new_tz)) => {
             old_unit == new_unit && old_tz == new_tz
-        }
+        },
 
         // Default: incompatible
         _ => false,

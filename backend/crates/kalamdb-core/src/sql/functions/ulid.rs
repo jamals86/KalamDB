@@ -78,9 +78,7 @@ impl ScalarUDFImpl for UlidFunction {
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
         if !args.args.is_empty() {
-            return Err(DataFusionError::Plan(
-                "ULID() takes no arguments".to_string(),
-            ));
+            return Err(DataFusionError::Plan("ULID() takes no arguments".to_string()));
         }
         let ulid_str = self.generate_ulid();
         let array = StringArray::from(vec![ulid_str.as_str()]);
@@ -125,10 +123,7 @@ mod tests {
 
         // Verify Crockford Base32: 0-9, A-Z excluding I, L, O, U
         for c in ulid_str.chars() {
-            assert!(
-                c.is_ascii_alphanumeric(),
-                "ULID should only contain alphanumeric characters"
-            );
+            assert!(c.is_ascii_alphanumeric(), "ULID should only contain alphanumeric characters");
 
             let upper_c = c.to_ascii_uppercase();
             assert!(
@@ -146,11 +141,7 @@ mod tests {
         // Generate 10000 ULIDs and ensure no duplicates
         for _ in 0..10000 {
             let ulid = func_impl.generate_ulid();
-            assert!(
-                ulids.insert(ulid.clone()),
-                "Duplicate ULID detected: {}",
-                ulid
-            );
+            assert!(ulids.insert(ulid.clone()), "Duplicate ULID detected: {}", ulid);
         }
     }
 
@@ -166,12 +157,7 @@ mod tests {
 
         // ULIDs should be lexicographically ordered by time
         // (timestamp is in the first 10 characters)
-        assert!(
-            ulid1 < ulid2,
-            "ULID should be time-ordered: {} < {}",
-            ulid1,
-            ulid2
-        );
+        assert!(ulid1 < ulid2, "ULID should be time-ordered: {} < {}", ulid1, ulid2);
     }
 
     #[test]
@@ -181,11 +167,7 @@ mod tests {
 
         // First 10 characters are the timestamp component
         let timestamp_part = &ulid_str[0..10];
-        assert_eq!(
-            timestamp_part.len(),
-            10,
-            "Timestamp component should be 10 characters"
-        );
+        assert_eq!(timestamp_part.len(), 10, "Timestamp component should be 10 characters");
 
         // Timestamp should be valid Crockford Base32
         for c in timestamp_part.chars() {
@@ -216,10 +198,6 @@ mod tests {
 
         // Verify the string can be parsed back into a ULID
         let parsed = ulid_str.parse::<Ulid>();
-        assert!(
-            parsed.is_ok(),
-            "Generated ULID should be parseable: {}",
-            ulid_str
-        );
+        assert!(parsed.is_ok(), "Generated ULID should be parseable: {}", ulid_str);
     }
 }

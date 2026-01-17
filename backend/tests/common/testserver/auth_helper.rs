@@ -75,9 +75,7 @@ pub async fn create_test_user(
         existing.locked_until = None;
         existing.deleted_at = None;
         existing.updated_at = chrono::Utc::now().timestamp_millis();
-        users_provider
-            .update_user(existing)
-            .expect("Failed to update test user");
+        users_provider.update_user(existing).expect("Failed to update test user");
     } else {
         let result = server
             .sql_executor
@@ -97,9 +95,7 @@ pub async fn create_test_user(
                     existing.locked_until = None;
                     existing.deleted_at = None;
                     existing.updated_at = chrono::Utc::now().timestamp_millis();
-                    users_provider
-                        .update_user(existing)
-                        .expect("Failed to update test user");
+                    users_provider.update_user(existing).expect("Failed to update test user");
                 } else {
                     panic!("Failed to load existing test user after create conflict");
                 }

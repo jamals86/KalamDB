@@ -33,8 +33,8 @@ use kalamdb_commons::schemas::{
     ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
 };
 use kalamdb_commons::{NamespaceId, TableName};
-use kalamdb_system::SystemTable;
 use kalamdb_raft::{ClusterInfo, CommandExecutor, ServerStateExt};
+use kalamdb_system::SystemTable;
 use std::sync::{Arc, OnceLock};
 
 /// Get the cluster schema (memoized)

@@ -3,15 +3,18 @@
 //! Provides the network transport for Raft RPCs using gRPC (tonic).
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use openraft::error::{InstallSnapshotError, NetworkError, RPCError, RaftError, RemoteError, Unreachable};
-use openraft::network::{RaftNetwork as OpenRaftNetwork, RaftNetworkFactory as OpenRaftNetworkFactory, RPCOption};
+use openraft::error::{
+    InstallSnapshotError, NetworkError, RPCError, RaftError, RemoteError, Unreachable,
+};
+use openraft::network::{
+    RPCOption, RaftNetwork as OpenRaftNetwork, RaftNetworkFactory as OpenRaftNetworkFactory,
+};
 use openraft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse,
-    InstallSnapshotRequest, InstallSnapshotResponse,
+    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
     VoteRequest, VoteResponse,
 };
 use parking_lot::RwLock;
@@ -69,8 +72,7 @@ impl ConnectionTracker {
     }
 
     fn set_retry_interval(&self, interval: Duration) {
-        self.retry_interval_ms
-            .store(interval.as_millis() as u64, Ordering::Relaxed);
+        self.retry_interval_ms.store(interval.as_millis() as u64, Ordering::Relaxed);
     }
 
     fn retry_interval(&self) -> Duration {
@@ -84,6 +86,11 @@ impl ConnectionTracker {
             .states
             .entry(target)
             .or_insert_with(|| ConnectionState::new(now, retry_interval));
+
+        if !entry.is_unreachable {
+            entry.last_attempt = now;
+            return true;
+        }
 
         if now.duration_since(entry.last_attempt) >= retry_interval {
             entry.last_attempt = now;
@@ -167,7 +174,7 @@ impl RaftNetwork {
             connection_tracker,
         }
     }
-    
+
     /// Get the gRPC channel
     fn get_channel(&self) -> Result<Channel, ConnectionError> {
         Ok(self.channel.clone())
@@ -187,34 +194,34 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         }
 
         // Get channel
-        let channel = self.get_channel()
-            .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
-        
+        let channel =
+            self.get_channel().map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
+
         // Serialize request
         let request_bytes = crate::state_machine::encode(&rpc)
             .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
-        
+
         // Create gRPC request
         let mut client = crate::network::service::raft_client::RaftClient::new(channel);
-        
+
         let grpc_request = tonic::Request::new(crate::network::service::RaftRpcRequest {
             group_id: self.group_id.to_string(),
             rpc_type: "append_entries".to_string(),
             payload: request_bytes,
         });
-        
+
         // Send request
         let response = match client.raft_rpc(grpc_request).await {
             Ok(response) => {
                 self.connection_tracker.record_success(self.target);
                 response
-            }
+            },
             Err(e) => {
                 self.connection_tracker.record_failure(self.target, &e.to_string());
                 return Err(RPCError::Network(NetworkError::new(&e)));
-            }
+            },
         };
-        
+
         // Deserialize response
         let inner = response.into_inner();
         if !inner.error.is_empty() {
@@ -224,13 +231,13 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
                 RaftError::Fatal(openraft::error::Fatal::Panicked),
             )));
         }
-        
+
         let result: AppendEntriesResponse<u64> = crate::state_machine::decode(&inner.payload)
             .map_err(|e| {
                 self.connection_tracker.record_failure(self.target, &e.to_string());
                 RPCError::Network(NetworkError::new(&e))
             })?;
-        
+
         Ok(result)
     }
 
@@ -238,7 +245,10 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         &mut self,
         rpc: InstallSnapshotRequest<KalamTypeConfig>,
         _option: RPCOption,
-    ) -> Result<InstallSnapshotResponse<u64>, RPCError<u64, KalamNode, RaftError<u64, InstallSnapshotError>>> {
+    ) -> Result<
+        InstallSnapshotResponse<u64>,
+        RPCError<u64, KalamNode, RaftError<u64, InstallSnapshotError>>,
+    > {
         if !self.connection_tracker.should_attempt(self.target) {
             return Err(RPCError::Unreachable(Unreachable::new(&ConnectionError(
                 "reconnect backoff".to_string(),
@@ -246,34 +256,34 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         }
 
         // Get channel
-        let channel = self.get_channel()
-            .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
-        
+        let channel =
+            self.get_channel().map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
+
         // Serialize request
         let request_bytes = crate::state_machine::encode(&rpc)
             .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
-        
+
         // Create gRPC request
         let mut client = crate::network::service::raft_client::RaftClient::new(channel);
-        
+
         let grpc_request = tonic::Request::new(crate::network::service::RaftRpcRequest {
             group_id: self.group_id.to_string(),
             rpc_type: "install_snapshot".to_string(),
             payload: request_bytes,
         });
-        
+
         // Send request
         let response = match client.raft_rpc(grpc_request).await {
             Ok(response) => {
                 self.connection_tracker.record_success(self.target);
                 response
-            }
+            },
             Err(e) => {
                 self.connection_tracker.record_failure(self.target, &e.to_string());
                 return Err(RPCError::Network(NetworkError::new(&e)));
-            }
+            },
         };
-        
+
         // Deserialize response
         let inner = response.into_inner();
         if !inner.error.is_empty() {
@@ -283,13 +293,13 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
                 RaftError::Fatal(openraft::error::Fatal::Panicked),
             )));
         }
-        
+
         let result: InstallSnapshotResponse<u64> = crate::state_machine::decode(&inner.payload)
             .map_err(|e| {
                 self.connection_tracker.record_failure(self.target, &e.to_string());
                 RPCError::Network(NetworkError::new(&e))
             })?;
-        
+
         Ok(result)
     }
 
@@ -305,34 +315,34 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         }
 
         // Get channel
-        let channel = self.get_channel()
-            .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
-        
+        let channel =
+            self.get_channel().map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
+
         // Serialize request
         let request_bytes = crate::state_machine::encode(&rpc)
             .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
-        
+
         // Create gRPC request
         let mut client = crate::network::service::raft_client::RaftClient::new(channel);
-        
+
         let grpc_request = tonic::Request::new(crate::network::service::RaftRpcRequest {
             group_id: self.group_id.to_string(),
             rpc_type: "vote".to_string(),
             payload: request_bytes,
         });
-        
+
         // Send request
         let response = match client.raft_rpc(grpc_request).await {
             Ok(response) => {
                 self.connection_tracker.record_success(self.target);
                 response
-            }
+            },
             Err(e) => {
                 self.connection_tracker.record_failure(self.target, &e.to_string());
                 return Err(RPCError::Network(NetworkError::new(&e)));
-            }
+            },
         };
-        
+
         // Deserialize response
         let inner = response.into_inner();
         if !inner.error.is_empty() {
@@ -342,13 +352,13 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
                 RaftError::Fatal(openraft::error::Fatal::Panicked),
             )));
         }
-        
-        let result: VoteResponse<u64> = crate::state_machine::decode(&inner.payload)
-            .map_err(|e| {
+
+        let result: VoteResponse<u64> =
+            crate::state_machine::decode(&inner.payload).map_err(|e| {
                 self.connection_tracker.record_failure(self.target, &e.to_string());
                 RPCError::Network(NetworkError::new(&e))
             })?;
-        
+
         Ok(result)
     }
 }
@@ -381,20 +391,20 @@ impl RaftNetworkFactory {
     pub fn set_reconnect_interval(&self, interval: Duration) {
         self.connection_tracker.set_retry_interval(interval);
     }
-    
+
     /// Register a node in the cluster
     pub fn register_node(&self, node_id: u64, node: KalamNode) {
         let mut nodes = self.nodes.write();
         nodes.insert(node_id, node);
     }
-    
+
     /// Remove a node from the cluster
     pub fn unregister_node(&self, node_id: u64) {
         let mut nodes = self.nodes.write();
         nodes.remove(&node_id);
         self.channels.remove(&node_id);
     }
-    
+
     /// Get node info by node ID (for leader forwarding)
     pub fn get_node(&self, node_id: u64) -> Option<KalamNode> {
         let nodes = self.nodes.read();
@@ -408,7 +418,7 @@ impl OpenRaftNetworkFactory<KalamTypeConfig> for RaftNetworkFactory {
     async fn new_client(&mut self, target: u64, node: &KalamNode) -> Self::Network {
         // Register the node if not already known
         self.register_node(target, node.clone());
-        
+
         // Get or create channel
         let channel = if let Some(ch) = self.channels.get(&target) {
             ch.clone()
@@ -416,10 +426,10 @@ impl OpenRaftNetworkFactory<KalamTypeConfig> for RaftNetworkFactory {
             // Need to create a new channel
             // Note: Tonic's connect is async, but we can't easily do async inside dashmap entry
             // So we do it outside. This might race but it's fine (last one wins)
-            
+
             // Note: We use the endpoint from the provided node info
             let endpoint = format!("http://{}", node.rpc_addr);
-            
+
             // Create a channel that lazily connects
             // This avoids making a connection just to check if it works
             let ch = Channel::from_shared(endpoint)
@@ -427,11 +437,11 @@ impl OpenRaftNetworkFactory<KalamTypeConfig> for RaftNetworkFactory {
                 .connect_timeout(std::time::Duration::from_secs(5))
                 .timeout(std::time::Duration::from_secs(30))
                 .connect_lazy();
-                
+
             self.channels.insert(target, ch.clone());
             ch
         };
-        
+
         RaftNetwork::new(
             target,
             node.clone(),
@@ -449,12 +459,15 @@ mod tests {
     #[test]
     fn test_network_factory_creation() {
         let factory = RaftNetworkFactory::new(GroupId::Meta);
-        
-        factory.register_node(1, KalamNode {
-            rpc_addr: "127.0.0.1:9000".to_string(),
-            api_addr: "127.0.0.1:8080".to_string(),
-        });
-        
+
+        factory.register_node(
+            1,
+            KalamNode {
+                rpc_addr: "127.0.0.1:9000".to_string(),
+                api_addr: "127.0.0.1:8080".to_string(),
+            },
+        );
+
         let nodes = factory.nodes.read();
         assert!(nodes.contains_key(&1));
     }

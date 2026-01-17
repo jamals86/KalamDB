@@ -9,8 +9,8 @@
 //! - **MetaApplier**: Unified applier for all metadata (namespaces, tables, storages, users, jobs)
 //! - **UserDataApplier / SharedDataApplier**: Data shard appliers
 
-mod meta_applier;
 mod data_applier;
+mod meta_applier;
 
 // Unified Meta applier
 pub use meta_applier::{MetaApplier, NoOpMetaApplier};

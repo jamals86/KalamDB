@@ -24,30 +24,26 @@ struct UiAssets;
 /// Falls back to index.html for client-side routing (SPA behavior).
 pub async fn serve_embedded_ui(req: HttpRequest) -> HttpResponse {
     let path = req.match_info().query("path");
-    
+
     // Normalize path - remove leading slash if present
     let path = path.trim_start_matches('/');
-    
+
     // Empty path means index.html
     let path = if path.is_empty() { "index.html" } else { path };
-    
+
     debug!("[embedded_ui] Serving path: {}", path);
-    
+
     // Try to find the exact file
     if let Some(content) = UiAssets::get(path) {
-        let mime_type = mime_guess::from_path(path)
-            .first_or_octet_stream()
-            .to_string();
-        
+        let mime_type = mime_guess::from_path(path).first_or_octet_stream().to_string();
+
         debug!("[embedded_ui] Found file: {} (mime: {})", path, mime_type);
-        
-        return HttpResponse::Ok()
-            .content_type(mime_type)
-            .body(content.data.into_owned());
+
+        return HttpResponse::Ok().content_type(mime_type).body(content.data.into_owned());
     }
-    
+
     debug!("[embedded_ui] File not found: {}, falling back to index.html", path);
-    
+
     // For non-existent paths, serve index.html (SPA fallback)
     // This allows client-side routing to work
     if let Some(index) = UiAssets::get("index.html") {
@@ -55,7 +51,7 @@ pub async fn serve_embedded_ui(req: HttpRequest) -> HttpResponse {
             .content_type("text/html; charset=utf-8")
             .body(index.data.into_owned());
     }
-    
+
     // No UI built - show helpful message
     HttpResponse::NotFound().body(
         "<html><body>\
@@ -66,7 +62,7 @@ pub async fn serve_embedded_ui(req: HttpRequest) -> HttpResponse {
         <li>Run <code>cd ui && npm install && npm run build</code></li>\
         <li>Rebuild the server with <code>cargo build</code></li>\
         </ol>\
-        </body></html>"
+        </body></html>",
     )
 }
 
@@ -79,7 +75,7 @@ pub fn configure_embedded_ui(cfg: &mut web::ServiceConfig) {
             // Catch-all for UI routes
             .route("", web::get().to(serve_embedded_ui))
             .route("/", web::get().to(serve_embedded_ui))
-            .route("/{path:.*}", web::get().to(serve_embedded_ui))
+            .route("/{path:.*}", web::get().to(serve_embedded_ui)),
     );
 }
 

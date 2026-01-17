@@ -4,12 +4,12 @@
 //! All rows are written to one file per flush operation.
 
 use super::base::{FlushJobResult, FlushMetadata, TableFlush};
+use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestService};
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
-use crate::app_context::AppContext;
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::write_parquet_with_store_sync;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -56,10 +56,7 @@ impl SharedTableFlushJob {
         let (bloom_filter_columns, indexed_columns) = unified_cache
             .get(&table_id)
             .map(|cached| {
-                (
-                    cached.bloom_filter_columns().to_vec(),
-                    cached.indexed_columns().to_vec(),
-                )
+                (cached.bloom_filter_columns().to_vec(), cached.indexed_columns().to_vec())
             })
             .unwrap_or_else(|| {
                 log::warn!(
@@ -105,8 +102,7 @@ impl SharedTableFlushJob {
     /// Generate batch filename using manifest max_batch (T115)
     /// Returns (batch_number, filename)
     fn generate_batch_filename(&self) -> Result<(u64, String), KalamDbError> {
-        let batch_number = self.manifest_helper
-                .get_next_batch_number(&self.table_id, None)?;
+        let batch_number = self.manifest_helper.get_next_batch_number(&self.table_id, None)?;
         let filename = FlushManifestHelper::generate_batch_filename(batch_number);
         log::debug!(
             "[MANIFEST] Generated batch filename: {} (batch_number={})",
@@ -140,8 +136,7 @@ impl SharedTableFlushJob {
         // IMPORTANT: Must use self.store.delete() instead of EntityStore::delete()
         // to ensure both the entity AND its index entries are removed atomically.
         for key in &parsed_keys {
-            self.store.delete(key)
-                .into_kalamdb_error("Failed to delete flushed row")?;
+            self.store.delete(key).into_kalamdb_error("Failed to delete flushed row")?;
         }
 
         log::debug!("Deleted {} flushed rows from storage", parsed_keys.len());
@@ -151,10 +146,7 @@ impl SharedTableFlushJob {
 
 impl TableFlush for SharedTableFlushJob {
     fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
-        log::debug!(
-            "🔄 Starting shared table flush: table={}",
-            self.table_id
-        );
+        log::debug!("🔄 Starting shared table flush: table={}", self.table_id);
 
         use super::base::{config, helpers, FlushDedupStats};
         use std::collections::HashMap;
@@ -176,11 +168,7 @@ impl TableFlush for SharedTableFlushJob {
                 .store
                 .scan_limited_with_prefix_and_start(None, cursor.as_deref(), config::BATCH_SIZE)
                 .map_err(|e| {
-                    log::error!(
-                        "❌ Failed to scan rows for shared table={}: {}",
-                        self.table_id,
-                        e
-                    );
+                    log::error!("❌ Failed to scan rows for shared table={}: {}", self.table_id, e);
                     KalamDbError::Other(format!("Failed to scan rows: {}", e))
                 })?;
 
@@ -210,7 +198,7 @@ impl TableFlush for SharedTableFlushJob {
                     _ => {
                         // No PK or null PK - use unique _seq as fallback
                         format!("_seq:{}", row._seq.as_i64())
-                    }
+                    },
                 };
 
                 let seq_val = row._seq.as_i64();
@@ -226,10 +214,10 @@ impl TableFlush for SharedTableFlushJob {
                         if seq_val > *existing_seq {
                             latest_versions.insert(pk_value, (key_bytes, row, seq_val));
                         }
-                    }
+                    },
                     None => {
                         latest_versions.insert(pk_value, (key_bytes, row, seq_val));
-                    }
+                    },
                 }
             }
 
@@ -292,10 +280,13 @@ impl TableFlush for SharedTableFlushJob {
         // T114-T115: Generate batch filename using manifest (sequential numbering)
         let (batch_number, batch_filename) = self.generate_batch_filename()?;
         let temp_filename = FlushManifestHelper::generate_temp_filename(batch_number);
-        let full_dir = self
-            .unified_cache
-            .get_storage_path(self.app_context.as_ref(), &self.table_id, None, None)?;
-        
+        let full_dir = self.unified_cache.get_storage_path(
+            self.app_context.as_ref(),
+            &self.table_id,
+            None,
+            None,
+        )?;
+
         // Use PathBuf for proper cross-platform path handling (avoids mixed slashes)
         let temp_path = std::path::Path::new(&full_dir)
             .join(&temp_filename)
@@ -306,18 +297,14 @@ impl TableFlush for SharedTableFlushJob {
             .to_string_lossy()
             .to_string();
 
-        let cached = self
-            .unified_cache
-            .get(&self.table_id)
-            .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id)))?;
+        let cached = self.unified_cache.get(&self.table_id).ok_or_else(|| {
+            KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id))
+        })?;
 
         // Get storage from registry (cached lookup)
         let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
-        let storage = self
-            .app_context
-            .storage_registry()
-            .get_storage(&storage_id)?
-            .ok_or_else(|| {
+        let storage =
+            self.app_context.storage_registry().get_storage(&storage_id)?.ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Storage '{}' not found",
                     storage_id.as_str()
@@ -332,10 +319,7 @@ impl TableFlush for SharedTableFlushJob {
         let bloom_filter_columns = &self.bloom_filter_columns;
         let indexed_columns = &self.indexed_columns;
 
-        log::debug!(
-            "🌸 Bloom filters enabled for columns: {:?}",
-            bloom_filter_columns
-        );
+        log::debug!("🌸 Bloom filters enabled for columns: {:?}", bloom_filter_columns);
 
         // ===== ATOMIC FLUSH PATTERN =====
         // Step 1: Mark manifest as syncing (flush in progress)
@@ -345,11 +329,7 @@ impl TableFlush for SharedTableFlushJob {
         }
 
         // Step 2: Write Parquet to TEMP location first
-        log::debug!(
-            "📝 [ATOMIC] Writing Parquet to temp path: {}, rows={}",
-            temp_path,
-            rows_count
-        );
+        log::debug!("📝 [ATOMIC] Writing Parquet to temp path: {}, rows={}", temp_path, rows_count);
         let result = write_parquet_with_store_sync(
             object_store.clone(),
             &storage,
@@ -361,18 +341,9 @@ impl TableFlush for SharedTableFlushJob {
         .into_kalamdb_error("Filestore error")?;
 
         // Step 3: Rename temp file to final location (atomic operation)
-        log::debug!(
-            "📝 [ATOMIC] Renaming {} -> {}",
-            temp_path,
-            destination_path
-        );
-        kalamdb_filestore::rename_file_sync(
-            object_store,
-            &storage,
-            &temp_path,
-            &destination_path,
-        )
-        .into_kalamdb_error("Failed to rename Parquet file to final location")?;
+        log::debug!("📝 [ATOMIC] Renaming {} -> {}", temp_path, destination_path);
+        kalamdb_filestore::rename_file_sync(object_store, &storage, &temp_path, &destination_path)
+            .into_kalamdb_error("Failed to rename Parquet file to final location")?;
 
         log::info!(
             "✅ Flushed {} rows for shared table={} to {}",

@@ -157,8 +157,7 @@ where
             }
 
             // Store: index_key → primary_key
-            self.backend
-                .put(&partition, new_key.as_ref(), primary_key.as_bytes())?;
+            self.backend.put(&partition, new_key.as_ref(), primary_key.as_bytes())?;
         } else {
             // Non-unique index: append to list
             let mut primary_keys = match self.backend.get(&partition, new_key.as_ref())? {
@@ -166,7 +165,7 @@ where
                     let existing: Vec<String> = serde_json::from_slice(&bytes)
                         .map_err(|e| StorageError::SerializationError(e.to_string()))?;
                     existing
-                }
+                },
                 None => Vec::new(),
             };
 
@@ -254,7 +253,7 @@ where
                     StorageError::SerializationError(format!("Invalid UTF-8 in primary key: {}", e))
                 })?;
                 Ok(Some(pk))
-            }
+            },
             None => Ok(None),
         }
     }
@@ -290,7 +289,7 @@ where
                         .map_err(|e| StorageError::SerializationError(e.to_string()))?;
                     Ok(pks)
                 }
-            }
+            },
             None => Ok(Vec::new()),
         }
     }
@@ -389,10 +388,7 @@ mod tests {
         // Attempting to add duplicate should fail
         let result = idx.put("u2", &user2, None);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            StorageError::UniqueConstraintViolation(_)
-        ));
+        assert!(matches!(result.unwrap_err(), StorageError::UniqueConstraintViolation(_)));
     }
 
     #[test]
@@ -428,10 +424,7 @@ mod tests {
         assert!(!idx.exists(b"alice").unwrap());
         // New username should exist
         assert!(idx.exists(b"alice_updated").unwrap());
-        assert_eq!(
-            idx.get_primary_key(b"alice_updated").unwrap(),
-            Some("u1".to_string())
-        );
+        assert_eq!(idx.get_primary_key(b"alice_updated").unwrap(), Some("u1".to_string()));
     }
 
     #[test]

@@ -9,13 +9,13 @@ use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::Namespace;
 use kalamdb_commons::NamespaceId;
+use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -91,10 +91,7 @@ impl NamespacesTableProvider {
         &self,
         namespace_id: &NamespaceId,
     ) -> Result<Option<Namespace>, SystemError> {
-        self.store
-            .get_async(namespace_id)
-            .await
-            .into_system_error("get_async error")
+        self.store.get_async(namespace_id).await.into_system_error("get_async error")
     }
 
     /// Update an existing namespace entry

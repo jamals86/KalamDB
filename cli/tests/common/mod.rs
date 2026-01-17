@@ -23,6 +23,104 @@ pub use std::os::unix::fs::PermissionsExt;
 
 static SERVER_URL: OnceLock<String> = OnceLock::new();
 static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
+static TEST_CONTEXT: OnceLock<TestContext> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+pub struct TestContext {
+    pub server_url: String,
+    pub username: String,
+    pub password: String,
+    pub is_cluster: bool,
+    pub cluster_urls: Vec<String>,
+}
+
+fn parse_test_arg(name: &str) -> Option<String> {
+    let prefix = format!("{}=", name);
+    for arg in std::env::args() {
+        if let Some(value) = arg.strip_prefix(&prefix) {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+fn parse_test_urls() -> Option<Vec<String>> {
+    let raw = parse_test_arg("--urls")?;
+    let urls: Vec<String> = raw
+        .split(',')
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .collect();
+    if urls.is_empty() {
+        None
+    } else {
+        Some(urls)
+    }
+}
+
+pub fn test_context() -> &'static TestContext {
+    TEST_CONTEXT.get_or_init(|| {
+        let server_url = parse_test_arg("--url")
+            .or_else(|| std::env::var("KALAMDB_SERVER_URL").ok())
+            .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
+
+        let username = parse_test_arg("--user")
+            .or_else(|| std::env::var("KALAMDB_USER").ok())
+            .unwrap_or_else(|| "root".to_string());
+
+        let password = parse_test_arg("--password")
+            .or_else(|| std::env::var("KALAMDB_ROOT_PASSWORD").ok())
+            .unwrap_or_else(|| "".to_string());
+
+        let cluster_default = "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
+        let cluster_urls: Vec<String> = parse_test_urls()
+            .or_else(|| std::env::var("KALAMDB_CLUSTER_URLS").ok().map(|s| {
+                s.split(',')
+                    .map(|url| url.trim().to_string())
+                    .filter(|url| !url.is_empty())
+                    .collect()
+            }))
+            .unwrap_or_else(|| {
+                cluster_default
+                    .split(',')
+                    .map(|url| url.trim().to_string())
+                    .filter(|url| !url.is_empty())
+                    .collect()
+            });
+
+        let healthy_cluster_nodes: Vec<String> = cluster_urls
+            .iter()
+            .filter(|url| {
+                let host_port = url
+                    .trim_start_matches("http://")
+                    .trim_start_matches("https://")
+                    .split('/')
+                    .next()
+                    .unwrap_or("127.0.0.1:8081");
+                std::net::TcpStream::connect(host_port)
+                    .map(|_| true)
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+
+        let (is_cluster, cluster_urls) = if let Some(explicit_urls) = parse_test_urls() {
+            (explicit_urls.len() > 1, explicit_urls)
+        } else if !healthy_cluster_nodes.is_empty() {
+            (true, healthy_cluster_nodes)
+        } else {
+            (false, vec![server_url.clone()])
+        };
+
+        TestContext {
+            server_url,
+            username,
+            password,
+            is_cluster,
+            cluster_urls,
+        }
+    })
+}
 
 /// Get the server URL for tests.
 ///
@@ -41,8 +139,15 @@ static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
 pub fn server_url() -> &'static str {
     SERVER_URL
         .get_or_init(|| {
-            std::env::var("KALAMDB_SERVER_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
+            let ctx = test_context();
+            if ctx.is_cluster {
+                ctx.cluster_urls
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| ctx.server_url.clone())
+            } else {
+                ctx.server_url.clone()
+            }
         })
         .as_str()
 }
@@ -67,9 +172,7 @@ pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// ```
 pub fn root_password() -> &'static str {
     ROOT_PASSWORD
-        .get_or_init(|| {
-            std::env::var("KALAMDB_ROOT_PASSWORD").unwrap_or_else(|_| "".to_string())
-        })
+    .get_or_init(|| test_context().password.clone())
         .as_str()
 }
 
@@ -108,7 +211,9 @@ pub async fn is_server_running_with_auth() -> bool {
     execute_sql_via_http_as_root("SELECT 1")
         .await
         .ok()
-        .and_then(|response| response.get("status").and_then(|s| s.as_str()).map(|s| s == "success"))
+        .and_then(|response| {
+            response.get("status").and_then(|s| s.as_str()).map(|s| s == "success")
+        })
         .unwrap_or(false)
 }
 
@@ -118,12 +223,12 @@ pub async fn is_server_running_with_auth() -> bool {
 /// This helper extracts the actual value, supporting common types.
 pub fn extract_arrow_value(value: &serde_json::Value) -> Option<serde_json::Value> {
     use serde_json::Value;
-    
+
     // Check if it's already a simple value
     if value.is_string() || value.is_number() || value.is_boolean() || value.is_null() {
         return Some(value.clone());
     }
-    
+
     // Check for Arrow typed objects
     if let Some(obj) = value.as_object() {
         // String types
@@ -168,7 +273,7 @@ pub fn extract_arrow_value(value: &serde_json::Value) -> Option<serde_json::Valu
             return Some(v.clone());
         }
     }
-    
+
     None
 }
 
@@ -182,22 +287,22 @@ pub fn extract_arrow_value(value: &serde_json::Value) -> Option<serde_json::Valu
 ///
 /// # Returns
 /// A vector of HashMap rows, or None if the result doesn't have the expected structure.
-pub fn rows_as_hashmaps(result: &serde_json::Value) -> Option<Vec<std::collections::HashMap<String, serde_json::Value>>> {
+pub fn rows_as_hashmaps(
+    result: &serde_json::Value,
+) -> Option<Vec<std::collections::HashMap<String, serde_json::Value>>> {
     use serde_json::Value;
     use std::collections::HashMap;
-    
+
     // Extract schema - array of {name, data_type, index}
     let schema = result.get("schema")?.as_array()?;
-    
+
     // Build column name list from schema
-    let column_names: Vec<&str> = schema
-        .iter()
-        .filter_map(|col| col.get("name")?.as_str())
-        .collect();
-    
+    let column_names: Vec<&str> =
+        schema.iter().filter_map(|col| col.get("name")?.as_str()).collect();
+
     // Extract rows - array of arrays
     let rows = result.get("rows")?.as_array()?;
-    
+
     // Convert each row array to a HashMap
     let result: Vec<HashMap<String, Value>> = rows
         .iter()
@@ -212,14 +317,16 @@ pub fn rows_as_hashmaps(result: &serde_json::Value) -> Option<Vec<std::collectio
             Some(map)
         })
         .collect();
-    
+
     Some(result)
 }
 
 /// Get rows from API response as HashMaps.
 ///
 /// Convenience function that extracts `results[0]` and converts its rows to HashMaps.
-pub fn get_rows_as_hashmaps(json: &serde_json::Value) -> Option<Vec<std::collections::HashMap<String, serde_json::Value>>> {
+pub fn get_rows_as_hashmaps(
+    json: &serde_json::Value,
+) -> Option<Vec<std::collections::HashMap<String, serde_json::Value>>> {
     let first_result = json.get("results")?.as_array()?.first()?;
     rows_as_hashmaps(first_result)
 }
@@ -237,17 +344,22 @@ pub fn parse_cli_json_output(
     output: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let trimmed = output.trim();
-    let start = trimmed
-        .find('{')
-        .ok_or_else(|| "JSON output missing '{'")?;
-    let end = trimmed
-        .rfind('}')
-        .ok_or_else(|| "JSON output missing '}'")?;
+    let start = trimmed.find('{').ok_or_else(|| "JSON output missing '{'")?;
+    let end = trimmed.rfind('}').ok_or_else(|| "JSON output missing '}'")?;
     let json_str = &trimmed[start..=end];
-    let value = serde_json::from_str(json_str).map_err(|e| {
-        format!("Failed to parse JSON output: {}. Raw: {}", e, output)
-    })?;
+    let value = serde_json::from_str(json_str)
+        .map_err(|e| format!("Failed to parse JSON output: {}. Raw: {}", e, output))?;
     Ok(value)
+}
+
+/// Detect leader-related errors for cluster failover attempts.
+pub fn is_leader_error(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("not leader")
+        || lower.contains("unknown leader")
+        || lower.contains("leader is node none")
+        || lower.contains("raft insert failed")
+        || lower.contains("raft update failed")
 }
 
 /// Check if the KalamDB server is running
@@ -263,9 +375,7 @@ pub fn is_server_running() -> bool {
 }
 
 fn is_server_reachable() -> bool {
-    std::net::TcpStream::connect(server_host_port())
-        .map(|_| true)
-        .unwrap_or(false)
+    std::net::TcpStream::connect(server_host_port()).map(|_| true).unwrap_or(false)
 }
 
 fn server_requires_auth() -> Option<bool> {
@@ -308,11 +418,11 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
                 Ok(result) => result,
                 Err(_) => return None,
             }
-        }
+        },
         Err(_) => {
             let rt = tokio::runtime::Runtime::new().ok()?;
             rt.block_on(request)
-        }
+        },
     };
 
     let response = match result {
@@ -335,60 +445,27 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
 
 /// Get available server URLs (cluster mode or single-node)
 pub fn get_available_server_urls() -> Vec<String> {
-    // First check for cluster URLs
-    let cluster_default = "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
-    let cluster_urls: Vec<String> = std::env::var("KALAMDB_CLUSTER_URLS")
-        .unwrap_or_else(|_| cluster_default.to_string())
-        .split(',')
-        .map(|url| url.trim().to_string())
-        .filter(|url| !url.is_empty())
-        .collect();
-
-    // Test if any cluster node is available
-    let healthy_cluster_nodes: Vec<String> = cluster_urls
-        .iter()
-        .filter(|url| {
-            let host_port = url
-                .trim_start_matches("http://")
-                .trim_start_matches("https://")
-                .split('/')
-                .next()
-                .unwrap_or("127.0.0.1:8081");
-            std::net::TcpStream::connect(host_port)
-                .map(|_| true)
-                .unwrap_or(false)
-        })
-        .cloned()
-        .collect();
-
-    if !healthy_cluster_nodes.is_empty() {
-        return healthy_cluster_nodes;
+    let ctx = test_context();
+    if ctx.is_cluster {
+        return ctx.cluster_urls.clone();
     }
 
-    // Fall back to single-node server
-    let single_node_url = server_url().to_string();
+    let single_node_url = ctx.server_url.clone();
     if is_server_running() {
         return vec![single_node_url];
     }
 
-    // No servers available
     vec![]
 }
 
 /// Check if we're running in cluster mode (multiple nodes available)
 pub fn is_cluster_mode() -> bool {
-    get_available_server_urls().len() > 1
+    test_context().is_cluster
 }
 
 pub fn server_host_port() -> String {
-    let trimmed = server_url()
-        .trim_start_matches("http://")
-        .trim_start_matches("https://");
-    trimmed
-        .split('/')
-        .next()
-        .unwrap_or("127.0.0.1:8080")
-        .to_string()
+    let trimmed = server_url().trim_start_matches("http://").trim_start_matches("https://");
+    trimmed.split('/').next().unwrap_or("127.0.0.1:8080").to_string()
 }
 
 pub fn websocket_url() -> String {
@@ -396,7 +473,7 @@ pub fn websocket_url() -> String {
         .first()
         .cloned()
         .unwrap_or_else(|| server_url().to_string());
-    
+
     let base = if base_url.starts_with("https://") {
         base_url.replacen("https://", "wss://", 1)
     } else {
@@ -418,10 +495,7 @@ pub fn storage_base_dir() -> std::path::PathBuf {
         }
     }
 
-    std::env::current_dir()
-        .expect("current dir")
-        .join("data")
-        .join("storage")
+    std::env::current_dir().expect("current dir").join("data").join("storage")
 }
 
 pub fn wait_for_query_contains_with<F>(
@@ -475,7 +549,7 @@ pub fn wait_for_path_exists(path: &std::path::Path, timeout: Duration) -> bool {
 /// Panics with a clear error message if the server is not running.
 pub fn require_server_running() -> bool {
     let available_urls = get_available_server_urls();
-    
+
     if available_urls.is_empty() {
         if std::env::var("KALAMDB_REQUIRE_SERVER").ok().as_deref() == Some("1") {
             panic!(
@@ -500,10 +574,14 @@ pub fn require_server_running() -> bool {
         eprintln!("Skipping CLI smoke tests: no running KalamDB server detected.");
         return false;
     }
-    
+
     // Print mode information
     if is_cluster_mode() {
-        println!("ℹ️  Running in CLUSTER mode with {} nodes: {:?}", available_urls.len(), available_urls);
+        println!(
+            "ℹ️  Running in CLUSTER mode with {} nodes: {:?}",
+            available_urls.len(),
+            available_urls
+        );
     } else {
         println!("ℹ️  Running in SINGLE-NODE mode: {}", available_urls[0]);
     }
@@ -523,11 +601,7 @@ pub fn execute_sql_via_cli(sql: &str) -> Result<String, Box<dyn std::error::Erro
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
-        Err(format!(
-            "CLI command failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into())
+        Err(format!("CLI command failed: {}", String::from_utf8_lossy(&output.stderr)).into())
     }
 }
 
@@ -540,8 +614,7 @@ pub struct CliTiming {
 
 impl CliTiming {
     pub fn overhead_ms(&self) -> Option<f64> {
-        self.server_time_ms
-            .map(|server| self.total_time_ms as f64 - server)
+        self.server_time_ms.map(|server| self.total_time_ms as f64 - server)
     }
 }
 
@@ -570,15 +643,10 @@ pub fn execute_sql_via_cli_as_with_timing(
         let output_str = String::from_utf8_lossy(&output.stdout).to_string();
 
         // Extract server time from output (looks for "Took: XXX.XXX ms")
-        let server_time_ms = output_str
-            .lines()
-            .find(|l| l.starts_with("Took:"))
-            .and_then(|line| {
-                // Parse "Took: 123.456 ms"
-                line.split_whitespace()
-                    .nth(1)
-                    .and_then(|s| s.parse::<f64>().ok())
-            });
+        let server_time_ms = output_str.lines().find(|l| l.starts_with("Took:")).and_then(|line| {
+            // Parse "Took: 123.456 ms"
+            line.split_whitespace().nth(1).and_then(|s| s.parse::<f64>().ok())
+        });
 
         Ok(CliTiming {
             output: output_str,
@@ -586,11 +654,7 @@ pub fn execute_sql_via_cli_as_with_timing(
             server_time_ms,
         })
     } else {
-        Err(format!(
-            "CLI command failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into())
+        Err(format!("CLI command failed: {}", String::from_utf8_lossy(&output.stderr)).into())
     }
 }
 
@@ -600,6 +664,17 @@ pub fn execute_sql_via_cli_as(
     password: &str,
     sql: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    let ctx = test_context();
+    let username = if username.is_empty() {
+        ctx.username.as_str()
+    } else {
+        username
+    };
+    let password = if password.is_empty() {
+        ctx.password.as_str()
+    } else {
+        password
+    };
     execute_sql_via_cli_as_with_args(username, password, sql, &[])
 }
 
@@ -611,98 +686,103 @@ fn execute_sql_via_cli_as_with_args(
 ) -> Result<String, Box<dyn std::error::Error>> {
     use std::time::Instant;
     use wait_timeout::ChildExt;
-    
+
     let sql_preview = if sql.len() > 60 {
         format!("{}...", &sql[..60])
     } else {
         sql.to_string()
     };
-    
-    let spawn_start = Instant::now();
-    eprintln!(
-        "[TEST_CLI] Executing as {}: \"{}\"",
-        username,
-        sql_preview.replace('\n', " ")
-    );
-    
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
-        .arg("-u")
-        .arg(server_url())
-        .arg("--username")
-        .arg(username)
-        .arg("--password")
-        .arg(password)
-        .arg("--no-spinner")     // Disable spinner for cleaner output
-        .args(extra_args)
-        .arg("--command")
-        .arg(sql)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    
-    let spawn_duration = spawn_start.elapsed();
-    eprintln!(
-        "[TEST_CLI] Process spawned in {:?}",
-        spawn_duration
-    );
-    
-    let wait_start = Instant::now();
-    
-    // Wait for child with timeout to avoid hanging tests
-    let timeout_duration = Duration::from_secs(60);
-    match child.wait_timeout(timeout_duration)? {
-        Some(status) => {
-            let wait_duration = wait_start.elapsed();
-            let total_duration_ms = spawn_start.elapsed().as_millis();
-            
-            // Now read stdout/stderr since the process completed
-            let mut stdout = String::new();
-            let mut stderr = String::new();
-            if let Some(ref mut out) = child.stdout {
-                use std::io::Read;
-                out.read_to_string(&mut stdout)?;
-            }
-            if let Some(ref mut err) = child.stderr {
-                use std::io::Read;
-                err.read_to_string(&mut stderr)?;
-            }
 
-            if status.success() {
-                if !stderr.is_empty() {
-                    eprintln!("[TEST_CLI] stderr: {}", stderr);
+    eprintln!("[TEST_CLI] Executing as {}: \"{}\"", username, sql_preview.replace('\n', " "));
+
+    let urls = if is_cluster_mode() {
+        get_available_server_urls()
+    } else {
+        vec![server_url().to_string()]
+    };
+
+    for _ in 0..3 {
+        for (idx, url) in urls.iter().enumerate() {
+            let spawn_start = Instant::now();
+
+            let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
+                .arg("-u")
+                .arg(url)
+                .arg("--username")
+                .arg(username)
+                .arg("--password")
+                .arg(password)
+                .arg("--no-spinner")     // Disable spinner for cleaner output
+                .args(extra_args)
+                .arg("--command")
+                .arg(sql)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?;
+
+            let spawn_duration = spawn_start.elapsed();
+            eprintln!("[TEST_CLI] Process spawned in {:?}", spawn_duration);
+
+            let wait_start = Instant::now();
+
+            // Wait for child with timeout to avoid hanging tests
+            let timeout_duration = Duration::from_secs(60);
+            match child.wait_timeout(timeout_duration)? {
+                Some(status) => {
+                    let wait_duration = wait_start.elapsed();
+                    let total_duration_ms = spawn_start.elapsed().as_millis();
+
+                    // Now read stdout/stderr since the process completed
+                    let mut stdout = String::new();
+                    let mut stderr = String::new();
+                    if let Some(ref mut out) = child.stdout {
+                        use std::io::Read;
+                        out.read_to_string(&mut stdout)?;
+                    }
+                    if let Some(ref mut err) = child.stderr {
+                        use std::io::Read;
+                        err.read_to_string(&mut stderr)?;
+                    }
+
+                    if status.success() {
+                        if !stderr.is_empty() {
+                            eprintln!("[TEST_CLI] stderr: {}", stderr);
+                        }
+                        eprintln!(
+                            "[TEST_CLI] Success: spawn={:?} wait={:?} total={}ms",
+                            spawn_duration, wait_duration, total_duration_ms
+                        );
+                        return Ok(stdout);
+                    } else {
+                        eprintln!(
+                            "[TEST_CLI] Failed: spawn={:?} wait={:?} total={}ms stderr={}",
+                            spawn_duration, wait_duration, total_duration_ms, stderr
+                        );
+                        let err_msg = format!("CLI command failed: {}", stderr);
+                        if is_leader_error(&err_msg) && idx + 1 < urls.len() {
+                            continue;
+                        }
+                        return Err(err_msg.into());
+                    }
                 }
-                eprintln!(
-                    "[TEST_CLI] Success: spawn={:?} wait={:?} total={}ms",
-                    spawn_duration, wait_duration, total_duration_ms
-                );
-                Ok(stdout)
-            } else {
-                eprintln!(
-                    "[TEST_CLI] Failed: spawn={:?} wait={:?} total={}ms stderr={}",
-                    spawn_duration, wait_duration, total_duration_ms, stderr
-                );
-                Err(format!(
-                    "CLI command failed: {}",
-                    stderr
-                )
-                .into())
+                None => {
+                    // Timeout - kill the child and return error
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let wait_duration = wait_start.elapsed();
+                    eprintln!("[TEST_CLI] TIMEOUT after {:?}", wait_duration);
+                    let err_msg = format!("CLI command timed out after {:?}", timeout_duration);
+                    if idx + 1 < urls.len() {
+                        continue;
+                    }
+                    return Err(err_msg.into());
+                }
             }
         }
-        None => {
-            // Timeout - kill the child and return error
-            let _ = child.kill();
-            let _ = child.wait();
-            let wait_duration = wait_start.elapsed();
-            eprintln!(
-                "[TEST_CLI] TIMEOUT after {:?}",
-                wait_duration
-            );
-            Err(format!(
-                "CLI command timed out after {:?}",
-                timeout_duration
-            ).into())
-        }
+        std::thread::sleep(Duration::from_millis(200));
     }
+
+    Err("CLI command failed on all cluster nodes".into())
 }
 
 /// Helper to execute SQL as root user via CLI
@@ -736,11 +816,11 @@ fn get_shared_runtime() -> &'static tokio::runtime::Runtime {
 /// A shared KalamLinkClient for root user to reuse HTTP connections.
 /// This avoids creating new TCP connections for every query, which helps
 /// avoid macOS TCP connection limits (connections in TIME_WAIT state).
-/// 
+///
 /// **CRITICAL PERFORMANCE FIX**: Uses JWT token authentication instead of Basic Auth.
 /// Basic Auth runs bcrypt verification (cost=12) on EVERY request (~100-300ms each).
 /// JWT authentication verifies the token signature (< 1ms) - 100-300x faster!
-/// 
+///
 /// This version automatically uses the first available server (cluster or single-node)
 fn get_shared_root_client() -> &'static KalamLinkClient {
     use std::sync::OnceLock;
@@ -878,10 +958,10 @@ fn get_shared_root_client() -> &'static KalamLinkClient {
 }
 
 /// Execute SQL via kalam-link client directly (avoids CLI process spawning).
-/// 
+///
 /// This function uses the kalam-link library directly instead of spawning CLI processes,
 /// which avoids macOS TCP connection limits when running many parallel queries.
-/// 
+///
 /// Returns JSON output as a string.
 pub fn execute_sql_via_client_as(
     username: &str,
@@ -892,16 +972,16 @@ pub fn execute_sql_via_client_as(
 }
 
 /// Execute SQL via kalam-link client directly with options.
-/// 
+///
 /// This function uses the kalam-link library directly instead of spawning CLI processes,
 /// which avoids macOS TCP connection limits when running many parallel queries.
-/// 
+///
 /// # Arguments
 /// * `username` - The username for authentication
 /// * `password` - The password for authentication  
 /// * `sql` - The SQL query to execute
 /// * `json_output` - If true, returns raw JSON; if false, returns formatted output
-/// 
+///
 /// Returns the query result as a string.
 pub fn execute_sql_via_client_as_with_args(
     username: &str,
@@ -910,53 +990,52 @@ pub fn execute_sql_via_client_as_with_args(
     json_output: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
     use std::sync::mpsc;
-    
+
     let runtime = get_shared_runtime();
-    
+
     let sql_preview = if sql.len() > 60 {
         format!("{}...", &sql[..60])
     } else {
         sql.to_string()
     };
-    
+
     eprintln!(
         "[TEST_CLIENT] Executing as {}: \"{}\"",
         username,
         sql_preview.replace('\n', " ")
     );
-    
+
     let start = std::time::Instant::now();
-    
+
     // Check if we can use the shared root client (most common case)
     let is_root = username == "root" && password == root_password();
-    
+
     // Clone values for the async block only if needed
     let sql = sql.to_string();
     let username_owned = username.to_string();
     let password_owned = password.to_string();
-    
+
     // Use a channel to receive the result from the async task
     // This avoids the block_on deadlock issue when called from multiple std threads
     let (tx, rx) = mpsc::channel();
-    
+
     runtime.spawn(async move {
         let result = async {
-            let base_url = get_available_server_urls()
+            let urls = get_available_server_urls();
+            let base_url = urls
                 .first()
                 .cloned()
                 .unwrap_or_else(|| server_url().to_string());
-            
-            if is_root {
-                // Reuse shared root client to avoid creating new TCP connections
-                let client = get_shared_root_client();
-                let response = client.execute_query(&sql, None, None).await?;
-                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response)
-            } else {
-                // For non-root users, we need a client with different auth
-                // These are less common, so creating a new client is acceptable
+
+            async fn execute_once(
+                url: &str,
+                username: &str,
+                password: &str,
+                sql: &str,
+            ) -> Result<kalam_link::QueryResponse, Box<dyn std::error::Error + Send + Sync>> {
                 let client = KalamLinkClient::builder()
-                    .base_url(&base_url)
-                    .auth(AuthProvider::basic_auth(username_owned, password_owned))
+                    .base_url(url)
+                    .auth(AuthProvider::basic_auth(username.to_string(), password.to_string()))
                     .timeouts(
                         KalamLinkTimeouts::builder()
                             .connection_timeout_secs(5)
@@ -968,40 +1047,75 @@ pub fn execute_sql_via_client_as_with_args(
                             .build(),
                     )
                     .build()?;
-                let response = client.execute_query(&sql, None, None).await?;
+                let response = client.execute_query(sql, None, None).await?;
                 Ok(response)
             }
-        }.await;
-        
+
+            // In cluster mode, try all nodes to find the leader for writes.
+            if is_cluster_mode() && urls.len() > 1 {
+                let mut last_err: Option<Box<dyn std::error::Error + Send + Sync>> = None;
+                for _ in 0..3 {
+                    for url in &urls {
+                        match execute_once(url, &username_owned, &password_owned, &sql).await {
+                            Ok(response) => return Ok(response),
+                            Err(e) => {
+                                let msg = e.to_string();
+                                if is_leader_error(&msg) {
+                                    last_err = Some(e);
+                                    continue;
+                                }
+                                return Err(e);
+                            }
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+                return Err(last_err.unwrap_or_else(|| "All cluster nodes failed".into()));
+            }
+
+            if is_root {
+                // Reuse shared root client to avoid creating new TCP connections
+                let client = get_shared_root_client();
+                let response = client.execute_query(&sql, None, None).await?;
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response)
+            } else {
+                let response =
+                    execute_once(&base_url, &username_owned, &password_owned, &sql).await?;
+                Ok(response)
+            }
+        }
+        .await;
+
         let _ = tx.send(result);
     });
-    
+
     // Wait for the result with a timeout
-    let result = rx.recv_timeout(Duration::from_secs(60))
+    let result = rx
+        .recv_timeout(Duration::from_secs(60))
         .map_err(|e| format!("Query timed out or channel error: {}", e))?;
-    
+
     let duration = start.elapsed();
-    
+
     match result {
         Ok(response) => {
-            eprintln!(
-                "[TEST_CLIENT] Success in {:?}",
-                duration
-            );
-            
+            eprintln!("[TEST_CLIENT] Success in {:?}", duration);
+
             if json_output {
                 // Return raw JSON
                 Ok(serde_json::to_string_pretty(&response)?)
             } else {
                 // Return a simple formatted output
                 let mut output = String::new();
-                
+
                 for result in &response.results {
                     // Check if this has a message (e.g., STORAGE FLUSH TABLE, DDL statements)
                     if let Some(ref message) = result.message {
                         // Check if this is a DML message like "Inserted N row(s)" or "Updated N row(s)"
                         // and normalize to "N rows affected" format for test compatibility
-                        if message.starts_with("Inserted ") || message.starts_with("Updated ") || message.starts_with("Deleted ") {
+                        if message.starts_with("Inserted ")
+                            || message.starts_with("Updated ")
+                            || message.starts_with("Deleted ")
+                        {
                             // Extract the count from messages like "Inserted 1 row(s)" -> "1 rows affected"
                             if let Some(count_str) = message.split_whitespace().nth(1) {
                                 if let Ok(count) = count_str.parse::<usize>() {
@@ -1015,28 +1129,30 @@ pub fn execute_sql_via_client_as_with_args(
                         output.push('\n');
                         continue;
                     }
-                    
+
                     // Check if this is a DML statement (no rows but has row_count)
-                    let is_dml = result.rows.is_none() || 
-                        (result.rows.as_ref().map(|r| r.is_empty()).unwrap_or(false) && result.row_count > 0);
-                    
+                    let is_dml = result.rows.is_none()
+                        || (result.rows.as_ref().map(|r| r.is_empty()).unwrap_or(false)
+                            && result.row_count > 0);
+
                     if is_dml {
                         // DML statements: show "N rows affected"
                         output.push_str(&format!("{} rows affected\n", result.row_count));
                     } else {
                         // Get column names from schema
                         let columns: Vec<String> = result.column_names();
-                        
+
                         // Add column headers
                         if !columns.is_empty() {
                             output.push_str(&columns.join(" | "));
                             output.push('\n');
                         }
-                        
+
                         // Add rows (rows is Option<Vec<...>>)
                         if let Some(ref rows) = result.rows {
                             for row in rows {
-                                let row_str: Vec<String> = columns.iter()
+                                let row_str: Vec<String> = columns
+                                    .iter()
                                     .enumerate()
                                     .map(|(i, _col)| {
                                         row.get(i)
@@ -1046,35 +1162,35 @@ pub fn execute_sql_via_client_as_with_args(
                                                 other => other.to_string(),
                                             })
                                             .unwrap_or_else(|| "NULL".to_string())
-                                            
                                     })
                                     .collect();
                                 output.push_str(&row_str.join(" | "));
                                 output.push('\n');
                             }
-                            
+
                             // Add row count
-                            output.push_str(&format!("({} row{})\n", rows.len(), if rows.len() == 1 { "" } else { "s" }));
+                            output.push_str(&format!(
+                                "({} row{})\n",
+                                rows.len(),
+                                if rows.len() == 1 { "" } else { "s" }
+                            ));
                         } else {
                             output.push_str("(0 rows)\n");
                         }
                     }
                 }
-                
+
                 if let Some(ref error) = response.error {
                     output.push_str(&format!("Error: {}\n", error.message));
                 }
-                
+
                 Ok(output)
             }
-        }
+        },
         Err(e) => {
-            eprintln!(
-                "[TEST_CLIENT] Failed in {:?}: {}",
-                duration, e
-            );
+            eprintln!("[TEST_CLIENT] Failed in {:?}: {}", duration, e);
             Err(e.to_string().into())
-        }
+        },
     }
 }
 
@@ -1084,7 +1200,9 @@ pub fn execute_sql_as_root_via_client(sql: &str) -> Result<String, Box<dyn std::
 }
 
 /// Execute SQL as root user via kalam-link client returning JSON output
-pub fn execute_sql_as_root_via_client_json(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub fn execute_sql_as_root_via_client_json(
+    sql: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     execute_sql_via_client_as_with_args("root", root_password(), sql, true)
 }
 
@@ -1104,10 +1222,10 @@ pub fn execute_sql_via_client(sql: &str) -> Result<String, Box<dyn std::error::E
 }
 
 /// Extract a numeric ID from a JSON value that might be a number or a string.
-/// 
+///
 /// Large integers (> JS_MAX_SAFE_INTEGER) are serialized as strings to preserve
 /// precision for JavaScript clients. This helper handles both cases.
-/// 
+///
 /// Returns Some(value_as_string) if the value is a number or a numeric string,
 /// None otherwise.
 pub fn json_value_as_id(value: &serde_json::Value) -> Option<String> {
@@ -1115,8 +1233,10 @@ pub fn json_value_as_id(value: &serde_json::Value) -> Option<String> {
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Some(i.to_string())
-            } else { n.as_u64().map(|u| u.to_string()) }
-        }
+            } else {
+                n.as_u64().map(|u| u.to_string())
+            }
+        },
         serde_json::Value::String(s) => {
             // Verify it's a valid numeric string
             if s.parse::<i64>().is_ok() || s.parse::<u64>().is_ok() {
@@ -1124,7 +1244,7 @@ pub fn json_value_as_id(value: &serde_json::Value) -> Option<String> {
             } else {
                 None
             }
-        }
+        },
         _ => None,
     }
 }
@@ -1144,7 +1264,7 @@ pub fn json_value_as_id(value: &serde_json::Value) -> Option<String> {
 /// ```
 pub fn extract_typed_value(value: &serde_json::Value) -> serde_json::Value {
     use serde_json::Value as JsonValue;
-    
+
     match value {
         JsonValue::Object(map) if map.len() == 1 => {
             // Handle typed ScalarValue format: {"Int64": "42"}, {"Utf8": "hello"}, etc.
@@ -1155,7 +1275,7 @@ pub fn extract_typed_value(value: &serde_json::Value) -> serde_json::Value {
                 "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" => {
                     // These are stored as strings to preserve precision
                     inner_value.clone()
-                }
+                },
                 "Float32" | "Float64" => inner_value.clone(),
                 "Utf8" | "LargeUtf8" => inner_value.clone(),
                 "Binary" | "LargeBinary" | "FixedSizeBinary" => inner_value.clone(),
@@ -1168,7 +1288,7 @@ pub fn extract_typed_value(value: &serde_json::Value) -> serde_json::Value {
                         }
                     }
                     JsonValue::Null
-                }
+                },
                 "Decimal128" => {
                     // Decimal has 'value', 'precision', 'scale'
                     if let Some(obj) = inner_value.as_object() {
@@ -1177,13 +1297,13 @@ pub fn extract_typed_value(value: &serde_json::Value) -> serde_json::Value {
                         }
                     }
                     JsonValue::Null
-                }
+                },
                 _ => {
                     // Fallback for unknown types - return the inner value
                     inner_value.clone()
-                }
+                },
             }
-        }
+        },
         // Not a typed value, return as-is
         _ => value.clone(),
     }
@@ -1198,10 +1318,7 @@ pub fn generate_unique_namespace(base_name: &str) -> String {
     let count = COUNTER.fetch_add(1, Ordering::SeqCst);
     // Use a short base36-encoded millisecond timestamp + counter.
     // This stays short enough for identifier limits while remaining unique across reruns.
-    let ts_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
+    let ts_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
     let ts36 = to_base36(ts_ms);
     let suffix = if ts36.len() > 8 {
         &ts36[ts36.len() - 8..]
@@ -1221,10 +1338,7 @@ pub fn generate_unique_table(base_name: &str) -> String {
     let count = COUNTER.fetch_add(1, Ordering::SeqCst);
     // Use a short base36-encoded millisecond timestamp + counter.
     // This stays short enough for identifier limits while remaining unique across reruns.
-    let ts_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
+    let ts_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
     let ts36 = to_base36(ts_ms);
     let suffix = if ts36.len() > 8 {
         &ts36[ts36.len() - 8..]
@@ -1347,10 +1461,7 @@ pub fn cleanup_test_table(table_full_name: &str) -> Result<(), Box<dyn std::erro
 /// ```
 pub fn random_string(len: usize) -> String {
     let rng = rand::rng();
-    rng.sample_iter(Alphanumeric)
-        .take(len)
-        .map(char::from)
-        .collect()
+    rng.sample_iter(Alphanumeric).take(len).map(char::from).collect()
 }
 
 /// Parse job ID from STORAGE FLUSH TABLE output
@@ -1375,7 +1486,9 @@ pub fn parse_job_id_from_flush_output(output: &str) -> Result<String, Box<dyn st
 /// Parse job ID from JSON response message field
 ///
 /// Expected JSON format: {"status":"success","results":[{"message":"Flush started... Job ID: FL-xxx"}]}
-pub fn parse_job_id_from_json_message(json_output: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub fn parse_job_id_from_json_message(
+    json_output: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let value: serde_json::Value = serde_json::from_str(json_output)
         .map_err(|e| format!("Failed to parse JSON: {} in: {}", e, json_output))?;
 
@@ -1391,10 +1504,8 @@ pub fn parse_job_id_from_json_message(json_output: &str) -> Result<String, Box<d
     // Extract job ID from message using the same logic as parse_job_id_from_flush_output
     if let Some(idx) = message.find("Job ID: ") {
         let after = &message[idx + "Job ID: ".len()..];
-        let id_token = after
-            .split_whitespace()
-            .next()
-            .ok_or("Missing job id token after 'Job ID: '")?;
+        let id_token =
+            after.split_whitespace().next().ok_or("Missing job id token after 'Job ID: '")?;
         return Ok(id_token.trim().to_string());
     }
 
@@ -1471,7 +1582,7 @@ pub fn verify_job_completed(
                 if let Some(row) = row {
                     // Rows are arrays: [job_id, status, error_message] (indices 0, 1, 2)
                     let row_arr = row.as_array();
-                    
+
                     let status = row_arr
                         .and_then(|arr| arr.get(1))
                         .map(|v| v.as_str().unwrap_or(""))
@@ -1493,17 +1604,17 @@ pub fn verify_job_completed(
                     }
                 } else {
                     // No row found - print debug info
-                    if start.elapsed().as_secs().is_multiple_of(5) && start.elapsed().as_millis() % 1000 < 250 {
+                    if start.elapsed().as_secs().is_multiple_of(5)
+                        && start.elapsed().as_millis() % 1000 < 250
+                    {
                         println!("[DEBUG] Job {} not found in system.jobs", job_id);
                     }
                 }
-            }
+            },
             Err(e) => {
                 // If we can't query the jobs table, that's an error
-                return Err(
-                    format!("Failed to query system.jobs for job {}: {}", job_id, e).into(),
-                );
-            }
+                return Err(format!("Failed to query system.jobs for job {}: {}", job_id, e).into());
+            },
         }
 
         std::thread::sleep(poll_interval);
@@ -1555,7 +1666,7 @@ pub fn wait_for_job_finished(
                 if lower.contains("failed") {
                     return Ok("failed".to_string());
                 }
-            }
+            },
             Err(e) => return Err(e),
         }
 
@@ -1607,25 +1718,28 @@ impl SubscriptionListener {
 
     /// Start a subscription listener with a specific timeout in seconds.
     /// Uses kalam-link WebSocket client instead of spawning CLI processes.
-    pub fn start_with_timeout(query: &str, _timeout_secs: u64) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn start_with_timeout(
+        query: &str,
+        _timeout_secs: u64,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let (event_tx, event_rx) = std_mpsc::channel();
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-        
+
         let query = query.to_string();
-        
+
         let handle = thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("Failed to create tokio runtime for subscription");
-            
+
             runtime.block_on(async move {
                 // Get first available server URL (cluster or single-node)
                 let base_url = get_available_server_urls()
                     .first()
                     .cloned()
                     .unwrap_or_else(|| server_url().to_string());
-                
+
                 // Build client for subscription
                 let client = match KalamLinkClient::builder()
                     .base_url(&base_url)
@@ -1646,21 +1760,21 @@ impl SubscriptionListener {
                     Err(e) => {
                         let _ = event_tx.send(format!("ERROR: Failed to create client: {}", e));
                         return;
-                    }
+                    },
                 };
-                
+
                 // Start subscription
                 let mut subscription = match client.subscribe(&query).await {
                     Ok(s) => s,
                     Err(e) => {
                         let _ = event_tx.send(format!("ERROR: Failed to subscribe: {}", e));
                         return;
-                    }
+                    },
                 };
-                
+
                 // Convert oneshot receiver to a future we can select on
                 let mut stop_rx = stop_rx;
-                
+
                 loop {
                     tokio::select! {
                         _ = &mut stop_rx => {
@@ -1711,7 +1825,7 @@ impl SubscriptionListener {
                 } else {
                     Ok(Some(line))
                 }
-            }
+            },
             Err(_) => Ok(None), // Channel closed
         }
     }
@@ -1731,10 +1845,10 @@ impl SubscriptionListener {
                 } else {
                     Ok(Some(line))
                 }
-            }
+            },
             Err(std_mpsc::RecvTimeoutError::Timeout) => {
                 Err("Timeout waiting for subscription data".into())
-            }
+            },
             Err(std_mpsc::RecvTimeoutError::Disconnected) => Ok(None),
         }
     }
@@ -1747,11 +1861,7 @@ impl SubscriptionListener {
     ) -> Result<String, Box<dyn std::error::Error>> {
         let start = std::time::Instant::now();
 
-        if let Some(index) = self
-            .pending_events
-            .iter()
-            .position(|line| line.contains(pattern))
-        {
+        if let Some(index) = self.pending_events.iter().position(|line| line.contains(pattern)) {
             let line = self.pending_events.remove(index).unwrap_or_default();
             if !line.is_empty() {
                 return Ok(line);
@@ -1759,10 +1869,7 @@ impl SubscriptionListener {
         }
 
         while start.elapsed() < timeout {
-            match self
-                .event_receiver
-                .recv_timeout(Duration::from_millis(100))
-            {
+            match self.event_receiver.recv_timeout(Duration::from_millis(100)) {
                 Ok(line) => {
                     if line.is_empty() {
                         break; // EOF
@@ -1771,7 +1878,7 @@ impl SubscriptionListener {
                         return Ok(line);
                     }
                     self.pending_events.push_back(line);
-                }
+                },
                 Err(std_mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(std_mpsc::RecvTimeoutError::Disconnected) => break,
             }
@@ -1803,14 +1910,14 @@ pub fn start_subscription_listener(
             Err(e) => {
                 let _ = event_sender.send(format!("ERROR: {}", e));
                 return;
-            }
+            },
         };
 
         loop {
             match listener.try_read_line(Duration::from_millis(100)) {
                 Ok(Some(line)) => {
                     let _ = event_sender.send(line);
-                }
+                },
                 Ok(None) => break,  // EOF
                 Err(_) => continue, // Timeout, try again
             }
@@ -1830,7 +1937,7 @@ const BACKEND_STORAGE_DIR: &str = "../backend/data/storage";
 /// Get the storage directory path for flush verification
 pub fn get_storage_dir() -> std::path::PathBuf {
     use std::path::PathBuf;
-    
+
     // The backend server writes to ./data/storage from backend/ directory
     // When tests run from cli/, we need to access ../backend/data/storage
     let backend_path = PathBuf::from(BACKEND_STORAGE_DIR);
@@ -1868,16 +1975,15 @@ pub struct FlushStorageVerificationResult {
 impl FlushStorageVerificationResult {
     /// Check if the verification found valid flush artifacts
     pub fn is_valid(&self) -> bool {
-        self.manifest_found && self.manifest_size > 0 && self.parquet_file_count > 0 && self.parquet_total_size > 0
+        self.manifest_found
+            && self.manifest_size > 0
+            && self.parquet_file_count > 0
+            && self.parquet_total_size > 0
     }
-    
+
     /// Assert that flush storage files exist and are valid
     pub fn assert_valid(&self, context: &str) {
-        assert!(
-            self.manifest_found,
-            "{}: manifest.json should exist after flush",
-            context
-        );
+        assert!(self.manifest_found, "{}: manifest.json should exist after flush", context);
         assert!(
             self.manifest_size > 0,
             "{}: manifest.json should not be empty (size: {} bytes)",
@@ -1899,7 +2005,6 @@ impl FlushStorageVerificationResult {
 }
 
 /// Verify flush storage files for a SHARED table
-///
 /// Checks that manifest.json and batch-*.parquet files exist with non-zero size
 /// in the expected storage path for a shared table.
 ///
@@ -1914,10 +2019,10 @@ pub fn verify_flush_storage_files_shared(
     table_name: &str,
 ) -> FlushStorageVerificationResult {
     use std::fs;
-    
+
     let storage_dir = get_storage_dir();
     let table_dir = storage_dir.join(namespace).join(table_name);
-    
+
     verify_flush_storage_files_in_dir(&table_dir)
 }
 
@@ -1938,10 +2043,10 @@ pub fn verify_flush_storage_files_user(
     table_name: &str,
 ) -> FlushStorageVerificationResult {
     use std::fs;
-    
+
     let storage_dir = get_storage_dir();
     let table_dir = storage_dir.join(namespace).join(table_name);
-    
+
     let mut result = FlushStorageVerificationResult {
         manifest_found: false,
         manifest_size: 0,
@@ -1950,18 +2055,18 @@ pub fn verify_flush_storage_files_user(
         manifest_path: None,
         parquet_paths: Vec::new(),
     };
-    
+
     if !table_dir.exists() {
         return result;
     }
-    
+
     // For user tables, iterate through user subdirectories
     if let Ok(entries) = fs::read_dir(&table_dir) {
         for entry in entries.flatten() {
             let user_dir = entry.path();
             if user_dir.is_dir() {
                 let user_result = verify_flush_storage_files_in_dir(&user_dir);
-                
+
                 // Aggregate results across all users
                 if user_result.manifest_found {
                     result.manifest_found = true;
@@ -1974,7 +2079,7 @@ pub fn verify_flush_storage_files_user(
             }
         }
     }
-    
+
     result
 }
 
@@ -1983,7 +2088,7 @@ pub fn verify_flush_storage_files_user(
 /// Internal helper that checks for manifest.json and batch-*.parquet files in a directory.
 fn verify_flush_storage_files_in_dir(dir: &std::path::Path) -> FlushStorageVerificationResult {
     use std::fs;
-    
+
     let mut result = FlushStorageVerificationResult {
         manifest_found: false,
         manifest_size: 0,
@@ -1992,11 +2097,11 @@ fn verify_flush_storage_files_in_dir(dir: &std::path::Path) -> FlushStorageVerif
         manifest_path: None,
         parquet_paths: Vec::new(),
     };
-    
+
     if !dir.exists() {
         return result;
     }
-    
+
     // Check for manifest.json
     let manifest_path = dir.join("manifest.json");
     if manifest_path.exists() {
@@ -2006,7 +2111,7 @@ fn verify_flush_storage_files_in_dir(dir: &std::path::Path) -> FlushStorageVerif
             result.manifest_path = Some(manifest_path);
         }
     }
-    
+
     // Check for batch-*.parquet files
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -2021,7 +2126,7 @@ fn verify_flush_storage_files_in_dir(dir: &std::path::Path) -> FlushStorageVerif
             }
         }
     }
-    
+
     result
 }
 
@@ -2046,7 +2151,7 @@ pub fn assert_flush_storage_files_exist(
 ) {
     // Give filesystem a moment to sync after async flush
     std::thread::sleep(Duration::from_millis(500));
-    
+
     let result = if is_user_table {
         verify_flush_storage_files_user(namespace, table_name)
     } else {
@@ -2067,9 +2172,7 @@ pub fn assert_flush_storage_files_exist(
     if manifest_exists_in_system_table(namespace, table_name) {
         println!(
             "✅ [{}] Verified flush storage via system.manifest for {}.{}",
-            context,
-            namespace,
-            table_name
+            context, namespace, table_name
         );
         return;
     }
@@ -2107,7 +2210,9 @@ pub fn manifest_exists_in_system_table(namespace: &str, table_name: &str) -> boo
 
 /// Execute SQL on all available nodes (single-node or cluster)
 /// Returns results from each node
-pub fn execute_sql_on_all_nodes(sql: &str) -> Vec<(String, Result<String, Box<dyn std::error::Error>>)> {
+pub fn execute_sql_on_all_nodes(
+    sql: &str,
+) -> Vec<(String, Result<String, Box<dyn std::error::Error>>)> {
     let urls = get_available_server_urls();
     urls.into_iter()
         .map(|url| {
@@ -2118,9 +2223,12 @@ pub fn execute_sql_on_all_nodes(sql: &str) -> Vec<(String, Result<String, Box<dy
 }
 
 /// Execute SQL on a specific node URL
-pub fn execute_sql_on_node(base_url: &str, sql: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub fn execute_sql_on_node(
+    base_url: &str,
+    sql: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     use tokio::runtime::Runtime;
-    
+
     let rt = Runtime::new()?;
     let client = KalamLinkClient::builder()
         .base_url(base_url)
@@ -2136,12 +2244,10 @@ pub fn execute_sql_on_node(base_url: &str, sql: &str) -> Result<String, Box<dyn 
                 .build(),
         )
         .build()?;
-    
+
     let sql = sql.to_string();
-    let response = rt.block_on(async {
-        client.execute_query(&sql, None, None).await
-    })?;
-    
+    let response = rt.block_on(async { client.execute_query(&sql, None, None).await })?;
+
     // Format response similar to execute_sql_via_client_as
     let mut output = String::new();
     for result in response.results {
@@ -2151,11 +2257,12 @@ pub fn execute_sql_on_node(base_url: &str, sql: &str) -> Result<String, Box<dyn 
         } else {
             // Get column names
             let columns: Vec<String> = result.column_names();
-            
+
             // Check if DML
-            let is_dml = result.rows.is_none() || 
-                (result.rows.as_ref().map(|r| r.is_empty()).unwrap_or(false) && result.row_count > 0);
-            
+            let is_dml = result.rows.is_none()
+                || (result.rows.as_ref().map(|r| r.is_empty()).unwrap_or(false)
+                    && result.row_count > 0);
+
             if is_dml {
                 output.push_str(&format!("{} rows affected\n", result.row_count));
             } else {
@@ -2164,11 +2271,12 @@ pub fn execute_sql_on_node(base_url: &str, sql: &str) -> Result<String, Box<dyn 
                     output.push_str(&columns.join(" | "));
                     output.push('\n');
                 }
-                
+
                 // Add rows
                 if let Some(ref rows) = result.rows {
                     for row in rows {
-                        let row_str: Vec<String> = columns.iter()
+                        let row_str: Vec<String> = columns
+                            .iter()
                             .enumerate()
                             .map(|(i, _col)| {
                                 row.get(i)
@@ -2183,15 +2291,19 @@ pub fn execute_sql_on_node(base_url: &str, sql: &str) -> Result<String, Box<dyn 
                         output.push_str(&row_str.join(" | "));
                         output.push('\n');
                     }
-                    
-                    output.push_str(&format!("({} row{})\n", rows.len(), if rows.len() == 1 { "" } else { "s" }));
+
+                    output.push_str(&format!(
+                        "({} row{})\n",
+                        rows.len(),
+                        if rows.len() == 1 { "" } else { "s" }
+                    ));
                 } else {
                     output.push_str("(0 rows)\n");
                 }
             }
         }
     }
-    
+
     Ok(output)
 }
 
@@ -2199,16 +2311,19 @@ pub fn execute_sql_on_node(base_url: &str, sql: &str) -> Result<String, Box<dyn 
 /// In single-node mode, just executes once
 pub fn verify_consistent_across_nodes(sql: &str, expected_contains: &[&str]) -> Result<(), String> {
     let results = execute_sql_on_all_nodes(sql);
-    
+
     for (url, result) in &results {
         let output = result.as_ref().map_err(|e| format!("Query failed on {}: {}", url, e))?;
-        
+
         for expected in expected_contains {
             if !output.contains(expected) {
-                return Err(format!("Output from {} does not contain '{}': {}", url, expected, output));
+                return Err(format!(
+                    "Output from {} does not contain '{}': {}",
+                    url, expected, output
+                ));
             }
         }
     }
-    
+
     Ok(())
 }

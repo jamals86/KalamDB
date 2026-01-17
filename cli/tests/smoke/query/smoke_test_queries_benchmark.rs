@@ -24,10 +24,7 @@ fn rows_to_insert() -> usize {
 #[test]
 fn smoke_queries_benchmark() {
     if !is_server_running() {
-        println!(
-            "Skipping smoke_queries_benchmark: server not running at {}",
-            server_url()
-        );
+        println!("Skipping smoke_queries_benchmark: server not running at {}", server_url());
         return;
     }
 
@@ -119,7 +116,7 @@ fn smoke_queries_benchmark() {
                         panic!("insert batch failed after retries: {}", e);
                     }
                     std::thread::sleep(std::time::Duration::from_millis(150));
-                }
+                },
             }
         }
         inserted += n;

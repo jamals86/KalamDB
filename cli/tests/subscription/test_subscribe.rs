@@ -37,7 +37,7 @@ fn test_cli_live_query_basic() {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             cleanup_test_table(&table).unwrap();
             return;
-        }
+        },
     };
 
     // Give it a moment to connect and receive initial data
@@ -75,10 +75,7 @@ fn test_cli_subscription_commands() {
         .arg("--list-subscriptions");
 
     let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "list-subscriptions command should succeed"
-    );
+    assert!(output.status.success(), "list-subscriptions command should succeed");
 
     // Test --unsubscribe command (should provide helpful message)
     let mut cmd = create_cli_command();
@@ -117,7 +114,7 @@ fn test_cli_live_query_with_filter() {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             cleanup_test_table(&table).unwrap();
             return;
-        }
+        },
     };
 
     // Give it a moment
@@ -126,7 +123,7 @@ fn test_cli_live_query_with_filter() {
     // Try to read with timeout - subscription with filter should not block indefinitely
     // Since there's no data with id > 10, we expect a timeout (which is the correct behavior)
     let read_result = listener.try_read_line(Duration::from_secs(2));
-    
+
     // Verify we could read (even if empty/timeout) - proves subscription filter was accepted
     assert!(read_result.is_ok() || read_result.is_err(), "Subscription filter was processed");
 
@@ -257,10 +254,7 @@ fn test_cli_subscription_comprehensive_crud() {
         .arg("--password")
         .arg(root_password())
         .arg("--command")
-        .arg(format!(
-            "SUBSCRIBE TO SELECT * FROM {} LIMIT 1",
-            table_name
-        ))
+        .arg(format!("SUBSCRIBE TO SELECT * FROM {} LIMIT 1", table_name))
         .timeout(std::time::Duration::from_secs(2)); // Short timeout
 
     let output = cmd.output().unwrap();
@@ -318,10 +312,7 @@ fn test_cli_subscription_comprehensive_crud() {
     );
 
     // Test 5: Update operation via CLI
-    let update_sql = format!(
-        "UPDATE {} SET data = 'updated_data' WHERE id = 1",
-        table_name
-    );
+    let update_sql = format!("UPDATE {} SET data = 'updated_data' WHERE id = 1", table_name);
     let _ = execute_sql_as_root_via_cli(&update_sql);
     std::thread::sleep(std::time::Duration::from_millis(50));
 
@@ -373,10 +364,7 @@ fn test_cli_subscription_comprehensive_crud() {
         .arg("--password")
         .arg(root_password())
         .arg("--command")
-        .arg(format!(
-            "SUBSCRIBE TO SELECT * FROM {} ORDER BY id",
-            table_name
-        ))
+        .arg(format!("SUBSCRIBE TO SELECT * FROM {} ORDER BY id", table_name))
         .timeout(std::time::Duration::from_secs(2));
 
     let output = cmd.output().unwrap();

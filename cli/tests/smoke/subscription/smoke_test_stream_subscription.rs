@@ -61,16 +61,13 @@ fn smoke_stream_table_subscription() {
                         got_any = true;
                         break;
                     }
-                }
+                },
                 Ok(None) => break,
                 Err(_) => continue,
             }
         }
     }
-    assert!(
-        got_any,
-        "expected to receive some subscription output within retry window"
-    );
+    assert!(got_any, "expected to receive some subscription output within retry window");
 
     // Stop subscription
     listener.stop().ok();

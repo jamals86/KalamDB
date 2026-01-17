@@ -174,10 +174,7 @@ mod tests {
     fn create_test_row(user_id: &str, seq: i64, id_value: i64) -> (UserTableRowId, UserTableRow) {
         let mut values = BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int64(Some(id_value)));
-        values.insert(
-            "name".to_string(),
-            ScalarValue::Utf8(Some("Test".to_string())),
-        );
+        values.insert("name".to_string(), ScalarValue::Utf8(Some("Test".to_string())));
 
         let key = UserTableRowId::new(UserId::new(user_id), SeqId::new(seq));
         let row = UserTableRow {

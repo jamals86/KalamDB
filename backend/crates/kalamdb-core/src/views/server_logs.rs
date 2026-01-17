@@ -191,7 +191,7 @@ impl ServerLogsView {
                     // Skip non-JSON lines (e.g., if format is "compact")
                     // This allows graceful degradation
                     continue;
-                }
+                },
             }
         }
 

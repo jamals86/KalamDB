@@ -10,9 +10,7 @@ static BENCHMARK_LOCK: Mutex<()> = Mutex::new(());
 
 /// Get the benchmark results directory
 pub fn get_results_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("view")
-        .join("results")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("view").join("results")
 }
 
 /// Ensure the results directory exists
@@ -308,10 +306,7 @@ pub fn execute_cli_timed(
     let cli_total_ms = start.elapsed().as_millis() as f64;
 
     if !output.status.success() {
-        anyhow::bail!(
-            "CLI command failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        anyhow::bail!("CLI command failed: {}", String::from_utf8_lossy(&output.stderr));
     }
 
     let output_str = String::from_utf8_lossy(&output.stdout).to_string();
@@ -320,11 +315,7 @@ pub fn execute_cli_timed(
     let server_time_ms = output_str
         .lines()
         .find(|l| l.starts_with("Took:"))
-        .and_then(|line| {
-            line.split_whitespace()
-                .nth(1)
-                .and_then(|s| s.parse::<f64>().ok())
-        })
+        .and_then(|line| line.split_whitespace().nth(1).and_then(|s| s.parse::<f64>().ok()))
         .unwrap_or(0.0);
 
     let overhead_ms = cli_total_ms - server_time_ms;

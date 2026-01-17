@@ -72,15 +72,11 @@ impl UserId {
             ));
         }
         if id.contains('\0') {
-            return Err(UserIdValidationError(
-                "User ID cannot contain null bytes".to_string(),
-            ));
+            return Err(UserIdValidationError("User ID cannot contain null bytes".to_string()));
         }
         // Check for empty ID
         if id.is_empty() {
-            return Err(UserIdValidationError(
-                "User ID cannot be empty".to_string(),
-            ));
+            return Err(UserIdValidationError("User ID cannot be empty".to_string()));
         }
         Ok(())
     }
@@ -165,9 +161,7 @@ impl StorageKey for UserId {
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
-        String::from_utf8(bytes.to_vec())
-            .map(UserId)
-            .map_err(|e| e.to_string())
+        String::from_utf8(bytes.to_vec()).map(UserId).map_err(|e| e.to_string())
     }
 }
 

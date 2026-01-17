@@ -140,7 +140,7 @@ mod tests {
     fn create_test_storage() -> Storage {
         let temp_dir = env::temp_dir().join("storage_cache_test");
         std::fs::create_dir_all(&temp_dir).ok();
-        
+
         let now = chrono::Utc::now().timestamp_millis();
         Storage {
             storage_id: StorageId::from("test_storage"),
@@ -161,7 +161,7 @@ mod tests {
     fn test_storage_cached_new() {
         let storage = create_test_storage();
         let cached = StorageCached::new(storage);
-        
+
         // Initially not initialized
         assert!(!cached.is_object_store_initialized());
     }
@@ -170,14 +170,14 @@ mod tests {
     fn test_storage_cached_object_store() {
         let storage = create_test_storage();
         let cached = StorageCached::new(storage);
-        
+
         // First call should build
         let store1 = cached.object_store().expect("Failed to get object store");
         assert!(cached.is_object_store_initialized());
-        
+
         // Second call should return cached
         let store2 = cached.object_store().expect("Failed to get object store");
-        
+
         // Should be the same Arc (pointer equality)
         assert!(Arc::ptr_eq(&store1, &store2));
     }
@@ -186,15 +186,15 @@ mod tests {
     fn test_storage_cached_invalidate() {
         let storage = create_test_storage();
         let cached = StorageCached::new(storage);
-        
+
         // Build the store
         let _store1 = cached.object_store().expect("Failed to get object store");
         assert!(cached.is_object_store_initialized());
-        
+
         // Invalidate
         cached.invalidate_object_store();
         assert!(!cached.is_object_store_initialized());
-        
+
         // Next call should rebuild
         let _store2 = cached.object_store().expect("Failed to get object store");
         assert!(cached.is_object_store_initialized());

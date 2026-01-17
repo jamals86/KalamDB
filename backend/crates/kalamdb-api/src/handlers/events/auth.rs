@@ -15,6 +15,7 @@ use kalamdb_commons::WebSocketMessage;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::live::{ConnectionsManager, SharedConnectionState};
 use kalamdb_core::sql::executor::helpers::audit;
+use log::debug;
 use log::{error, info};
 use std::sync::Arc;
 
@@ -68,7 +69,7 @@ async fn authenticate_with_request(
     // Get username for logging (before authentication attempt)
     let username_for_log = extract_username_for_audit(&auth_request);
 
-    info!(
+    debug!(
         "Authenticating WebSocket: connection_id={}, username={}",
         connection_id, username_for_log
     );
@@ -87,7 +88,7 @@ async fn authenticate_with_request(
                 error!("Failed to persist audit log: {}", e);
             }
             result.user
-        }
+        },
         Err(e) => {
             // Log failed authentication
             let entry = audit::log_auth_event(
@@ -102,13 +103,11 @@ async fn authenticate_with_request(
 
             let _ = send_auth_error(session.clone(), "Invalid username or password").await;
             return Err("Authentication failed".to_string());
-        }
+        },
     };
 
     // Mark authenticated in connection state
-    connection_state
-        .write()
-        .mark_authenticated(auth_result.user_id.clone());
+    connection_state.write().mark_authenticated(auth_result.user_id.clone());
     // Update registry's user index
     registry.on_authenticated(&connection_id, auth_result.user_id.clone());
 
@@ -119,7 +118,7 @@ async fn authenticate_with_request(
     };
     let _ = send_json(session, &msg).await;
 
-    info!(
+    debug!(
         "WebSocket authenticated: {} as {} ({:?})",
         connection_id,
         auth_result.user_id.as_str(),

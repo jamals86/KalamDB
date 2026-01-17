@@ -9,11 +9,10 @@
 //! - Maximum password length
 //! - Shared table default access levels
 
-
-use base64::{engine::general_purpose, Engine as _};
 use super::test_support::TestServer;
+use base64::{engine::general_purpose, Engine as _};
 use kalamdb_auth::{authenticate, AuthRequest};
-use kalamdb_commons::{Role, UserId, models::ConnectionInfo};
+use kalamdb_commons::{models::ConnectionInfo, Role, UserId};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// T143A: Test authentication with empty credentials returns error
@@ -77,9 +76,7 @@ async fn test_concurrent_auth_no_race_conditions() {
     );
 
     // Create test user
-    server
-        .create_user(&username, "TestPass123", Role::User)
-        .await;
+    server.create_user(&username, "TestPass123", Role::User).await;
 
     let user_repo = server.users_repo();
 
@@ -91,8 +88,7 @@ async fn test_concurrent_auth_no_race_conditions() {
 
         let handle = tokio::spawn(async move {
             let connection_info = ConnectionInfo::new(Some(format!("127.0.0.1:{}", 8080 + i)));
-            let credentials =
-                general_purpose::STANDARD.encode(format!("{}:TestPass123", username));
+            let credentials = general_purpose::STANDARD.encode(format!("{}:TestPass123", username));
             let auth_header = format!("Basic {}", credentials);
             let auth_request = AuthRequest::Header(auth_header);
             authenticate(auth_request, &connection_info, &user_repo).await
@@ -112,10 +108,7 @@ async fn test_concurrent_auth_no_race_conditions() {
         }
     }
 
-    assert_eq!(
-        success_count, 10,
-        "All concurrent auth requests should succeed"
-    );
+    assert_eq!(success_count, 10, "All concurrent auth requests should succeed");
 }
 
 /// T143D: Test deleted user authentication is denied
@@ -124,9 +117,7 @@ async fn test_deleted_user_denied() {
     let server = TestServer::new().await;
 
     // Create user
-    server
-        .create_user("deleted_user", "TestPass123", Role::User)
-        .await;
+    server.create_user("deleted_user", "TestPass123", Role::User).await;
 
     // Soft delete the user via provider
     let users_provider = server.app_context.system_tables().users();
@@ -149,7 +140,9 @@ async fn test_deleted_user_denied() {
     // The unified auth returns generic "Invalid username or password" for security
     // (doesn't reveal whether user exists or is deleted)
     assert!(
-        err_msg.contains("UserDeleted") || err_msg.contains("deleted") || err_msg.contains("Invalid"),
+        err_msg.contains("UserDeleted")
+            || err_msg.contains("deleted")
+            || err_msg.contains("Invalid"),
         "Error should indicate auth failure: {}",
         err_msg
     );
@@ -161,9 +154,7 @@ async fn test_role_change_applies_next_request() {
     let server = TestServer::new().await;
 
     // Create user with User role
-    server
-        .create_user("role_change_user", "TestPass123", Role::User)
-        .await;
+    server.create_user("role_change_user", "TestPass123", Role::User).await;
 
     let user_repo = server.users_repo();
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
@@ -184,9 +175,7 @@ async fn test_role_change_applies_next_request() {
         .unwrap()
         .unwrap();
     user.role = Role::Dba;
-    users_provider
-        .update_user(user)
-        .expect("Failed to update user");
+    users_provider.update_user(user).expect("Failed to update user");
 
     // Second authentication should reflect new role
     // (unified auth reads directly from repo, no caching)
@@ -206,9 +195,7 @@ async fn test_maximum_password_length() {
     let max_password = "A".repeat(72);
 
     // Create user with maximum length password
-    server
-        .create_user("max_pass_user", &max_password, Role::User)
-        .await;
+    server.create_user("max_pass_user", &max_password, Role::User).await;
 
     let user_repo = server.users_repo();
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));

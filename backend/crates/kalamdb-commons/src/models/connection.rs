@@ -36,7 +36,7 @@ impl ConnectionInfo {
                     || addr.starts_with("localhost:")
                     || addr == "::1"
                     || addr.starts_with("[::1]")
-            }
+            },
             None => false,
         }
     }

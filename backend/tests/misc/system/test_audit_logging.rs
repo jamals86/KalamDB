@@ -2,7 +2,6 @@
 //!
 //! Verifies that privileged operations write entries to `system.audit_log`.
 
-
 use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
@@ -64,9 +63,7 @@ async fn test_audit_log_for_user_management() {
         .await;
     assert_eq!(resp.status, ResponseStatus::Success, "ALTER USER failed");
 
-    let resp = server
-        .execute_sql_as_user("DROP USER 'audit_user_1'", admin_id.as_str())
-        .await;
+    let resp = server.execute_sql_as_user("DROP USER 'audit_user_1'", admin_id.as_str()).await;
     assert_eq!(resp.status, ResponseStatus::Success, "DROP USER failed");
 
     let logs = server
@@ -80,18 +77,10 @@ async fn test_audit_log_for_user_management() {
     assert_eq!(create_entry.actor_user_id, admin_id);
     assert_eq!(create_entry.action, "CREATE_USER");
     // Details are strings in current implementation, not JSON
-    assert!(create_entry
-        .details
-        .as_ref()
-        .unwrap()
-        .contains("Role: User"));
+    assert!(create_entry.details.as_ref().unwrap().contains("Role: User"));
 
     let alter_entry = find_audit_entry(&logs, "ALTER_USER", "audit_user_1");
-    assert!(alter_entry
-        .details
-        .as_ref()
-        .unwrap()
-        .contains("SetRole(Dba)"));
+    assert!(alter_entry.details.as_ref().unwrap().contains("SetRole(Dba)"));
 
     let drop_entry = find_audit_entry(&logs, "DROP_USER", "audit_user_1");
     assert!(drop_entry.details.is_none());
@@ -107,12 +96,7 @@ async fn test_audit_log_for_table_access_change() {
         .await;
     // Ignore if namespace already exists
     if resp.status != ResponseStatus::Success
-        && !resp
-            .error
-            .as_ref()
-            .unwrap()
-            .message
-            .contains("already exists")
+        && !resp.error.as_ref().unwrap().message.contains("already exists")
     {
         panic!("CREATE NAMESPACE failed: {:?}", resp.error);
     }
@@ -126,17 +110,12 @@ async fn test_audit_log_for_table_access_change() {
     // or update TestServer to support shared tables.
     // For now, let's try to proceed and see if unique name helps (unlikely if it's a CF issue).
 
-    let sql = format!(
-        "CREATE SHARED TABLE {} (id INT, value TEXT) ACCESS LEVEL private",
-        table_name
-    );
+    let sql =
+        format!("CREATE SHARED TABLE {} (id INT, value TEXT) ACCESS LEVEL private", table_name);
     let resp = server.execute_sql_as_user(&sql, admin_id.as_str()).await;
 
     if resp.status != ResponseStatus::Success {
-        println!(
-            "Skipping shared table test due to environment limitations: {:?}",
-            resp.error
-        );
+        println!("Skipping shared table test due to environment limitations: {:?}", resp.error);
         return;
     }
 
@@ -153,18 +132,14 @@ async fn test_audit_log_for_table_access_change() {
 
     let entry = find_audit_entry(&logs, "ALTER_TABLE", &table_name);
     // Details string: "Operation: SET ACCESS LEVEL Public, New Version: ..."
-    assert!(entry
-        .details
-        .as_ref()
-        .unwrap()
-        .contains("SET ACCESS LEVEL Public"));
+    assert!(entry.details.as_ref().unwrap().contains("SET ACCESS LEVEL Public"));
 }
 
 #[actix_web::test]
 async fn test_audit_log_password_masking() {
     // **Test that passwords are NEVER stored in audit logs**
     // Verifies that ALTER USER SET PASSWORD entries mask the actual password
-    
+
     let server = TestServer::new().await;
     let admin_id = create_system_user(&server, "audit_admin_3").await;
 
@@ -196,7 +171,7 @@ async fn test_audit_log_password_masking() {
 
     // Find the ALTER USER entry
     let alter_entry = find_audit_entry(&logs, "ALTER_USER", "audit_user_2");
-    
+
     // Verify password is masked
     let details = alter_entry.details.as_ref().expect("Details should exist");
     assert!(
@@ -204,7 +179,7 @@ async fn test_audit_log_password_masking() {
         "Password should be redacted in audit log, got: {}",
         details
     );
-    
+
     // Verify actual password is NOT in the audit log
     assert!(
         !details.contains("SuperSecret789!"),
@@ -216,6 +191,6 @@ async fn test_audit_log_password_masking() {
         "Initial password should NOT appear in audit log, got: {}",
         details
     );
-    
+
     println!("✓ Password correctly masked in audit log: {}", details);
 }

@@ -12,9 +12,9 @@
 //!    - Enables: Broadcasting changes to subscribers of a table
 
 use super::live_queries_indexes::create_live_queries_indexes;
+use crate::SystemTable;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::LiveQueryId;
-use crate::SystemTable;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::sync::Arc;
 
@@ -73,7 +73,7 @@ mod tests {
             created_at: 1000,
             last_update: 1000,
             changes: 0,
-             node_id: NodeId::new(1),
+            node_id: NodeId::new(1),
             subscription_id: subscription_id.to_string(),
             status: kalamdb_commons::types::LiveQueryStatus::Active,
             last_ping_at: 1000,
@@ -119,8 +119,12 @@ mod tests {
 
         // Insert multiple live queries with different connections
         for i in 1..=3 {
-            let live_query =
-                create_test_live_query("user1", &format!("conn{}", i), &format!("sub{}", i), "test");
+            let live_query = create_test_live_query(
+                "user1",
+                &format!("conn{}", i),
+                &format!("sub{}", i),
+                "test",
+            );
             store.insert(&live_query.live_id, &live_query).unwrap();
         }
 
@@ -146,17 +150,13 @@ mod tests {
         // Scan by table_id index - should find 2 for default:messages
         let table_id_messages = TableId::from_strings("default", "messages");
         let prefix = table_id_index_prefix(&table_id_messages);
-        let results = store
-            .scan_by_index(TABLE_ID_INDEX, Some(&prefix), None)
-            .unwrap();
+        let results = store.scan_by_index(TABLE_ID_INDEX, Some(&prefix), None).unwrap();
         assert_eq!(results.len(), 2);
 
         // Scan by table_id index - should find 1 for default:users
         let table_id_users = TableId::from_strings("default", "users");
         let prefix = table_id_index_prefix(&table_id_users);
-        let results = store
-            .scan_by_index(TABLE_ID_INDEX, Some(&prefix), None)
-            .unwrap();
+        let results = store.scan_by_index(TABLE_ID_INDEX, Some(&prefix), None).unwrap();
         assert_eq!(results.len(), 1);
     }
 }

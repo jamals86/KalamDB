@@ -4,8 +4,8 @@
 //! This is a read-only view of the manifest cache managed by ManifestService.
 
 use crate::system_table_store::SystemTableStore;
-use kalamdb_commons::types::ManifestCacheEntry;
 use crate::SystemTable;
+use kalamdb_commons::types::ManifestCacheEntry;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
@@ -27,11 +27,7 @@ impl ManifestCacheKey {
         let namespace = parts.next()?;
         let table = parts.next()?;
         let scope = parts.next()?;
-        Some((
-            namespace.to_string(),
-            table.to_string(),
-            scope.to_string(),
-        ))
+        Some((namespace.to_string(), table.to_string(), scope.to_string()))
     }
 }
 
@@ -101,9 +97,7 @@ mod tests {
     #[test]
     fn test_create_store() {
         let store = create_test_store();
-        assert!(EntityStore::scan_all(&store, None, None, None)
-            .unwrap()
-            .is_empty());
+        assert!(store.scan_all(None, None, None).unwrap().is_empty());
     }
 
     #[test]
@@ -121,9 +115,9 @@ mod tests {
         let key = ManifestCacheKey::from("ns1:tbl1:shared");
         let entry = create_test_entry();
 
-        EntityStore::put(&store, &key, &entry).unwrap();
+        store.put(&key, &entry).unwrap();
 
-        let retrieved = EntityStore::get(&store, &key).unwrap();
+        let retrieved = store.get(&key).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.etag, Some("etag123".to_string()));
@@ -138,10 +132,10 @@ mod tests {
         // Insert multiple entries
         for i in 1..=3 {
             let key = ManifestCacheKey::from(format!("ns{}:tbl{}:shared", i, i));
-            EntityStore::put(&store, &key, &entry).unwrap();
+            store.put(&key, &entry).unwrap();
         }
 
-        let all = EntityStore::scan_all(&store, None, None, None).unwrap();
+        let all = store.scan_all(None, None, None).unwrap();
         assert_eq!(all.len(), 3);
     }
 }

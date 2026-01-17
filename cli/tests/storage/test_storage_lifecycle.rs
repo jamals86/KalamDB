@@ -29,11 +29,7 @@ fn test_storage_drop_requires_detached_tables() {
         }
         fs::create_dir_all(&base_dir).expect("create base directory for storage");
     }
-    let base_dir_sql = escape_single_quotes(
-        base_dir
-            .to_str()
-            .expect("valid storage path"),
-    );
+    let base_dir_sql = escape_single_quotes(base_dir.to_str().expect("valid storage path"));
 
     execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
         .expect("namespace creation");
@@ -50,10 +46,7 @@ fn test_storage_drop_requires_detached_tables() {
     execute_sql_as_root_via_cli(&create_storage_sql).expect("storage creation");
 
     if local_fs_checks {
-        assert!(
-            base_dir.exists(),
-            "filesystem storage should eagerly create its base directory"
-        );
+        assert!(base_dir.exists(), "filesystem storage should eagerly create its base directory");
     }
 
     let storage_rows = query_rows(&format!(
@@ -78,11 +71,9 @@ fn test_storage_drop_requires_detached_tables() {
         namespace, user_table
     ));
     // Flush to force Parquet file creation (directories are created on flush, not on insert)
-    let flush_output = execute_sql_as_root_via_cli(&format!(
-        "STORAGE FLUSH TABLE {}.{}",
-        namespace, user_table
-    ))
-    .expect("flush user table");
+    let flush_output =
+        execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}.{}", namespace, user_table))
+            .expect("flush user table");
     if let Ok(job_id) = parse_job_id_from_flush_output(&flush_output) {
         verify_job_completed(&job_id, std::time::Duration::from_secs(10))
             .expect("user table flush job should complete");
@@ -92,9 +83,8 @@ fn test_storage_drop_requires_detached_tables() {
 
     // For user tables we only require the table directory itself to exist eagerly; the per-user
     // subdirectory may be created lazily on first write depending on backend semantics.
-    let user_table_base_path = base_dir
-        .join(format!("ns_{}", namespace))
-        .join(format!("user_{}", user_table));
+    let user_table_base_path =
+        base_dir.join(format!("ns_{}", namespace)).join(format!("user_{}", user_table));
     if local_fs_checks {
         assert!(
             wait_for_path_exists(&user_table_base_path, std::time::Duration::from_secs(5)),
@@ -114,11 +104,9 @@ fn test_storage_drop_requires_detached_tables() {
         namespace, shared_table
     ));
     // Flush to force Parquet file creation (directories are created on flush, not on insert)
-    let flush_output = execute_sql_as_root_via_cli(&format!(
-        "STORAGE FLUSH TABLE {}.{}",
-        namespace, shared_table
-    ))
-    .expect("flush shared table");
+    let flush_output =
+        execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}.{}", namespace, shared_table))
+            .expect("flush shared table");
     if let Ok(job_id) = parse_job_id_from_flush_output(&flush_output) {
         verify_job_completed(&job_id, std::time::Duration::from_secs(10))
             .expect("shared table flush job should complete");
@@ -138,10 +126,7 @@ fn test_storage_drop_requires_detached_tables() {
     }
 
     let drop_err = execute_sql_as_root_via_cli(&format!("DROP STORAGE {}", storage_id));
-    assert!(
-        drop_err.is_err(),
-        "drop storage should fail while tables exist"
-    );
+    assert!(drop_err.is_err(), "drop storage should fail while tables exist");
     let err_msg = drop_err.err().unwrap().to_string();
     assert!(
         err_msg.contains("Cannot drop storage") && err_msg.contains("table(s) still using it"),

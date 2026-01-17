@@ -52,10 +52,7 @@ impl TableCache {
     #[inline]
     fn current_timestamp() -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
     }
 
     /// Get cached table data by TableId
@@ -100,7 +97,7 @@ impl TableCache {
     pub fn invalidate_all_versions(&self, table_id: &TableId) {
         // Remove from latest cache
         self.cache.remove(table_id);
-        
+
         // Remove all versioned entries for this table
         // Note: DashMap doesn't support prefix deletion, so we iterate
         let keys_to_remove: Vec<TableVersionId> = self
@@ -109,7 +106,7 @@ impl TableCache {
             .filter(|entry| entry.key().table_id() == table_id)
             .map(|entry| entry.key().clone())
             .collect();
-        
+
         for key in keys_to_remove {
             self.version_cache.remove(&key);
         }

@@ -35,22 +35,17 @@ pub(crate) fn scan_parquet_files_as_batch(
         .clone()
         .unwrap_or_else(kalamdb_commons::models::StorageId::local);
 
-    let storage = core
-        .app_context
-        .storage_registry()
-        .get_storage(&storage_id)?
-        .ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!(
-                "Storage '{}' not found",
-                storage_id.as_str()
-            ))
+    let storage =
+        core.app_context.storage_registry().get_storage(&storage_id)?.ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
         })?;
 
     // 3. Get ObjectStore (cached)
     let object_store = cached.object_store(core.app_context.as_ref())?;
 
     // 4. Resolve storage path
-    let storage_path = PathResolver::get_storage_path(core.app_context.as_ref(), &cached, user_id, None)?;
+    let storage_path =
+        PathResolver::get_storage_path(core.app_context.as_ref(), &cached, user_id, None)?;
 
     let manifest_service = core.app_context.manifest_service();
     let cache_result = manifest_service.get_or_load(table_id, user_id);
@@ -100,7 +95,7 @@ pub(crate) fn scan_parquet_files_as_batch(
                                 table_id_for_spawn,
                                 scope_for_spawn
                             );
-                        }
+                        },
                         Err(e) => {
                             log::error!(
                                 "❌ [MANIFEST REBUILD FAILED] table={} {} error={}",
@@ -108,13 +103,13 @@ pub(crate) fn scan_parquet_files_as_batch(
                                 scope_for_spawn,
                                 e
                             );
-                        }
+                        },
                     }
                 });
             } else {
                 manifest_opt = Some(manifest);
             }
-        }
+        },
         Ok(None) => {
             log::debug!(
                 "⚠️  Manifest cache MISS | table={} | {} | fallback=directory_scan",
@@ -122,7 +117,7 @@ pub(crate) fn scan_parquet_files_as_batch(
                 scope_label
             );
             use_degraded_mode = true;
-        }
+        },
         Err(e) => {
             log::warn!(
                 "⚠️  Manifest cache ERROR | table={} | {} | error={} | fallback=directory_scan",
@@ -131,7 +126,7 @@ pub(crate) fn scan_parquet_files_as_batch(
                 e
             );
             use_degraded_mode = true;
-        }
+        },
     }
 
     if let Some(ref _manifest) = manifest_opt {

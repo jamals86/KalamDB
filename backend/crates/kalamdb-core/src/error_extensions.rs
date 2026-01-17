@@ -43,7 +43,7 @@ pub trait KalamDbResultExt<T> {
     ///     .into_kalamdb_error("Failed to read config file")?;
     /// ```
     fn into_kalamdb_error(self, context: &str) -> Result<T, KalamDbError>;
-    
+
     /// Convert Arrow errors into KalamDbError with generic message.
     ///
     /// # Example
@@ -52,7 +52,7 @@ pub trait KalamDbResultExt<T> {
     ///     .into_arrow_error()?;
     /// ```
     fn into_arrow_error(self) -> Result<T, KalamDbError>;
-    
+
     /// Convert Arrow errors into KalamDbError with context.
     ///
     /// # Example
@@ -61,7 +61,7 @@ pub trait KalamDbResultExt<T> {
     ///     .into_arrow_error_ctx("Schema evolution cast failed")?;
     /// ```
     fn into_arrow_error_ctx(self, context: &str) -> Result<T, KalamDbError>;
-    
+
     /// Convert errors into KalamDbError::ExecutionError with context.
     ///
     /// # Example
@@ -70,7 +70,7 @@ pub trait KalamDbResultExt<T> {
     ///     .into_execution_error("Query execution failed")?;
     /// ```
     fn into_execution_error(self, context: &str) -> Result<T, KalamDbError>;
-    
+
     /// Convert errors into KalamDbError::SerializationError.
     ///
     /// # Example
@@ -79,7 +79,7 @@ pub trait KalamDbResultExt<T> {
     ///     .into_serialization_error("Config serialization failed")?;
     /// ```
     fn into_serialization_error(self, context: &str) -> Result<T, KalamDbError>;
-    
+
     /// Convert errors into KalamDbError::SchemaError.
     ///
     /// # Example
@@ -88,7 +88,7 @@ pub trait KalamDbResultExt<T> {
     ///     .into_schema_error("Invalid schema evolution")?;
     /// ```
     fn into_schema_error(self, context: &str) -> Result<T, KalamDbError>;
-    
+
     /// Convert errors into KalamDbError::InvalidOperation.
     ///
     /// # Example
@@ -97,7 +97,7 @@ pub trait KalamDbResultExt<T> {
     ///     .into_invalid_operation("Invalid table configuration")?;
     /// ```
     fn into_invalid_operation(self, context: &str) -> Result<T, KalamDbError>;
-    
+
     /// Convert errors into KalamDbError::NotFound.
     ///
     /// # Example
@@ -106,7 +106,7 @@ pub trait KalamDbResultExt<T> {
     ///     .into_not_found("Table not found")?;
     /// ```
     fn into_not_found(self, context: &str) -> Result<T, KalamDbError>;
-    
+
     /// Convert errors into KalamDbError::AlreadyExists.
     ///
     /// # Example
@@ -115,7 +115,7 @@ pub trait KalamDbResultExt<T> {
     ///     .into_already_exists("Table already exists")?;
     /// ```
     fn into_already_exists(self, context: &str) -> Result<T, KalamDbError>;
-    
+
     /// Convert errors into KalamDbError::ConfigError.
     ///
     /// # Example
@@ -131,47 +131,47 @@ impl<T, E: std::fmt::Display> KalamDbResultExt<T> for Result<T, E> {
     fn into_kalamdb_error(self, context: &str) -> Result<T, KalamDbError> {
         self.map_err(|e| KalamDbError::Other(format!("{}: {}", context, e)))
     }
-    
+
     #[inline]
     fn into_arrow_error(self) -> Result<T, KalamDbError> {
         self.map_err(|e| KalamDbError::Other(format!("Arrow error: {}", e)))
     }
-    
+
     #[inline]
     fn into_arrow_error_ctx(self, context: &str) -> Result<T, KalamDbError> {
         self.map_err(|e| KalamDbError::Other(format!("Arrow error - {}: {}", context, e)))
     }
-    
+
     #[inline]
     fn into_execution_error(self, context: &str) -> Result<T, KalamDbError> {
         self.map_err(|e| KalamDbError::ExecutionError(format!("{}: {}", context, e)))
     }
-    
+
     #[inline]
     fn into_serialization_error(self, context: &str) -> Result<T, KalamDbError> {
         self.map_err(|e| KalamDbError::SerializationError(format!("{}: {}", context, e)))
     }
-    
+
     #[inline]
     fn into_schema_error(self, context: &str) -> Result<T, KalamDbError> {
         self.map_err(|e| KalamDbError::SchemaError(format!("{}: {}", context, e)))
     }
-    
+
     #[inline]
     fn into_invalid_operation(self, context: &str) -> Result<T, KalamDbError> {
         self.map_err(|e| KalamDbError::InvalidOperation(format!("{}: {}", context, e)))
     }
-    
+
     #[inline]
     fn into_not_found(self, context: &str) -> Result<T, KalamDbError> {
         self.map_err(|e| KalamDbError::NotFound(format!("{}: {}", context, e)))
     }
-    
+
     #[inline]
     fn into_already_exists(self, context: &str) -> Result<T, KalamDbError> {
         self.map_err(|e| KalamDbError::AlreadyExists(format!("{}: {}", context, e)))
     }
-    
+
     #[inline]
     fn into_config_error(self, context: &str) -> Result<T, KalamDbError> {
         self.map_err(|e| KalamDbError::ConfigError(format!("{}: {}", context, e)))
@@ -233,141 +233,141 @@ impl<T> TokioJoinResultExt<T> for Result<T, tokio::task::JoinError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_into_kalamdb_error() {
         let result: Result<(), &str> = Err("something failed");
         let err = result.into_kalamdb_error("Test operation").unwrap_err();
-        
+
         match err {
             KalamDbError::Other(msg) => {
                 assert!(msg.contains("Test operation"));
                 assert!(msg.contains("something failed"));
-            }
+            },
             _ => panic!("Expected KalamDbError::Other"),
         }
     }
-    
+
     #[test]
     fn test_into_arrow_error() {
         let result: Result<(), &str> = Err("arrow failed");
         let err = result.into_arrow_error().unwrap_err();
-        
+
         match err {
             KalamDbError::Other(msg) => assert!(msg.contains("arrow failed")),
             _ => panic!("Expected KalamDbError::Other"),
         }
     }
-    
+
     #[test]
     fn test_into_execution_error() {
         let result: Result<(), &str> = Err("execution issue");
         let err = result.into_execution_error("Query execution").unwrap_err();
-        
+
         match err {
             KalamDbError::ExecutionError(msg) => {
                 assert!(msg.contains("Query execution"));
                 assert!(msg.contains("execution issue"));
-            }
+            },
             _ => panic!("Expected KalamDbError::ExecutionError"),
         }
     }
-    
+
     #[test]
     fn test_into_serialization_error() {
         let result: Result<(), &str> = Err("json parse error");
         let err = result.into_serialization_error("Parsing config").unwrap_err();
-        
+
         match err {
             KalamDbError::SerializationError(msg) => {
                 assert!(msg.contains("Parsing config"));
                 assert!(msg.contains("json parse error"));
-            }
+            },
             _ => panic!("Expected KalamDbError::SerializationError"),
         }
     }
-    
+
     #[test]
     fn test_into_schema_error() {
         let result: Result<(), &str> = Err("incompatible types");
         let err = result.into_schema_error("Schema validation").unwrap_err();
-        
+
         match err {
             KalamDbError::SchemaError(msg) => {
                 assert!(msg.contains("Schema validation"));
                 assert!(msg.contains("incompatible types"));
-            }
+            },
             _ => panic!("Expected KalamDbError::SchemaError"),
         }
     }
-    
+
     #[test]
     fn test_into_invalid_operation() {
         let result: Result<(), &str> = Err("operation not allowed");
         let err = result.into_invalid_operation("Validation").unwrap_err();
-        
+
         match err {
             KalamDbError::InvalidOperation(msg) => {
                 assert!(msg.contains("Validation"));
                 assert!(msg.contains("operation not allowed"));
-            }
+            },
             _ => panic!("Expected KalamDbError::InvalidOperation"),
         }
     }
-    
+
     #[test]
     fn test_into_not_found() {
         let result: Result<(), &str> = Err("resource missing");
         let err = result.into_not_found("Resource lookup").unwrap_err();
-        
+
         match err {
             KalamDbError::NotFound(msg) => {
                 assert!(msg.contains("Resource lookup"));
                 assert!(msg.contains("resource missing"));
-            }
+            },
             _ => panic!("Expected KalamDbError::NotFound"),
         }
     }
-    
+
     #[test]
     fn test_into_already_exists() {
         let result: Result<(), &str> = Err("duplicate entry");
         let err = result.into_already_exists("Create table").unwrap_err();
-        
+
         match err {
             KalamDbError::AlreadyExists(msg) => {
                 assert!(msg.contains("Create table"));
                 assert!(msg.contains("duplicate entry"));
-            }
+            },
             _ => panic!("Expected KalamDbError::AlreadyExists"),
         }
     }
-    
+
     #[test]
     fn test_into_config_error() {
         let result: Result<(), &str> = Err("invalid config value");
         let err = result.into_config_error("Config parsing").unwrap_err();
-        
+
         match err {
             KalamDbError::ConfigError(msg) => {
                 assert!(msg.contains("Config parsing"));
                 assert!(msg.contains("invalid config value"));
-            }
+            },
             _ => panic!("Expected KalamDbError::ConfigError"),
         }
     }
-    
+
     #[test]
     fn test_serde_json_error() {
         // Test with actual serde_json error
         let invalid_json = "{invalid json}";
         let result: Result<serde_json::Value, _> = serde_json::from_str(invalid_json);
         let err = result.into_serde_error("JSON parsing").unwrap_err();
-        
+
         match err {
             KalamDbError::SerializationError(msg) => {
                 assert!(msg.contains("JSON parsing"));
-            }
+            },
             _ => panic!("Expected KalamDbError::SerializationError"),
         }
     }

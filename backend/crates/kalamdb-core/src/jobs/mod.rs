@@ -8,8 +8,10 @@
 //! ```rust,no_run
 //! // Phase 9: Unified Job Management with typed JobIds
 //! use kalamdb_core::jobs::{JobsManager, JobRegistry};
+//! use kalamdb_core::app_context::AppContext;
 //! use kalamdb_core::jobs::executors::*;
 //! use kalamdb_core::tables::system::JobsTableProvider;
+//! use kalamdb_system::JobNodesTableProvider;
 //! use kalamdb_store::test_utils::InMemoryBackend;
 //! use kalamdb_store::StorageBackend;
 //! use std::sync::Arc;
@@ -18,12 +20,19 @@
 //! # fn example() {
 //! let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
 //! let jobs_provider = Arc::new(JobsTableProvider::new(backend));
-//! let job_manager = Arc::new(JobsManager::new(jobs_provider));
+//! # let app_ctx = AppContext::get();
+//! let job_registry = Arc::new(JobRegistry::new());
+//! let job_nodes_provider = Arc::new(JobNodesTableProvider::new(backend));
+//! let job_manager = Arc::new(JobsManager::new(
+//!     jobs_provider,
+//!     job_nodes_provider,
+//!     job_registry,
+//!     app_ctx,
+//! ));
 //!
 //! // Register executors (8 concrete implementations)
-//! let mut registry = JobRegistry::new();
-//! registry.register("flush", Arc::new(FlushExecutor::new(/* ... */)));
-//! registry.register("cleanup", Arc::new(CleanupExecutor::new(/* ... */)));
+//! job_registry.register("flush", Arc::new(FlushExecutor::new(/* ... */)));
+//! job_registry.register("cleanup", Arc::new(CleanupExecutor::new(/* ... */)));
 //! // ... register remaining 6 executors
 //!
 //! // Create job with typed JobId (idempotency enforced)
@@ -50,8 +59,8 @@ pub mod stream_eviction;
 // ============================================================================
 // PHASE 16: LEADER-ONLY JOB EXECUTION (CLUSTER MODE)
 // ============================================================================
-pub mod leader_guard;
 pub mod leader_failover;
+pub mod leader_guard;
 
 // Phase 9 exports (production API)
 pub use executors::{JobContext, JobDecision, JobExecutor as JobExecutorTrait, JobRegistry};
@@ -60,5 +69,5 @@ pub use jobs_manager::JobsManager;
 pub use stream_eviction::StreamEvictionScheduler;
 
 // Phase 16 exports (cluster mode)
+pub use leader_failover::{JobRecoveryAction, LeaderFailoverHandler, RecoveryReport};
 pub use leader_guard::{LeaderOnlyJobGuard, LeadershipStatus};
-pub use leader_failover::{LeaderFailoverHandler, JobRecoveryAction, RecoveryReport};

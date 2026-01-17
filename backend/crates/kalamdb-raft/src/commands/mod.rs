@@ -10,14 +10,14 @@
 
 use serde::{Deserialize, Serialize};
 
-mod meta;
 mod data;
+mod meta;
 
 // Unified Meta commands
 pub use meta::{MetaCommand, MetaResponse};
 
 // Data commands
-pub use data::{UserDataCommand, SharedDataCommand, DataResponse};
+pub use data::{DataResponse, SharedDataCommand, UserDataCommand};
 
 /// Unified command type for all Raft operations
 ///

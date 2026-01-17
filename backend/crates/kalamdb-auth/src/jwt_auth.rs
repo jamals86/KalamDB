@@ -1,8 +1,10 @@
 // JWT authentication and validation module
 
 use crate::error::{AuthError, AuthResult};
-use jsonwebtoken::{decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use jsonwebtoken::errors::ErrorKind;
+use jsonwebtoken::{
+    decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation,
+};
 use kalamdb_commons::{Role, UserId, UserName};
 use serde::{Deserialize, Serialize};
 
@@ -85,7 +87,7 @@ pub fn generate_jwt_token(claims: &JwtClaims, secret: &str) -> AuthResult<String
 }
 
 /// Create and sign a new JWT token in one step.
-/// 
+///
 /// This is the preferred way to generate tokens to ensure consistency.
 pub fn create_and_sign_token(
     user_id: &UserId,
@@ -174,13 +176,12 @@ pub fn validate_jwt_token(
     validation.validate_nbf = false; // Don't check "not before"
 
     let decoding_key = DecodingKey::from_secret(secret.as_bytes());
-    let token_data = decode::<JwtClaims>(token, &decoding_key, &validation).map_err(|e| {
-        match e.kind() {
+    let token_data =
+        decode::<JwtClaims>(token, &decoding_key, &validation).map_err(|e| match e.kind() {
             ErrorKind::ExpiredSignature => AuthError::TokenExpired,
             ErrorKind::InvalidSignature => AuthError::InvalidSignature,
             _ => AuthError::MalformedAuthorization(format!("JWT decode error: {}", e)),
-        }
-    })?;
+        })?;
 
     let claims = token_data.claims;
 

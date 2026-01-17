@@ -3,9 +3,9 @@
 //! Common utilities for DDL operations including schema transformations,
 //! table validation, and metadata storage.
 
+use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::app_context::AppContext;
 use arrow::datatypes::Schema;
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use kalamdb_commons::StorageId;
@@ -24,7 +24,7 @@ use std::sync::Arc;
 /// # Returns
 /// Ok(()) if valid, error otherwise
 pub fn validate_table_name(name: &str) -> Result<(), String> {
-    kalamdb_commons::validation::validate_table_name(name).map_err(|e| e.to_string())
+    kalamdb_sql::validation::validate_table_name(name).map_err(|e| e.to_string())
 }
 
 /// Save table definition to information_schema.tables
@@ -44,9 +44,7 @@ pub fn save_table_definition(
 ) -> Result<(), KalamDbError> {
     use kalamdb_commons::datatypes::{FromArrowType, KalamDataType};
     use kalamdb_commons::models::TableId;
-    use kalamdb_commons::schemas::{
-        ColumnDefinition, TableDefinition, TableOptions,
-    };
+    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions};
 
     // Extract columns directly from Arrow schema (user-provided columns only)
     let columns: Vec<ColumnDefinition> = original_arrow_schema
@@ -55,7 +53,7 @@ pub fn save_table_definition(
         .enumerate()
         .map(|(idx, field)| {
             // Validate column name
-            kalamdb_commons::validation::validate_column_name(field.name()).map_err(|e| {
+            kalamdb_sql::validation::validate_column_name(field.name()).map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Invalid column name '{}': {}",
                     field.name(),
@@ -67,17 +65,11 @@ pub fn save_table_definition(
                 KalamDataType::from_arrow_type(field.data_type()).unwrap_or(KalamDataType::Text);
 
             // T060: Mark the PRIMARY KEY column with is_primary_key = true
-            let is_pk = stmt
-                .primary_key_column
-                .as_ref()
-                .map(|pk| pk == field.name())
-                .unwrap_or(false);
+            let is_pk =
+                stmt.primary_key_column.as_ref().map(|pk| pk == field.name()).unwrap_or(false);
 
-            let default_val = stmt
-                .column_defaults
-                .get(field.name())
-                .cloned()
-                .unwrap_or(ColumnDefault::None);
+            let default_val =
+                stmt.column_defaults.get(field.name()).cloned().unwrap_or(ColumnDefault::None);
 
             log::debug!(
                 "save_table_definition: Column '{}' - is_pk={}, default={:?}",
@@ -87,7 +79,7 @@ pub fn save_table_definition(
             );
 
             Ok(ColumnDefinition::new(
-                (idx + 1) as u64,    // column_id is 1-indexed
+                (idx + 1) as u64, // column_id is 1-indexed
                 field.name().clone(),
                 (idx + 1) as u32, // ordinal_position is 1-indexed
                 kalam_type,
@@ -126,7 +118,7 @@ pub fn save_table_definition(
             opts.storage_id = storage;
             opts.use_user_storage = stmt.use_user_storage;
             opts.flush_policy = stmt.flush_policy.clone();
-        }
+        },
         (TableOptions::Shared(opts), TableType::Shared) => {
             let storage = stmt.storage_id.clone().unwrap_or_else(StorageId::local);
             opts.storage_id = storage;
@@ -135,13 +127,13 @@ pub fn save_table_definition(
                 opts.access_level = Some(access);
             }
             opts.flush_policy = stmt.flush_policy.clone();
-        }
+        },
         (TableOptions::Stream(opts), TableType::Stream) => {
             if let Some(ttl) = stmt.ttl_seconds {
                 opts.ttl_seconds = ttl;
             }
-        }
-        _ => {}
+        },
+        _ => {},
     }
 
     // Inject system columns via SystemColumnsService (Phase 12, US5, T022)

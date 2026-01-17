@@ -177,11 +177,7 @@ pub fn parse_create_drop_statement(
 /// let table_ref = extract_token(sql, 2)?;
 /// ```
 pub fn extract_token(sql: &str, token_index: usize) -> DdlResult<String> {
-    let tokens: Vec<&str> = sql
-        .trim()
-        .trim_end_matches(';')
-        .split_whitespace()
-        .collect();
+    let tokens: Vec<&str> = sql.trim().trim_end_matches(';').split_whitespace().collect();
 
     tokens
         .get(token_index)
@@ -202,11 +198,7 @@ pub fn validate_no_extra_tokens(
     expected_token_count: usize,
     command: &str,
 ) -> DdlResult<()> {
-    let tokens: Vec<&str> = sql
-        .trim()
-        .trim_end_matches(';')
-        .split_whitespace()
-        .collect();
+    let tokens: Vec<&str> = sql.trim().trim_end_matches(';').split_whitespace().collect();
 
     if tokens.len() > expected_token_count {
         return Err(format!(
@@ -275,7 +267,7 @@ pub fn parse_table_reference(table_ref: &str) -> DdlResult<(Option<String>, Stri
                 return Err("Table name cannot be empty".to_string());
             }
             Ok((None, table.to_string()))
-        }
+        },
         (Some(namespace), Some(table), None) => {
             if namespace.is_empty() {
                 return Err("Namespace name cannot be empty".to_string());
@@ -284,7 +276,7 @@ pub fn parse_table_reference(table_ref: &str) -> DdlResult<(Option<String>, Stri
                 return Err("Table name cannot be empty".to_string());
             }
             Ok((Some(namespace.to_string()), table.to_string()))
-        }
+        },
         _ => Err(format!(
             "Invalid table reference '{}'. Expected 'table' or 'namespace.table'",
             table_ref
@@ -333,10 +325,7 @@ mod tests {
     #[test]
     fn test_normalize_and_upper() {
         assert_eq!(normalize_and_upper("  show  tables  ;"), "SHOW TABLES");
-        assert_eq!(
-            normalize_and_upper("create\nnamespace\napp"),
-            "CREATE NAMESPACE APP"
-        );
+        assert_eq!(normalize_and_upper("create\nnamespace\napp"), "CREATE NAMESPACE APP");
     }
 
     #[test]
@@ -425,14 +414,12 @@ mod tests {
             "STORAGE FLUSH TABLE"
         )
         .is_ok());
-        assert!(
-            validate_no_extra_tokens(
-                "STORAGE FLUSH TABLE prod.events extra",
-                4,
-                "STORAGE FLUSH TABLE"
-            )
-            .is_err()
-        );
+        assert!(validate_no_extra_tokens(
+            "STORAGE FLUSH TABLE prod.events extra",
+            4,
+            "STORAGE FLUSH TABLE"
+        )
+        .is_err());
     }
 
     #[test]

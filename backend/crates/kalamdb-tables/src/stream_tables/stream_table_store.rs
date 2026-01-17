@@ -40,7 +40,11 @@ pub struct StreamTableStore {
 
 impl StreamTableStore {
     /// Create a new stream table store (in-memory backed)
-    pub fn new(table_id: TableId, partition: impl Into<String>, _config: StreamTableStoreConfig) -> Self {
+    pub fn new(
+        table_id: TableId,
+        partition: impl Into<String>,
+        _config: StreamTableStoreConfig,
+    ) -> Self {
         let log_store = Arc::new(MemoryStreamLogStore::with_table_id(table_id.clone()));
 
         Self {
@@ -96,7 +100,10 @@ impl StreamTableStore {
     }
 
     /// Scan all rows with an optional limit.
-    pub fn scan_all(&self, limit: Option<usize>) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
+    pub fn scan_all(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
         let limit = limit.unwrap_or(MAX_SCAN_LIMIT);
         if limit == 0 {
             return Ok(Vec::new());
@@ -146,11 +153,7 @@ impl StreamTableStore {
 
         let mut vec: Vec<(StreamTableRowId, StreamTableRow)> = rows
             .into_iter()
-            .filter(|(key, _)| {
-                start_seq
-                    .map(|seq| key.seq() >= seq)
-                    .unwrap_or(true)
-            })
+            .filter(|(key, _)| start_seq.map(|seq| key.seq() >= seq).unwrap_or(true))
             .collect();
         vec.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(vec)
@@ -198,7 +201,10 @@ impl StreamTableStore {
 ///
 /// # Returns
 /// A new StreamTableStore instance configured for the stream table
-pub fn new_stream_table_store(table_id: &TableId, config: StreamTableStoreConfig) -> StreamTableStore {
+pub fn new_stream_table_store(
+    table_id: &TableId,
+    config: StreamTableStoreConfig,
+) -> StreamTableStore {
     let partition_name = partition_name(
         kalamdb_commons::constants::ColumnFamilyNames::STREAM_TABLE_PREFIX,
         table_id,
@@ -210,7 +216,7 @@ pub fn new_stream_table_store(table_id: &TableId, config: StreamTableStoreConfig
 mod tests {
     use super::*;
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::models::{NamespaceId, TableName, rows::Row};
+    use kalamdb_commons::models::{rows::Row, NamespaceId, TableName};
     use kalamdb_sharding::ShardRouter;
     use std::collections::BTreeMap;
 

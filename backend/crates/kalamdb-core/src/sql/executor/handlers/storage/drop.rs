@@ -46,9 +46,8 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
         }
 
         // Check if any tables are using this storage
-        let all_tables = tables_provider
-            .list_tables()
-            .into_kalamdb_error("Failed to check tables")?;
+        let all_tables =
+            tables_provider.list_tables().into_kalamdb_error("Failed to check tables")?;
 
         let tables_using_storage: Vec<_> = all_tables
             .iter()
@@ -57,10 +56,10 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
                 match &t.table_options {
                     kalamdb_commons::schemas::TableOptions::User(opts) => {
                         opts.storage_id == storage_id
-                    }
+                    },
                     kalamdb_commons::schemas::TableOptions::Shared(opts) => {
                         opts.storage_id == storage_id
-                    }
+                    },
                     _ => false, // STREAM and SYSTEM tables don't have storage_id
                 }
             })
@@ -74,10 +73,12 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
             )));
         }
 
-        // Delete the storage
-        storages_provider
-            .delete_storage(&storage_id)
-            .into_kalamdb_error("Failed to drop storage")?;
+        // Delegate to unified applier (handles standalone vs cluster internally)
+        self.app_context
+            .applier()
+            .drop_storage(storage_id.clone())
+            .await
+            .map_err(|e| KalamDbError::ExecutionError(format!("DROP STORAGE failed: {}", e)))?;
 
         // Invalidate storage cache
         self.app_context.storage_registry().invalidate(&storage_id);

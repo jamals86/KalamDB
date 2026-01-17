@@ -12,15 +12,9 @@ impl CLISession {
         let cluster_info = self.fetch_cluster_info().await;
 
         println!();
-        println!(
-            "{}",
-            "═══════════════════════════════════════".cyan().bold()
-        );
+        println!("{}", "═══════════════════════════════════════".cyan().bold());
         println!("{}", "    Session Information".white().bold());
-        println!(
-            "{}",
-            "═══════════════════════════════════════".cyan().bold()
-        );
+        println!("{}", "═══════════════════════════════════════".cyan().bold());
         println!();
 
         // Connection info
@@ -112,10 +106,7 @@ impl CLISession {
             println!("  Mode:           {}", "Standalone".dimmed());
             println!("  {}", "(Could not fetch cluster info)".dimmed());
         }
-        println!(
-            "  {}",
-            "Use 'SELECT * FROM system.cluster' for full details".dimmed()
-        );
+        println!("  {}", "Use 'SELECT * FROM system.cluster' for full details".dimmed());
         println!();
 
         // CLI config
@@ -123,10 +114,7 @@ impl CLISession {
         let conn_cfg = self.config.resolved_connection();
         let ui_cfg = self.config.resolved_ui();
         println!("{}", "CLI Config:".yellow().bold());
-        println!(
-            "  Config File:   {}",
-            self.config_path.display().to_string().green()
-        );
+        println!("  Config File:   {}", self.config_path.display().to_string().green());
         println!(
             "  File Exists:   {}",
             if self.config_path.exists() {
@@ -135,20 +123,10 @@ impl CLISession {
                 "No".red()
             }
         );
-        println!(
-            "  Server URL:    {}",
-            server_cfg
-                .url
-                .as_deref()
-                .unwrap_or("<not set>")
-                .green()
-        );
+        println!("  Server URL:    {}", server_cfg.url.as_deref().unwrap_or("<not set>").green());
         println!("  Timeout:       {}s", server_cfg.timeout.to_string().green());
         println!("  Max Retries:   {}", server_cfg.max_retries.to_string().green());
-        println!(
-            "  HTTP Version: {}",
-            server_cfg.http_version.to_string().green()
-        );
+        println!("  HTTP Version: {}", server_cfg.http_version.to_string().green());
         println!(
             "  Auto Reconnect: {}",
             if conn_cfg.auto_reconnect {
@@ -157,20 +135,14 @@ impl CLISession {
                 "No".red()
             }
         );
-        println!(
-            "  Reconnect Delay: {} ms",
-            conn_cfg.reconnect_delay_ms.to_string().green()
-        );
+        println!("  Reconnect Delay: {} ms", conn_cfg.reconnect_delay_ms.to_string().green());
         println!(
             "  Max Reconnect Delay: {} ms",
             conn_cfg.max_reconnect_delay_ms.to_string().green()
         );
         println!(
             "  Max Reconnect Attempts: {}",
-            conn_cfg
-                .max_reconnect_attempts
-                .to_string()
-                .green()
+            conn_cfg.max_reconnect_attempts.to_string().green()
         );
         println!("  Output Format: {}", ui_cfg.format.green());
         println!(
@@ -181,32 +153,17 @@ impl CLISession {
                 "Disabled".red()
             }
         );
-        println!(
-            "  Timestamp Format: {}",
-            ui_cfg.timestamp_format.green()
-        );
-        println!(
-            "  History Size:  {}",
-            ui_cfg.history_size.to_string().green()
-        );
+        println!("  Timestamp Format: {}", ui_cfg.timestamp_format.green());
+        println!("  History Size:  {}", ui_cfg.history_size.to_string().green());
         println!();
 
         // History info
         let history = CommandHistory::new(ui_cfg.history_size);
         let history_count = history.entry_count().unwrap_or(0);
         println!("{}", "History:".yellow().bold());
-        println!(
-            "  History File:  {}",
-            history.path().display().to_string().green()
-        );
-        println!(
-            "  Entries:       {}",
-            history_count.to_string().green()
-        );
-        println!(
-            "  Max Entries:   {}",
-            ui_cfg.history_size.to_string().green()
-        );
+        println!("  History File:  {}", history.path().display().to_string().green());
+        println!("  Entries:       {}", history_count.to_string().green());
+        println!("  Max Entries:   {}", ui_cfg.history_size.to_string().green());
         println!();
 
         // Client info
@@ -219,10 +176,7 @@ impl CLISession {
 
         // Session statistics
         println!("{}", "Statistics:".yellow().bold());
-        println!(
-            "  Queries:        {}",
-            self.queries_executed.to_string().green()
-        );
+        println!("  Queries:        {}", self.queries_executed.to_string().green());
         println!("  Format:         {}", format!("{:?}", self.format).green());
         println!(
             "  Colors:         {}",
@@ -258,10 +212,7 @@ impl CLISession {
         }
         println!();
 
-        println!(
-            "{}",
-            "═══════════════════════════════════════".cyan().bold()
-        );
+        println!("{}", "═══════════════════════════════════════".cyan().bold());
         println!();
     }
 }

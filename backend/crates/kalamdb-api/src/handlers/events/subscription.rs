@@ -27,11 +27,7 @@ pub async fn handle_subscribe(
     rate_limiter: &Arc<RateLimiter>,
     live_query_manager: &Arc<LiveQueryManager>,
 ) -> Result<(), String> {
-    let user_id = connection_state
-        .read()
-        .user_id()
-        .cloned()
-        .ok_or("Not authenticated")?;
+    let user_id = connection_state.read().user_id().cloned().ok_or("Not authenticated")?;
 
     // Validate subscription ID
     if subscription.id.trim().is_empty() {
@@ -91,7 +87,11 @@ pub async fn handle_subscribe(
     // Register subscription with initial data fetch
     // LiveQueryManager handles all SQL parsing, permission checks, and registration internally
     match live_query_manager
-        .register_subscription_with_initial_data(connection_state, &subscription, Some(initial_opts))
+        .register_subscription_with_initial_data(
+            connection_state,
+            &subscription,
+            Some(initial_opts),
+        )
         .await
     {
         Ok(result) => {
@@ -102,11 +102,7 @@ pub async fn handle_subscribe(
                 result.initial_data.is_some()
             );
             if let Some(ref initial) = result.initial_data {
-                info!(
-                    "Initial data: {} rows, has_more={}",
-                    initial.rows.len(),
-                    initial.has_more
-                );
+                info!("Initial data: {} rows, has_more={}", initial.rows.len(), initial.has_more);
             }
 
             // Update rate limiter
@@ -116,7 +112,7 @@ pub async fn handle_subscribe(
             // Use BatchControl::new() which handles status based on batch_num and has_more
             let batch_control = if let Some(ref initial) = result.initial_data {
                 BatchControl::new(
-                    0,  // batch_num
+                    0, // batch_num
                     initial.has_more,
                     initial.last_seq,
                     initial.snapshot_end_seq,
@@ -126,8 +122,12 @@ pub async fn handle_subscribe(
                 BatchControl::new(0, false, None, None)
             };
 
-            let ack =
-                WebSocketMessage::subscription_ack(subscription_id.clone(), 0, batch_control.clone(), result.schema.clone());
+            let ack = WebSocketMessage::subscription_ack(
+                subscription_id.clone(),
+                0,
+                batch_control.clone(),
+                result.schema.clone(),
+            );
             // info!("Sending subscription_ack for {} with {} schema fields", subscription_id, result.schema.len());
             let _ = send_json(session, &ack).await;
 
@@ -137,7 +137,7 @@ pub async fn handle_subscribe(
                 //     subscription_id,
                 //     initial.rows.len()
                 // );
-                
+
                 // Convert Row objects to HashMap (always using simple JSON format)
                 let mut rows_json = Vec::with_capacity(initial.rows.len());
                 for row in initial.rows {
@@ -153,10 +153,10 @@ pub async fn handle_subscribe(
                             )
                             .await
                             .map_err(|_| "Failed to send error message".to_string());
-                        }
+                        },
                     }
                 }
-                
+
                 let batch_msg =
                     WebSocketMessage::initial_data_batch(subscription_id, rows_json, batch_control);
                 let _ = send_json(session, &batch_msg).await;
@@ -165,18 +165,18 @@ pub async fn handle_subscribe(
             }
 
             Ok(())
-        }
+        },
         Err(e) => {
             // Map error types to appropriate WebSocket error codes
             let (code, message) = match &e {
                 kalamdb_core::error::KalamDbError::PermissionDenied(msg) => {
                     ("UNAUTHORIZED", msg.as_str())
-                }
+                },
                 kalamdb_core::error::KalamDbError::NotFound(msg) => ("NOT_FOUND", msg.as_str()),
                 kalamdb_core::error::KalamDbError::InvalidSql(msg) => ("INVALID_SQL", msg.as_str()),
                 kalamdb_core::error::KalamDbError::InvalidOperation(msg) => {
                     ("UNSUPPORTED", msg.as_str())
-                }
+                },
                 _ => ("SUBSCRIPTION_FAILED", "Subscription registration failed"),
             };
             error!(
@@ -185,6 +185,6 @@ pub async fn handle_subscribe(
             );
             let _ = send_error(session, &subscription_id, code, message).await;
             Ok(())
-        }
+        },
     }
 }

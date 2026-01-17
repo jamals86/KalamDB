@@ -9,16 +9,14 @@ use std::time::Duration;
 /// Test: System table counts are consistent across all cluster nodes
 #[test]
 fn cluster_test_system_table_consistency() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Cluster System Table Count Consistency ===\n");
 
     let urls = cluster_urls();
-    assert!(
-        urls.len() >= 3,
-        "Expected at least 3 cluster URLs, got {}",
-        urls.len()
-    );
+    assert!(urls.len() >= 3, "Expected at least 3 cluster URLs, got {}", urls.len());
 
     let queries = [
         ("system.tables", "SELECT count(*) as count FROM system.tables"),
@@ -61,7 +59,9 @@ fn cluster_test_system_table_consistency() {
 /// Test: Namespace creation is replicated to all nodes
 #[test]
 fn cluster_test_namespace_replication() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Namespace Replication ===\n");
 
@@ -88,12 +88,7 @@ fn cluster_test_namespace_replication() {
         )
         .expect("Query failed");
 
-        assert!(
-            result.contains(&namespace),
-            "Namespace not found on node {}: {}",
-            i,
-            result
-        );
+        assert!(result.contains(&namespace), "Namespace not found on node {}: {}", i, result);
         println!("  ✓ Node {} has namespace", i);
     }
 
@@ -106,7 +101,9 @@ fn cluster_test_namespace_replication() {
 /// Test: Table creation is replicated to all nodes
 #[test]
 fn cluster_test_table_replication() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Table Replication ===\n");
 
@@ -114,10 +111,7 @@ fn cluster_test_table_replication() {
     let namespace = generate_unique_namespace("cluster_tbl");
 
     // Setup namespace
-    let _ = execute_on_node(
-        &urls[0],
-        &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace),
-    );
+    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -168,13 +162,7 @@ fn cluster_test_table_replication() {
             )
             .expect("Query failed");
 
-            assert!(
-                result.contains(*name),
-                "Table {} not found on node {}: {}",
-                name,
-                i,
-                result
-            );
+            assert!(result.contains(*name), "Table {} not found on node {}: {}", name, i, result);
         }
         println!("  ✓ Node {} has all {} tables", i, tables.len());
     }
@@ -188,7 +176,9 @@ fn cluster_test_table_replication() {
 /// Test: Data written to leader is readable from followers
 #[test]
 fn cluster_test_data_consistency() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Data Consistency Across Nodes ===\n");
 
@@ -196,10 +186,7 @@ fn cluster_test_data_consistency() {
     let namespace = generate_unique_namespace("cluster_data");
 
     // Setup
-    let _ = execute_on_node(
-        &urls[0],
-        &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace),
-    );
+    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");

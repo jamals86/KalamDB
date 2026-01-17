@@ -58,9 +58,7 @@ impl WireFormat for KalamDataType {
         // Handle EMBEDDING specially (needs dimension)
         if tag == 0x0D {
             let mut dim_buf = [0u8; 4];
-            reader
-                .read_exact(&mut dim_buf)
-                .map_err(|_| WireFormatError::UnexpectedEof)?;
+            reader.read_exact(&mut dim_buf).map_err(|_| WireFormatError::UnexpectedEof)?;
             let dim = u32::from_le_bytes(dim_buf) as usize;
 
             KalamDataType::validate_embedding_dimension(dim)

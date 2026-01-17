@@ -30,17 +30,15 @@ pub fn evaluate_default(
     match default {
         ColumnDefault::None => {
             // No default - should not be called for this case
-            Err(KalamDbError::InvalidOperation(
-                "Cannot evaluate None default".to_string(),
-            ))
-        }
+            Err(KalamDbError::InvalidOperation("Cannot evaluate None default".to_string()))
+        },
         ColumnDefault::Literal(value) => {
             // Convert literal JSON to ScalarValue
             Ok(json_value_to_scalar(value))
-        }
+        },
         ColumnDefault::FunctionCall { name, args } => {
             evaluate_function(name, args, user_id, sys_cols)
-        }
+        },
     }
 }
 
@@ -62,7 +60,7 @@ fn evaluate_function(
                 ));
             }
             Ok(ScalarValue::Utf8(Some(user_id.as_str().to_string())))
-        }
+        },
 
         "NOW" | "CURRENT_TIMESTAMP" => {
             // Return current timestamp in RFC3339 format (ISO 8601)
@@ -74,7 +72,7 @@ fn evaluate_function(
             }
             let now = chrono::Utc::now();
             Ok(ScalarValue::Utf8(Some(now.to_rfc3339())))
-        }
+        },
 
         "SNOWFLAKE_ID" => {
             // Generate Snowflake ID (64-bit sortable unique ID)
@@ -93,7 +91,7 @@ fn evaluate_function(
                         ))
                     })?;
                     Ok(ScalarValue::Int64(Some(seq_id.as_i64())))
-                }
+                },
                 None => {
                     // Fallback: create fresh generator (non-singleton, for testing only)
                     use kalamdb_commons::ids::SnowflakeGenerator;
@@ -105,9 +103,9 @@ fn evaluate_function(
                         ))
                     })?;
                     Ok(ScalarValue::Int64(Some(id)))
-                }
+                },
             }
-        }
+        },
 
         "UUID_V7" => {
             // Generate UUID v7 (time-ordered UUID)
@@ -119,7 +117,7 @@ fn evaluate_function(
             use uuid::Uuid;
             let uuid = Uuid::now_v7();
             Ok(ScalarValue::Utf8(Some(uuid.to_string())))
-        }
+        },
 
         "ULID" => {
             // Generate ULID (Universally Unique Lexicographically Sortable Identifier)
@@ -135,7 +133,7 @@ fn evaluate_function(
             // Convert to uppercase hex without dashes (ULID format)
             let ulid_like = uuid.to_string().replace('-', "").to_uppercase();
             Ok(ScalarValue::Utf8(Some(ulid_like)))
-        }
+        },
 
         _ => Err(KalamDbError::InvalidOperation(format!(
             "Unknown DEFAULT function: {}",
@@ -220,10 +218,7 @@ mod tests {
         let user_id = UserId::from("u_test123");
         let result = evaluate_default(&default, &user_id, None);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("takes no arguments"));
+        assert!(result.unwrap_err().to_string().contains("takes no arguments"));
     }
 
     #[test]
@@ -232,9 +227,6 @@ mod tests {
         let user_id = UserId::from("u_test123");
         let result = evaluate_default(&default, &user_id, None);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unknown DEFAULT function"));
+        assert!(result.unwrap_err().to_string().contains("Unknown DEFAULT function"));
     }
 }

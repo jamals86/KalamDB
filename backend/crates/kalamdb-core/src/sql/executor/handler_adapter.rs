@@ -186,7 +186,7 @@ mod tests {
         let adapter = TypedHandlerAdapter::new(handler, |stmt| match stmt.kind() {
             kalamdb_sql::statement_classifier::SqlStatementKind::CreateNamespace(s) => {
                 Some(s.clone())
-            }
+            },
             _ => None,
         });
         let ctx =
@@ -215,7 +215,7 @@ mod tests {
         let adapter = TypedHandlerAdapter::new(handler, |stmt| match stmt.kind() {
             kalamdb_sql::statement_classifier::SqlStatementKind::CreateNamespace(s) => {
                 Some(s.clone())
-            }
+            },
             _ => None,
         });
         let ctx =
@@ -234,7 +234,7 @@ mod tests {
         match result {
             Err(KalamDbError::InvalidOperation(msg)) => {
                 assert!(msg.contains("wrong statement type"));
-            }
+            },
             _ => panic!("Expected InvalidOperation error"),
         }
     }

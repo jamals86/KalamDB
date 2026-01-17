@@ -169,9 +169,7 @@ impl ServerConfig {
         }
 
         if self.user_management.deletion_grace_period_days < 0 {
-            return Err(anyhow::anyhow!(
-                "deletion_grace_period_days cannot be negative"
-            ));
+            return Err(anyhow::anyhow!("deletion_grace_period_days cannot be negative"));
         }
 
         if self.user_management.cleanup_job_schedule.trim().is_empty() {

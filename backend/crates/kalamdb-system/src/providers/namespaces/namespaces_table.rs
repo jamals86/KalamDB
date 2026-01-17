@@ -105,14 +105,14 @@ impl NamespacesTableSchema {
 
     /// Get the cached Arrow schema for system.namespaces table
     pub fn schema() -> SchemaRef {
-            static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-            SCHEMA
-                .get_or_init(|| {
-                    Self::definition()
-                        .to_arrow_schema()
-                        .expect("Failed to convert namespaces TableDefinition to Arrow schema")
-                })
-                .clone()
+        static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+        SCHEMA
+            .get_or_init(|| {
+                Self::definition()
+                    .to_arrow_schema()
+                    .expect("Failed to convert namespaces TableDefinition to Arrow schema")
+            })
+            .clone()
     }
 
     /// Get the table name

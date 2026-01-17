@@ -69,8 +69,8 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
         }
 
         if let Some(raw_config) = statement.config_json {
-            let value: serde_json::Value = serde_json::from_str(&raw_config)
-                .into_invalid_operation("Invalid config_json")?;
+            let value: serde_json::Value =
+                serde_json::from_str(&raw_config).into_invalid_operation("Invalid config_json")?;
 
             if !value.is_object() {
                 return Err(KalamDbError::InvalidOperation(
@@ -78,8 +78,10 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
                 ));
             }
 
-            storage.config_json = Some(serde_json::to_string(&value)
-                .into_invalid_operation("Failed to normalize CONFIG JSON")?);
+            storage.config_json = Some(
+                serde_json::to_string(&value)
+                    .into_invalid_operation("Failed to normalize CONFIG JSON")?,
+            );
         }
 
         // Update timestamp

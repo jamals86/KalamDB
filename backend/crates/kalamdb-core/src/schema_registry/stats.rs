@@ -16,8 +16,7 @@ use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::schemas::{
-    ColumnDefault, ColumnDefinition, TableDefinition, TableOptions,
-    TableType as KalamTableType,
+    ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType as KalamTableType,
 };
 use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_system::{SystemError, SystemTableProviderExt};
@@ -153,17 +152,24 @@ impl StatsTableProvider {
                 Arc::new(names.finish()) as ArrayRef,
                 Arc::new(values.finish()) as ArrayRef,
             ],
-        ).into_kalamdb_error("Failed to build stats batch")
+        )
+        .into_kalamdb_error("Failed to build stats batch")
     }
 }
 
 impl Default for StatsTableProvider {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SystemTableProviderExt for StatsTableProvider {
-    fn table_name(&self) -> &str { StatsTableSchema::table_name() }
-    fn schema_ref(&self) -> SchemaRef { self.schema.clone() }
+    fn table_name(&self) -> &str {
+        StatsTableSchema::table_name()
+    }
+    fn schema_ref(&self) -> SchemaRef {
+        self.schema.clone()
+    }
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {
         self.build_metrics_batch().map_err(|e| SystemError::Other(e.to_string()))
     }
@@ -171,9 +177,15 @@ impl SystemTableProviderExt for StatsTableProvider {
 
 #[async_trait]
 impl TableProvider for StatsTableProvider {
-    fn as_any(&self) -> &dyn Any { self }
-    fn schema(&self) -> SchemaRef { self.schema.clone() }
-    fn table_type(&self) -> TableType { TableType::View }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+    fn table_type(&self) -> TableType {
+        TableType::View
+    }
 
     async fn scan(
         &self,

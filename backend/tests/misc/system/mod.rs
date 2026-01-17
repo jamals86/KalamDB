@@ -15,5 +15,5 @@ pub(super) mod test_support;
 mod test_audit_logging;
 mod test_config_access;
 mod test_live_queries_metadata;
-mod test_system_users;
 mod test_system_user_init;
+mod test_system_users;

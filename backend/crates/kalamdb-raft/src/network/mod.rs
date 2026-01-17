@@ -15,5 +15,5 @@ mod network;
 pub mod service;
 
 pub use network::{RaftNetwork, RaftNetworkFactory};
-pub use service::{RaftService, start_rpc_server, ClientProposalRequest, ClientProposalResponse};
 pub use service::raft_client::RaftClient;
+pub use service::{start_rpc_server, ClientProposalRequest, ClientProposalResponse, RaftService};

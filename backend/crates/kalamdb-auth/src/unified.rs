@@ -126,15 +126,14 @@ pub enum AuthRequest {
     /// HTTP Authorization header (Basic or Bearer)
     /// Automatically parsed to determine auth method
     Header(String),
-    
+
     /// Direct username/password (WebSocket authenticate message)
     /// Bypasses header parsing for structured JSON input
     Credentials { username: String, password: String },
-    
+
     /// Direct JWT token (WebSocket authenticate message)
     /// Bypasses header parsing for structured JSON input
     Jwt { token: String },
-    
     // Future auth methods can be added here:
     // ApiKey { key: String },
     // OAuth { provider: String, token: String },
@@ -156,7 +155,7 @@ impl From<kalamdb_commons::websocket::WsAuthCredentials> for AuthRequest {
         match creds {
             WsAuthCredentials::Basic { username, password } => {
                 AuthRequest::Credentials { username, password }
-            }
+            },
             WsAuthCredentials::Jwt { token } => AuthRequest::Jwt { token },
             // Future auth methods:
             // WsAuthCredentials::ApiKey { key } => AuthRequest::ApiKey { key },
@@ -197,7 +196,7 @@ pub async fn authenticate(
         AuthRequest::Header(header) => authenticate_header(&header, connection_info, repo).await,
         AuthRequest::Credentials { username, password } => {
             authenticate_credentials(&username, &password, connection_info, repo).await
-        }
+        },
         AuthRequest::Jwt { token } => {
             // Direct JWT token authentication (from WebSocket)
             let user = authenticate_bearer(&token, connection_info, repo).await?;
@@ -205,7 +204,7 @@ pub async fn authenticate(
                 user,
                 method: AuthMethod::Bearer,
             })
-        }
+        },
     }
 }
 
@@ -225,9 +224,7 @@ async fn authenticate_header(
         // Handle both "Bearer " and malformed "Bearer" without space
         let token = auth_header.strip_prefix("Bearer").unwrap_or("").trim();
         if token.is_empty() {
-            return Err(AuthError::MalformedAuthorization(
-                "Bearer token missing".to_string(),
-            ));
+            return Err(AuthError::MalformedAuthorization("Bearer token missing".to_string()));
         }
         let user = authenticate_bearer(token, connection_info, repo).await?;
         Ok(AuthenticationResult {
@@ -289,9 +286,7 @@ async fn authenticate_username_password(
     if user.deleted_at.is_some() {
         // Security: Use generic message to prevent username enumeration
         debug!("Authentication failed for user attempt");
-        return Err(AuthError::InvalidCredentials(
-            "Invalid username or password".to_string(),
-        ));
+        return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
     }
 
     // Check if account is locked BEFORE password verification
@@ -346,9 +341,7 @@ async fn authenticate_username_password(
                 ));
             }
             if !password.is_empty()
-                && password::verify_password(password, &user.password_hash)
-                    .await
-                    .unwrap_or(false)
+                && password::verify_password(password, &user.password_hash).await.unwrap_or(false)
             {
                 auth_success = true;
             } else {
@@ -359,14 +352,10 @@ async fn authenticate_username_password(
     } else {
         // Regular users must have a password
         if user.password_hash.is_empty() {
-            return Err(AuthError::InvalidCredentials(
-                "Invalid username or password".to_string(),
-            ));
+            return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
         }
         if !password.is_empty()
-            && password::verify_password(password, &user.password_hash)
-                .await
-                .unwrap_or(false)
+            && password::verify_password(password, &user.password_hash).await.unwrap_or(false)
         {
             auth_success = true;
         } else {
@@ -380,9 +369,7 @@ async fn authenticate_username_password(
         if let Err(e) = LOGIN_TRACKER.record_failed_login(&mut user, repo).await {
             log::error!("Failed to record failed login: {}", e);
         }
-        return Err(AuthError::InvalidCredentials(
-            "Invalid username or password".to_string(),
-        ));
+        return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
     }
 
     // Record successful login (fire and forget, don't fail auth on tracking error)
@@ -415,10 +402,10 @@ static JWT_CONFIG: Lazy<JwtConfig> = Lazy::new(|| {
         .unwrap_or_else(|_| kalamdb_configs::defaults::default_auth_jwt_secret());
     // Default trusted issuer is "kalamdb" (matching KALAMDB_ISSUER in jwt_auth.rs)
     // Additional issuers can be added via KALAMDB_JWT_TRUSTED_ISSUERS env var
-    let trusted = std::env::var("KALAMDB_JWT_TRUSTED_ISSUERS")
-        .unwrap_or_else(|_| "kalamdb".to_string());
+    let trusted =
+        std::env::var("KALAMDB_JWT_TRUSTED_ISSUERS").unwrap_or_else(|_| "kalamdb".to_string());
     let trusted_issuers: Vec<String> = trusted.split(',').map(|s| s.trim().to_string()).collect();
-    
+
     JwtConfig {
         secret,
         trusted_issuers,
@@ -452,9 +439,7 @@ async fn authenticate_bearer(
     let user = repo.get_user_by_username(&username_typed).await?;
 
     if user.deleted_at.is_some() {
-        return Err(AuthError::InvalidCredentials(
-            "Invalid username or password".to_string(),
-        ));
+        return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
     }
 
     // SECURITY: Validate role from claims matches database
@@ -505,7 +490,7 @@ pub fn extract_username_for_audit(request: &AuthRequest) -> String {
             } else {
                 "unknown".to_string()
             }
-        }
+        },
         AuthRequest::Credentials { username, .. } => username.clone(),
         AuthRequest::Jwt { token } => extract_jwt_username_unsafe(token),
     }
@@ -563,7 +548,8 @@ mod tests {
     #[test]
     fn test_extract_username_from_basic_header() {
         // "testuser:password" base64 encoded
-        let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "testuser:password");
+        let encoded =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "testuser:password");
         let request = AuthRequest::Header(format!("Basic {}", encoded));
         assert_eq!(extract_username_for_audit(&request), "testuser");
     }
@@ -642,7 +628,7 @@ mod tests {
             AuthRequest::Credentials { username, password } => {
                 assert_eq!(username, "testuser");
                 assert_eq!(password, "testpass");
-            }
+            },
             _ => panic!("Expected Credentials variant"),
         }
     }
@@ -660,7 +646,7 @@ mod tests {
         match auth_request {
             AuthRequest::Jwt { token } => {
                 assert_eq!(token, "my.jwt.token");
-            }
+            },
             _ => panic!("Expected Jwt variant"),
         }
     }

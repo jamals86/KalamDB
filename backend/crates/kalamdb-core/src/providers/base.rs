@@ -19,12 +19,10 @@ use crate::providers::unified_dml;
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    Array, BooleanArray, Int16Array, Int32Array, Int64Array, StringArray, UInt32Array,
-    UInt64Array,
+    Array, BooleanArray, Int16Array, Int32Array, Int64Array, StringArray, UInt32Array, UInt64Array,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use kalamdb_commons::constants::SystemColumnNames;
 use datafusion::catalog::Session;
 use datafusion::datasource::memory::MemTable;
 use datafusion::datasource::TableProvider;
@@ -32,6 +30,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{utils::expr_to_columns, Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use datafusion::scalar::ScalarValue;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
@@ -155,10 +154,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
             KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
         })?;
 
-        coerced_rows
-            .into_iter()
-            .map(|row| self.insert(user_id, row))
-            .collect()
+        coerced_rows.into_iter().map(|row| self.insert(user_id, row)).collect()
     }
 
     /// Update a row by key (appends new version with incremented _seq)
@@ -197,9 +193,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
 
     /// Delete multiple rows in a batch (default implementation)
     fn delete_batch(&self, user_id: &UserId, keys: Vec<K>) -> Result<Vec<()>, KalamDbError> {
-        keys.into_iter()
-            .map(|key| self.delete(user_id, &key))
-            .collect()
+        keys.into_iter().map(|key| self.delete(user_id, &key)).collect()
     }
 
     // ===========================
@@ -285,11 +279,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// Delete a row by searching for matching ID field value.
     ///
     /// Returns `true` if a row was deleted, `false` if the row did not exist.
-    fn delete_by_id_field(
-        &self,
-        user_id: &UserId,
-        id_value: &str,
-    ) -> Result<bool, KalamDbError> {
+    fn delete_by_id_field(&self, user_id: &UserId, id_value: &str) -> Result<bool, KalamDbError> {
         if let Some(key) = self.find_row_key_by_id_field(user_id, id_value)? {
             self.delete(user_id, &key)?;
             Ok(true)
@@ -333,12 +323,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
             None
         } else {
             let first = filters[0].clone();
-            Some(
-                filters[1..]
-                    .iter()
-                    .cloned()
-                    .fold(first, |acc, e| acc.and(e)),
-            )
+            Some(filters[1..].iter().cloned().fold(first, |acc, e| acc.and(e)))
         };
 
         // Optimization: Pass projection to scan_rows ONLY if filters is empty.
@@ -540,11 +525,14 @@ pub fn pk_exists_in_cold(
                 scope_label
             );
             return Ok(false);
-        }
+        },
     };
 
     // 2. Get Storage from registry (cached lookup) and ObjectStore
-    let storage_id = cached.storage_id.clone().unwrap_or_else(kalamdb_commons::models::StorageId::local);
+    let storage_id = cached
+        .storage_id
+        .clone()
+        .unwrap_or_else(kalamdb_commons::models::StorageId::local);
     let storage = match core.app_context.storage_registry().get_storage(&storage_id) {
         Ok(Some(s)) => s,
         Ok(None) | Err(_) => {
@@ -556,7 +544,7 @@ pub fn pk_exists_in_cold(
                 scope_label
             );
             return Ok(false);
-        }
+        },
     };
 
     let object_store = cached
@@ -588,7 +576,7 @@ pub fn pk_exists_in_cold(
                 scope_label
             );
             return Ok(false);
-        }
+        },
     };
 
     if all_files.is_empty() {
@@ -615,7 +603,7 @@ pub fn pk_exists_in_cold(
                 scope_label
             );
             None
-        }
+        },
         Err(e) => {
             log::warn!(
                 "[pk_exists_in_cold] Manifest cache error for {}.{} {}: {}",
@@ -625,7 +613,7 @@ pub fn pk_exists_in_cold(
                 e
             );
             None
-        }
+        },
     };
 
     // 5. Use manifest to prune segments or list all Parquet files
@@ -654,10 +642,7 @@ pub fn pk_exists_in_cold(
         pruned_paths
     } else {
         // No manifest - use all Parquet files from listing
-        all_files
-            .into_iter()
-            .filter(|p| p.ends_with(".parquet"))
-            .collect()
+        all_files.into_iter().filter(|p| p.ends_with(".parquet")).collect()
     };
 
     if files_to_scan.is_empty() {
@@ -737,11 +722,14 @@ pub fn pk_exists_batch_in_cold(
                 scope_label
             );
             return Ok(None);
-        }
+        },
     };
 
     // 2. Get Storage from registry (cached lookup) and ObjectStore
-    let storage_id = cached.storage_id.clone().unwrap_or_else(kalamdb_commons::models::StorageId::local);
+    let storage_id = cached
+        .storage_id
+        .clone()
+        .unwrap_or_else(kalamdb_commons::models::StorageId::local);
     let storage = match core.app_context.storage_registry().get_storage(&storage_id) {
         Ok(Some(s)) => s,
         Ok(None) | Err(_) => {
@@ -753,7 +741,7 @@ pub fn pk_exists_batch_in_cold(
                 scope_label
             );
             return Ok(None);
-        }
+        },
     };
 
     let object_store = cached
@@ -785,7 +773,7 @@ pub fn pk_exists_batch_in_cold(
                 scope_label
             );
             return Ok(None);
-        }
+        },
     };
 
     if all_files.is_empty() {
@@ -812,7 +800,7 @@ pub fn pk_exists_batch_in_cold(
                 scope_label
             );
             None
-        }
+        },
         Err(e) => {
             log::warn!(
                 "[pk_exists_batch_in_cold] Manifest cache error for {}.{} {}: {}",
@@ -822,7 +810,7 @@ pub fn pk_exists_batch_in_cold(
                 e
             );
             None
-        }
+        },
     };
 
     // 5. Determine files to scan - union of files that may contain any of the PK values
@@ -855,10 +843,7 @@ pub fn pk_exists_batch_in_cold(
         relevant_files.into_iter().collect()
     } else {
         // No manifest - use all Parquet files from listing
-        all_files
-            .into_iter()
-            .filter(|p| p.ends_with(".parquet"))
-            .collect()
+        all_files.into_iter().filter(|p| p.ends_with(".parquet")).collect()
     };
 
     if files_to_scan.is_empty() {
@@ -1100,7 +1085,7 @@ where
     K: StorageKey,
 {
     let table_id = provider.table_id();
-    
+
     // Get table definition to check if PK is auto-increment
     if let Some(table_def) = provider
         .app_context()
@@ -1123,10 +1108,7 @@ where
             let pk_str = unified_dml::extract_user_pk_value(row_data, pk_name)?;
             let user_scope = resolve_user_scope(scope);
             // Use find_row_key_by_id_field which can use PK index (O(1) vs O(n))
-            if provider
-                .find_row_key_by_id_field(user_scope, &pk_str)?
-                .is_some()
-            {
+            if provider.find_row_key_by_id_field(user_scope, &pk_str)?.is_some() {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Primary key violation: value '{}' already exists in column '{}'",
                     pk_str, pk_name
@@ -1216,8 +1198,7 @@ where
         if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Cannot modify auto-increment primary key column '{}' in table {}",
-                pk_name,
-                table_id
+                pk_name, table_id
             )));
         }
     }
@@ -1226,10 +1207,7 @@ where
     let new_pk_str = unified_dml::extract_user_pk_value(updates, pk_name)?;
     let user_scope = resolve_user_scope(scope);
 
-    if provider
-        .find_row_key_by_id_field(user_scope, &new_pk_str)?
-        .is_some()
-    {
+    if provider.find_row_key_by_id_field(user_scope, &new_pk_str)?.is_some() {
         return Err(KalamDbError::AlreadyExists(format!(
             "Primary key violation: value '{}' already exists in column '{}' (UPDATE would create duplicate)",
             new_pk_str, pk_name

@@ -21,12 +21,12 @@ pub enum CommandType {
     DropTable,
     CreateStorage,
     DropStorage,
-    
+
     // User Management (Meta group)
     CreateUser,
     UpdateUser,
     DeleteUser,
-    
+
     // DML Commands (Data groups - routed by shard)
     Insert,
     Update,
@@ -50,13 +50,10 @@ impl CommandType {
                 | CommandType::DeleteUser
         )
     }
-    
+
     /// Check if this is a DML command
     pub fn is_dml(&self) -> bool {
-        matches!(
-            self,
-            CommandType::Insert | CommandType::Update | CommandType::Delete
-        )
+        matches!(self, CommandType::Insert | CommandType::Update | CommandType::Delete)
     }
 }
 

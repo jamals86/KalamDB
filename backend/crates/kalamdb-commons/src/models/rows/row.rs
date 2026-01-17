@@ -161,31 +161,31 @@ impl From<StoredScalarValue> for ScalarValue {
             StoredScalarValue::Int32(v) => ScalarValue::Int32(v),
             StoredScalarValue::Int64(v) => {
                 ScalarValue::Int64(v.and_then(|s| s.parse::<i64>().ok()))
-            }
+            },
             StoredScalarValue::UInt8(v) => ScalarValue::UInt8(v),
             StoredScalarValue::UInt16(v) => ScalarValue::UInt16(v),
             StoredScalarValue::UInt32(v) => ScalarValue::UInt32(v),
             StoredScalarValue::UInt64(v) => {
                 ScalarValue::UInt64(v.and_then(|s| s.parse::<u64>().ok()))
-            }
+            },
             StoredScalarValue::Utf8(v) => ScalarValue::Utf8(v),
             StoredScalarValue::LargeUtf8(v) => ScalarValue::LargeUtf8(v),
             StoredScalarValue::Binary(v) => ScalarValue::Binary(v),
             StoredScalarValue::LargeBinary(v) => ScalarValue::LargeBinary(v),
             StoredScalarValue::FixedSizeBinary { size, value } => {
                 ScalarValue::FixedSizeBinary(size, value)
-            }
+            },
             StoredScalarValue::Date32(v) => ScalarValue::Date32(v),
             StoredScalarValue::Time64Microsecond(v) => ScalarValue::Time64Microsecond(v),
             StoredScalarValue::TimestampMillisecond { value, timezone } => {
                 ScalarValue::TimestampMillisecond(value, timezone.map(Arc::<str>::from))
-            }
+            },
             StoredScalarValue::TimestampMicrosecond { value, timezone } => {
                 ScalarValue::TimestampMicrosecond(value, timezone.map(Arc::<str>::from))
-            }
+            },
             StoredScalarValue::TimestampNanosecond { value, timezone } => {
                 ScalarValue::TimestampNanosecond(value, timezone.map(Arc::<str>::from))
-            }
+            },
             StoredScalarValue::Decimal128 {
                 value,
                 precision,
@@ -308,7 +308,7 @@ fn encode_embedding_from_list(array: Arc<FixedSizeListArray>) -> Option<StoredSc
 
 fn decode_embedding(size: i32, values: &Option<Vec<Option<f32>>>) -> ScalarValue {
     use arrow::datatypes::Float32Type;
-    
+
     let values = values.clone().unwrap_or_else(|| vec![None; size as usize]);
     let mut floats = Vec::with_capacity(size as usize);
     for value in values {

@@ -7,9 +7,9 @@ use crate::jobs::executors::{
 };
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::{NamespaceId, NodeId, StorageId};
-use kalamdb_system::{StoragePartition, SystemTable};
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
+use kalamdb_system::{StoragePartition, SystemTable};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use std::sync::Once;
@@ -44,12 +44,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         test_config.execution.max_parameters = 50;
         test_config.execution.max_parameter_size_bytes = 512 * 1024;
 
-        AppContext::init(
-            storage_backend,
-            NodeId::new(1),
-            "data/storage".to_string(),
-            test_config,
-        );
+        AppContext::init(storage_backend, NodeId::new(1), "data/storage".to_string(), test_config);
     });
 
     // One-time bootstrap that matches server startup behavior closely:
@@ -89,11 +84,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         // Ensure default namespace exists
         let namespaces = app_ctx.system_tables().namespaces();
         let default_namespace = NamespaceId::new("default");
-        if namespaces
-            .get_namespace_by_id(&default_namespace)
-            .unwrap()
-            .is_none()
-        {
+        if namespaces.get_namespace_by_id(&default_namespace).unwrap().is_none() {
             namespaces
                 .create_namespace(kalamdb_commons::system::Namespace {
                     namespace_id: default_namespace,
@@ -127,10 +118,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         }
     });
 
-    TEST_DB
-        .get()
-        .expect("TEST_DB should be initialized")
-        .clone()
+    TEST_DB.get().expect("TEST_DB should be initialized").clone()
 }
 
 pub fn create_test_job_registry() -> JobRegistry {

@@ -50,13 +50,13 @@ pub fn append_version_sync(
             return Err(KalamDbError::InvalidOperation(
                 "System tables cannot use append_version()".to_string(),
             ));
-        }
+        },
         TableType::Stream => {
             return Err(KalamDbError::InvalidOperation(
                 "Stream tables cannot use append_version()".to_string(),
             ));
-        }
-        _ => {}
+        },
+        _ => {},
     }
 
     // Generate new SeqId via SystemColumnsService
@@ -103,7 +103,7 @@ pub fn append_version_sync(
             );
 
             Ok(seq_id)
-        }
+        },
         TableType::Shared => {
             // Create SharedTableRow
             let entity = SharedTableRow {
@@ -137,11 +137,11 @@ pub fn append_version_sync(
             );
 
             Ok(seq_id)
-        }
+        },
         TableType::System | TableType::Stream => {
             // Already handled above, unreachable
             unreachable!()
-        }
+        },
     }
 }
 
@@ -183,7 +183,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_append_version_user_table() {
-        let app_ctx = Arc::new(AppContext::new_test());
+        let app_ctx = AppContext::new_test();
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
         let user_id = UserId::new("user1");
         let fields = serde_json::json!({"id": 1, "name": "Alice"});
@@ -199,18 +199,14 @@ mod tests {
         .await;
 
         // Should succeed with in-memory test backend
-        assert!(
-            result.is_ok(),
-            "INSERT via append_version should succeed: {:?}",
-            result.err()
-        );
+        assert!(result.is_ok(), "INSERT via append_version should succeed: {:?}", result.err());
         let seq_id = result.unwrap();
         assert!(seq_id.as_i64() > 0, "SeqId should be positive");
     }
 
     #[tokio::test]
     async fn test_append_version_requires_user_id_for_user_tables() {
-        let app_ctx = Arc::new(AppContext::new_test());
+        let app_ctx = AppContext::new_test();
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
         let fields = serde_json::json!({"id": 1, "name": "Alice"});
 
@@ -230,24 +226,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_append_version_system_table_rejected() {
-        let app_ctx = Arc::new(AppContext::new_test());
+        let app_ctx = AppContext::new_test();
         let table_id = TableId::new(NamespaceId::new("system"), TableName::new("users"));
         let fields = serde_json::json!({"id": 1});
 
-        let result = append_version(
-            Arc::clone(&app_ctx),
-            &table_id,
-            TableType::System,
-            None,
-            fields,
-            false,
-        )
-        .await;
+        let result =
+            append_version(Arc::clone(&app_ctx), &table_id, TableType::System, None, fields, false)
+                .await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("System tables cannot"));
+        assert!(result.unwrap_err().to_string().contains("System tables cannot"));
     }
 }

@@ -138,14 +138,8 @@ mod tests {
 
         assert_eq!(stmt.name.as_str(), "app");
         assert_eq!(stmt.options.len(), 2);
-        assert_eq!(
-            stmt.options.get("max_tables"),
-            Some(&JsonValue::Number(100.into()))
-        );
-        assert_eq!(
-            stmt.options.get("region"),
-            Some(&JsonValue::String("us-west".to_string()))
-        );
+        assert_eq!(stmt.options.get("max_tables"), Some(&JsonValue::Number(100.into())));
+        assert_eq!(stmt.options.get("region"), Some(&JsonValue::String("us-west".to_string())));
     }
 
     #[test]

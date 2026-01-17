@@ -74,9 +74,7 @@ impl RocksDBBackend {
 impl StorageBackend for RocksDBBackend {
     fn get(&self, partition: &Partition, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let cf = self.get_cf(partition)?;
-        self.db
-            .get_cf(&cf, key)
-            .map_err(|e| StorageError::IoError(e.to_string()))
+        self.db.get_cf(&cf, key).map_err(|e| StorageError::IoError(e.to_string()))
     }
 
     fn put(&self, partition: &Partition, key: &[u8], value: &[u8]) -> Result<()> {
@@ -107,11 +105,11 @@ impl StorageBackend for RocksDBBackend {
                 } => {
                     let cf = self.get_cf(&partition)?;
                     batch.put_cf(&cf, key, value);
-                }
+                },
                 Operation::Delete { partition, key } => {
                     let cf = self.get_cf(&partition)?;
                     batch.delete_cf(&cf, key);
-                }
+                },
             }
         }
 
@@ -179,7 +177,7 @@ impl StorageBackend for RocksDBBackend {
                             }
                         }
                         Some((k.to_vec(), v.to_vec()))
-                    }
+                    },
                     Err(_) => None,
                 }
             }
@@ -219,7 +217,7 @@ impl StorageBackend for RocksDBBackend {
                     return Ok(());
                 }
                 Err(StorageError::IoError(msg))
-            }
+            },
         }
     }
 
@@ -257,12 +255,12 @@ impl StorageBackend for RocksDBBackend {
 
     fn compact_partition(&self, partition: &Partition) -> Result<()> {
         let cf = self.get_cf(partition)?;
-        
+
         // Compact the entire column family range
         // This removes tombstones and optimizes storage after flush operations
         // Note: compact_range_cf is infallible (no Result return)
         self.db.compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
-        
+
         Ok(())
     }
 
@@ -354,10 +352,7 @@ mod tests {
         backend.batch(ops).unwrap();
 
         assert_eq!(backend.get(&partition, b"key1").unwrap(), None);
-        assert_eq!(
-            backend.get(&partition, b"key2").unwrap(),
-            Some(b"value2".to_vec())
-        );
+        assert_eq!(backend.get(&partition, b"key2").unwrap(), Some(b"value2".to_vec()));
     }
 
     #[test]
@@ -372,10 +367,7 @@ mod tests {
         backend.put(&partition, b"key2", b"value2").unwrap();
         backend.put(&partition, b"key3", b"value3").unwrap();
 
-        let results: Vec<_> = backend
-            .scan(&partition, None, None, None)
-            .unwrap()
-            .collect();
+        let results: Vec<_> = backend.scan(&partition, None, None, None).unwrap().collect();
 
         assert_eq!(results.len(), 3);
     }
@@ -392,10 +384,8 @@ mod tests {
         backend.put(&partition, b"user:2", b"value2").unwrap();
         backend.put(&partition, b"admin:1", b"value3").unwrap();
 
-        let results: Vec<_> = backend
-            .scan(&partition, Some(b"user:"), None, None)
-            .unwrap()
-            .collect();
+        let results: Vec<_> =
+            backend.scan(&partition, Some(b"user:"), None, None).unwrap().collect();
 
         assert_eq!(results.len(), 2);
     }
@@ -412,10 +402,7 @@ mod tests {
         backend.put(&partition, b"key2", b"value2").unwrap();
         backend.put(&partition, b"key3", b"value3").unwrap();
 
-        let results: Vec<_> = backend
-            .scan(&partition, None, None, Some(2))
-            .unwrap()
-            .collect();
+        let results: Vec<_> = backend.scan(&partition, None, None, Some(2)).unwrap().collect();
 
         assert_eq!(results.len(), 2);
     }

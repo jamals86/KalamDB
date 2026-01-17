@@ -129,10 +129,7 @@ impl SubscriptionValidator {
         }
 
         // Only allow alphanumeric, dash, underscore
-        if !subscription_id
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
-        {
+        if !subscription_id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
             return Err(LiveError::InvalidSubscription {
                 reason: "subscription_id must contain only alphanumeric, dash, or underscore"
                     .to_string(),
@@ -173,7 +170,7 @@ impl SubscriptionValidator {
 
     /// Validate table name format
     pub fn validate_table_name(table_name: &str) -> Result<()> {
-        kalamdb_commons::validation::validate_table_name(table_name).map_err(|e| {
+        kalamdb_sql::validation::validate_table_name(table_name).map_err(|e| {
             LiveError::InvalidSubscription {
                 reason: e.to_string(),
                 field: "table_name".to_string(),
@@ -246,9 +243,6 @@ mod tests {
             subscription_id: "sub-1".to_string(),
             connection_id: "conn-1".to_string(),
         };
-        assert_eq!(
-            err.to_string(),
-            "Duplicate subscription ID 'sub-1' for connection 'conn-1'"
-        );
+        assert_eq!(err.to_string(), "Duplicate subscription ID 'sub-1' for connection 'conn-1'");
     }
 }

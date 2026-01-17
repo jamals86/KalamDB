@@ -104,12 +104,12 @@ pub fn require_admin(context: &ExecutionContext, action: &str) -> Result<(), Kal
 /// ```ignore
 /// block_anonymous_write(context, "CREATE TABLE")?;
 /// ```
-pub fn block_anonymous_write(context: &ExecutionContext, operation: &str) -> Result<(), KalamDbError> {
+pub fn block_anonymous_write(
+    context: &ExecutionContext,
+    operation: &str,
+) -> Result<(), KalamDbError> {
     if context.is_anonymous() {
-        log::warn!(
-            "❌ {} blocked: Anonymous users cannot perform write operations",
-            operation
-        );
+        log::warn!("❌ {} blocked: Anonymous users cannot perform write operations", operation);
         return Err(KalamDbError::Unauthorized(
             "Anonymous users can only SELECT from public tables. Please authenticate to perform write operations.".to_string()
         ));
@@ -136,7 +136,8 @@ mod tests {
     fn test_block_system_namespace_modification() {
         // System namespaces should be blocked
         let system_ns = NamespaceId::from("system");
-        let result = block_system_namespace_modification(&system_ns, "ALTER", "TABLE", Some("users"));
+        let result =
+            block_system_namespace_modification(&system_ns, "ALTER", "TABLE", Some("users"));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Cannot alter"));
 

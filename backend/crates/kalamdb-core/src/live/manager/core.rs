@@ -7,13 +7,14 @@
 //! When data is applied on any node (leader or follower), the provider's methods
 //! fire local notifications - no need for separate HTTP cluster broadcast.
 
+use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use crate::live::connections_manager::{ConnectionsManager, SharedConnectionState};
 use crate::live::filter_eval::parse_where_clause;
 use crate::live::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::live::notification::NotificationService;
 use crate::live::query_parser::QueryParser;
-use crate::live::connections_manager::{ConnectionsManager, SharedConnectionState};
 use crate::live::subscription::SubscriptionService;
 use crate::live::types::{ChangeNotification, RegistryStats, SubscriptionResult};
 use crate::sql::executor::SqlExecutor;
@@ -52,23 +53,17 @@ impl LiveQueryManager {
         schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
         registry: Arc<ConnectionsManager>,
         base_session_context: Arc<SessionContext>,
+        app_context: Arc<AppContext>,
     ) -> Self {
         let node_id = registry.node_id().clone();
-        let initial_data_fetcher = Arc::new(InitialDataFetcher::new(
-            base_session_context,
-            schema_registry.clone(),
-        ));
+        let initial_data_fetcher =
+            Arc::new(InitialDataFetcher::new(base_session_context, schema_registry.clone()));
 
-        let subscription_service = Arc::new(SubscriptionService::new(
-            registry.clone(),
-            live_queries_provider.clone(),
-            node_id.clone(),
-        ));
+        let subscription_service =
+            Arc::new(SubscriptionService::new(registry.clone(), node_id.clone(), app_context));
 
-        let notification_service = NotificationService::new(
-            registry.clone(),
-            live_queries_provider.clone(),
-        );
+        let notification_service =
+            NotificationService::new(registry.clone(), live_queries_provider.clone());
 
         Self {
             registry,
@@ -84,12 +79,6 @@ impl LiveQueryManager {
     /// Get the node_id for this manager
     pub fn node_id(&self) -> &NodeId {
         &self.node_id
-    }
-
-    /// Set the AppContext for Raft command execution.
-    /// Called after AppContext is fully constructed.
-    pub fn set_app_context(&self, app_ctx: Arc<crate::app_context::AppContext>) {
-        self.subscription_service.set_app_context(app_ctx);
     }
 
     /// Provide shared SqlExecutor so initial data fetches reuse common execution path
@@ -116,7 +105,14 @@ impl LiveQueryManager {
         batch_size: usize,
     ) -> Result<LiveQueryId, KalamDbError> {
         self.subscription_service
-            .register_subscription(connection_state, request, table_id, filter_expr, projections, batch_size)
+            .register_subscription(
+                connection_state,
+                request,
+                table_id,
+                filter_expr,
+                projections,
+                batch_size,
+            )
             .await
     }
 
@@ -137,16 +133,16 @@ impl LiveQueryManager {
         initial_data_options: Option<InitialDataOptions>,
     ) -> Result<SubscriptionResult, KalamDbError> {
         // Get user_id from connection state
-        let user_id = connection_state.read().user_id()
-            .cloned()
-            .ok_or_else(|| KalamDbError::InvalidOperation("Connection not authenticated".to_string()))?;
+        let user_id = connection_state.read().user_id().cloned().ok_or_else(|| {
+            KalamDbError::InvalidOperation("Connection not authenticated".to_string())
+        })?;
 
         // Parse table name from SQL
         // TODO: Parse tableid/where/projection all at once using sqlparser instead of writing ad-hoc parsers
         let raw_table = QueryParser::extract_table_name(&request.sql)?;
-        let (namespace, table) = raw_table
-            .split_once('.')
-            .ok_or_else(|| KalamDbError::InvalidSql("Query must use namespace.table format".to_string()))?;
+        let (namespace, table) = raw_table.split_once('.').ok_or_else(|| {
+            KalamDbError::InvalidSql("Query must use namespace.table format".to_string())
+        })?;
 
         let namespace_id = NamespaceId::from(namespace);
         let table_name = TableName::from(table);
@@ -178,30 +174,34 @@ impl LiveQueryManager {
             kalamdb_commons::TableType::User => {
                 // USER tables are accessible to any authenticated user
                 // Row-level security filters data to only their rows during query execution
-            }
+            },
             kalamdb_commons::TableType::System if !is_admin => {
                 return Err(KalamDbError::PermissionDenied(
                     format!("Cannot subscribe to system table '{}': insufficient privileges. Only DBA and system roles can subscribe to system tables.",
                     table_id)
                 ));
-            }
+            },
             kalamdb_commons::TableType::Shared => {
                 return Err(KalamDbError::InvalidOperation(
                     format!("Cannot subscribe to shared table '{}': shared tables do not support live subscriptions. Use direct SELECT queries instead.",
                     table_id)
                 ));
-            }
-            _ => {}
+            },
+            _ => {},
         }
 
         // Determine batch size
-        let batch_size = request.options.batch_size.unwrap_or(kalamdb_commons::websocket::MAX_ROWS_PER_BATCH);
+        let batch_size = request
+            .options
+            .batch_size
+            .unwrap_or(kalamdb_commons::websocket::MAX_ROWS_PER_BATCH);
 
         // Parse filter expression from WHERE clause (if present)
         let filter_expr: Option<Expr> = QueryParser::extract_where_clause(&request.sql)
             .map(|where_clause| {
                 // Resolve placeholders like CURRENT_USER() before parsing
-                let resolved = QueryParser::resolve_where_clause_placeholders(&where_clause, &user_id);
+                let resolved =
+                    QueryParser::resolve_where_clause_placeholders(&where_clause, &user_id);
                 parse_where_clause(&resolved)
             })
             .transpose()
@@ -219,14 +219,16 @@ impl LiveQueryManager {
         }
 
         // Register the subscription
-        let live_id = self.register_subscription(
-            connection_state,
-            request,
-            table_id.clone(),
-            filter_expr,
-            projections.clone(),
-            batch_size,
-        ).await?;
+        let live_id = self
+            .register_subscription(
+                connection_state,
+                request,
+                table_id.clone(),
+                filter_expr,
+                projections.clone(),
+                batch_size,
+            )
+            .await?;
 
         // Fetch initial data if requested
         let initial_data = if let Some(fetch_options) = initial_data_options {
@@ -266,9 +268,13 @@ impl LiveQueryManager {
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, col_name)| {
-                    table_def.columns.iter().find(|c| c.column_name.eq_ignore_ascii_case(col_name)).map(|col| {
-                        SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx)
-                    })
+                    table_def
+                        .columns
+                        .iter()
+                        .find(|c| c.column_name.eq_ignore_ascii_case(col_name))
+                        .map(|col| {
+                            SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx)
+                        })
                 })
                 .collect()
         } else {
@@ -277,7 +283,9 @@ impl LiveQueryManager {
             cols.sort_by_key(|c| c.ordinal_position);
             cols.iter()
                 .enumerate()
-                .map(|(idx, col)| SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx))
+                .map(|(idx, col)| {
+                    SchemaField::new(col.column_name.clone(), col.data_type.clone(), idx)
+                })
                 .collect()
         };
 
@@ -300,13 +308,9 @@ impl LiveQueryManager {
         // Get subscription state from connection
         let sub_state = {
             let state = connection_state.read();
-            state
-                .subscriptions
-                .get(subscription_id)
-                .map(|s| s.clone())
-                .ok_or_else(|| {
-                    KalamDbError::NotFound(format!("Subscription not found: {}", subscription_id))
-                })?
+            state.subscriptions.get(subscription_id).map(|s| s.clone()).ok_or_else(|| {
+                KalamDbError::NotFound(format!("Subscription not found: {}", subscription_id))
+            })?
         };
 
         let table_def = self
@@ -327,11 +331,8 @@ impl LiveQueryManager {
         let projections_ref = sub_state.projections.as_deref().map(|v| v.as_slice());
 
         // Create batch options with metadata from subscription state
-        let fetch_options = InitialDataOptions::batch(
-            since_seq,
-            sub_state.snapshot_end_seq,
-            sub_state.batch_size,
-        );
+        let fetch_options =
+            InitialDataOptions::batch(since_seq, sub_state.snapshot_end_seq, sub_state.batch_size);
 
         self.initial_data_fetcher
             .fetch_initial_data(
@@ -356,9 +357,7 @@ impl LiveQueryManager {
         user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<Vec<LiveQueryId>, KalamDbError> {
-        self.subscription_service
-            .unregister_connection(user_id, connection_id)
-            .await
+        self.subscription_service.unregister_connection(user_id, connection_id).await
     }
 
     /// Unregister a single live query subscription using SharedConnectionState
@@ -382,12 +381,9 @@ impl LiveQueryManager {
         live_id: &LiveQueryId,
     ) -> Result<(), KalamDbError> {
         // Get connection from registry
-        let connection_state = self.registry.get_connection(&live_id.connection_id)
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!(
-                    "Connection not found for live query: {}",
-                    live_id
-                ))
+        let connection_state =
+            self.registry.get_connection(&live_id.connection_id).ok_or_else(|| {
+                KalamDbError::NotFound(format!("Connection not found for live query: {}", live_id))
             })?;
 
         // Extract subscription_id from live_id
@@ -449,8 +445,7 @@ impl LiveQueryManager {
         table_id: TableId,
         notification: ChangeNotification,
     ) {
-        self.notification_service
-            .notify_async(user_id, table_id, notification)
+        self.notification_service.notify_async(user_id, table_id, notification)
     }
 
     /// Notify live query subscribers of a table change
@@ -466,24 +461,27 @@ impl LiveQueryManager {
     }
 
     /// Handle auth expiry for a connection
-    pub async fn handle_auth_expiry(&self, connection_id: &ConnectionId) -> Result<(), KalamDbError> {
+    pub async fn handle_auth_expiry(
+        &self,
+        connection_id: &ConnectionId,
+    ) -> Result<(), KalamDbError> {
         let connection_state = self.registry.get_connection(connection_id).ok_or_else(|| {
             KalamDbError::NotFound(format!("Connection not found: {}", connection_id))
         })?;
-        
+
         let user_id = {
             let state = connection_state.read();
             state.user_id.clone().ok_or_else(|| {
                 KalamDbError::NotFound(format!("User not found for connection: {}", connection_id))
             })?
         };
-        
+
         let removed_ids = self.unregister_connection(&user_id, connection_id).await?;
-        
+
         for live_id in removed_ids {
             let _ = self.live_queries_provider.delete_live_query_async(&live_id).await;
         }
-        
+
         Ok(())
     }
 

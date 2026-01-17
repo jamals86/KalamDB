@@ -41,7 +41,12 @@ pub async fn send_auth_error(mut session: Session, message: &str) -> Result<(), 
 }
 
 /// Send error notification
-pub async fn send_error(session: &mut Session, id: &str, code: &str, message: &str) -> Result<(), ()> {
+pub async fn send_error(
+    session: &mut Session,
+    id: &str,
+    code: &str,
+    message: &str,
+) -> Result<(), ()> {
     let msg = Notification::error(id.to_string(), code.to_string(), message.to_string());
     send_json(session, &msg).await
 }
@@ -56,12 +61,12 @@ pub async fn send_json<T: serde::Serialize>(session: &mut Session, msg: &T) -> R
 }
 
 /// Send raw data with automatic compression
-/// 
+///
 /// Messages over 512 bytes are automatically gzip compressed and sent as binary frames.
 /// Smaller messages are sent as text frames for efficiency.
 async fn send_data(session: &mut Session, data: &[u8]) -> Result<(), ()> {
     let (payload, compressed) = maybe_compress(data);
-    
+
     if compressed && is_gzip(&payload) {
         // Send compressed data as binary frame
         session.binary(payload).await.map_err(|_| ())

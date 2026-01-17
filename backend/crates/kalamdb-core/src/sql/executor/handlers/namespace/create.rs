@@ -13,7 +13,6 @@ use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::catalog::MemorySchemaProvider;
 use kalamdb_commons::models::{NamespaceId, UserId};
-use kalamdb_commons::system::Namespace;
 use kalamdb_sql::ddl::CreateNamespaceStatement;
 use std::sync::Arc;
 
@@ -52,20 +51,15 @@ impl CreateNamespaceHandler {
         // Tables will be registered here when CREATE TABLE is executed
         let schema_provider = Arc::new(MemorySchemaProvider::new());
 
-        catalog
-            .register_schema(namespace_id.as_str(), schema_provider)
-            .map_err(|e| {
-                KalamDbError::CatalogError(format!(
-                    "Failed to register schema '{}': {}",
-                    namespace_id.as_str(),
-                    e
-                ))
-            })?;
+        catalog.register_schema(namespace_id.as_str(), schema_provider).map_err(|e| {
+            KalamDbError::CatalogError(format!(
+                "Failed to register schema '{}': {}",
+                namespace_id.as_str(),
+                e
+            ))
+        })?;
 
-        log::debug!(
-            "Registered DataFusion schema for namespace '{}'",
-            namespace_id.as_str()
-        );
+        log::debug!("Registered DataFusion schema for namespace '{}'", namespace_id.as_str());
 
         Ok(())
     }
@@ -83,7 +77,7 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         let name = statement.name.as_str();
 
         // Validate namespace name
-        Namespace::validate_name(name)?;
+        kalamdb_sql::validation::validate_namespace_name(name).map_err(|e| e.to_string())?;
 
         // Check if namespace already exists
         let namespace_id = NamespaceId::new(name);
@@ -102,7 +96,7 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
             namespace_id: namespace_id.clone(),
             created_by,
         };
-        
+
         executor.execute_meta(cmd).await.map_err(|e| {
             KalamDbError::ExecutionError(format!("Failed to create namespace via executor: {}", e))
         })?;
@@ -126,10 +120,10 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         use crate::sql::executor::helpers::guards::block_anonymous_write;
-        
+
         // T050: Block anonymous users from DDL operations
         block_anonymous_write(context, "CREATE NAMESPACE")?;
-        
+
         require_admin(context, "create namespace")
     }
 }
@@ -164,7 +158,7 @@ mod tests {
             ExecutionResult::Success { message } => {
                 assert!(message.contains("test_typed_ns"));
                 assert!(message.contains("created successfully"));
-            }
+            },
             _ => panic!("Expected Success result"),
         }
     }
@@ -200,11 +194,8 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateNamespaceHandler::new(app_ctx);
-        let user_ctx = ExecutionContext::new(
-            UserId::from("regular_user"),
-            Role::User,
-            create_test_session(),
-        );
+        let user_ctx =
+            ExecutionContext::new(UserId::from("regular_user"), Role::User, create_test_session());
 
         let stmt = CreateNamespaceStatement {
             name: NamespaceId::new("unauthorized_ns"),
