@@ -5,7 +5,6 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use once_cell::sync::OnceCell;
 use std::sync::Arc;
 
 use kalamdb_commons::models::rows::Row;
@@ -159,9 +158,6 @@ pub trait UnifiedApplier: Send + Sync {
 
     /// Get leader info for forwarding (if not leader)
     fn get_leader_info(&self) -> Option<LeaderInfo>;
-
-    /// Initialize the applier with AppContext (called after AppContext is created)
-    fn set_app_context(&self, app_context: Arc<AppContext>);
 }
 
 /// Raft Applier - routes all commands through Raft consensus
@@ -173,28 +169,20 @@ pub trait UnifiedApplier: Send + Sync {
 ///
 /// Even in single-node mode, we use a single-node Raft cluster for consistency.
 pub struct RaftApplier {
-    executor: OnceCell<CommandExecutorImpl>,
-}
-
-impl Default for RaftApplier {
-    fn default() -> Self {
-        Self::new()
-    }
+    executor: CommandExecutorImpl,
 }
 
 impl RaftApplier {
     /// Create a new Raft applier
-    pub fn new() -> Self {
+    pub fn new(app_context: Arc<AppContext>) -> Self {
         Self {
-            executor: OnceCell::new(),
+            executor: CommandExecutorImpl::new(app_context),
         }
     }
 
-    /// Get the executor (panics if not initialized)
+    /// Get the executor
     fn executor(&self) -> &CommandExecutorImpl {
-        self.executor
-            .get()
-            .expect("RaftApplier not initialized - call set_app_context first")
+        &self.executor
     }
 
     /// Get leader info for meta group
@@ -230,19 +218,14 @@ impl RaftApplier {
     ) -> Result<String, ApplierError> {
         let app_ctx = self.executor().app_context();
         let executor = app_ctx.executor();
-        let raft_exec = executor
-            .as_any()
-            .downcast_ref::<RaftExecutor>()
-            .ok_or(ApplierError::NoLeader)?;
+        let raft_exec =
+            executor.as_any().downcast_ref::<RaftExecutor>().ok_or(ApplierError::NoLeader)?;
         let raft_mgr = raft_exec.manager();
 
         log::debug!(
             "RaftApplier: Proposing {} to meta Raft (leader={}, we_are_leader={})",
             cmd_type,
-            raft_mgr
-                .current_leader(GroupId::Meta)
-                .map(|n| n.as_u64())
-                .unwrap_or(0),
+            raft_mgr.current_leader(GroupId::Meta).map(|n| n.as_u64()).unwrap_or(0),
             raft_mgr.is_leader(GroupId::Meta)
         );
 
@@ -497,15 +480,5 @@ impl UnifiedApplier for RaftApplier {
 
     fn get_leader_info(&self) -> Option<LeaderInfo> {
         self.get_meta_leader_info()
-    }
-
-    fn set_app_context(&self, app_context: Arc<AppContext>) {
-        if self
-            .executor
-            .set(CommandExecutorImpl::new(app_context))
-            .is_err()
-        {
-            log::warn!("RaftApplier already initialized; ignoring duplicate set_app_context");
-        }
     }
 }

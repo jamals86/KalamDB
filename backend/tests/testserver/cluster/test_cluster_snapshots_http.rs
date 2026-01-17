@@ -42,27 +42,23 @@ async fn wait_for_lock_release(lock_path: &Path) -> Result<()> {
             return Ok(());
         }
 
-        let open_result = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(lock_path);
+        let open_result = std::fs::OpenOptions::new().read(true).write(true).open(lock_path);
 
         if open_result.is_ok() {
             return Ok(());
         }
 
         if Instant::now() >= deadline {
-            anyhow::bail!(
-                "Timed out waiting for RocksDB lock release at {}",
-                lock_path.display()
-            );
+            anyhow::bail!("Timed out waiting for RocksDB lock release at {}", lock_path.display());
         }
 
         sleep(Duration::from_millis(100)).await;
     }
 }
 
-async fn start_server_with_retry(data_path: &Path) -> Result<super::test_support::http_server::HttpTestServer> {
+async fn start_server_with_retry(
+    data_path: &Path,
+) -> Result<super::test_support::http_server::HttpTestServer> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match start_http_test_server_with_config(|cfg| {
@@ -81,7 +77,7 @@ async fn start_server_with_retry(data_path: &Path) -> Result<super::test_support
                     continue;
                 }
                 return Err(e);
-            }
+            },
         }
     }
 }
@@ -135,17 +131,23 @@ async fn test_cluster_snapshot_creation_and_reuse() -> Result<()> {
     let server = start_server_with_retry(&data_path).await?;
 
     let result = async {
-        let resp = server
-            .execute_sql("SELECT COUNT(*) AS cnt FROM snap_ns.snap_table")
-            .await?;
-        anyhow::ensure!(resp.status == ResponseStatus::Success, "SELECT after restart failed: {:?}", resp.error);
+        let resp = server.execute_sql("SELECT COUNT(*) AS cnt FROM snap_ns.snap_table").await?;
+        anyhow::ensure!(
+            resp.status == ResponseStatus::Success,
+            "SELECT after restart failed: {:?}",
+            resp.error
+        );
         let count = resp.get_i64("cnt").unwrap_or(0);
         anyhow::ensure!(count == 1, "Expected 1 row after restart, got {}", count);
 
         let resp = server
             .execute_sql("SELECT snapshot FROM system.cluster_groups WHERE group_type = 'meta'")
             .await?;
-        anyhow::ensure!(resp.status == ResponseStatus::Success, "system.cluster_groups failed: {:?}", resp.error);
+        anyhow::ensure!(
+            resp.status == ResponseStatus::Success,
+            "system.cluster_groups failed: {:?}",
+            resp.error
+        );
         let rows = resp.rows_as_maps();
         anyhow::ensure!(!rows.is_empty(), "system.cluster_groups returned no rows");
 

@@ -29,12 +29,8 @@ use log::{debug, error, info, warn};
 use std::sync::Arc;
 
 use super::events::{
-    auth::handle_authenticate,
-    batch::handle_next_batch,
-    cleanup::cleanup_connection,
-    send_error,
-    subscription::handle_subscribe,
-    unsubscribe::handle_unsubscribe,
+    auth::handle_authenticate, batch::handle_next_batch, cleanup::cleanup_connection, send_error,
+    subscription::handle_subscribe, unsubscribe::handle_unsubscribe,
 };
 use crate::rate_limiter::RateLimiter;
 
@@ -43,7 +39,7 @@ use crate::rate_limiter::RateLimiter;
 /// Accepts unauthenticated WebSocket connections.
 /// Authentication happens via post-connection Authenticate message (3-second timeout enforced).
 /// Uses ConnectionsManager for consolidated connection state management.
-/// 
+///
 /// Security:
 /// - Origin header validation (if configured)
 /// - Message size limits enforced
@@ -70,7 +66,7 @@ pub async fn websocket_handler(
     } else {
         &config.security.allowed_ws_origins
     };
-    
+
     if !allowed_ws_origins.is_empty() && !allowed_ws_origins.contains(&"*".to_string()) {
         if let Some(origin) = req.headers().get("Origin") {
             if let Ok(origin_str) = origin.to_str() {
@@ -91,22 +87,17 @@ pub async fn websocket_handler(
     // Extract client IP with security checks against spoofing
     let client_ip = kalamdb_auth::extract_client_ip_secure(&req);
 
-    debug!(
-        "New WebSocket connection: {} (auth required within 3s)",
-        connection_id
-    );
+    debug!("New WebSocket connection: {} (auth required within 3s)", connection_id);
 
     // Register connection with unified registry (handles heartbeat tracking)
-    let registration = match connection_registry.register_connection(
-        connection_id.clone(),
-        client_ip.clone(),
-    ) {
-        Some(reg) => reg,
-        None => {
-            warn!("Rejecting WebSocket during shutdown: {}", connection_id);
-            return Ok(HttpResponse::ServiceUnavailable().body("Server shutting down"));
-        }
-    };
+    let registration =
+        match connection_registry.register_connection(connection_id.clone(), client_ip.clone()) {
+            Some(reg) => reg,
+            None => {
+                warn!("Rejecting WebSocket during shutdown: {}", connection_id);
+                return Ok(HttpResponse::ServiceUnavailable().body("Server shutting down"));
+            },
+        };
 
     // Upgrade to WebSocket using actix-ws
     let (response, session, msg_stream) = actix_ws::handle(&req, stream)?;
@@ -229,9 +220,9 @@ async fn handle_websocket(
 
                         // Security: Check message size limit
                         if text.len() > max_message_size {
-                            warn!("Message too large from {}: {} bytes (max {})", 
+                            warn!("Message too large from {}: {} bytes (max {})",
                                 connection_id, text.len(), max_message_size);
-                            let _ = send_error(&mut session, "protocol", "MESSAGE_TOO_LARGE", 
+                            let _ = send_error(&mut session, "protocol", "MESSAGE_TOO_LARGE",
                                 &format!("Message exceeds maximum size of {} bytes", max_message_size)).await;
                             continue;
                         }
@@ -340,7 +331,7 @@ async fn handle_text_message(
                 user_repo,
             )
             .await
-        }
+        },
         ClientMessage::Subscribe { subscription } => {
             if !connection_state.read().is_authenticated() {
                 let _ = send_error(
@@ -360,7 +351,7 @@ async fn handle_text_message(
                 live_query_manager,
             )
             .await
-        }
+        },
         ClientMessage::NextBatch {
             subscription_id,
             last_seq_id,
@@ -376,18 +367,13 @@ async fn handle_text_message(
                 live_query_manager,
             )
             .await
-        }
+        },
         ClientMessage::Unsubscribe { subscription_id } => {
             if !connection_state.read().is_authenticated() {
                 return Ok(());
             }
-            handle_unsubscribe(
-                connection_state,
-                &subscription_id,
-                rate_limiter,
-                live_query_manager,
-            )
-            .await
-        }
+            handle_unsubscribe(connection_state, &subscription_id, rate_limiter, live_query_manager)
+                .await
+        },
     }
 }

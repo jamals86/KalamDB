@@ -220,9 +220,7 @@ impl UsersTableSchema {
 
     /// Get the column family name in RocksDB
     pub fn column_family_name() -> &'static str {
-        SystemTable::Users
-            .column_family_name()
-            .expect("Users is a table, not a view")
+        SystemTable::Users.column_family_name().expect("Users is a table, not a view")
     }
 
     /// Get the partition key for storage
@@ -264,9 +262,7 @@ mod tests {
         assert_eq!(UsersTableSchema::table_name(), "users");
         assert_eq!(
             UsersTableSchema::column_family_name(),
-            SystemTable::Users
-                .column_family_name()
-                .expect("Users is a table, not a view")
+            SystemTable::Users.column_family_name().expect("Users is a table, not a view")
         );
     }
 

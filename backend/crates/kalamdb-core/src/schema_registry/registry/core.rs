@@ -23,7 +23,6 @@ use std::sync::{Arc, OnceLock};
 /// timestamps map while keeping per-access work O(1) and avoiding any deep clones.
 pub struct SchemaRegistry {
     //TODO: Pass appcontext instead of keeping passing it in each method?
-    
     /// Cache for table data (includes provider storage)
     table_cache: TableCache,
 
@@ -144,18 +143,16 @@ impl SchemaRegistry {
         table_id: TableId,
         provider: Arc<dyn TableProvider + Send + Sync>,
     ) -> Result<(), KalamDbError> {
-        log::debug!(
-            "[SchemaRegistry] Inserting provider for table {}",
-            table_id
-        );
+        log::debug!("[SchemaRegistry] Inserting provider for table {}", table_id);
 
         // Store in CachedTableData
         if let Some(cached) = self.get(&table_id) {
             cached.set_provider(provider.clone());
         } else {
             // Table not in cache - try to load from persistence first
-            if let Some(cached) = SchemaPersistence::get_table_if_exists(app_ctx, &self.table_cache, &table_id)?
-                .and_then(|_| self.get(&table_id))
+            if let Some(cached) =
+                SchemaPersistence::get_table_if_exists(app_ctx, &self.table_cache, &table_id)?
+                    .and_then(|_| self.get(&table_id))
             {
                 cached.set_provider(provider.clone());
             } else {
@@ -187,15 +184,9 @@ impl SchemaRegistry {
     pub fn get_provider(&self, table_id: &TableId) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         let result = self.get(table_id).and_then(|cached| cached.get_provider());
         if result.is_some() {
-            log::trace!(
-                "[SchemaRegistry] Retrieved provider for table {}",
-                table_id
-            );
+            log::trace!("[SchemaRegistry] Retrieved provider for table {}", table_id);
         } else {
-            log::warn!(
-                "[SchemaRegistry] Provider NOT FOUND for table {}",
-                table_id
-            );
+            log::warn!("[SchemaRegistry] Provider NOT FOUND for table {}", table_id);
         }
         result
     }
@@ -216,22 +207,19 @@ impl SchemaRegistry {
             })?;
 
             // Get or create namespace schema
-            let schema = catalog
-                .schema(table_id.namespace_id().as_str())
-                .unwrap_or_else(|| {
-                    // Create namespace schema if it doesn't exist
-                    let new_schema =
-                        Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-                    catalog
-                        .register_schema(table_id.namespace_id().as_str(), new_schema.clone())
-                        .expect("Failed to register namespace schema");
-                    new_schema
-                });
+            let schema = catalog.schema(table_id.namespace_id().as_str()).unwrap_or_else(|| {
+                // Create namespace schema if it doesn't exist
+                let new_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
+                catalog
+                    .register_schema(table_id.namespace_id().as_str(), new_schema.clone())
+                    .expect("Failed to register namespace schema");
+                new_schema
+            });
 
             // For ALTER TABLE: always deregister first (if exists), then register with new provider
             // This ensures the new schema is always visible
             let table_name = table_id.table_name().as_str();
-            
+
             // Check if table already exists - if so, deregister it first
             if schema.table_exist(table_name) {
                 log::debug!(
@@ -244,41 +232,38 @@ impl SchemaRegistry {
                             "[SchemaRegistry] Successfully deregistered old provider for {}",
                             table_id
                         );
-                    }
+                    },
                     Ok(None) => {
                         // Table existed but deregister returned None - shouldn't happen but handle it
                         log::warn!(
                             "[SchemaRegistry] table_exist returned true but deregister_table returned None for {}",
                             table_id
                         );
-                    }
+                    },
                     Err(e) => {
                         return Err(KalamDbError::InvalidOperation(format!(
                             "Failed to deregister existing table {} from DataFusion: {}",
                             table_id, e
                         )));
-                    }
+                    },
                 }
             }
-            
+
             // Now register the new provider - table should not exist at this point
-            log::debug!("[SchemaRegistry] Registering table {} (schema cols: {})", 
-                table_id, 
+            log::debug!(
+                "[SchemaRegistry] Registering table {} (schema cols: {})",
+                table_id,
                 provider.schema().fields().len()
             );
-            
-            schema.register_table(table_name.to_string(), provider)
-                .map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to register table {} with DataFusion: {}",
-                        table_id, e
-                    ))
-                })?;
 
-            log::debug!(
-                "[SchemaRegistry] Registered table {} with DataFusion catalog",
-                table_id
-            );
+            schema.register_table(table_name.to_string(), provider).map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to register table {} with DataFusion: {}",
+                    table_id, e
+                ))
+            })?;
+
+            log::debug!("[SchemaRegistry] Registered table {} with DataFusion catalog", table_id);
         }
 
         Ok(())
@@ -287,13 +272,8 @@ impl SchemaRegistry {
     /// Deregister a table from DataFusion's catalog
     fn deregister_from_datafusion(&self, table_id: &TableId) -> Result<(), KalamDbError> {
         if let Some(base_session) = self.base_session_context.get() {
-            let catalog_name = base_session
-                .state()
-                .config()
-                .options()
-                .catalog
-                .default_catalog
-                .clone();
+            let catalog_name =
+                base_session.state().config().options().catalog.default_catalog.clone();
 
             let catalog = base_session.catalog(&catalog_name).ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name))
@@ -302,19 +282,14 @@ impl SchemaRegistry {
             // Get namespace schema
             if let Some(schema) = catalog.schema(table_id.namespace_id().as_str()) {
                 // Deregister table from DataFusion
-                schema
-                    .deregister_table(table_id.table_name().as_str())
-                    .map_err(|e| {
-                        KalamDbError::InvalidOperation(format!(
-                            "Failed to deregister table from DataFusion: {}",
-                            e
-                        ))
-                    })?;
+                schema.deregister_table(table_id.table_name().as_str()).map_err(|e| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to deregister table from DataFusion: {}",
+                        e
+                    ))
+                })?;
 
-                log::debug!(
-                    "Unregistered table {} from DataFusion catalog",
-                    table_id
-                );
+                log::debug!("Unregistered table {} from DataFusion catalog", table_id);
             }
         }
 
@@ -351,7 +326,11 @@ impl SchemaRegistry {
     }
 
     /// Check if table exists in persistence layer
-    pub fn table_exists(&self, app_ctx: &AppContext, table_id: &TableId) -> Result<bool, KalamDbError> {
+    pub fn table_exists(
+        &self,
+        app_ctx: &AppContext,
+        table_id: &TableId,
+    ) -> Result<bool, KalamDbError> {
         SchemaPersistence::table_exists(app_ctx, &self.table_cache, table_id)
     }
 
@@ -409,10 +388,7 @@ impl SchemaRegistry {
             }
         }
 
-        Err(KalamDbError::TableNotFound(format!(
-            "Table not found: {}",
-            table_id
-        )))
+        Err(KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))
     }
 
     /// Get Arrow schema for a specific table version (for reading old Parquet files)
@@ -437,7 +413,12 @@ impl SchemaRegistry {
             .system_tables()
             .tables()
             .get_version(table_id, schema_version)
-            .map_err(|e| KalamDbError::Other(format!("Failed to retrieve schema version {}: {}", schema_version, e)))?
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to retrieve schema version {}: {}",
+                    schema_version, e
+                ))
+            })?
             .ok_or_else(|| {
                 KalamDbError::Other(format!(
                     "Schema version {} not found for table {}",

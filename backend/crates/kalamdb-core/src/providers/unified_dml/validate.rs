@@ -10,10 +10,7 @@ use kalamdb_commons::models::rows::Row;
 /// Extract primary key value from a `Row`
 pub fn extract_user_pk_value(fields: &Row, pk_column: &str) -> Result<String, KalamDbError> {
     let pk_value = fields.get(pk_column).ok_or_else(|| {
-        KalamDbError::InvalidSql(format!(
-            "Primary key column '{}' not found in fields",
-            pk_column
-        ))
+        KalamDbError::InvalidSql(format!("Primary key column '{}' not found in fields", pk_column))
     })?;
 
     scalar_pk_to_string(pk_value, pk_column)
@@ -66,10 +63,7 @@ mod tests {
     #[test]
     fn test_extract_user_pk_value_string() {
         let mut values = BTreeMap::new();
-        values.insert(
-            "id".to_string(),
-            ScalarValue::Utf8(Some("user123".to_string())),
-        );
+        values.insert("id".to_string(), ScalarValue::Utf8(Some("user123".to_string())));
         let row = Row::new(values);
         let pk = extract_user_pk_value(&row, "id").unwrap();
         assert_eq!(pk, "user123");
@@ -87,10 +81,7 @@ mod tests {
     #[test]
     fn test_extract_user_pk_value_missing() {
         let mut values = BTreeMap::new();
-        values.insert(
-            "name".to_string(),
-            ScalarValue::Utf8(Some("Alice".to_string())),
-        );
+        values.insert("name".to_string(), ScalarValue::Utf8(Some("Alice".to_string())));
         let row = Row::new(values);
         let result = extract_user_pk_value(&row, "id");
         assert!(result.is_err());
@@ -104,19 +95,13 @@ mod tests {
         let row = Row::new(values);
         let result = extract_user_pk_value(&row, "id");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("unsupported or NULL"));
+        assert!(result.unwrap_err().to_string().contains("unsupported or NULL"));
     }
 
     #[test]
     fn test_validate_primary_key_success() {
         let mut values = BTreeMap::new();
-        values.insert(
-            "id".to_string(),
-            ScalarValue::Utf8(Some("new_user".to_string())),
-        );
+        values.insert("id".to_string(), ScalarValue::Utf8(Some("new_user".to_string())));
         let row = Row::new(values);
         let existing = HashSet::from(["user1".to_string(), "user2".to_string()]);
 
@@ -127,10 +112,7 @@ mod tests {
     #[test]
     fn test_validate_primary_key_duplicate() {
         let mut values = BTreeMap::new();
-        values.insert(
-            "id".to_string(),
-            ScalarValue::Utf8(Some("user1".to_string())),
-        );
+        values.insert("id".to_string(), ScalarValue::Utf8(Some("user1".to_string())));
         let row = Row::new(values);
         let existing = HashSet::from(["user1".to_string(), "user2".to_string()]);
 
@@ -142,10 +124,7 @@ mod tests {
     #[test]
     fn test_validate_primary_key_missing_column() {
         let mut values = BTreeMap::new();
-        values.insert(
-            "name".to_string(),
-            ScalarValue::Utf8(Some("Alice".to_string())),
-        );
+        values.insert("name".to_string(), ScalarValue::Utf8(Some("Alice".to_string())));
         let row = Row::new(values);
         let existing = HashSet::new();
 

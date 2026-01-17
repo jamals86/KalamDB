@@ -97,11 +97,7 @@ fn test_cli_describe_table() {
     // Should execute successfully and show table info
     assert!(result.is_ok(), "Should describe table: {:?}", result.err());
     let output = result.unwrap();
-    assert!(
-        output.contains("messages"),
-        "Should contain table name: {}",
-        output
-    );
+    assert!(output.contains("messages"), "Should contain table name: {}", output);
 
     // Cleanup
     let drop_sql = format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name);
@@ -232,11 +228,7 @@ fn test_cli_health_check() {
     // Test server health via SQL query
     let result = execute_sql_as_root_via_cli("SELECT 1 as health_check");
 
-    assert!(
-        result.is_ok(),
-        "Server should respond to SQL queries: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Server should respond to SQL queries: {:?}", result.err());
 
     let output = result.unwrap();
     assert!(
@@ -258,9 +250,5 @@ fn test_server_health_check() {
 
     let result = execute_sql_as_root_via_cli("SELECT 1");
 
-    assert!(
-        result.is_ok(),
-        "Server should respond successfully: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Server should respond successfully: {:?}", result.err());
 }

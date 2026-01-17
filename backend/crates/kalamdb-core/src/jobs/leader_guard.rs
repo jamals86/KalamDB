@@ -88,7 +88,7 @@ impl LeaderOnlyJobGuard {
     /// Returns Ok(true) if claim succeeded, Ok(false) if already claimed.
     pub async fn claim_job(&self, job_id: &JobId) -> Result<bool, KalamDbError> {
         let now = Utc::now();
-        
+
         let cmd = MetaCommand::ClaimJob {
             job_id: job_id.clone(),
             node_id: self.node_id.clone(),
@@ -112,7 +112,7 @@ impl LeaderOnlyJobGuard {
     /// This allows other nodes to pick up the job if this node fails.
     pub async fn release_job(&self, job_id: &JobId, reason: &str) -> Result<(), KalamDbError> {
         let now = Utc::now();
-        
+
         let cmd = MetaCommand::ReleaseJob {
             job_id: job_id.clone(),
             reason: reason.to_string(),
@@ -135,7 +135,7 @@ impl LeaderOnlyJobGuard {
         result_json: Option<String>,
     ) -> Result<(), KalamDbError> {
         let now = Utc::now();
-        
+
         let cmd = MetaCommand::CompleteJob {
             job_id: job_id.clone(),
             result_json,
@@ -154,7 +154,7 @@ impl LeaderOnlyJobGuard {
     /// Fail a job via Raft consensus
     pub async fn fail_job(&self, job_id: &JobId, error_message: &str) -> Result<(), KalamDbError> {
         let now = Utc::now();
-        
+
         let cmd = MetaCommand::FailJob {
             job_id: job_id.clone(),
             error_message: error_message.to_string(),
@@ -163,10 +163,9 @@ impl LeaderOnlyJobGuard {
 
         match self.executor.execute_meta(cmd).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(KalamDbError::InvalidOperation(format!(
-                "Failed to fail job {}: {}",
-                job_id, e
-            ))),
+            Err(e) => {
+                Err(KalamDbError::InvalidOperation(format!("Failed to fail job {}: {}", job_id, e)))
+            },
         }
     }
 
@@ -182,8 +181,8 @@ mod tests {
     use async_trait::async_trait;
     use kalamdb_commons::models::UserId;
     use kalamdb_raft::{
-        ClusterInfo, ClusterNodeInfo, DataResponse, NodeRole, NodeStatus,
-        SharedDataCommand, UserDataCommand, Result,
+        ClusterInfo, ClusterNodeInfo, DataResponse, NodeRole, NodeStatus, Result,
+        SharedDataCommand, UserDataCommand,
     };
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -234,15 +233,21 @@ mod tests {
         async fn execute_meta(&self, cmd: MetaCommand) -> Result<MetaResponse> {
             // Simulate successful job operations
             match cmd {
-                MetaCommand::ClaimJob { job_id, node_id, .. } => {
+                MetaCommand::ClaimJob {
+                    job_id, node_id, ..
+                } => {
                     if self.is_leader.load(Ordering::SeqCst) {
-                        Ok(MetaResponse::JobClaimed { job_id, node_id, message: "Job claimed successfully".to_string() })
+                        Ok(MetaResponse::JobClaimed {
+                            job_id,
+                            node_id,
+                            message: "Job claimed successfully".to_string(),
+                        })
                     } else {
                         Ok(MetaResponse::Error {
                             message: "Not leader".to_string(),
                         })
                     }
-                }
+                },
                 MetaCommand::ReleaseJob { .. }
                 | MetaCommand::CompleteJob { .. }
                 | MetaCommand::FailJob { .. } => Ok(MetaResponse::Ok),
@@ -295,7 +300,11 @@ mod tests {
                     api_addr: "http://127.0.0.1:8081".to_string(),
                     is_self: true,
                     is_leader: self.is_leader.load(Ordering::SeqCst),
-                    groups_leading: if self.is_leader.load(Ordering::SeqCst) { 14 } else { 0 },
+                    groups_leading: if self.is_leader.load(Ordering::SeqCst) {
+                        14
+                    } else {
+                        0
+                    },
                     total_groups: 14,
                     current_term: Some(1),
                     last_applied_log: None,
@@ -343,7 +352,7 @@ mod tests {
         match not_leader {
             LeadershipStatus::NotLeader { leader_node_id } => {
                 assert_eq!(leader_node_id, Some(NodeId::from(2u64)));
-            }
+            },
             _ => panic!("Expected NotLeader"),
         }
     }
@@ -390,7 +399,7 @@ mod tests {
         match guard.check_leadership().await {
             LeadershipStatus::NotLeader { leader_node_id } => {
                 assert_eq!(leader_node_id, Some(NodeId::from(1u64)));
-            }
+            },
             _ => panic!("Expected NotLeader status"),
         }
     }

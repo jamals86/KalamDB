@@ -58,10 +58,7 @@ fn get_leader_and_followers() -> (String, Vec<String>) {
 fn create_ws_client(base_url: &str) -> KalamLinkClient {
     KalamLinkClient::builder()
         .base_url(base_url)
-        .auth(AuthProvider::basic_auth(
-            "root".to_string(),
-            root_password().to_string(),
-        ))
+        .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
         .timeouts(
             KalamLinkTimeouts::builder()
                 .connection_timeout_secs(5)
@@ -79,7 +76,9 @@ fn create_ws_client(base_url: &str) -> KalamLinkClient {
 /// Test: Subscription on leader receives changes from leader writes
 #[test]
 fn cluster_test_subscription_leader_to_leader() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Subscription Leader to Leader ===\n");
 
@@ -91,7 +90,8 @@ fn cluster_test_subscription_leader_to_leader() {
     let full = format!("{}.{}", namespace, table);
 
     // Setup
-    let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     // Use USER table instead of SHARED - subscriptions only work on USER/STREAM tables
@@ -112,10 +112,8 @@ fn cluster_test_subscription_leader_to_leader() {
     cluster_runtime().block_on(async {
         let client = create_ws_client(&leader_url);
 
-        let mut subscription = client
-            .subscribe(&query)
-            .await
-            .expect("Failed to subscribe on leader");
+        let mut subscription =
+            client.subscribe(&query).await.expect("Failed to subscribe on leader");
 
         // Insert data on leader
         client
@@ -146,8 +144,8 @@ fn cluster_test_subscription_leader_to_leader() {
                             }
                         }
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
 
@@ -162,17 +160,19 @@ fn cluster_test_subscription_leader_to_leader() {
 /// Test: Subscription on follower receives changes from leader writes
 #[test]
 fn cluster_test_subscription_follower_to_leader() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Subscription Follower to Leader ===\n");
 
     let (leader_url, followers) = get_leader_and_followers();
-    
+
     if followers.is_empty() {
         println!("  ⚠ No followers available, skipping test");
         return;
     }
-    
+
     let follower_url = &followers[0];
     println!("Leader: {}", leader_url);
     println!("Follower: {}", follower_url);
@@ -182,7 +182,8 @@ fn cluster_test_subscription_follower_to_leader() {
     let full = format!("{}.{}", namespace, table);
 
     // Setup on leader
-    let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     // Use USER table - subscriptions only work on USER/STREAM tables
@@ -240,15 +241,12 @@ fn cluster_test_subscription_follower_to_leader() {
                             }
                         }
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
 
-        assert!(
-            received,
-            "Follower subscription did not receive leader insert event"
-        );
+        assert!(received, "Follower subscription did not receive leader insert event");
     });
 
     let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE {} CASCADE", namespace));
@@ -259,7 +257,9 @@ fn cluster_test_subscription_follower_to_leader() {
 /// Test: Multiple subscriptions across nodes receive identical events
 #[test]
 fn cluster_test_subscription_multi_node_identical() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Multi-Node Subscriptions Receive Identical Events ===\n");
 
@@ -275,7 +275,8 @@ fn cluster_test_subscription_multi_node_identical() {
     let full = format!("{}.{}", namespace, table);
 
     // Setup
-    let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     // Use USER table - subscriptions only work on USER/STREAM tables
@@ -304,10 +305,7 @@ fn cluster_test_subscription_multi_node_identical() {
 
         for url in &urls {
             let client = create_ws_client(url);
-            let sub = client
-                .subscribe(&query)
-                .await
-                .expect("Failed to subscribe");
+            let sub = client.subscribe(&query).await.expect("Failed to subscribe");
             subscriptions.push(sub);
         }
 
@@ -330,11 +328,11 @@ fn cluster_test_subscription_multi_node_identical() {
 
         // Collect events from all subscriptions
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        
+
         for (idx, sub) in subscriptions.iter_mut().enumerate() {
             let count = received_counts[idx].clone();
             let mut local_count = 0;
-            
+
             while tokio::time::Instant::now() < deadline && local_count < expected_inserts {
                 let wait = Duration::from_millis(500);
                 match tokio::time::timeout(wait, sub.next()).await {
@@ -349,8 +347,8 @@ fn cluster_test_subscription_multi_node_identical() {
                                 }
                             }
                         }
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
         }
@@ -365,11 +363,7 @@ fn cluster_test_subscription_multi_node_identical() {
 
         // All should have received at least some events (replication might have slight timing differences)
         for (i, count) in all_counts.iter().enumerate() {
-            assert!(
-                *count > 0,
-                "Node {} received 0 events, expected > 0",
-                i
-            );
+            assert!(*count > 0, "Node {} received 0 events, expected > 0", i);
         }
     });
 
@@ -381,7 +375,9 @@ fn cluster_test_subscription_multi_node_identical() {
 /// Test: Initial data is identical when subscribing to any node
 #[test]
 fn cluster_test_subscription_initial_data_consistency() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Subscription Initial Data Consistency ===\n");
 
@@ -393,7 +389,8 @@ fn cluster_test_subscription_initial_data_consistency() {
     let full = format!("{}.{}", namespace, table);
 
     // Setup and insert data
-    let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     // Use USER table - subscriptions only work on USER/STREAM tables
@@ -421,8 +418,8 @@ fn cluster_test_subscription_initial_data_consistency() {
         &format!("INSERT INTO {} (id, value) VALUES {}", full, values.join(", ")),
     )
     .expect("Failed to insert initial data");
-    
-    // Wait for data replication - USER tables may take more time especially 
+
+    // Wait for data replication - USER tables may take more time especially
     // when the cluster is under load from other parallel tests
     let mut data_replicated = false;
     for attempt in 1..=5 {
@@ -433,7 +430,7 @@ fn cluster_test_subscription_initial_data_consistency() {
         println!("  ⏳ Attempt {}/5: Data not fully replicated, retrying...", attempt);
         std::thread::sleep(Duration::from_millis(1000));
     }
-    
+
     if !data_replicated {
         panic!("Data did not replicate to all nodes within timeout (USER table replication may be slow under load)");
     }
@@ -446,12 +443,9 @@ fn cluster_test_subscription_initial_data_consistency() {
 
         for (idx, url) in urls.iter().enumerate() {
             let client = create_ws_client(url);
-            
+
             // Query initial data via subscription
-            let response = client
-                .execute_query(&query, None, None)
-                .await
-                .expect("Failed to query");
+            let response = client.execute_query(&query, None, None).await.expect("Failed to query");
 
             let mut ids: Vec<i64> = Vec::new();
             if let Some(result) = response.results.first() {
@@ -482,11 +476,7 @@ fn cluster_test_subscription_initial_data_consistency() {
         assert_eq!(reference.len(), 20, "Expected 20 rows, got {}", reference.len());
 
         for (i, data) in initial_data_sets.iter().enumerate().skip(1) {
-            assert_eq!(
-                data, reference,
-                "Node {} has different initial data than reference",
-                i
-            );
+            assert_eq!(data, reference, "Node {} has different initial data than reference", i);
             println!("  ✓ Node {} initial data matches reference", i);
         }
     });
@@ -499,7 +489,9 @@ fn cluster_test_subscription_initial_data_consistency() {
 /// Test: User table subscriptions work on any node
 #[test]
 fn cluster_test_subscription_user_table_any_node() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: User Table Subscription from Any Node ===\n");
 
@@ -511,7 +503,8 @@ fn cluster_test_subscription_user_table_any_node() {
     let full = format!("{}.{}", namespace, table);
 
     // Setup
-    let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(
@@ -524,10 +517,7 @@ fn cluster_test_subscription_user_table_any_node() {
     let test_user = format!("sub_test_user_{}", rand::random::<u32>());
     execute_on_node(
         &leader_url,
-        &format!(
-            "CREATE USER {} WITH PASSWORD 'test_password_123' ROLE 'user'",
-            test_user
-        ),
+        &format!("CREATE USER {} WITH PASSWORD 'test_password_123' ROLE 'user'", test_user),
     )
     .expect("Failed to create test user");
 
@@ -542,10 +532,7 @@ fn cluster_test_subscription_user_table_any_node() {
         cluster_runtime().block_on(async {
             let client = KalamLinkClient::builder()
                 .base_url(url)
-                .auth(AuthProvider::basic_auth(
-                    test_user.clone(),
-                    "test_password_123".to_string(),
-                ))
+                .auth(AuthProvider::basic_auth(test_user.clone(), "test_password_123".to_string()))
                 .timeouts(
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
@@ -563,11 +550,11 @@ fn cluster_test_subscription_user_table_any_node() {
             match client.subscribe(&query).await {
                 Ok(_sub) => {
                     println!("  ✓ Node {} accepts user table subscription", idx);
-                }
+                },
                 Err(e) => {
                     // Some errors might be expected if subscription routing isn't fully implemented
                     println!("  ⚠ Node {} subscription result: {}", idx, e);
-                }
+                },
             }
         });
     }

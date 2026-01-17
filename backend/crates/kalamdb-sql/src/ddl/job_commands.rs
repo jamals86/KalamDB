@@ -188,29 +188,20 @@ mod tests {
     fn test_parse_kill_job_empty_id() {
         let result = parse_job_command("KILL JOB");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("requires a job_id"));
+        assert!(result.unwrap_err().to_string().contains("requires a job_id"));
     }
 
     #[test]
     fn test_parse_kill_job_unterminated_quote() {
         let result = parse_job_command("KILL JOB 'flush-001");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unterminated string"));
+        assert!(result.unwrap_err().to_string().contains("Unterminated string"));
     }
 
     #[test]
     fn test_parse_unknown_command() {
         let result = parse_job_command("CANCEL JOB 'flush-001'");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unknown job command"));
+        assert!(result.unwrap_err().to_string().contains("Unknown job command"));
     }
 }

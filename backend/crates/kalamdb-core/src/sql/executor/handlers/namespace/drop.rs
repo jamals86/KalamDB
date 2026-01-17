@@ -66,7 +66,7 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                         namespace_id.as_str()
                     )));
                 }
-            }
+            },
         };
 
         // Check if namespace has tables
@@ -74,19 +74,19 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
             if statement.cascade {
                 // CASCADE: Drop all tables in the namespace first
                 let tables_provider = self.app_context.system_tables().tables();
-                let tables_in_namespace = tables_provider.list_tables_in_namespace(&namespace_id)?;
-                
+                let tables_in_namespace =
+                    tables_provider.list_tables_in_namespace(&namespace_id)?;
+
                 for table in tables_in_namespace {
                     // Construct TableId from namespace and table name
-                    let table_id = TableId::new(table.namespace_id.clone(), table.table_name.clone());
-                    
+                    let table_id =
+                        TableId::new(table.namespace_id.clone(), table.table_name.clone());
+
                     // Delegate to unified applier
-                    self.app_context
-                        .applier()
-                        .drop_table(table_id.clone())
-                        .await
-                        .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
-                    
+                    self.app_context.applier().drop_table(table_id.clone()).await.map_err(|e| {
+                        KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e))
+                    })?;
+
                     // Log table drop as part of cascade
                     use crate::sql::executor::helpers::audit;
                     let audit_entry = audit::log_ddl_operation(
@@ -140,10 +140,10 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         use crate::sql::executor::helpers::guards::block_anonymous_write;
-        
+
         // T050: Block anonymous users from DDL operations
         block_anonymous_write(context, "DROP NAMESPACE")?;
-        
+
         require_admin(context, "drop namespace")
     }
 }

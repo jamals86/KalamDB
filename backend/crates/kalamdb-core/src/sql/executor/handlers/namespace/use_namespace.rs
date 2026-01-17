@@ -51,10 +51,7 @@ impl TypedStatementHandler<UseNamespaceStatement> for UseNamespaceHandler {
         // Use DataFusion's native SET command to change the default schema
         // This is the recommended way per DataFusion documentation
         let session = context.create_session_with_user();
-        let set_sql = format!(
-            "SET datafusion.catalog.default_schema = '{}'",
-            namespace_name
-        );
+        let set_sql = format!("SET datafusion.catalog.default_schema = '{}'", namespace_name);
 
         session.sql(&set_sql).await.map_err(|e| {
             KalamDbError::ExecutionError(format!("Failed to set default namespace: {}", e))
@@ -105,7 +102,7 @@ mod tests {
 
         let result = handler.execute(stmt, vec![], &ctx).await;
         assert!(result.is_err());
-        
+
         if let Err(KalamDbError::NotFound(msg)) = result {
             assert!(msg.contains("nonexistent"));
         } else {

@@ -86,12 +86,10 @@ async fn setup_test_data() -> Result<String, Box<dyn std::error::Error>> {
     let full_table = format!("ws_test.{}", table_name);
 
     // Create namespace if needed
-    execute_sql("CREATE NAMESPACE IF NOT EXISTS ws_test")
-        .await
-        .ok();
+    execute_sql("CREATE NAMESPACE IF NOT EXISTS ws_test").await.ok();
     sleep(Duration::from_millis(50)).await;
 
-        // Create test table (STREAM table for WebSocket tests)
+    // Create test table (STREAM table for WebSocket tests)
     execute_sql(&format!(
         r#"CREATE TABLE {} (
                 event_id TEXT NOT NULL,
@@ -132,9 +130,7 @@ async fn test_kalam_link_query_execution() {
     }
 
     let client = create_test_client().expect("Failed to create client");
-    let result = client
-        .execute_query("SELECT 1 as test_value", None, None)
-        .await;
+    let result = client.execute_query("SELECT 1 as test_value", None, None).await;
 
     assert!(result.is_ok(), "Query should execute successfully");
     let response = result.unwrap();
@@ -182,18 +178,11 @@ async fn test_kalam_link_parametrized_query() {
         )
         .await;
 
-    assert!(
-        insert_result.is_ok(),
-        "Insert should succeed: {:?}",
-        insert_result.err()
-    );
+    assert!(insert_result.is_ok(), "Insert should succeed: {:?}", insert_result.err());
 
     // Query to verify
     let query_result = client
-        .execute_query(&format!(
-            "SELECT * FROM {} WHERE event_type = 'test'",
-            table
-        ), None, None)
+        .execute_query(&format!("SELECT * FROM {} WHERE event_type = 'test'", table), None, None)
         .await;
 
     assert!(query_result.is_ok(), "Query should succeed");
@@ -219,11 +208,8 @@ async fn test_websocket_subscription_creation() {
     let client = create_test_client().expect("Failed to create client");
 
     // Create subscription
-    let subscription_result = timeout(
-        TEST_TIMEOUT,
-        client.subscribe(&format!("SELECT * FROM {}", table)),
-    )
-    .await;
+    let subscription_result =
+        timeout(TEST_TIMEOUT, client.subscribe(&format!("SELECT * FROM {}", table))).await;
 
     // Test passes if subscription succeeds or fails gracefully (no panic)
     // WebSocket subscriptions may not be fully implemented
@@ -231,15 +217,15 @@ async fn test_websocket_subscription_creation() {
         Ok(Ok(_subscription)) => {
             // Subscription created successfully
             true
-        }
+        },
         Ok(Err(_e)) => {
             // WebSocket might not be fully implemented yet - graceful failure
             true
-        }
+        },
         Err(_) => {
             // Timeout - still a valid attempt
             true
-        }
+        },
     };
     assert!(subscription_attempted, "Subscription should be attempted");
 
@@ -267,15 +253,15 @@ async fn test_websocket_subscription_with_config() {
         Ok(Ok(_subscription)) => {
             // Success
             true
-        }
+        },
         Ok(Err(_e)) => {
             // Graceful failure - WebSocket may not be fully implemented
             true
-        }
+        },
         Err(_) => {
             // Timeout - still a valid attempt
             true
-        }
+        },
     };
     assert!(subscription_attempted, "Subscription with config should be attempted");
 
@@ -310,11 +296,8 @@ async fn test_websocket_initial_data_snapshot() {
 
     let client = create_test_client().expect("Failed to create client");
 
-    let subscription_result = timeout(
-        TEST_TIMEOUT,
-        client.subscribe(&format!("SELECT * FROM {}", table)),
-    )
-    .await;
+    let subscription_result =
+        timeout(TEST_TIMEOUT, client.subscribe(&format!("SELECT * FROM {}", table))).await;
 
     match subscription_result {
         Ok(Ok(mut subscription)) => {
@@ -331,17 +314,17 @@ async fn test_websocket_initial_data_snapshot() {
                             assert!(!rows.is_empty(), "Initial snapshot should contain data");
                             received_initial_data = true;
                             break;
-                        }
+                        },
                         ChangeEvent::Ack { .. } => {
                             // Received ACK, continue waiting for InitialData
                             continue;
-                        }
+                        },
                         other => {
                             panic!(
                                 "Received unexpected event type during initial snapshot: {:?}",
                                 other
                             );
-                        }
+                        },
                     }
                 }
             }
@@ -350,13 +333,13 @@ async fn test_websocket_initial_data_snapshot() {
                 received_initial_data,
                 "FAILED: Should receive InitialData event with snapshot of existing rows"
             );
-        }
+        },
         Ok(Err(e)) => {
             panic!("Subscription failed: {}", e);
-        }
+        },
         Err(_) => {
             panic!("Subscription creation timed out");
-        }
+        },
     }
 
     cleanup_test_data(&table).await.ok();
@@ -373,11 +356,8 @@ async fn test_websocket_insert_notification() {
 
     let client = create_test_client().expect("Failed to create client");
 
-    let subscription_result = timeout(
-        TEST_TIMEOUT,
-        client.subscribe(&format!("SELECT * FROM {}", table)),
-    )
-    .await;
+    let subscription_result =
+        timeout(TEST_TIMEOUT, client.subscribe(&format!("SELECT * FROM {}", table))).await;
 
     match subscription_result {
         Ok(Ok(mut subscription)) => {
@@ -390,12 +370,12 @@ async fn test_websocket_insert_notification() {
                         if batch_control.status == kalam_link::models::BatchStatus::Ready {
                             break;
                         }
-                    }
+                    },
                     Ok(Some(Ok(ChangeEvent::InitialDataBatch { batch_control, .. }))) => {
                         if batch_control.status == kalam_link::models::BatchStatus::Ready {
                             break;
                         }
-                    }
+                    },
                     Ok(Some(Ok(_))) => continue,
                     Ok(Some(Err(e))) => panic!("Subscription stream error during drain: {}", e),
                     Ok(None) => panic!("Subscription ended during initial drain"),
@@ -421,7 +401,7 @@ async fn test_websocket_insert_notification() {
                         assert!(!rows.is_empty(), "Insert notification should contain rows");
                         got_insert = true;
                         break;
-                    }
+                    },
                     Ok(Some(Ok(_))) => continue,
                     Ok(Some(Err(e))) => panic!("Insert notification failed with error: {}", e),
                     Ok(None) => panic!("Subscription ended before receiving insert notification"),
@@ -430,13 +410,13 @@ async fn test_websocket_insert_notification() {
             }
 
             assert!(got_insert, "FAILED: No insert notification received within timeout");
-        }
+        },
         Ok(Err(e)) => {
             panic!("Subscription failed: {}", e);
-        }
+        },
         Err(_) => {
             panic!("Subscription creation timed out");
-        }
+        },
     }
 
     cleanup_test_data(&table).await.ok();
@@ -456,10 +436,7 @@ async fn test_websocket_filtered_subscription() {
     // Subscribe with WHERE filter
     let subscription_result = timeout(
         TEST_TIMEOUT,
-        client.subscribe(&format!(
-            "SELECT * FROM {} WHERE event_type = 'filtered'",
-            table
-        )),
+        client.subscribe(&format!("SELECT * FROM {} WHERE event_type = 'filtered'", table)),
     )
     .await;
 
@@ -509,24 +486,24 @@ async fn test_websocket_filtered_subscription() {
                         if got_filtered {
                             break;
                         }
-                    }
+                    },
                     Ok(Some(Ok(_))) => continue,
                     Ok(Some(Err(e))) => {
                         panic!("Filtered subscription stream error: {}", e);
-                    }
+                    },
                     Ok(None) => break,
                     Err(_) => continue,
                 }
             }
 
             assert!(got_filtered, "Expected an Insert event for filtered row");
-        }
+        },
         Ok(Err(e)) => {
             panic!("Filtered subscription failed: {}", e);
-        }
+        },
         Err(_) => {
             panic!("Filtered subscription creation timed out");
-        }
+        },
     }
 
     cleanup_test_data(&table).await.ok();
@@ -555,9 +532,7 @@ async fn test_sql_create_namespace() {
     assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
 
     // Cleanup
-    let _ = client
-        .execute_query("DROP NAMESPACE test_ns CASCADE", None, None)
-        .await;
+    let _ = client.execute_query("DROP NAMESPACE test_ns CASCADE", None, None).await;
 }
 
 #[tokio::test]
@@ -571,7 +546,8 @@ async fn test_sql_create_user_table() {
 
     let client = create_test_client().expect("Failed to create client");
 
-        let result = client.execute_query(
+    let result = client
+        .execute_query(
             r#"CREATE TABLE ws_test.test_table (
                 id INT PRIMARY KEY,
                 event_type VARCHAR,
@@ -579,7 +555,8 @@ async fn test_sql_create_user_table() {
             ) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:10')"#,
             None,
             None,
-        ).await;
+        )
+        .await;
 
     assert!(
         result.is_ok() || result.unwrap_err().to_string().contains("already exists"),
@@ -602,20 +579,21 @@ async fn test_sql_insert_select() {
 
     // INSERT
     let insert = client
-        .execute_query(&format!(
-            "INSERT INTO {} (event_id, event_type, data) VALUES ('{}', 'test', 'data')",
-            table,
-            unique_event_id()
-        ), None, None)
+        .execute_query(
+            &format!(
+                "INSERT INTO {} (event_id, event_type, data) VALUES ('{}', 'test', 'data')",
+                table,
+                unique_event_id()
+            ),
+            None,
+            None,
+        )
         .await;
     assert!(insert.is_ok(), "INSERT should succeed: {:?}", insert.err());
 
     // SELECT
     let select = client
-        .execute_query(&format!(
-            "SELECT * FROM {} WHERE event_type = 'test'",
-            table
-        ), None, None)
+        .execute_query(&format!("SELECT * FROM {} WHERE event_type = 'test'", table), None, None)
         .await;
     assert!(select.is_ok(), "SELECT should succeed");
 
@@ -666,21 +644,15 @@ async fn test_sql_system_tables() {
     let client = create_test_client().expect("Failed to create client");
 
     // Query system.users
-    let users = client
-        .execute_query("SELECT * FROM system.users", None, None)
-        .await;
+    let users = client.execute_query("SELECT * FROM system.users", None, None).await;
     assert!(users.is_ok(), "Should query system.users");
 
     // Query system.namespaces
-    let namespaces = client
-        .execute_query("SELECT * FROM system.namespaces", None, None)
-        .await;
+    let namespaces = client.execute_query("SELECT * FROM system.namespaces", None, None).await;
     assert!(namespaces.is_ok(), "Should query system.namespaces");
 
     // Query system.tables
-    let tables = client
-        .execute_query("SELECT * FROM system.tables", None, None)
-        .await;
+    let tables = client.execute_query("SELECT * FROM system.tables", None, None).await;
     assert!(tables.is_ok(), "Should query system.tables");
 }
 
@@ -698,32 +670,33 @@ async fn test_sql_where_clause_operators() {
     // Insert test data
     for i in 1..=5 {
         client
-            .execute_query(&format!(
-                "INSERT INTO {} (event_id, event_type, data) VALUES ('{}', 'op_test', '{}')",
-                table,
-                unique_event_id(),
-                i
-            ), None, None)
+            .execute_query(
+                &format!(
+                    "INSERT INTO {} (event_id, event_type, data) VALUES ('{}', 'op_test', '{}')",
+                    table,
+                    unique_event_id(),
+                    i
+                ),
+                None,
+                None,
+            )
             .await
             .ok();
     }
 
     // Test LIKE
     let like = client
-        .execute_query(
-            &format!("SELECT * FROM {} WHERE data LIKE '%3%'", table),
-            None,
-            None,
-        )
+        .execute_query(&format!("SELECT * FROM {} WHERE data LIKE '%3%'", table), None, None)
         .await;
     assert!(like.is_ok(), "LIKE operator should work");
 
     // Test IN
     let in_op = client
-        .execute_query(&format!(
-            "SELECT * FROM {} WHERE data IN ('1', '2', '3')",
-            table
-        ), None, None)
+        .execute_query(
+            &format!("SELECT * FROM {} WHERE data IN ('1', '2', '3')", table),
+            None,
+            None,
+        )
         .await;
     assert!(in_op.is_ok(), "IN operator should work");
 
@@ -744,22 +717,27 @@ async fn test_sql_limit_offset() {
     // Insert multiple rows
     for i in 1..=10 {
         client
-            .execute_query(&format!(
-                "INSERT INTO {} (event_id, event_type, data) VALUES ('{}', 'limit_test', '{}')",
-                table,
-                unique_event_id(),
-                i
-            ), None, None)
+            .execute_query(
+                &format!(
+                    "INSERT INTO {} (event_id, event_type, data) VALUES ('{}', 'limit_test', '{}')",
+                    table,
+                    unique_event_id(),
+                    i
+                ),
+                None,
+                None,
+            )
             .await
             .ok();
     }
 
     // Test LIMIT
     let limit = client
-        .execute_query(&format!(
-            "SELECT * FROM {} WHERE event_type = 'limit_test' LIMIT 5",
-            table
-        ), None, None)
+        .execute_query(
+            &format!("SELECT * FROM {} WHERE event_type = 'limit_test' LIMIT 5", table),
+            None,
+            None,
+        )
         .await;
     assert!(limit.is_ok(), "LIMIT should work");
     let response = limit.unwrap();
@@ -783,28 +761,37 @@ async fn test_sql_order_by() {
 
     // Insert data
     client
-        .execute_query(&format!(
-            "INSERT INTO {} (event_id, event_type, data) VALUES ('{}', 'sort', 'z')",
-            table,
-            unique_event_id()
-        ), None, None)
+        .execute_query(
+            &format!(
+                "INSERT INTO {} (event_id, event_type, data) VALUES ('{}', 'sort', 'z')",
+                table,
+                unique_event_id()
+            ),
+            None,
+            None,
+        )
         .await
         .ok();
     client
-        .execute_query(&format!(
-            "INSERT INTO {} (event_id, event_type, data) VALUES ('{}', 'sort', 'a')",
-            table,
-            unique_event_id()
-        ), None, None)
+        .execute_query(
+            &format!(
+                "INSERT INTO {} (event_id, event_type, data) VALUES ('{}', 'sort', 'a')",
+                table,
+                unique_event_id()
+            ),
+            None,
+            None,
+        )
         .await
         .ok();
 
     // Test ORDER BY
     let ordered = client
-        .execute_query(&format!(
-            "SELECT * FROM {} WHERE event_type = 'sort' ORDER BY data ASC",
-            table
-        ), None, None)
+        .execute_query(
+            &format!("SELECT * FROM {} WHERE event_type = 'sort' ORDER BY data ASC", table),
+            None,
+            None,
+        )
         .await;
     assert!(ordered.is_ok(), "ORDER BY should work");
 
@@ -824,9 +811,7 @@ async fn test_error_invalid_sql() {
 
     let client = create_test_client().expect("Failed to create client");
 
-    let result = client
-        .execute_query("INVALID SQL STATEMENT", None, None)
-        .await;
+    let result = client.execute_query("INVALID SQL STATEMENT", None, None).await;
     assert!(
         result.is_err() || result.unwrap().status == ResponseStatus::Error,
         "Invalid SQL should return error"
@@ -842,9 +827,7 @@ async fn test_error_table_not_found() {
 
     let client = create_test_client().expect("Failed to create client");
 
-    let result = client
-        .execute_query("SELECT * FROM nonexistent.table", None, None)
-        .await;
+    let result = client.execute_query("SELECT * FROM nonexistent.table", None, None).await;
     assert!(
         result.is_err() || result.unwrap().status == ResponseStatus::Error,
         "Querying non-existent table should return error"
@@ -861,10 +844,7 @@ async fn test_error_connection_refused() {
         .expect("Client creation should succeed");
 
     let result = client.execute_query("SELECT 1", None, None).await;
-    assert!(
-        result.is_err(),
-        "Connection to non-existent server should fail"
-    );
+    assert!(result.is_err(), "Connection to non-existent server should fail");
 }
 
 // =============================================================================

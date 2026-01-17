@@ -74,10 +74,7 @@ mod cluster_common {
     ) -> KalamLinkClient {
         KalamLinkClient::builder()
             .base_url(base_url)
-            .auth(AuthProvider::basic_auth(
-                username.to_string(),
-                password.to_string(),
-            ))
+            .auth(AuthProvider::basic_auth(username.to_string(), password.to_string()))
             .timeouts(
                 KalamLinkTimeouts::builder()
                     .connection_timeout_secs(5)
@@ -100,15 +97,9 @@ mod cluster_common {
         cluster_runtime()
             .block_on(async move { client.execute_query(&sql, None, None).await })
             .map(|response| {
-                let result = response
-                    .results
-                    .first()
-                    .expect("Missing query result for count");
-                let rows = result
-                    .rows
-                    .as_ref()
-                    .and_then(|rows| rows.first())
-                    .expect("Missing count row");
+                let result = response.results.first().expect("Missing query result for count");
+                let rows =
+                    result.rows.as_ref().and_then(|rows| rows.first()).expect("Missing count row");
                 let value = rows.first().expect("Missing count column");
                 let unwrapped = extract_typed_value(value);
                 match unwrapped {
@@ -205,14 +196,8 @@ mod cluster_common {
     /// Fetch normalized row strings from a root-authenticated query
     pub fn fetch_normalized_rows(base_url: &str, sql: &str) -> Result<Vec<String>, String> {
         let response = execute_on_node_response(base_url, sql)?;
-        let result = response
-            .results
-            .first()
-            .ok_or_else(|| "Missing query result".to_string())?;
-        let rows = result
-            .rows
-            .as_ref()
-            .ok_or_else(|| "Missing row data".to_string())?;
+        let result = response.results.first().ok_or_else(|| "Missing query result".to_string())?;
+        let rows = result.rows.as_ref().ok_or_else(|| "Missing row data".to_string())?;
 
         Ok(normalize_rows(rows))
     }
@@ -225,14 +210,8 @@ mod cluster_common {
         sql: &str,
     ) -> Result<Vec<String>, String> {
         let response = execute_on_node_as_user_response(base_url, username, password, sql)?;
-        let result = response
-            .results
-            .first()
-            .ok_or_else(|| "Missing query result".to_string())?;
-        let rows = result
-            .rows
-            .as_ref()
-            .ok_or_else(|| "Missing row data".to_string())?;
+        let result = response.results.first().ok_or_else(|| "Missing query result".to_string())?;
+        let rows = result.rows.as_ref().ok_or_else(|| "Missing row data".to_string())?;
 
         Ok(normalize_rows(rows))
     }
@@ -275,11 +254,7 @@ mod cluster_common {
 
     /// Wait for a table to be visible on all cluster nodes
     /// Returns true if table is visible on all nodes within timeout, false otherwise
-    pub fn wait_for_table_on_all_nodes(
-        namespace: &str,
-        table_name: &str,
-        timeout_ms: u64,
-    ) -> bool {
+    pub fn wait_for_table_on_all_nodes(namespace: &str, table_name: &str, timeout_ms: u64) -> bool {
         let urls = cluster_urls();
         let query = format!(
             "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
@@ -288,19 +263,19 @@ mod cluster_common {
 
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_millis(timeout_ms);
-        
+
         while start.elapsed() < timeout {
             let all_visible = urls.iter().all(|url| {
                 matches!(execute_on_node(url, &query), Ok(result) if result.contains(table_name))
             });
-            
+
             if all_visible {
                 return true;
             }
-            
+
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        
+
         false
     }
 
@@ -314,19 +289,19 @@ mod cluster_common {
 
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_millis(timeout_ms);
-        
+
         while start.elapsed() < timeout {
             let all_visible = urls.iter().all(|url| {
                 matches!(execute_on_node(url, &query), Ok(result) if result.contains(namespace))
             });
-            
+
             if all_visible {
                 return true;
             }
-            
+
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        
+
         false
     }
 
@@ -341,53 +316,53 @@ mod cluster_common {
 
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_millis(timeout_ms);
-        
+
         while start.elapsed() < timeout {
             let all_match = urls
                 .iter()
                 .map(|url| query_count_on_url(url, &query))
                 .all(|count| count == expected);
-            
+
             if all_match {
                 return true;
             }
-            
+
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        
+
         false
     }
 }
 
-#[path = "cluster/cluster_test_consistency.rs"]
-mod cluster_test_consistency;
-#[path = "cluster/cluster_test_failover.rs"]
-mod cluster_test_failover;
-#[path = "cluster/cluster_test_snapshot.rs"]
-mod cluster_test_snapshot;
-#[path = "cluster/cluster_test_data_digest.rs"]
-mod cluster_test_data_digest;
-#[path = "cluster/cluster_test_replication.rs"]
-mod cluster_test_replication;
-#[path = "cluster/cluster_test_ws_follower.rs"]
-mod cluster_test_ws_follower;
-#[path = "cluster/cluster_test_system_tables_replication.rs"]
-mod cluster_test_system_tables_replication;
-#[path = "cluster/cluster_test_subscription_nodes.rs"]
-mod cluster_test_subscription_nodes;
-#[path = "cluster/cluster_test_table_identity.rs"]
-mod cluster_test_table_identity;
-#[path = "cluster/cluster_test_table_crud_consistency.rs"]
-mod cluster_test_table_crud_consistency;
-#[path = "cluster/cluster_test_multi_node_smoke.rs"]
-mod cluster_test_multi_node_smoke;
-#[path = "cluster/cluster_test_final_consistency.rs"]
-mod cluster_test_final_consistency;
-#[path = "cluster/cluster_test_node_rejoin.rs"]
-mod cluster_test_node_rejoin;
-#[path = "cluster/cluster_test_leader_jobs.rs"]
-mod cluster_test_leader_jobs;
-#[path = "cluster/cluster_test_flush.rs"]
-mod cluster_test_flush;
 #[path = "cluster/cluster_test_cluster_list.rs"]
 mod cluster_test_cluster_list;
+#[path = "cluster/cluster_test_consistency.rs"]
+mod cluster_test_consistency;
+#[path = "cluster/cluster_test_data_digest.rs"]
+mod cluster_test_data_digest;
+#[path = "cluster/cluster_test_failover.rs"]
+mod cluster_test_failover;
+#[path = "cluster/cluster_test_final_consistency.rs"]
+mod cluster_test_final_consistency;
+#[path = "cluster/cluster_test_flush.rs"]
+mod cluster_test_flush;
+#[path = "cluster/cluster_test_leader_jobs.rs"]
+mod cluster_test_leader_jobs;
+#[path = "cluster/cluster_test_multi_node_smoke.rs"]
+mod cluster_test_multi_node_smoke;
+#[path = "cluster/cluster_test_node_rejoin.rs"]
+mod cluster_test_node_rejoin;
+#[path = "cluster/cluster_test_replication.rs"]
+mod cluster_test_replication;
+#[path = "cluster/cluster_test_snapshot.rs"]
+mod cluster_test_snapshot;
+#[path = "cluster/cluster_test_subscription_nodes.rs"]
+mod cluster_test_subscription_nodes;
+#[path = "cluster/cluster_test_system_tables_replication.rs"]
+mod cluster_test_system_tables_replication;
+#[path = "cluster/cluster_test_table_crud_consistency.rs"]
+mod cluster_test_table_crud_consistency;
+#[path = "cluster/cluster_test_table_identity.rs"]
+mod cluster_test_table_identity;
+#[path = "cluster/cluster_test_ws_follower.rs"]
+mod cluster_test_ws_follower;

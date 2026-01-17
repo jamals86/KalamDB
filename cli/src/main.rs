@@ -45,7 +45,8 @@ async fn run() -> Result<()> {
     // If the password is explicitly set to an empty string, only prompt in interactive mode.
     // In non-interactive modes (--command/--file), an empty password may be valid (e.g. default root).
     let is_interactive_mode = cli.command.is_none() && cli.file.is_none();
-    if cli.password.as_deref() == Some("") && is_interactive_mode && std::io::stdin().is_terminal() {
+    if cli.password.as_deref() == Some("") && is_interactive_mode && std::io::stdin().is_terminal()
+    {
         let password = rpassword::prompt_password("Password: ")
             .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?;
         cli.password = Some(password);
@@ -88,24 +89,24 @@ async fn run() -> Result<()> {
                 CLIError::FileError(format!("Failed to read {}: {}", file.display(), e))
             })?;
             session.execute_batch(&sql).await?;
-        }
+        },
 
         // Execute single command
         (None, Some(command)) => {
             session.execute(&command).await?;
-        }
+        },
 
         // Interactive mode
         (None, None) => {
             session.run_interactive().await?;
-        }
+        },
 
         // Invalid combination
         (Some(_), Some(_)) => {
             return Err(CLIError::ConfigurationError(
                 "Cannot specify both --file and --command".into(),
             ));
-        }
+        },
     }
 
     Ok(())

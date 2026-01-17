@@ -89,9 +89,7 @@ async fn test_datatypes_preservation_values() {
         .expect("Failed to store table definition");
 
     // Arrow schema for the job
-    let arrow_schema = table_def
-        .to_arrow_schema()
-        .expect("Failed to convert to Arrow schema");
+    let arrow_schema = table_def.to_arrow_schema().expect("Failed to convert to Arrow schema");
 
     // Create user table store
     let store = Arc::new(new_user_table_store(backend.clone(), &table_id));
@@ -111,17 +109,12 @@ async fn test_datatypes_preservation_values() {
         let f = (i as f32) / 7.0 - 0.5;
         let s = format!("row-{}", i);
         let ts = (base_ts + Duration::seconds(i as i64)).timestamp_millis();
-        let date_str = (base_date + Duration::days(i as i64))
-            .format("%Y-%m-%d")
-            .to_string();
+        let date_str = (base_date + Duration::days(i as i64)).format("%Y-%m-%d").to_string();
         let dt_str = (base_ts + Duration::minutes(i as i64)).to_rfc3339();
         let time_str = format!("12:34:{:02}.{:06}", (i % 60), (i * 137) % 1_000_000);
         let json_str = format!("{{\"k\":{}}}", i);
         let bytes: Vec<u8> = (0..8).map(|j| ((i + j) % 256) as u8).collect();
-        let bytes_b64 = format!(
-            "base64:{}",
-            general_purpose::STANDARD.encode(bytes.as_slice())
-        );
+        let bytes_b64 = format!("base64:{}", general_purpose::STANDARD.encode(bytes.as_slice()));
         let emb = vec![i as f32, i as f32 + 0.5, -(i as f32), 1.0];
 
         // P0 datatype values
@@ -192,23 +185,12 @@ async fn test_datatypes_preservation_values() {
     );
 
     let result = job.execute().expect("flush job failed");
-    assert_eq!(
-        result.rows_flushed as usize, row_count,
-        "unexpected rows_flushed"
-    );
-    assert_eq!(
-        result.parquet_files.len(),
-        1,
-        "expected one parquet file (single user)"
-    );
+    assert_eq!(result.rows_flushed as usize, row_count, "unexpected rows_flushed");
+    assert_eq!(result.parquet_files.len(), 1, "expected one parquet file (single user)");
 
     // Parquet file should exist
     let parquet_path = Path::new(&result.parquet_files[0]);
-    assert!(
-        parquet_path.exists(),
-        "parquet file not found: {:?}",
-        parquet_path
-    );
+    assert!(parquet_path.exists(), "parquet file not found: {:?}", parquet_path);
 
     // Read back using Parquet reader and verify a few representative values across types
     {
@@ -252,30 +234,21 @@ async fn test_datatypes_preservation_values() {
 
             // UUID should be FixedSizeBinary(16)
             assert!(
-                matches!(
-                    uuid_field.data_type(),
-                    arrow::datatypes::DataType::FixedSizeBinary(16)
-                ),
+                matches!(uuid_field.data_type(), arrow::datatypes::DataType::FixedSizeBinary(16)),
                 "UUID field should be FixedSizeBinary(16), got {:?}",
                 uuid_field.data_type()
             );
 
             // DECIMAL should be Decimal128(10, 2)
             assert!(
-                matches!(
-                    decimal_field.data_type(),
-                    arrow::datatypes::DataType::Decimal128(10, 2)
-                ),
+                matches!(decimal_field.data_type(), arrow::datatypes::DataType::Decimal128(10, 2)),
                 "DECIMAL field should be Decimal128(10, 2), got {:?}",
                 decimal_field.data_type()
             );
 
             // SMALLINT should be Int16
             assert!(
-                matches!(
-                    smallint_field.data_type(),
-                    arrow::datatypes::DataType::Int16
-                ),
+                matches!(smallint_field.data_type(), arrow::datatypes::DataType::Int16),
                 "SMALLINT field should be Int16, got {:?}",
                 smallint_field.data_type()
             );
@@ -404,62 +377,25 @@ async fn test_datatypes_preservation_values() {
 
                 assert_eq!(b_arr.value(row), exp_b, "bool mismatch for id={}", id);
                 assert_eq!(i_arr.value(row), exp_i, "int mismatch for id={}", id);
-                assert!(
-                    (d_arr.value(row) - exp_d).abs() < 1e-9,
-                    "double mismatch for id={}",
-                    id
-                );
-                assert!(
-                    (f_arr.value(row) - exp_f).abs() < 1e-6,
-                    "float mismatch for id={}",
-                    id
-                );
+                assert!((d_arr.value(row) - exp_d).abs() < 1e-9, "double mismatch for id={}", id);
+                assert!((f_arr.value(row) - exp_f).abs() < 1e-6, "float mismatch for id={}", id);
                 assert_eq!(s_arr.value(row), exp_s, "text mismatch for id={}", id);
                 assert_eq!(ts_arr.value(row), exp_ts, "ts(ms) mismatch for id={}", id);
-                assert_eq!(
-                    date_arr.value(row),
-                    exp_date_days,
-                    "date(days) mismatch for id={}",
-                    id
-                );
-                assert_eq!(
-                    dt_arr.value(row),
-                    exp_dt_ms,
-                    "datetime(ms) mismatch for id={}",
-                    id
-                );
-                assert_eq!(
-                    time_arr.value(row),
-                    exp_time_us,
-                    "time(us) mismatch for id={}",
-                    id
-                );
+                assert_eq!(date_arr.value(row), exp_date_days, "date(days) mismatch for id={}", id);
+                assert_eq!(dt_arr.value(row), exp_dt_ms, "datetime(ms) mismatch for id={}", id);
+                assert_eq!(time_arr.value(row), exp_time_us, "time(us) mismatch for id={}", id);
                 let got_bytes = bytes_arr.value(row);
-                assert_eq!(
-                    got_bytes,
-                    exp_bytes.as_slice(),
-                    "bytes mismatch for id={}",
-                    id
-                );
+                assert_eq!(got_bytes, exp_bytes.as_slice(), "bytes mismatch for id={}", id);
 
                 // P0 datatype assertions
                 let got_uuid = uuid_arr.value(row);
-                assert_eq!(
-                    got_uuid,
-                    exp_uuid_bytes.as_slice(),
-                    "UUID mismatch for id={}",
-                    id
-                );
+                assert_eq!(got_uuid, exp_uuid_bytes.as_slice(), "UUID mismatch for id={}", id);
 
                 let got_decimal = decimal_arr.value(row);
                 assert_eq!(got_decimal, exp_decimal, "DECIMAL mismatch for id={}", id);
 
                 let got_smallint = smallint_arr.value(row);
-                assert_eq!(
-                    got_smallint, exp_smallint,
-                    "SMALLINT mismatch for id={}",
-                    id
-                );
+                assert_eq!(got_smallint, exp_smallint, "SMALLINT mismatch for id={}", id);
 
                 // Embedding: extract fixed-size list item values
                 if emb_arr.is_valid(row) {
@@ -467,10 +403,8 @@ async fn test_datatypes_preservation_values() {
                     // Start offset = row * size
                     let size = emb_arr.value_length() as usize;
                     let start = row * size;
-                    let vals = values
-                        .as_any()
-                        .downcast_ref::<arrow::array::Float32Array>()
-                        .unwrap();
+                    let vals =
+                        values.as_any().downcast_ref::<arrow::array::Float32Array>().unwrap();
                     let got = [
                         vals.value(start),
                         vals.value(start + 1),
@@ -494,10 +428,7 @@ async fn test_datatypes_preservation_values() {
     }
 
     // Also verify the file physically exists on disk under the computed directory
-    let user_dir = output_base
-        .join(ns.as_str())
-        .join(tbl_name.as_str())
-        .join(user_id);
+    let user_dir = output_base.join(ns.as_str()).join(tbl_name.as_str()).join(user_id);
     assert!(user_dir.exists(), "user dir missing: {:?}", user_dir);
     let files = fs::read_dir(&user_dir).unwrap();
     let parquet_files: Vec<_> = files
@@ -505,9 +436,5 @@ async fn test_datatypes_preservation_values() {
         .map(|e| e.path())
         .filter(|p| p.extension().map(|s| s == "parquet").unwrap_or(false))
         .collect();
-    assert!(
-        !parquet_files.is_empty(),
-        "no parquet files found in {:?}",
-        user_dir
-    );
+    assert!(!parquet_files.is_empty(), "no parquet files found in {:?}", user_dir);
 }

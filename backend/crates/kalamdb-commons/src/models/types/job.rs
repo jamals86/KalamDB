@@ -42,6 +42,7 @@ use serde::{Deserialize, Serialize};
 ///     job_id: JobId::new("job_123456"),
 ///     job_type: JobType::Flush,
 ///     status: JobStatus::Running,
+///     leader_status: None,
 ///     parameters: Some(r#"{"namespace_id":"default","table_name":"events"}"#.to_string()),
 ///     message: None,
 ///     exception_trace: None,
@@ -55,6 +56,7 @@ use serde::{Deserialize, Serialize};
 ///     started_at: Some(1730000000000),
 ///     finished_at: None,
 ///     node_id: NodeId::from(1u64),
+///     leader_node_id: None,
 ///     queue: None,
 ///     priority: None,
 /// };
@@ -62,30 +64,46 @@ use serde::{Deserialize, Serialize};
 /// Job struct with fields ordered for optimal memory alignment.
 /// 8-byte aligned fields first (i64, pointers/String), then smaller types.
 /// This minimizes struct padding and improves cache efficiency.
+///
+/// ## Distributed Job Execution Model
+///
+/// Jobs in a cluster have two execution phases:
+/// - **Local work**: Runs on ALL nodes (e.g., RocksDB flush, local cache eviction)
+/// - **Leader actions**: Runs ONLY on leader (e.g., Parquet upload to S3, shared metadata updates)
+///
+/// The `status` field tracks overall job status (local work on this node).
+/// The `leader_status` field tracks leader-only actions when this node is the leader.
+/// The `leader_node_id` field indicates which node performed leader actions.
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct Job {
     // 8-byte aligned fields first (i64, Option<i64>, String/pointer types)
-    pub created_at: i64,            // Unix timestamp in milliseconds
-    pub updated_at: i64,            // Unix timestamp in milliseconds
-    pub started_at: Option<i64>,    // Unix timestamp in milliseconds
-    pub finished_at: Option<i64>,   // Unix timestamp in milliseconds
-    pub memory_used: Option<i64>,   // bytes
-    pub cpu_used: Option<i64>,      // microseconds
+    pub created_at: i64,          // Unix timestamp in milliseconds
+    pub updated_at: i64,          // Unix timestamp in milliseconds
+    pub started_at: Option<i64>,  // Unix timestamp in milliseconds
+    pub finished_at: Option<i64>, // Unix timestamp in milliseconds
+    pub memory_used: Option<i64>, // bytes
+    pub cpu_used: Option<i64>,    // microseconds
     pub job_id: JobId,
     #[bincode(with_serde)]
     pub node_id: NodeId,
+    /// Node that performed leader actions (if any). Only set when leader_status is Some.
+    #[bincode(with_serde)]
+    pub leader_node_id: Option<NodeId>,
     pub parameters: Option<String>, // JSON object containing namespace_id, table_name, and other params
     pub message: Option<String>,    // Unified field replacing result/error_message
     pub exception_trace: Option<String>, // Full stack trace on failures
     pub idempotency_key: Option<String>, // For preventing duplicate jobs
     pub queue: Option<String>,      // Queue name (future use)
     // 4-byte aligned fields (enums, i32)
-    pub priority: Option<i32>,      // Priority value (future use)
+    pub priority: Option<i32>, // Priority value (future use)
     pub job_type: JobType,
+    /// Status of local work (runs on all nodes)
     pub status: JobStatus,
+    /// Status of leader-only actions (only set on leader node for jobs with leader actions)
+    pub leader_status: Option<JobStatus>,
     // 1-byte fields last
-    pub retry_count: u8,            // Number of retries attempted (default 0)
-    pub max_retries: u8,            // Maximum retries allowed (default 3)
+    pub retry_count: u8, // Number of retries attempted (default 0)
+    pub max_retries: u8, // Maximum retries allowed (default 3)
 }
 
 impl Job {
@@ -281,6 +299,7 @@ mod tests {
             job_id: "job_123".into(),
             job_type: JobType::Flush,
             status: JobStatus::Completed,
+            leader_status: Some(JobStatus::Completed),
             parameters: Some(r#"{"namespace_id":"default","table_name":"events"}"#.to_string()),
             message: Some("Job completed successfully".to_string()),
             exception_trace: None,
@@ -294,6 +313,7 @@ mod tests {
             started_at: Some(1730000000000),
             finished_at: Some(1730000300000),
             node_id: NodeId::from(1u64),
+            leader_node_id: Some(NodeId::from(1u64)),
             queue: None,
             priority: None,
         };
@@ -311,6 +331,7 @@ mod tests {
             job_id: JobId::new("job_123"),
             job_type: JobType::Flush,
             status: JobStatus::Running,
+            leader_status: None,
             parameters: Some(r#"{"namespace_id":"default","table_name":"events"}"#.to_string()),
             message: None,
             exception_trace: None,
@@ -324,6 +345,7 @@ mod tests {
             started_at: Some(1730000000000),
             finished_at: None,
             node_id: NodeId::from(1u64),
+            leader_node_id: None,
             queue: None,
             priority: None,
         };

@@ -23,7 +23,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UserDataCommand {
     // === User Table Data ===
-    
     /// Insert rows into a user table
     Insert {
         /// Watermark: Meta group's last_applied_index at proposal time
@@ -57,7 +56,6 @@ pub enum UserDataCommand {
     },
 
     // === Live Query Subscriptions ===
-    
     /// Register a new live query subscription
     RegisterLiveQuery {
         /// Watermark: Meta group's last_applied_index at proposal time
@@ -102,29 +100,71 @@ impl UserDataCommand {
     /// Get the required_meta_index watermark for this command
     pub fn required_meta_index(&self) -> u64 {
         match self {
-            UserDataCommand::Insert { required_meta_index, .. } => *required_meta_index,
-            UserDataCommand::Update { required_meta_index, .. } => *required_meta_index,
-            UserDataCommand::Delete { required_meta_index, .. } => *required_meta_index,
-            UserDataCommand::RegisterLiveQuery { required_meta_index, .. } => *required_meta_index,
-            UserDataCommand::UnregisterLiveQuery { required_meta_index, .. } => *required_meta_index,
-            UserDataCommand::CleanupNodeSubscriptions { required_meta_index, .. } => *required_meta_index,
-            UserDataCommand::PingLiveQuery { required_meta_index, .. } => *required_meta_index,
+            UserDataCommand::Insert {
+                required_meta_index,
+                ..
+            } => *required_meta_index,
+            UserDataCommand::Update {
+                required_meta_index,
+                ..
+            } => *required_meta_index,
+            UserDataCommand::Delete {
+                required_meta_index,
+                ..
+            } => *required_meta_index,
+            UserDataCommand::RegisterLiveQuery {
+                required_meta_index,
+                ..
+            } => *required_meta_index,
+            UserDataCommand::UnregisterLiveQuery {
+                required_meta_index,
+                ..
+            } => *required_meta_index,
+            UserDataCommand::CleanupNodeSubscriptions {
+                required_meta_index,
+                ..
+            } => *required_meta_index,
+            UserDataCommand::PingLiveQuery {
+                required_meta_index,
+                ..
+            } => *required_meta_index,
         }
     }
-    
+
     /// Set the required_meta_index watermark for this command
     pub fn set_required_meta_index(&mut self, index: u64) {
         match self {
-            UserDataCommand::Insert { required_meta_index, .. } => *required_meta_index = index,
-            UserDataCommand::Update { required_meta_index, .. } => *required_meta_index = index,
-            UserDataCommand::Delete { required_meta_index, .. } => *required_meta_index = index,
-            UserDataCommand::RegisterLiveQuery { required_meta_index, .. } => *required_meta_index = index,
-            UserDataCommand::UnregisterLiveQuery { required_meta_index, .. } => *required_meta_index = index,
-            UserDataCommand::CleanupNodeSubscriptions { required_meta_index, .. } => *required_meta_index = index,
-            UserDataCommand::PingLiveQuery { required_meta_index, .. } => *required_meta_index = index,
+            UserDataCommand::Insert {
+                required_meta_index,
+                ..
+            } => *required_meta_index = index,
+            UserDataCommand::Update {
+                required_meta_index,
+                ..
+            } => *required_meta_index = index,
+            UserDataCommand::Delete {
+                required_meta_index,
+                ..
+            } => *required_meta_index = index,
+            UserDataCommand::RegisterLiveQuery {
+                required_meta_index,
+                ..
+            } => *required_meta_index = index,
+            UserDataCommand::UnregisterLiveQuery {
+                required_meta_index,
+                ..
+            } => *required_meta_index = index,
+            UserDataCommand::CleanupNodeSubscriptions {
+                required_meta_index,
+                ..
+            } => *required_meta_index = index,
+            UserDataCommand::PingLiveQuery {
+                required_meta_index,
+                ..
+            } => *required_meta_index = index,
         }
     }
-    
+
     /// Get the user_id for routing to the correct shard
     pub fn user_id(&self) -> &UserId {
         match self {
@@ -183,21 +223,39 @@ impl SharedDataCommand {
     /// Get the required_meta_index watermark for this command
     pub fn required_meta_index(&self) -> u64 {
         match self {
-            SharedDataCommand::Insert { required_meta_index, .. } => *required_meta_index,
-            SharedDataCommand::Update { required_meta_index, .. } => *required_meta_index,
-            SharedDataCommand::Delete { required_meta_index, .. } => *required_meta_index,
+            SharedDataCommand::Insert {
+                required_meta_index,
+                ..
+            } => *required_meta_index,
+            SharedDataCommand::Update {
+                required_meta_index,
+                ..
+            } => *required_meta_index,
+            SharedDataCommand::Delete {
+                required_meta_index,
+                ..
+            } => *required_meta_index,
         }
     }
-    
+
     /// Set the required_meta_index watermark for this command
     pub fn set_required_meta_index(&mut self, index: u64) {
         match self {
-            SharedDataCommand::Insert { required_meta_index, .. } => *required_meta_index = index,
-            SharedDataCommand::Update { required_meta_index, .. } => *required_meta_index = index,
-            SharedDataCommand::Delete { required_meta_index, .. } => *required_meta_index = index,
+            SharedDataCommand::Insert {
+                required_meta_index,
+                ..
+            } => *required_meta_index = index,
+            SharedDataCommand::Update {
+                required_meta_index,
+                ..
+            } => *required_meta_index = index,
+            SharedDataCommand::Delete {
+                required_meta_index,
+                ..
+            } => *required_meta_index = index,
         }
     }
-    
+
     /// Get the table_id for this command
     pub fn table_id(&self) -> &TableId {
         match self {
@@ -218,20 +276,18 @@ pub enum DataResponse {
     RowsAffected(usize),
 
     /// Subscription registered
-    Subscribed {
-        subscription_id: String,
-    },
+    Subscribed { subscription_id: String },
 
     /// Error
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 impl DataResponse {
     /// Create an error response with the given message
     pub fn error(msg: impl Into<String>) -> Self {
-        Self::Error { message: msg.into() }
+        Self::Error {
+            message: msg.into(),
+        }
     }
 
     /// Returns true if this is not an error response
@@ -310,15 +366,27 @@ mod tests {
     fn test_data_response_is_ok() {
         assert!(DataResponse::Ok.is_ok());
         assert!(DataResponse::RowsAffected(5).is_ok());
-        assert!(DataResponse::Subscribed { subscription_id: "sub_1".to_string() }.is_ok());
-        assert!(!DataResponse::Error { message: "error".to_string() }.is_ok());
+        assert!(DataResponse::Subscribed {
+            subscription_id: "sub_1".to_string()
+        }
+        .is_ok());
+        assert!(!DataResponse::Error {
+            message: "error".to_string()
+        }
+        .is_ok());
     }
 
     #[test]
     fn test_data_response_rows_affected() {
         assert_eq!(DataResponse::Ok.rows_affected(), 0);
         assert_eq!(DataResponse::RowsAffected(10).rows_affected(), 10);
-        assert_eq!(DataResponse::Error { message: "err".to_string() }.rows_affected(), 0);
+        assert_eq!(
+            DataResponse::Error {
+                message: "err".to_string()
+            }
+            .rows_affected(),
+            0
+        );
     }
 
     #[test]
@@ -379,17 +447,51 @@ mod tests {
         let user_id = UserId::from("u");
 
         let commands = vec![
-            UserDataCommand::Insert { required_meta_index: 1, table_id: table_id.clone(), user_id: user_id.clone(), rows: vec![] },
-            UserDataCommand::Update { required_meta_index: 2, table_id: table_id.clone(), user_id: user_id.clone(), updates: vec![], filter: None },
-            UserDataCommand::Delete { required_meta_index: 3, table_id: table_id.clone(), user_id: user_id.clone(), pk_values: None },
-            UserDataCommand::RegisterLiveQuery { 
-                required_meta_index: 4, subscription_id: "s".to_string(), user_id: user_id.clone(), 
-                query_hash: "h".to_string(), table_id: table_id.clone(), filter_json: None, 
-                node_id: NodeId::from(1), created_at: Utc::now() 
+            UserDataCommand::Insert {
+                required_meta_index: 1,
+                table_id: table_id.clone(),
+                user_id: user_id.clone(),
+                rows: vec![],
             },
-            UserDataCommand::UnregisterLiveQuery { required_meta_index: 5, subscription_id: "s".to_string(), user_id: user_id.clone() },
-            UserDataCommand::CleanupNodeSubscriptions { required_meta_index: 6, user_id: user_id.clone(), failed_node_id: NodeId::from(2) },
-            UserDataCommand::PingLiveQuery { required_meta_index: 7, subscription_id: "s".to_string(), user_id: user_id.clone(), pinged_at: Utc::now() },
+            UserDataCommand::Update {
+                required_meta_index: 2,
+                table_id: table_id.clone(),
+                user_id: user_id.clone(),
+                updates: vec![],
+                filter: None,
+            },
+            UserDataCommand::Delete {
+                required_meta_index: 3,
+                table_id: table_id.clone(),
+                user_id: user_id.clone(),
+                pk_values: None,
+            },
+            UserDataCommand::RegisterLiveQuery {
+                required_meta_index: 4,
+                subscription_id: "s".to_string(),
+                user_id: user_id.clone(),
+                query_hash: "h".to_string(),
+                table_id: table_id.clone(),
+                filter_json: None,
+                node_id: NodeId::from(1),
+                created_at: Utc::now(),
+            },
+            UserDataCommand::UnregisterLiveQuery {
+                required_meta_index: 5,
+                subscription_id: "s".to_string(),
+                user_id: user_id.clone(),
+            },
+            UserDataCommand::CleanupNodeSubscriptions {
+                required_meta_index: 6,
+                user_id: user_id.clone(),
+                failed_node_id: NodeId::from(2),
+            },
+            UserDataCommand::PingLiveQuery {
+                required_meta_index: 7,
+                subscription_id: "s".to_string(),
+                user_id: user_id.clone(),
+                pinged_at: Utc::now(),
+            },
         ];
 
         for (i, cmd) in commands.iter().enumerate() {
@@ -402,9 +504,22 @@ mod tests {
         let table_id = TableId::new(NamespaceId::from("n"), TableName::from("t"));
 
         let commands = vec![
-            SharedDataCommand::Insert { required_meta_index: 10, table_id: table_id.clone(), rows: vec![] },
-            SharedDataCommand::Update { required_meta_index: 20, table_id: table_id.clone(), updates: vec![], filter: None },
-            SharedDataCommand::Delete { required_meta_index: 30, table_id: table_id.clone(), pk_values: None },
+            SharedDataCommand::Insert {
+                required_meta_index: 10,
+                table_id: table_id.clone(),
+                rows: vec![],
+            },
+            SharedDataCommand::Update {
+                required_meta_index: 20,
+                table_id: table_id.clone(),
+                updates: vec![],
+                filter: None,
+            },
+            SharedDataCommand::Delete {
+                required_meta_index: 30,
+                table_id: table_id.clone(),
+                pk_values: None,
+            },
         ];
 
         assert_eq!(commands[0].required_meta_index(), 10);

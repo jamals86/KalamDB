@@ -1,9 +1,8 @@
 //! Quickstart end-to-end smoke over the real HTTP SQL API.
 
-
+use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use super::test_support::http_server::HttpTestServer;
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
     let password = "UserPass123!";

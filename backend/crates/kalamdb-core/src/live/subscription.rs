@@ -7,23 +7,22 @@
 //!
 //! Live query records are replicated through Raft MetaCommand for cluster-wide visibility.
 
-use super::connections_manager::{ConnectionsManager, SharedConnectionState, SubscriptionHandle, SubscriptionState};
+use super::connections_manager::{
+    ConnectionsManager, SharedConnectionState, SubscriptionHandle, SubscriptionState,
+};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use chrono::Utc;
-use log::debug;
 use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
-use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::websocket::SubscriptionRequest;
 use kalamdb_commons::NodeId;
 use kalamdb_raft::MetaCommand;
-use kalamdb_system::LiveQueriesTableProvider;
-use std::sync::{Arc, Weak};
+use log::debug;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
 
 /// Service for managing subscriptions
 ///
@@ -34,50 +33,27 @@ use tokio::sync::RwLock;
 pub struct SubscriptionService {
     /// Manager uses DashMap internally for lock-free access
     registry: Arc<ConnectionsManager>,
-    live_queries_provider: Arc<LiveQueriesTableProvider>,
     node_id: NodeId,
-    /// AppContext for executing Raft commands (set after construction)
-    app_context: RwLock<Option<Weak<AppContext>>>,
+    /// AppContext for executing Raft commands
+    app_context: Arc<AppContext>,
 }
 
 impl SubscriptionService {
     pub fn new(
         registry: Arc<ConnectionsManager>,
-        live_queries_provider: Arc<LiveQueriesTableProvider>,
         node_id: NodeId,
+        app_context: Arc<AppContext>,
     ) -> Self {
         Self {
             registry,
-            live_queries_provider,
             node_id,
-            app_context: RwLock::new(None),
-        }
-    }
-
-    /// Set the AppContext for executing Raft commands.
-    /// Called after AppContext is fully constructed.
-    pub fn set_app_context(&self, app_ctx: Arc<AppContext>) {
-        // Store as Weak to avoid Arc cycle
-        if let Ok(mut w) = self.app_context.try_write() {
-            *w = Some(Arc::downgrade(&app_ctx));
-        }
-    }
-
-    /// Get the AppContext if available
-    fn get_app_context(&self) -> Option<Arc<AppContext>> {
-        if let Ok(r) = self.app_context.try_read() {
-            r.as_ref().and_then(|w| w.upgrade())
-        } else {
-            None
+            app_context,
         }
     }
 
     /// Get current timestamp in milliseconds
     fn current_timestamp_ms() -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64
     }
 
     /// Register a live query subscription
@@ -107,7 +83,7 @@ impl SubscriptionService {
             let user_id = state.user_id.clone().ok_or_else(|| {
                 KalamDbError::InvalidOperation("Connection not authenticated".to_string())
             })?;
-            
+
             // Prevent DoS via excessive subscriptions per connection
             const MAX_SUBSCRIPTIONS_PER_CONNECTION: usize = 100;
             if state.subscriptions.len() >= MAX_SUBSCRIPTIONS_PER_CONNECTION {
@@ -116,18 +92,12 @@ impl SubscriptionService {
                     MAX_SUBSCRIPTIONS_PER_CONNECTION
                 )));
             }
-            
+
             (state.connection_id.clone(), user_id, state.notification_tx.clone())
         };
 
         // Generate LiveQueryId
-        let live_id = LiveQueryId::new(
-            user_id.clone(),
-            connection_id.clone(),
-            request.id.clone(),
-        );
-
-        let timestamp = Self::current_timestamp_ms();
+        let live_id = LiveQueryId::new(user_id.clone(), connection_id.clone(), request.id.clone());
 
         // Clone subscription options directly
         let options = request.options.clone();
@@ -135,49 +105,6 @@ impl SubscriptionService {
         // Serialize options to JSON
         let options_json = serde_json::to_string(&options)
             .into_serialization_error("Failed to serialize options")?;
-
-        // Create live query through Raft for cluster-wide replication
-        // This ensures all nodes see the same live queries in system.live_queries
-        if let Some(app_ctx) = self.get_app_context() {
-            let cmd = MetaCommand::CreateLiveQuery {
-                live_id: live_id.clone(),
-                connection_id: connection_id.clone(),
-                namespace_id: table_id.namespace_id().clone(),
-                table_name: table_id.table_name().clone(),
-                user_id: user_id.clone(),
-                query: request.sql.clone(),
-                options_json: Some(options_json),
-                node_id: self.node_id.clone(),
-                subscription_id: request.id.clone(),
-                created_at: Utc::now(),
-            };
-            
-            app_ctx.executor().execute_meta(cmd).await
-                .map_err(|e| KalamDbError::Other(format!("Failed to create live query: {}", e)))?;
-        } else {
-            // Fallback to direct write if AppContext not available (startup/testing)
-            let live_query_record = SystemLiveQuery {
-                live_id: live_id.clone(),
-                connection_id: connection_id.to_string(),
-                namespace_id: table_id.namespace_id().clone(),
-                table_name: table_id.table_name().clone(),
-                user_id: user_id.clone(),
-                query: request.sql.clone(),
-                options: Some(options_json),
-                created_at: timestamp,
-                last_update: timestamp,
-                changes: 0,
-                node_id: self.node_id.clone(),
-                subscription_id: request.id.clone(),
-                status: kalamdb_commons::types::LiveQueryStatus::Active,
-                last_ping_at: timestamp,
-            };
-            
-            self.live_queries_provider
-                .insert_live_query_async(live_query_record)
-                .await
-                .into_kalamdb_error("Failed to insert live query")?;
-        }
 
         // Wrap filter_expr and projections in Arc for zero-copy sharing between state and handle
         let filter_expr_arc = filter_expr.map(Arc::new);
@@ -187,12 +114,12 @@ impl SubscriptionService {
         let subscription_state = SubscriptionState {
             live_id: live_id.clone(),
             table_id: table_id.clone(),
-            sql: request.sql.as_str().into(),  // Arc<str> for zero-copy
+            sql: request.sql.as_str().into(), // Arc<str> for zero-copy
             filter_expr: filter_expr_arc.clone(),
             projections: projections_arc.clone(),
             batch_size,
             snapshot_end_seq: None,
-            current_batch_num: 0,  // Start at batch 0
+            current_batch_num: 0, // Start at batch 0
         };
 
         // Create lightweight handle for the index (~48 bytes vs ~800+ bytes)
@@ -202,6 +129,9 @@ impl SubscriptionService {
             notification_tx,
         };
 
+        // CRITICAL: Index subscription BEFORE sending Raft command to avoid race condition.
+        // If we index after Raft, INSERT commands might be applied before the subscription
+        // is indexed, causing notifications to be missed.
         // Add subscription to connection state
         {
             let state = connection_state.read();
@@ -216,6 +146,33 @@ impl SubscriptionService {
             table_id.clone(),
             subscription_handle,
         );
+
+        // Create live query through Raft for cluster-wide replication
+        // This ensures all nodes see the same live queries in system.live_queries
+        // Note: We index the subscription first to ensure notifications aren't missed
+        // If Raft fails, we clean up the subscription state below
+        let cmd = MetaCommand::CreateLiveQuery {
+            live_id: live_id.clone(),
+            connection_id: connection_id.clone(),
+            namespace_id: table_id.namespace_id().clone(),
+            table_name: table_id.table_name().clone(),
+            user_id: user_id.clone(),
+            query: request.sql.clone(),
+            options_json: Some(options_json),
+            node_id: self.node_id.clone(),
+            subscription_id: request.id.clone(),
+            created_at: Utc::now(),
+        };
+
+        if let Err(e) = self.app_context.executor().execute_meta(cmd).await {
+            // Raft failed - clean up the subscription we just indexed
+            self.registry.unindex_subscription(&user_id, &live_id, &table_id);
+            {
+                let state = connection_state.read();
+                state.subscriptions.remove(&request.id);
+            }
+            return Err(KalamDbError::Other(format!("Failed to create live query: {}", e)));
+        }
 
         debug!(
             "Registered subscription {} for connection {} on {}",
@@ -257,7 +214,7 @@ impl SubscriptionService {
                         "Subscription not found: {}",
                         subscription_id
                     )));
-                }
+                },
             }
         };
 
@@ -265,26 +222,18 @@ impl SubscriptionService {
         self.registry.unindex_subscription(&user_id, live_id, &table_id);
 
         // Delete from system.live_queries through Raft for cluster-wide replication
-        if let Some(app_ctx) = self.get_app_context() {
-            let cmd = MetaCommand::DeleteLiveQuery {
-                live_id: live_id.clone(),
-                deleted_at: Utc::now(),
-            };
-            
-            app_ctx.executor().execute_meta(cmd).await
-                .map_err(|e| KalamDbError::Other(format!("Failed to delete live query: {}", e)))?;
-        } else {
-            // Fallback to direct delete if AppContext not available
-            self.live_queries_provider
-                .delete_live_query_async(live_id)
-                .await
-                .into_kalamdb_error("Failed to delete live query")?;
-        }
+        let cmd = MetaCommand::DeleteLiveQuery {
+            live_id: live_id.clone(),
+            deleted_at: Utc::now(),
+        };
 
-        debug!(
-            "Unregistered subscription {} for connection {}",
-            subscription_id, connection_id
-        );
+        self.app_context
+            .executor()
+            .execute_meta(cmd)
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Failed to delete live query: {}", e)))?;
+
+        debug!("Unregistered subscription {} for connection {}", subscription_id, connection_id);
 
         Ok(())
     }
@@ -295,27 +244,18 @@ impl SubscriptionService {
     /// ConnectionsManager registry.
     pub async fn unregister_connection(
         &self,
-        user_id: &UserId,
+        _user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<Vec<LiveQueryId>, KalamDbError> {
         // Delete from system.live_queries through Raft for cluster-wide replication
-        if let Some(app_ctx) = self.get_app_context() {
-            let cmd = MetaCommand::DeleteLiveQueriesByConnection {
-                connection_id: connection_id.clone(),
-                deleted_at: Utc::now(),
-            };
-            
-            app_ctx.executor().execute_meta(cmd).await
-                .map_err(|e| KalamDbError::Other(format!("Failed to delete live queries by connection: {}", e)))?;
-        } else {
-            // Fallback to direct delete if AppContext not available
-            self.live_queries_provider
-                .delete_by_connection_id_async(user_id, connection_id)
-                .await
-                .map_err(|e| {
-                    KalamDbError::Other(format!("Failed to delete live queries by connection: {}", e))
-                })?;
-        }
+        let cmd = MetaCommand::DeleteLiveQueriesByConnection {
+            connection_id: connection_id.clone(),
+            deleted_at: Utc::now(),
+        };
+
+        self.app_context.executor().execute_meta(cmd).await.map_err(|e| {
+            KalamDbError::Other(format!("Failed to delete live queries by connection: {}", e))
+        })?;
 
         // Unregister from connections manager (removes connection and returns live_ids)
         let live_ids = self.registry.unregister_connection(connection_id);

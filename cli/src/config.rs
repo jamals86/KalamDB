@@ -240,11 +240,12 @@ impl CLIConfiguration {
         // Apply server settings
         if let Some(ref server) = self.server {
             // Parse http_version string to HttpVersion enum
-            options = options.with_http_version(match server.http_version.to_lowercase().as_str() {
-                "http1" | "http/1" | "http/1.1" => HttpVersion::Http1,
-                "http2" | "http/2" => HttpVersion::Http2,
-                _ => HttpVersion::Auto,
-            });
+            options =
+                options.with_http_version(match server.http_version.to_lowercase().as_str() {
+                    "http1" | "http/1" | "http/1.1" => HttpVersion::Http1,
+                    "http2" | "http/2" => HttpVersion::Http2,
+                    _ => HttpVersion::Auto,
+                });
         }
 
         // Apply connection settings
@@ -316,7 +317,9 @@ fn parse_timestamp_format(value: &str) -> Option<TimestampFormat> {
     match value.trim().to_lowercase().as_str() {
         "iso8601" => Some(TimestampFormat::Iso8601),
         "iso8601-date" | "iso8601_date" | "date" => Some(TimestampFormat::Iso8601Date),
-        "iso8601-datetime" | "iso8601_datetime" | "datetime" => Some(TimestampFormat::Iso8601DateTime),
+        "iso8601-datetime" | "iso8601_datetime" | "datetime" => {
+            Some(TimestampFormat::Iso8601DateTime)
+        },
         "unix-ms" | "unix_ms" | "ms" => Some(TimestampFormat::UnixMs),
         "unix-sec" | "unix_sec" | "sec" | "s" => Some(TimestampFormat::UnixSec),
         "relative" => Some(TimestampFormat::Relative),
@@ -334,10 +337,7 @@ mod tests {
     fn test_default_config() {
         let config = CLIConfiguration::default();
         assert!(config.server.is_some());
-        assert_eq!(
-            config.server.as_ref().unwrap().url,
-            Some("http://localhost:8080".to_string())
-        );
+        assert_eq!(config.server.as_ref().unwrap().url, Some("http://localhost:8080".to_string()));
         // HTTP/2 should be the default
         assert_eq!(config.server.as_ref().unwrap().http_version, "http2");
     }

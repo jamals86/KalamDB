@@ -73,19 +73,19 @@ mod tests {
         use kalamdb_commons::models::{Role, UserId};
         use std::sync::Arc;
 
-        let app_context = Arc::new(AppContext::new_test());
+        let app_context = AppContext::new_test();
         let handler = ShowManifestCacheHandler::new(app_context.clone());
         let stmt = ShowManifestStatement;
-        let exec_ctx = ExecutionContext::new(
-            UserId::from("1"),
-            Role::System,
-            Arc::new(SessionContext::new()),
-        );
+        let exec_ctx =
+            ExecutionContext::new(UserId::from("1"), Role::System, Arc::new(SessionContext::new()));
 
         let result = handler.execute(stmt, vec![], &exec_ctx).await;
         assert!(result.is_ok());
 
-        if let Ok(ExecutionResult::Rows { batches, row_count, .. }) = result {
+        if let Ok(ExecutionResult::Rows {
+            batches, row_count, ..
+        }) = result
+        {
             assert_eq!(row_count, 0);
             assert_eq!(batches.len(), 1);
             assert_eq!(batches[0].num_rows(), 0);

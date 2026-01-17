@@ -1,6 +1,5 @@
 //! Integration test for Live Query DELETE detection via WebSocket
 
-
 use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;
 use tokio::time::Duration;

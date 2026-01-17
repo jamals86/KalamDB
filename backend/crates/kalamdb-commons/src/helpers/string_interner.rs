@@ -56,7 +56,7 @@ pub fn intern(s: &str) -> Arc<str> {
             let key = vacant.key().clone();
             vacant.insert(());
             key
-        }
+        },
     }
 }
 

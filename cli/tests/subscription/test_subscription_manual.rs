@@ -17,7 +17,7 @@ fn test_subscription_listener_functionality() {
         Err(e) => {
             eprintln!("⚠️  Failed to setup test table: {}. Skipping test.", e);
             return;
-        }
+        },
     };
 
     // Insert some initial data
@@ -35,7 +35,7 @@ fn test_subscription_listener_functionality() {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             cleanup_test_table(&table).unwrap();
             return;
-        }
+        },
     };
 
     // Give subscription time to connect and send initial data
@@ -54,13 +54,13 @@ fn test_subscription_listener_functionality() {
         match listener.try_read_line(Duration::from_millis(500)) {
             Ok(Some(line)) => {
                 received_lines.push(line);
-            }
+            },
             Ok(None) => {
                 break;
-            }
+            },
             Err(_) => {
                 break;
-            }
+            },
         }
     }
 

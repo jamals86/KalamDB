@@ -54,14 +54,8 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
     let test_namespace = NamespaceId::new("user1");
     let test_table = TableName::new("messages");
     let table_id = TableId::new(test_namespace.clone(), test_table.clone());
-    let _user_table_store = Arc::new(new_user_table_store(
-        backend.clone(),
-        &table_id,
-    ));
-    let _shared_table_store = Arc::new(new_shared_table_store(
-        backend.clone(),
-        &table_id,
-    ));
+    let _user_table_store = Arc::new(new_user_table_store(backend.clone(), &table_id));
+    let _shared_table_store = Arc::new(new_shared_table_store(backend.clone(), &table_id));
     let stream_temp_dir = TempDir::new().unwrap();
     let _stream_table_store = Arc::new(new_stream_table_store(
         &table_id,
@@ -111,10 +105,8 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         None,
     )
     .unwrap();
-    let messages_table_id = TableId::new(
-        messages_table.namespace_id.clone(),
-        messages_table.table_name.clone(),
-    );
+    let messages_table_id =
+        TableId::new(messages_table.namespace_id.clone(), messages_table.table_name.clone());
     schema_registry
         .put_table_definition(app_ctx.as_ref(), &messages_table_id, &messages_table)
         .unwrap();
@@ -172,6 +164,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         schema_registry,
         connection_registry.clone(),
         base_session_context,
+        Arc::clone(&app_ctx),
     );
     let sql_executor = Arc::new(SqlExecutor::new(app_ctx, false));
     manager.set_sql_executor(sql_executor);
@@ -185,7 +178,9 @@ fn register_and_auth_connection(
     connection_id: ConnectionId,
     user_id: UserId,
 ) -> crate::live::SharedConnectionState {
-    let registration = registry.register_connection(connection_id.clone(), ConnectionInfo::new(None)).unwrap();
+    let registration = registry
+        .register_connection(connection_id.clone(), ConnectionInfo::new(None))
+        .unwrap();
     let connection_state = registration.state;
     connection_state.write().mark_authenticated(user_id.clone());
     registry.on_authenticated(&connection_id, user_id);
@@ -216,7 +211,8 @@ async fn test_register_subscription() {
     let user_id = UserId::new("user1".to_string());
     let connection_id = ConnectionId::new("conn1".to_string());
 
-    let connection_state = register_and_auth_connection(&registry, connection_id.clone(), user_id.clone());
+    let connection_state =
+        register_and_auth_connection(&registry, connection_id.clone(), user_id.clone());
 
     let subscription = create_test_subscription_request(
         "q1".to_string(),
@@ -244,9 +240,7 @@ async fn test_extract_table_name() {
         .unwrap();
     assert_eq!(table_name, "user1.messages");
 
-    let table_name = manager
-        .extract_table_name_from_query("select id from test.users")
-        .unwrap();
+    let table_name = manager.extract_table_name_from_query("select id from test.users").unwrap();
     assert_eq!(table_name, "test.users");
 
     let table_name = manager
@@ -261,7 +255,8 @@ async fn test_get_subscriptions_for_table() {
     let user_id = UserId::new("user1".to_string());
     let connection_id = ConnectionId::new("conn1".to_string());
 
-    let connection_state = register_and_auth_connection(&registry, connection_id.clone(), user_id.clone());
+    let connection_state =
+        register_and_auth_connection(&registry, connection_id.clone(), user_id.clone());
 
     let subscription1 = create_test_subscription_request(
         "q1".to_string(),
@@ -304,7 +299,8 @@ async fn test_unregister_connection() {
     let user_id = UserId::new("user1".to_string());
     let connection_id = ConnectionId::new("conn1".to_string());
 
-    let connection_state = register_and_auth_connection(&registry, connection_id.clone(), user_id.clone());
+    let connection_state =
+        register_and_auth_connection(&registry, connection_id.clone(), user_id.clone());
 
     let subscription1 = create_test_subscription_request(
         "q1".to_string(),
@@ -326,10 +322,7 @@ async fn test_unregister_connection() {
         .await
         .unwrap();
 
-    let removed_live_ids = manager
-        .unregister_connection(&user_id, &connection_id)
-        .await
-        .unwrap();
+    let removed_live_ids = manager.unregister_connection(&user_id, &connection_id).await.unwrap();
     assert_eq!(removed_live_ids.len(), 2);
 
     let stats = manager.get_stats().await;
@@ -347,7 +340,8 @@ async fn test_unregister_subscription() {
     let user_id = UserId::new("user1".to_string());
     let connection_id = ConnectionId::new("conn1".to_string());
 
-    let connection_state = register_and_auth_connection(&registry, connection_id.clone(), user_id.clone());
+    let connection_state =
+        register_and_auth_connection(&registry, connection_id.clone(), user_id.clone());
 
     let subscription_request = create_test_subscription_request(
         "q1".to_string(),
@@ -379,7 +373,8 @@ async fn test_increment_changes() {
     let user_id = UserId::new("user1".to_string());
     let connection_id = ConnectionId::new("conn1".to_string());
 
-    let connection_state = register_and_auth_connection(&registry, connection_id.clone(), user_id.clone());
+    let connection_state =
+        register_and_auth_connection(&registry, connection_id.clone(), user_id.clone());
 
     let subscription = create_test_subscription_request(
         "q1".to_string(),
@@ -396,11 +391,7 @@ async fn test_increment_changes() {
     manager.increment_changes(&live_id).await.unwrap();
     manager.increment_changes(&live_id).await.unwrap();
 
-    let live_query_record = manager
-        .get_live_query(live_id.as_ref())
-        .await
-        .unwrap()
-        .unwrap();
+    let live_query_record = manager.get_live_query(live_id.as_ref()).await.unwrap().unwrap();
     assert_eq!(live_query_record.changes, 2);
 }
 
@@ -410,7 +401,8 @@ async fn test_multi_subscription_support() {
     let user_id = UserId::new("user1".to_string());
     let connection_id = ConnectionId::new("conn1".to_string());
 
-    let connection_state = register_and_auth_connection(&registry, connection_id.clone(), user_id.clone());
+    let connection_state =
+        register_and_auth_connection(&registry, connection_id.clone(), user_id.clone());
 
     // Multiple subscriptions on same connection
     let subscription1 = create_test_subscription_request(

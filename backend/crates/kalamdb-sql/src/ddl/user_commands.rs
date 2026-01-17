@@ -45,7 +45,10 @@ fn parse_role(role_str: &str) -> Result<Role, UserCommandError> {
         "system" => Ok(Role::System),
         _ => Err(UserCommandError {
             message: format!("Invalid role '{}'", role_str),
-            hint: Some("Valid roles: dba, admin, developer, analyst, viewer, user, service, system".to_string()),
+            hint: Some(
+                "Valid roles: dba, admin, developer, analyst, viewer, user, service, system"
+                    .to_string(),
+            ),
         }),
     }
 }
@@ -68,20 +71,15 @@ fn is_keyword(token: &Token, keyword: &str) -> bool {
 /// Tokenize SQL using sqlparser
 fn tokenize(sql: &str) -> Result<Vec<Token>, UserCommandError> {
     let dialect = GenericDialect {};
-    Tokenizer::new(&dialect, sql)
-        .tokenize()
-        .map_err(|e| UserCommandError {
-            message: format!("Tokenization error: {}", e),
-            hint: None,
-        })
+    Tokenizer::new(&dialect, sql).tokenize().map_err(|e| UserCommandError {
+        message: format!("Tokenization error: {}", e),
+        hint: None,
+    })
 }
 
 /// Filter out whitespace tokens
 fn filter_tokens(tokens: Vec<Token>) -> Vec<Token> {
-    tokens
-        .into_iter()
-        .filter(|t| !matches!(t, Token::Whitespace(_)))
-        .collect()
+    tokens.into_iter().filter(|t| !matches!(t, Token::Whitespace(_))).collect()
 }
 
 // ============================================================================
@@ -118,39 +116,47 @@ impl CreateUserStatement {
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "CREATE") {
             return Err(UserCommandError {
                 message: "Expected CREATE".to_string(),
-                hint: Some("Syntax: CREATE USER username WITH PASSWORD 'pass' ROLE role".to_string()),
+                hint: Some(
+                    "Syntax: CREATE USER username WITH PASSWORD 'pass' ROLE role".to_string(),
+                ),
             });
         }
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "USER") {
             return Err(UserCommandError {
                 message: "Expected USER after CREATE".to_string(),
-                hint: Some("Syntax: CREATE USER username WITH PASSWORD 'pass' ROLE role".to_string()),
+                hint: Some(
+                    "Syntax: CREATE USER username WITH PASSWORD 'pass' ROLE role".to_string(),
+                ),
             });
         }
 
         // Username (identifier or quoted string)
-        let username = extract_identifier(iter.next().unwrap_or(&Token::EOF))
-            .ok_or_else(|| UserCommandError {
+        let username = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+            UserCommandError {
                 message: "Expected username after CREATE USER".to_string(),
                 hint: Some("Username can be unquoted (alice) or quoted ('alice')".to_string()),
-            })?;
+            }
+        })?;
 
         // WITH keyword
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "WITH") {
             return Err(UserCommandError {
                 message: "Expected WITH after username".to_string(),
-                hint: Some("Syntax: CREATE USER username WITH PASSWORD|OAUTH|INTERNAL ...".to_string()),
+                hint: Some(
+                    "Syntax: CREATE USER username WITH PASSWORD|OAUTH|INTERNAL ...".to_string(),
+                ),
             });
         }
 
         // Auth type: PASSWORD, OAUTH, or INTERNAL
         let auth_token = iter.next().unwrap_or(&Token::EOF);
         let (auth_type, password) = if is_keyword(auth_token, "PASSWORD") {
-            let pwd = extract_identifier(iter.next().unwrap_or(&Token::EOF))
-                .ok_or_else(|| UserCommandError {
+            let pwd = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                UserCommandError {
                     message: "Expected password value after PASSWORD".to_string(),
                     hint: Some("Password must be quoted: WITH PASSWORD 'secret'".to_string()),
-                })?;
+                }
+            })?;
             (AuthType::Password, Some(pwd))
         } else if is_keyword(auth_token, "OAUTH") {
             // Optional JSON payload
@@ -169,7 +175,9 @@ impl CreateUserStatement {
         } else {
             return Err(UserCommandError {
                 message: "Expected PASSWORD, OAUTH, or INTERNAL after WITH".to_string(),
-                hint: Some("Valid auth types: WITH PASSWORD 'pass', WITH OAUTH, WITH INTERNAL".to_string()),
+                hint: Some(
+                    "Valid auth types: WITH PASSWORD 'pass', WITH OAUTH, WITH INTERNAL".to_string(),
+                ),
             });
         };
 
@@ -180,21 +188,23 @@ impl CreateUserStatement {
                 hint: Some("ROLE is required: ... ROLE dba".to_string()),
             });
         }
-        let role_str = extract_identifier(iter.next().unwrap_or(&Token::EOF))
-            .ok_or_else(|| UserCommandError {
+        let role_str = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+            UserCommandError {
                 message: "Expected role name after ROLE".to_string(),
                 hint: Some("Valid roles: dba, admin, developer, service, user, system".to_string()),
-            })?;
+            }
+        })?;
         let role = parse_role(&role_str)?;
 
         // Optional EMAIL
         let email = if is_keyword(iter.peek().unwrap_or(&&Token::EOF), "EMAIL") {
             iter.next(); // consume EMAIL
-            Some(extract_identifier(iter.next().unwrap_or(&Token::EOF))
-                .ok_or_else(|| UserCommandError {
+            Some(extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                UserCommandError {
                     message: "Expected email address after EMAIL".to_string(),
                     hint: Some("Email must be quoted: EMAIL 'user@example.com'".to_string()),
-                })?)
+                }
+            })?)
         } else {
             None
         };
@@ -271,11 +281,12 @@ impl AlterUserStatement {
         }
 
         // Username (identifier or quoted string)
-        let username = extract_identifier(iter.next().unwrap_or(&Token::EOF))
-            .ok_or_else(|| UserCommandError {
+        let username = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+            UserCommandError {
                 message: "Expected username after ALTER USER".to_string(),
                 hint: Some("Username can be unquoted (root) or quoted ('root')".to_string()),
-            })?;
+            }
+        })?;
 
         // SET keyword
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "SET") {
@@ -288,31 +299,43 @@ impl AlterUserStatement {
         // Modification type: PASSWORD, ROLE, or EMAIL
         let mod_token = iter.next().unwrap_or(&Token::EOF);
         let modification = if is_keyword(mod_token, "PASSWORD") {
-            let pwd = extract_identifier(iter.next().unwrap_or(&Token::EOF))
-                .ok_or_else(|| UserCommandError {
+            let pwd = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                UserCommandError {
                     message: "Expected password value after SET PASSWORD".to_string(),
                     hint: Some("Password must be quoted: SET PASSWORD 'newsecret'".to_string()),
-                })?;
+                }
+            })?;
             UserModification::SetPassword(pwd)
         } else if is_keyword(mod_token, "ROLE") {
-            let role_str = extract_identifier(iter.next().unwrap_or(&Token::EOF))
-                .ok_or_else(|| UserCommandError {
-                    message: "Expected role name after SET ROLE".to_string(),
-                    hint: Some("Valid roles: dba, admin, developer, service, user, system".to_string()),
+            let role_str =
+                extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                    UserCommandError {
+                        message: "Expected role name after SET ROLE".to_string(),
+                        hint: Some(
+                            "Valid roles: dba, admin, developer, service, user, system".to_string(),
+                        ),
+                    }
                 })?;
             let role = parse_role(&role_str)?;
             UserModification::SetRole(role)
         } else if is_keyword(mod_token, "EMAIL") {
-            let email = extract_identifier(iter.next().unwrap_or(&Token::EOF))
-                .ok_or_else(|| UserCommandError {
-                    message: "Expected email address after SET EMAIL".to_string(),
-                    hint: Some("Email must be quoted: SET EMAIL 'user@example.com'".to_string()),
+            let email =
+                extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                    UserCommandError {
+                        message: "Expected email address after SET EMAIL".to_string(),
+                        hint: Some(
+                            "Email must be quoted: SET EMAIL 'user@example.com'".to_string(),
+                        ),
+                    }
                 })?;
             UserModification::SetEmail(email)
         } else {
             return Err(UserCommandError {
                 message: "Expected PASSWORD, ROLE, or EMAIL after SET".to_string(),
-                hint: Some("Valid modifications: SET PASSWORD 'pass', SET ROLE admin, SET EMAIL 'x@y.com'".to_string()),
+                hint: Some(
+                    "Valid modifications: SET PASSWORD 'pass', SET ROLE admin, SET EMAIL 'x@y.com'"
+                        .to_string(),
+                ),
             });
         };
 
@@ -378,13 +401,17 @@ impl DropUserStatement {
         };
 
         // Username (identifier or quoted string)
-        let username = extract_identifier(iter.next().unwrap_or(&Token::EOF))
-            .ok_or_else(|| UserCommandError {
+        let username = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+            UserCommandError {
                 message: "Expected username".to_string(),
                 hint: Some("Username can be unquoted (alice) or quoted ('alice')".to_string()),
-            })?;
+            }
+        })?;
 
-        Ok(DropUserStatement { username, if_exists })
+        Ok(DropUserStatement {
+            username,
+            if_exists,
+        })
     }
 }
 
@@ -566,19 +593,23 @@ mod tests {
     fn test_user_modification_display_for_audit_password() {
         let modification = UserModification::SetPassword("SuperSecret123!".to_string());
         let display = modification.display_for_audit();
-        
+
         // Should contain [REDACTED]
         assert!(display.contains("[REDACTED]"), "Expected [REDACTED] in: {}", display);
-        
+
         // Should NOT contain the actual password
-        assert!(!display.contains("SuperSecret123!"), "Password should be masked in: {}", display);
+        assert!(
+            !display.contains("SuperSecret123!"),
+            "Password should be masked in: {}",
+            display
+        );
     }
 
     #[test]
     fn test_user_modification_display_for_audit_role() {
         let modification = UserModification::SetRole(Role::Dba);
         let display = modification.display_for_audit();
-        
+
         assert_eq!(display, "SetRole(Dba)");
     }
 
@@ -586,7 +617,7 @@ mod tests {
     fn test_user_modification_display_for_audit_email() {
         let modification = UserModification::SetEmail("alice@example.com".to_string());
         let display = modification.display_for_audit();
-        
+
         assert_eq!(display, "SetEmail(alice@example.com)");
     }
 }

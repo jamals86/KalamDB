@@ -28,11 +28,7 @@ fn test_cli_jwt_authentication() {
     let result = execute_sql_as_root_via_cli("SELECT 1 as auth_test");
 
     // Should work with proper authentication
-    assert!(
-        result.is_ok(),
-        "Should handle authentication: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Should handle authentication: {:?}", result.err());
 }
 
 /// T053: Test invalid token handling

@@ -112,7 +112,7 @@ impl CompactAllTablesStatement {
                         namespace: default_namespace.clone(),
                     })
                 }
-            }
+            },
             Err(err) => Err(err),
         }
     }
@@ -140,22 +140,15 @@ mod tests {
     fn test_parse_compact_table_unqualified_error() {
         let result = CompactTableStatement::parse("STORAGE COMPACT TABLE events");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("must be qualified"));
+        assert!(result.unwrap_err().to_string().contains("must be qualified"));
     }
 
     #[test]
     fn test_parse_compact_table_extra_tokens_error() {
-        let result = CompactTableStatement::parse(
-            "STORAGE COMPACT TABLE prod.events WHERE id > 100",
-        );
+        let result =
+            CompactTableStatement::parse("STORAGE COMPACT TABLE prod.events WHERE id > 100");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unexpected tokens"));
+        assert!(result.unwrap_err().to_string().contains("Unexpected tokens"));
     }
 
     #[test]
@@ -186,23 +179,17 @@ mod tests {
 
     #[test]
     fn test_parse_compact_all_tables_extra_tokens_error() {
-        let result =
-            CompactAllTablesStatement::parse("STORAGE COMPACT ALL IN prod WHERE id > 100");
+        let result = CompactAllTablesStatement::parse("STORAGE COMPACT ALL IN prod WHERE id > 100");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unexpected tokens"));
+        assert!(result.unwrap_err().to_string().contains("Unexpected tokens"));
     }
 
     #[test]
     fn test_parse_compact_all_tables_with_default_namespace() {
         let default_ns = NamespaceId::from("default");
-        let stmt = CompactAllTablesStatement::parse_with_default(
-            "STORAGE COMPACT ALL",
-            &default_ns,
-        )
-        .unwrap();
+        let stmt =
+            CompactAllTablesStatement::parse_with_default("STORAGE COMPACT ALL", &default_ns)
+                .unwrap();
         assert_eq!(stmt.namespace, default_ns);
     }
 }

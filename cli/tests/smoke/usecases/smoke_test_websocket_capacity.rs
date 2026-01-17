@@ -4,18 +4,18 @@ use crate::common::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest,
     http::header::{HeaderValue, AUTHORIZATION, USER_AGENT},
     protocol::Message,
 };
+use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 const AUTH_USERNAME: &str = "root";
 // Use conservative count to avoid overwhelming server during testing
@@ -28,10 +28,7 @@ const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 #[test]
 fn smoke_test_websocket_capacity() {
     if !is_server_running() {
-        println!(
-            "Skipping smoke_test_websocket_capacity: server not running at {}",
-            server_url()
-        );
+        println!("Skipping smoke_test_websocket_capacity: server not running at {}", server_url());
         return;
     }
 
@@ -257,22 +254,17 @@ async fn open_authenticated_connection(
 
     match auth_response {
         Message::Text(payload) => {
-            let value: serde_json::Value = serde_json::from_str(&payload)
-                .unwrap_or_else(|e| panic!("Invalid auth response JSON on websocket #{}: {}", idx, e));
-            let msg_type = value
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
+            let value: serde_json::Value = serde_json::from_str(&payload).unwrap_or_else(|e| {
+                panic!("Invalid auth response JSON on websocket #{}: {}", idx, e)
+            });
+            let msg_type = value.get("type").and_then(|v| v.as_str()).unwrap_or_default();
             assert_eq!(
                 msg_type, "auth_success",
                 "Websocket #{} expected auth_success, got {}",
                 idx, payload
             );
-        }
-        other => panic!(
-            "Websocket #{} expected text auth response, got {:?}",
-            idx, other
-        ),
+        },
+        other => panic!("Websocket #{} expected text auth response, got {:?}", idx, other),
     }
 
     let subscribe_payload = json!({
@@ -287,7 +279,9 @@ async fn open_authenticated_connection(
     stream
         .send(Message::Text(subscribe_payload.to_string().into()))
         .await
-        .unwrap_or_else(|e| panic!("Failed to send subscribe message on websocket #{}: {}", idx, e));
+        .unwrap_or_else(|e| {
+            panic!("Failed to send subscribe message on websocket #{}: {}", idx, e)
+        });
 
     wait_for_subscription_ack(idx, subscription_id, &mut stream).await;
 
@@ -299,8 +293,8 @@ async fn run_simple_sql() -> Duration {
     let result = tokio::task::spawn_blocking(|| {
         execute_sql_as_root_via_client("SELECT 1").map_err(|e| format!("{}", e))
     })
-        .await
-        .expect("spawn_blocking join failure");
+    .await
+    .expect("spawn_blocking join failure");
 
     let output = result.expect("SELECT 1 should succeed while websockets are open");
     assert!(
@@ -337,12 +331,11 @@ async fn count_live_query_subscriptions(prefix: String) -> usize {
         let rows = get_rows_as_hashmaps(&value).unwrap_or_default();
         rows.iter()
             .filter(|row| {
-                let id_value = row.get("subscription_id")
+                let id_value = row
+                    .get("subscription_id")
                     .map(extract_typed_value)
                     .unwrap_or(serde_json::Value::Null);
-                id_value.as_str()
-                    .map(|id| id.starts_with(&prefix))
-                    .unwrap_or(false)
+                id_value.as_str().map(|id| id.starts_with(&prefix)).unwrap_or(false)
             })
             .count()
     })
@@ -363,13 +356,14 @@ async fn wait_for_subscription_ack(idx: usize, expected_id: &str, stream: &mut W
                 // Respond with Pong to keep the connection healthy.
                 let _ = stream.send(Message::Pong(payload)).await;
                 continue;
-            }
+            },
             Message::Pong(_) => continue,
             Message::Text(payload) => {
-            let value: serde_json::Value = serde_json::from_str(&payload)
-                .unwrap_or_else(|e| panic!("Invalid subscription response JSON on websocket #{}: {}", idx, e));
-            if let Some(msg_type) = value.get("type").and_then(|v| v.as_str()) {
-                match msg_type {
+                let value: serde_json::Value = serde_json::from_str(&payload).unwrap_or_else(|e| {
+                    panic!("Invalid subscription response JSON on websocket #{}: {}", idx, e)
+                });
+                if let Some(msg_type) = value.get("type").and_then(|v| v.as_str()) {
+                    match msg_type {
                     "subscription_ack" => {
                         let sub_id = value
                             .get("subscription_id")
@@ -388,20 +382,17 @@ async fn wait_for_subscription_ack(idx: usize, expected_id: &str, stream: &mut W
                         idx, other, payload
                     ),
                 }
-            }
-            }
+                }
+            },
             Message::Close(frame) => {
-                panic!(
-                    "Websocket #{} closed before subscription ack: {:?}",
-                    idx, frame
-                );
-            }
+                panic!("Websocket #{} closed before subscription ack: {:?}", idx, frame);
+            },
             other => {
                 panic!(
                     "Websocket #{} received unexpected message while awaiting subscription ack: {:?}",
                     idx, other
                 );
-            }
+            },
         }
     }
 }
@@ -417,16 +408,11 @@ fn setup_test_table(namespace: &str, full_table_name: &str) {
     execute_sql_as_root_via_client(&create_sql)
         .expect("CREATE TABLE should succeed for websocket capacity test");
 
-    let delete_sql = format!(
-        "DELETE FROM {} WHERE id = 0",
-        full_table_name
-    );
+    let delete_sql = format!("DELETE FROM {} WHERE id = 0", full_table_name);
     let _ = execute_sql_as_root_via_client(&delete_sql);
 
-    let insert_sql = format!(
-        "INSERT INTO {} (id, value) VALUES (0, 'ws payload')",
-        full_table_name
-    );
+    let insert_sql =
+        format!("INSERT INTO {} (id, value) VALUES (0, 'ws payload')", full_table_name);
     let _ = execute_sql_as_root_via_client(&insert_sql);
 }
 

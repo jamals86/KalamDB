@@ -21,9 +21,9 @@ pub const TEST_BCRYPT_COST: u32 = 4;
 /// Get bcrypt cost - uses lower cost in test mode
 pub fn get_bcrypt_cost() -> u32 {
     if cfg!(test) {
-        4  // Fast cost for tests
+        4 // Fast cost for tests
     } else {
-        BCRYPT_COST  // Secure cost for production
+        BCRYPT_COST // Secure cost for production
     }
 }
 
@@ -107,12 +107,12 @@ pub async fn hash_password(password: &str, cost: Option<u32>) -> AuthResult<Stri
 pub async fn verify_password(password: &str, hash_str: &str) -> AuthResult<bool> {
     let cache = get_password_cache();
     let cache_key = (password.to_string(), hash_str.to_string());
-    
+
     // Check cache first - if present, we know it was previously verified successfully
     if cache.contains_key(&cache_key) {
         return Ok(true);
     }
-    
+
     // Convert once for bcrypt (requires owned String)
     let password = password.to_string();
     let hash = hash_str.to_string();
@@ -123,12 +123,12 @@ pub async fn verify_password(password: &str, hash_str: &str) -> AuthResult<bool>
     })
     .await
     .map_err(|e| AuthError::HashingError(format!("Task join error: {}", e)))??;
-    
+
     // Only cache successful verifications (reuse cache_key we already created)
     if result {
         cache.insert(cache_key, ());
     }
-    
+
     Ok(result)
 }
 
@@ -203,9 +203,7 @@ pub fn validate_password_with_policy(password: &str, policy: &PasswordPolicy) ->
     }
 
     if !policy.skip_common_check && is_common_password(password) {
-        return Err(AuthError::WeakPassword(
-            "Password is too common".to_string(),
-        ));
+        return Err(AuthError::WeakPassword("Password is too common".to_string()));
     }
 
     if policy.enforce_complexity {
@@ -270,19 +268,14 @@ mod tests {
     #[tokio::test]
     async fn test_hash_and_verify_password() {
         let password = "SecurePassword123!";
-        let hash = hash_password(password, Some(4))
-            .await
-            .expect("Failed to hash");
+        let hash = hash_password(password, Some(4)).await.expect("Failed to hash");
         assert!(hash.starts_with("$2b$")); // Bcrypt hash format
 
-        let verified = verify_password(password, &hash)
-            .await
-            .expect("Failed to verify");
+        let verified = verify_password(password, &hash).await.expect("Failed to verify");
         assert!(verified);
 
-        let wrong_verified = verify_password("WrongPassword", &hash)
-            .await
-            .expect("Failed to verify");
+        let wrong_verified =
+            verify_password("WrongPassword", &hash).await.expect("Failed to verify");
         assert!(!wrong_verified);
     }
 
@@ -312,10 +305,7 @@ mod tests {
 
         // Same password should pass with check disabled
         let result = validate_password_with_config("password", true);
-        assert!(
-            result.is_ok(),
-            "Password should be accepted when common check disabled"
-        );
+        assert!(result.is_ok(), "Password should be accepted when common check disabled");
     }
 
     #[test]

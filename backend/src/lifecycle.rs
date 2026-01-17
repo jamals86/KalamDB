@@ -245,8 +245,6 @@ pub async fn bootstrap(
 
     app_context.set_sql_executor(sql_executor.clone());
     live_query_manager.set_sql_executor(sql_executor.clone());
-    // Set AppContext on LiveQueryManager for Raft command execution
-    live_query_manager.set_app_context(app_context.clone());
 
     sql_executor.load_existing_tables().await?;
     debug!(
@@ -439,7 +437,6 @@ pub async fn bootstrap_isolated(
 
     app_context.set_sql_executor(sql_executor.clone());
     live_query_manager.set_sql_executor(sql_executor.clone());
-    live_query_manager.set_app_context(app_context.clone());
 
     sql_executor.load_existing_tables().await?;
 

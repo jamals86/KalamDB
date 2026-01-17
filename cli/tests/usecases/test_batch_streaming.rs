@@ -118,11 +118,7 @@ fn test_websocket_batch_streaming_rows() {
 
         let insert_result = execute_sql_as_root_via_cli(&insert_sql);
         if insert_result.is_err() {
-            eprintln!(
-                "⚠️  Failed to insert batch {}: {:?}",
-                batch_num,
-                insert_result.err()
-            );
+            eprintln!("⚠️  Failed to insert batch {}: {:?}", batch_num, insert_result.err());
             cleanup_test_table(&table_name).ok();
             return;
         }
@@ -148,15 +144,12 @@ fn test_websocket_batch_streaming_rows() {
             if output.contains(&expected) || output.contains(&expected_spaced) {
                 println!("✓ COUNT verification passed: {} rows", TOTAL_ROWS);
             } else {
-                eprintln!(
-                    "⚠️  COUNT mismatch. Expected {} rows. Output: {}",
-                    TOTAL_ROWS, output
-                );
+                eprintln!("⚠️  COUNT mismatch. Expected {} rows. Output: {}", TOTAL_ROWS, output);
             }
-        }
+        },
         Err(e) => {
             eprintln!("⚠️  COUNT query failed: {}", e);
-        }
+        },
     }
 
     // Test WebSocket subscription to verify batch streaming
@@ -169,7 +162,7 @@ fn test_websocket_batch_streaming_rows() {
             eprintln!("⚠️  Failed to start subscription: {}", e);
             cleanup_test_table(&table_name).ok();
             return;
-        }
+        },
     };
 
     println!("✓ Subscription started, waiting for initial data batches...");
@@ -226,17 +219,14 @@ fn test_websocket_batch_streaming_rows() {
             if has_id_0 && has_id_9 {
                 println!("✓ Data integrity check passed: Found ID 0 through ID 9");
             } else {
-                println!(
-                    "⚠️  Data integrity check: has_id_0={}, has_id_9={}",
-                    has_id_0, has_id_9
-                );
+                println!("⚠️  Data integrity check: has_id_0={}, has_id_9={}", has_id_0, has_id_9);
                 // Output is likely truncated, but the COUNT query already verified all rows exist
                 println!("✓ COUNT query already confirmed all 5000 rows exist");
             }
-        }
+        },
         Err(e) => {
             eprintln!("⚠️  SELECT query failed: {}", e);
-        }
+        },
     }
 
     // Cleanup

@@ -143,28 +143,28 @@ impl ExtensionStatement {
         if sql_upper.starts_with("STORAGE FLUSH TABLE") {
             return FlushTableStatement::parse(sql)
                 .map(ExtensionStatement::FlushTable)
-            .map_err(|e| format!("STORAGE FLUSH TABLE parsing failed: {}", e));
+                .map_err(|e| format!("STORAGE FLUSH TABLE parsing failed: {}", e));
         }
 
         // Try STORAGE FLUSH ALL
         if sql_upper.starts_with("STORAGE FLUSH ALL") {
             return FlushAllTablesStatement::parse(sql)
                 .map(ExtensionStatement::FlushAllTables)
-            .map_err(|e| format!("STORAGE FLUSH ALL parsing failed: {}", e));
+                .map_err(|e| format!("STORAGE FLUSH ALL parsing failed: {}", e));
         }
 
         // Try STORAGE COMPACT TABLE
         if sql_upper.starts_with("STORAGE COMPACT TABLE") {
             return CompactTableStatement::parse(sql)
-            .map(ExtensionStatement::CompactTable)
-            .map_err(|e| format!("STORAGE COMPACT TABLE parsing failed: {}", e));
+                .map(ExtensionStatement::CompactTable)
+                .map_err(|e| format!("STORAGE COMPACT TABLE parsing failed: {}", e));
         }
 
         // Try STORAGE COMPACT ALL
         if sql_upper.starts_with("STORAGE COMPACT ALL") {
             return CompactAllTablesStatement::parse(sql)
-            .map(ExtensionStatement::CompactAllTables)
-            .map_err(|e| format!("STORAGE COMPACT ALL parsing failed: {}", e));
+                .map(ExtensionStatement::CompactAllTables)
+                .map_err(|e| format!("STORAGE COMPACT ALL parsing failed: {}", e));
         }
 
         // Try KILL JOB
@@ -300,10 +300,7 @@ mod tests {
             eprintln!("Parse error: {}", e);
         }
         assert!(result.is_ok());
-        assert!(matches!(
-            result.unwrap(),
-            ExtensionStatement::CreateStorage(_)
-        ));
+        assert!(matches!(result.unwrap(), ExtensionStatement::CreateStorage(_)));
     }
 
     #[test]
@@ -352,8 +349,6 @@ mod tests {
         let sql = "CREATE FOOBAR something";
         let result = ExtensionStatement::parse(sql);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Unknown KalamDB extension command"));
+        assert!(result.unwrap_err().contains("Unknown KalamDB extension command"));
     }
 }

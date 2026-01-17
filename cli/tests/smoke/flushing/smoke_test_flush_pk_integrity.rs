@@ -11,13 +11,15 @@
 use crate::common::*;
 use std::time::Duration;
 
-const JOB_TIMEOUT: Duration = Duration::from_secs(30);
+const JOB_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Test flush with PK integrity: insert, update, flush, re-query, duplicate PK check, post-flush update
 #[ntest::timeout(180_000)]
 #[test]
 fn smoke_test_flush_pk_integrity_user_table() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     let namespace = generate_unique_namespace("smoke_pk");
     let table_name = generate_unique_table("pk_integrity");
@@ -26,10 +28,8 @@ fn smoke_test_flush_pk_integrity_user_table() {
     println!("🧪 Testing flush with PK integrity: {}", full_table_name);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
-        namespace
-    ));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -59,7 +59,10 @@ fn smoke_test_flush_pk_integrity_user_table() {
     for id in 1..=5 {
         let insert_sql = format!(
             "INSERT INTO {} (id, name, value) VALUES ({}, 'Name{}', {})",
-            full_table_name, id, id, id * 10
+            full_table_name,
+            id,
+            id,
+            id * 10
         );
         execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
     }
@@ -82,12 +85,9 @@ fn smoke_test_flush_pk_integrity_user_table() {
 
     // Step 3: UPDATE a row (hot storage)
     println!("📝 Step 3: UPDATE row id=3");
-    let update_sql = format!(
-        "UPDATE {} SET name = 'UpdatedName3', value = 999 WHERE id = 3",
-        full_table_name
-    );
-    let update_output =
-        execute_sql_as_root_via_client(&update_sql).expect("Failed to update row");
+    let update_sql =
+        format!("UPDATE {} SET name = 'UpdatedName3', value = 999 WHERE id = 3", full_table_name);
+    let update_output = execute_sql_as_root_via_client(&update_sql).expect("Failed to update row");
     assert!(
         update_output.contains("1 rows affected") || update_output.contains("Updated 1 row"),
         "Expected 1 row affected, got: {}",
@@ -112,8 +112,9 @@ fn smoke_test_flush_pk_integrity_user_table() {
 
     // Step 5: STORAGE FLUSH TABLE
     println!("🚀 Step 5: Flush table to cold storage");
-    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
-        .expect("Failed to flush table");
+    let flush_output =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
+            .expect("Failed to flush table");
 
     let job_id = parse_job_id_from_flush_output(&flush_output)
         .expect("Failed to parse job ID from flush output");
@@ -153,10 +154,8 @@ fn smoke_test_flush_pk_integrity_user_table() {
 
     // Step 7: Try to insert duplicate PK (should fail)
     println!("❌ Step 7: Try to INSERT duplicate PK (should fail)");
-    let duplicate_insert_sql = format!(
-        "INSERT INTO {} (id, name, value) VALUES (3, 'Duplicate', 777)",
-        full_table_name
-    );
+    let duplicate_insert_sql =
+        format!("INSERT INTO {} (id, name, value) VALUES (3, 'Duplicate', 777)", full_table_name);
     let duplicate_result = execute_sql_as_root_via_client(&duplicate_insert_sql);
 
     match duplicate_result {
@@ -165,7 +164,7 @@ fn smoke_test_flush_pk_integrity_user_table() {
                 "Expected duplicate PK insert to fail, but it succeeded with output: {}",
                 output
             );
-        }
+        },
         Err(e) => {
             let error_msg = e.to_string();
             assert!(
@@ -177,7 +176,7 @@ fn smoke_test_flush_pk_integrity_user_table() {
                 error_msg
             );
             println!("✅ Duplicate PK insert correctly rejected: {}", error_msg);
-        }
+        },
     }
 
     // Step 8: UPDATE a row post-flush (should work)
@@ -224,22 +223,19 @@ fn smoke_test_flush_pk_integrity_user_table() {
 #[ntest::timeout(180_000)]
 #[test]
 fn smoke_test_flush_pk_integrity_shared_table() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     let namespace = generate_unique_namespace("smoke_pk");
     let table_name = generate_unique_table("pk_shared");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
-    println!(
-        "🧪 Testing flush with PK integrity (SHARED): {}",
-        full_table_name
-    );
+    println!("🧪 Testing flush with PK integrity (SHARED): {}", full_table_name);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
-        namespace
-    ));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -269,7 +265,10 @@ fn smoke_test_flush_pk_integrity_shared_table() {
     for id in 10..=15 {
         let insert_sql = format!(
             "INSERT INTO {} (id, name, value) VALUES ({}, 'Shared{}', {})",
-            full_table_name, id, id, id * 100
+            full_table_name,
+            id,
+            id,
+            id * 100
         );
         execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
     }
@@ -286,8 +285,9 @@ fn smoke_test_flush_pk_integrity_shared_table() {
 
     // Flush
     println!("🚀 Flush SHARED table");
-    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
-        .expect("Failed to flush table");
+    let flush_output =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
+            .expect("Failed to flush table");
 
     let job_id = parse_job_id_from_flush_output(&flush_output)
         .expect("Failed to parse job ID from flush output");
@@ -324,10 +324,7 @@ fn smoke_test_flush_pk_integrity_shared_table() {
         full_table_name
     ));
 
-    assert!(
-        duplicate_result.is_err(),
-        "Expected duplicate PK to fail for SHARED table"
-    );
+    assert!(duplicate_result.is_err(), "Expected duplicate PK to fail for SHARED table");
     println!("✅ Duplicate PK correctly rejected");
 
     // Post-flush update

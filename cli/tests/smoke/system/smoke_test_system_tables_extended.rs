@@ -32,7 +32,8 @@ fn smoke_test_system_tables_options_column() {
     println!("🧪 Testing system.tables options column");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -116,16 +117,10 @@ fn smoke_test_system_tables_options_column() {
     // Verify table_type column
     // Note: JSON output will have "table_type" field, but exact format depends on implementation
     // For smoke test, we just verify the column exists
-    assert!(
-        output.contains("\"table_type\""),
-        "Expected table_type column in system.tables"
-    );
+    assert!(output.contains("\"table_type\""), "Expected table_type column in system.tables");
 
     // Verify options column exists
-    assert!(
-        output.contains("\"options\""),
-        "Expected options column in system.tables"
-    );
+    assert!(output.contains("\"options\""), "Expected options column in system.tables");
 
     // Verify options JSON contains expected fields
     // For USER table: TYPE, STORAGE_ID, FLUSH_POLICY
@@ -181,7 +176,8 @@ fn smoke_test_system_live_queries() {
     println!("🧪 Testing system.live_queries");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -209,8 +205,8 @@ fn smoke_test_system_live_queries() {
 
     // Query system.live_queries
     let query_sql = "SELECT live_id, query, user_id FROM system.live_queries";
-    let output =
-        execute_sql_as_root_via_client_json(query_sql).expect("Failed to query system.live_queries");
+    let output = execute_sql_as_root_via_client_json(query_sql)
+        .expect("Failed to query system.live_queries");
 
     println!("system.live_queries output:\n{}", output);
 
@@ -263,11 +259,7 @@ fn smoke_test_system_stats_meta_command() {
     ];
 
     for key in expected_keys {
-        assert!(
-            output.contains(key),
-            "Expected stat key '{}' in system.stats",
-            key
-        );
+        assert!(output.contains(key), "Expected stat key '{}' in system.stats", key);
     }
 
     println!("✅ Verified system.stats contains cache statistics");
@@ -295,7 +287,8 @@ fn smoke_test_dt_meta_command() {
     println!("🧪 Testing \\dt meta-command");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -324,16 +317,8 @@ fn smoke_test_dt_meta_command() {
     println!("\\dt equivalent output:\n{}", output);
 
     // Verify both tables listed
-    assert!(
-        output.contains(&table1),
-        "Expected table {} in \\dt output",
-        table1
-    );
-    assert!(
-        output.contains(&table2),
-        "Expected table {} in \\dt output",
-        table2
-    );
+    assert!(output.contains(&table1), "Expected table {} in \\dt output", table1);
+    assert!(output.contains(&table2), "Expected table {} in \\dt output", table2);
 
     println!("✅ Verified \\dt lists created tables");
 
@@ -360,7 +345,8 @@ fn smoke_test_describe_table_meta_command() {
     println!("🧪 Testing \\d <table> meta-command");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))

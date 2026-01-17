@@ -28,7 +28,7 @@ fn latest_sst_mtime(root: &Path) -> Option<SystemTime> {
                         match latest {
                             Some(current) if modified > *current => *latest = Some(modified),
                             None => *latest = Some(modified),
-                            _ => {}
+                            _ => {},
                         }
                     }
                 }
@@ -42,10 +42,7 @@ fn latest_sst_mtime(root: &Path) -> Option<SystemTime> {
 }
 
 fn fetch_job_result(job_id: &str) -> Option<String> {
-    let sql = format!(
-        "SELECT result FROM system.jobs WHERE job_id = '{}'",
-        job_id
-    );
+    let sql = format!("SELECT result FROM system.jobs WHERE job_id = '{}'", job_id);
     let output = execute_sql_as_root_via_client_json(&sql).ok()?;
     let json: JsonValue = serde_json::from_str(&output).ok()?;
     let row = json
@@ -73,7 +70,8 @@ fn smoke_storage_compact_table_job_and_rocksdb() {
     let full_table = format!("{}.{}", namespace, table);
 
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("create namespace");
@@ -92,44 +90,31 @@ fn smoke_storage_compact_table_job_and_rocksdb() {
         .expect("insert row");
     }
 
-    execute_sql_as_root_via_client(&format!(
-        "DELETE FROM {} WHERE id <= 25",
-        full_table
-    ))
-    .expect("delete rows");
+    execute_sql_as_root_via_client(&format!("DELETE FROM {} WHERE id <= 25", full_table))
+        .expect("delete rows");
 
     let rocksdb_path = rocksdb_dir();
     let before_compact = latest_sst_mtime(&rocksdb_path);
 
-    let compact_json = execute_sql_as_root_via_client_json(&format!(
-        "STORAGE COMPACT TABLE {}",
-        full_table
-    ))
-    .expect("compact table");
+    let compact_json =
+        execute_sql_as_root_via_client_json(&format!("STORAGE COMPACT TABLE {}", full_table))
+            .expect("compact table");
 
-    let job_id = parse_job_id_from_json_message(&compact_json)
-        .expect("parse compaction job id");
+    let job_id = parse_job_id_from_json_message(&compact_json).expect("parse compaction job id");
 
-    verify_job_completed(&job_id, Duration::from_secs(40))
-        .expect("compaction job completed");
+    verify_job_completed(&job_id, Duration::from_secs(20)).expect("compaction job completed");
 
     if let Some(result) = fetch_job_result(&job_id) {
-        assert!(
-            result.contains("Compaction completed"),
-            "Unexpected job result: {}",
-            result
-        );
+        assert!(result.contains("Compaction completed"), "Unexpected job result: {}", result);
     }
 
     if let (Some(before), Some(after)) = (before_compact, latest_sst_mtime(&rocksdb_path)) {
-        assert!(
-            after >= before,
-            "Expected RocksDB SST files to update after compaction"
-        );
+        assert!(after >= before, "Expected RocksDB SST files to update after compaction");
     } else {
         println!("ℹ️  RocksDB SST files not found; skipping file timestamp check");
     }
 
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }

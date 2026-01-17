@@ -225,7 +225,7 @@ mod tests {
     fn test_timestamp_field_type() {
         let schema = AuditLogsTableSchema::schema();
         match schema.field(1).data_type() {
-            DataType::Timestamp(TimeUnit::Millisecond, None) => {}
+            DataType::Timestamp(TimeUnit::Millisecond, None) => {},
             _ => panic!("timestamp field should be Timestamp(Millisecond, None)"),
         }
     }

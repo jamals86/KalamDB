@@ -98,9 +98,8 @@ pub fn json_rows_to_arrow_batch(schema: &SchemaRef, rows: Vec<Row>) -> Result<Re
 
     // Transpose rows to columns (Row-oriented -> Column-oriented)
     // We use move semantics (row.values.remove) to avoid cloning strings/blobs
-    let mut columns: Vec<Vec<ScalarValue>> = (0..schema.fields().len())
-        .map(|_| Vec::with_capacity(rows.len()))
-        .collect();
+    let mut columns: Vec<Vec<ScalarValue>> =
+        (0..schema.fields().len()).map(|_| Vec::with_capacity(rows.len())).collect();
 
     for mut row in rows {
         for (i, field) in schema.fields().iter().enumerate() {
@@ -157,17 +156,11 @@ fn get_column_defaults(schema: &SchemaRef) -> Vec<Option<ScalarValue>> {
                 DataType::Utf8 => Some(ScalarValue::Utf8(Some("".to_string()))),
                 DataType::LargeUtf8 => Some(ScalarValue::LargeUtf8(Some("".to_string()))),
                 DataType::Timestamp(TimeUnit::Microsecond, tz_opt) => {
-                    Some(ScalarValue::TimestampMicrosecond(
-                        Some(0),
-                        tz_opt.clone(),
-                    ))
-                }
+                    Some(ScalarValue::TimestampMicrosecond(Some(0), tz_opt.clone()))
+                },
                 DataType::Timestamp(TimeUnit::Millisecond, tz_opt) => {
-                    Some(ScalarValue::TimestampMillisecond(
-                        Some(0),
-                        tz_opt.clone(),
-                    ))
-                }
+                    Some(ScalarValue::TimestampMillisecond(Some(0), tz_opt.clone()))
+                },
                 DataType::Date32 => Some(ScalarValue::Date32(Some(0))),
                 DataType::Date64 => Some(ScalarValue::Date64(Some(0))),
                 _ => None,
@@ -250,20 +243,12 @@ mod tests {
         assert_eq!(batch.num_rows(), 3);
         assert_eq!(batch.num_columns(), 2);
 
-        let id_col = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
+        let id_col = batch.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
         assert_eq!(id_col.value(0), 1);
         assert_eq!(id_col.value(1), 2);
         assert_eq!(id_col.value(2), 3);
 
-        let name_col = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
+        let name_col = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
         assert_eq!(name_col.value(0), "Alice");
         assert!(name_col.is_null(1));
         assert_eq!(name_col.value(2), "Charlie");
@@ -295,11 +280,7 @@ mod tests {
             ScalarValue::Int64(Some(1609459200000)),
         )])];
         let batch = json_rows_to_arrow_batch(&schema, rows).unwrap();
-        let ts_col = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<TimestampMillisecondArray>()
-            .unwrap();
+        let ts_col = batch.column(0).as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
         assert_eq!(ts_col.value(0), 1609459200000i64);
 
         // Test RFC3339 string
@@ -308,11 +289,7 @@ mod tests {
             ScalarValue::Utf8(Some("2021-01-01T00:00:00Z".into())),
         )])];
         let batch = json_rows_to_arrow_batch(&schema, rows).unwrap();
-        let ts_col = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<TimestampMillisecondArray>()
-            .unwrap();
+        let ts_col = batch.column(0).as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
         assert_eq!(ts_col.value(0), 1609459200000i64);
     }
 }
@@ -333,143 +310,103 @@ pub fn arrow_value_to_scalar(
         DataType::Boolean => {
             let arr = array.as_any().downcast_ref::<BooleanArray>().unwrap();
             Ok(ScalarValue::Boolean(Some(arr.value(row_idx))))
-        }
+        },
         DataType::Int8 => {
             let arr = array.as_any().downcast_ref::<Int8Array>().unwrap();
             Ok(ScalarValue::Int8(Some(arr.value(row_idx))))
-        }
+        },
         DataType::Int16 => {
             let arr = array.as_any().downcast_ref::<Int16Array>().unwrap();
             Ok(ScalarValue::Int16(Some(arr.value(row_idx))))
-        }
+        },
         DataType::Int32 => {
             let arr = array.as_any().downcast_ref::<Int32Array>().unwrap();
             Ok(ScalarValue::Int32(Some(arr.value(row_idx))))
-        }
+        },
         DataType::Int64 => {
             let arr = array.as_any().downcast_ref::<Int64Array>().unwrap();
             Ok(ScalarValue::Int64(Some(arr.value(row_idx))))
-        }
+        },
         DataType::UInt8 => {
             let arr = array.as_any().downcast_ref::<UInt8Array>().unwrap();
             Ok(ScalarValue::UInt8(Some(arr.value(row_idx))))
-        }
+        },
         DataType::UInt16 => {
             let arr = array.as_any().downcast_ref::<UInt16Array>().unwrap();
             Ok(ScalarValue::UInt16(Some(arr.value(row_idx))))
-        }
+        },
         DataType::UInt32 => {
             let arr = array.as_any().downcast_ref::<UInt32Array>().unwrap();
             Ok(ScalarValue::UInt32(Some(arr.value(row_idx))))
-        }
+        },
         DataType::UInt64 => {
             let arr = array.as_any().downcast_ref::<UInt64Array>().unwrap();
             Ok(ScalarValue::UInt64(Some(arr.value(row_idx))))
-        }
+        },
         DataType::Float32 => {
             let arr = array.as_any().downcast_ref::<Float32Array>().unwrap();
             Ok(ScalarValue::Float32(Some(arr.value(row_idx))))
-        }
+        },
         DataType::Float64 => {
             let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
             Ok(ScalarValue::Float64(Some(arr.value(row_idx))))
-        }
+        },
         DataType::Utf8 => {
             let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
             Ok(ScalarValue::Utf8(Some(arr.value(row_idx).to_string())))
-        }
+        },
         DataType::LargeUtf8 => {
             let arr = array.as_any().downcast_ref::<LargeStringArray>().unwrap();
             Ok(ScalarValue::LargeUtf8(Some(arr.value(row_idx).to_string())))
-        }
+        },
         DataType::Timestamp(TimeUnit::Millisecond, tz) => {
-            let arr = array
-                .as_any()
-                .downcast_ref::<TimestampMicrosecondArray>()
-                .unwrap();
-            Ok(ScalarValue::TimestampMillisecond(
-                Some(arr.value(row_idx)),
-                tz.clone(),
-            ))
-        }
+            let arr = array.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+            Ok(ScalarValue::TimestampMillisecond(Some(arr.value(row_idx)), tz.clone()))
+        },
         DataType::Timestamp(TimeUnit::Microsecond, tz) => {
-            let arr = array
-                .as_any()
-                .downcast_ref::<TimestampMicrosecondArray>()
-                .unwrap();
-            Ok(ScalarValue::TimestampMicrosecond(
-                Some(arr.value(row_idx)),
-                tz.clone(),
-            ))
-        }
+            let arr = array.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+            Ok(ScalarValue::TimestampMicrosecond(Some(arr.value(row_idx)), tz.clone()))
+        },
         DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
-            let arr = array
-                .as_any()
-                .downcast_ref::<TimestampNanosecondArray>()
-                .unwrap();
-            Ok(ScalarValue::TimestampNanosecond(
-                Some(arr.value(row_idx)),
-                tz.clone(),
-            ))
-        }
+            let arr = array.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+            Ok(ScalarValue::TimestampNanosecond(Some(arr.value(row_idx)), tz.clone()))
+        },
         DataType::Date32 => {
             let arr = array.as_any().downcast_ref::<Date32Array>().unwrap();
             Ok(ScalarValue::Date32(Some(arr.value(row_idx))))
-        }
+        },
         DataType::Date64 => {
             let arr = array.as_any().downcast_ref::<Date64Array>().unwrap();
             Ok(ScalarValue::Date64(Some(arr.value(row_idx))))
-        }
+        },
         DataType::Time32(TimeUnit::Second) => {
             let arr = array.as_any().downcast_ref::<Time32SecondArray>().unwrap();
             Ok(ScalarValue::Time32Second(Some(arr.value(row_idx))))
-        }
+        },
         DataType::Time32(TimeUnit::Millisecond) => {
-            let arr = array
-                .as_any()
-                .downcast_ref::<Time32MillisecondArray>()
-                .unwrap();
+            let arr = array.as_any().downcast_ref::<Time32MillisecondArray>().unwrap();
             Ok(ScalarValue::Time32Millisecond(Some(arr.value(row_idx))))
-        }
+        },
         DataType::Time64(TimeUnit::Microsecond) => {
-            let arr = array
-                .as_any()
-                .downcast_ref::<Time64MicrosecondArray>()
-                .unwrap();
+            let arr = array.as_any().downcast_ref::<Time64MicrosecondArray>().unwrap();
             Ok(ScalarValue::Time64Microsecond(Some(arr.value(row_idx))))
-        }
+        },
         DataType::Time64(TimeUnit::Nanosecond) => {
-            let arr = array
-                .as_any()
-                .downcast_ref::<Time64NanosecondArray>()
-                .unwrap();
+            let arr = array.as_any().downcast_ref::<Time64NanosecondArray>().unwrap();
             Ok(ScalarValue::Time64Nanosecond(Some(arr.value(row_idx))))
-        }
+        },
         DataType::FixedSizeBinary(size) => {
-            let arr = array
-                .as_any()
-                .downcast_ref::<FixedSizeBinaryArray>()
-                .unwrap();
-            Ok(ScalarValue::FixedSizeBinary(
-                *size,
-                Some(arr.value(row_idx).to_vec()),
-            ))
-        }
+            let arr = array.as_any().downcast_ref::<FixedSizeBinaryArray>().unwrap();
+            Ok(ScalarValue::FixedSizeBinary(*size, Some(arr.value(row_idx).to_vec())))
+        },
         DataType::Decimal128(precision, scale) => {
             let arr = array.as_any().downcast_ref::<Decimal128Array>().unwrap();
-            Ok(ScalarValue::Decimal128(
-                Some(arr.value(row_idx)),
-                *precision,
-                *scale,
-            ))
-        }
+            Ok(ScalarValue::Decimal128(Some(arr.value(row_idx)), *precision, *scale))
+        },
         _ => {
             // Fallback: convert to string representation
-            Ok(ScalarValue::Utf8(Some(format!(
-                "{:?}",
-                array.slice(row_idx, 1)
-            ))))
-        }
+            Ok(ScalarValue::Utf8(Some(format!("{:?}", array.slice(row_idx, 1)))))
+        },
     }
 }
 
@@ -504,7 +441,7 @@ pub fn json_value_to_scalar(v: &JsonValue) -> ScalarValue {
             } else {
                 ScalarValue::Float64(None)
             }
-        }
+        },
         JsonValue::String(s) => ScalarValue::Utf8(Some(s.clone())),
         JsonValue::Array(_) => ScalarValue::Utf8(Some(v.to_string())), // Fallback for arrays
         JsonValue::Object(_) => ScalarValue::Utf8(Some(v.to_string())), // Fallback for objects
@@ -530,7 +467,7 @@ pub fn json_value_to_scalar_strict(v: &JsonValue) -> Result<ScalarValue, String>
             } else {
                 Err(format!("Unsupported number format: {}", n))
             }
-        }
+        },
         JsonValue::String(s) => Ok(ScalarValue::Utf8(Some(s.clone()))),
         JsonValue::Array(_) => Err("Array parameters not yet supported".to_string()),
         JsonValue::Object(_) => Err("Object parameters not yet supported".to_string()),
@@ -538,10 +475,10 @@ pub fn json_value_to_scalar_strict(v: &JsonValue) -> Result<ScalarValue, String>
 }
 
 /// Convert DataFusion ScalarValue to serde_json::Value
-/// 
+///
 /// **SINGLE SOURCE OF TRUTH** for converting ScalarValue to JSON.
 /// All ScalarValue → JSON conversions in the codebase flow through this function.
-/// 
+///
 /// Plain JSON values with Int64/UInt64 as strings for precision.
 /// - Example: `"123"` for Int64(123), `"Alice"` for Utf8("Alice")
 /// - Timestamps serialized as raw microsecond values (numbers)
@@ -578,7 +515,7 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<JsonValue, KalamDbErr
         ScalarValue::Float64(None) => Ok(JsonValue::Null),
         ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => {
             Ok(JsonValue::String(s.clone()))
-        }
+        },
         ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) => Ok(JsonValue::Null),
         ScalarValue::Date32(Some(d)) => Ok(JsonValue::Number((*d).into())),
         ScalarValue::Date32(None) => Ok(JsonValue::Null),
@@ -606,7 +543,7 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<JsonValue, KalamDbErr
                     width = *scale as usize
                 )))
             }
-        }
+        },
         ScalarValue::Decimal128(None, _, _) => Ok(JsonValue::Null),
         ScalarValue::FixedSizeBinary(_, Some(bytes)) => {
             // If it looks like a UUID (16 bytes), try to format as UUID string
@@ -616,16 +553,12 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<JsonValue, KalamDbErr
                 }
             }
             // Otherwise, use array of numbers for generic binary
-            Ok(JsonValue::Array(
-                bytes.iter().map(|&b| JsonValue::Number(b.into())).collect(),
-            ))
-        }
+            Ok(JsonValue::Array(bytes.iter().map(|&b| JsonValue::Number(b.into())).collect()))
+        },
         ScalarValue::FixedSizeBinary(_, None) => Ok(JsonValue::Null),
         ScalarValue::Binary(Some(bytes)) | ScalarValue::LargeBinary(Some(bytes)) => {
-            Ok(JsonValue::Array(
-                bytes.iter().map(|&b| JsonValue::Number(b.into())).collect(),
-            ))
-        }
+            Ok(JsonValue::Array(bytes.iter().map(|&b| JsonValue::Number(b.into())).collect()))
+        },
         ScalarValue::Binary(None) | ScalarValue::LargeBinary(None) => Ok(JsonValue::Null),
         // Time types - output as raw microseconds/nanoseconds value (integer)
         ScalarValue::Time64Microsecond(Some(t)) => Ok(JsonValue::Number((*t).into())),
@@ -743,13 +676,13 @@ pub fn row_to_json_map(
     row: &Row,
 ) -> Result<std::collections::HashMap<String, JsonValue>, KalamDbError> {
     let mut json_row = std::collections::HashMap::with_capacity(row.values.len());
-    
+
     for (col_name, scalar_value) in &row.values {
         // ✅ SINGLE SOURCE: All conversions flow through this function
         let json_value = scalar_value_to_json(scalar_value)?;
         json_row.insert(col_name.clone(), json_value);
     }
-    
+
     Ok(json_row)
 }
 

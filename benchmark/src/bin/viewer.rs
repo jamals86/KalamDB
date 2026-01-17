@@ -35,20 +35,18 @@ async fn list_results(data: web::Data<Arc<AppState>>) -> HttpResponse {
             match serde_json::to_string(&files) {
                 Ok(json_str) => {
                     eprintln!("📤 Sending response: {}", json_str);
-                    HttpResponse::Ok()
-                        .content_type("application/json")
-                        .body(json_str)
-                }
+                    HttpResponse::Ok().content_type("application/json").body(json_str)
+                },
                 Err(e) => {
                     eprintln!("❌ JSON serialization error: {}", e);
                     HttpResponse::InternalServerError().body(format!("JSON error: {}", e))
-                }
+                },
             }
-        }
+        },
         Err(e) => {
             eprintln!("❌ Error reading directory: {}", e);
             HttpResponse::InternalServerError().body(format!("Failed to read directory: {}", e))
-        }
+        },
     }
 }
 
@@ -58,10 +56,7 @@ async fn main() -> std::io::Result<()> {
     let results_dir = view_dir.join("results");
 
     if !view_dir.exists() {
-        eprintln!(
-            "❌ Error: View directory does not exist: {}",
-            view_dir.display()
-        );
+        eprintln!("❌ Error: View directory does not exist: {}", view_dir.display());
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("View directory not found: {}", view_dir.display()),

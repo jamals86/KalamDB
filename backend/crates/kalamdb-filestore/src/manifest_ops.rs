@@ -44,12 +44,12 @@ pub fn manifest_exists(
     manifest_path: &str,
 ) -> Result<bool> {
     use crate::object_store_ops::head_file_sync;
-    
+
     match head_file_sync(store, storage, manifest_path) {
         Ok(_) => Ok(true),
         Err(FilestoreError::ObjectStore(ref e)) if e.contains("not found") || e.contains("404") => {
             Ok(false)
-        }
+        },
         Err(e) => Err(e),
     }
 }
@@ -94,12 +94,8 @@ mod tests {
         let test_json = r#"{"version":1,"segments":[]}"#;
 
         // Write manifest
-        let write_result = write_manifest_json(
-            Arc::clone(&store),
-            &storage,
-            manifest_path,
-            test_json,
-        );
+        let write_result =
+            write_manifest_json(Arc::clone(&store), &storage, manifest_path, test_json);
         assert!(write_result.is_ok(), "Failed to write manifest");
 
         // Read manifest back
@@ -174,7 +170,7 @@ mod tests {
 
         let manifest_path = "nonexistent/manifest.json";
         let result = read_manifest_json(store, &storage, manifest_path);
-        
+
         assert!(result.is_err(), "Should fail for nonexistent file");
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -190,13 +186,13 @@ mod tests {
         let store = build_object_store(&storage).expect("Failed to build store");
 
         let manifest_path = "test/manifest.json";
-        
+
         // JSON with unicode, escapes, etc.
         let test_json = r#"{"version":1,"name":"Test 🚀","segments":["seg-1","seg-2"],"metadata":{"key":"value with \"quotes\""}}"#;
 
         write_manifest_json(Arc::clone(&store), &storage, manifest_path, test_json).unwrap();
         let read_back = read_manifest_json(store, &storage, manifest_path).unwrap();
-        
+
         assert_eq!(read_back, test_json);
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -216,14 +212,14 @@ mod tests {
         // Write first version
         let v1_json = r#"{"version":1}"#;
         write_manifest_json(Arc::clone(&store), &storage, manifest_path, v1_json).unwrap();
-        
+
         let read_v1 = read_manifest_json(Arc::clone(&store), &storage, manifest_path).unwrap();
         assert_eq!(read_v1, v1_json);
 
         // Overwrite with second version
         let v2_json = r#"{"version":2}"#;
         write_manifest_json(Arc::clone(&store), &storage, manifest_path, v2_json).unwrap();
-        
+
         let read_v2 = read_manifest_json(store, &storage, manifest_path).unwrap();
         assert_eq!(read_v2, v2_json, "Should read updated version");
 
@@ -244,7 +240,7 @@ mod tests {
 
         write_manifest_json(Arc::clone(&store), &storage, manifest_path, empty_json).unwrap();
         let read_back = read_manifest_json(store, &storage, manifest_path).unwrap();
-        
+
         assert_eq!(read_back, empty_json);
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -260,7 +256,7 @@ mod tests {
         let store = build_object_store(&storage).expect("Failed to build store");
 
         let manifest_path = "test/large_manifest.json";
-        
+
         // Generate large JSON with many segments
         let mut segments = Vec::new();
         for i in 0..1000 {
@@ -270,7 +266,7 @@ mod tests {
 
         write_manifest_json(Arc::clone(&store), &storage, manifest_path, &large_json).unwrap();
         let read_back = read_manifest_json(store, &storage, manifest_path).unwrap();
-        
+
         assert_eq!(read_back, large_json);
         assert!(read_back.len() > 10000, "Should be a large manifest");
 

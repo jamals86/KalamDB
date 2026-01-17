@@ -22,7 +22,7 @@ use crate::applier::SharedDataApplier;
 use crate::{DataResponse, GroupId, RaftError, SharedDataCommand};
 
 use super::{decode, encode, ApplyResult, KalamStateMachine, StateMachineSnapshot};
-use super::{PendingBuffer, PendingCommand, get_coordinator};
+use super::{get_coordinator, PendingBuffer, PendingCommand};
 
 /// Row operation tracking (for metrics)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,10 +81,7 @@ impl std::fmt::Debug for SharedDataStateMachine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SharedDataStateMachine")
             .field("shard", &self.shard)
-            .field(
-                "last_applied_index",
-                &self.last_applied_index.load(Ordering::Relaxed),
-            )
+            .field("last_applied_index", &self.last_applied_index.load(Ordering::Relaxed))
             .field("has_applier", &self.applier.read().is_some())
             .field("pending_count", &self.pending_buffer.len())
             .finish()
@@ -136,31 +133,34 @@ impl SharedDataStateMachine {
             self.shard
         );
     }
-    
+
     /// Drain and apply any buffered commands that are now satisfied
     async fn drain_pending(&self) -> Result<(), RaftError> {
         let current_meta = get_coordinator().current_index();
         let drained = self.pending_buffer.drain_satisfied(current_meta);
-        
+
         if !drained.is_empty() {
             log::info!(
                 "SharedDataStateMachine[{}]: Draining {} buffered commands (meta_index={})",
-                self.shard, drained.len(), current_meta
+                self.shard,
+                drained.len(),
+                current_meta
             );
         }
-        
+
         for pending in drained {
             let cmd: SharedDataCommand = decode(&pending.command_bytes)?;
             let _ = self.apply_command(cmd).await?;
             log::debug!(
                 "SharedDataStateMachine[{}]: Applied buffered command log_index={}",
-                self.shard, pending.log_index
+                self.shard,
+                pending.log_index
             );
         }
-        
+
         Ok(())
     }
-    
+
     /// Get the number of pending commands
     pub fn pending_count(&self) -> usize {
         self.pending_buffer.len()
@@ -194,7 +194,7 @@ impl SharedDataStateMachine {
                                 e
                             );
                             return Ok(DataResponse::error(e.to_string()));
-                        }
+                        },
                     }
                 } else {
                     log::warn!(
@@ -220,13 +220,12 @@ impl SharedDataStateMachine {
                         ops.remove(0);
                     }
                 }
-                
+
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
-                self.approximate_size
-                    .fetch_add(rows.len() as u64, Ordering::Relaxed);
+                self.approximate_size.fetch_add(rows.len() as u64, Ordering::Relaxed);
 
                 Ok(DataResponse::RowsAffected(rows_affected))
-            }
+            },
 
             SharedDataCommand::Update {
                 table_id,
@@ -234,15 +233,10 @@ impl SharedDataStateMachine {
                 filter,
                 ..
             } => {
-                log::debug!(
-                    "SharedDataStateMachine[{}]: Update {:?}",
-                    self.shard,
-                    table_id
-                );
+                log::debug!("SharedDataStateMachine[{}]: Update {:?}", self.shard, table_id);
 
                 let rows_affected = if let Some(ref a) = applier {
-                    match a.update(&table_id, &updates, filter.as_deref())
-                        .await {
+                    match a.update(&table_id, &updates, filter.as_deref()).await {
                         Ok(count) => count,
                         Err(e) => {
                             log::warn!(
@@ -251,7 +245,7 @@ impl SharedDataStateMachine {
                                 e
                             );
                             return Ok(DataResponse::error(e.to_string()));
-                        }
+                        },
                     }
                 } else {
                     log::warn!(
@@ -278,18 +272,14 @@ impl SharedDataStateMachine {
 
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
                 Ok(DataResponse::RowsAffected(rows_affected))
-            }
+            },
 
             SharedDataCommand::Delete {
                 table_id,
                 pk_values,
                 ..
             } => {
-                log::debug!(
-                    "SharedDataStateMachine[{}]: Delete from {:?}",
-                    self.shard,
-                    table_id
-                );
+                log::debug!("SharedDataStateMachine[{}]: Delete from {:?}", self.shard, table_id);
 
                 let rows_affected = if let Some(ref a) = applier {
                     match a.delete(&table_id, pk_values.as_deref()).await {
@@ -301,7 +291,7 @@ impl SharedDataStateMachine {
                                 e
                             );
                             return Ok(DataResponse::error(e.to_string()));
-                        }
+                        },
                     }
                 } else {
                     log::warn!(
@@ -328,7 +318,7 @@ impl SharedDataStateMachine {
 
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
                 Ok(DataResponse::RowsAffected(rows_affected))
-            }
+            },
         }
     }
 }
@@ -344,68 +334,72 @@ impl KalamStateMachine for SharedDataStateMachine {
     fn group_id(&self) -> GroupId {
         GroupId::DataSharedShard(self.shard)
     }
-    
+
     async fn apply(&self, index: u64, term: u64, command: &[u8]) -> Result<ApplyResult, RaftError> {
         // Idempotency check
         let last_applied = self.last_applied_index.load(Ordering::Acquire);
         if index <= last_applied {
             log::debug!(
                 "SharedDataStateMachine[{}]: Skipping already applied entry {} (last_applied={})",
-                self.shard, index, last_applied
+                self.shard,
+                index,
+                last_applied
             );
             return Ok(ApplyResult::NoOp);
         }
-        
+
         // Deserialize command to check watermark
         let cmd: SharedDataCommand = decode(command)?;
         let required_meta = cmd.required_meta_index();
         let current_meta = get_coordinator().current_index();
-        
+
         // Check watermark: if Meta is behind, wait for it to catch up
         if required_meta > current_meta {
             log::debug!(
                 "SharedDataStateMachine[{}]: Waiting for meta (required_meta={} > current_meta={})",
-                self.shard, required_meta, current_meta
+                self.shard,
+                required_meta,
+                current_meta
             );
             get_coordinator().wait_for(required_meta).await;
         }
-        
+
         // Drain any pending commands that are now satisfied
         self.drain_pending().await?;
-        
+
         // Apply current command
         let response = self.apply_command(cmd).await?;
-        
+
         // Update last applied
         self.last_applied_index.store(index, Ordering::Release);
         self.last_applied_term.store(term, Ordering::Release);
-        
+
         // Serialize response
         let response_data = encode(&response)?;
-        
+
         Ok(ApplyResult::ok_with_data(response_data))
     }
-    
+
     fn last_applied_index(&self) -> u64 {
         self.last_applied_index.load(Ordering::Acquire)
     }
-    
+
     fn last_applied_term(&self) -> u64 {
         self.last_applied_term.load(Ordering::Acquire)
     }
-    
+
     async fn snapshot(&self) -> Result<StateMachineSnapshot, RaftError> {
         let recent_operations = self.recent_operations.read().clone();
         let pending_commands = self.pending_buffer.get_all();
-        
+
         let snapshot = SharedDataSnapshot {
             total_operations: self.total_operations.load(Ordering::Relaxed),
             recent_operations,
             pending_commands,
         };
-        
+
         let data = encode(&snapshot)?;
-        
+
         Ok(StateMachineSnapshot::new(
             self.group_id(),
             self.last_applied_index(),
@@ -413,31 +407,31 @@ impl KalamStateMachine for SharedDataStateMachine {
             data,
         ))
     }
-    
+
     async fn restore(&self, snapshot: StateMachineSnapshot) -> Result<(), RaftError> {
         let data: SharedDataSnapshot = decode(&snapshot.data)?;
-        
+
         {
             let mut ops = self.recent_operations.write();
             *ops = data.recent_operations;
         }
-        
+
         // Restore pending buffer from snapshot
         self.pending_buffer.load_from(data.pending_commands);
-        
+
         self.total_operations.store(data.total_operations, Ordering::Release);
         self.last_applied_index.store(snapshot.last_applied_index, Ordering::Release);
         self.last_applied_term.store(snapshot.last_applied_term, Ordering::Release);
-        
+
         log::info!(
             "SharedDataStateMachine[{}]: Restored from snapshot at index {}, term {}, {} pending commands",
             self.shard, snapshot.last_applied_index, snapshot.last_applied_term,
             self.pending_buffer.len()
         );
-        
+
         Ok(())
     }
-    
+
     fn approximate_size(&self) -> usize {
         self.approximate_size.load(Ordering::Relaxed) as usize
     }
@@ -446,30 +440,30 @@ impl KalamStateMachine for SharedDataStateMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::TableId;
     use kalamdb_commons::models::NamespaceId;
+    use kalamdb_commons::TableId;
 
     #[tokio::test]
     async fn test_shared_data_state_machine_insert() {
         let sm = SharedDataStateMachine::default();
-        
+
         let cmd = SharedDataCommand::Insert {
             table_id: TableId::new(NamespaceId::new("default"), "config".into()),
             rows: vec![],
             required_meta_index: 0,
         };
         let cmd_bytes = encode(&cmd).unwrap();
-        
+
         let result = sm.apply(1, 1, &cmd_bytes).await.unwrap();
         assert!(result.is_ok());
         assert_eq!(sm.last_applied_index(), 1);
         assert_eq!(sm.total_operations.load(Ordering::Relaxed), 1);
     }
-    
+
     #[tokio::test]
     async fn test_shared_data_state_machine_multiple_ops() {
         let sm = SharedDataStateMachine::default();
-        
+
         // Insert
         let insert = SharedDataCommand::Insert {
             table_id: TableId::new(NamespaceId::new("default"), "settings".into()),
@@ -477,7 +471,7 @@ mod tests {
             required_meta_index: 0,
         };
         sm.apply(1, 1, &encode(&insert).unwrap()).await.unwrap();
-        
+
         // Update
         let update = SharedDataCommand::Update {
             table_id: TableId::new(NamespaceId::new("default"), "settings".into()),
@@ -486,7 +480,7 @@ mod tests {
             required_meta_index: 0,
         };
         sm.apply(2, 1, &encode(&update).unwrap()).await.unwrap();
-        
+
         // Delete
         let delete = SharedDataCommand::Delete {
             table_id: TableId::new(NamespaceId::new("default"), "settings".into()),
@@ -494,10 +488,10 @@ mod tests {
             required_meta_index: 0,
         };
         sm.apply(3, 1, &encode(&delete).unwrap()).await.unwrap();
-        
+
         assert_eq!(sm.total_operations.load(Ordering::Relaxed), 3);
         assert_eq!(sm.last_applied_index(), 3);
-        
+
         // Check recent operations
         {
             let ops = sm.recent_operations.read();

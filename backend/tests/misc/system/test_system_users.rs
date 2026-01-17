@@ -13,14 +13,13 @@
 //! - Remote-enabled system users MUST have a password set
 //! - Localhost connections can skip password for internal users
 
-
-use actix_web::{test, web, App};
 use super::test_support::{auth_helper, TestServer};
+use actix_web::{test, web, App};
 use kalamdb_api::repositories::CoreUsersRepo;
+use kalamdb_auth::UserRepository;
 use kalamdb_commons::models::UserName;
 use kalamdb_commons::system::User;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
-use kalamdb_auth::UserRepository;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -175,10 +174,7 @@ async fn test_system_user_remote_denied_by_default() {
         status
     );
 
-    println!(
-        "✓ T098: System user remote access denied by default - Status: {}",
-        status
-    );
+    println!("✓ T098: System user remote access denied by default - Status: {}", status);
 }
 
 /// T099: System user remote access WITH password when allow_remote=true
@@ -287,10 +283,7 @@ async fn test_system_user_remote_no_password_denied() {
         status
     );
 
-    println!(
-        "✓ T100: System user remote access without password denied - Status: {}",
-        status
-    );
+    println!("✓ T100: System user remote access without password denied - Status: {}", status);
 }
 
 /// T101: Global allow_remote_access config flag

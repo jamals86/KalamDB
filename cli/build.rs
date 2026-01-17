@@ -27,9 +27,7 @@ fn main() {
         .unwrap_or_else(|| fallback.0.clone());
 
     // Capture build date/time in ISO 8601 format
-    let build_date = chrono::Utc::now()
-        .format("%Y-%m-%d %H:%M:%S UTC")
-        .to_string();
+    let build_date = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
     // Capture Git branch name
     let branch = Command::new("git")
@@ -61,11 +59,7 @@ fn main() {
 /// Read fallback values from version.toml
 /// Returns (commit_hash, branch, build_date) with defaults if file doesn't exist
 fn read_version_toml(path: &str) -> (String, String, String) {
-    let default = (
-        "unknown".to_string(),
-        "unknown".to_string(),
-        "unknown".to_string(),
-    );
+    let default = ("unknown".to_string(), "unknown".to_string(), "unknown".to_string());
 
     let content = match fs::read_to_string(path) {
         Ok(c) => c,

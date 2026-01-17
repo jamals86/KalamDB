@@ -26,18 +26,10 @@ fn user_table_update_1() -> anyhow::Result<()> {
     let disk_after = measure_disk_mb("backend/data/rocksdb");
 
     // Create test result
-    let mut result = TestResult::new(
-        "USR_UPD_1",
-        TestGroup::UserTable,
-        "update",
-        "Update 1 row in user table",
-    );
+    let mut result =
+        TestResult::new("USR_UPD_1", TestGroup::UserTable, "update", "Update 1 row in user table");
 
-    result.set_timings(
-        execution.cli_total_ms,
-        execution.server_time_ms,
-        execution.server_time_ms,
-    );
+    result.set_timings(execution.cli_total_ms, execution.server_time_ms, execution.server_time_ms);
     result.set_memory(mem_before, mem_after);
     result.set_disk(disk_before, disk_after);
     result.set_requests(1, execution.server_time_ms);

@@ -257,7 +257,8 @@ pub struct ConnectionsManager {
     // === Secondary Indices (for efficient lookups) ===
     /// (UserId, TableId) → DashMap<LiveQueryId, SubscriptionHandle> for O(1) notification delivery
     /// Uses lightweight handles (~48 bytes) instead of full state (~800+ bytes)
-    user_table_subscriptions: DashMap<(UserId, TableId), Arc<DashMap<LiveQueryId, SubscriptionHandle>>>,
+    user_table_subscriptions:
+        DashMap<(UserId, TableId), Arc<DashMap<LiveQueryId, SubscriptionHandle>>>,
     /// Shared empty map to avoid allocations on lookup misses
     empty_subscriptions: Arc<DashMap<LiveQueryId, SubscriptionHandle>>,
     /// LiveQueryId → ConnectionId reverse index
@@ -365,7 +366,7 @@ impl ConnectionsManager {
             warn!("Rejecting new connection during shutdown: {}", connection_id);
             return None;
         }
-        
+
         // DoS protection: reject if at max connections
         let current = self.total_connections.load(Ordering::Acquire);
         if current >= self.max_connections {
@@ -416,44 +417,45 @@ impl ConnectionsManager {
     ///
     /// Returns the list of removed LiveQueryIds for cleanup.
     pub fn unregister_connection(&self, connection_id: &ConnectionId) -> Vec<LiveQueryId> {
-        let removed_live_ids = if let Some((_, shared_state)) = self.connections.remove(connection_id) {
-            self.total_connections.fetch_sub(1, Ordering::AcqRel);
+        let removed_live_ids =
+            if let Some((_, shared_state)) = self.connections.remove(connection_id) {
+                self.total_connections.fetch_sub(1, Ordering::AcqRel);
 
-            let state = shared_state.read();
+                let state = shared_state.read();
 
-            // Remove from user_table_subscriptions index
-            if let Some(user_id) = &state.user_id {
                 // Remove from user_table_subscriptions index
-                for entry in state.subscriptions.iter() {
-                    let sub = entry.value();
-                    let key = (user_id.clone(), sub.table_id.clone());
-                    if let Some(entries) = self.user_table_subscriptions.get(&key) {
-                        entries.remove(&sub.live_id);
-                        if entries.is_empty() {
-                            drop(entries);
-                            self.user_table_subscriptions.remove(&key);
+                if let Some(user_id) = &state.user_id {
+                    // Remove from user_table_subscriptions index
+                    for entry in state.subscriptions.iter() {
+                        let sub = entry.value();
+                        let key = (user_id.clone(), sub.table_id.clone());
+                        if let Some(entries) = self.user_table_subscriptions.get(&key) {
+                            entries.remove(&sub.live_id);
+                            if entries.is_empty() {
+                                drop(entries);
+                                self.user_table_subscriptions.remove(&key);
+                            }
                         }
                     }
                 }
-            }
 
-            // Collect and remove all subscriptions
-            let mut removed = Vec::with_capacity(state.subscriptions.len());
-            for entry in state.subscriptions.iter() {
-                let sub = entry.value();
-                removed.push(sub.live_id.clone());
-                self.live_id_to_connection.remove(&sub.live_id);
-            }
+                // Collect and remove all subscriptions
+                let mut removed = Vec::with_capacity(state.subscriptions.len());
+                for entry in state.subscriptions.iter() {
+                    let sub = entry.value();
+                    removed.push(sub.live_id.clone());
+                    self.live_id_to_connection.remove(&sub.live_id);
+                }
 
-            let sub_count = removed.len();
-            if sub_count > 0 {
-                self.total_subscriptions.fetch_sub(sub_count, Ordering::AcqRel);
-            }
+                let sub_count = removed.len();
+                if sub_count > 0 {
+                    self.total_subscriptions.fetch_sub(sub_count, Ordering::AcqRel);
+                }
 
-            removed
-        } else {
-            Vec::new()
-        };
+                removed
+            } else {
+                Vec::new()
+            };
 
         if !removed_live_ids.is_empty() {
             debug!(
@@ -481,6 +483,12 @@ impl ConnectionsManager {
         table_id: TableId,
         handle: SubscriptionHandle,
     ) {
+        log::debug!(
+            "ConnectionsManager::index_subscription: user={}, table={}, live_id={}",
+            user_id,
+            table_id,
+            live_id
+        );
         // Add to (UserId, TableId) → Arc<DashMap<LiveQueryId, SubscriptionHandle>> index
         self.user_table_subscriptions
             .entry((user_id.clone(), table_id))
@@ -495,12 +503,17 @@ impl ConnectionsManager {
 
         // Add to reverse index
         self.live_id_to_connection.insert(live_id, connection_id.clone());
-        
+
         self.total_subscriptions.fetch_add(1, Ordering::AcqRel);
     }
 
     /// Remove subscription from indices (called by LiveQueryManager after removing from ConnectionState)
-    pub fn unindex_subscription(&self, user_id: &UserId, live_id: &LiveQueryId, table_id: &TableId) {
+    pub fn unindex_subscription(
+        &self,
+        user_id: &UserId,
+        live_id: &LiveQueryId,
+        table_id: &TableId,
+    ) {
         // Remove from reverse index
         self.live_id_to_connection.remove(live_id);
 
@@ -531,8 +544,7 @@ impl ConnectionsManager {
 
     /// Check if any subscriptions exist for a (user, table) pair
     pub fn has_subscriptions(&self, user_id: &UserId, table_id: &TableId) -> bool {
-        self.user_table_subscriptions
-            .contains_key(&(user_id.clone(), table_id.clone()))
+        self.user_table_subscriptions.contains_key(&(user_id.clone(), table_id.clone()))
     }
 
     /// Get subscription handles for a specific (user, table) pair for notification routing
@@ -561,9 +573,10 @@ impl ConnectionsManager {
                 key_table.namespace_id().as_str() == first
                     && key_table.table_name().as_str() == table_name
             }),
-            None => self.user_table_subscriptions.iter().any(|entry| {
-                entry.key().1.table_name().as_str() == first
-            }),
+            None => self
+                .user_table_subscriptions
+                .iter()
+                .any(|entry| entry.key().1.table_name().as_str() == first),
         }
     }
 
@@ -592,7 +605,9 @@ impl ConnectionsManager {
         table_id: &TableId,
         notification: Notification,
     ) {
-        if let Some(handles) = self.user_table_subscriptions.get(&(user_id.clone(), table_id.clone())) {
+        if let Some(handles) =
+            self.user_table_subscriptions.get(&(user_id.clone(), table_id.clone()))
+        {
             let notification = Arc::new(notification);
             for handle in handles.iter() {
                 let live_id = handle.key().clone();
@@ -751,7 +766,10 @@ mod tests {
         let registry = create_test_registry();
         let conn_id = ConnectionId::new("conn1");
 
-        let reg = registry.register_connection(conn_id.clone(), ConnectionInfo::new(Some("127.0.0.1".to_string())));
+        let reg = registry.register_connection(
+            conn_id.clone(),
+            ConnectionInfo::new(Some("127.0.0.1".to_string())),
+        );
         assert!(reg.is_some());
         assert_eq!(registry.connection_count(), 1);
 
@@ -768,14 +786,14 @@ mod tests {
         let reg = registry.register_connection(conn_id.clone(), ConnectionInfo::new(None));
         assert!(reg.is_some());
         let reg = reg.unwrap();
-        
+
         {
             let mut state = reg.state.write();
             assert!(!state.is_authenticated());
             state.mark_auth_started();
             state.mark_authenticated(user_id.clone());
         }
-        
+
         // Update registry index
         registry.on_authenticated(&conn_id, user_id.clone());
 
@@ -790,7 +808,8 @@ mod tests {
 
         registry.is_shutting_down.store(true, Ordering::Release);
 
-        let reg = registry.register_connection(ConnectionId::new("conn1"), ConnectionInfo::new(None));
+        let reg =
+            registry.register_connection(ConnectionId::new("conn1"), ConnectionInfo::new(None));
         assert!(reg.is_none());
     }
 }

@@ -56,10 +56,7 @@ impl StorageBackend for InMemoryBackend {
         key: &[u8],
     ) -> crate::storage_trait::Result<Option<Vec<u8>>> {
         let data = self.data.read().unwrap();
-        Ok(data
-            .get(partition.name())
-            .and_then(|map| map.get(key))
-            .cloned())
+        Ok(data.get(partition.name()).and_then(|map| map.get(key)).cloned())
     }
 
     fn put(
@@ -91,10 +88,10 @@ impl StorageBackend for InMemoryBackend {
                     value,
                 } => {
                     self.put(&partition, &key, &value)?;
-                }
+                },
                 Operation::Delete { partition, key } => {
                     self.delete(&partition, &key)?;
-                }
+                },
             }
         }
         Ok(())
@@ -124,7 +121,7 @@ impl StorageBackend for InMemoryBackend {
                         } else {
                             Some(prefix.to_vec())
                         }
-                    }
+                    },
                     (Some(prefix), None) => Some(prefix.to_vec()),
                     (None, Some(start)) => Some(start.to_vec()),
                     (None, None) => None,

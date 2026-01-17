@@ -81,10 +81,7 @@ impl SeqId {
     /// Parse from big-endian bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() != 8 {
-            return Err(format!(
-                "Invalid byte length: expected 8, got {}",
-                bytes.len()
-            ));
+            return Err(format!("Invalid byte length: expected 8, got {}", bytes.len()));
         }
         let mut array = [0u8; 8];
         array.copy_from_slice(bytes);

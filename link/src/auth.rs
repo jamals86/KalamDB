@@ -91,15 +91,15 @@ impl AuthProvider {
                 let credentials = format!("{}:{}", username, password);
                 let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
                 Ok(request.header("Authorization", format!("Basic {}", encoded)))
-            }
+            },
             Self::JwtToken(token) => {
                 // Authorization: Bearer <token>
                 Ok(request.bearer_auth(token))
-            }
+            },
             Self::None => {
                 // No authentication headers
                 Ok(request)
-            }
+            },
         }
     }
 
@@ -150,7 +150,7 @@ mod tests {
             AuthProvider::BasicAuth(username, password) => {
                 assert_eq!(username, "root");
                 assert_eq!(password, "test_password");
-            }
+            },
             _ => panic!("Expected BasicAuth variant"),
         }
     }

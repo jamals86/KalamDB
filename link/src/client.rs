@@ -6,7 +6,9 @@
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
-    models::{ConnectionOptions, HealthCheckResponse, HttpVersion, QueryResponse, SubscriptionConfig},
+    models::{
+        ConnectionOptions, HealthCheckResponse, HttpVersion, QueryResponse, SubscriptionConfig,
+    },
     query::QueryExecutor,
     subscription::SubscriptionManager,
     timeouts::KalamLinkTimeouts,
@@ -120,7 +122,10 @@ impl KalamLinkClient {
                 (cache.last_check, cache.last_response.clone())
             {
                 if last_check.elapsed() < HEALTH_CHECK_TTL {
-                    log::debug!("[HEALTH_CHECK] Returning cached response (age: {:?})", last_check.elapsed());
+                    log::debug!(
+                        "[HEALTH_CHECK] Returning cached response (age: {:?})",
+                        last_check.elapsed()
+                    );
                     return Ok(response);
                 }
             }
@@ -130,7 +135,11 @@ impl KalamLinkClient {
         log::debug!("[HEALTH_CHECK] Fetching from url={}", url);
         let start = std::time::Instant::now();
         let response = self.http_client.get(&url).send().await?;
-        log::debug!("[HEALTH_CHECK] HTTP response received in {:?}, status={}", start.elapsed(), response.status());
+        log::debug!(
+            "[HEALTH_CHECK] HTTP response received in {:?}, status={}",
+            start.elapsed(),
+            response.status()
+        );
         let health_response = response.json::<HealthCheckResponse>().await?;
         log::debug!("[HEALTH_CHECK] JSON parsed in {:?}", start.elapsed());
 
@@ -174,36 +183,41 @@ impl KalamLinkClient {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn login(&self, username: &str, password: &str) -> Result<crate::models::LoginResponse> {
+    pub async fn login(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<crate::models::LoginResponse> {
         let url = format!("{}/v1/api/auth/login", self.base_url);
         log::debug!("[LOGIN] Authenticating user '{}' at url={}", username, url);
-        
+
         let login_request = crate::models::LoginRequest {
             username: username.to_string(),
             password: password.to_string(),
         };
-        
+
         let start = std::time::Instant::now();
-        let response = self.http_client
-            .post(&url)
-            .json(&login_request)
-            .send()
-            .await?;
-        
+        let response = self.http_client.post(&url).json(&login_request).send().await?;
+
         let status = response.status();
         log::debug!("[LOGIN] HTTP response received in {:?}, status={}", start.elapsed(), status);
-        
+
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
             log::debug!("[LOGIN] Login failed: {}", error_text);
-            return Err(KalamLinkError::AuthenticationError(
-                format!("Login failed ({}): {}", status, error_text)
-            ));
+            return Err(KalamLinkError::AuthenticationError(format!(
+                "Login failed ({}): {}",
+                status, error_text
+            )));
         }
-        
+
         let login_response = response.json::<crate::models::LoginResponse>().await?;
-        log::debug!("[LOGIN] Successfully authenticated user '{}' in {:?}", username, start.elapsed());
-        
+        log::debug!(
+            "[LOGIN] Successfully authenticated user '{}' in {:?}",
+            username,
+            start.elapsed()
+        );
+
         Ok(login_response)
     }
 }
@@ -374,19 +388,19 @@ impl KalamLinkClientBuilder {
             HttpVersion::Http1 => {
                 log::debug!("[CLIENT] Using HTTP/1.1 only");
                 client_builder.http1_only()
-            }
+            },
             HttpVersion::Http2 => {
                 log::debug!("[CLIENT] Using HTTP/2 with prior knowledge");
                 // http2_prior_knowledge() assumes the server speaks HTTP/2
                 // Use this for known HTTP/2 servers for best performance
                 client_builder.http2_prior_knowledge()
-            }
+            },
             HttpVersion::Auto => {
                 log::debug!("[CLIENT] Using automatic HTTP version negotiation");
                 // Default behavior - will negotiate via ALPN for HTTPS
                 // For HTTP, will use HTTP/1.1
                 client_builder
-            }
+            },
         };
 
         let http_client = client_builder

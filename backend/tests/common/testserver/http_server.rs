@@ -1,12 +1,12 @@
 #![allow(unused_imports)]
 
+use super::cluster::ClusterTestServer;
 use anyhow::{Context, Result};
 use base64::Engine;
 use kalam_link::models::{QueryResponse, ResponseStatus};
 use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
 use kalamdb_commons::{Role, UserId, UserName};
 use kalamdb_core::app_context::AppContext;
-use super::cluster::ClusterTestServer;
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -258,10 +258,8 @@ impl HttpTestServer {
 
     /// Register a user password in the cache for later basic-auth requests
     pub fn cache_user_password(&self, username: &str, password: &str) {
-        let mut cache = self
-            .user_password_cache
-            .lock()
-            .expect("user_password_cache mutex poisoned");
+        let mut cache =
+            self.user_password_cache.lock().expect("user_password_cache mutex poisoned");
         cache.insert(username.to_string(), password.to_string());
     }
 
@@ -273,10 +271,7 @@ impl HttpTestServer {
 
     /// Get cached password for a username, if available
     pub fn get_cached_user_password(&self, username: &str) -> Option<String> {
-        let cache = self
-            .user_password_cache
-            .lock()
-            .expect("user_password_cache mutex poisoned");
+        let cache = self.user_password_cache.lock().expect("user_password_cache mutex poisoned");
         cache.get(username).cloned()
     }
 
@@ -646,10 +641,8 @@ impl HttpTestServer {
                 ) {
                     return Ok(());
                 }
-                last_error = select_probe
-                    .err()
-                    .map(|e| format!("{:#}", e))
-                    .or_else(|| last_error.take());
+                last_error =
+                    select_probe.err().map(|e| format!("{:#}", e)).or_else(|| last_error.take());
                 if Instant::now() >= deadline {
                     return Err(anyhow::anyhow!(
                         "HTTP test server did not become ready in time (last_error={:?})",
@@ -741,7 +734,8 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
     // Increase rate limits for tests (default is 100/sec which is too low for insert loops)
     config.rate_limit.max_queries_per_sec = 100000;
     config.rate_limit.max_messages_per_sec = 10000;
-    let skip_raft_leader_check = config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
+    let skip_raft_leader_check =
+        config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
 
     // Match production behavior: set env var early so auth uses the same secret.
     if std::env::var("KALAMDB_JWT_SECRET").is_err() {
@@ -799,7 +793,8 @@ pub async fn start_http_test_server_with_config(
     config.rate_limit.max_queries_per_sec = 100000;
     config.rate_limit.max_messages_per_sec = 10000;
     override_config(&mut config);
-    let skip_raft_leader_check = config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
+    let skip_raft_leader_check =
+        config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
 
     if std::env::var("KALAMDB_JWT_SECRET").is_err() {
         std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
@@ -847,7 +842,8 @@ async fn start_cluster_server() -> Result<ClusterTestServer> {
 
     for i in 0..3 {
         eprintln!("  📍 Starting node {} of 3...", i + 1);
-        let server = start_http_test_server().await
+        let server = start_http_test_server()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to start cluster node {}: {}", i, e))?;
         nodes.push(server);
     }
@@ -865,7 +861,7 @@ async fn start_cluster_server() -> Result<ClusterTestServer> {
 // ============================================================================
 
 /// Run a test closure against a freshly started HTTP test server (with config override), then shut it down.
-/// 
+///
 /// **DEPRECATED**: Only use this if you need a config override. Otherwise use `get_global_server()`.
 #[allow(dead_code)]
 pub async fn with_http_test_server_config<T, F>(

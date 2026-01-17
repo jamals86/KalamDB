@@ -116,7 +116,7 @@ pub trait StorageBackend: Send + Sync {
         prefix: Option<&[u8]>,
         start_key: Option<&[u8]>,
         limit: Option<usize>,
-        ) -> Result<KvIterator<'_>>;
+    ) -> Result<KvIterator<'_>>;
 
     /// Checks if a partition exists.
     fn partition_exists(&self, partition: &Partition) -> bool;
@@ -245,12 +245,7 @@ impl StorageBackendAsync for std::sync::Arc<dyn StorageBackend> {
         let backend = self.clone();
         let partition = partition.clone();
         tokio::task::spawn_blocking(move || {
-            let iter = backend.scan(
-                &partition,
-                prefix.as_deref(),
-                start_key.as_deref(),
-                limit,
-            )?;
+            let iter = backend.scan(&partition, prefix.as_deref(), start_key.as_deref(), limit)?;
             Ok(iter.collect())
         })
         .await
@@ -296,7 +291,7 @@ mod tests {
                 assert_eq!(partition.name(), "test");
                 assert_eq!(key, b"key1");
                 assert_eq!(value, b"value1");
-            }
+            },
             _ => panic!("Wrong operation type"),
         }
     }

@@ -12,7 +12,9 @@ use std::time::Duration;
 /// It verifies the cluster can detect unhealthy nodes.
 #[test]
 fn cluster_test_node_health_detection() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Node Health Detection ===\n");
 
@@ -44,7 +46,9 @@ fn cluster_test_node_health_detection() {
 /// This test checks the system.cluster table for leader information.
 #[test]
 fn cluster_test_leader_visibility() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Leader Visibility ===\n");
 
@@ -64,10 +68,10 @@ fn cluster_test_leader_visibility() {
                 if resp.contains("leader") || resp.contains("true") {
                     println!("    Leader information found");
                 }
-            }
+            },
             Err(e) => {
                 println!("  ✗ Node {} failed to query leader: {}", i, e);
-            }
+            },
         }
     }
 
@@ -83,12 +87,7 @@ fn cluster_test_leader_visibility() {
 
     // All nodes should see exactly one leader
     for (i, count) in leader_ids.iter().enumerate() {
-        assert!(
-            *count >= 1,
-            "Node {} doesn't see a leader (count = {})",
-            i,
-            count
-        );
+        assert!(*count >= 1, "Node {} doesn't see a leader (count = {})", i, count);
     }
 
     println!("\n  ✅ All nodes can identify the cluster leader\n");
@@ -100,7 +99,9 @@ fn cluster_test_leader_visibility() {
 /// receives the request (follower should forward to leader).
 #[test]
 fn cluster_test_write_routing() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Write Routing to Leader ===\n");
 
@@ -122,11 +123,11 @@ fn cluster_test_write_routing() {
         match result {
             Ok(_) => {
                 println!("  ✓ Write from node {} succeeded", i);
-            }
+            },
             Err(e) => {
                 // This might fail if write routing isn't implemented
                 println!("  ⚠ Write from node {} failed (expected for followers): {}", i, e);
-            }
+            },
         }
 
         // Cleanup
@@ -141,7 +142,9 @@ fn cluster_test_write_routing() {
 /// Verifies that read operations can be performed on any node.
 #[test]
 fn cluster_test_read_from_any_node() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Read from Any Node ===\n");
 
@@ -149,18 +152,15 @@ fn cluster_test_read_from_any_node() {
 
     // Try reading from each node
     for (i, url) in urls.iter().enumerate() {
-        let result = execute_on_node(
-            url,
-            "SELECT count(*) as count FROM system.users",
-        );
+        let result = execute_on_node(url, "SELECT count(*) as count FROM system.users");
 
         match result {
             Ok(_) => {
                 println!("  ✓ Read from node {} succeeded", i);
-            }
+            },
             Err(e) => {
                 panic!("Read from node {} failed: {}", i, e);
-            }
+            },
         }
     }
 

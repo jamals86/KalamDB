@@ -26,10 +26,7 @@ fn concurrency_insert_50k_users() -> anyhow::Result<()> {
             values.push(format!("('concurrent_value_{}')", idx));
         }
 
-        let sql = format!(
-            "INSERT INTO bench_user.items (value) VALUES {}",
-            values.join(", ")
-        );
+        let sql = format!("INSERT INTO bench_user.items (value) VALUES {}", values.join(", "));
         let execution = execute_cli_timed_root(&sql)?;
         total_cli_ms += execution.cli_total_ms;
         total_server_ms += execution.server_time_ms;

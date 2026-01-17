@@ -34,18 +34,18 @@ impl CachedUsersRepo {
             .max_capacity(USER_CACHE_MAX_CAPACITY)
             .time_to_live(Duration::from_secs(USER_CACHE_TTL_SECS))
             .build();
-        
+
         Self {
             inner: CoreUsersRepo::new(provider),
             cache,
         }
     }
-    
+
     /// Invalidate a user's cache entry (call after password/role changes)
     pub fn invalidate_user(&self, username: &UserName) {
         self.cache.invalidate(username);
     }
-    
+
     /// Clear entire cache (call on system-wide user changes)
     pub fn clear_cache(&self) {
         self.cache.invalidate_all();
@@ -59,20 +59,20 @@ impl UserRepository for CachedUsersRepo {
         if let Some(user) = self.cache.get(username) {
             return Ok(user);
         }
-        
+
         // Cache miss: fetch from database
         let user = self.inner.get_user_by_username(username).await?;
-        
+
         // Cache the result (insert takes ownership, no need to clone user)
         self.cache.insert(username.clone(), user.clone());
-        
+
         Ok(user)
     }
 
     async fn update_user(&self, user: &User) -> AuthResult<()> {
         // Invalidate cache before update to ensure consistency
         self.invalidate_user(&user.username);
-        
+
         // Perform the update
         self.inner.update_user(user).await
     }
@@ -113,4 +113,3 @@ impl UserRepository for CoreUsersRepo {
             .map_err(|e| AuthError::DatabaseError(e.to_string()))
     }
 }
-

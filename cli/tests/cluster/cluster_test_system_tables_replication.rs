@@ -16,21 +16,13 @@ use std::time::Duration;
 /// Helper to extract rows from query response as a set of normalized strings
 fn extract_row_set(base_url: &str, sql: &str) -> Result<HashSet<String>, String> {
     let response = execute_on_node_response(base_url, sql)?;
-    let result = response
-        .results
-        .first()
-        .ok_or_else(|| "Missing query result".to_string())?;
-    let rows = result
-        .rows
-        .as_ref()
-        .ok_or_else(|| "Missing row data".to_string())?;
+    let result = response.results.first().ok_or_else(|| "Missing query result".to_string())?;
+    let rows = result.rows.as_ref().ok_or_else(|| "Missing row data".to_string())?;
 
     let mut set = HashSet::new();
     for row in rows {
-        let normalized: Vec<String> = row
-            .iter()
-            .map(|v| extract_typed_value(v).to_string())
-            .collect();
+        let normalized: Vec<String> =
+            row.iter().map(|v| extract_typed_value(v).to_string()).collect();
         set.insert(normalized.join("|"));
     }
     Ok(set)
@@ -39,7 +31,9 @@ fn extract_row_set(base_url: &str, sql: &str) -> Result<HashSet<String>, String>
 /// Test: system.tables is identical across all nodes
 #[test]
 fn cluster_test_system_tables_replication() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: system.tables Replication ===\n");
 
@@ -49,20 +43,28 @@ fn cluster_test_system_tables_replication() {
     // Setup: Create namespace and tables on first node
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
-    
+
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create multiple table types
     execute_on_node(
         &urls[0],
-        &format!("CREATE USER TABLE {}.users_data (id BIGINT PRIMARY KEY, name STRING)", namespace),
-    ).expect("Failed to create user table");
+        &format!(
+            "CREATE USER TABLE {}.users_data (id BIGINT PRIMARY KEY, name STRING)",
+            namespace
+        ),
+    )
+    .expect("Failed to create user table");
 
     execute_on_node(
         &urls[0],
-        &format!("CREATE SHARED TABLE {}.config_data (id BIGINT PRIMARY KEY, value STRING)", namespace),
-    ).expect("Failed to create shared table");
+        &format!(
+            "CREATE SHARED TABLE {}.config_data (id BIGINT PRIMARY KEY, value STRING)",
+            namespace
+        ),
+    )
+    .expect("Failed to create shared table");
 
     execute_on_node(
         &urls[0],
@@ -92,9 +94,9 @@ fn cluster_test_system_tables_replication() {
                 Ok(set) if set.len() >= 3 => {
                     rows = set;
                     break;
-                }
+                },
                 Ok(set) => rows = set,
-                Err(_) => {}
+                Err(_) => {},
             }
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -105,15 +107,17 @@ fn cluster_test_system_tables_replication() {
     // Compare all sets - they should be identical
     let reference = &all_sets[0];
     assert!(!reference.is_empty(), "Reference node has no tables");
-    
+
     for (i, set) in all_sets.iter().enumerate().skip(1) {
         let missing: HashSet<_> = reference.difference(set).collect();
         let extra: HashSet<_> = set.difference(reference).collect();
-        
+
         assert!(
             missing.is_empty() && extra.is_empty(),
             "Node {} has different tables. Missing: {:?}, Extra: {:?}",
-            i, missing, extra
+            i,
+            missing,
+            extra
         );
         println!("  ✓ Node {} matches reference node", i);
     }
@@ -127,7 +131,9 @@ fn cluster_test_system_tables_replication() {
 /// Test: system.namespaces is identical across all nodes
 #[test]
 fn cluster_test_system_namespaces_replication() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: system.namespaces Replication ===\n");
 
@@ -164,9 +170,9 @@ fn cluster_test_system_namespaces_replication() {
                 Ok(set) if set.len() >= 5 => {
                     rows = set;
                     break;
-                }
+                },
                 Ok(set) => rows = set,
-                Err(_) => {}
+                Err(_) => {},
             }
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -178,11 +184,7 @@ fn cluster_test_system_namespaces_replication() {
     assert!(reference.len() >= 5, "Reference node has only {} namespaces", reference.len());
 
     for (i, set) in all_sets.iter().enumerate().skip(1) {
-        assert_eq!(
-            set, reference,
-            "Node {} has different namespaces than reference",
-            i
-        );
+        assert_eq!(set, reference, "Node {} has different namespaces than reference", i);
         println!("  ✓ Node {} matches reference node", i);
     }
 
@@ -197,7 +199,9 @@ fn cluster_test_system_namespaces_replication() {
 /// Test: system.users is identical across all nodes after user creation
 #[test]
 fn cluster_test_system_users_replication() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: system.users Replication ===\n");
 
@@ -219,10 +223,7 @@ fn cluster_test_system_users_replication() {
     let users: Vec<String> = (0..3).map(|i| format!("test_user_{}_{}", namespace, i)).collect();
 
     for user in &users {
-        let sql = format!(
-            "CREATE USER {} WITH PASSWORD 'test_password_123' ROLE 'user'",
-            user
-        );
+        let sql = format!("CREATE USER {} WITH PASSWORD 'test_password_123' ROLE 'user'", user);
         execute_on_node(&urls[0], &sql)
             .unwrap_or_else(|e| panic!("Failed to create user {}: {}", user, e));
     }
@@ -233,18 +234,15 @@ fn cluster_test_system_users_replication() {
     // Verify users exist on all nodes
     for (i, url) in urls.iter().enumerate() {
         for user in &users {
-            let query = format!(
-                "SELECT username FROM system.users WHERE username = '{}'",
-                user
-            );
-            
+            let query = format!("SELECT username FROM system.users WHERE username = '{}'", user);
+
             let mut found = false;
             for _ in 0..10 {
                 match execute_on_node(url, &query) {
                     Ok(result) if result.contains(user) => {
                         found = true;
                         break;
-                    }
+                    },
                     _ => std::thread::sleep(Duration::from_millis(200)),
                 }
             }
@@ -263,7 +261,9 @@ fn cluster_test_system_users_replication() {
 /// Test: system.cluster shows consistent view from all nodes
 #[test]
 fn cluster_test_system_cluster_consistency() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: system.cluster Consistency ===\n");
 
@@ -278,24 +278,24 @@ fn cluster_test_system_cluster_consistency() {
             Ok(set) => {
                 println!("  Node {} sees {} cluster members", i, set.len());
                 cluster_views.push(set);
-            }
+            },
             Err(e) => {
                 panic!("Node {} failed to query system.cluster: {}", i, e);
-            }
+            },
         }
     }
 
     // All nodes should see the same cluster configuration
     let reference = &cluster_views[0];
-    assert!(reference.len() >= 3, "Expected at least 3 cluster members, got {}", reference.len());
+    assert!(
+        reference.len() >= 3,
+        "Expected at least 3 cluster members, got {}",
+        reference.len()
+    );
 
     for (i, view) in cluster_views.iter().enumerate().skip(1) {
         let diff: HashSet<_> = reference.symmetric_difference(view).collect();
-        assert!(
-            diff.is_empty(),
-            "Node {} has different cluster view: {:?}",
-            i, diff
-        );
+        assert!(diff.is_empty(), "Node {} has different cluster view: {:?}", i, diff);
         println!("  ✓ Node {} has consistent cluster view", i);
     }
 
@@ -305,11 +305,7 @@ fn cluster_test_system_cluster_consistency() {
             url,
             "SELECT count(*) as count FROM system.cluster WHERE is_leader = true",
         );
-        assert_eq!(
-            leader_count, 1,
-            "Node {} sees {} leaders, expected 1",
-            i, leader_count
-        );
+        assert_eq!(leader_count, 1, "Node {} sees {} leaders, expected 1", i, leader_count);
     }
     println!("  ✓ All nodes agree on single leader");
 
@@ -319,7 +315,9 @@ fn cluster_test_system_cluster_consistency() {
 /// Test: ALTER TABLE is replicated to all nodes
 #[test]
 fn cluster_test_alter_table_replication() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: ALTER TABLE Replication ===\n");
 
@@ -334,8 +332,12 @@ fn cluster_test_alter_table_replication() {
 
     execute_on_node(
         &urls[0],
-        &format!("CREATE SHARED TABLE {}.alter_test (id BIGINT PRIMARY KEY, name STRING)", namespace),
-    ).expect("Failed to create table");
+        &format!(
+            "CREATE SHARED TABLE {}.alter_test (id BIGINT PRIMARY KEY, name STRING)",
+            namespace
+        ),
+    )
+    .expect("Failed to create table");
 
     // Wait for table to replicate
     if !wait_for_table_on_all_nodes(&namespace, "alter_test", 10000) {
@@ -347,7 +349,8 @@ fn cluster_test_alter_table_replication() {
     execute_on_node(
         &urls[0],
         &format!("ALTER TABLE {}.alter_test ADD COLUMN age BIGINT", namespace),
-    ).expect("Failed to alter table");
+    )
+    .expect("Failed to alter table");
 
     // Wait for replication
     std::thread::sleep(Duration::from_millis(1500));
@@ -355,10 +358,7 @@ fn cluster_test_alter_table_replication() {
     // Verify new column exists on all nodes by attempting to use it
     // Note: information_schema.columns may not reflect dynamically added columns,
     // so we verify by actually querying the column in a SELECT statement
-    let verify_query = format!(
-        "SELECT id, name, age FROM {}.alter_test LIMIT 1",
-        namespace
-    );
+    let verify_query = format!("SELECT id, name, age FROM {}.alter_test LIMIT 1", namespace);
 
     for (i, url) in urls.iter().enumerate() {
         let mut found_age = false;
@@ -371,7 +371,7 @@ fn cluster_test_alter_table_replication() {
                         found_age = true;
                         break;
                     }
-                }
+                },
                 Err(e) => {
                     let err_str = e.to_string();
                     // If error contains "not found" or "unknown column", column doesn't exist yet
@@ -379,7 +379,7 @@ fn cluster_test_alter_table_replication() {
                         // Some other error - might be worth investigating
                         println!("  Query error on node {}: {}", i, err_str);
                     }
-                }
+                },
             }
             std::thread::sleep(Duration::from_millis(300));
         }
@@ -396,7 +396,9 @@ fn cluster_test_alter_table_replication() {
 /// Test: DROP operations are replicated to all nodes
 #[test]
 fn cluster_test_drop_replication() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: DROP Operation Replication ===\n");
 
@@ -412,7 +414,8 @@ fn cluster_test_drop_replication() {
     execute_on_node(
         &urls[0],
         &format!("CREATE SHARED TABLE {}.drop_test (id BIGINT PRIMARY KEY)", namespace),
-    ).expect("Failed to create table");
+    )
+    .expect("Failed to create table");
 
     // Wait for table to replicate to all nodes
     if !wait_for_table_on_all_nodes(&namespace, "drop_test", 10000) {
@@ -431,7 +434,7 @@ fn cluster_test_drop_replication() {
                 Ok(result) if result.contains("drop_test") => {
                     found = true;
                     break;
-                }
+                },
                 _ => std::thread::sleep(Duration::from_millis(200)),
             }
         }
@@ -458,7 +461,7 @@ fn cluster_test_drop_replication() {
                 Ok(result) if !result.contains("drop_test") || result.contains("\"rows\":[]") => {
                     gone = true;
                     break;
-                }
+                },
                 _ => std::thread::sleep(Duration::from_millis(200)),
             }
         }

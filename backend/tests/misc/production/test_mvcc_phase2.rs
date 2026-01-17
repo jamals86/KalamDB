@@ -12,7 +12,6 @@
 //! - T063: RocksDB prefix scan `{user_id}:` → efficiently returns only that user's rows
 //! - T064: RocksDB range scan `_seq > threshold` → efficiently skips older versions
 
-
 use super::test_support::{fixtures, QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
 
@@ -126,18 +125,11 @@ async fn test_create_table_auto_adds_system_columns() {
 
     // Verify system columns exist
     assert!(row.contains_key("_seq"), "_seq column should be auto-added");
-    assert!(
-        row.contains_key("_deleted"),
-        "_deleted column should be auto-added"
-    );
+    assert!(row.contains_key("_deleted"), "_deleted column should be auto-added");
 
     // Verify _seq is a valid i64 (SeqId)
     let seq = row.get("_seq").unwrap();
-    assert!(
-        seq.is_i64() || seq.is_u64(),
-        "_seq should be numeric (SeqId), got: {:?}",
-        seq
-    );
+    assert!(seq.is_i64() || seq.is_u64(), "_seq should be numeric (SeqId), got: {:?}", seq);
 
     // Verify _deleted defaults to false
     assert_eq!(
@@ -282,12 +274,7 @@ async fn test_user_table_row_structure() {
             "user1",
         )
         .await;
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Success,
-        "Table creation failed: {:?}",
-        resp.error
-    );
+    assert_eq!(resp.status, ResponseStatus::Success, "Table creation failed: {:?}", resp.error);
 
     // Insert record
     let resp = server
@@ -297,12 +284,7 @@ async fn test_user_table_row_structure() {
             "user1",
         )
         .await;
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Success,
-        "Insert failed: {:?}",
-        resp.error
-    );
+    assert_eq!(resp.status, ResponseStatus::Success, "Insert failed: {:?}", resp.error);
 
     // Query with all columns including system columns
     let response = server
@@ -328,18 +310,10 @@ async fn test_user_table_row_structure() {
 
     // Verify _seq is numeric (SeqId wrapper)
     let seq = row.get("_seq").unwrap();
-    assert!(
-        seq.is_i64() || seq.is_u64(),
-        "_seq should be numeric, got: {:?}",
-        seq
-    );
+    assert!(seq.is_i64() || seq.is_u64(), "_seq should be numeric, got: {:?}", seq);
 
     // Verify _deleted is boolean
-    assert_eq!(
-        row.get("_deleted").unwrap().as_bool(),
-        Some(false),
-        "_deleted should be false"
-    );
+    assert_eq!(row.get("_deleted").unwrap().as_bool(), Some(false), "_deleted should be false");
 
     // Note: user_id is NOT exposed in query results (internal to storage key)
     // UserTableRow structure: { user_id: UserId, _seq: SeqId, _deleted: bool, fields: JsonValue }
@@ -374,12 +348,7 @@ async fn test_shared_table_row_structure() {
             "system",
         )
         .await;
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Success,
-        "Table creation failed: {:?}",
-        resp.error
-    );
+    assert_eq!(resp.status, ResponseStatus::Success, "Table creation failed: {:?}", resp.error);
 
     // Insert record (must be done by system/owner)
     let resp = server
@@ -389,12 +358,7 @@ async fn test_shared_table_row_structure() {
             "system",
         )
         .await;
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Success,
-        "Insert failed: {:?}",
-        resp.error
-    );
+    assert_eq!(resp.status, ResponseStatus::Success, "Insert failed: {:?}", resp.error);
 
     // Query with all columns including system columns (as system user)
     let response = server
@@ -410,10 +374,7 @@ async fn test_shared_table_row_structure() {
     let row = &rows[0];
 
     // Verify fields (user-defined columns)
-    assert_eq!(
-        row.get("config_key").unwrap().as_str().unwrap(),
-        "feature_flag"
-    );
+    assert_eq!(row.get("config_key").unwrap().as_str().unwrap(), "feature_flag");
     assert_eq!(row.get("value").unwrap().as_str().unwrap(), "on");
     assert!(row.get("enabled").unwrap().as_bool().unwrap());
 
@@ -430,11 +391,7 @@ async fn test_shared_table_row_structure() {
 
     // Verify _seq is numeric
     let seq = row.get("_seq").unwrap();
-    assert!(
-        seq.is_i64() || seq.is_u64(),
-        "_seq should be numeric, got: {:?}",
-        seq
-    );
+    assert!(seq.is_i64() || seq.is_u64(), "_seq should be numeric, got: {:?}", seq);
 
     // SharedTableRow structure: { _seq: SeqId, _deleted: bool, fields: JsonValue }
     // NO user_id (not user-scoped), NO access_level (in schema cache)
@@ -479,11 +436,7 @@ async fn test_insert_duplicate_pk_rejected() {
         )
         .await;
 
-    assert_eq!(
-        response.status,
-        ResponseStatus::Success,
-        "First INSERT should succeed"
-    );
+    assert_eq!(response.status, ResponseStatus::Success, "First INSERT should succeed");
 
     // Try to insert duplicate PK (should fail - user provided explicit PK value)
     let response = server
@@ -516,19 +469,12 @@ async fn test_insert_duplicate_pk_rejected() {
 
     // Verify only one record exists
     let response = server
-        .execute_sql_as_user(
-            "SELECT item_id, name FROM test_ns_t060.unique_items",
-            "user1",
-        )
+        .execute_sql_as_user("SELECT item_id, name FROM test_ns_t060.unique_items", "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
     let rows = response.results[0].rows_as_maps();
-    assert_eq!(
-        rows.len(),
-        1,
-        "Should only have 1 record (duplicate rejected)"
-    );
+    assert_eq!(rows.len(), 1, "Should only have 1 record (duplicate rejected)");
     assert_eq!(
         rows[0].get("name").unwrap().as_str().unwrap(),
         "First",
@@ -579,12 +525,7 @@ async fn test_incremental_sync_seq_threshold() {
             "user1",
         )
         .await;
-    assert_eq!(
-        resp.status,
-        ResponseStatus::Success,
-        "Table creation failed: {:?}",
-        resp.error
-    );
+    assert_eq!(resp.status, ResponseStatus::Success, "Table creation failed: {:?}", resp.error);
 
     // Insert 3 records
     server
@@ -644,10 +585,7 @@ async fn test_incremental_sync_seq_threshold() {
     );
 
     let returned_seq = rows[0].get("_seq").unwrap().as_i64().unwrap();
-    assert!(
-        returned_seq > threshold_seq,
-        "Returned _seq should be greater than threshold"
-    );
+    assert!(returned_seq > threshold_seq, "Returned _seq should be greater than threshold");
 
     println!("✅ T062: Incremental sync with WHERE _seq > X works correctly");
 }
@@ -709,14 +647,8 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
     assert_eq!(response.status, ResponseStatus::Success);
     let rows = response.results[0].rows_as_maps();
     assert_eq!(rows.len(), 2, "User1 should only see their own 2 notes");
-    assert_eq!(
-        rows[0].get("content").unwrap().as_str().unwrap(),
-        "User1 Note 1"
-    );
-    assert_eq!(
-        rows[1].get("content").unwrap().as_str().unwrap(),
-        "User1 Note 2"
-    );
+    assert_eq!(rows[0].get("content").unwrap().as_str().unwrap(), "User1 Note 1");
+    assert_eq!(rows[1].get("content").unwrap().as_str().unwrap(), "User1 Note 2");
 
     // Query as user2 (should only see user2's note)
     let response = server
@@ -729,10 +661,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
     assert_eq!(response.status, ResponseStatus::Success);
     let rows = response.results[0].rows_as_maps();
     assert_eq!(rows.len(), 1, "User2 should only see their own 1 note");
-    assert_eq!(
-        rows[0].get("content").unwrap().as_str().unwrap(),
-        "User2 Note 1"
-    );
+    assert_eq!(rows[0].get("content").unwrap().as_str().unwrap(), "User2 Note 1");
 
     println!("✅ T063: RocksDB prefix scan ensures user isolation");
 }
@@ -769,17 +698,10 @@ async fn test_rocksdb_range_scan_efficiency() {
 
     // Get initial _seq
     let response = server
-        .execute_sql_as_user(
-            "SELECT id, value, _seq FROM test_ns_t064.versioned_data",
-            "user1",
-        )
+        .execute_sql_as_user("SELECT id, value, _seq FROM test_ns_t064.versioned_data", "user1")
         .await;
 
-    let initial_seq = response.results[0].rows_as_maps()[0]
-        .get("_seq")
-        .unwrap()
-        .as_i64()
-        .unwrap();
+    let initial_seq = response.results[0].rows_as_maps()[0].get("_seq").unwrap().as_i64().unwrap();
 
     // Update record (creates new version)
     server
@@ -813,17 +735,10 @@ async fn test_rocksdb_range_scan_efficiency() {
     // Should return the latest version (value=3) since version resolution
     // applies MAX(_seq) AFTER the range filter
     assert_eq!(rows.len(), 1, "Should return 1 row (latest version)");
-    assert_eq!(
-        rows[0].get("value").unwrap().as_i64().unwrap(),
-        3,
-        "Should return latest value"
-    );
+    assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 3, "Should return latest value");
 
     let returned_seq = rows[0].get("_seq").unwrap().as_i64().unwrap();
-    assert!(
-        returned_seq > initial_seq,
-        "Returned _seq should be > initial_seq"
-    );
+    assert!(returned_seq > initial_seq, "Returned _seq should be > initial_seq");
 
     println!("✅ T064: RocksDB range scan with _seq > threshold works efficiently");
 }

@@ -1,6 +1,5 @@
 //! Tests for password complexity enforcement.
 
-
 use super::test_support::TestServer;
 use kalamdb_commons::{models::UserName, AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_core::app_context::AppContext;
@@ -10,11 +9,7 @@ use std::sync::Arc;
 
 async fn setup_executor(
     enforce_complexity: bool,
-) -> (
-    SqlExecutor,
-    Arc<AppContext>,
-    Arc<datafusion::prelude::SessionContext>,
-) {
+) -> (SqlExecutor, Arc<AppContext>, Arc<datafusion::prelude::SessionContext>) {
     // Use shared TestServer harness to initialize AppContext and session
     let server = TestServer::new().await;
     let app_context = server.app_context.clone();
@@ -32,10 +27,8 @@ async fn create_admin_user(app_context: &Arc<AppContext>) -> UserId {
     let now = chrono::Utc::now().timestamp_millis();
 
     // If user already exists (singleton AppContext across tests), return existing id
-    if let Ok(Some(existing)) = app_context
-        .system_tables()
-        .users()
-        .get_user_by_username("complexity_admin")
+    if let Ok(Some(existing)) =
+        app_context.system_tables().users().get_user_by_username("complexity_admin")
     {
         return existing.id;
     }
@@ -79,7 +72,7 @@ fn assert_complexity_error(
                 expected_fragment,
                 msg
             );
-        }
+        },
         other => panic!("Expected InvalidOperation error, got {:?}", other),
     }
 }
@@ -225,7 +218,7 @@ async fn test_complexity_alter_user_requires_special_character() {
     );
 
     let username = format!("alter_target_{}", std::process::id());
-    
+
     executor
         .execute(
             &format!("CREATE USER '{}' WITH PASSWORD 'ValidPass1!' ROLE user", username),
@@ -257,7 +250,7 @@ async fn test_complexity_alter_user_valid_password_succeeds() {
     );
 
     let username = format!("alter_target_ok_{}", std::process::id());
-    
+
     executor
         .execute(
             &format!("CREATE USER '{}' WITH PASSWORD 'ValidPass1!' ROLE user", username),
@@ -275,9 +268,5 @@ async fn test_complexity_alter_user_valid_password_succeeds() {
         )
         .await;
 
-    assert!(
-        result.is_ok(),
-        "ALTER USER with complex password should succeed: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "ALTER USER with complex password should succeed: {:?}", result);
 }

@@ -20,10 +20,7 @@ fn shared_table_update_50k() -> anyhow::Result<()> {
             values.push(format!("('benchmark_value_{}')", idx));
         }
 
-        let sql = format!(
-            "INSERT INTO bench_shared.items (value) VALUES {}",
-            values.join(", ")
-        );
+        let sql = format!("INSERT INTO bench_shared.items (value) VALUES {}", values.join(", "));
         execute_cli_timed_root(&sql)?;
     }
     std::thread::sleep(Duration::from_millis(200));
@@ -48,11 +45,7 @@ fn shared_table_update_50k() -> anyhow::Result<()> {
         "Update 50,000 rows in shared table",
     );
 
-    result.set_timings(
-        execution.cli_total_ms,
-        execution.server_time_ms,
-        execution.server_time_ms,
-    );
+    result.set_timings(execution.cli_total_ms, execution.server_time_ms, execution.server_time_ms);
     result.set_memory(mem_before, mem_after);
     result.set_disk(disk_before, disk_after);
     result.set_requests(1, execution.server_time_ms);

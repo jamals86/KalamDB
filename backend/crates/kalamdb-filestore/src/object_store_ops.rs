@@ -67,26 +67,16 @@ pub async fn read_file(
     path: &str,
 ) -> Result<Bytes> {
     let key = object_key_for_path(storage, path)?;
-    
-    let result = store
-        .get(&key)
-        .await
-        .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
-    
-    let bytes = result
-        .bytes()
-        .await
-        .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
-    
+
+    let result = store.get(&key).await.map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+
+    let bytes = result.bytes().await.map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+
     Ok(bytes)
 }
 
 /// Synchronous wrapper for read_file.
-pub fn read_file_sync(
-    store: Arc<dyn ObjectStore>,
-    storage: &Storage,
-    path: &str,
-) -> Result<Bytes> {
+pub fn read_file_sync(store: Arc<dyn ObjectStore>, storage: &Storage, path: &str) -> Result<Bytes> {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         std::thread::scope(|s| {
             s.spawn(|| handle.block_on(read_file(store, storage, path)))
@@ -111,12 +101,12 @@ pub async fn write_file(
     data: Bytes,
 ) -> Result<()> {
     let key = object_key_for_path(storage, path)?;
-    
+
     store
         .put(&key, data.into())
         .await
         .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
-    
+
     Ok(())
 }
 
@@ -144,27 +134,19 @@ pub fn write_file_sync(
 }
 
 /// Delete a file.
-pub async fn delete_file(
-    store: Arc<dyn ObjectStore>,
-    storage: &Storage,
-    path: &str,
-) -> Result<()> {
+pub async fn delete_file(store: Arc<dyn ObjectStore>, storage: &Storage, path: &str) -> Result<()> {
     let key = object_key_for_path(storage, path)?;
-    
+
     store
         .delete(&key)
         .await
         .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
-    
+
     Ok(())
 }
 
 /// Synchronous wrapper for delete_file.
-pub fn delete_file_sync(
-    store: Arc<dyn ObjectStore>,
-    storage: &Storage,
-    path: &str,
-) -> Result<()> {
+pub fn delete_file_sync(store: Arc<dyn ObjectStore>, storage: &Storage, path: &str) -> Result<()> {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         std::thread::scope(|s| {
             s.spawn(|| handle.block_on(delete_file(store, storage, path)))
@@ -188,12 +170,9 @@ pub async fn head_file(
     path: &str,
 ) -> Result<FileMetadata> {
     let key = object_key_for_path(storage, path)?;
-    
-    let meta = store
-        .head(&key)
-        .await
-        .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
-    
+
+    let meta = store.head(&key).await.map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+
     Ok(FileMetadata {
         size_bytes: meta.size as usize,
         modified_timestamp_ms: meta.last_modified.timestamp_millis(),
@@ -239,7 +218,7 @@ pub async fn delete_prefix(
     prefix: &str,
 ) -> Result<u64> {
     let key = object_key_for_path(storage, prefix)?;
-    
+
     let prefix_path = if key.as_ref().is_empty() {
         None
     } else {
@@ -317,16 +296,16 @@ fn remove_empty_dir_tree(target: &std::path::Path, stop_at: &str) -> std::io::Re
         match std::fs::remove_dir(dir) {
             Ok(_) => {
                 // Successfully removed empty directory
-            }
+            },
             Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
                 // Not empty, skip
-            }
+            },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // Already removed
-            }
+            },
             Err(_) => {
                 // Other error (permissions, etc.), skip
-            }
+            },
         }
     }
 
@@ -338,18 +317,18 @@ fn remove_empty_dir_tree(target: &std::path::Path, stop_at: &str) -> std::io::Re
         match std::fs::remove_dir(&current) {
             Ok(_) => {
                 // Successfully removed empty parent directory
-            }
+            },
             Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
                 // Directory not empty, stop walking up
                 break;
-            }
+            },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // Already removed, continue walking up
-            }
+            },
             Err(_) => {
                 // Other error (permissions, etc.), stop
                 break;
-            }
+            },
         }
 
         // Move to parent
@@ -398,7 +377,7 @@ pub async fn prefix_exists(
     };
 
     let mut stream = store.list(prefix_path.as_ref());
-    
+
     // Check if at least one file exists
     Ok(stream.next().await.is_some())
 }
@@ -443,12 +422,12 @@ pub async fn rename_file(
 ) -> Result<()> {
     let from_key = object_key_for_path(storage, from_path)?;
     let to_key = object_key_for_path(storage, to_path)?;
-    
+
     store
         .rename(&from_key, &to_key)
         .await
         .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
-    
+
     Ok(())
 }
 
@@ -542,21 +521,15 @@ mod tests {
         ];
 
         for file in &files {
-            write_file_sync(
-                Arc::clone(&store),
-                &storage,
-                file,
-                Bytes::from("test"),
-            )
-            .unwrap();
+            write_file_sync(Arc::clone(&store), &storage, file, Bytes::from("test")).unwrap();
         }
 
         // List all files under namespace1
         let listed = list_files_sync(Arc::clone(&store), &storage, "namespace1").unwrap();
-        
+
         // Should include namespace1 files
         assert!(listed.len() >= 3, "Should list at least 3 files");
-        
+
         // Check that namespace1 files are present
         let has_file1 = listed.iter().any(|p| p.contains("file1.txt"));
         let has_file2 = listed.iter().any(|p| p.contains("file2.txt"));
@@ -583,7 +556,7 @@ mod tests {
 
         // Get metadata
         let meta = head_file_sync(store, &storage, file_path).unwrap();
-        
+
         assert_eq!(meta.size_bytes, content.len());
         assert!(meta.modified_timestamp_ms > 0);
 
@@ -636,13 +609,7 @@ mod tests {
         ];
 
         for file in &files {
-            write_file_sync(
-                Arc::clone(&store),
-                &storage,
-                file,
-                Bytes::from("test"),
-            )
-            .unwrap();
+            write_file_sync(Arc::clone(&store), &storage, file, Bytes::from("test")).unwrap();
         }
 
         // Verify files exist
@@ -669,17 +636,13 @@ mod tests {
         let store = build_object_store(&storage).expect("Failed to build store");
 
         // Check non-existent prefix
-        let exists_before = prefix_exists_sync(Arc::clone(&store), &storage, "nonexistent").unwrap();
+        let exists_before =
+            prefix_exists_sync(Arc::clone(&store), &storage, "nonexistent").unwrap();
         assert!(!exists_before);
 
         // Write a file
-        write_file_sync(
-            Arc::clone(&store),
-            &storage,
-            "exists/file.txt",
-            Bytes::from("test"),
-        )
-        .unwrap();
+        write_file_sync(Arc::clone(&store), &storage, "exists/file.txt", Bytes::from("test"))
+            .unwrap();
 
         // Check prefix now exists
         let exists_after = prefix_exists_sync(store, &storage, "exists").unwrap();
@@ -700,25 +663,13 @@ mod tests {
         let file_path = "test/overwrite.txt";
 
         // Write first version
-        write_file_sync(
-            Arc::clone(&store),
-            &storage,
-            file_path,
-            Bytes::from("version 1"),
-        )
-        .unwrap();
+        write_file_sync(Arc::clone(&store), &storage, file_path, Bytes::from("version 1")).unwrap();
 
         let v1 = read_file_sync(Arc::clone(&store), &storage, file_path).unwrap();
         assert_eq!(v1, Bytes::from("version 1"));
 
         // Overwrite with version 2
-        write_file_sync(
-            Arc::clone(&store),
-            &storage,
-            file_path,
-            Bytes::from("version 2"),
-        )
-        .unwrap();
+        write_file_sync(Arc::clone(&store), &storage, file_path, Bytes::from("version 2")).unwrap();
 
         let v2 = read_file_sync(store, &storage, file_path).unwrap();
         assert_eq!(v2, Bytes::from("version 2"));
@@ -751,7 +702,7 @@ mod tests {
         let store = build_object_store(&storage).expect("Failed to build store");
 
         let file_path = "test/large.bin";
-        
+
         // Create 1MB of data
         let large_data = vec![42u8; 1024 * 1024];
         let content = Bytes::from(large_data.clone());
@@ -782,13 +733,7 @@ mod tests {
 
         // Write to deeply nested path
         let file_path = "a/b/c/d/e/f/file.txt";
-        write_file_sync(
-            Arc::clone(&store),
-            &storage,
-            file_path,
-            Bytes::from("nested"),
-        )
-        .unwrap();
+        write_file_sync(Arc::clone(&store), &storage, file_path, Bytes::from("nested")).unwrap();
 
         // Read back
         let content = read_file_sync(store, &storage, file_path).unwrap();
@@ -866,7 +811,7 @@ mod tests {
         let store = build_object_store(&storage).expect("Failed to build store");
 
         let file_path = "test/binary.bin";
-        
+
         // Create binary data with all byte values
         let binary_data: Vec<u8> = (0..=255).collect();
         let content = Bytes::from(binary_data.clone());
@@ -953,7 +898,7 @@ mod tests {
 
         let temp_path = "ns/table/batch-0.parquet.tmp";
         let final_path = "ns/table/batch-0.parquet";
-        
+
         // Simulate Parquet content (just bytes for this test)
         let parquet_content = Bytes::from(vec![0x50, 0x41, 0x52, 0x31]); // "PAR1" magic
 
@@ -990,7 +935,7 @@ mod tests {
 
         let src_path = "large/file.tmp";
         let dst_path = "large/file.dat";
-        
+
         // Create a larger file (1MB)
         let large_content: Vec<u8> = (0..1024 * 1024).map(|i| (i % 256) as u8).collect();
         let content = Bytes::from(large_content.clone());
@@ -1022,18 +967,14 @@ mod tests {
         // Initial state: manifest exists (from previous flush)
         let manifest_path = "myns/mytable/manifest.json";
         let initial_manifest = r#"{"version":1,"segments":[]}"#;
-        write_file_sync(
-            Arc::clone(&store),
-            &storage,
-            manifest_path,
-            Bytes::from(initial_manifest),
-        ).unwrap();
+        write_file_sync(Arc::clone(&store), &storage, manifest_path, Bytes::from(initial_manifest))
+            .unwrap();
 
         // Step 1: Write Parquet to temp location
         let temp_parquet = "myns/mytable/batch-0.parquet.tmp";
         let final_parquet = "myns/mytable/batch-0.parquet";
         let parquet_data = Bytes::from(vec![0x50, 0x41, 0x52, 0x31, 0x00, 0x01, 0x02, 0x03]);
-        
+
         write_file_sync(Arc::clone(&store), &storage, temp_parquet, parquet_data.clone()).unwrap();
 
         // Step 2: Atomic rename temp -> final
@@ -1041,17 +982,13 @@ mod tests {
 
         // Step 3: Update manifest with new segment
         let updated_manifest = r#"{"version":2,"segments":[{"path":"batch-0.parquet"}]}"#;
-        write_file_sync(
-            Arc::clone(&store),
-            &storage,
-            manifest_path,
-            Bytes::from(updated_manifest),
-        ).unwrap();
+        write_file_sync(Arc::clone(&store), &storage, manifest_path, Bytes::from(updated_manifest))
+            .unwrap();
 
         // Verify final state
         let files = list_files_sync(Arc::clone(&store), &storage, "myns/mytable").unwrap();
         assert_eq!(files.len(), 2); // manifest.json + batch-0.parquet
-        
+
         // No temp files should exist
         let temp_files: Vec<_> = files.iter().filter(|f| f.contains(".tmp")).collect();
         assert!(temp_files.is_empty(), "No temp files should remain after atomic flush");

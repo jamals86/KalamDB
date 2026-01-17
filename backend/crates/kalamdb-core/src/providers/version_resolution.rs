@@ -81,10 +81,7 @@ pub async fn resolve_latest_version(
     let num_rows = combined.num_rows();
     let mut groups: HashMap<&str, Vec<usize>> = HashMap::with_capacity(num_rows);
     for i in 0..num_rows {
-        groups
-            .entry(row_id_array.value(i))
-            .or_default()
-            .push(i);
+        groups.entry(row_id_array.value(i)).or_default().push(i);
     }
 
     let mut keep_indices = Vec::with_capacity(groups.len());
@@ -109,15 +106,13 @@ pub async fn resolve_latest_version(
     }
     keep_indices.sort_unstable();
 
-    let indices_array = Arc::new(UInt64Array::from(
-        keep_indices.iter().map(|&i| i as u64).collect::<Vec<_>>(),
-    ));
+    let indices_array =
+        Arc::new(UInt64Array::from(keep_indices.iter().map(|&i| i as u64).collect::<Vec<_>>()));
     let result_columns: Result<Vec<ArrayRef>, _> = combined
         .columns()
         .iter()
         .map(|col| {
-            compute::take(col.as_ref(), indices_array.as_ref(), None)
-                .into_kalamdb_error("take")
+            compute::take(col.as_ref(), indices_array.as_ref(), None).into_kalamdb_error("take")
         })
         .collect();
     let result_batch = RecordBatch::try_new(combined_schema.clone(), result_columns?)
@@ -151,9 +146,8 @@ fn project_to_target_schema(
                 );
                 // Fallback: try to convert from other types if needed
                 if let Some(string_array) = col.as_any().downcast_ref::<StringArray>() {
-                    let bools: Vec<bool> = (0..string_array.len())
-                        .map(|i| string_array.value(i) == "true")
-                        .collect();
+                    let bools: Vec<bool> =
+                        (0..string_array.len()).map(|i| string_array.value(i) == "true").collect();
                     final_columns.push(Arc::new(BooleanArray::from(bools)) as ArrayRef);
                     continue;
                 }
@@ -163,24 +157,18 @@ fn project_to_target_schema(
         final_columns.push(col.clone());
     }
 
-    RecordBatch::try_new(schema, final_columns)
-        .into_kalamdb_error("project_to_target_schema")
+    RecordBatch::try_new(schema, final_columns).into_kalamdb_error("project_to_target_schema")
 }
 
 fn add_source_priority(batch: RecordBatch, priority: u8) -> Result<RecordBatch, KalamDbError> {
     let num_rows = batch.num_rows();
     let priority_array: ArrayRef = Arc::new(Int32Array::from(vec![priority as i32; num_rows]));
     let mut fields = batch.schema().fields().to_vec();
-    fields.push(Arc::new(Field::new(
-        "source_priority",
-        DataType::Int32,
-        false,
-    )));
+    fields.push(Arc::new(Field::new("source_priority", DataType::Int32, false)));
     let new_schema = Arc::new(Schema::new(fields));
     let mut columns: Vec<ArrayRef> = batch.columns().to_vec();
     columns.push(priority_array);
-    RecordBatch::try_new(new_schema, columns)
-        .into_kalamdb_error("add_source_priority")
+    RecordBatch::try_new(new_schema, columns).into_kalamdb_error("add_source_priority")
 }
 
 fn create_empty_batch(schema: &Arc<Schema>) -> Result<RecordBatch, KalamDbError> {
@@ -196,8 +184,7 @@ fn create_empty_batch(schema: &Arc<Schema>) -> Result<RecordBatch, KalamDbError>
             _ => Arc::new(StringArray::from(Vec::<&str>::new())) as ArrayRef,
         })
         .collect();
-    RecordBatch::try_new(schema.clone(), empty_columns)
-        .into_kalamdb_error("empty_batch")
+    RecordBatch::try_new(schema.clone(), empty_columns).into_kalamdb_error("empty_batch")
 }
 
 #[cfg(test)]
@@ -219,13 +206,7 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(
-            resolve_latest_version(e.clone(), e, s)
-                .await
-                .unwrap()
-                .num_rows(),
-            0
-        );
+        assert_eq!(resolve_latest_version(e.clone(), e, s).await.unwrap().num_rows(), 0);
     }
     #[tokio::test]
     async fn test_max_seq() {
@@ -255,11 +236,7 @@ mod tests {
         let r = resolve_latest_version(f, l, s).await.unwrap();
         assert_eq!(r.num_rows(), 1);
         assert_eq!(
-            r.column(2)
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .unwrap()
-                .value(0),
+            r.column(2).as_any().downcast_ref::<StringArray>().unwrap().value(0),
             "Alice_v2"
         );
     }
@@ -290,14 +267,7 @@ mod tests {
         .unwrap();
         let r = resolve_latest_version(f, l, s).await.unwrap();
         assert_eq!(r.num_rows(), 1);
-        assert_eq!(
-            r.column(2)
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .unwrap()
-                .value(0),
-            "Fast"
-        );
+        assert_eq!(r.column(2).as_any().downcast_ref::<StringArray>().unwrap().value(0), "Fast");
     }
 }
 
@@ -373,9 +343,10 @@ where
 
     // Step 4: Filter out deleted records (_deleted = true)
     let filtered_batch = {
-        let deleted_col = resolved_batch.column_by_name(SystemColumnNames::DELETED).ok_or_else(|| {
-            datafusion::error::DataFusionError::Execution("Missing _deleted column".to_string())
-        })?;
+        let deleted_col =
+            resolved_batch.column_by_name(SystemColumnNames::DELETED).ok_or_else(|| {
+                datafusion::error::DataFusionError::Execution("Missing _deleted column".to_string())
+            })?;
         let deleted_array = deleted_col.as_boolean();
 
         // Create filter: NOT deleted (keep rows where _deleted = false)
@@ -463,15 +434,10 @@ pub fn parquet_batch_to_rows(batch: &RecordBatch) -> Result<Vec<ParquetRowData>,
             match arrow_value_to_scalar(array.as_ref(), row_idx) {
                 Ok(val) => {
                     values.insert(col_name.clone(), val);
-                }
+                },
                 Err(e) => {
-                    log::warn!(
-                        "Failed to convert column {} for row {}: {}",
-                        col_name,
-                        row_idx,
-                        e
-                    );
-                }
+                    log::warn!("Failed to convert column {} for row {}: {}", col_name, row_idx, e);
+                },
             }
         }
 
@@ -566,14 +532,12 @@ where
                 if row.seq_id() > entry.get().1.seq_id() {
                     entry.insert((key, row));
                 }
-            }
+            },
             Entry::Vacant(entry) => {
                 entry.insert((key, row));
-            }
+            },
         }
     }
 
-    best.into_values()
-        .filter(|(_, row)| keep_deleted || !row.deleted())
-        .collect()
+    best.into_values().filter(|(_, row)| keep_deleted || !row.deleted()).collect()
 }

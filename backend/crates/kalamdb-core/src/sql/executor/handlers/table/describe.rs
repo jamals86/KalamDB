@@ -32,10 +32,7 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let start_time = std::time::Instant::now();
-        let ns = statement
-            .namespace_id
-            .clone()
-            .unwrap_or_else(|| NamespaceId::new("default"));
+        let ns = statement.namespace_id.clone().unwrap_or_else(|| NamespaceId::new("default"));
         let table_id = TableId::from_strings(ns.as_str(), statement.table_name.as_str());
         let def = self
             .app_context
@@ -55,13 +52,8 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
         // Log query operation
         let duration = start_time.elapsed().as_secs_f64() * 1000.0;
         use crate::sql::executor::helpers::audit;
-        let audit_entry = audit::log_query_operation(
-            context,
-            "DESCRIBE",
-            &table_id.full_name(),
-            duration,
-            None,
-        );
+        let audit_entry =
+            audit::log_query_operation(context, "DESCRIBE", &table_id.full_name(), duration, None);
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         Ok(ExecutionResult::Rows {

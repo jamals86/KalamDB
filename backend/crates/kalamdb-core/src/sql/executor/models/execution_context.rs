@@ -170,7 +170,7 @@ impl ExecutionContext {
     pub fn is_system(&self) -> bool {
         matches!(self.user_role, Role::System)
     }
-    
+
     /// Check if this is an anonymous user (not authenticated)
     ///
     /// Anonymous users have limited permissions:
@@ -263,22 +263,15 @@ impl ExecutionContext {
 
         // Inject current user_id and role into session config extensions
         // TableProviders will read this during scan() for per-user filtering
-        session_state
-            .config_mut()
-            .options_mut()
-            .extensions
-            .insert(SessionUserContext {
-                user_id: self.user_id.clone(),
-                role: self.user_role,
-            });
+        session_state.config_mut().options_mut().extensions.insert(SessionUserContext {
+            user_id: self.user_id.clone(),
+            role: self.user_role,
+        });
 
         // Override default_schema if namespace_id is set on this context
         if let Some(ref ns) = self.namespace_id {
-            session_state
-                .config_mut()
-                .options_mut()
-                .catalog
-                .default_schema = ns.as_str().to_string();
+            session_state.config_mut().options_mut().catalog.default_schema =
+                ns.as_str().to_string();
         }
 
         // Create SessionContext from the per-user state

@@ -58,7 +58,7 @@ pub struct StorageCleanupDetails {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CleanupParams {
     /// Table identifier (required)
-     pub table_id: TableId,
+    pub table_id: TableId,
     /// Table type (required)
     pub table_type: TableType,
     /// Cleanup operation (required)
@@ -114,32 +114,25 @@ impl JobExecutor for CleanupExecutor {
 
         // Execute cleanup in 3 phases:
         // 1. Clean up table data (rows) from RocksDB stores
-        let rows_deleted =
-            cleanup_table_data_internal(&ctx.app_ctx, &table_id, table_type).await?;
+        let rows_deleted = cleanup_table_data_internal(&ctx.app_ctx, &table_id, table_type).await?;
 
         ctx.log_debug(&format!("Cleaned up {} rows from table data", rows_deleted));
 
         // 2. Clean up Parquet files from storage backend
-        let bytes_freed = cleanup_parquet_files_internal(
-            &ctx.app_ctx,
-            &table_id,
-            table_type,
-            &params.storage,
-        )
-        .await?;
+        let bytes_freed =
+            cleanup_parquet_files_internal(&ctx.app_ctx, &table_id, table_type, &params.storage)
+                .await?;
 
         ctx.log_debug(&format!("Freed {} bytes from Parquet files", bytes_freed));
 
         // 3. Invalidate manifest cache (L1 hot cache + L2 RocksDB)
         let manifest_service = ctx.app_ctx.manifest_service();
-        let cache_entries_invalidated = manifest_service
-            .invalidate_table(&table_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to invalidate manifest cache: {}", e)))?;
+        let cache_entries_invalidated =
+            manifest_service.invalidate_table(&table_id).map_err(|e| {
+                KalamDbError::Other(format!("Failed to invalidate manifest cache: {}", e))
+            })?;
 
-        ctx.log_debug(&format!(
-            "Invalidated {} manifest cache entries",
-            cache_entries_invalidated
-        ));
+        ctx.log_debug(&format!("Invalidated {} manifest cache entries", cache_entries_invalidated));
 
         // 4. Clean up metadata from SchemaRegistry
         let schema_registry = ctx.app_ctx.schema_registry();

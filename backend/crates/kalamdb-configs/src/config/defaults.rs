@@ -254,8 +254,7 @@ pub fn default_auth_allow_remote_access() -> bool {
 /// - Any secret shorter than 32 characters
 pub fn default_auth_jwt_secret() -> String {
     // Use environment variable if set, otherwise use placeholder
-    std::env::var("KALAMDB_JWT_SECRET")
-        .unwrap_or_else(|_| "CHANGE_ME_IN_PRODUCTION".to_string())
+    std::env::var("KALAMDB_JWT_SECRET").unwrap_or_else(|_| "CHANGE_ME_IN_PRODUCTION".to_string())
 }
 
 /// Default trusted JWT issuers (empty = no issuer validation)

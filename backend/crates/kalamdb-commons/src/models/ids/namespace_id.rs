@@ -134,10 +134,7 @@ impl NamespaceId {
     /// - `datafusion`: DataFusion internal catalog
     #[inline]
     pub fn is_system_namespace(&self) -> bool {
-        matches!(
-            self.as_str(),
-            "system" | "information_schema" | "pg_catalog" | "datafusion"
-        )
+        matches!(self.as_str(), "system" | "information_schema" | "pg_catalog" | "datafusion")
     }
 
     /// Check if this namespace name is reserved and cannot be created by users.
@@ -157,9 +154,7 @@ impl NamespaceId {
     #[inline]
     pub fn is_reserved(&self) -> bool {
         let lowercase = self.0.to_lowercase();
-        RESERVED_NAMESPACE_NAMES
-            .iter()
-            .any(|&reserved| reserved == lowercase)
+        RESERVED_NAMESPACE_NAMES.iter().any(|&reserved| reserved == lowercase)
     }
 }
 
@@ -201,9 +196,7 @@ impl StorageKey for NamespaceId {
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
-        String::from_utf8(bytes.to_vec())
-            .map(NamespaceId)
-            .map_err(|e| e.to_string())
+        String::from_utf8(bytes.to_vec()).map(NamespaceId).map_err(|e| e.to_string())
     }
 }
 

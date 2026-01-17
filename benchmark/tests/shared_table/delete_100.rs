@@ -10,10 +10,7 @@ fn shared_table_delete_100() -> anyhow::Result<()> {
 
     // Insert 200 rows
     for i in 1..=200 {
-        let sql = format!(
-            "INSERT INTO bench_shared.items (id, value) VALUES ({}, 'val_{}')",
-            i, i
-        );
+        let sql = format!("INSERT INTO bench_shared.items (id, value) VALUES ({}, 'val_{}')", i, i);
         execute_cli_timed_root(&sql)?;
     }
     std::thread::sleep(Duration::from_millis(100));
@@ -37,11 +34,7 @@ fn shared_table_delete_100() -> anyhow::Result<()> {
         "delete",
         "Delete 1 row from medium shared table (200 rows)",
     );
-    result.set_timings(
-        execution.cli_total_ms,
-        execution.server_time_ms,
-        execution.server_time_ms,
-    );
+    result.set_timings(execution.cli_total_ms, execution.server_time_ms, execution.server_time_ms);
     result.set_memory(mem_before, mem_after);
     result.set_disk(disk_before, disk_after);
     result.set_requests(1, execution.server_time_ms);

@@ -156,12 +156,7 @@ impl MachineInfo {
                 if let Ok(s) = String::from_utf8(output.stdout) {
                     for line in s.lines() {
                         if line.starts_with("Model name:") {
-                            return line
-                                .split(':')
-                                .nth(1)
-                                .unwrap_or("Unknown")
-                                .trim()
-                                .to_string();
+                            return line.split(':').nth(1).unwrap_or("Unknown").trim().to_string();
                         }
                     }
                 }
@@ -170,10 +165,8 @@ impl MachineInfo {
 
         #[cfg(target_os = "macos")]
         {
-            if let Ok(output) = Command::new("sysctl")
-                .arg("-n")
-                .arg("machdep.cpu.brand_string")
-                .output()
+            if let Ok(output) =
+                Command::new("sysctl").arg("-n").arg("machdep.cpu.brand_string").output()
             {
                 if let Ok(s) = String::from_utf8(output.stdout) {
                     return s.trim().to_string();

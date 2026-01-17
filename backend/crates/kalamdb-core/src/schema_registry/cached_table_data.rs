@@ -83,14 +83,11 @@ impl Clone for CachedTableData {
 impl CachedTableData {
     fn now_millis() -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
     }
 
     /// Compute bloom filter columns and indexed columns from table definition
-    /// 
+    ///
     /// This is computed once when CachedTableData is created and reused for all
     /// flush operations. Returns (bloom_filter_columns, indexed_columns).
     ///
@@ -201,25 +198,20 @@ impl CachedTableData {
         let table_type = table_def.table_type;
 
         let storage_path_template = if let Some(ref sid) = storage_id {
-            PathResolver::resolve_storage_path_template(app_ctx, table_id, table_type, sid).unwrap_or_else(
-                |e| {
+            PathResolver::resolve_storage_path_template(app_ctx, table_id, table_type, sid)
+                .unwrap_or_else(|e| {
                     log::warn!(
                         "Failed to resolve storage path template for {}: {}. Using empty template.",
                         table_id,
                         e
                     );
                     String::new()
-                },
-            )
+                })
         } else {
             String::new()
         };
 
-        Ok(Self::with_storage_config(
-            table_def,
-            storage_id,
-            storage_path_template,
-        ))
+        Ok(Self::with_storage_config(table_def, storage_id, storage_path_template))
     }
 
     /// Create CachedTableData for an altered table, preserving storage config from old entry
@@ -259,8 +251,7 @@ impl CachedTableData {
 
     #[inline]
     pub fn touch_at(&self, timestamp_ms: u64) {
-        self.last_accessed_ms
-            .store(timestamp_ms, Ordering::Relaxed);
+        self.last_accessed_ms.store(timestamp_ms, Ordering::Relaxed);
     }
 
     #[inline]
@@ -307,7 +298,9 @@ impl CachedTableData {
             }
 
             // Compute Arrow schema from TableDefinition (~75μs first time)
-            let arrow_schema = self.table.to_arrow_schema()
+            let arrow_schema = self
+                .table
+                .to_arrow_schema()
                 .into_schema_error("Failed to convert to Arrow schema")?;
 
             // Cache for future access
@@ -373,10 +366,7 @@ impl CachedTableData {
     ///
     /// **Performance**: O(1) access with read lock
     pub fn get_provider(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        let guard = self
-            .provider
-            .read()
-            .expect("RwLock poisoned: provider read lock failed");
+        let guard = self.provider.read().expect("RwLock poisoned: provider read lock failed");
         guard.as_ref().map(Arc::clone)
     }
 
@@ -387,19 +377,13 @@ impl CachedTableData {
     ///
     /// **Performance**: O(1) with write lock
     pub fn set_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
-        let mut guard = self
-            .provider
-            .write()
-            .expect("RwLock poisoned: provider write lock failed");
+        let mut guard = self.provider.write().expect("RwLock poisoned: provider write lock failed");
         *guard = Some(provider);
     }
 
     /// Clear the cached provider (used during table invalidation)
     pub fn clear_provider(&self) {
-        let mut guard = self
-            .provider
-            .write()
-            .expect("RwLock poisoned: provider write lock failed");
+        let mut guard = self.provider.write().expect("RwLock poisoned: provider write lock failed");
         *guard = None;
     }
 }

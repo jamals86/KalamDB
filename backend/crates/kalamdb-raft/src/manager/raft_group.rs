@@ -61,8 +61,11 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         backend: Arc<dyn StorageBackend>,
         snapshots_dir: std::path::PathBuf,
     ) -> Result<Self, RaftError> {
-        let storage = KalamRaftStorage::new_persistent(group_id, state_machine, backend, snapshots_dir)
-            .map_err(|e| RaftError::Storage(format!("Failed to create persistent storage: {}", e)))?;
+        let storage =
+            KalamRaftStorage::new_persistent(group_id, state_machine, backend, snapshots_dir)
+                .map_err(|e| {
+                    RaftError::Storage(format!("Failed to create persistent storage: {}", e))
+                })?;
 
         Ok(Self {
             group_id,
@@ -106,23 +109,27 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// Start the Raft group with the given node ID and configuration
     ///
     /// This initializes the Raft instance and begins participating in consensus.
-    pub async fn start(&self, node_id: u64, config: &crate::manager::RaftManagerConfig) -> Result<(), RaftError> {
+    pub async fn start(
+        &self,
+        node_id: u64,
+        config: &crate::manager::RaftManagerConfig,
+    ) -> Result<(), RaftError> {
         // Check if already started
         if self.is_started() {
             return Ok(());
         }
-        
+
         // Detect single-node mode (no peers configured)
         let is_single_node = config.peers.is_empty();
 
-        self
-            .network_factory
+        self.network_factory
             .set_reconnect_interval(Duration::from_millis(config.reconnect_interval_ms));
-        
+
         // Parse snapshot policy from configuration
-        let snapshot_policy = kalamdb_configs::ClusterConfig::parse_snapshot_policy(&config.snapshot_policy)
-            .map_err(|e| RaftError::Config(format!("Invalid snapshot policy: {}", e)))?;
-        
+        let snapshot_policy =
+            kalamdb_configs::ClusterConfig::parse_snapshot_policy(&config.snapshot_policy)
+                .map_err(|e| RaftError::Config(format!("Invalid snapshot policy: {}", e)))?;
+
         // Create Raft configuration with optimizations for single-node mode
         // Single-node optimizations (OpenRaft recommendations):
         // - Disable snapshot purging (max_in_snapshot_log_to_keep = 0)
@@ -131,23 +138,26 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         // - Keep tick and elect enabled (required for Raft state machine to function)
         // - Snapshot policy from config (default: 1000 entries)
         let raft_config = if is_single_node {
-            log::debug!("[SINGLE-NODE] Applying lightweight Raft optimizations for {}", self.group_id);
+            log::debug!(
+                "[SINGLE-NODE] Applying lightweight Raft optimizations for {}",
+                self.group_id
+            );
             log::debug!("[SINGLE-NODE] Snapshot policy: {:?}", snapshot_policy);
             let mut cfg = Config {
                 cluster_name: format!("kalamdb-{}", self.group_id),
-                election_timeout_min: 150,  // Faster elections (default 150-300ms)
+                election_timeout_min: 150, // Faster elections (default 150-300ms)
                 election_timeout_max: 300,
-                heartbeat_interval: 50,      // Faster heartbeats (default 50ms)
+                heartbeat_interval: 50, // Faster heartbeats (default 50ms)
                 install_snapshot_timeout: 5000,
-                max_in_snapshot_log_to_keep: 0,  // Disable log retention after snapshot
-                purge_batch_size: 64,        // Smaller purge batches
-                
-                enable_heartbeat: false,    // Disable heartbeats (no followers to send to)
-                enable_elect: true,         // Keep elections enabled (needed to become leader)
-                enable_tick: true,          // Keep tick enabled (REQUIRED for Raft to function)
+                max_in_snapshot_log_to_keep: 0, // Disable log retention after snapshot
+                purge_batch_size: 64,           // Smaller purge batches
+
+                enable_heartbeat: false, // Disable heartbeats (no followers to send to)
+                enable_elect: true,      // Keep elections enabled (needed to become leader)
+                enable_tick: true,       // Keep tick enabled (REQUIRED for Raft to function)
                 ..Default::default()
             };
-            
+
             // Configure snapshot policy from config
             cfg.snapshot_policy = snapshot_policy;
             cfg
@@ -165,37 +175,35 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                 purge_batch_size: 256,
                 ..Default::default()
             };
-            
+
             // Configure snapshot policy from config
             cfg.snapshot_policy = snapshot_policy;
             cfg
         };
-        
-        let config = Arc::new(raft_config.validate().map_err(|e| RaftError::Config(e.to_string()))?);
-        
+
+        let config =
+            Arc::new(raft_config.validate().map_err(|e| RaftError::Config(e.to_string()))?);
+
         // Create adaptor from combined storage
-        let (log_store, state_machine): (StorageAdaptor<SM>, StorageAdaptor<SM>) = 
+        let (log_store, state_machine): (StorageAdaptor<SM>, StorageAdaptor<SM>) =
             Adaptor::new(self.storage.clone());
-        
+
         // Create the Raft instance
-        let raft = Raft::new(
-            node_id,
-            config,
-            self.network_factory.clone(),
-            log_store,
-            state_machine,
-        ).await.map_err(|e| RaftError::Internal(format!("Failed to create Raft: {:?}", e)))?;
-        
+        let raft =
+            Raft::new(node_id, config, self.network_factory.clone(), log_store, state_machine)
+                .await
+                .map_err(|e| RaftError::Internal(format!("Failed to create Raft: {:?}", e)))?;
+
         // Store the instance
         {
             let mut guard = self.raft.write();
             *guard = Some(raft);
         }
-        
+
         log::debug!("Started Raft group {} on node {}", self.group_id, node_id);
         Ok(())
     }
-    
+
     /// Initialize the cluster (call on first node only)
     ///
     /// This bootstraps the cluster with an initial membership containing only this node.
@@ -205,37 +213,42 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             let guard = self.raft.read();
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
-        
+
         // Create initial membership with just this node
         let mut members = std::collections::BTreeMap::new();
         members.insert(node_id.into(), node);
-        
+
         match raft.initialize(members).await {
             Ok(_) => {
-                log::debug!("Initialized Raft group {} cluster with node {}", self.group_id, node_id);
+                log::debug!(
+                    "Initialized Raft group {} cluster with node {}",
+                    self.group_id,
+                    node_id
+                );
                 Ok(())
-            }
-            Err(openraft::error::RaftError::APIError(openraft::error::InitializeError::NotAllowed(_))) => {
+            },
+            Err(openraft::error::RaftError::APIError(
+                openraft::error::InitializeError::NotAllowed(_),
+            )) => {
                 // Cluster already initialized (has log entries) - this is fine for restart
                 log::debug!("Raft group {} already initialized, skipping", self.group_id);
                 Ok(())
-            }
-            Err(e) => {
-                Err(RaftError::Internal(format!("Failed to initialize cluster: {:?}", e)))
-            }
+            },
+            Err(e) => Err(RaftError::Internal(format!("Failed to initialize cluster: {:?}", e))),
         }
     }
-    
+
     /// Add a learner (non-voting member) to the cluster
     pub async fn add_learner(&self, node_id: u64, node: KalamNode) -> Result<(), RaftError> {
         let raft = {
             let guard = self.raft.read();
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
-        
-        raft.add_learner(node_id.into(), node, true).await
+
+        raft.add_learner(node_id.into(), node, true)
+            .await
             .map_err(|e| RaftError::Internal(format!("Failed to add learner: {:?}", e)))?;
-        
+
         Ok(())
     }
 
@@ -291,64 +304,63 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             tokio::time::sleep(poll_interval).await;
         }
     }
-    
+
     /// Change membership to include the given voters
-        pub async fn change_membership(&self, members: Vec<u64>) -> Result<(), RaftError> {
+    pub async fn change_membership(&self, members: Vec<u64>) -> Result<(), RaftError> {
         let raft = {
             let guard = self.raft.read();
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
-        
+
         let member_set: std::collections::BTreeSet<u64> = members.into_iter().collect();
-        raft.change_membership(member_set, false).await
+        raft.change_membership(member_set, false)
+            .await
             .map_err(|e| RaftError::Internal(format!("Failed to change membership: {:?}", e)))?;
-        
+
         Ok(())
     }
 
     /// Promote a learner to a voter using the current membership configuration
     pub async fn promote_learner(&self, node_id: u64) -> Result<(), RaftError> {
-            let raft = {
-                let guard = self.raft.read();
-                guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
-            };
+        let raft = {
+            let guard = self.raft.read();
+            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
+        };
 
         let metrics = raft.metrics().borrow().clone();
         if metrics.current_leader != Some(metrics.id) {
-            return Err(RaftError::not_leader(
-                self.group_id.to_string(),
-                metrics.current_leader,
-            ));
+            return Err(RaftError::not_leader(self.group_id.to_string(), metrics.current_leader));
         }
 
         let mut voters: std::collections::BTreeSet<u64> =
             metrics.membership_config.voter_ids().collect();
-            if voters.contains(&node_id) {
+        if voters.contains(&node_id) {
             return Ok(());
         }
 
         voters.insert(node_id);
-        raft.change_membership(voters, false).await
+        raft.change_membership(voters, false)
+            .await
             .map_err(|e| RaftError::Internal(format!("Failed to change membership: {:?}", e)))?;
 
         Ok(())
     }
-    
+
     /// Get the Raft instance (if started)
     pub fn raft(&self) -> Option<RaftInstance> {
         self.raft.read().clone()
     }
-    
+
     /// Get the group ID
     pub fn group_id(&self) -> GroupId {
         self.group_id
     }
-    
+
     /// Check if this group has been started
     pub fn is_started(&self) -> bool {
         self.raft.read().is_some()
     }
-    
+
     /// Check if this node is the leader for this group
     pub fn is_leader(&self) -> bool {
         let raft = self.raft.read();
@@ -356,17 +368,15 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             Some(r) => {
                 let metrics = r.metrics().borrow().clone();
                 metrics.current_leader == Some(metrics.id)
-            }
+            },
             None => false,
         }
     }
-    
+
     /// Get the current leader node ID, if known
     pub fn current_leader(&self) -> Option<u64> {
         let raft = self.raft.read();
-        raft.as_ref().and_then(|r| {
-            r.metrics().borrow().current_leader
-        })
+        raft.as_ref().and_then(|r| r.metrics().borrow().current_leader)
     }
 
     /// Get the latest OpenRaft metrics for this group, if started
@@ -374,83 +384,100 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         let raft = self.raft.read();
         raft.as_ref().map(|r| r.metrics().borrow().clone())
     }
-    
+
     /// Propose a command to this Raft group
     ///
     /// Returns the response after the command is committed and applied.
     /// Note: This method only works if this node is the leader.
     /// For automatic forwarding, use `propose_with_forward`.
-    pub async fn propose(&self, command: crate::RaftCommand) -> Result<crate::RaftResponse, RaftError> {
+    pub async fn propose(
+        &self,
+        command: crate::RaftCommand,
+    ) -> Result<crate::RaftResponse, RaftError> {
         let (response, _log_index) = self.propose_with_index(command).await?;
         Ok(response)
     }
-    
+
     /// Propose a command and return both response and log index
     ///
     /// Handles serialization of the command and deserialization of the response internally.
     /// Returns (response, log_index) after the command is committed and applied.
     /// The log_index is useful for read-your-writes consistency when forwarding.
     /// Note: This method only works if this node is the leader.
-    pub async fn propose_with_index(&self, command: crate::RaftCommand) -> Result<(crate::RaftResponse, u64), RaftError> {
+    pub async fn propose_with_index(
+        &self,
+        command: crate::RaftCommand,
+    ) -> Result<(crate::RaftResponse, u64), RaftError> {
         // Serialize the INNER command (not the RaftCommand wrapper)
         // The state machine expects MetaCommand, UserDataCommand, or SharedDataCommand directly
         let command_bytes = match &command {
             crate::RaftCommand::Meta(cmd) => crate::state_machine::serde_helpers::encode(cmd)?,
             crate::RaftCommand::UserData(cmd) => crate::state_machine::serde_helpers::encode(cmd)?,
-            crate::RaftCommand::SharedData(cmd) => crate::state_machine::serde_helpers::encode(cmd)?,
+            crate::RaftCommand::SharedData(cmd) => {
+                crate::state_machine::serde_helpers::encode(cmd)?
+            },
         };
-        
+
         // Clone Arc once outside the lock scope to avoid holding read lock
-        let raft = self.raft.read()
+        let raft = self
+            .raft
+            .read()
             .as_ref()
             .ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
             .clone();
-        
+
         // Submit the command and wait for commit
-        let response = raft.client_write(command_bytes).await
+        let response = raft
+            .client_write(command_bytes)
+            .await
             .map_err(|e| RaftError::Proposal(format!("{:?}", e)))?;
-        
+
         // Deserialize the response based on command type using centralized serde_helpers
         // The state machine returns MetaResponse or DataResponse directly, not wrapped in RaftResponse
         let response_obj = match command {
             crate::RaftCommand::Meta(_) => {
-                let meta_response: crate::MetaResponse = crate::state_machine::serde_helpers::decode(&response.data)?;
+                let meta_response: crate::MetaResponse =
+                    crate::state_machine::serde_helpers::decode(&response.data)?;
                 crate::RaftResponse::Meta(meta_response)
-            }
+            },
             crate::RaftCommand::UserData(_) | crate::RaftCommand::SharedData(_) => {
-                let data_response: crate::DataResponse = crate::state_machine::serde_helpers::decode(&response.data)?;
+                let data_response: crate::DataResponse =
+                    crate::state_machine::serde_helpers::decode(&response.data)?;
                 crate::RaftResponse::Data(data_response)
-            }
+            },
         };
-        
+
         Ok((response_obj, response.log_id.index))
     }
-    
+
     /// Propose a command with automatic leader forwarding
     ///
     /// If this node is the leader, proposes locally.
     /// If this node is a follower, forwards the proposal to the leader via gRPC.
     /// Includes retry logic for transient failures (e.g., leader unknown).
-    /// 
+    ///
     /// For the Meta group, when forwarding, waits for the log entry to be applied
     /// locally to ensure read-your-writes consistency.
-    pub async fn propose_with_forward(&self, command: crate::RaftCommand) -> Result<crate::RaftResponse, RaftError> {
+    pub async fn propose_with_forward(
+        &self,
+        command: crate::RaftCommand,
+    ) -> Result<crate::RaftResponse, RaftError> {
         // Fast path: if we are the leader, propose locally
         if self.is_leader() {
             return self.propose(command).await;
         }
-        
+
         // Serialize command once for forwarding using centralized serde_helpers
         let command_bytes = crate::state_machine::serde_helpers::encode(&command)?;
-        
+
         // We're not the leader - try to forward to the leader with retries
         // because the leader might not be known yet (during election)
         const MAX_RETRIES: u32 = 5;
         const INITIAL_BACKOFF_MS: u64 = 50;
-        
+
         let mut last_error = None;
         let mut command_bytes_opt = Some(command_bytes);
-        
+
         for attempt in 0..MAX_RETRIES {
             // Get current leader
             match self.current_leader() {
@@ -460,23 +487,33 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                         Some(leader_node) => {
                             log::debug!(
                                 "Forwarding proposal for group {} to leader {} at {} (attempt {})",
-                                self.group_id, leader_id, leader_node.rpc_addr, attempt + 1
+                                self.group_id,
+                                leader_id,
+                                leader_node.rpc_addr,
+                                attempt + 1
                             );
-                            
+
                             // Take ownership on first attempt, clone on retries
                             let cmd_bytes = if attempt == 0 {
                                 command_bytes_opt.take().unwrap()
                             } else {
                                 command_bytes_opt.as_ref().unwrap().clone()
                             };
-                            
+
                             // Try to forward
                             match self.forward_to_leader(&leader_node.rpc_addr, cmd_bytes).await {
                                 Ok((response_bytes, log_index)) => {
                                     // Deserialize the response using serdes_helpers
-                                    let response = crate::state_machine::serde_helpers::decode(&response_bytes)
-                                        .map_err(|e| RaftError::Internal(format!("Failed to deserialize forwarded response: {}", e)))?;
-                                    
+                                    let response = crate::state_machine::serde_helpers::decode(
+                                        &response_bytes,
+                                    )
+                                    .map_err(|e| {
+                                        RaftError::Internal(format!(
+                                            "Failed to deserialize forwarded response: {}",
+                                            e
+                                        ))
+                                    })?;
+
                                     // Wait for local apply to ensure read-your-writes consistency
                                     // This applies to ALL groups (Meta and Data shards)
                                     if log_index > 0 {
@@ -484,14 +521,15 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                                             "Waiting for {} log index {} to be applied locally for read-your-writes consistency",
                                             self.group_id, log_index
                                         );
-                                        
+
                                         // Poll the state machine until the log is applied
                                         let start = Instant::now();
                                         let timeout = Duration::from_secs(10);
                                         let poll_interval = Duration::from_millis(5);
-                                        
+
                                         loop {
-                                            let applied = self.storage.state_machine().last_applied_index();
+                                            let applied =
+                                                self.storage.state_machine().last_applied_index();
                                             if applied >= log_index {
                                                 log::debug!(
                                                     "{} log index {} applied locally (current: {}), read-your-writes consistency achieved",
@@ -499,7 +537,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                                                 );
                                                 break;
                                             }
-                                            
+
                                             if start.elapsed() > timeout {
                                                 log::warn!(
                                                     "Timeout waiting for {} log index {} to be applied locally (current: {}). \
@@ -508,65 +546,66 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                                                 );
                                                 break;
                                             }
-                                            
+
                                             tokio::time::sleep(poll_interval).await;
                                         }
                                     }
                                     return Ok(response);
-                                }
+                                },
                                 Err(e) => {
                                     log::debug!("Forward attempt {} failed: {}", attempt + 1, e);
                                     last_error = Some(e);
                                     // Continue to retry
-                                }
+                                },
                             }
-                        }
+                        },
                         None => {
                             log::debug!(
                                 "Leader node {} for group {} not in registry (attempt {})",
-                                leader_id, self.group_id, attempt + 1
+                                leader_id,
+                                self.group_id,
+                                attempt + 1
                             );
                             last_error = Some(RaftError::Network(format!(
-                                "Unknown leader node {} for group {}", leader_id, self.group_id
+                                "Unknown leader node {} for group {}",
+                                leader_id, self.group_id
                             )));
-                        }
+                        },
                     }
-                }
+                },
                 None => {
                     log::debug!(
                         "No leader known for group {} (attempt {}), waiting...",
-                        self.group_id, attempt + 1
+                        self.group_id,
+                        attempt + 1
                     );
                     last_error = Some(RaftError::not_leader(self.group_id.to_string(), None));
-                }
+                },
             }
-            
+
             // Wait before retry with exponential backoff
             if attempt + 1 < MAX_RETRIES {
                 let backoff = INITIAL_BACKOFF_MS * (1 << attempt);
                 tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
             }
         }
-        
+
         // All retries exhausted
-        Err(last_error.unwrap_or_else(|| RaftError::not_leader(
-            self.group_id.to_string(), 
-            None
-        )))
+        Err(last_error.unwrap_or_else(|| RaftError::not_leader(self.group_id.to_string(), None)))
     }
-    
+
     /// Forward a proposal to the leader via gRPC
-    /// 
+    ///
     /// Returns (payload, log_index) where log_index is the Raft log index
     /// of the applied entry (for read-your-writes consistency).
     async fn forward_to_leader(
-        &self, 
-        leader_addr: &str, 
+        &self,
+        leader_addr: &str,
         command: Vec<u8>,
     ) -> Result<(Vec<u8>, u64), RaftError> {
+        use crate::network::{ClientProposalRequest, RaftClient};
         use tonic::transport::Channel;
-        use crate::network::{RaftClient, ClientProposalRequest};
-        
+
         // Connect to leader
         let endpoint = format!("http://{}", leader_addr);
         let channel = Channel::from_shared(endpoint.clone())
@@ -575,25 +614,25 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             .timeout(std::time::Duration::from_secs(30))
             .connect()
             .await
-            .map_err(|e| RaftError::Network(format!(
-                "Failed to connect to leader at {}: {}", leader_addr, e
-            )))?;
-        
+            .map_err(|e| {
+                RaftError::Network(format!("Failed to connect to leader at {}: {}", leader_addr, e))
+            })?;
+
         let mut client = RaftClient::new(channel);
-        
+
         // Send the proposal
         let request = tonic::Request::new(ClientProposalRequest {
             group_id: self.group_id.to_string(),
             command,
         });
-        
-        let response = client.client_proposal(request).await
-            .map_err(|e| RaftError::Network(format!(
-                "gRPC error forwarding proposal: {}", e
-            )))?;
-        
+
+        let response = client
+            .client_proposal(request)
+            .await
+            .map_err(|e| RaftError::Network(format!("gRPC error forwarding proposal: {}", e)))?;
+
         let inner = response.into_inner();
-        
+
         if inner.success {
             Ok((inner.payload, inner.log_index))
         } else if let Some(leader_hint) = inner.leader_hint {
@@ -608,17 +647,17 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     pub fn register_peer(&self, node_id: u64, node: KalamNode) {
         self.network_factory.register_node(node_id, node);
     }
-    
+
     /// Get reference to the storage
     pub fn storage(&self) -> &Arc<KalamRaftStorage<SM>> {
         &self.storage
     }
-    
+
     /// Get reference to the network factory
     pub fn network_factory(&self) -> &RaftNetworkFactory {
         &self.network_factory
     }
-    
+
     /// Attempt to transfer leadership to another node
     ///
     /// In OpenRaft v0.9, we don't have explicit leadership transfer API.
@@ -643,8 +682,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
 
-        raft.trigger().elect().await
-            .map_err(|e| RaftError::Internal(format!("Failed to trigger election for group {}: {:?}", self.group_id, e)))?;
+        raft.trigger().elect().await.map_err(|e| {
+            RaftError::Internal(format!(
+                "Failed to trigger election for group {}: {:?}",
+                self.group_id, e
+            ))
+        })?;
 
         Ok(())
     }
@@ -656,8 +699,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
 
-        raft.trigger().purge_log(upto).await
-            .map_err(|e| RaftError::Internal(format!("Failed to purge logs for group {}: {:?}", self.group_id, e)))?;
+        raft.trigger().purge_log(upto).await.map_err(|e| {
+            RaftError::Internal(format!(
+                "Failed to purge logs for group {}: {:?}",
+                self.group_id, e
+            ))
+        })?;
 
         Ok(())
     }
@@ -696,7 +743,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
 
         Ok(())
     }
-    
+
     /// Trigger a snapshot for this Raft group
     ///
     /// Forces OpenRaft to create a snapshot of the current state.
@@ -724,19 +771,23 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                 return Ok(());
             }
         }
-        
-        raft.trigger().snapshot().await
-            .map_err(|e| RaftError::Internal(format!("Failed to trigger snapshot for group {}: {:?}", self.group_id, e)))?;
-        
+
+        raft.trigger().snapshot().await.map_err(|e| {
+            RaftError::Internal(format!(
+                "Failed to trigger snapshot for group {}: {:?}",
+                self.group_id, e
+            ))
+        })?;
+
         log::debug!("Triggered snapshot for Raft group {}", self.group_id);
         Ok(())
     }
-    
+
     /// Get the snapshot index for this group (if a snapshot exists)
     pub fn snapshot_index(&self) -> Option<u64> {
         self.metrics().and_then(|m| m.snapshot.map(|log_id| log_id.index))
     }
-    
+
     /// Shutdown this Raft group
     ///
     /// Calls OpenRaft's Raft::shutdown() to cleanly terminate the internal tasks.
@@ -746,14 +797,18 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             let mut guard = self.raft.write();
             guard.take() // Take ownership to drop after shutdown
         };
-        
+
         if let Some(raft) = raft {
             log::debug!("Shutting down Raft group {}", self.group_id);
-            raft.shutdown().await
-                .map_err(|e| RaftError::Internal(format!("Failed to shutdown Raft group {}: {:?}", self.group_id, e)))?;
+            raft.shutdown().await.map_err(|e| {
+                RaftError::Internal(format!(
+                    "Failed to shutdown Raft group {}: {:?}",
+                    self.group_id, e
+                ))
+            })?;
             log::debug!("Raft group {} shutdown complete", self.group_id);
         }
-        
+
         Ok(())
     }
 }
@@ -767,7 +822,7 @@ mod tests {
     fn test_raft_group_creation() {
         let sm = MetaStateMachine::new();
         let group = RaftGroup::new(GroupId::Meta, sm);
-        
+
         assert_eq!(group.group_id(), GroupId::Meta);
         assert!(!group.is_started());
         assert!(!group.is_leader());

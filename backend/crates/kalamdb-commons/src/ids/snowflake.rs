@@ -45,11 +45,7 @@ impl SnowflakeGenerator {
 
     /// Create a new Snowflake ID generator with custom epoch
     pub fn with_epoch(worker_id: u16, epoch: u64) -> Self {
-        assert!(
-            worker_id <= Self::MAX_WORKER_ID,
-            "worker_id must be <= {}",
-            Self::MAX_WORKER_ID
-        );
+        assert!(worker_id <= Self::MAX_WORKER_ID, "worker_id must be <= {}", Self::MAX_WORKER_ID);
 
         Self {
             worker_id,
@@ -261,10 +257,7 @@ mod tests {
         let id = gen.next_id().unwrap();
         let timestamp = gen.extract_timestamp(id);
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
 
         // Timestamp should be within 1 second of now
         assert!((timestamp as i64 - now as i64).abs() < 1000);

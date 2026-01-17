@@ -4,7 +4,9 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::{ExecutionContext, ExecutionResult, ScalarValue, StatementHandler};
+use crate::sql::executor::handlers::{
+    ExecutionContext, ExecutionResult, ScalarValue, StatementHandler,
+};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::sync::Arc;
 
@@ -34,7 +36,7 @@ impl StatementHandler for ClusterJoinHandler {
                     "CLUSTER JOIN handler received wrong statement type: {}",
                     statement.name()
                 )));
-            }
+            },
         };
 
         log::warn!(

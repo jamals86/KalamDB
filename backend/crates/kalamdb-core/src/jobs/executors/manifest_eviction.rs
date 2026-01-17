@@ -112,16 +112,11 @@ impl JobExecutor for ManifestEvictionExecutor {
         let manifest_service = ctx.app_ctx.manifest_service();
 
         // Evict stale entries
-        let evicted_count = manifest_service
-            .evict_stale_entries(ttl_seconds)
-            .map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Failed to evict manifests: {}", e))
-            })?;
+        let evicted_count = manifest_service.evict_stale_entries(ttl_seconds).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to evict manifests: {}", e))
+        })?;
 
-        ctx.log_info(&format!(
-            "Manifest eviction completed - {} entries evicted",
-            evicted_count
-        ));
+        ctx.log_info(&format!("Manifest eviction completed - {} entries evicted", evicted_count));
 
         Ok(JobDecision::Completed {
             message: Some(format!(

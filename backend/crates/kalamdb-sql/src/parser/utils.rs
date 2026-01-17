@@ -169,24 +169,16 @@ fn find_whole_word(haystack: &str, needle: &str) -> Option<usize> {
             Some(pos) => {
                 let absolute_pos = search_pos + pos;
                 let is_word_start = absolute_pos == 0
-                    || haystack
-                        .chars()
-                        .nth(absolute_pos - 1)
-                        .unwrap()
-                        .is_whitespace();
+                    || haystack.chars().nth(absolute_pos - 1).unwrap().is_whitespace();
                 let is_word_end = absolute_pos + needle.len() >= haystack.len()
-                    || haystack
-                        .chars()
-                        .nth(absolute_pos + needle.len())
-                        .unwrap()
-                        .is_whitespace();
+                    || haystack.chars().nth(absolute_pos + needle.len()).unwrap().is_whitespace();
 
                 if is_word_start && is_word_end {
                     return Some(absolute_pos);
                 } else {
                     search_pos = absolute_pos + 1;
                 }
-            }
+            },
             None => return None,
         }
     }
@@ -199,19 +191,13 @@ mod tests {
     #[test]
     fn test_normalize_sql() {
         assert_eq!(normalize_sql("  SELECT  * ;"), "SELECT *");
-        assert_eq!(
-            normalize_sql("CREATE\n  STORAGE\n  s3  "),
-            "CREATE STORAGE s3"
-        );
+        assert_eq!(normalize_sql("CREATE\n  STORAGE\n  s3  "), "CREATE STORAGE s3");
     }
 
     #[test]
     fn test_extract_quoted_keyword_value() {
         let sql = "CREATE STORAGE s3 NAME 'Production Storage'";
-        assert_eq!(
-            extract_quoted_keyword_value(sql, "NAME").unwrap(),
-            "Production Storage"
-        );
+        assert_eq!(extract_quoted_keyword_value(sql, "NAME").unwrap(), "Production Storage");
 
         // Keyword not found
         assert!(extract_quoted_keyword_value(sql, "MISSING").is_err());

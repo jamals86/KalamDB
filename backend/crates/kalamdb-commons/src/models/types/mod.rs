@@ -50,6 +50,7 @@
 
 mod audit_log;
 mod job;
+mod job_node;
 mod live_query;
 mod live_query_status;
 mod manifest;
@@ -60,6 +61,7 @@ mod user_table_counter;
 
 pub use audit_log::AuditLogEntry;
 pub use job::{Job, JobFilter, JobOptions, JobSortField, SortOrder};
+pub use job_node::JobNode;
 pub use live_query::LiveQuery;
 pub use live_query_status::LiveQueryStatus;
 pub use manifest::{ColumnStats, Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
@@ -67,4 +69,3 @@ pub use namespace::Namespace;
 pub use storage::Storage;
 pub use user::{User, DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS};
 pub use user_table_counter::UserTableCounter;
-

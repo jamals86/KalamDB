@@ -16,7 +16,7 @@
 use crate::common::*;
 use std::time::Duration;
 
-const JOB_TIMEOUT: Duration = Duration::from_secs(30);
+const JOB_TIMEOUT: Duration = Duration::from_secs(15);
 const FLUSH_POLICY_ROWS: usize = 50;
 const INSERT_ROWS: usize = 200;
 
@@ -39,7 +39,8 @@ fn smoke_test_user_table_flush() {
     println!("🧪 Testing USER table flush: {}", full_table_name);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -63,10 +64,7 @@ fn smoke_test_user_table_flush() {
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create user table");
     std::thread::sleep(Duration::from_millis(200));
 
-    println!(
-        "✅ Created USER table with FLUSH ROWS {}",
-        FLUSH_POLICY_ROWS
-    );
+    println!("✅ Created USER table with FLUSH ROWS {}", FLUSH_POLICY_ROWS);
 
     // Insert rows in batches using a single multi-row INSERT per batch.
     // This keeps the smoke test fast and reduces flakiness from per-row request overhead.
@@ -101,8 +99,9 @@ fn smoke_test_user_table_flush() {
 
     // Manually flush the table
     println!("🚀 Triggering manual STORAGE FLUSH TABLE...");
-    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
-        .expect("Failed to flush table");
+    let flush_output =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
+            .expect("Failed to flush table");
 
     println!("Flush output: {}", flush_output);
 
@@ -192,7 +191,8 @@ fn smoke_test_shared_table_flush() {
     println!("🧪 Testing SHARED table flush: {}", full_table_name);
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -216,10 +216,7 @@ fn smoke_test_shared_table_flush() {
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
     std::thread::sleep(Duration::from_millis(200));
 
-    println!(
-        "✅ Created SHARED table with FLUSH ROWS {}",
-        FLUSH_POLICY_ROWS
-    );
+    println!("✅ Created SHARED table with FLUSH ROWS {}", FLUSH_POLICY_ROWS);
 
     // Insert rows in batches using a single multi-row INSERT per batch.
     println!("📝 Inserting {} rows...", INSERT_ROWS);
@@ -253,8 +250,9 @@ fn smoke_test_shared_table_flush() {
 
     // Manually flush the table
     println!("🚀 Triggering manual STORAGE FLUSH TABLE...");
-    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
-        .expect("Failed to flush table");
+    let flush_output =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
+            .expect("Failed to flush table");
 
     println!("Flush output: {}", flush_output);
 
@@ -342,13 +340,11 @@ fn smoke_test_mixed_source_query() {
     let table_name = generate_unique_table("mixed_query");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
-    println!(
-        "🧪 Testing mixed source (RocksDB + Parquet) query: {}",
-        full_table_name
-    );
+    println!("🧪 Testing mixed source (RocksDB + Parquet) query: {}", full_table_name);
 
     // Setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -386,8 +382,9 @@ fn smoke_test_mixed_source_query() {
 
     // Manually flush to ensure first batch is in Parquet
     println!("🚀 Flushing first batch...");
-    let flush1_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
-        .expect("Failed to flush");
+    let flush1_output =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table_name))
+            .expect("Failed to flush");
     let job1_id = parse_job_id_from_flush_output(&flush1_output).expect("Failed to parse job ID");
     verify_job_completed(&job1_id, JOB_TIMEOUT).expect("First flush failed");
     println!("✅ First batch flushed to Parquet");

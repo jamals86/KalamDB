@@ -3,7 +3,6 @@
 //! Tests that the database creates a default system user on first startup
 //! with appropriate credentials and security settings.
 
-
 use super::test_support::{QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::constants::AuthConstants;
@@ -18,9 +17,7 @@ async fn test_system_user_created_on_init() {
         AuthConstants::DEFAULT_ROOT_USER_ID
     );
 
-    let response = server
-        .execute_sql_as_user(&sql, AuthConstants::DEFAULT_ROOT_USER_ID)
-        .await;
+    let response = server.execute_sql_as_user(&sql, AuthConstants::DEFAULT_ROOT_USER_ID).await;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
@@ -36,17 +33,11 @@ async fn test_system_user_created_on_init() {
     let row = &rows[0];
 
     // Verify username
-    let username = row
-        .get("username")
-        .and_then(|v| v.as_str())
-        .expect("username missing");
+    let username = row.get("username").and_then(|v| v.as_str()).expect("username missing");
     assert_eq!(username, AuthConstants::DEFAULT_SYSTEM_USERNAME);
 
     // Verify role
-    let role_str = row
-        .get("role")
-        .and_then(|v| v.as_str())
-        .expect("role missing");
+    let role_str = row.get("role").and_then(|v| v.as_str()).expect("role missing");
     assert_eq!(role_str.to_lowercase(), "system");
 
     // Verify password hash exists
@@ -58,10 +49,7 @@ async fn test_system_user_created_on_init() {
     assert!(password_hash.starts_with("$2b$") || password_hash.starts_with("$2y$"));
 
     // Verify email
-    let email = row
-        .get("email")
-        .and_then(|v| v.as_str())
-        .expect("email missing");
+    let email = row.get("email").and_then(|v| v.as_str()).expect("email missing");
     assert_eq!(email, "system@localhost");
 }
 
@@ -75,9 +63,7 @@ async fn test_system_user_initialization_idempotent() {
         "SELECT created_at FROM system.users WHERE user_id = '{}'",
         AuthConstants::DEFAULT_ROOT_USER_ID
     );
-    let response1 = server1
-        .execute_sql_as_user(&sql, AuthConstants::DEFAULT_ROOT_USER_ID)
-        .await;
+    let response1 = server1.execute_sql_as_user(&sql, AuthConstants::DEFAULT_ROOT_USER_ID).await;
     let created_at_1 = response1.results[0]
         .row_as_map(0)
         .and_then(|row| row.get("created_at").cloned())
@@ -88,9 +74,7 @@ async fn test_system_user_initialization_idempotent() {
     // In TestServer implementation, this shares the same DB but re-runs the bootstrap logic
     let server2 = TestServer::new().await;
 
-    let response2 = server2
-        .execute_sql_as_user(&sql, AuthConstants::DEFAULT_ROOT_USER_ID)
-        .await;
+    let response2 = server2.execute_sql_as_user(&sql, AuthConstants::DEFAULT_ROOT_USER_ID).await;
     let created_at_2 = response2.results[0]
         .row_as_map(0)
         .and_then(|row| row.get("created_at").cloned())
@@ -98,8 +82,5 @@ async fn test_system_user_initialization_idempotent() {
         .unwrap();
 
     // Should be the exact same user record (same created_at)
-    assert_eq!(
-        created_at_1, created_at_2,
-        "System user should not be recreated"
-    );
+    assert_eq!(created_at_1, created_at_2, "System user should not be recreated");
 }

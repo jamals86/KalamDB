@@ -39,38 +39,20 @@ fn test_basic_table_creation_and_access() {
     );
 
     let result = common::execute_sql_as_root_via_cli(&create_sql);
-    assert!(
-        result.is_ok(),
-        "Should create table successfully: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Should create table successfully: {:?}", result.err());
 
     // Insert test data
-    let insert_sql = format!(
-        "INSERT INTO {}.{} (content) VALUES ('test data')",
-        namespace, table_name
-    );
+    let insert_sql =
+        format!("INSERT INTO {}.{} (content) VALUES ('test data')", namespace, table_name);
     let result = common::execute_sql_as_root_via_cli(&insert_sql);
-    assert!(
-        result.is_ok(),
-        "Should insert data successfully: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Should insert data successfully: {:?}", result.err());
 
     // Query the data
     let select_sql = format!("SELECT content FROM {}.{}", namespace, table_name);
     let result = common::execute_sql_as_root_via_cli(&select_sql);
-    assert!(
-        result.is_ok(),
-        "Should query data successfully: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Should query data successfully: {:?}", result.err());
     let output = result.unwrap();
-    assert!(
-        output.contains("test data"),
-        "Should contain inserted data: {}",
-        output
-    );
+    assert!(output.contains("test data"), "Should contain inserted data: {}", output);
 
     // Cleanup
     let drop_sql = format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name);

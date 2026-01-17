@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 /// 8-byte aligned fields first (i64, String types), then smaller types.
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct Namespace {
-    pub created_at: i64,         // Unix timestamp in milliseconds
+    pub created_at: i64, // Unix timestamp in milliseconds
     pub namespace_id: NamespaceId,
     pub name: String,
     pub options: Option<String>, // JSON configuration

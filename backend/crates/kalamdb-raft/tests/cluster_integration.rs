@@ -9,8 +9,8 @@
 //! - All Raft groups coverage (meta + user shards + shared)
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use kalamdb_commons::models::rows::Row;
@@ -20,19 +20,21 @@ use chrono::Utc;
 use parking_lot::RwLock;
 use tokio::time::sleep;
 
-use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
+use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableType;
+use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
 use kalamdb_commons::JobStatus;
 use kalamdb_commons::TableId;
 use kalamdb_raft::{
-    manager::{RaftManager, RaftManagerConfig, PeerNode},
+    commands::{MetaCommand, SharedDataCommand, UserDataCommand},
     executor::RaftExecutor,
+    manager::{PeerNode, RaftManager, RaftManagerConfig},
     GroupId,
-    commands::{MetaCommand, UserDataCommand, SharedDataCommand},
 };
-use kalamdb_raft::{ApplyResult, KalamRaftStorage, KalamStateMachine, RaftError, StateMachineSnapshot};
+use kalamdb_raft::{
+    ApplyResult, KalamRaftStorage, KalamStateMachine, RaftError, StateMachineSnapshot,
+};
 use openraft::{Entry, EntryPayload, LogId, RaftSnapshotBuilder, RaftStorage};
-use async_trait::async_trait;
 
 // =============================================================================
 // Test Cluster Infrastructure
@@ -54,14 +56,14 @@ impl TestNetwork {
     fn new() -> Self {
         Self::default()
     }
-    
+
     /// Partition node A from node B (bidirectional)
     fn partition(&self, node_a: u64, node_b: u64) {
         let mut partitions = self.partitions.write();
         partitions.entry(node_a).or_default().insert(node_b);
         partitions.entry(node_b).or_default().insert(node_a);
     }
-    
+
     /// Heal partition between node A and node B (bidirectional)
     fn heal(&self, node_a: u64, node_b: u64) {
         let mut partitions = self.partitions.write();
@@ -72,7 +74,7 @@ impl TestNetwork {
             set.remove(&node_a);
         }
     }
-    
+
     /// Isolate a node from all others
     fn isolate(&self, node_id: u64, all_nodes: &[u64]) {
         for &other in all_nodes {
@@ -81,13 +83,13 @@ impl TestNetwork {
             }
         }
     }
-    
+
     /// Heal all partitions
     fn heal_all(&self) {
         let mut partitions = self.partitions.write();
         partitions.clear();
     }
-    
+
     /// Check if node A can reach node B
     fn can_reach(&self, from: u64, to: u64) -> bool {
         let partitions = self.partitions.read();
@@ -117,10 +119,10 @@ impl TestNode {
             election_timeout_ms: (150, 300),
             ..Default::default()
         };
-        
+
         let manager = Arc::new(RaftManager::new(config));
         let executor = RaftExecutor::new(manager.clone());
-        
+
         Self {
             node_id,
             manager,
@@ -129,25 +131,25 @@ impl TestNode {
             api_port,
         }
     }
-    
+
     async fn start(&self) -> Result<(), kalamdb_raft::RaftError> {
         self.manager.start().await?;
-        
+
         // Start the RPC server for this node
         let rpc_addr = format!("127.0.0.1:{}", self.rpc_port);
         kalamdb_raft::network::start_rpc_server(self.manager.clone(), rpc_addr).await?;
-        
+
         Ok(())
     }
-    
+
     async fn initialize_cluster(&self) -> Result<(), kalamdb_raft::RaftError> {
         self.manager.initialize_cluster().await
     }
-    
+
     fn is_leader(&self, group: GroupId) -> bool {
         self.manager.is_leader(group)
     }
-    
+
     fn current_leader(&self, group: GroupId) -> Option<u64> {
         self.manager.current_leader(group).map(|n| n.as_u64())
     }
@@ -236,10 +238,8 @@ impl KalamStateMachine for SnapshotTestStateMachine {
         let value = u64::from_le_bytes(bytes);
 
         self.state.store(value, Ordering::Release);
-        self.last_applied_index
-            .store(snapshot.last_applied_index, Ordering::Release);
-        self.last_applied_term
-            .store(snapshot.last_applied_term, Ordering::Release);
+        self.last_applied_index.store(snapshot.last_applied_index, Ordering::Release);
+        self.last_applied_term.store(snapshot.last_applied_term, Ordering::Release);
         Ok(())
     }
 
@@ -266,10 +266,7 @@ async fn test_snapshot_restore_via_storage_install_snapshot() {
     ];
 
     let mut leader_storage_clone = leader_storage.clone();
-    leader_storage_clone
-        .apply_to_state_machine(&entries)
-        .await
-        .unwrap();
+    leader_storage_clone.apply_to_state_machine(&entries).await.unwrap();
 
     let mut builder = leader_storage_clone.get_snapshot_builder().await;
     let snapshot = builder.build_snapshot().await.unwrap();
@@ -282,10 +279,7 @@ async fn test_snapshot_restore_via_storage_install_snapshot() {
     let snapshot_meta = snapshot.meta.clone();
     let snapshot_data = snapshot.snapshot;
 
-    follower_storage
-        .install_snapshot(&snapshot_meta, snapshot_data)
-        .await
-        .unwrap();
+    follower_storage.install_snapshot(&snapshot_meta, snapshot_data).await.unwrap();
 
     assert_eq!(leader_state.load(Ordering::Acquire), 10);
     assert_eq!(follower_state.load(Ordering::Acquire), 10);
@@ -297,7 +291,7 @@ impl TestCluster {
     /// Create a new test cluster configuration
     fn new(node_count: usize, base_rpc_port: u16, base_api_port: u16, user_shards: u32) -> Self {
         let mut nodes = Vec::with_capacity(node_count);
-        
+
         // Build peer configs for all nodes
         let all_peers: Vec<PeerNode> = (1..=node_count as u64)
             .map(|id| PeerNode {
@@ -306,16 +300,13 @@ impl TestCluster {
                 api_addr: format!("127.0.0.1:{}", base_api_port + id as u16 - 1),
             })
             .collect();
-        
+
         // Create each node with peers (excluding itself)
         for i in 0..node_count {
             let node_id = (i + 1) as u64;
-            let peers: Vec<PeerNode> = all_peers
-                .iter()
-                .filter(|p| p.node_id.as_u64() != node_id)
-                .cloned()
-                .collect();
-            
+            let peers: Vec<PeerNode> =
+                all_peers.iter().filter(|p| p.node_id.as_u64() != node_id).cloned().collect();
+
             nodes.push(TestNode::new(
                 node_id,
                 base_rpc_port + i as u16,
@@ -324,7 +315,7 @@ impl TestCluster {
                 user_shards,
             ));
         }
-        
+
         Self {
             nodes,
             base_rpc_port,
@@ -332,7 +323,7 @@ impl TestCluster {
             user_shards,
         }
     }
-    
+
     /// Start all nodes
     async fn start_all(&self) -> Result<(), kalamdb_raft::RaftError> {
         for node in &self.nodes {
@@ -340,7 +331,7 @@ impl TestCluster {
         }
         Ok(())
     }
-    
+
     /// Initialize cluster on node 1
     async fn initialize(&self) -> Result<(), kalamdb_raft::RaftError> {
         if let Some(node) = self.nodes.first() {
@@ -348,15 +339,15 @@ impl TestCluster {
         }
         Ok(())
     }
-    
+
     /// Wait for leader election to complete for all groups
     async fn wait_for_leaders(&self, timeout: Duration) -> bool {
         let start = std::time::Instant::now();
         let _group_count = 3 + self.user_shards + 1; // meta + user + shared
-        
+
         while start.elapsed() < timeout {
             let mut all_have_leaders = true;
-            
+
             // Check all groups
             let groups = self.all_group_ids();
             for group in &groups {
@@ -366,51 +357,49 @@ impl TestCluster {
                     break;
                 }
             }
-            
+
             if all_have_leaders {
                 return true;
             }
-            
+
             sleep(Duration::from_millis(50)).await;
         }
-        
+
         false
     }
-    
+
     /// Get all group IDs
     fn all_group_ids(&self) -> Vec<GroupId> {
-        let mut groups = vec![
-            GroupId::Meta,
-        ];
-        
+        let mut groups = vec![GroupId::Meta];
+
         for shard in 0..self.user_shards {
             groups.push(GroupId::DataUserShard(shard));
         }
-        
+
         groups.push(GroupId::DataSharedShard(0));
         groups
     }
-    
+
     /// Get the node that is leader for a given group
     fn get_leader_node(&self, group: GroupId) -> Option<&TestNode> {
         self.nodes.iter().find(|n| n.is_leader(group))
     }
-    
+
     /// Get a non-leader node for a given group
     fn get_follower_node(&self, group: GroupId) -> Option<&TestNode> {
         self.nodes.iter().find(|n| !n.is_leader(group))
     }
-    
+
     /// Get node by ID
     fn get_node(&self, node_id: u64) -> Option<&TestNode> {
         self.nodes.iter().find(|n| n.node_id == node_id)
     }
-    
+
     /// Count nodes that are leaders for a specific group
     fn count_leaders(&self, group: GroupId) -> usize {
         self.nodes.iter().filter(|n| n.is_leader(group)).count()
     }
-    
+
     /// Check if exactly one leader exists for each group
     fn verify_single_leader_per_group(&self) -> bool {
         for group in self.all_group_ids() {
@@ -420,15 +409,13 @@ impl TestCluster {
         }
         true
     }
-    
+
     /// Check if all nodes agree on the leader for each group
     fn verify_leader_consensus(&self) -> bool {
         for group in self.all_group_ids() {
-            let leaders: HashSet<Option<u64>> = self.nodes
-                .iter()
-                .map(|n| n.current_leader(group))
-                .collect();
-            
+            let leaders: HashSet<Option<u64>> =
+                self.nodes.iter().map(|n| n.current_leader(group)).collect();
+
             // All nodes should agree on the same leader (or all see None)
             if leaders.len() > 1 {
                 // Allow for None + one leader during transitions
@@ -450,23 +437,26 @@ impl TestCluster {
 #[tokio::test]
 async fn test_three_node_cluster_formation() {
     let cluster = TestCluster::new(3, 10000, 11000, 4); // 4 user shards for faster tests
-    
+
     // Start all nodes
     cluster.start_all().await.expect("Failed to start cluster");
-    
+
     // Initialize on node 1
     cluster.initialize().await.expect("Failed to initialize");
-    
+
     // Wait for leader election
     let elected = cluster.wait_for_leaders(Duration::from_secs(5)).await;
     assert!(elected, "Leader election did not complete in time");
-    
+
     // Verify exactly one leader per group
-    assert!(cluster.verify_single_leader_per_group(), "Should have exactly one leader per group");
-    
+    assert!(
+        cluster.verify_single_leader_per_group(),
+        "Should have exactly one leader per group"
+    );
+
     // Verify all nodes agree on leaders
     assert!(cluster.verify_leader_consensus(), "All nodes should agree on leaders");
-    
+
     println!("✅ Three-node cluster formation test passed!");
     println!("   - {} nodes started", cluster.nodes.len());
     println!("   - {} groups initialized", cluster.all_group_ids().len());
@@ -476,25 +466,23 @@ async fn test_three_node_cluster_formation() {
 #[tokio::test]
 async fn test_leader_agreement_all_groups() {
     let cluster = TestCluster::new(3, 10100, 11100, 4);
-    
+
     cluster.start_all().await.expect("Failed to start cluster");
     cluster.initialize().await.expect("Failed to initialize");
-    
+
     let elected = cluster.wait_for_leaders(Duration::from_secs(5)).await;
     assert!(elected, "Leader election did not complete");
-    
+
     // Give a bit more time for stabilization
     sleep(Duration::from_millis(200)).await;
-    
+
     // Check each group
     for group in cluster.all_group_ids() {
-        let leaders: Vec<_> = cluster.nodes
-            .iter()
-            .map(|n| (n.node_id, n.current_leader(group)))
-            .collect();
-        
+        let leaders: Vec<_> =
+            cluster.nodes.iter().map(|n| (n.node_id, n.current_leader(group))).collect();
+
         println!("Group {:?}: {:?}", group, leaders);
-        
+
         // All should report the same leader
         let unique_leaders: HashSet<_> = leaders.iter().filter_map(|(_, l)| *l).collect();
         assert!(
@@ -504,7 +492,7 @@ async fn test_leader_agreement_all_groups() {
             unique_leaders
         );
     }
-    
+
     println!("✅ Leader agreement test passed for all groups!");
 }
 
@@ -512,13 +500,13 @@ async fn test_leader_agreement_all_groups() {
 #[tokio::test]
 async fn test_single_leader_invariant() {
     let cluster = TestCluster::new(3, 10200, 11200, 4);
-    
+
     cluster.start_all().await.expect("Failed to start");
     cluster.initialize().await.expect("Failed to init");
-    
+
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(300)).await;
-    
+
     for group in cluster.all_group_ids() {
         let leader_count = cluster.count_leaders(group);
         assert_eq!(
@@ -527,7 +515,7 @@ async fn test_single_leader_invariant() {
             group, leader_count
         );
     }
-    
+
     println!("✅ Single leader invariant verified for all groups!");
 }
 
@@ -539,27 +527,26 @@ async fn test_single_leader_invariant() {
 #[tokio::test]
 async fn test_command_proposal_to_leader() {
     let cluster = TestCluster::new(3, 10300, 11300, 4);
-    
+
     cluster.start_all().await.expect("Failed to start");
     cluster.initialize().await.expect("Failed to init");
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(200)).await;
-    
+
     // Get the leader for Meta
-    let leader = cluster.get_leader_node(GroupId::Meta)
-        .expect("Should have Meta leader");
-    
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("Should have Meta leader");
+
     // Propose a meta command
     let command = MetaCommand::CreateNamespace {
         namespace_id: NamespaceId::from("test_ns"),
         created_by: Some(UserId::from("tester")),
     };
-    
+
     let result = leader.manager.propose_meta(command).await;
-    
+
     // Command should succeed on leader
     assert!(result.is_ok(), "Command proposal should succeed on leader");
-    
+
     println!("✅ Command proposal to leader succeeded!");
 }
 
@@ -567,34 +554,41 @@ async fn test_command_proposal_to_leader() {
 #[tokio::test]
 async fn test_proposal_forwarding_to_leader() {
     let cluster = TestCluster::new(3, 10400, 11400, 4);
-    
+
     cluster.start_all().await.expect("Failed to start");
     cluster.initialize().await.expect("Failed to init");
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(200)).await;
-    
+
     // Get a follower for Meta
-    let follower = cluster.get_follower_node(GroupId::Meta)
-        .expect("Should have Meta follower");
-    
-    let leader_id = cluster.get_leader_node(GroupId::Meta)
+    let follower = cluster.get_follower_node(GroupId::Meta).expect("Should have Meta follower");
+
+    let leader_id = cluster
+        .get_leader_node(GroupId::Meta)
         .map(|n| n.manager.node_id())
         .expect("Should have a leader");
-    
-    println!("Testing proposal on follower (node {}) with leader {}", 
-        follower.manager.node_id(), leader_id);
-    
+
+    println!(
+        "Testing proposal on follower (node {}) with leader {}",
+        follower.manager.node_id(),
+        leader_id
+    );
+
     // Propose a command to follower - should be automatically forwarded to leader
     let command = MetaCommand::CreateNamespace {
         namespace_id: NamespaceId::from("forwarded_ns"),
         created_by: None,
     };
-    
+
     let result = follower.manager.propose_meta(command).await;
-    
+
     // Proposal on follower should succeed via leader forwarding
-    assert!(result.is_ok(), "Proposal on follower should succeed via leader forwarding: {:?}", result);
-    
+    assert!(
+        result.is_ok(),
+        "Proposal on follower should succeed via leader forwarding: {:?}",
+        result
+    );
+
     println!("✅ Follower correctly forwards proposals to leader!");
 }
 
@@ -602,24 +596,24 @@ async fn test_proposal_forwarding_to_leader() {
 #[tokio::test]
 async fn test_all_groups_accept_proposals() {
     let cluster = TestCluster::new(3, 10500, 11500, 4);
-    
+
     cluster.start_all().await.expect("Failed to start");
     cluster.initialize().await.expect("Failed to init");
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(300)).await;
-    
+
     // Test Meta (unified metadata group - covers namespaces, users, jobs)
     {
         let leader = cluster.get_leader_node(GroupId::Meta).unwrap();
-        
+
         // Test namespace creation
-        let cmd = MetaCommand::CreateNamespace { 
+        let cmd = MetaCommand::CreateNamespace {
             namespace_id: NamespaceId::from("ns1"),
-            created_by: Some(UserId::from("admin"))
+            created_by: Some(UserId::from("admin")),
         };
         let result = leader.manager.propose_meta(cmd).await;
         assert!(result.is_ok(), "Meta should accept namespace proposals");
-        
+
         // Test job creation
         let params = serde_json::json!({
             "namespace_id": "ns1",
@@ -640,20 +634,23 @@ async fn test_all_groups_accept_proposals() {
         let result = leader.manager.propose_meta(cmd).await;
         assert!(result.is_ok(), "Meta should accept job proposals");
     }
-    
+
     // Test UserDataShards
     for shard in 0..cluster.user_shards {
         let leader = cluster.get_leader_node(GroupId::DataUserShard(shard)).unwrap();
         let cmd = UserDataCommand::Insert {
             required_meta_index: 0,
-            table_id: TableId::new(NamespaceId::from("ns1"), TableName::from(format!("table{}", shard))),
+            table_id: TableId::new(
+                NamespaceId::from("ns1"),
+                TableName::from(format!("table{}", shard)),
+            ),
             user_id: UserId::from(format!("user_{}", shard)),
             rows: vec![make_test_row()],
         };
         let result = leader.manager.propose_user_data(shard, cmd).await;
         assert!(result.is_ok(), "UserDataShard({}) should accept proposals", shard);
     }
-    
+
     // Test SharedDataShard
     {
         let leader = cluster.get_leader_node(GroupId::DataSharedShard(0)).unwrap();
@@ -665,7 +662,7 @@ async fn test_all_groups_accept_proposals() {
         let result = leader.manager.propose_shared_data(0, cmd).await;
         assert!(result.is_ok(), "SharedDataShard should accept proposals");
     }
-    
+
     println!("✅ All {} groups accepted proposals!", cluster.all_group_ids().len());
 }
 
@@ -677,30 +674,31 @@ async fn test_all_groups_accept_proposals() {
 #[tokio::test]
 async fn test_leader_election_on_failure() {
     let cluster = TestCluster::new(3, 10600, 11600, 2);
-    
+
     cluster.start_all().await.expect("Failed to start");
     cluster.initialize().await.expect("Failed to init");
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(300)).await;
-    
+
     // Record current leaders
-    let initial_leaders: HashMap<GroupId, u64> = cluster.all_group_ids()
+    let initial_leaders: HashMap<GroupId, u64> = cluster
+        .all_group_ids()
         .into_iter()
         .filter_map(|g| cluster.get_leader_node(g).map(|n| (g, n.node_id)))
         .collect();
-    
+
     println!("Initial leaders: {:?}", initial_leaders);
-    
+
     // Verify we have leaders for all groups
     assert_eq!(
         initial_leaders.len(),
         cluster.all_group_ids().len(),
         "Should have leaders for all groups"
     );
-    
+
     // Note: In a real test, we would stop node 1 and verify re-election
     // Since we can't easily stop/restart in this test, we verify the invariants
-    
+
     println!("✅ Initial leader state verified for failover test!");
 }
 
@@ -708,18 +706,18 @@ async fn test_leader_election_on_failure() {
 #[tokio::test]
 async fn test_data_consistency_after_network_delay() {
     let cluster = TestCluster::new(3, 10700, 11700, 2);
-    
+
     cluster.start_all().await.expect("Failed to start");
     cluster.initialize().await.expect("Failed to init");
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(300)).await;
-    
+
     // Propose multiple commands
     let leader = cluster.get_leader_node(GroupId::Meta).unwrap();
-    
+
     let mut successful_proposals = 0;
     for i in 0..10 {
-        let cmd = MetaCommand::CreateNamespace { 
+        let cmd = MetaCommand::CreateNamespace {
             namespace_id: NamespaceId::from(format!("consistency_ns_{}", i)),
             created_by: None,
         };
@@ -727,16 +725,19 @@ async fn test_data_consistency_after_network_delay() {
             successful_proposals += 1;
         }
     }
-    
+
     assert!(successful_proposals >= 8, "Most proposals should succeed");
-    
+
     // Add network delay simulation
     sleep(Duration::from_millis(200)).await;
-    
+
     // All nodes should still agree on leaders
     assert!(cluster.verify_leader_consensus(), "Leaders should be consistent after delays");
-    
-    println!("✅ Data consistency maintained with {} successful proposals!", successful_proposals);
+
+    println!(
+        "✅ Data consistency maintained with {} successful proposals!",
+        successful_proposals
+    );
 }
 
 // =============================================================================
@@ -747,22 +748,22 @@ async fn test_data_consistency_after_network_delay() {
 #[tokio::test]
 async fn test_meta_group_operations() {
     let cluster = TestCluster::new(3, 10800, 11800, 2);
-    
+
     cluster.start_all().await.expect("Failed to start");
     cluster.initialize().await.expect("Failed to init");
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(200)).await;
-    
+
     let leader = cluster.get_leader_node(GroupId::Meta).unwrap();
-    
+
     // Test CreateNamespace
-    let cmd = MetaCommand::CreateNamespace { 
+    let cmd = MetaCommand::CreateNamespace {
         namespace_id: NamespaceId::from("test_ns"),
-        created_by: Some(UserId::from("tester"))
+        created_by: Some(UserId::from("tester")),
     };
     let result = leader.manager.propose_meta(cmd).await;
     assert!(result.is_ok(), "CreateNamespace should succeed");
-    
+
     // Test CreateTable
     let cmd = MetaCommand::CreateTable {
         table_id: TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table")),
@@ -771,7 +772,7 @@ async fn test_meta_group_operations() {
     };
     let result = leader.manager.propose_meta(cmd).await;
     assert!(result.is_ok(), "CreateTable should succeed");
-    
+
     // Test RegisterStorage
     let cmd = MetaCommand::RegisterStorage {
         storage_id: StorageId::new("storage1".to_string()),
@@ -779,7 +780,7 @@ async fn test_meta_group_operations() {
     };
     let result = leader.manager.propose_meta(cmd).await;
     assert!(result.is_ok(), "RegisterStorage should succeed");
-    
+
     // Test CreateJob
     let params = serde_json::json!({"namespace_id": "ns1", "table_name": "t1"});
     let cmd = MetaCommand::CreateJob {
@@ -796,7 +797,7 @@ async fn test_meta_group_operations() {
     };
     let result = leader.manager.propose_meta(cmd).await;
     assert!(result.is_ok(), "CreateJob should succeed");
-    
+
     // Test ClaimJob
     let cmd = MetaCommand::ClaimJob {
         job_id: JobId::from("j1"),
@@ -805,7 +806,7 @@ async fn test_meta_group_operations() {
     };
     let result = leader.manager.propose_meta(cmd).await;
     assert!(result.is_ok(), "ClaimJob should succeed");
-    
+
     // Test UpdateJobStatus
     let cmd = MetaCommand::UpdateJobStatus {
         job_id: JobId::from("j1"),
@@ -814,7 +815,7 @@ async fn test_meta_group_operations() {
     };
     let result = leader.manager.propose_meta(cmd).await;
     assert!(result.is_ok(), "UpdateJobStatus should succeed");
-    
+
     println!("✅ Meta group operations verified!");
 }
 
@@ -822,18 +823,21 @@ async fn test_meta_group_operations() {
 #[tokio::test]
 async fn test_user_data_shard_operations() {
     let cluster = TestCluster::new(3, 11100, 12100, 4); // 4 shards
-    
+
     cluster.start_all().await.expect("Failed to start");
     cluster.initialize().await.expect("Failed to init");
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(200)).await;
-    
+
     // Test all 4 user data shards
     for shard in 0..4 {
         let leader = cluster.get_leader_node(GroupId::DataUserShard(shard)).unwrap();
-        let table_id = TableId::new(NamespaceId::from("ns1"), TableName::from(format!("user_table_{}", shard)));
+        let table_id = TableId::new(
+            NamespaceId::from("ns1"),
+            TableName::from(format!("user_table_{}", shard)),
+        );
         let user_id = UserId::from(format!("user_{}", shard));
-        
+
         // Test Insert
         let cmd = UserDataCommand::Insert {
             required_meta_index: 0,
@@ -843,7 +847,7 @@ async fn test_user_data_shard_operations() {
         };
         let result = leader.manager.propose_user_data(shard, cmd).await;
         assert!(result.is_ok(), "Insert shard {} should succeed", shard);
-        
+
         // Test Update
         let cmd = UserDataCommand::Update {
             required_meta_index: 0,
@@ -854,7 +858,7 @@ async fn test_user_data_shard_operations() {
         };
         let result = leader.manager.propose_user_data(shard, cmd).await;
         assert!(result.is_ok(), "Update shard {} should succeed", shard);
-        
+
         // Test Delete
         let cmd = UserDataCommand::Delete {
             required_meta_index: 0,
@@ -864,7 +868,7 @@ async fn test_user_data_shard_operations() {
         };
         let result = leader.manager.propose_user_data(shard, cmd).await;
         assert!(result.is_ok(), "Delete shard {} should succeed", shard);
-        
+
         // Test RegisterLiveQuery
         let cmd = UserDataCommand::RegisterLiveQuery {
             required_meta_index: 0,
@@ -878,10 +882,10 @@ async fn test_user_data_shard_operations() {
         };
         let result = leader.manager.propose_user_data(shard, cmd).await;
         assert!(result.is_ok(), "RegisterLiveQuery shard {} should succeed", shard);
-        
+
         println!("  ✓ UserDataShard({}) operations verified", shard);
     }
-    
+
     println!("✅ All UserData shard operations verified!");
 }
 
@@ -889,15 +893,15 @@ async fn test_user_data_shard_operations() {
 #[tokio::test]
 async fn test_shared_data_shard_operations() {
     let cluster = TestCluster::new(3, 11200, 12200, 2);
-    
+
     cluster.start_all().await.expect("Failed to start");
     cluster.initialize().await.expect("Failed to init");
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(200)).await;
-    
+
     let leader = cluster.get_leader_node(GroupId::DataSharedShard(0)).unwrap();
     let table_id = TableId::new(NamespaceId::from("shared"), TableName::from("global_config"));
-    
+
     // Test Insert
     let cmd = SharedDataCommand::Insert {
         required_meta_index: 0,
@@ -906,7 +910,7 @@ async fn test_shared_data_shard_operations() {
     };
     let result = leader.manager.propose_shared_data(0, cmd).await;
     assert!(result.is_ok(), "SharedData Insert should succeed");
-    
+
     // Test Update
     let cmd = SharedDataCommand::Update {
         required_meta_index: 0,
@@ -916,7 +920,7 @@ async fn test_shared_data_shard_operations() {
     };
     let result = leader.manager.propose_shared_data(0, cmd).await;
     assert!(result.is_ok(), "SharedData Update should succeed");
-    
+
     // Test Delete
     let cmd = SharedDataCommand::Delete {
         required_meta_index: 0,
@@ -925,7 +929,7 @@ async fn test_shared_data_shard_operations() {
     };
     let result = leader.manager.propose_shared_data(0, cmd).await;
     assert!(result.is_ok(), "SharedData Delete should succeed");
-    
+
     println!("✅ SharedData shard operations verified!");
 }
 
@@ -937,18 +941,18 @@ async fn test_shared_data_shard_operations() {
 #[tokio::test]
 async fn test_proposal_throughput() {
     let cluster = TestCluster::new(3, 11300, 12300, 2);
-    
+
     cluster.start_all().await.expect("Failed to start");
     cluster.initialize().await.expect("Failed to init");
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(300)).await;
-    
+
     let leader = cluster.get_leader_node(GroupId::DataUserShard(0)).unwrap();
-    
+
     let start = std::time::Instant::now();
     let mut success_count = 0;
     let total_proposals = 100;
-    
+
     for i in 0..total_proposals {
         let cmd = UserDataCommand::Insert {
             required_meta_index: 0,
@@ -960,16 +964,16 @@ async fn test_proposal_throughput() {
             success_count += 1;
         }
     }
-    
+
     let elapsed = start.elapsed();
     let throughput = success_count as f64 / elapsed.as_secs_f64();
-    
+
     println!("✅ Proposal throughput test:");
     println!("   - Total proposals: {}", total_proposals);
     println!("   - Successful: {}", success_count);
     println!("   - Time: {:?}", elapsed);
     println!("   - Throughput: {:.1} proposals/sec", throughput);
-    
+
     assert!(success_count >= 80, "At least 80% proposals should succeed");
 }
 
@@ -977,52 +981,58 @@ async fn test_proposal_throughput() {
 #[tokio::test]
 async fn test_concurrent_multi_group_proposals() {
     let cluster = TestCluster::new(3, 11400, 12400, 4);
-    
+
     cluster.start_all().await.expect("Failed to start");
     cluster.initialize().await.expect("Failed to init");
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(300)).await;
-    
+
     let success_count = Arc::new(AtomicUsize::new(0));
     let total_count = Arc::new(AtomicUsize::new(0));
-    
+
     // Launch concurrent proposals to different shards
-    let handles: Vec<_> = (0..4).map(|shard| {
-        let leader = cluster.get_leader_node(GroupId::DataUserShard(shard))
-            .expect("Leader should exist");
-        let manager = leader.manager.clone();
-        let success = success_count.clone();
-        let total = total_count.clone();
-        
-        tokio::spawn(async move {
-            for i in 0..25 {
-                let cmd = UserDataCommand::Insert {
-                    required_meta_index: 0,
-                    table_id: TableId::new(NamespaceId::from("concurrent"), TableName::from(format!("shard{}", shard))),
-                    user_id: UserId::from(format!("user_{}_{}", shard, i)),
-                    rows: vec![make_test_row()],
-                };
-                if manager.propose_user_data(shard, cmd).await.is_ok() {
-                    success.fetch_add(1, Ordering::Relaxed);
+    let handles: Vec<_> = (0..4)
+        .map(|shard| {
+            let leader = cluster
+                .get_leader_node(GroupId::DataUserShard(shard))
+                .expect("Leader should exist");
+            let manager = leader.manager.clone();
+            let success = success_count.clone();
+            let total = total_count.clone();
+
+            tokio::spawn(async move {
+                for i in 0..25 {
+                    let cmd = UserDataCommand::Insert {
+                        required_meta_index: 0,
+                        table_id: TableId::new(
+                            NamespaceId::from("concurrent"),
+                            TableName::from(format!("shard{}", shard)),
+                        ),
+                        user_id: UserId::from(format!("user_{}_{}", shard, i)),
+                        rows: vec![make_test_row()],
+                    };
+                    if manager.propose_user_data(shard, cmd).await.is_ok() {
+                        success.fetch_add(1, Ordering::Relaxed);
+                    }
+                    total.fetch_add(1, Ordering::Relaxed);
                 }
-                total.fetch_add(1, Ordering::Relaxed);
-            }
+            })
         })
-    }).collect();
-    
+        .collect();
+
     // Wait for all tasks
     for handle in handles {
         handle.await.expect("Task panicked");
     }
-    
+
     let successes = success_count.load(Ordering::Relaxed);
     let totals = total_count.load(Ordering::Relaxed);
-    
+
     println!("✅ Concurrent multi-group proposals:");
     println!("   - Total: {}", totals);
     println!("   - Successful: {}", successes);
     println!("   - Success rate: {:.1}%", (successes as f64 / totals as f64) * 100.0);
-    
+
     assert!(successes >= 80, "At least 80% concurrent proposals should succeed");
 }
 
@@ -1034,12 +1044,12 @@ async fn test_concurrent_multi_group_proposals() {
 #[tokio::test]
 async fn test_shard_routing_consistency() {
     let cluster = TestCluster::new(3, 11500, 12500, 8);
-    
+
     cluster.start_all().await.expect("Failed to start");
-    
+
     // Get manager from any node
     let manager = &cluster.nodes[0].manager;
-    
+
     // Test that same table always maps to same shard
     let test_tables = vec![
         ("ns1", "users"),
@@ -1047,22 +1057,22 @@ async fn test_shard_routing_consistency() {
         ("ns2", "products"),
         ("analytics", "events"),
     ];
-    
+
     for (ns, table) in test_tables {
         let table_id = TableId::new(NamespaceId::from(ns), TableName::from(table));
-        
+
         // Compute shard multiple times
         let shard1 = manager.compute_shard(&table_id);
         let shard2 = manager.compute_shard(&table_id);
         let shard3 = manager.compute_shard(&table_id);
-        
+
         assert_eq!(shard1, shard2, "Same table should always map to same shard");
         assert_eq!(shard2, shard3, "Same table should always map to same shard");
         assert!(shard1 < 8, "Shard should be in valid range");
-        
+
         println!("  {}.{} -> shard {}", ns, table, shard1);
     }
-    
+
     println!("✅ Shard routing consistency verified!");
 }
 
@@ -1070,33 +1080,33 @@ async fn test_shard_routing_consistency() {
 #[tokio::test]
 async fn test_shard_distribution() {
     let cluster = TestCluster::new(3, 11600, 12600, 8);
-    
+
     cluster.start_all().await.expect("Failed to start");
     cluster.initialize().await.expect("Failed to init");
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(200)).await;
-    
+
     // Count leaders per node
     let mut leader_count: HashMap<u64, usize> = HashMap::new();
-    
+
     for group in cluster.all_group_ids() {
         if let Some(leader) = cluster.get_leader_node(group) {
             *leader_count.entry(leader.node_id).or_default() += 1;
         }
     }
-    
+
     println!("Leader distribution:");
     for (node_id, count) in &leader_count {
         println!("  Node {}: {} groups", node_id, count);
     }
-    
+
     // In single-node initialized cluster, node 1 will be leader for all
     // In a real multi-node scenario, distribution would vary
     let total_groups = cluster.all_group_ids().len();
     let total_leaders: usize = leader_count.values().sum();
-    
+
     assert_eq!(total_leaders, total_groups, "Every group should have a leader");
-    
+
     println!("✅ Shard distribution verified ({} total groups)", total_groups);
 }
 
@@ -1108,14 +1118,14 @@ async fn test_shard_distribution() {
 #[tokio::test]
 async fn test_invalid_shard_error() {
     let cluster = TestCluster::new(3, 11700, 12700, 4);
-    
+
     cluster.start_all().await.expect("Failed to start");
     cluster.initialize().await.expect("Failed to init");
     cluster.wait_for_leaders(Duration::from_secs(5)).await;
     sleep(Duration::from_millis(200)).await;
-    
+
     let node = &cluster.nodes[0];
-    
+
     // Try to propose to invalid shard
     let cmd = UserDataCommand::Insert {
         table_id: TableId::new(NamespaceId::from("test"), TableName::from("table")),
@@ -1123,10 +1133,10 @@ async fn test_invalid_shard_error() {
         rows: vec![make_test_row()],
         required_meta_index: 0,
     };
-    
+
     let result = node.manager.propose_user_data(99, cmd).await; // Invalid shard
     assert!(result.is_err(), "Invalid shard should return error");
-    
+
     println!("✅ Invalid shard error handling verified!");
 }
 
@@ -1142,16 +1152,16 @@ async fn test_proposal_before_start_error() {
         shared_shards: 1,
         ..Default::default()
     };
-    
+
     let manager = RaftManager::new(config);
-    
+
     // Try to propose before starting
-    let cmd = MetaCommand::CreateNamespace { 
+    let cmd = MetaCommand::CreateNamespace {
         namespace_id: NamespaceId::from("ns1"),
         created_by: None,
     };
     let result = manager.propose_meta(cmd).await;
     assert!(result.is_err(), "Proposal before start should fail");
-    
+
     println!("✅ Proposal before start error handling verified!");
 }

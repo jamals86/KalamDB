@@ -206,7 +206,7 @@ impl FlushAllTablesStatement {
                         namespace: default_namespace.clone(),
                     })
                 }
-            }
+            },
             Err(err) => Err(err),
         }
     }
@@ -234,20 +234,14 @@ mod tests {
     fn test_parse_flush_table_unqualified_error() {
         let result = FlushTableStatement::parse("STORAGE FLUSH TABLE events");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("must be qualified"));
+        assert!(result.unwrap_err().to_string().contains("must be qualified"));
     }
 
     #[test]
     fn test_parse_flush_table_extra_tokens_error() {
         let result = FlushTableStatement::parse("STORAGE FLUSH TABLE prod.events WHERE id > 100");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unexpected tokens"));
+        assert!(result.unwrap_err().to_string().contains("Unexpected tokens"));
     }
 
     #[test]
@@ -279,10 +273,7 @@ mod tests {
     fn test_parse_flush_all_tables_extra_tokens_error() {
         let result = FlushAllTablesStatement::parse("STORAGE FLUSH ALL IN prod WHERE id > 100");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unexpected tokens"));
+        assert!(result.unwrap_err().to_string().contains("Unexpected tokens"));
     }
 
     #[test]

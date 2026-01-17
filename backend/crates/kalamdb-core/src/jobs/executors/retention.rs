@@ -121,10 +121,7 @@ impl JobExecutor for RetentionExecutor {
         // For now, return placeholder metrics
         let rows_deleted = 0;
 
-        ctx.log_info(&format!(
-            "Retention enforcement completed - {} rows deleted",
-            rows_deleted
-        ));
+        ctx.log_info(&format!("Retention enforcement completed - {} rows deleted", rows_deleted));
 
         Ok(JobDecision::Completed {
             message: Some(format!(

@@ -15,11 +15,11 @@ pub struct RaftRpcRequest {
     /// Raft group ID (e.g., "MetaSystem", "DataUserShard(5)")
     #[prost(string, tag = "1")]
     pub group_id: String,
-    
+
     /// RPC type: "vote", "append_entries", "install_snapshot"
     #[prost(string, tag = "2")]
     pub rpc_type: String,
-    
+
     /// Serialized RPC payload
     #[prost(bytes = "vec", tag = "3")]
     pub payload: Vec<u8>,
@@ -31,7 +31,7 @@ pub struct RaftRpcResponse {
     /// Serialized response payload
     #[prost(bytes = "vec", tag = "1")]
     pub payload: Vec<u8>,
-    
+
     /// Error message if any
     #[prost(string, tag = "2")]
     pub error: String,
@@ -43,7 +43,7 @@ pub struct ClientProposalRequest {
     /// Raft group ID (e.g., "MetaSystem", "DataUserShard(5)")
     #[prost(string, tag = "1")]
     pub group_id: String,
-    
+
     /// Serialized command payload
     #[prost(bytes = "vec", tag = "2")]
     pub command: Vec<u8>,
@@ -55,19 +55,19 @@ pub struct ClientProposalResponse {
     /// True if proposal was successful
     #[prost(bool, tag = "1")]
     pub success: bool,
-    
+
     /// Serialized response payload (if successful)
     #[prost(bytes = "vec", tag = "2")]
     pub payload: Vec<u8>,
-    
+
     /// Error message (if not successful)
     #[prost(string, tag = "3")]
     pub error: String,
-    
+
     /// Leader node ID hint (if we're not the leader)
     #[prost(uint64, optional, tag = "4")]
     pub leader_hint: Option<u64>,
-    
+
     /// Log index of the applied entry (for read-your-writes consistency)
     /// Followers should wait for this index to be applied locally before
     /// returning to the client.
@@ -106,32 +106,31 @@ pub mod raft_client {
             &mut self,
             request: impl tonic::IntoRequest<RaftRpcRequest>,
         ) -> std::result::Result<tonic::Response<RaftRpcResponse>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| tonic::Status::new(tonic::Code::Unknown, format!("Service not ready: {:?}", e)))?;
-            
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(tonic::Code::Unknown, format!("Service not ready: {:?}", e))
+            })?;
+
             let codec = ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/kalamdb.raft.Raft/RaftRpc");
             let mut req = request.into_request();
             req.extensions_mut().insert(GrpcMethod::new("kalamdb.raft.Raft", "RaftRpc"));
             self.inner.unary(req, path, codec).await
         }
-        
+
         /// Forward a client proposal to the leader
         pub async fn client_proposal(
             &mut self,
             request: impl tonic::IntoRequest<ClientProposalRequest>,
         ) -> std::result::Result<tonic::Response<ClientProposalResponse>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| tonic::Status::new(tonic::Code::Unknown, format!("Service not ready: {:?}", e)))?;
-            
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(tonic::Code::Unknown, format!("Service not ready: {:?}", e))
+            })?;
+
             let codec = ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/kalamdb.raft.Raft/ClientProposal");
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new("kalamdb.raft.Raft", "ClientProposal"));
+            req.extensions_mut()
+                .insert(GrpcMethod::new("kalamdb.raft.Raft", "ClientProposal"));
             self.inner.unary(req, path, codec).await
         }
     }
@@ -150,7 +149,7 @@ pub mod raft_server {
             &self,
             request: tonic::Request<RaftRpcRequest>,
         ) -> std::result::Result<tonic::Response<RaftRpcResponse>, tonic::Status>;
-        
+
         /// Handle a client proposal (for leader forwarding)
         async fn client_proposal(
             &self,
@@ -166,7 +165,9 @@ pub mod raft_server {
 
     impl<T: Raft> RaftServer<T> {
         pub fn new(inner: T) -> Self {
-            Self { inner: Arc::new(inner) }
+            Self {
+                inner: Arc::new(inner),
+            }
         }
 
         pub fn from_arc(inner: Arc<T>) -> Self {
@@ -188,13 +189,16 @@ pub mod raft_server {
         type Error = std::convert::Infallible;
         type Future = BoxFuture<Self::Response, Self::Error>;
 
-        fn poll_ready(&mut self, _cx: &mut std::task::Context<'_>) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+        fn poll_ready(
+            &mut self,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
             std::task::Poll::Ready(Ok(()))
         }
 
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             let inner = self.inner.clone();
-            
+
             match req.uri().path() {
                 "/kalamdb.raft.Raft/RaftRpc" => {
                     let fut = async move {
@@ -204,7 +208,7 @@ pub mod raft_server {
                         Ok(res)
                     };
                     Box::pin(fut)
-                }
+                },
                 "/kalamdb.raft.Raft/ClientProposal" => {
                     let fut = async move {
                         let mut grpc = tonic::server::Grpc::new(ProstCodec::default());
@@ -213,14 +217,12 @@ pub mod raft_server {
                         Ok(res)
                     };
                     Box::pin(fut)
-                }
-                _ => {
-                    Box::pin(async move {
-                        let mut builder = http::Response::builder();
-                        builder = builder.status(200).header("grpc-status", "12");
-                        Ok(builder.body(tonic::body::Body::empty()).unwrap())
-                    })
-                }
+                },
+                _ => Box::pin(async move {
+                    let mut builder = http::Response::builder();
+                    builder = builder.status(200).header("grpc-status", "12");
+                    Ok(builder.body(tonic::body::Body::empty()).unwrap())
+                }),
             }
         }
     }
@@ -237,7 +239,7 @@ pub mod raft_server {
             Box::pin(fut)
         }
     }
-    
+
     struct ClientProposalSvc<T: Raft>(Arc<T>);
 
     impl<T: Raft> tonic::server::UnaryService<ClientProposalRequest> for ClientProposalSvc<T> {
@@ -252,8 +254,8 @@ pub mod raft_server {
     }
 }
 
-use std::sync::Arc;
 use crate::manager::RaftManager;
+use std::sync::Arc;
 
 /// Raft gRPC service implementation
 #[derive(Clone)]
@@ -276,27 +278,28 @@ impl raft_server::Raft for RaftService {
         request: Request<RaftRpcRequest>,
     ) -> Result<Response<RaftRpcResponse>, Status> {
         let req = request.into_inner();
-        
+
         // Parse group ID
-        let group_id = req.group_id.parse::<crate::GroupId>()
+        let group_id = req
+            .group_id
+            .parse::<crate::GroupId>()
             .map_err(|e| Status::invalid_argument(format!("Invalid group ID: {}", e)))?;
-        
+
         // Route to appropriate Raft group
         let result = match req.rpc_type.as_str() {
-            "vote" => {
-                self.manager.handle_vote(group_id, &req.payload).await
-            }
-            "append_entries" => {
-                self.manager.handle_append_entries(group_id, &req.payload).await
-            }
+            "vote" => self.manager.handle_vote(group_id, &req.payload).await,
+            "append_entries" => self.manager.handle_append_entries(group_id, &req.payload).await,
             "install_snapshot" => {
                 self.manager.handle_install_snapshot(group_id, &req.payload).await
-            }
+            },
             _ => {
-                return Err(Status::invalid_argument(format!("Unknown RPC type: {}", req.rpc_type)));
-            }
+                return Err(Status::invalid_argument(format!(
+                    "Unknown RPC type: {}",
+                    req.rpc_type
+                )));
+            },
         };
-        
+
         match result {
             Ok(payload) => Ok(Response::new(RaftRpcResponse {
                 payload,
@@ -308,23 +311,26 @@ impl raft_server::Raft for RaftService {
             })),
         }
     }
-    
+
     async fn client_proposal(
         &self,
         request: Request<ClientProposalRequest>,
     ) -> Result<Response<ClientProposalResponse>, Status> {
         let req = request.into_inner();
-        
+
         // Parse group ID
-        let group_id = req.group_id.parse::<crate::GroupId>()
+        let group_id = req
+            .group_id
+            .parse::<crate::GroupId>()
             .map_err(|e| Status::invalid_argument(format!("Invalid group ID: {}", e)))?;
-        
+
         // Check if we are the leader for this group
         if !self.manager.is_leader(group_id) {
             let leader = self.manager.current_leader(group_id);
             log::debug!(
                 "ClientProposal for {} received but not leader (leader is {:?})",
-                group_id, leader
+                group_id,
+                leader
             );
             return Ok(Response::new(ClientProposalResponse {
                 success: false,
@@ -334,10 +340,10 @@ impl raft_server::Raft for RaftService {
                 log_index: 0,
             }));
         }
-        
+
         // We are the leader - propose the command locally
         let result = self.manager.propose_for_group_with_index(group_id, req.command).await;
-        
+
         match result {
             Ok((payload, log_index)) => Ok(Response::new(ClientProposalResponse {
                 success: true,
@@ -370,42 +376,42 @@ pub async fn start_rpc_server(
     advertise_addr: String,
 ) -> Result<(), crate::RaftError> {
     use tokio::sync::oneshot;
-    
+
     // Extract port from advertise_addr (e.g., "kalamdb-node1:9090" -> 9090)
-    let port = advertise_addr
-        .rsplit(':')
-        .next()
-        .ok_or_else(|| crate::RaftError::Internal(format!(
-            "Invalid advertise address '{}': missing port", advertise_addr
-        )))?;
-    
+    let port = advertise_addr.rsplit(':').next().ok_or_else(|| {
+        crate::RaftError::Internal(format!(
+            "Invalid advertise address '{}': missing port",
+            advertise_addr
+        ))
+    })?;
+
     let bind_addr = format!("0.0.0.0:{}", port);
     let addr: std::net::SocketAddr = bind_addr.parse().map_err(|e| {
         crate::RaftError::Internal(format!("Invalid bind address '{}': {}", bind_addr, e))
     })?;
-    
+
     // Try to bind the TCP listener first to detect port conflicts early
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
         crate::RaftError::Internal(format!(
-            "Failed to bind Raft RPC server to {}: {}. Is the port already in use?", 
+            "Failed to bind Raft RPC server to {}: {}. Is the port already in use?",
             bind_addr, e
         ))
     })?;
-    
+
     let service = RaftService::new(manager);
     let server = raft_server::RaftServer::new(service);
-    
+
     log::info!("Starting Raft RPC server on {} (advertising as {})", addr, advertise_addr);
-    
+
     // Use oneshot channel to report startup success/failure
     let (tx, rx) = oneshot::channel::<Result<(), String>>();
     let bind_addr_clone = bind_addr.clone();
-    
+
     // Spawn the server in a background task
     tokio::spawn(async move {
         // Signal that we've started (we already successfully bound)
         let _ = tx.send(Ok(()));
-        
+
         let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
         if let Err(e) = tonic::transport::Server::builder()
             .add_service(server)
@@ -415,33 +421,28 @@ pub async fn start_rpc_server(
             log::error!("Raft RPC server error on {}: {}", bind_addr_clone, e);
         }
     });
-    
+
     // Wait for startup confirmation (with timeout)
-    match tokio::time::timeout(
-        tokio::time::Duration::from_secs(5),
-        rx
-    ).await {
+    match tokio::time::timeout(tokio::time::Duration::from_secs(5), rx).await {
         Ok(Ok(Ok(()))) => {
             log::info!("✓ Raft RPC server started successfully on {}", bind_addr);
             Ok(())
-        }
+        },
         Ok(Ok(Err(e))) => {
-            Err(crate::RaftError::Internal(format!(
-                "Raft RPC server failed to start: {}", e
-            )))
-        }
+            Err(crate::RaftError::Internal(format!("Raft RPC server failed to start: {}", e)))
+        },
         Ok(Err(_)) => {
             // Channel closed unexpectedly
             Err(crate::RaftError::Internal(
-                "Raft RPC server startup channel closed unexpectedly".to_string()
+                "Raft RPC server startup channel closed unexpectedly".to_string(),
             ))
-        }
+        },
         Err(_) => {
             // Timeout
             Err(crate::RaftError::Internal(
-                "Raft RPC server startup timed out after 5 seconds".to_string()
+                "Raft RPC server startup timed out after 5 seconds".to_string(),
             ))
-        }
+        },
     }
 }
 
@@ -456,7 +457,7 @@ mod tests {
             rpc_type: "vote".to_string(),
             payload: vec![1, 2, 3],
         };
-        
+
         assert_eq!(req.group_id, "MetaSystem");
         assert_eq!(req.rpc_type, "vote");
     }

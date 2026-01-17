@@ -63,7 +63,7 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                 let hash = bcrypt::hash(raw, bcrypt::DEFAULT_COST)
                     .into_kalamdb_error("Password hash error")?;
                 (hash, None)
-            }
+            },
             AuthType::OAuth => {
                 // For OAuth, the 'password' field contains the JSON payload
                 let payload = statement.password.clone();
@@ -90,7 +90,7 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                 }
 
                 ("".to_string(), payload)
-            }
+            },
             AuthType::Internal => ("".to_string(), None),
         };
 

@@ -64,10 +64,7 @@ impl ArrowSchemaWithOptions {
                         .map_err(|e| RegistryError::SchemaError(e.to_string()))?,
                 );
 
-                field_map.insert(
-                    "nullable".to_string(),
-                    serde_json::json!(field.is_nullable()),
-                );
+                field_map.insert("nullable".to_string(), serde_json::json!(field.is_nullable()));
                 Ok(field_map)
             })
             .collect();
@@ -109,12 +106,9 @@ impl ArrowSchemaWithOptions {
                     RegistryError::SchemaError("Field must be an object".to_string())
                 })?;
 
-                let name = field_obj
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        RegistryError::SchemaError("Field missing 'name'".to_string())
-                    })?;
+                let name = field_obj.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                    RegistryError::SchemaError("Field missing 'name'".to_string())
+                })?;
 
                 // Deserialize KalamDataType
                 let kalam_type_val = field_obj.get("data_type").ok_or_else(|| {
@@ -151,10 +145,7 @@ impl ArrowSchemaWithOptions {
                     RegistryError::SchemaError(format!("Failed to convert to Arrow type: {}", e))
                 })?;
 
-                let nullable = field_obj
-                    .get("nullable")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
+                let nullable = field_obj.get("nullable").and_then(|v| v.as_bool()).unwrap_or(true);
 
                 Ok(arrow::datatypes::Field::new(name, data_type, nullable))
             })
@@ -219,17 +210,10 @@ mod tests {
 
     #[test]
     fn test_schema_with_options() {
-        let schema = Arc::new(Schema::new(vec![Field::new(
-            "value",
-            DataType::Float64,
-            false,
-        )]));
+        let schema = Arc::new(Schema::new(vec![Field::new("value", DataType::Float64, false)]));
 
         let mut options = HashMap::new();
-        options.insert(
-            "flush_policy".to_string(),
-            serde_json::json!({"row_limit": 1000}),
-        );
+        options.insert("flush_policy".to_string(), serde_json::json!({"row_limit": 1000}));
 
         let schema_with_opts = ArrowSchemaWithOptions::with_options(schema.clone(), options);
 

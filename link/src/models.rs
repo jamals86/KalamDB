@@ -109,14 +109,9 @@ pub enum BatchStatus {
 #[serde(tag = "method", rename_all = "snake_case")]
 pub enum WsAuthCredentials {
     /// Username and password authentication
-    Basic {
-        username: String,
-        password: String,
-    },
+    Basic { username: String, password: String },
     /// JWT token authentication
-    Jwt {
-        token: String,
-    },
+    Jwt { token: String },
     // Future auth methods can be added here:
     // ApiKey { key: String },
     // OAuth { provider: String, token: String },
@@ -561,11 +556,7 @@ impl QueryResponse {
 
     /// Returns the first result's rows, if any (as arrays)
     pub fn rows(&self) -> Vec<Vec<JsonValue>> {
-        self.results
-            .first()
-            .and_then(|r| r.rows.as_ref())
-            .cloned()
-            .unwrap_or_default()
+        self.results.first().and_then(|r| r.rows.as_ref()).cloned().unwrap_or_default()
     }
 
     /// Returns the first result's rows as HashMaps (column name -> value)
@@ -574,9 +565,7 @@ impl QueryResponse {
             return Vec::new();
         };
         let row_count = result.rows.as_ref().map(|r| r.len()).unwrap_or(0);
-        (0..row_count)
-            .filter_map(|i| result.row_as_map(i))
-            .collect()
+        (0..row_count).filter_map(|i| result.row_as_map(i)).collect()
     }
 
     /// Returns the first row as a HashMap, if any
@@ -598,8 +587,7 @@ impl QueryResponse {
 
     /// Get a value from the first row by column name
     pub fn get_value(&self, column_name: &str) -> Option<JsonValue> {
-        self.first_row_as_map()
-            .and_then(|row| row.get(column_name).cloned())
+        self.first_row_as_map().and_then(|row| row.get(column_name).cloned())
     }
 
     /// Get an i64 value from the first row by column name
@@ -616,8 +604,7 @@ impl QueryResponse {
 
     /// Get a string value from the first row by column name
     pub fn get_string(&self, column_name: &str) -> Option<String> {
-        self.get_value(column_name)
-            .and_then(|v| v.as_str().map(|s| s.to_string()))
+        self.get_value(column_name).and_then(|v| v.as_str().map(|s| s.to_string()))
     }
 }
 
@@ -740,10 +727,7 @@ impl QueryResult {
             return vec![];
         };
 
-        rows.iter()
-            .enumerate()
-            .filter_map(|(i, _)| self.row_as_map(i))
-            .collect()
+        rows.iter().enumerate().filter_map(|(i, _)| self.row_as_map(i)).collect()
     }
 }
 
@@ -1120,9 +1104,7 @@ mod tests {
 
     #[test]
     fn test_subscription_options_serialization() {
-        let opts = SubscriptionOptions::new()
-            .with_batch_size(200)
-            .with_last_rows(100);
+        let opts = SubscriptionOptions::new().with_batch_size(200).with_last_rows(100);
 
         let json = serde_json::to_string(&opts).unwrap();
 
@@ -1136,9 +1118,7 @@ mod tests {
     #[test]
     fn test_subscription_options_serialization_with_seq_id() {
         let seq_id = SeqId::from(42i64);
-        let opts = SubscriptionOptions::new()
-            .with_batch_size(50)
-            .with_from_seq_id(seq_id);
+        let opts = SubscriptionOptions::new().with_batch_size(50).with_from_seq_id(seq_id);
 
         let json = serde_json::to_string(&opts).unwrap();
 
@@ -1171,13 +1151,10 @@ mod tests {
     #[test]
     fn test_connection_and_subscription_options_are_independent() {
         // Ensure the two option types don't overlap in their fields
-        let conn_opts = ConnectionOptions::new()
-            .with_auto_reconnect(true)
-            .with_reconnect_delay_ms(1000);
+        let conn_opts =
+            ConnectionOptions::new().with_auto_reconnect(true).with_reconnect_delay_ms(1000);
 
-        let sub_opts = SubscriptionOptions::new()
-            .with_batch_size(100)
-            .with_last_rows(50);
+        let sub_opts = SubscriptionOptions::new().with_batch_size(100).with_last_rows(50);
 
         // Connection options should NOT have subscription fields
         let conn_json = serde_json::to_string(&conn_opts).unwrap();
@@ -1196,9 +1173,7 @@ mod tests {
 
     #[test]
     fn test_subscription_request_with_options() {
-        let opts = SubscriptionOptions::new()
-            .with_batch_size(100)
-            .with_last_rows(25);
+        let opts = SubscriptionOptions::new().with_batch_size(100).with_last_rows(25);
 
         let request = SubscriptionRequest {
             id: "sub-123".to_string(),
@@ -1334,18 +1309,9 @@ mod tests {
         let loading_batch = BatchStatus::LoadingBatch;
         let ready = BatchStatus::Ready;
 
-        assert_eq!(
-            serde_json::to_string(&loading).unwrap(),
-            "\"loading\""
-        );
-        assert_eq!(
-            serde_json::to_string(&loading_batch).unwrap(),
-            "\"loading_batch\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ready).unwrap(),
-            "\"ready\""
-        );
+        assert_eq!(serde_json::to_string(&loading).unwrap(), "\"loading\"");
+        assert_eq!(serde_json::to_string(&loading_batch).unwrap(), "\"loading_batch\"");
+        assert_eq!(serde_json::to_string(&ready).unwrap(), "\"ready\"");
     }
 
     // ==================== ServerMessage Parsing Tests ====================
@@ -1375,7 +1341,7 @@ mod tests {
                 assert_eq!(rows.len(), 1);
                 assert!(batch_control.has_more);
                 assert_eq!(batch_control.last_seq_id, Some(SeqId::from(12345i64)));
-            }
+            },
             _ => panic!("Expected InitialDataBatch"),
         }
     }
@@ -1401,7 +1367,7 @@ mod tests {
                 assert_eq!(change_type, ChangeTypeRaw::Insert);
                 assert!(rows.is_some());
                 assert!(old_values.is_none());
-            }
+            },
             _ => panic!("Expected Change"),
         }
     }
@@ -1497,13 +1463,11 @@ mod tests {
                 last_seq_id: None,
                 snapshot_end_seq: None,
             },
-            schema: vec![
-                SchemaField {
-                    name: "id".to_string(),
-                    data_type: KalamDataType::BigInt,
-                    index: 0,
-                },
-            ],
+            schema: vec![SchemaField {
+                name: "id".to_string(),
+                data_type: KalamDataType::BigInt,
+                index: 0,
+            }],
         };
         assert_eq!(ack.subscription_id(), Some("sub-1"));
         assert!(!ack.is_error());

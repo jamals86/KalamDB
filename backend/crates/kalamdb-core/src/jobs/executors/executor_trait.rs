@@ -268,11 +268,61 @@ pub trait JobExecutor: Send + Sync {
         Ok(true)
     }
 
-    /// Executes the job with type-safe parameters
+    /// Executes the job with type-safe parameters (legacy single-phase execution)
     ///
     /// Parameters are already deserialized and validated in JobContext.
     /// Returns a JobDecision indicating whether the job completed, should retry, or failed.
+    ///
+    /// **Deprecated**: For new executors, implement `execute_local()` and optionally
+    /// `execute_leader()` for the two-phase distributed execution model.
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError>;
+
+    /// Execute local work phase (runs on ALL nodes in cluster)
+    ///
+    /// This phase handles node-local operations that don't require cluster coordination:
+    /// - RocksDB flushes (each node flushes its own buffered data)
+    /// - Local cache eviction
+    /// - Local file cleanup
+    /// - RocksDB compaction
+    ///
+    /// By default, delegates to `execute()` for backwards compatibility with single-phase executors.
+    ///
+    /// # Returns
+    /// - `Ok(JobDecision::Completed { .. })` - Local work completed successfully
+    /// - `Ok(JobDecision::Failed { .. })` - Local work failed, skip leader phase
+    /// - `Err(..)` - Critical error
+    async fn execute_local(
+        &self,
+        ctx: &JobContext<Self::Params>,
+    ) -> Result<JobDecision, KalamDbError> {
+        // Default: delegate to execute() for backward compatibility
+        self.execute(ctx).await
+    }
+
+    /// Execute leader-only phase (runs ONLY on leader node)
+    ///
+    /// This phase handles operations that require cluster-wide coordination:
+    /// - Uploading Parquet files to external storage (S3, GCS)
+    /// - Registering manifest entries (shared metadata)
+    /// - Updating cluster-wide state in system tables
+    /// - Coordinating with external services
+    ///
+    /// Called only for job types where `job_type().has_leader_actions()` returns true.
+    /// Only executed if `execute_local()` returned `JobDecision::Completed`.
+    ///
+    /// By default, returns Completed (no leader actions needed).
+    ///
+    /// # Returns
+    /// - `Ok(JobDecision::Completed { .. })` - Leader actions completed
+    /// - `Ok(JobDecision::Failed { .. })` - Leader actions failed
+    /// - `Err(..)` - Critical error
+    async fn execute_leader(
+        &self,
+        _ctx: &JobContext<Self::Params>,
+    ) -> Result<JobDecision, KalamDbError> {
+        // Default: no leader actions needed
+        Ok(JobDecision::Completed { message: None })
+    }
 
     /// Cancels a running job
     ///
@@ -297,7 +347,7 @@ mod tests {
         match decision {
             JobDecision::Completed { message } => {
                 assert_eq!(message, Some("Success".to_string()));
-            }
+            },
             _ => panic!("Expected Completed decision"),
         }
     }
@@ -318,7 +368,7 @@ mod tests {
                 assert_eq!(message, "Temporary failure");
                 assert_eq!(exception_trace, Some("Stack trace".to_string()));
                 assert_eq!(backoff_ms, 1000);
-            }
+            },
             _ => panic!("Expected Retry decision"),
         }
     }
@@ -336,7 +386,7 @@ mod tests {
             } => {
                 assert_eq!(message, "Permanent failure");
                 assert_eq!(exception_trace, None);
-            }
+            },
             _ => panic!("Expected Failed decision"),
         }
     }

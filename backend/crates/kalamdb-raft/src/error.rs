@@ -10,10 +10,7 @@ pub type Result<T> = std::result::Result<T, RaftError>;
 pub enum RaftError {
     /// The node is not the leader for this group
     #[error("Not leader for group {group}: leader is node {leader:?}")]
-    NotLeader {
-        group: String,
-        leader: Option<u64>,
-    },
+    NotLeader { group: String, leader: Option<u64> },
 
     /// Raft group not found
     #[error("Raft group not found: {0}")]
@@ -108,10 +105,10 @@ impl RaftError {
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            RaftError::NotLeader { .. } 
-            | RaftError::Timeout(_) 
-            | RaftError::Network(_)
-            | RaftError::ReplicationTimeout { .. }
+            RaftError::NotLeader { .. }
+                | RaftError::Timeout(_)
+                | RaftError::Network(_)
+                | RaftError::ReplicationTimeout { .. }
         )
     }
 
@@ -154,7 +151,7 @@ mod tests {
             RaftError::NotLeader { group, leader } => {
                 assert_eq!(group, "group_1");
                 assert_eq!(leader, Some(2));
-            }
+            },
             _ => panic!("Expected NotLeader error"),
         }
     }
@@ -191,11 +188,12 @@ mod tests {
         assert!(RaftError::not_leader("g1", Some(2)).is_retryable());
         assert!(RaftError::Timeout(std::time::Duration::from_secs(1)).is_retryable());
         assert!(RaftError::Network("connection lost".to_string()).is_retryable());
-        assert!(RaftError::ReplicationTimeout { 
-            group: "g1".to_string(), 
-            committed_log_id: "1-100".to_string(), 
-            timeout_ms: 5000 
-        }.is_retryable());
+        assert!(RaftError::ReplicationTimeout {
+            group: "g1".to_string(),
+            committed_log_id: "1-100".to_string(),
+            timeout_ms: 5000
+        }
+        .is_retryable());
 
         // Non-retryable errors
         assert!(!RaftError::ApplyFailed("failed".to_string()).is_retryable());
@@ -228,11 +226,9 @@ mod tests {
     fn test_from_bincode_encode_error() {
         // Create a bincode encode error by trying to encode something that will fail
         let value = std::f64::NAN;
-        let result: std::result::Result<Vec<u8>, _> = bincode::serde::encode_to_vec(
-            &value, 
-            bincode::config::standard()
-        );
-        
+        let result: std::result::Result<Vec<u8>, _> =
+            bincode::serde::encode_to_vec(&value, bincode::config::standard());
+
         if let Err(encode_err) = result {
             let raft_err: RaftError = encode_err.into();
             match raft_err {
@@ -267,7 +263,10 @@ mod tests {
     #[test]
     fn test_all_error_variants_are_errors() {
         let errors: Vec<RaftError> = vec![
-            RaftError::NotLeader { group: "g".to_string(), leader: None },
+            RaftError::NotLeader {
+                group: "g".to_string(),
+                leader: None,
+            },
             RaftError::GroupNotFound("g".to_string()),
             RaftError::InvalidGroup("g".to_string()),
             RaftError::NotStarted("g".to_string()),
@@ -278,7 +277,11 @@ mod tests {
             RaftError::Storage("e".to_string()),
             RaftError::Config("e".to_string()),
             RaftError::Timeout(std::time::Duration::from_secs(1)),
-            RaftError::ReplicationTimeout { group: "g".to_string(), committed_log_id: "1".to_string(), timeout_ms: 100 },
+            RaftError::ReplicationTimeout {
+                group: "g".to_string(),
+                committed_log_id: "1".to_string(),
+                timeout_ms: 100,
+            },
             RaftError::Shutdown,
             RaftError::InvalidState("s".to_string()),
             RaftError::Provider("p".to_string()),

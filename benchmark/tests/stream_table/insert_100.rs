@@ -14,10 +14,8 @@ fn stream_table_insert_100() -> anyhow::Result<()> {
     let mut total_server_ms = 0.0;
 
     for i in 1..=100 {
-        let sql = format!(
-            "INSERT INTO bench_stream.events (value) VALUES ('benchmark_value_{}')",
-            i
-        );
+        let sql =
+            format!("INSERT INTO bench_stream.events (value) VALUES ('benchmark_value_{}')", i);
         let execution = execute_cli_timed_root(&sql)?;
         total_cli_ms += execution.cli_total_ms;
         total_server_ms += execution.server_time_ms;

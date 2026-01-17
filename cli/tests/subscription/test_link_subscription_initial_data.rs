@@ -52,7 +52,7 @@ fn test_link_subscription_initial_batch_then_inserts() {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
             return;
-        }
+        },
     };
 
     // Wait for initial data - should receive ACK first, then InitialDataBatch
@@ -72,11 +72,11 @@ fn test_link_subscription_initial_batch_then_inserts() {
                 "Initial data batch should contain our inserted messages: {}",
                 batch_line
             );
-        }
+        },
         Err(e) => {
             eprintln!("⚠️  Did not receive InitialDataBatch within timeout: {}", e);
             // This is the key failure case we want to detect
-        }
+        },
     }
 
     // Now insert a new row - should receive INSERT event
@@ -96,16 +96,16 @@ fn test_link_subscription_initial_batch_then_inserts() {
                 "Insert event should contain the new message or id: {}",
                 insert_line
             );
-        }
+        },
         Err(e) => {
             eprintln!("⚠️  Did not receive Insert event: {}", e);
-        }
+        },
     }
 
     // Cleanup
     listener.stop().ok();
     let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
-    
+
     eprintln!("✓ Test completed successfully");
 }
 
@@ -142,7 +142,7 @@ fn test_link_subscription_empty_table_then_inserts() {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
             return;
-        }
+        },
     };
 
     // Wait for ACK (should indicate 0 rows)
@@ -150,10 +150,10 @@ fn test_link_subscription_empty_table_then_inserts() {
     match ack_result {
         Ok(ack_line) => {
             eprintln!("✓ Received subscription ACK for empty table: {}", ack_line);
-        }
+        },
         Err(e) => {
             eprintln!("⚠️  Did not receive ACK: {}", e);
-        }
+        },
     }
 
     // Insert a row - should receive INSERT event
@@ -173,16 +173,16 @@ fn test_link_subscription_empty_table_then_inserts() {
                 "Insert event should contain the event data: {}",
                 insert_line
             );
-        }
+        },
         Err(e) => {
             eprintln!("⚠️  Did not receive Insert event: {}", e);
-        }
+        },
     }
 
     // Cleanup
     listener.stop().ok();
     let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
-    
+
     eprintln!("✓ Test completed successfully");
 }
 
@@ -225,7 +225,7 @@ fn test_link_subscription_batch_status_transition() {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
             return;
-        }
+        },
     };
 
     // Collect all events for a few seconds
@@ -236,7 +236,7 @@ fn test_link_subscription_batch_status_transition() {
             Ok(Some(line)) => {
                 eprintln!("[EVENT] {}", line);
                 events.push(line);
-            }
+            },
             Ok(None) => break,
             Err(_) => continue,
         }
@@ -247,10 +247,17 @@ fn test_link_subscription_batch_status_transition() {
     let has_batch = events.iter().any(|e| e.contains("InitialDataBatch") || e.contains("rows:"));
     let has_ready_status = events.iter().any(|e| e.contains("Ready") || e.contains("ready"));
 
-    eprintln!("Event summary: has_ack={}, has_batch={}, has_ready={}", has_ack, has_batch, has_ready_status);
-    
+    eprintln!(
+        "Event summary: has_ack={}, has_batch={}, has_ready={}",
+        has_ack, has_batch, has_ready_status
+    );
+
     // At minimum we should get the ACK or some batch data
-    assert!(has_ack || has_batch, "Should receive either Ack or InitialDataBatch: {:?}", events);
+    assert!(
+        has_ack || has_batch,
+        "Should receive either Ack or InitialDataBatch: {:?}",
+        events
+    );
 
     // Cleanup
     listener.stop().ok();
@@ -286,7 +293,7 @@ fn test_link_subscription_multiple_live_inserts() {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
             return;
-        }
+        },
     };
 
     // Wait for ACK
@@ -299,7 +306,10 @@ fn test_link_subscription_multiple_live_inserts() {
     for (i, level) in levels.iter().enumerate() {
         let _ = execute_sql_as_root_via_cli(&format!(
             "INSERT INTO {} (id, level, message) VALUES ({}, '{}', 'Test message {}')",
-            table_full, i + 1, level, i + 1
+            table_full,
+            i + 1,
+            level,
+            i + 1
         ));
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -314,14 +324,14 @@ fn test_link_subscription_multiple_live_inserts() {
                     insert_count += 1;
                     eprintln!("[INSERT {}] {}", insert_count, line);
                 }
-            }
+            },
             Ok(None) => continue,
             Err(_) => continue,
         }
     }
 
     eprintln!("Received {} insert events out of {} expected", insert_count, levels.len());
-    
+
     // We should receive all insert events
     assert!(
         insert_count >= levels.len(),
@@ -371,7 +381,7 @@ fn test_link_subscription_delete_events() {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
             return;
-        }
+        },
     };
 
     // Wait for initial batch
@@ -379,20 +389,17 @@ fn test_link_subscription_delete_events() {
     let _ = listener.wait_for_event("InitialDataBatch", Duration::from_secs(3));
 
     // Delete the row
-    let _ = execute_sql_as_root_via_cli(&format!(
-        "DELETE FROM {} WHERE id = 1",
-        table_full
-    ));
+    let _ = execute_sql_as_root_via_cli(&format!("DELETE FROM {} WHERE id = 1", table_full));
 
     // Wait for DELETE event
     let delete_result = listener.wait_for_event("Delete", Duration::from_secs(5));
     match delete_result {
         Ok(delete_line) => {
             eprintln!("✓ Received Delete event: {}", delete_line);
-        }
+        },
         Err(e) => {
             eprintln!("⚠️  Did not receive Delete event: {}", e);
-        }
+        },
     }
 
     // Cleanup

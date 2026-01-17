@@ -9,9 +9,8 @@
 //! **Test Philosophy**: Follow TDD - these tests verify the unified authentication
 //! flow that is used by both HTTP and WebSocket handlers.
 
-
 use super::test_support::{auth_helper, TestServer};
-use kalamdb_commons::{Role, models::ConnectionInfo};
+use kalamdb_commons::{models::ConnectionInfo, Role};
 use std::sync::Arc;
 
 /// Test successful Basic Auth with valid credentials
@@ -38,9 +37,8 @@ async fn test_basic_auth_success() {
     let auth_request = AuthRequest::Header(auth_header);
 
     // Create user repository adapter
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
-        server.app_context.system_tables().users(),
-    ));
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
 
     // Authenticate using unified auth
     let result = authenticate(auth_request, &connection_info, &user_repo).await;
@@ -86,18 +84,14 @@ async fn test_basic_auth_invalid_credentials() {
     let auth_request = AuthRequest::Header(auth_header);
 
     // Create user repository adapter
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
-        server.app_context.system_tables().users(),
-    ));
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
 
     // Authenticate using unified auth
     let result = authenticate(auth_request, &connection_info, &user_repo).await;
 
     // Verify failure
-    assert!(
-        result.is_err(),
-        "Authentication should fail with invalid password"
-    );
+    assert!(result.is_err(), "Authentication should fail with invalid password");
 
     println!("✓ Invalid credentials correctly rejected");
 }
@@ -112,19 +106,15 @@ async fn test_basic_auth_missing_header() {
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
     // Create user repository adapter
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
-        server.app_context.system_tables().users(),
-    ));
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
 
     // Empty authorization header
     let auth_request = AuthRequest::Header("".to_string());
     let result = authenticate(auth_request, &connection_info, &user_repo).await;
 
     // Verify failure
-    assert!(
-        result.is_err(),
-        "Authentication should fail with missing header"
-    );
+    assert!(result.is_err(), "Authentication should fail with missing header");
 
     println!("✓ Missing Authorization header correctly rejected");
 }
@@ -139,9 +129,8 @@ async fn test_basic_auth_malformed_header() {
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
     // Create user repository adapter
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
-        server.app_context.system_tables().users(),
-    ));
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
 
     // Test various malformed headers
     let malformed_headers = vec![
@@ -178,9 +167,8 @@ async fn test_basic_auth_nonexistent_user() {
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
     // Create user repository adapter
-    let user_repo: Arc<dyn UserRepository> = Arc::new(CoreUsersRepo::new(
-        server.app_context.system_tables().users(),
-    ));
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
 
     // Create auth header for user that doesn't exist
     let credentials = general_purpose::STANDARD.encode("nonexistent:password123");
@@ -190,10 +178,7 @@ async fn test_basic_auth_nonexistent_user() {
     let result = authenticate(auth_request, &connection_info, &user_repo).await;
 
     // Verify failure
-    assert!(
-        result.is_err(),
-        "Authentication should fail for non-existent user"
-    );
+    assert!(result.is_err(), "Authentication should fail for non-existent user");
 
     println!("✓ Nonexistent user correctly rejected");
 }

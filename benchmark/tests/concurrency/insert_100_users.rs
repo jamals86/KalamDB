@@ -16,10 +16,7 @@ fn concurrency_insert_100_users() -> anyhow::Result<()> {
 
     // Simulate 100 concurrent users
     for i in 1..=100 {
-        let sql = format!(
-            "INSERT INTO bench_user.items (value) VALUES ('concurrent_value_{}')",
-            i
-        );
+        let sql = format!("INSERT INTO bench_user.items (value) VALUES ('concurrent_value_{}')", i);
         let execution = execute_cli_timed_root(&sql)?;
         total_cli_ms += execution.cli_total_ms;
         total_server_ms += execution.server_time_ms;

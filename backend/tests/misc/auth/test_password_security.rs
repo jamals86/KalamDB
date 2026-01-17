@@ -70,10 +70,7 @@ async fn test_concurrent_bcrypt_non_blocking() {
         duration.as_millis()
     );
 
-    println!(
-        "✓ 10 concurrent operations completed in {:?}ms",
-        duration.as_millis()
-    );
+    println!("✓ 10 concurrent operations completed in {:?}ms", duration.as_millis());
     println!("  Actual bcrypt hashing uses tokio::task::spawn_blocking");
     println!("  See: backend/crates/kalamdb-auth/src/password.rs::hash_password");
 }
@@ -109,10 +106,7 @@ async fn test_min_password_length_8() {
     ];
 
     for password in short_passwords {
-        println!(
-            "  ❌ Password with {} characters should be rejected (min: 8)",
-            password.len()
-        );
+        println!("  ❌ Password with {} characters should be rejected (min: 8)", password.len());
     }
 
     println!("✓ Minimum password length validation verified in kalamdb-auth unit tests");

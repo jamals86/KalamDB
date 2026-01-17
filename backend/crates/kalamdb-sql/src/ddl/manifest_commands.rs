@@ -21,11 +21,7 @@ impl ShowManifestStatement {
     /// * `Err(String)` if syntax is invalid
     pub fn parse(sql: &str) -> Result<Self, String> {
         // Normalize whitespace: split by whitespace and rejoin with single space
-        let normalized = sql
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .to_uppercase();
+        let normalized = sql.split_whitespace().collect::<Vec<_>>().join(" ").to_uppercase();
 
         // Validate exact syntax
         if normalized != "SHOW MANIFEST" {

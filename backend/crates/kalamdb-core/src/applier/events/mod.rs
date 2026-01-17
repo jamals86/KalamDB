@@ -8,7 +8,7 @@
 
 mod broadcast;
 
-use kalamdb_commons::models::{NamespaceId, TableId, UserId, StorageId};
+use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 
 pub use broadcast::EventBroadcaster;
@@ -32,7 +32,7 @@ pub enum DatabaseEvent {
     TableDropped {
         table_id: TableId,
     },
-    
+
     // Namespace events
     NamespaceCreated {
         namespace_id: NamespaceId,
@@ -40,7 +40,7 @@ pub enum DatabaseEvent {
     NamespaceDropped {
         namespace_id: NamespaceId,
     },
-    
+
     // Storage events
     StorageCreated {
         storage_id: StorageId,
@@ -48,7 +48,7 @@ pub enum DatabaseEvent {
     StorageDropped {
         storage_id: StorageId,
     },
-    
+
     // User events
     UserCreated {
         user_id: UserId,
@@ -59,7 +59,7 @@ pub enum DatabaseEvent {
     UserDeleted {
         user_id: UserId,
     },
-    
+
     // DML events
     RowsInserted {
         table_id: TableId,
@@ -76,7 +76,7 @@ pub enum DatabaseEvent {
         count: usize,
         user_id: Option<UserId>,
     },
-    
+
     // Flush events
     TableFlushed {
         table_id: TableId,
@@ -105,7 +105,7 @@ impl DatabaseEvent {
             Self::TableFlushed { .. } => "table_flushed",
         }
     }
-    
+
     /// Get the table ID if this event is table-related
     pub fn table_id(&self) -> Option<&TableId> {
         match self {
@@ -140,7 +140,7 @@ impl EventEmitter for NoOpEventEmitter {
 pub trait EventHandler: Send + Sync {
     /// Handle a database event
     fn handle(&self, event: &DatabaseEvent);
-    
+
     /// Check if this handler is interested in the event
     fn is_interested(&self, event: &DatabaseEvent) -> bool;
 }

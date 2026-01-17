@@ -106,10 +106,7 @@ impl UserTableProvider {
             );
         }
 
-        let pk_index = UserTablePkIndex::new(
-            core.table_id(),
-            &primary_key_field_name,
-        );
+        let pk_index = UserTablePkIndex::new(core.table_id(), &primary_key_field_name);
 
         Ok(Self {
             core,
@@ -158,9 +155,7 @@ impl UserTableProvider {
         pk_value: &ScalarValue,
     ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
         // Build prefix for PK index scan
-        let prefix = self
-            .pk_index
-            .build_prefix_for_pk(user_id.as_str(), pk_value);
+        let prefix = self.pk_index.build_prefix_for_pk(user_id.as_str(), pk_value);
 
         // Scan index for all versions with this PK
         let index_results = self
@@ -172,9 +167,7 @@ impl UserTableProvider {
             return Ok(None);
         }
 
-        if let Some((row_id, row)) = index_results
-            .into_iter()
-            .max_by_key(|(row_id, _)| row_id.seq)
+        if let Some((row_id, row)) = index_results.into_iter().max_by_key(|(row_id, _)| row_id.seq)
         {
             if row._deleted {
                 Ok(None)
@@ -237,7 +230,7 @@ impl UserTableProvider {
                     Err(err) => {
                         log::warn!("Skipping invalid UserTableRowId key bytes: {}", err);
                         None
-                    }
+                    },
                 }
             })
             .collect();
@@ -247,11 +240,8 @@ impl UserTableProvider {
             user_ids.insert(row.user_id.clone());
         }
 
-        if let Ok(scopes) = self
-            .core
-            .app_context
-            .manifest_service()
-            .list_user_scopes_for_table(table_id)
+        if let Ok(scopes) =
+            self.core.app_context.manifest_service().list_user_scopes_for_table(table_id)
         {
             user_ids.extend(scopes);
         }
@@ -319,17 +309,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         // Fast path: check hot storage for a non-deleted version
         if let Some((row_id, _row)) = self.find_by_pk(user_id, &pk_value)? {
-            log::trace!(
-                "[UserTableProvider] PK collision in hot storage: id={}",
-                id_value
-            );
+            log::trace!("[UserTableProvider] PK collision in hot storage: id={}", id_value);
             return Ok(Some(row_id));
         }
 
         // If hot storage has entries but all are deleted, the PK can be reused.
-        let hot_prefix = self
-            .pk_index
-            .build_prefix_for_pk(user_id.as_str(), &pk_value);
+        let hot_prefix = self.pk_index.build_prefix_for_pk(user_id.as_str(), &pk_value);
         let hot_has_versions = self
             .store
             .exists_by_index(0, &hot_prefix)
@@ -342,10 +327,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             return Ok(None);
         }
 
-        log::trace!(
-            "[UserTableProvider] PK {} not in hot storage, checking cold",
-            id_value
-        );
+        log::trace!("[UserTableProvider] PK {} not in hot storage, checking cold", id_value);
 
         // Not found in hot storage - check cold storage using optimized manifest-based lookup
         // This uses column_stats to prune segments that can't contain the PK
@@ -362,14 +344,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         )?;
 
         if exists_in_cold {
-            log::trace!(
-                "[UserTableProvider] PK {} exists in cold storage",
-                id_value
-            );
+            log::trace!("[UserTableProvider] PK {} exists in cold storage", id_value);
             // Load the actual row_id from cold storage so DELETE/UPDATE can target correct version
-            if let Some((row_id, _row)) =
-                base::find_row_by_pk(self, Some(user_id), id_value)?
-            {
+            if let Some((row_id, _row)) = base::find_row_by_pk(self, Some(user_id), id_value)? {
                 return Ok(Some(row_id));
             }
 
@@ -410,11 +387,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             KalamDbError::InvalidOperation(format!("Failed to insert user table row: {}", e))
         })?;
 
-        log::debug!(
-            "Inserted user table row for user {} with _seq {}",
-            user_id.as_str(),
-            seq_id
-        );
+        log::debug!("Inserted user table row for user {} with _seq {}", user_id.as_str(), seq_id);
 
         // Fire live query notification (INSERT)
         if let Some(manager) = &self.core.live_query_manager {
@@ -474,7 +447,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         for row_data in &coerced_rows {
             if let Some(pk_value) = row_data.get(pk_name) {
                 if !matches!(pk_value, ScalarValue::Null) {
-                    let pk_str = crate::providers::unified_dml::extract_user_pk_value(row_data, pk_name)?;
+                    let pk_str =
+                        crate::providers::unified_dml::extract_user_pk_value(row_data, pk_name)?;
                     let prefix = self.pk_index.build_prefix_for_pk(user_id.as_str(), pk_value);
                     pk_values_to_check.push((pk_str, prefix));
                 }
@@ -498,9 +472,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 // Larger batch: use batch index scan for efficiency
                 // Build common prefix for this user's PKs
                 let user_prefix = self.pk_index.build_user_prefix(user_id.as_str());
-                let prefixes: Vec<Vec<u8>> = pk_values_to_check.iter().map(|(_, p)| p.clone()).collect();
+                let prefixes: Vec<Vec<u8>> =
+                    pk_values_to_check.iter().map(|(_, p)| p.clone()).collect();
 
-                let existing = self.store.exists_batch_by_index(0, &user_prefix, &prefixes)
+                let existing = self
+                    .store
+                    .exists_batch_by_index(0, &user_prefix, &prefixes)
                     .into_kalamdb_error("Batch PK index scan failed")?;
 
                 // Check if any of the requested PKs already exist
@@ -552,6 +529,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Fire live query notifications (one per row - async fire-and-forget)
         if let Some(manager) = &self.core.live_query_manager {
             let table_id = self.core.table_id().clone();
+            log::debug!(
+                "UserTableProvider::insert_batch: Sending {} notifications for user={}, table={}",
+                entries.len(),
+                user_id.as_str(),
+                table_id
+            );
 
             for (_row_key, entity) in entries.iter() {
                 // Build complete row including system columns (_seq, _deleted)
@@ -559,6 +542,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 let notification = ChangeNotification::insert(table_id.clone(), row);
                 manager.notify_table_change_async(user_id.clone(), table_id.clone(), notification);
             }
+        } else {
+            log::debug!(
+                "UserTableProvider::insert_batch: No live_query_manager for table={}",
+                self.core.table_id()
+            );
         }
 
         Ok(row_keys)
@@ -604,20 +592,19 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         // Find latest resolved row for this PK under same user
         // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet scan)
-        let (_latest_key, latest_row) = if let Some(result) =
-            self.find_by_pk(user_id, &pk_value_scalar)?
-        {
-            result
-        } else {
-            // Not in hot storage, check cold storage
-            let pk_value_str = pk_value_scalar.to_string();
-            base::find_row_by_pk(self, Some(user_id), &pk_value_str)?.ok_or_else(|| {
-                KalamDbError::NotFound(format!(
-                    "Row with {}={} not found",
-                    pk_name, pk_value_scalar
-                ))
-            })?
-        };
+        let (_latest_key, latest_row) =
+            if let Some(result) = self.find_by_pk(user_id, &pk_value_scalar)? {
+                result
+            } else {
+                // Not in hot storage, check cold storage
+                let pk_value_str = pk_value_scalar.to_string();
+                base::find_row_by_pk(self, Some(user_id), &pk_value_str)?.ok_or_else(|| {
+                    KalamDbError::NotFound(format!(
+                        "Row with {}={} not found",
+                        pk_name, pk_value_scalar
+                    ))
+                })?
+            };
 
         // Merge updates onto latest
         let mut merged = latest_row.fields.values.clone();
@@ -673,16 +660,15 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         // Find latest resolved row for this PK under same user
         // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet scan)
-        let (_latest_key, latest_row) = if let Some(result) =
-            self.find_by_pk(user_id, &pk_value_scalar)?
-        {
-            result
-        } else {
-            // Not in hot storage, check cold storage
-            base::find_row_by_pk(self, Some(user_id), pk_value)?.ok_or_else(|| {
-                KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value))
-            })?
-        };
+        let (_latest_key, latest_row) =
+            if let Some(result) = self.find_by_pk(user_id, &pk_value_scalar)? {
+                result
+            } else {
+                // Not in hot storage, check cold storage
+                base::find_row_by_pk(self, Some(user_id), pk_value)?.ok_or_else(|| {
+                    KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value))
+                })?
+            };
 
         // Merge updates onto latest
         let mut merged = latest_row.fields.values.clone();
@@ -809,9 +795,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         // Privileged roles can scan across all users for read access; others remain scoped to
         // their own user_id for RLS.
-        let keep_deleted = filter
-            .map(base::filter_uses_deleted_column)
-            .unwrap_or(false);
+        let keep_deleted = filter.map(base::filter_uses_deleted_column).unwrap_or(false);
 
         let kvs = if allow_all_users {
             self.scan_all_users_with_version_resolution(filter, limit, keep_deleted)?
@@ -848,7 +832,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         keep_deleted: bool,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
         let table_id = self.core.table_id();
-        
+
         // Warn if no filter or limit - potential performance issue
         base::warn_if_unfiltered_scan(table_id, filter, limit, self.core.table_type());
 
@@ -894,7 +878,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     Err(err) => {
                         log::warn!("Skipping invalid UserTableRowId key bytes: {}", err);
                         None
-                    }
+                    },
                 }
             })
             .collect();
@@ -950,7 +934,6 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         Ok(result)
     }
-
 
     fn extract_row(row: &UserTableRow) -> &Row {
         &row.fields

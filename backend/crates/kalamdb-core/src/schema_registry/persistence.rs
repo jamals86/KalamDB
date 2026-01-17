@@ -1,6 +1,6 @@
+use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::app_context::AppContext;
 use crate::schema_registry::cached_table_data::CachedTableData;
 use crate::schema_registry::table_cache::TableCache;
 use kalamdb_commons::models::schemas::TableDefinition;
@@ -49,13 +49,13 @@ impl SchemaPersistence {
     }
 
     /// Scan all table definitions from persistence layer
-    pub fn scan_all_table_definitions(app_ctx: &AppContext) -> Result<Vec<TableDefinition>, KalamDbError> {
+    pub fn scan_all_table_definitions(
+        app_ctx: &AppContext,
+    ) -> Result<Vec<TableDefinition>, KalamDbError> {
         let tables_provider = app_ctx.system_tables().tables();
 
         // Scan all tables from storage
-        tables_provider
-            .scan_all()
-            .into_kalamdb_error("Failed to scan tables")
+        tables_provider.scan_all().into_kalamdb_error("Failed to scan tables")
     }
 
     /// Check if table exists in persistence layer
@@ -85,7 +85,7 @@ impl SchemaPersistence {
                 let data = CachedTableData::from_table_definition(app_ctx, table_id, table_arc)?;
                 cache.insert(table_id.clone(), Arc::new(data));
                 Ok(true)
-            }
+            },
             None => Ok(false),
         }
     }
@@ -122,10 +122,11 @@ impl SchemaPersistence {
             Some(table_def) => {
                 // Cache the result with fully initialized storage config
                 let table_arc = Arc::new(table_def);
-                let data = CachedTableData::from_table_definition(app_ctx, table_id, table_arc.clone())?;
+                let data =
+                    CachedTableData::from_table_definition(app_ctx, table_id, table_arc.clone())?;
                 cache.insert(table_id.clone(), Arc::new(data));
                 Ok(Some(table_arc))
-            }
+            },
             None => Ok(None),
         }
     }

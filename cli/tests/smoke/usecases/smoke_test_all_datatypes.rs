@@ -103,15 +103,15 @@ fn smoke_all_datatypes_user_shared_stream() {
     );
 
     // Parse JSON to extract IDs
-    let json_value: serde_json::Value = serde_json::from_str(&user_out_json)
-        .expect("Failed to parse JSON response");
-    let rows = get_rows_as_hashmaps(&json_value)
-        .expect("Expected rows in JSON response");
+    let json_value: serde_json::Value =
+        serde_json::from_str(&user_out_json).expect("Failed to parse JSON response");
+    let rows = get_rows_as_hashmaps(&json_value).expect("Expected rows in JSON response");
 
     let mut first_id: Option<String> = None;
     let mut second_id: Option<String> = None;
     for row in &rows {
-        let text_col_value = row.get("text_col").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
+        let text_col_value =
+            row.get("text_col").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
         let text_col = text_col_value.as_str().unwrap_or("");
         let id_value = row.get("id").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
         let id = json_value_as_id(&id_value);
@@ -128,11 +128,8 @@ fn smoke_all_datatypes_user_shared_stream() {
     let second_id = second_id.expect("parsed second user id");
 
     // 5) DELETE first row & UPDATE second row in USER table
-    execute_sql_as_root_via_client(&format!(
-        "DELETE FROM {} WHERE id = {}",
-        user_full, first_id
-    ))
-    .expect("delete user first row should succeed");
+    execute_sql_as_root_via_client(&format!("DELETE FROM {} WHERE id = {}", user_full, first_id))
+        .expect("delete user first row should succeed");
     execute_sql_as_root_via_client(&format!(
         "UPDATE {} SET text_col='upd' WHERE id = {}",
         user_full, second_id
@@ -147,27 +144,24 @@ fn smoke_all_datatypes_user_shared_stream() {
         "Expected updated text_col token 'upd': {}",
         user_out2
     );
-    assert!(
-        !user_out2.contains("hello"),
-        "Deleted row should be gone: {}",
-        user_out2
-    );
+    assert!(!user_out2.contains("hello"), "Deleted row should be gone: {}", user_out2);
 
     // 7) Perform CRUD on SHARED table (DELETE + UPDATE) using JSON output
     let shared_select_ids = format!("SELECT id, text_col FROM {} ORDER BY id", shared_full);
-    let shared_out_json =
-        execute_sql_as_root_via_client_json(&shared_select_ids).expect("select shared should succeed");
-    
+    let shared_out_json = execute_sql_as_root_via_client_json(&shared_select_ids)
+        .expect("select shared should succeed");
+
     // Parse JSON to extract IDs
-    let shared_json: serde_json::Value = serde_json::from_str(&shared_out_json)
-        .expect("Failed to parse shared JSON response");
-    let shared_rows = get_rows_as_hashmaps(&shared_json)
-        .expect("Expected rows in shared JSON response");
+    let shared_json: serde_json::Value =
+        serde_json::from_str(&shared_out_json).expect("Failed to parse shared JSON response");
+    let shared_rows =
+        get_rows_as_hashmaps(&shared_json).expect("Expected rows in shared JSON response");
 
     let mut s_first: Option<String> = None;
     let mut s_second: Option<String> = None;
     for row in &shared_rows {
-        let text_col_value = row.get("text_col").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
+        let text_col_value =
+            row.get("text_col").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
         let text_col = text_col_value.as_str().unwrap_or("");
         let id_value = row.get("id").map(extract_typed_value).unwrap_or(serde_json::Value::Null);
         let id = json_value_as_id(&id_value);
@@ -183,11 +177,8 @@ fn smoke_all_datatypes_user_shared_stream() {
     let s_first = s_first.expect("parsed shared first id");
     let s_second = s_second.expect("parsed shared second id");
 
-    execute_sql_as_root_via_client(&format!(
-        "DELETE FROM {} WHERE id = {}",
-        shared_full, s_first
-    ))
-    .expect("delete shared first row should succeed");
+    execute_sql_as_root_via_client(&format!("DELETE FROM {} WHERE id = {}", shared_full, s_first))
+        .expect("delete shared first row should succeed");
     execute_sql_as_root_via_client(&format!(
         "UPDATE {} SET text_col='shared_upd' WHERE id = {}",
         shared_full, s_second
@@ -222,10 +213,10 @@ fn smoke_all_datatypes_user_shared_stream() {
         stream_out
     );
     // Check row count using JSON
-    let stream_out_json =
-        execute_sql_as_root_via_client_json(&stream_sel).expect("select stream json should succeed");
-    let stream_json: serde_json::Value = serde_json::from_str(&stream_out_json)
-        .expect("Failed to parse stream JSON response");
+    let stream_out_json = execute_sql_as_root_via_client_json(&stream_sel)
+        .expect("select stream json should succeed");
+    let stream_json: serde_json::Value =
+        serde_json::from_str(&stream_out_json).expect("Failed to parse stream JSON response");
     let stream_rows = stream_json
         .get("results")
         .and_then(|v| v.as_array())

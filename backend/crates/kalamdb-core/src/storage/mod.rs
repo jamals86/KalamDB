@@ -20,14 +20,9 @@ pub use kalamdb_filestore::{
 
 // Re-export unified object_store operations
 pub use kalamdb_filestore::{
-    delete_file, delete_file_sync,
-    delete_prefix, delete_prefix_sync,
-    head_file, head_file_sync,
-    list_files, list_files_sync,
-    prefix_exists, prefix_exists_sync,
-    read_file, read_file_sync,
-    write_file, write_file_sync,
-    FileMetadata,
+    delete_file, delete_file_sync, delete_prefix, delete_prefix_sync, head_file, head_file_sync,
+    list_files, list_files_sync, prefix_exists, prefix_exists_sync, read_file, read_file_sync,
+    write_file, write_file_sync, FileMetadata,
 };
 
 // Re-export cached storage and registry

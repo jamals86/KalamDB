@@ -6,7 +6,6 @@
 //! Verifies that the schema cache is properly invalidated when tables are
 //! created, altered, or dropped, ensuring stale schemas are never served.
 
-
 use kalamdb_commons::models::TableId;
 use kalamdb_core::schema_registry::SchemaRegistry;
 use kalamdb_core::system_table_registration::register_system_tables;
@@ -86,10 +85,7 @@ async fn test_cache_invalidation_removes_entry() {
     schema_registry.insert(table_id.clone(), table_def);
 
     // Verify entry exists
-    assert!(
-        schema_registry.get(&table_id).is_some(),
-        "Table should be in cache"
-    );
+    assert!(schema_registry.get(&table_id).is_some(), "Table should be in cache");
     assert_eq!(
         schema_registry.len(),
         initial_cache_size + 1,
@@ -159,10 +155,7 @@ async fn test_cache_invalidation_forces_cache_miss() {
 
     // Access again - should be a miss
     let result = schema_registry.get(&table_id);
-    assert!(
-        result.is_none(),
-        "Should be a cache miss after invalidation"
-    );
+    assert!(result.is_none(), "Should be a cache miss after invalidation");
 
     // Verify miss count increased
     let (hits_after, misses_after, _, _) = schema_registry.stats();
@@ -229,18 +222,9 @@ async fn test_selective_invalidation_preserves_other_entries() {
     let table_1_id = TableId::from_strings("default", "test_table_1");
     let table_3_id = TableId::from_strings("default", "test_table_3");
 
-    assert!(
-        schema_registry.get(&table_1_id).is_some(),
-        "Table 1 should still be cached"
-    );
-    assert!(
-        schema_registry.get(&table_2_id).is_none(),
-        "Table 2 should be invalidated"
-    );
-    assert!(
-        schema_registry.get(&table_3_id).is_some(),
-        "Table 3 should still be cached"
-    );
+    assert!(schema_registry.get(&table_1_id).is_some(), "Table 1 should still be cached");
+    assert!(schema_registry.get(&table_2_id).is_none(), "Table 2 should be invalidated");
+    assert!(schema_registry.get(&table_3_id).is_some(), "Table 3 should still be cached");
 }
 
 #[tokio::test]
@@ -337,9 +321,5 @@ async fn test_cache_stats_track_invalidation_behavior() {
     let (hits, misses, _, size) = schema_registry.stats();
     assert_eq!(hits, 2, "Should have 2 hits");
     assert_eq!(misses, 1, "Should have 1 miss");
-    assert_eq!(
-        size,
-        initial_cache_size + 1,
-        "Should have 1 additional entry"
-    );
+    assert_eq!(size, initial_cache_size + 1, "Should have 1 additional entry");
 }

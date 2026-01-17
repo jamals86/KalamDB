@@ -10,6 +10,6 @@
 pub(super) mod test_support;
 
 // Table Tests
-mod test_user_tables_http;
 mod test_shared_tables_http;
 mod test_stream_tables_http;
+mod test_user_tables_http;

@@ -72,10 +72,10 @@ mod tests {
         let storage = create_test_storage("local", "Local Storage");
 
         // Put storage
-        EntityStore::put(&store, &storage_id, &storage).unwrap();
+        store.put(&storage_id, &storage).unwrap();
 
         // Get storage
-        let retrieved = EntityStore::get(&store, &storage_id).unwrap();
+        let retrieved = store.get(&storage_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.storage_id, storage_id);
@@ -89,11 +89,11 @@ mod tests {
         let storage = create_test_storage("local", "Local Storage");
 
         // Put then delete
-        EntityStore::put(&store, &storage_id, &storage).unwrap();
-        EntityStore::delete(&store, &storage_id).unwrap();
+        store.put(&storage_id, &storage).unwrap();
+        store.delete(&storage_id).unwrap();
 
         // Verify deleted
-        let retrieved = EntityStore::get(&store, &storage_id).unwrap();
+        let retrieved = store.get(&storage_id).unwrap();
         assert!(retrieved.is_none());
     }
 
@@ -105,11 +105,11 @@ mod tests {
         for i in 1..=3 {
             let storage_id = StorageId::new(format!("storage{}", i));
             let storage = create_test_storage(&format!("storage{}", i), &format!("Storage {}", i));
-            EntityStore::put(&store, &storage_id, &storage).unwrap();
+            store.put(&storage_id, &storage).unwrap();
         }
 
         // Scan all
-        let storages = EntityStore::scan_all(&store, None, None, None).unwrap();
+        let storages = store.scan_all(None, None, None).unwrap();
         assert_eq!(storages.len(), 3);
     }
 

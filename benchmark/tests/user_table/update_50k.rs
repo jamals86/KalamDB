@@ -20,10 +20,7 @@ fn user_table_update_50k() -> anyhow::Result<()> {
             values.push(format!("('benchmark_value_{}')", idx));
         }
 
-        let sql = format!(
-            "INSERT INTO bench_user.items (value) VALUES {}",
-            values.join(", ")
-        );
+        let sql = format!("INSERT INTO bench_user.items (value) VALUES {}", values.join(", "));
         execute_cli_timed_root(&sql)?;
     }
     std::thread::sleep(Duration::from_millis(200));

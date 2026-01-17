@@ -1,4 +1,3 @@
-
 #[ignore = "requires running backend server"]
 #[test]
 fn user_table_insert_50k() -> anyhow::Result<()> {

@@ -13,9 +13,8 @@ use kalamdb_commons::models::{NodeId, UserId};
 
 use crate::cluster_types::NodeStatus;
 use crate::{
-    manager::RaftManager,
-    ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId, KalamNode, MetaCommand,
-    MetaResponse, RaftError, SharedDataCommand, UserDataCommand,
+    manager::RaftManager, ClusterInfo, ClusterNodeInfo, CommandExecutor, DataResponse, GroupId,
+    KalamNode, MetaCommand, MetaResponse, RaftError, SharedDataCommand, UserDataCommand,
 };
 
 /// Result type for executor operations
@@ -36,7 +35,7 @@ impl RaftExecutor {
     pub fn new(manager: Arc<RaftManager>) -> Self {
         Self { manager }
     }
-    
+
     /// Get a reference to the underlying RaftManager
     ///
     /// This is used during AppContext initialization to wire up appliers
@@ -44,12 +43,12 @@ impl RaftExecutor {
     pub fn manager(&self) -> &Arc<RaftManager> {
         &self.manager
     }
-    
+
     /// Compute the shard for a user based on their ID
     fn user_shard(&self, user_id: &UserId) -> u32 {
-        use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
-        
+        use std::hash::{Hash, Hasher};
+
         let num_shards = self.manager.config().user_shards;
         let mut hasher = DefaultHasher::new();
         user_id.as_str().hash(&mut hasher);
@@ -63,20 +62,24 @@ impl CommandExecutor for RaftExecutor {
         self.manager.propose_meta(cmd).await
     }
 
-    async fn execute_user_data(&self, user_id: &UserId, mut cmd: UserDataCommand) -> Result<DataResponse> {
+    async fn execute_user_data(
+        &self,
+        user_id: &UserId,
+        mut cmd: UserDataCommand,
+    ) -> Result<DataResponse> {
         // Stamp the watermark: capture current Meta group's last applied index
         let meta_index = self.manager.current_meta_index();
         cmd.set_required_meta_index(meta_index);
-        
+
         let shard = self.user_shard(user_id);
         let response = self.manager.propose_user_data(shard, cmd).await?;
-        
+
         // Check if the response is an error and convert to RaftError
         // Use Internal instead of Provider since the message already contains full context
         if let DataResponse::Error { message } = response {
             return Err(RaftError::Internal(message));
         }
-        
+
         Ok(response)
     }
 
@@ -84,16 +87,16 @@ impl CommandExecutor for RaftExecutor {
         // Stamp the watermark: capture current Meta group's last applied index
         let meta_index = self.manager.current_meta_index();
         cmd.set_required_meta_index(meta_index);
-        
+
         // All shared data goes to shard 0
         let response = self.manager.propose_shared_data(0, cmd).await?;
-        
+
         // Check if the response is an error and convert to RaftError
         // Use Internal instead of Provider since the message already contains full context
         if let DataResponse::Error { message } = response {
             return Err(RaftError::Internal(message));
         }
-        
+
         Ok(response)
     }
 
@@ -112,12 +115,12 @@ impl CommandExecutor for RaftExecutor {
     fn node_id(&self) -> NodeId {
         self.manager.node_id()
     }
-    
+
     fn get_cluster_info(&self) -> ClusterInfo {
         let config = self.manager.config();
         let all_groups = self.manager.all_group_ids();
         let total_groups = all_groups.len() as u32;
-        
+
         // Count how many groups this node leads
         let mut self_groups_leading = 0;
         for group in &all_groups {
@@ -125,57 +128,68 @@ impl CommandExecutor for RaftExecutor {
                 self_groups_leading += 1;
             }
         }
-        
+
         let meta_metrics = self.manager.meta_metrics();
         let mut voter_ids = BTreeSet::new();
         let mut nodes_map: BTreeMap<u64, KalamNode> = BTreeMap::new();
 
         // Extract metrics from OpenRaft
-        let (leader_id, current_term, last_log_index, last_applied, millis_since_quorum_ack, replication_metrics, self_state) = 
-            if let Some(metrics) = meta_metrics.as_ref() {
-                voter_ids.extend(metrics.membership_config.voter_ids());
-                for (node_id, node) in metrics.membership_config.nodes() {
-                    nodes_map.insert(*node_id, node.clone());
-                }
-                
-                (
-                    metrics.current_leader,
-                    metrics.current_term,
-                    metrics.last_log_index,
-                    metrics.last_applied.map(|log_id| log_id.index),
-                    metrics.millis_since_quorum_ack,
-                    metrics.replication.clone(),
-                    metrics.state,
-                )
-            } else {
-                // Fallback to config when metrics not available
+        let (
+            leader_id,
+            current_term,
+            last_log_index,
+            last_applied,
+            millis_since_quorum_ack,
+            replication_metrics,
+            self_state,
+        ) = if let Some(metrics) = meta_metrics.as_ref() {
+            voter_ids.extend(metrics.membership_config.voter_ids());
+            for (node_id, node) in metrics.membership_config.nodes() {
+                nodes_map.insert(*node_id, node.clone());
+            }
+
+            (
+                metrics.current_leader,
+                metrics.current_term,
+                metrics.last_log_index,
+                metrics.last_applied.map(|log_id| log_id.index),
+                metrics.millis_since_quorum_ack,
+                metrics.replication.clone(),
+                metrics.state,
+            )
+        } else {
+            // Fallback to config when metrics not available
+            nodes_map.insert(
+                config.node_id.as_u64(),
+                KalamNode {
+                    rpc_addr: config.rpc_addr.clone(),
+                    api_addr: config.api_addr.clone(),
+                },
+            );
+            for peer in &config.peers {
                 nodes_map.insert(
-                    config.node_id.as_u64(),
+                    peer.node_id.as_u64(),
                     KalamNode {
-                        rpc_addr: config.rpc_addr.clone(),
-                        api_addr: config.api_addr.clone(),
+                        rpc_addr: peer.rpc_addr.clone(),
+                        api_addr: peer.api_addr.clone(),
                     },
                 );
-                for peer in &config.peers {
-                    nodes_map.insert(
-                        peer.node_id.as_u64(),
-                        KalamNode {
-                            rpc_addr: peer.rpc_addr.clone(),
-                            api_addr: peer.api_addr.clone(),
-                        },
-                    );
-                }
-                voter_ids.extend(nodes_map.keys().copied());
-                (
-                    if self_groups_leading > 0 { Some(config.node_id.as_u64()) } else { None },
-                    0,
-                    None,
-                    None,
-                    None,
-                    None,
-                    ServerState::Follower,
-                )
-            };
+            }
+            voter_ids.extend(nodes_map.keys().copied());
+            (
+                if self_groups_leading > 0 {
+                    Some(config.node_id.as_u64())
+                } else {
+                    None
+                },
+                0,
+                None,
+                None,
+                None,
+                None,
+                ServerState::Follower,
+            )
+        };
 
         // Determine self status from OpenRaft running state
         let self_status = if let Some(metrics) = meta_metrics.as_ref() {
@@ -202,7 +216,7 @@ impl CommandExecutor for RaftExecutor {
         for (node_id, node) in nodes_map {
             let is_self = node_id == config.node_id.as_u64();
             let is_leader = leader_id == Some(node_id);
-            
+
             // Determine role for each node using OpenRaft ServerState
             // If not a voter, it's a learner (non-voting member)
             let role = if is_self {
@@ -215,7 +229,7 @@ impl CommandExecutor for RaftExecutor {
                 // Node is in membership but not a voter = learner
                 ServerState::Learner
             };
-            
+
             // Determine status and replication metrics for other nodes
             let (status, replication_lag, last_applied_log, catchup_progress_pct) = if is_self {
                 (self_status, None, last_applied, None)
@@ -226,22 +240,23 @@ impl CommandExecutor for RaftExecutor {
                     let leader_log_idx = last_log_index.unwrap_or(0);
                     let lag = Some(leader_log_idx.saturating_sub(matched_index));
                     let applied = Some(matched_index);
-                    
+
                     // Calculate catchup progress
                     // If lag > 0, node is catching up
-                    let (node_status, progress) = if leader_log_idx > 0 && matched_index < leader_log_idx {
-                        // Calculate progress as percentage
-                        let pct = if leader_log_idx > 0 {
-                            ((matched_index as f64 / leader_log_idx as f64) * 100.0) as u8
+                    let (node_status, progress) =
+                        if leader_log_idx > 0 && matched_index < leader_log_idx {
+                            // Calculate progress as percentage
+                            let pct = if leader_log_idx > 0 {
+                                ((matched_index as f64 / leader_log_idx as f64) * 100.0) as u8
+                            } else {
+                                100
+                            };
+                            (NodeStatus::CatchingUp, Some(pct))
                         } else {
-                            100
+                            // No lag = active
+                            (NodeStatus::Active, None)
                         };
-                        (NodeStatus::CatchingUp, Some(pct))
-                    } else {
-                        // No lag = active
-                        (NodeStatus::Active, None)
-                    };
-                    
+
                     (node_status, lag, applied, progress)
                 } else {
                     // Node in membership but no replication info yet
@@ -271,7 +286,7 @@ impl CommandExecutor for RaftExecutor {
                 replication_lag,
             });
         }
-        
+
         ClusterInfo {
             cluster_id: config.cluster_id.clone(),
             current_node_id: config.node_id,
@@ -286,25 +301,25 @@ impl CommandExecutor for RaftExecutor {
             millis_since_quorum_ack,
         }
     }
-    
+
     async fn start(&self) -> Result<()> {
         // First start the RPC server so we can receive incoming Raft RPCs
         let rpc_addr = self.manager.config().rpc_addr.clone();
         crate::network::start_rpc_server(self.manager.clone(), rpc_addr).await?;
-        
+
         // Then start the Raft groups
         self.manager.start().await
     }
-    
+
     async fn initialize_cluster(&self) -> Result<()> {
         self.manager.initialize_cluster().await
     }
-    
+
     async fn shutdown(&self) -> Result<()> {
         log::info!("RaftExecutor shutting down with graceful cluster leave...");
         self.manager.shutdown().await
     }
-    
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

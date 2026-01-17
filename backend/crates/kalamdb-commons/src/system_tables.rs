@@ -30,6 +30,8 @@ pub enum SystemTable {
     LiveQueries,
     /// system.jobs - Background job tracking (persisted)
     Jobs,
+    /// system.job_nodes - Per-node job execution state (persisted)
+    JobNodes,
     /// system.audit_log - Administrative audit trail (persisted)
     AuditLog,
     /// system.manifest - Manifest cache entries for query optimization (persisted)
@@ -61,6 +63,7 @@ impl SystemTable {
             SystemTable::Storages => "storages",
             SystemTable::LiveQueries => "live_queries",
             SystemTable::Jobs => "jobs",
+            SystemTable::JobNodes => "job_nodes",
             SystemTable::AuditLog => "audit_log",
             SystemTable::Manifest => "manifest",
             // Views
@@ -102,6 +105,7 @@ impl SystemTable {
             SystemTable::Storages => Some("system_storages"),
             SystemTable::LiveQueries => Some("system_live_queries"),
             SystemTable::Jobs => Some("system_jobs"),
+            SystemTable::JobNodes => Some("system_job_nodes"),
             SystemTable::AuditLog => Some("system_audit_log"),
             SystemTable::Manifest => Some("manifest_cache"),
             // Views have no column family
@@ -128,6 +132,7 @@ impl SystemTable {
             "storages" | "system_storages" => Ok(SystemTable::Storages),
             "live_queries" | "system_live_queries" => Ok(SystemTable::LiveQueries),
             "jobs" | "system_jobs" => Ok(SystemTable::Jobs),
+            "job_nodes" | "system_job_nodes" => Ok(SystemTable::JobNodes),
             "audit_log" | "system_audit_log" => Ok(SystemTable::AuditLog),
             "manifest" | "manifest_cache" => Ok(SystemTable::Manifest),
             // Views
@@ -151,6 +156,7 @@ impl SystemTable {
             SystemTable::Storages,
             SystemTable::LiveQueries,
             SystemTable::Jobs,
+            SystemTable::JobNodes,
             SystemTable::AuditLog,
             SystemTable::Manifest,
         ]
@@ -179,6 +185,7 @@ impl SystemTable {
             SystemTable::Storages,
             SystemTable::LiveQueries,
             SystemTable::Jobs,
+            SystemTable::JobNodes,
             SystemTable::AuditLog,
             SystemTable::Manifest,
             // Views
@@ -205,24 +212,17 @@ impl SystemTable {
         use crate::storage::Partition;
         use once_cell::sync::Lazy;
 
-        static USERS: Lazy<Partition> =
-            Lazy::new(|| Partition::new("system_users"));
-        static NAMESPACES: Lazy<Partition> =
-            Lazy::new(|| Partition::new("system_namespaces"));
-        static TABLES: Lazy<Partition> =
-            Lazy::new(|| Partition::new("system_tables"));
+        static USERS: Lazy<Partition> = Lazy::new(|| Partition::new("system_users"));
+        static NAMESPACES: Lazy<Partition> = Lazy::new(|| Partition::new("system_namespaces"));
+        static TABLES: Lazy<Partition> = Lazy::new(|| Partition::new("system_tables"));
         static TABLE_SCHEMAS: Lazy<Partition> =
             Lazy::new(|| Partition::new("system_table_schemas"));
-        static STORAGES: Lazy<Partition> =
-            Lazy::new(|| Partition::new("system_storages"));
-        static LIVE_QUERIES: Lazy<Partition> =
-            Lazy::new(|| Partition::new("system_live_queries"));
-        static JOBS: Lazy<Partition> =
-            Lazy::new(|| Partition::new("system_jobs"));
-        static AUDIT_LOG: Lazy<Partition> =
-            Lazy::new(|| Partition::new("system_audit_log"));
-        static MANIFEST: Lazy<Partition> =
-            Lazy::new(|| Partition::new("manifest_cache"));
+        static STORAGES: Lazy<Partition> = Lazy::new(|| Partition::new("system_storages"));
+        static LIVE_QUERIES: Lazy<Partition> = Lazy::new(|| Partition::new("system_live_queries"));
+        static JOBS: Lazy<Partition> = Lazy::new(|| Partition::new("system_jobs"));
+        static JOB_NODES: Lazy<Partition> = Lazy::new(|| Partition::new("system_job_nodes"));
+        static AUDIT_LOG: Lazy<Partition> = Lazy::new(|| Partition::new("system_audit_log"));
+        static MANIFEST: Lazy<Partition> = Lazy::new(|| Partition::new("manifest_cache"));
 
         match self {
             SystemTable::Users => Some(&USERS),
@@ -232,6 +232,7 @@ impl SystemTable {
             SystemTable::Storages => Some(&STORAGES),
             SystemTable::LiveQueries => Some(&LIVE_QUERIES),
             SystemTable::Jobs => Some(&JOBS),
+            SystemTable::JobNodes => Some(&JOB_NODES),
             SystemTable::AuditLog => Some(&AUDIT_LOG),
             SystemTable::Manifest => Some(&MANIFEST),
             // Views have no partition
@@ -370,15 +371,9 @@ mod tests {
     fn test_column_family_name() {
         // Tables have column families
         assert_eq!(SystemTable::Users.column_family_name(), Some("system_users"));
-        assert_eq!(
-            SystemTable::Namespaces.column_family_name(),
-            Some("system_namespaces")
-        );
+        assert_eq!(SystemTable::Namespaces.column_family_name(), Some("system_namespaces"));
         assert_eq!(SystemTable::Jobs.column_family_name(), Some("system_jobs"));
-        assert_eq!(
-            SystemTable::AuditLog.column_family_name(),
-            Some("system_audit_log")
-        );
+        assert_eq!(SystemTable::AuditLog.column_family_name(), Some("system_audit_log"));
         // Views have no column family
         assert_eq!(SystemTable::Stats.column_family_name(), None);
         assert_eq!(SystemTable::Cluster.column_family_name(), None);
@@ -388,24 +383,12 @@ mod tests {
     fn test_from_name() {
         // Tables
         assert_eq!(SystemTable::from_name("users").unwrap(), SystemTable::Users);
-        assert_eq!(
-            SystemTable::from_name("system.users").unwrap(),
-            SystemTable::Users
-        );
-        assert_eq!(
-            SystemTable::from_name("system_users").unwrap(),
-            SystemTable::Users
-        );
-        assert_eq!(
-            SystemTable::from_name("storages").unwrap(),
-            SystemTable::Storages
-        );
+        assert_eq!(SystemTable::from_name("system.users").unwrap(), SystemTable::Users);
+        assert_eq!(SystemTable::from_name("system_users").unwrap(), SystemTable::Users);
+        assert_eq!(SystemTable::from_name("storages").unwrap(), SystemTable::Storages);
         // Views
         assert_eq!(SystemTable::from_name("stats").unwrap(), SystemTable::Stats);
-        assert_eq!(
-            SystemTable::from_name("system.cluster").unwrap(),
-            SystemTable::Cluster
-        );
+        assert_eq!(SystemTable::from_name("system.cluster").unwrap(), SystemTable::Cluster);
         assert_eq!(
             SystemTable::from_name("system.cluster_groups").unwrap(),
             SystemTable::ClusterGroups

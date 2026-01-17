@@ -12,11 +12,11 @@
 #[path = "../../../crates/kalamdb-core/tests/test_helpers.rs"]
 mod test_helpers;
 
-use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::types::{Manifest, SegmentMetadata};
 use kalamdb_commons::UserId;
 use kalamdb_commons::{NamespaceId, StorageId, TableId, TableName};
+use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_core::manifest::ManifestService;
 use kalamdb_core::schema_registry::PathResolver;
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
@@ -26,7 +26,7 @@ use tempfile::TempDir;
 
 fn create_test_service() -> (ManifestService, TempDir) {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Initialize a test AppContext for SchemaRegistry and providers (used by ManifestService)
     test_helpers::init_test_app_context();
     let app_ctx = kalamdb_core::app_context::AppContext::get();
@@ -34,11 +34,11 @@ fn create_test_service() -> (ManifestService, TempDir) {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     let config = ManifestCacheSettings::default();
     let service = ManifestService::new_with_registries(
-        backend, 
-        temp_dir.path().to_string_lossy().to_string(), 
+        backend,
+        temp_dir.path().to_string_lossy().to_string(),
         config,
         app_ctx.schema_registry(),
-        app_ctx.storage_registry()
+        app_ctx.storage_registry(),
     );
 
     // Register "local" storage required by flush operations
@@ -59,7 +59,7 @@ fn create_test_service() -> (ManifestService, TempDir) {
                 existing.base_directory = base_path;
                 existing.updated_at = now;
                 let _ = storages_provider.update_storage(existing);
-            }
+            },
             None => {
                 let default_storage = Storage {
                     storage_id: storage_id.clone(),
@@ -70,12 +70,13 @@ fn create_test_service() -> (ManifestService, TempDir) {
                     credentials: None,
                     config_json: None,
                     shared_tables_template: "shared/{namespace}/{tableName}".to_string(),
-                    user_tables_template: "users/{userId}/tables/{namespace}/{tableName}".to_string(),
+                    user_tables_template: "users/{userId}/tables/{namespace}/{tableName}"
+                        .to_string(),
                     created_at: now,
                     updated_at: now,
                 };
                 let _ = storages_provider.insert_storage(default_storage);
-            }
+            },
         }
 
         app_ctx.storage_registry().invalidate(&storage_id);

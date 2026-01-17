@@ -81,10 +81,7 @@ impl ErrorResponse {
             ),
             KalamDbError::ParamsNotSupported { statement_type } => (
                 "PARAMS_NOT_SUPPORTED",
-                format!(
-                    "Parameters are not supported for {} statements",
-                    statement_type
-                ),
+                format!("Parameters are not supported for {} statements", statement_type),
                 Some(serde_json::json!({
                     "statement_type": statement_type,
                     "supported_types": ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -99,7 +96,7 @@ impl ErrorResponse {
             ),
             KalamDbError::PermissionDenied(msg) | KalamDbError::Unauthorized(msg) => {
                 ("AUTH_INSUFFICIENT_ROLE", msg.clone(), None)
-            }
+            },
             KalamDbError::TableNotFound(msg) => ("NOT_FOUND_TABLE", msg.clone(), None),
             KalamDbError::NamespaceNotFound(msg) => ("NOT_FOUND_NAMESPACE", msg.clone(), None),
             KalamDbError::NotImplemented { feature, message } => (

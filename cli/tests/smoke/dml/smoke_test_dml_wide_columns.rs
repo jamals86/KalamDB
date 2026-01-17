@@ -26,11 +26,7 @@ fn run_dml_sequence(full: &str, _is_shared: bool) {
         full
     );
     let out1 = execute_sql_as_root_via_client(&ins1).expect("insert 1 should succeed");
-    assert!(
-        out1.contains("1 rows affected"),
-        "expected 1 row affected: {}",
-        out1
-    );
+    assert!(out1.contains("1 rows affected"), "expected 1 row affected: {}", out1);
 
     // insert row 2
     let ins2 = format!(
@@ -54,7 +50,8 @@ fn run_dml_sequence(full: &str, _is_shared: bool) {
 
     // parse alpha id via focused query to avoid brittle table parsing
     let sel_alpha_id = format!("SELECT id FROM {} WHERE name = 'alpha'", full);
-    let out_alpha_json = execute_sql_as_root_via_client_json(&sel_alpha_id).expect("select alpha id");
+    let out_alpha_json =
+        execute_sql_as_root_via_client_json(&sel_alpha_id).expect("select alpha id");
     let id_alpha = extract_first_id_from_json(&out_alpha_json).expect("should parse alpha id");
 
     // update single column on alpha
@@ -64,11 +61,7 @@ fn run_dml_sequence(full: &str, _is_shared: bool) {
 
     // check
     let out_chk1 = execute_sql_as_root_via_client(&sel_all).expect("post update select");
-    assert!(
-        out_chk1.contains("26"),
-        "expected updated age 26: {}",
-        out_chk1
-    );
+    assert!(out_chk1.contains("26"), "expected updated age 26: {}", out_chk1);
 
     // multi-column update on alpha
     let upd2 = format!(
@@ -99,11 +92,7 @@ fn run_dml_sequence(full: &str, _is_shared: bool) {
 
     // best-effort final check: ensure updated row still present
     let out_after = execute_sql_as_root_via_client(&sel_all).expect("final select after delete");
-    assert!(
-        out_after.contains("alpha2"),
-        "expected updated row present: {}",
-        out_after
-    );
+    assert!(out_after.contains("alpha2"), "expected updated row present: {}", out_after);
 
     // Note: subscription validations are covered in dedicated test below
 }
@@ -219,7 +208,7 @@ fn smoke_subscription_update_delete_notifications() {
     let mut all_events: Vec<String> = Vec::new();
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     let mut initial_data_received = false;
-    
+
     while std::time::Instant::now() < deadline {
         match listener.try_read_line(Duration::from_millis(500)) {
             Ok(Some(line)) => {
@@ -233,73 +222,86 @@ fn smoke_subscription_update_delete_notifications() {
                         break;
                     }
                 }
-            }
+            },
             Ok(None) => break,
             Err(_) => {
                 if initial_data_received {
                     break;
                 }
                 continue;
-            }
+            },
         }
     }
-    
+
     assert!(initial_data_received, "Should have received initial data batch");
-    
+
     // Small delay to ensure subscription is fully ready
     std::thread::sleep(Duration::from_millis(500));
 
     // UPDATE - use a unique value we can search for
     let update_value = format!("upd_{}", std::process::id());
     let _ = execute_sql_as_root_via_client(&format!(
-        "UPDATE {} SET name='{}' WHERE id=1", 
+        "UPDATE {} SET name='{}' WHERE id=1",
         full, update_value
     ));
-    
+
     // Wait for update event - look for our unique value
     let mut found_update = false;
     let update_deadline = std::time::Instant::now() + Duration::from_secs(15);
     while std::time::Instant::now() < update_deadline {
         match listener.try_read_line(Duration::from_millis(500)) {
             Ok(Some(line)) => {
-                println!("[subscription] After UPDATE: {}", &line[..std::cmp::min(200, line.len())]);
+                println!(
+                    "[subscription] After UPDATE: {}",
+                    &line[..std::cmp::min(200, line.len())]
+                );
                 all_events.push(line.clone());
                 if line.contains(&update_value) || line.contains("Update") {
                     found_update = true;
                     break;
                 }
-            }
+            },
             Ok(None) => break,
             Err(_) => continue,
         }
     }
-    
-    assert!(found_update, "Should have received UPDATE event with value '{}'. All events: {:?}", 
-            update_value, all_events.iter().take(5).collect::<Vec<_>>());
+
+    assert!(
+        found_update,
+        "Should have received UPDATE event with value '{}'. All events: {:?}",
+        update_value,
+        all_events.iter().take(5).collect::<Vec<_>>()
+    );
 
     // DELETE
     let _ = execute_sql_as_root_via_client(&format!("DELETE FROM {} WHERE id=1", full));
-    
+
     // Wait for delete event
     let mut found_delete = false;
     let delete_deadline = std::time::Instant::now() + Duration::from_secs(10);
     while std::time::Instant::now() < delete_deadline {
         match listener.try_read_line(Duration::from_millis(500)) {
             Ok(Some(line)) => {
-                println!("[subscription] After DELETE: {}", &line[..std::cmp::min(200, line.len())]);
+                println!(
+                    "[subscription] After DELETE: {}",
+                    &line[..std::cmp::min(200, line.len())]
+                );
                 all_events.push(line.clone());
                 if line.contains("Delete") || line.contains(&update_value) {
                     found_delete = true;
                     break;
                 }
-            }
+            },
             Ok(None) => break,
             Err(_) => continue,
         }
     }
-    
-    assert!(found_delete, "Should have received DELETE event. All events: {:?}", 
-            all_events.iter().rev().take(5).collect::<Vec<_>>());
+
+    assert!(
+        found_delete,
+        "Should have received DELETE event. All events: {:?}",
+        all_events.iter().rev().take(5).collect::<Vec<_>>()
+    );
 
     listener.stop().ok();
 }

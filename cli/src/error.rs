@@ -73,7 +73,7 @@ impl CLIError {
                 }
                 // Fallback to full message if not JSON or no error.message field
                 format!("Server error ({}): {}", status_code, message)
-            }
+            },
             KalamLinkError::Cancelled => "Operation cancelled".to_string(),
         }
     }

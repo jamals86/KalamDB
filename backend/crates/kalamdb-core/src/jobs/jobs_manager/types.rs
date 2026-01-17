@@ -1,10 +1,9 @@
 use crate::app_context::AppContext;
 use crate::jobs::executors::JobRegistry;
 use kalamdb_commons::NodeId;
-use kalamdb_system::JobsTableProvider;
+use kalamdb_system::{JobNodesTableProvider, JobsTableProvider};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
-use tokio::sync::RwLock;
 
 /// Unified Job Manager
 ///
@@ -12,6 +11,8 @@ use tokio::sync::RwLock;
 pub struct JobsManager {
     /// System table provider for job persistence
     pub(crate) jobs_provider: Arc<JobsTableProvider>,
+    /// System table provider for per-node job state
+    pub(crate) job_nodes_provider: Arc<JobNodesTableProvider>,
 
     /// Registry of job executors (trait-based dispatch)
     pub(crate) job_registry: Arc<JobRegistry>,
@@ -23,7 +24,7 @@ pub struct JobsManager {
     pub(crate) shutdown: AtomicBool,
     /// AppContext for global services - uses Weak to avoid Arc cycle
     /// (AppContext holds Arc<JobsManager>, so we use Weak here)
-    pub(crate) app_context: Arc<RwLock<Option<Weak<AppContext>>>>,
+    pub(crate) app_context: Weak<AppContext>,
 }
 
 impl JobsManager {
@@ -32,57 +33,29 @@ impl JobsManager {
     /// # Arguments
     /// * `jobs_provider` - System table provider for job persistence
     /// * `job_registry` - Registry of job executors
-    pub fn new(jobs_provider: Arc<JobsTableProvider>, job_registry: Arc<JobRegistry>) -> Self {
+    /// * `app_ctx` - AppContext for accessing shared services
+    pub fn new(
+        jobs_provider: Arc<JobsTableProvider>,
+        job_nodes_provider: Arc<JobNodesTableProvider>,
+        job_registry: Arc<JobRegistry>,
+        app_ctx: Arc<AppContext>,
+    ) -> Self {
+        let node_id = app_ctx.node_id().as_ref().clone();
         Self {
             jobs_provider,
+            job_nodes_provider,
             job_registry,
-            node_id: NodeId::new(0), // TODO: Get from config - 0 means uninitialized
+            node_id,
             shutdown: AtomicBool::new(false),
-            app_context: Arc::new(RwLock::new(None)),
+            app_context: Arc::downgrade(&app_ctx),
         }
     }
 
-    /// Attach an AppContext instance to this JobsManager. This is used to avoid
-    /// calling AppContext::get() repeatedly while still supporting initialization
-    /// ordering where AppContext is created after JobsManager.
-    pub fn set_app_context(&self, app_ctx: Arc<AppContext>) {
-        // Use try_write() to avoid blocking in async context
-        // Store as Weak to avoid Arc cycle (AppContext holds Arc<JobsManager>)
-        if let Ok(mut w) = self.app_context.try_write() {
-            *w = Some(Arc::downgrade(&app_ctx));
-        } else {
-            // Fallback: spin until we can acquire the lock (should be rare)
-            loop {
-                if let Ok(mut w) = self.app_context.try_write() {
-                    *w = Some(Arc::downgrade(&app_ctx));
-                    break;
-                }
-                std::thread::yield_now();
-            }
-        }
-    }
-
-    /// Get attached AppContext (panics if not attached or if AppContext was dropped)
+    /// Get attached AppContext (panics if AppContext was dropped)
     pub(crate) fn get_attached_app_context(&self) -> Arc<AppContext> {
-        // Use try_read() to avoid blocking in async context
-        if let Ok(r) = self.app_context.try_read() {
-            r.as_ref()
-                .expect("AppContext not attached to JobsManager")
-                .upgrade()
-                .expect("AppContext was dropped - JobsManager outlived AppContext")
-        } else {
-            // Fallback: spin until we can acquire the lock (should be rare)
-            loop {
-                if let Ok(r) = self.app_context.try_read() {
-                    return r
-                        .as_ref()
-                        .expect("AppContext not attached to JobsManager")
-                        .upgrade()
-                        .expect("AppContext was dropped - JobsManager outlived AppContext");
-                }
-                std::thread::yield_now();
-            }
-        }
+        self.app_context
+            .upgrade()
+            .expect("AppContext was dropped - JobsManager outlived AppContext")
     }
 
     /// Request graceful shutdown

@@ -9,10 +9,8 @@ fn shared_table_select_100() -> anyhow::Result<()> {
     std::thread::sleep(Duration::from_millis(200));
 
     for i in 1..=100 {
-        let sql = format!(
-            "INSERT INTO bench_shared.items (value) VALUES ('benchmark_value_{}')",
-            i
-        );
+        let sql =
+            format!("INSERT INTO bench_shared.items (value) VALUES ('benchmark_value_{}')", i);
         execute_cli_timed_root(&sql)?;
     }
     std::thread::sleep(Duration::from_millis(100));
@@ -37,11 +35,7 @@ fn shared_table_select_100() -> anyhow::Result<()> {
         "Select 100 rows from shared table",
     );
 
-    result.set_timings(
-        execution.cli_total_ms,
-        execution.server_time_ms,
-        execution.server_time_ms,
-    );
+    result.set_timings(execution.cli_total_ms, execution.server_time_ms, execution.server_time_ms);
     result.set_memory(mem_before, mem_after);
     result.set_disk(disk_before, disk_after);
     result.set_requests(1, execution.server_time_ms);

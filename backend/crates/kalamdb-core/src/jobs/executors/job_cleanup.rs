@@ -70,10 +70,7 @@ impl JobExecutor for JobCleanupExecutor {
         let params = ctx.params();
         let retention_days = params.retention_days;
 
-        ctx.log_info(&format!(
-            "Cleaning up jobs older than {} days",
-            retention_days
-        ));
+        ctx.log_info(&format!("Cleaning up jobs older than {} days", retention_days));
 
         let jobs_provider = ctx.app_ctx.system_tables().jobs();
 

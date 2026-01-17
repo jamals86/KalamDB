@@ -149,18 +149,12 @@ macro_rules! finish_array {
     };
     ($builder:ident, Timestamp) => {
         Arc::new(datafusion::arrow::array::TimestampMicrosecondArray::from(
-            $builder
-                .into_iter()
-                .map(|ts| ts.map(|ms| ms * 1000))
-                .collect::<Vec<_>>(),
+            $builder.into_iter().map(|ts| ts.map(|ms| ms * 1000)).collect::<Vec<_>>(),
         )) as ArrayRef
     };
     ($builder:ident, OptionalTimestamp) => {
         Arc::new(datafusion::arrow::array::TimestampMicrosecondArray::from(
-            $builder
-                .into_iter()
-                .map(|ts| ts.map(|ms| ms * 1000))
-                .collect::<Vec<_>>(),
+            $builder.into_iter().map(|ts| ts.map(|ms| ms * 1000)).collect::<Vec<_>>(),
         )) as ArrayRef
     };
     ($builder:ident, Int64) => {

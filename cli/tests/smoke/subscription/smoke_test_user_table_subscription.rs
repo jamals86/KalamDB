@@ -7,7 +7,9 @@ use crate::common::*;
 #[ntest::timeout(180000)]
 #[test]
 fn smoke_user_table_subscription_lifecycle() {
-    if !require_server_running() { return; }
+    if !require_server_running() {
+        return;
+    }
 
     // Unique per run
     let namespace = generate_unique_namespace("smoke_ns");
@@ -38,23 +40,16 @@ fn smoke_user_table_subscription_lifecycle() {
     // Quick verification via SELECT
     let sel = format!("SELECT * FROM {}", full);
     let out = execute_sql_as_root_via_client(&sel).expect("select should succeed");
-    assert!(
-        out.contains("alpha"),
-        "expected to see 'alpha' in select output: {}",
-        out
-    );
-    assert!(
-        out.contains("beta"),
-        "expected to see 'beta' in select output: {}",
-        out
-    );
+    assert!(out.contains("alpha"), "expected to see 'alpha' in select output: {}", out);
+    assert!(out.contains("beta"), "expected to see 'beta' in select output: {}", out);
 
     // Small delay to ensure data is visible to subscription queries
     std::thread::sleep(std::time::Duration::from_millis(200));
 
     // Double-check data is visible right before subscribing
     let verify_sel = format!("SELECT COUNT(*) as cnt FROM {}", full);
-    let count_out = execute_sql_as_root_via_client(&verify_sel).expect("count query should succeed");
+    let count_out =
+        execute_sql_as_root_via_client(&verify_sel).expect("count query should succeed");
     println!("[DEBUG] Row count before subscribing: {}", count_out);
 
     // 4) Subscribe to the user table
@@ -71,7 +66,7 @@ fn smoke_user_table_subscription_lifecycle() {
                     println!("[subscription][snapshot] {}", line);
                     snapshot_lines.push(line);
                 }
-            }
+            },
             Ok(None) => break,
             Err(_) => continue,
         }
@@ -118,30 +113,20 @@ fn smoke_user_table_subscription_lifecycle() {
                         break;
                     }
                 }
-            }
+            },
             Ok(None) => {
-                println!(
-                    "[DEBUG] EOF on subscription stream after {} polls",
-                    poll_count
-                );
+                println!("[DEBUG] EOF on subscription stream after {} polls", poll_count);
                 break;
-            }
+            },
             Err(_e) => {
                 if poll_count % 10 == 0 {
-                    println!(
-                        "[DEBUG] Still waiting for change event... (poll {})",
-                        poll_count
-                    );
+                    println!("[DEBUG] Still waiting for change event... (poll {})", poll_count);
                 }
                 continue;
-            }
+            },
         }
     }
-    println!(
-        "[DEBUG] Total polls: {}, lines collected: {}",
-        poll_count,
-        change_lines.len()
-    );
+    println!("[DEBUG] Total polls: {}, lines collected: {}", poll_count, change_lines.len());
 
     let changes_joined = change_lines.join("\n");
     assert!(
@@ -153,8 +138,8 @@ fn smoke_user_table_subscription_lifecycle() {
 
     // 6) Flush the user table and verify job completes successfully
     let flush_sql = format!("STORAGE FLUSH TABLE {}", full);
-    let flush_output =
-        execute_sql_as_root_via_client_json(&flush_sql).expect("flush should succeed for user table");
+    let flush_output = execute_sql_as_root_via_client_json(&flush_sql)
+        .expect("flush should succeed for user table");
 
     println!("[FLUSH] Output: {}", flush_output);
 
@@ -165,12 +150,9 @@ fn smoke_user_table_subscription_lifecycle() {
     println!("[FLUSH] Job ID: {}", job_id);
 
     // Wait for terminal state (completed or failed) to avoid flakes
-    let final_status = wait_for_job_finished(&job_id, std::time::Duration::from_secs(30))
+    let final_status = wait_for_job_finished(&job_id, std::time::Duration::from_secs(15))
         .expect("flush job should reach terminal state");
-    println!(
-        "[FLUSH] Job {} finished with status: {}",
-        job_id, final_status
-    );
+    println!("[FLUSH] Job {} finished with status: {}", job_id, final_status);
 
     // Stop subscription
     listener.stop().ok();

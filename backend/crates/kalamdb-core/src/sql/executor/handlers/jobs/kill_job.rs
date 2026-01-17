@@ -43,7 +43,7 @@ impl TypedStatementHandler<JobCommand> for KillJobHandler {
                     job_id,
                     status: "cancelled".to_string(),
                 })
-            }
+            },
         }
     }
 

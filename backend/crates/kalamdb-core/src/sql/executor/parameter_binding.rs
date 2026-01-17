@@ -60,7 +60,7 @@ fn estimate_scalar_value_size(value: &ScalarValue) -> usize {
         ScalarValue::Float64(_) => 8,
         ScalarValue::Utf8(s) | ScalarValue::LargeUtf8(s) => {
             s.as_ref().map(|s| s.len()).unwrap_or(0)
-        }
+        },
         ScalarValue::Binary(b)
         | ScalarValue::LargeBinary(b)
         | ScalarValue::FixedSizeBinary(_, b) => b.as_ref().map(|b| b.len()).unwrap_or(0),
@@ -85,7 +85,7 @@ fn estimate_scalar_value_size(value: &ScalarValue) -> usize {
         ScalarValue::Struct(arr) => {
             // Rough estimate: sum of all field sizes
             arr.len() * 64
-        }
+        },
         ScalarValue::Decimal128(_, _, _) | ScalarValue::Decimal256(_, _, _) => 16,
         // Conservative fallback for any new types
         _ => 64,
@@ -133,11 +133,10 @@ pub fn replace_placeholders_in_plan(
     // - Type inference via infer_placeholder_types
     // - Subquery traversal
     // - Schema updates after replacement
-    plan.with_param_values(param_values).map_err(|e| {
-        KalamDbError::ParameterBindingError {
+    plan.with_param_values(param_values)
+        .map_err(|e| KalamDbError::ParameterBindingError {
             message: e.to_string(),
-        }
-    })
+        })
 }
 
 #[cfg(test)]
@@ -152,10 +151,7 @@ mod tests {
 
         // Invalid: over limit
         let params = vec![ScalarValue::Int64(Some(1)); 51];
-        assert!(matches!(
-            validate_params(&params),
-            Err(KalamDbError::ParamCountExceeded { .. })
-        ));
+        assert!(matches!(validate_params(&params), Err(KalamDbError::ParamCountExceeded { .. })));
     }
 
     #[test]
@@ -168,22 +164,13 @@ mod tests {
         // Invalid: over size limit (600KB)
         let large_string = "x".repeat(600_000);
         let params = vec![ScalarValue::Utf8(Some(large_string))];
-        assert!(matches!(
-            validate_params(&params),
-            Err(KalamDbError::ParamSizeExceeded { .. })
-        ));
+        assert!(matches!(validate_params(&params), Err(KalamDbError::ParamSizeExceeded { .. })));
     }
 
     #[test]
     fn test_estimate_scalar_value_size() {
-        assert_eq!(
-            estimate_scalar_value_size(&ScalarValue::Int64(Some(123))),
-            8
-        );
-        assert_eq!(
-            estimate_scalar_value_size(&ScalarValue::Utf8(Some("hello".to_string()))),
-            5
-        );
+        assert_eq!(estimate_scalar_value_size(&ScalarValue::Int64(Some(123))), 8);
+        assert_eq!(estimate_scalar_value_size(&ScalarValue::Utf8(Some("hello".to_string()))), 5);
         assert_eq!(estimate_scalar_value_size(&ScalarValue::Null), 0);
     }
 }

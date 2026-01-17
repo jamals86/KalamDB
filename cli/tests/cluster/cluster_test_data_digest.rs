@@ -20,14 +20,8 @@ fn normalize_rows(rows: &[Vec<Value>]) -> Vec<String> {
 
 fn fetch_sorted_rows(base_url: &str, sql: &str) -> Result<Vec<String>, String> {
     let response = execute_on_node_response(base_url, sql)?;
-    let result = response
-        .results
-        .first()
-        .ok_or_else(|| "Missing query result".to_string())?;
-    let rows = result
-        .rows
-        .as_ref()
-        .ok_or_else(|| "Missing row data".to_string())?;
+    let result = response.results.first().ok_or_else(|| "Missing query result".to_string())?;
+    let rows = result.rows.as_ref().ok_or_else(|| "Missing row data".to_string())?;
 
     Ok(normalize_rows(rows))
 }
@@ -35,17 +29,16 @@ fn fetch_sorted_rows(base_url: &str, sql: &str) -> Result<Vec<String>, String> {
 /// Test: Data content is identical across all nodes
 #[test]
 fn cluster_test_data_digest_consistency() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Data Digest Consistency Across Nodes ===\n");
 
     let urls = cluster_urls();
     let namespace = generate_unique_namespace("cluster_digest");
 
-    let _ = execute_on_node(
-        &urls[0],
-        &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace),
-    );
+    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -83,10 +76,7 @@ fn cluster_test_data_digest_consistency() {
         }
     }
 
-    let sql = format!(
-        "SELECT id, payload FROM {}.digest_test ORDER BY id",
-        namespace
-    );
+    let sql = format!("SELECT id, payload FROM {}.digest_test ORDER BY id", namespace);
     let mut matched = false;
 
     for _ in 0..20 {

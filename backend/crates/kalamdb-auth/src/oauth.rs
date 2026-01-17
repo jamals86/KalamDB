@@ -96,13 +96,13 @@ pub fn validate_oauth_token(
             return Err(AuthError::MalformedAuthorization(
                 "RS256 tokens require JWKS support (not yet implemented)".to_string(),
             ));
-        }
+        },
         _ => {
             return Err(AuthError::MalformedAuthorization(format!(
                 "Unsupported algorithm: {:?}",
                 algorithm
             )));
-        }
+        },
     };
 
     let token_data = decode::<OAuthClaims>(token, &decoding_key, &validation).map_err(|e| {

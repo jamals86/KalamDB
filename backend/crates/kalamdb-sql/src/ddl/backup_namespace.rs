@@ -114,8 +114,13 @@ impl BackupDatabaseStatement {
         let normalized = path.to_lowercase();
         let sensitive_paths = ["/etc/", "/root/", "/var/log/", "c:\\windows\\"];
         for sensitive in sensitive_paths {
-            if normalized.starts_with(sensitive) || normalized.contains(&format!("/{}", sensitive.trim_start_matches('/'))) {
-                return Err(format!("Backup path cannot write to sensitive directory: {}", sensitive));
+            if normalized.starts_with(sensitive)
+                || normalized.contains(&format!("/{}", sensitive.trim_start_matches('/')))
+            {
+                return Err(format!(
+                    "Backup path cannot write to sensitive directory: {}",
+                    sensitive
+                ));
             }
         }
 
@@ -191,7 +196,8 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("path traversal"));
 
-        let result = BackupDatabaseStatement::parse("BACKUP DATABASE app TO '/backups/../../../tmp/evil'");
+        let result =
+            BackupDatabaseStatement::parse("BACKUP DATABASE app TO '/backups/../../../tmp/evil'");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("path traversal"));
     }

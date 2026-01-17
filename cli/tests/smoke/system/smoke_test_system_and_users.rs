@@ -104,8 +104,5 @@ fn smoke_system_tables_and_user_lifecycle() {
             out
         );
     }
-    println!(
-        "[FLUSH ALL] Verified {} jobs recorded in system.jobs",
-        job_ids.len()
-    );
+    println!("[FLUSH ALL] Verified {} jobs recorded in system.jobs", job_ids.len());
 }

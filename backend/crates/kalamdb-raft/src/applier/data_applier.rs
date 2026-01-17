@@ -347,7 +347,8 @@ mod tests {
     #[tokio::test]
     async fn test_shared_data_applier_insert() {
         let applier = MockSharedDataApplier::new();
-        let table_id = TableId::new(NamespaceId::from("shared_ns"), TableName::from("shared_table"));
+        let table_id =
+            TableId::new(NamespaceId::from("shared_ns"), TableName::from("shared_table"));
 
         let result = applier.insert(&table_id, &[]).await;
         assert!(result.is_ok());
@@ -373,11 +374,11 @@ mod tests {
         // Update with filter
         let result = applier.update(&table_id, &user_id, &[], Some("filter_value")).await;
         assert!(result.is_ok());
-        
+
         // Delete with filter
         let result = applier.delete(&table_id, &user_id, Some(&["pk_1".to_string()])).await;
         assert!(result.is_ok());
-        
+
         assert_eq!(applier.get_counts(), (0, 1, 1));
     }
 

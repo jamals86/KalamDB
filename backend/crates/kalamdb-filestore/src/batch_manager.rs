@@ -73,12 +73,10 @@ impl ObjectStoreBatchManager {
             }
 
             // Extract filename from full path
-            let filename = std::path::Path::new(&path)
-                .file_name()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| {
-                    FilestoreError::InvalidBatchFile(format!("Invalid filename: {}", path))
-                })?;
+            let filename =
+                std::path::Path::new(&path).file_name().and_then(|s| s.to_str()).ok_or_else(
+                    || FilestoreError::InvalidBatchFile(format!("Invalid filename: {}", path)),
+                )?;
 
             // Parse batch metadata from filename
             let (timestamp_ms, batch_index) = parse_batch_filename(filename)?;

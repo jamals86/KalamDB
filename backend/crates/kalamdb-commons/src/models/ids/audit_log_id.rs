@@ -73,9 +73,7 @@ impl StorageKey for AuditLogId {
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
-        String::from_utf8(bytes.to_vec())
-            .map(AuditLogId)
-            .map_err(|e| e.to_string())
+        String::from_utf8(bytes.to_vec()).map(AuditLogId).map_err(|e| e.to_string())
     }
 }
 

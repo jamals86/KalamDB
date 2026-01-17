@@ -159,14 +159,14 @@ impl FromStr for GroupId {
                     .parse::<u32>()
                     .map(GroupId::DataUserShard)
                     .map_err(|e| format!("Invalid user shard ID: {}", e))
-            }
+            },
             _ if s.starts_with("data:shared:") => {
                 let id_str = s.strip_prefix("data:shared:").unwrap();
                 id_str
                     .parse::<u32>()
                     .map(GroupId::DataSharedShard)
                     .map_err(|e| format!("Invalid shared shard ID: {}", e))
-            }
+            },
             _ => Err(format!("Unknown group ID format: {}", s)),
         }
     }
@@ -207,14 +207,8 @@ mod tests {
     #[test]
     fn test_partition_prefix() {
         assert_eq!(GroupId::Meta.partition_prefix(), "raft_meta");
-        assert_eq!(
-            GroupId::DataUserShard(5).partition_prefix(),
-            "raft_data_user_05"
-        );
-        assert_eq!(
-            GroupId::DataSharedShard(0).partition_prefix(),
-            "raft_data_shared_00"
-        );
+        assert_eq!(GroupId::DataUserShard(5).partition_prefix(), "raft_data_user_05");
+        assert_eq!(GroupId::DataSharedShard(0).partition_prefix(), "raft_data_shared_00");
     }
 
     #[test]

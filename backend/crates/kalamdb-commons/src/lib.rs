@@ -53,13 +53,13 @@ pub mod system_tables; // System table enumeration (SystemTable, StoragePartitio
 pub mod websocket;
 
 // Re-export commonly used types at crate root
-pub use helpers::arrow_utils::{empty_batch, RecordBatchBuilder};
+pub use constants::{ANONYMOUS_USER_ID, MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES};
+pub use errors::{CommonError, Result};
 pub use helpers::arrow_utils;
+pub use helpers::arrow_utils::{empty_batch, RecordBatchBuilder};
 pub use helpers::file_helpers;
 pub use helpers::security;
 pub use helpers::string_interner;
-pub use constants::{ANONYMOUS_USER_ID, MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES};
-pub use errors::{CommonError, Result};
 pub use models::{
     // Phase 15 (008-schema-consolidation): Re-export schema types
     datatypes,

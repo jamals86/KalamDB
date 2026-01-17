@@ -16,23 +16,13 @@ fn test_client_creation_valid() {
         "testuser".to_string(),
         "testpass".to_string(),
     );
-    assert!(
-        client.is_ok(),
-        "Client creation should succeed with valid parameters"
-    );
+    assert!(client.is_ok(), "Client creation should succeed with valid parameters");
 }
 
 #[wasm_bindgen_test]
 fn test_client_creation_empty_url() {
-    let client = KalamClient::new(
-        "".to_string(),
-        "testuser".to_string(),
-        "testpass".to_string(),
-    );
-    assert!(
-        client.is_err(),
-        "Client creation should fail with empty URL"
-    );
+    let client = KalamClient::new("".to_string(), "testuser".to_string(), "testpass".to_string());
+    assert!(client.is_err(), "Client creation should fail with empty URL");
 }
 
 #[wasm_bindgen_test]
@@ -42,10 +32,7 @@ fn test_client_creation_empty_username() {
         "".to_string(),
         "testpass".to_string(),
     );
-    assert!(
-        client.is_err(),
-        "Client creation should fail with empty username"
-    );
+    assert!(client.is_err(), "Client creation should fail with empty username");
 }
 
 #[wasm_bindgen_test]
@@ -55,10 +42,7 @@ fn test_client_creation_empty_password() {
         "testuser".to_string(),
         "".to_string(),
     );
-    assert!(
-        client.is_err(),
-        "Client creation should fail with empty password"
-    );
+    assert!(client.is_err(), "Client creation should fail with empty password");
 }
 
 // T063S: Test connect() establishes WebSocket connection
@@ -77,10 +61,7 @@ async fn test_connect() {
 
     // For now, just verify the method doesn't panic
     // TODO: Add mock WebSocket server for integration tests
-    assert!(
-        result.is_ok() || result.is_err(),
-        "Connect should return a result"
-    );
+    assert!(result.is_ok() || result.is_err(), "Connect should return a result");
 }
 
 // T063T: Test disconnect() properly closes WebSocket
@@ -97,10 +78,7 @@ async fn test_disconnect() {
     let result = client.disconnect().await;
 
     assert!(result.is_ok(), "Disconnect should succeed");
-    assert!(
-        !client.is_connected(),
-        "Client should not be connected after disconnect"
-    );
+    assert!(!client.is_connected(), "Client should not be connected after disconnect");
 }
 
 // T063U: Test query() sends HTTP POST with correct headers and body
@@ -117,10 +95,7 @@ async fn test_query_not_connected() {
     let result = client.query("SELECT * FROM test".to_string()).await;
 
     // This will fail without a real server, but we're testing the client logic
-    assert!(
-        result.is_ok() || result.is_err(),
-        "Query should return a result"
-    );
+    assert!(result.is_ok() || result.is_err(), "Query should return a result");
 }
 
 // T063V: Test insert() executes INSERT and returns result
@@ -134,17 +109,11 @@ async fn test_insert() {
     .expect("Client creation should succeed");
 
     let result = client
-        .insert(
-            "todos".to_string(),
-            r#"{"title": "Test todo", "completed": false}"#.to_string(),
-        )
+        .insert("todos".to_string(), r#"{"title": "Test todo", "completed": false}"#.to_string())
         .await;
 
     // Will fail without server, but tests the method exists and doesn't panic
-    assert!(
-        result.is_ok() || result.is_err(),
-        "Insert should return a result"
-    );
+    assert!(result.is_ok() || result.is_err(), "Insert should return a result");
 }
 
 // T063W: Test delete() executes DELETE statement
@@ -157,15 +126,10 @@ async fn test_delete() {
     )
     .expect("Client creation should succeed");
 
-    let result = client
-        .delete("todos".to_string(), "test-id-123".to_string())
-        .await;
+    let result = client.delete("todos".to_string(), "test-id-123".to_string()).await;
 
     // Will fail without server, but tests the method exists and doesn't panic
-    assert!(
-        result.is_ok() || result.is_err(),
-        "Delete should return a result"
-    );
+    assert!(result.is_ok() || result.is_err(), "Delete should return a result");
 }
 
 // T063X: Test subscribe() registers callback and receives messages
@@ -198,10 +162,7 @@ async fn test_unsubscribe_not_connected() {
     let result = client.unsubscribe("test-subscription".to_string()).await;
 
     // Should fail because not connected
-    assert!(
-        result.is_err(),
-        "Unsubscribe should fail when not connected"
-    );
+    assert!(result.is_err(), "Unsubscribe should fail when not connected");
 }
 
 // T063Z: Test memory safety - verify callbacks don't cause memory access violations
@@ -245,7 +206,7 @@ async fn test_multiple_subscriptions_share_single_websocket() {
 
     // Connect once - this opens a single WebSocket
     let connect_result = client.connect().await;
-    
+
     if connect_result.is_err() {
         // Skip test if server not available
         return;
@@ -254,9 +215,12 @@ async fn test_multiple_subscriptions_share_single_websocket() {
     assert!(client.is_connected(), "Client should be connected after connect()");
 
     // Create multiple subscriptions - these should all share the same WebSocket
-    let callback1 = js_sys::Function::new_with_args("data", "console.log('Subscription 1:', data);");
-    let callback2 = js_sys::Function::new_with_args("data", "console.log('Subscription 2:', data);");
-    let callback3 = js_sys::Function::new_with_args("data", "console.log('Subscription 3:', data);");
+    let callback1 =
+        js_sys::Function::new_with_args("data", "console.log('Subscription 1:', data);");
+    let callback2 =
+        js_sys::Function::new_with_args("data", "console.log('Subscription 2:', data);");
+    let callback3 =
+        js_sys::Function::new_with_args("data", "console.log('Subscription 3:', data);");
 
     let sub1_result = client.subscribe("todos".to_string(), callback1).await;
     let sub2_result = client.subscribe("events".to_string(), callback2).await;
@@ -264,7 +228,10 @@ async fn test_multiple_subscriptions_share_single_websocket() {
 
     // All subscriptions should use the same connection
     // The isConnected() check verifies the single WebSocket is still open
-    assert!(client.is_connected(), "Client should remain connected with multiple subscriptions");
+    assert!(
+        client.is_connected(),
+        "Client should remain connected with multiple subscriptions"
+    );
 
     // Verify all subscriptions succeeded (they share the same WebSocket)
     if sub1_result.is_ok() && sub2_result.is_ok() && sub3_result.is_ok() {
@@ -288,7 +255,10 @@ async fn test_multiple_subscriptions_share_single_websocket() {
 
         // Unsubscribe from last one - connection still open (disconnect() needed to close)
         let _ = client.unsubscribe(sub3_id).await;
-        assert!(client.is_connected(), "Connection should remain open until disconnect() is called");
+        assert!(
+            client.is_connected(),
+            "Connection should remain open until disconnect() is called"
+        );
     }
 
     // Disconnect closes the single WebSocket connection
@@ -307,7 +277,7 @@ async fn test_subscribe_same_table_multiple_times() {
     .expect("Client creation should succeed");
 
     let connect_result = client.connect().await;
-    
+
     if connect_result.is_err() {
         // Skip test if server not available
         return;

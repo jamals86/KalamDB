@@ -5,7 +5,9 @@
 
 use crate::error::KalamDbError;
 use kalamdb_commons::models::UserId;
-use sqlparser::ast::{Expr, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins};
+use sqlparser::ast::{
+    Expr, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
+};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
@@ -55,9 +57,7 @@ impl QueryParser {
     /// Extract table name from SELECT statement
     fn extract_table_from_select(select: &Select) -> Result<String, KalamDbError> {
         if select.from.is_empty() {
-            return Err(KalamDbError::InvalidSql(
-                "Query must contain FROM clause".to_string(),
-            ));
+            return Err(KalamDbError::InvalidSql("Query must contain FROM clause".to_string()));
         }
 
         // Get the first table in FROM clause
@@ -82,7 +82,7 @@ impl QueryParser {
                     .collect::<Vec<_>>()
                     .join(".");
                 Ok(table_name)
-            }
+            },
             _ => Err(KalamDbError::InvalidSql(
                 "Unsupported table reference type for subscriptions".to_string(),
             )),
@@ -110,9 +110,7 @@ impl QueryParser {
     /// Extract WHERE clause from parsed Query
     fn extract_where_from_query(query: &Query) -> Option<String> {
         match query.body.as_ref() {
-            SetExpr::Select(select) => {
-                select.selection.as_ref().map(|expr| expr.to_string())
-            }
+            SetExpr::Select(select) => select.selection.as_ref().map(|expr| expr.to_string()),
             _ => None,
         }
     }
@@ -165,7 +163,7 @@ impl QueryParser {
     /// Extract column names from SELECT clause
     fn extract_projections_from_select(select: &Select) -> Option<Vec<String>> {
         let mut columns = Vec::new();
-        
+
         for item in &select.projection {
             match item {
                 SelectItem::Wildcard(_) => return None, // SELECT *
@@ -173,13 +171,13 @@ impl QueryParser {
                     if let Some(col_name) = Self::extract_column_name_from_expr(expr) {
                         columns.push(col_name);
                     }
-                }
+                },
                 SelectItem::ExprWithAlias { expr, .. } => {
                     // Use original column name, not alias
                     if let Some(col_name) = Self::extract_column_name_from_expr(expr) {
                         columns.push(col_name);
                     }
-                }
+                },
                 SelectItem::QualifiedWildcard(_, _) => return None, // table.*
             }
         }
@@ -198,7 +196,7 @@ impl QueryParser {
             Expr::CompoundIdentifier(idents) => {
                 // table.column -> take the column name (last part)
                 idents.last().map(|ident| ident.value.clone())
-            }
+            },
             _ => None, // Complex expressions not supported for projections
         }
     }
@@ -231,7 +229,10 @@ mod tests {
     #[test]
     fn test_extract_table_name_with_joins() {
         // Should extract the first table from FROM clause
-        let table_name = QueryParser::extract_table_name("SELECT * FROM orders o JOIN users u ON o.user_id = u.id").unwrap();
+        let table_name = QueryParser::extract_table_name(
+            "SELECT * FROM orders o JOIN users u ON o.user_id = u.id",
+        )
+        .unwrap();
         assert_eq!(table_name, "orders");
     }
 
@@ -262,8 +263,9 @@ mod tests {
     #[test]
     fn test_extract_where_clause_complex() {
         let clause = QueryParser::extract_where_clause(
-            "SELECT * FROM t WHERE a = 1 AND b = 'hello' ORDER BY id LIMIT 10"
-        ).unwrap();
+            "SELECT * FROM t WHERE a = 1 AND b = 'hello' ORDER BY id LIMIT 10",
+        )
+        .unwrap();
         assert_eq!(clause, "a = 1 AND b = 'hello'");
     }
 
@@ -289,19 +291,25 @@ mod tests {
 
     #[test]
     fn test_extract_projections_multiple_columns() {
-        let projections = QueryParser::extract_projections("SELECT id, name, email FROM test.users").unwrap();
+        let projections =
+            QueryParser::extract_projections("SELECT id, name, email FROM test.users").unwrap();
         assert_eq!(projections, vec!["id", "name", "email"]);
     }
 
     #[test]
     fn test_extract_projections_with_alias() {
-        let projections = QueryParser::extract_projections("SELECT id, name AS user_name FROM test.users").unwrap();
+        let projections =
+            QueryParser::extract_projections("SELECT id, name AS user_name FROM test.users")
+                .unwrap();
         assert_eq!(projections, vec!["id", "name"]);
     }
 
     #[test]
     fn test_extract_projections_with_where() {
-        let projections = QueryParser::extract_projections("SELECT id, message FROM chat.messages WHERE user_id = 'alice'").unwrap();
+        let projections = QueryParser::extract_projections(
+            "SELECT id, message FROM chat.messages WHERE user_id = 'alice'",
+        )
+        .unwrap();
         assert_eq!(projections, vec!["id", "message"]);
     }
 

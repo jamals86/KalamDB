@@ -59,6 +59,15 @@ impl JobParams for FlushParams {
 /// Flush Job Executor
 ///
 /// Executes flush operations for buffered table data.
+///
+/// ## Two-Phase Distributed Execution
+///
+/// **Phase 1 - Local Work (all nodes)**:
+/// Currently a no-op. Future: will delete flushed rows from RocksDB to free memory.
+///
+/// **Phase 2 - Leader Actions (leader only)**:
+/// Full flush: read from RocksDB, write Parquet files to storage, update manifest,
+/// delete flushed rows from RocksDB.
 pub struct FlushExecutor;
 
 impl FlushExecutor {
@@ -66,21 +75,9 @@ impl FlushExecutor {
     pub fn new() -> Self {
         Self
     }
-}
 
-#[async_trait]
-impl JobExecutor for FlushExecutor {
-    type Params = FlushParams;
-
-    fn job_type(&self) -> JobType {
-        JobType::Flush
-    }
-
-    fn name(&self) -> &'static str {
-        "FlushExecutor"
-    }
-
-    async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
+    /// Internal flush implementation used by both execute() and execute_leader()
+    async fn do_flush(&self, ctx: &JobContext<FlushParams>) -> Result<JobDecision, KalamDbError> {
         // Parameters already validated in JobContext - type-safe access
         let params = ctx.params();
         let table_id = Arc::new(params.table_id.clone());
@@ -97,9 +94,10 @@ impl JobExecutor for FlushExecutor {
         // let table_def = schema_registry
         //     .get_table_if_exists(app_ctx.as_ref(), &table_id)?
         //     .ok_or_else(|| KalamDbError::NotFound(format!("Table {} not found", table_id)))?;
-        
+
         // Get current Arrow schema from the registry (already includes system columns)
-        let schema = schema_registry.get_arrow_schema(app_ctx.as_ref(), &table_id)
+        let schema = schema_registry
+            .get_arrow_schema(app_ctx.as_ref(), &table_id)
             .into_kalamdb_error(&format!("Arrow schema not found for {}", table_id))?;
 
         // Get current schema version for manifest recording
@@ -151,9 +149,11 @@ impl JobExecutor for FlushExecutor {
                 // Execute in blocking thread pool to avoid starving async runtime
                 tokio::task::spawn_blocking(move || flush_job.execute())
                     .await
-                    .map_err(|e| KalamDbError::InvalidOperation(format!("Flush task panicked: {}", e)))?
+                    .map_err(|e| {
+                        KalamDbError::InvalidOperation(format!("Flush task panicked: {}", e))
+                    })?
                     .into_kalamdb_error("User table flush failed")?
-            }
+            },
             TableType::Shared => {
                 ctx.log_debug("Executing SharedTableFlushJob (non-blocking)");
 
@@ -190,9 +190,11 @@ impl JobExecutor for FlushExecutor {
                 // Execute in blocking thread pool to avoid starving async runtime
                 tokio::task::spawn_blocking(move || flush_job.execute())
                     .await
-                    .map_err(|e| KalamDbError::InvalidOperation(format!("Flush task panicked: {}", e)))?
+                    .map_err(|e| {
+                        KalamDbError::InvalidOperation(format!("Flush task panicked: {}", e))
+                    })?
                     .into_kalamdb_error("Shared table flush failed")?
-            }
+            },
             TableType::Stream => {
                 ctx.log_debug("Stream table flush not yet implemented");
                 // Streams: return Completed (no-op) for idempotency and clarity
@@ -202,12 +204,12 @@ impl JobExecutor for FlushExecutor {
                         table_id
                     )),
                 });
-            }
+            },
             TableType::System => {
                 return Err(KalamDbError::InvalidOperation(
                     "Cannot flush SYSTEM tables".to_string(),
                 ));
-            }
+            },
         };
 
         ctx.log_debug(&format!(
@@ -227,7 +229,7 @@ impl JobExecutor for FlushExecutor {
                     ColumnFamilyNames::USER_TABLE_PREFIX,
                     table_id // TableId Display: "namespace:table"
                 )
-            }
+            },
             TableType::Shared => {
                 use kalamdb_commons::constants::ColumnFamilyNames;
                 format!(
@@ -235,36 +237,39 @@ impl JobExecutor for FlushExecutor {
                     ColumnFamilyNames::SHARED_TABLE_PREFIX,
                     table_id // TableId Display: "namespace:table"
                 )
-            }
+            },
             _ => {
                 // For Stream/System tables, skip compaction
                 return Ok(JobDecision::Completed {
                     message: Some(format!(
                         "Flushed {} successfully ({} rows, {} files)",
-                        table_id, result.rows_flushed, result.parquet_files.len()
+                        table_id,
+                        result.rows_flushed,
+                        result.parquet_files.len()
                     )),
                 });
-            }
+            },
         };
 
         use kalamdb_store::storage_trait::Partition;
         let partition = Partition::new(partition_name);
-        
+
         // Run RocksDB compaction in blocking thread pool to avoid blocking async runtime
-        let compact_result = tokio::task::spawn_blocking(move || {
-            backend.compact_partition(&partition)
-        })
-        .await
-        .map_err(|e| KalamDbError::InvalidOperation(format!("Compaction task panicked: {}", e)))?;
+        let compact_result =
+            tokio::task::spawn_blocking(move || backend.compact_partition(&partition))
+                .await
+                .map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Compaction task panicked: {}", e))
+                })?;
 
         match compact_result {
             Ok(()) => {
                 ctx.log_debug("RocksDB compaction completed successfully");
-            }
+            },
             Err(e) => {
                 // Log compaction failure but don't fail the flush job
                 ctx.log_warn(&format!("RocksDB compaction failed (non-critical): {}", e));
-            }
+            },
         }
 
         Ok(JobDecision::Completed {
@@ -275,6 +280,56 @@ impl JobExecutor for FlushExecutor {
                 result.parquet_files.len()
             )),
         })
+    }
+}
+
+#[async_trait]
+impl JobExecutor for FlushExecutor {
+    type Params = FlushParams;
+
+    fn job_type(&self) -> JobType {
+        JobType::Flush
+    }
+
+    fn name(&self) -> &'static str {
+        "FlushExecutor"
+    }
+
+    /// Legacy single-phase execute - delegates to do_flush for backward compatibility
+    async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
+        self.do_flush(ctx).await
+    }
+
+    /// Local work phase - currently no-op on followers
+    ///
+    /// In future: will compact RocksDB to free memory without writing Parquet files.
+    /// The actual RocksDB delete happens in the leader phase after Parquet is written.
+    async fn execute_local(
+        &self,
+        ctx: &JobContext<Self::Params>,
+    ) -> Result<JobDecision, KalamDbError> {
+        ctx.log_debug("Flush local phase - preparing for leader actions");
+        // No-op for now: followers don't do anything in local phase
+        // The actual flush (including RocksDB deletion) happens in leader phase
+        Ok(JobDecision::Completed {
+            message: Some("Local phase completed".to_string()),
+        })
+    }
+
+    /// Leader-only phase - full flush implementation
+    ///
+    /// Performs the complete flush operation:
+    /// 1. Read buffered data from RocksDB
+    /// 2. Write Parquet files to storage (local or S3)
+    /// 3. Update manifest with new segment metadata
+    /// 4. Delete flushed rows from RocksDB
+    /// 5. Compact RocksDB to reclaim space
+    async fn execute_leader(
+        &self,
+        ctx: &JobContext<Self::Params>,
+    ) -> Result<JobDecision, KalamDbError> {
+        ctx.log_debug("Flush leader phase - executing full flush");
+        self.do_flush(ctx).await
     }
 }
 

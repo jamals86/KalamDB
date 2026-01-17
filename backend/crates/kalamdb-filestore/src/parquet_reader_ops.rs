@@ -20,25 +20,23 @@ pub async fn read_parquet_batches(
     parquet_path: &str,
 ) -> Result<Vec<RecordBatch>> {
     use crate::object_store_ops::read_file;
-    
+
     // Read file bytes
     let bytes = read_file(Arc::clone(&store), storage, parquet_path).await?;
-    
+
     // Parse Parquet from bytes (Bytes implements ChunkReader directly)
     let builder = ParquetRecordBatchReaderBuilder::try_new(bytes)
         .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
-    
+
     let row_group_count = builder.metadata().num_row_groups();
-    let reader = builder
-        .build()
-        .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
+    let reader = builder.build().map_err(|e| FilestoreError::Parquet(e.to_string()))?;
 
     let mut batches = Vec::with_capacity(row_group_count);
     for batch_result in reader {
         let batch = batch_result.map_err(|e| FilestoreError::Parquet(e.to_string()))?;
         batches.push(batch);
     }
-    
+
     Ok(batches)
 }
 
@@ -50,11 +48,9 @@ pub fn read_parquet_batches_sync(
 ) -> Result<Vec<RecordBatch>> {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         std::thread::scope(|s| {
-            s.spawn(|| {
-                handle.block_on(read_parquet_batches(store, storage, parquet_path))
-            })
-            .join()
-            .map_err(|_| FilestoreError::Other("Thread panicked".into()))?
+            s.spawn(|| handle.block_on(read_parquet_batches(store, storage, parquet_path)))
+                .join()
+                .map_err(|_| FilestoreError::Other("Thread panicked".into()))?
         })
     } else {
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -73,14 +69,14 @@ pub async fn read_parquet_schema(
     parquet_path: &str,
 ) -> Result<SchemaRef> {
     use crate::object_store_ops::read_file;
-    
+
     // Read file bytes
     let bytes = read_file(Arc::clone(&store), storage, parquet_path).await?;
-    
+
     // Parse schema from bytes (Bytes implements ChunkReader directly)
     let builder = ParquetRecordBatchReaderBuilder::try_new(bytes)
         .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
-    
+
     Ok(builder.schema().clone())
 }
 
@@ -111,7 +107,7 @@ mod tests {
     use super::*;
     use crate::build_object_store;
     use crate::parquet_storage_writer::write_parquet_with_store_sync;
-    use arrow::array::{Array, Int64Array, StringArray, Float64Array, BooleanArray};
+    use arrow::array::{Array, BooleanArray, Float64Array, Int64Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
     use kalamdb_commons::models::ids::StorageId;
@@ -289,7 +285,7 @@ mod tests {
         let batch1 = create_simple_batch(50);
         let batch2 = create_simple_batch(75);
         let batch3 = create_simple_batch(100);
-        
+
         let schema = batch1.schema();
         let file_path = "test/multi_batch.parquet";
 
@@ -308,7 +304,7 @@ mod tests {
 
         // Should be combined into batches based on row group size
         assert!(!read_batches.is_empty());
-        
+
         let total_rows: usize = read_batches.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 50 + 75 + 100);
 
@@ -374,7 +370,7 @@ mod tests {
         let store = build_object_store(&storage).expect("Failed to build store");
 
         let result = read_parquet_batches_sync(store, &storage, "nonexistent/file.parquet");
-        
+
         assert!(result.is_err(), "Should fail for nonexistent file");
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -399,12 +395,7 @@ mod tests {
             Arc::clone(&schema),
             vec![
                 Arc::new(Int64Array::from(vec![1, 2, 3, 4])),
-                Arc::new(StringArray::from(vec![
-                    Some("a"),
-                    None,
-                    Some("c"),
-                    None,
-                ])),
+                Arc::new(StringArray::from(vec![Some("a"), None, Some("c"), None])),
             ],
         )
         .unwrap();
@@ -425,13 +416,9 @@ mod tests {
 
         assert_eq!(read_batches.len(), 1);
         assert_eq!(read_batches[0].num_rows(), 4);
-        
+
         // Verify null handling
-        let str_array = read_batches[0]
-            .column(1)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
+        let str_array = read_batches[0].column(1).as_any().downcast_ref::<StringArray>().unwrap();
         assert!(str_array.is_null(1));
         assert!(str_array.is_null(3));
         assert!(!str_array.is_null(0));

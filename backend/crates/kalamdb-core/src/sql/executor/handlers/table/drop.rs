@@ -6,10 +6,10 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::sql::executor::helpers::guards::block_system_namespace_modification;
 use crate::jobs::executors::cleanup::{CleanupOperation, CleanupParams, StorageCleanupDetails};
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
+use crate::sql::executor::helpers::guards::block_system_namespace_modification;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::{StorageId, TableId};
 use kalamdb_commons::schemas::TableType;
@@ -64,7 +64,7 @@ pub async fn cleanup_table_data_internal(
                         table_id
                     );
                     0usize // Unknown exact row count after drop
-                }
+                },
                 Err(e) => {
                     // If partition not found, treat as already clean
                     let msg = e.to_string();
@@ -80,9 +80,9 @@ pub async fn cleanup_table_data_internal(
                             partition_name, table_id, e
                         )));
                     }
-                }
+                },
             }
-        }
+        },
         TableType::Shared => {
             // Drop the entire RocksDB partition for this shared table
             // Partition format mirrors new_shared_table_store():
@@ -107,7 +107,7 @@ pub async fn cleanup_table_data_internal(
                         table_id
                     );
                     0usize
-                }
+                },
                 Err(e) => {
                     let msg = e.to_string();
                     if msg.to_lowercase().contains("not found") {
@@ -122,9 +122,9 @@ pub async fn cleanup_table_data_internal(
                             partition_name, table_id, e
                         )));
                     }
-                }
+                },
             }
-        }
+        },
         TableType::Stream => {
             // Stream tables are in-memory by design. However, if a persistent
             // backend is configured, attempt to drop the partition best-effort.
@@ -148,7 +148,7 @@ pub async fn cleanup_table_data_internal(
                         table_id
                     );
                     0usize
-                }
+                },
                 Err(e) => {
                     let msg = e.to_string();
                     if msg.to_lowercase().contains("not found") {
@@ -163,21 +163,18 @@ pub async fn cleanup_table_data_internal(
                             partition_name, table_id, e
                         )));
                     }
-                }
+                },
             }
-        }
+        },
         TableType::System => {
             // System tables cannot be dropped via DDL
             return Err(KalamDbError::InvalidOperation(
                 "Cannot cleanup system table data".to_string(),
             ));
-        }
+        },
     };
 
-    log::debug!(
-        "[CleanupHelper] Deleted {} rows from table data",
-        rows_deleted
-    );
+    log::debug!("[CleanupHelper] Deleted {} rows from table data", rows_deleted);
     Ok(rows_deleted)
 }
 
@@ -204,15 +201,16 @@ pub async fn cleanup_parquet_files_internal(
     );
 
     // Get the Storage object from the registry (cached lookup)
-    let storage_obj = app_context
-        .storage_registry()
-        .get_storage(&storage.storage_id)?
-        .ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!(
-                "Storage '{}' not found during cleanup",
-                storage.storage_id.as_str()
-            ))
-        })?;
+    let storage_obj =
+        app_context
+            .storage_registry()
+            .get_storage(&storage.storage_id)?
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' not found during cleanup",
+                    storage.storage_id.as_str()
+                ))
+            })?;
 
     // Build ObjectStore for this storage
     let object_store = kalamdb_filestore::build_object_store(&storage_obj)
@@ -226,10 +224,7 @@ pub async fn cleanup_parquet_files_internal(
     )
     .into_kalamdb_error("Filestore delete failed")?;
 
-    log::debug!(
-        "[CleanupHelper] Freed {} bytes from Parquet files",
-        bytes_freed
-    );
+    log::debug!("[CleanupHelper] Freed {} bytes from Parquet files", bytes_freed);
     Ok(bytes_freed)
 }
 
@@ -251,10 +246,7 @@ pub async fn cleanup_metadata_internal(
     log::debug!("[CleanupHelper] Cleaning up metadata for {:?}", table_id);
 
     if !schema_registry.table_exists(app_ctx, table_id)? {
-        log::debug!(
-            "[CleanupHelper] Metadata already removed for {:?}, skipping",
-            table_id
-        );
+        log::debug!("[CleanupHelper] Metadata already removed for {:?}, skipping", table_id);
         return Ok(());
     }
 
@@ -283,16 +275,10 @@ impl DropTableHandler {
     ) -> Result<StorageCleanupDetails, KalamDbError> {
         let registry = self.app_context.schema_registry();
         let cached = registry.get(table_id).ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!(
-                "Table cache entry not found for {}",
-                table_id
-            ))
+            KalamDbError::InvalidOperation(format!("Table cache entry not found for {}", table_id))
         })?;
 
-        let storage_id = cached
-            .storage_id
-            .clone()
-            .unwrap_or_else(StorageId::local);
+        let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
 
         let relative_template = if cached.storage_path_template.is_empty() {
             use crate::schema_registry::PathResolver;
@@ -311,19 +297,12 @@ impl DropTableHandler {
             Ok(Some(storage)) => {
                 let trimmed = storage.base_directory.trim();
                 if trimmed.is_empty() {
-                    self.app_context
-                        .storage_registry()
-                        .default_storage_path()
-                        .to_string()
+                    self.app_context.storage_registry().default_storage_path().to_string()
                 } else {
                     storage.base_directory.clone()
                 }
-            }
-            _ => self
-                .app_context
-                .storage_registry()
-                .default_storage_path()
-                .to_string(),
+            },
+            _ => self.app_context.storage_registry().default_storage_path().to_string(),
         };
 
         Ok(StorageCleanupDetails {
@@ -342,10 +321,8 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let table_id = TableId::from_strings(
-            statement.namespace_id.as_str(),
-            statement.table_name.as_str(),
-        );
+        let table_id =
+            TableId::from_strings(statement.namespace_id.as_str(), statement.table_name.as_str());
 
         log::debug!(
             "🗑️  DROP TABLE request: {}.{} (if_exists: {}, user: {}, role: {:?})",
@@ -366,10 +343,11 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
 
         // RBAC: authorize based on actual table type if exists
         let registry = self.app_context.schema_registry();
-        let actual_type = match registry.get_table_if_exists(self.app_context.as_ref(), &table_id)? {
-            Some(def) => def.table_type,
-            None => TableType::from(statement.table_type),
-        };
+        let actual_type =
+            match registry.get_table_if_exists(self.app_context.as_ref(), &table_id)? {
+                Some(def) => def.table_type,
+                None => TableType::from(statement.table_type),
+            };
         let is_owner = false;
         if !crate::auth::rbac::can_delete_table(context.user_role, actual_type, is_owner) {
             log::error!(
@@ -474,7 +452,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
                             statement.table_name.as_str()
                         );
                         cancelled_count += 1;
-                    }
+                    },
                     Err(e) => {
                         log::warn!(
                             "⚠️  Failed to cancel flush job {} for table {}.{}: {}",
@@ -483,7 +461,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
                             statement.table_name.as_str(),
                             e
                         );
-                    }
+                    },
                 }
             }
         }
@@ -521,20 +499,12 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             storage: storage_details,
         };
 
-        let idempotency_key = format!(
-            "drop-{}-{}",
-            statement.namespace_id.as_str(),
-            statement.table_name.as_str()
-        );
+        let idempotency_key =
+            format!("drop-{}-{}", statement.namespace_id.as_str(), statement.table_name.as_str());
 
         let job_manager = self.app_context.job_manager();
         let job_id = job_manager
-            .create_job_typed(
-                JobType::Cleanup,
-                params,
-                Some(idempotency_key),
-                None,
-            )
+            .create_job_typed(JobType::Cleanup, params, Some(idempotency_key), None)
             .await?;
 
         // Log DDL operation
@@ -543,16 +513,8 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             context,
             "DROP",
             "TABLE",
-            &format!(
-                "{}.{}",
-                statement.namespace_id.as_str(),
-                statement.table_name.as_str()
-            ),
-            Some(format!(
-                "Type: {:?}, Cleanup Job: {}",
-                actual_type,
-                job_id.as_str()
-            )),
+            &format!("{}.{}", statement.namespace_id.as_str(), statement.table_name.as_str()),
+            Some(format!("Type: {:?}, Cleanup Job: {}", actual_type, job_id.as_str())),
             None,
         );
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
@@ -581,10 +543,10 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         use crate::sql::executor::helpers::guards::block_anonymous_write;
-        
+
         // T050: Block anonymous users from DDL operations
         block_anonymous_write(context, "DROP TABLE")?;
-        
+
         // Coarse auth gate (fine-grained check performed in execute using actual table type)
         if context.is_system() || context.is_admin() {
             return Ok(());

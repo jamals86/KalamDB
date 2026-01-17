@@ -2,7 +2,6 @@
 //!
 //! Verifies that auth expiry events correctly terminate WebSocket connections.
 
-
 use super::test_support::TestServer;
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, UserId};
 use std::time::Duration;
@@ -29,9 +28,8 @@ async fn test_live_query_auth_expiry() {
     // Get connection state from registry to authenticate
     // (don't hold onto it - let the registry own it)
     {
-        let connection_state = registry
-            .get_connection(&connection_id)
-            .expect("Connection should exist");
+        let connection_state =
+            registry.get_connection(&connection_id).expect("Connection should exist");
         connection_state.write().mark_authenticated(user_id.clone());
         registry.on_authenticated(&connection_id, user_id.clone());
     }
@@ -75,14 +73,14 @@ async fn test_live_query_auth_expiry() {
                     // Channel still open but no messages - this is acceptable
                     // as long as connection is removed from registry
                     println!("✓ No more messages received (connection removed from registry)")
-                }
+                },
             }
-        }
+        },
         Err(_) => {
             // Timeout - channel still open but no messages, which is acceptable
             // The important verification is that the connection was removed from registry
             println!("✓ Channel timeout (connection removed from registry)")
-        }
+        },
     }
 
     println!("✓ Auth expiry test passed - connection removed from registry");

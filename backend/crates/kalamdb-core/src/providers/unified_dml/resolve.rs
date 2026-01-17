@@ -96,24 +96,14 @@ mod tests {
     #[test]
     fn test_resolve_latest_version_from_rows() {
         let rows = vec![
-            (
-                "pk1".to_string(),
-                100,
-                false,
-                serde_json::json!({"id": 1, "name": "Alice"}),
-            ),
+            ("pk1".to_string(), 100, false, serde_json::json!({"id": 1, "name": "Alice"})),
             (
                 "pk1".to_string(),
                 200,
                 false,
                 serde_json::json!({"id": 1, "name": "Alice Updated"}),
             ),
-            (
-                "pk2".to_string(),
-                150,
-                false,
-                serde_json::json!({"id": 2, "name": "Bob"}),
-            ),
+            ("pk2".to_string(), 150, false, serde_json::json!({"id": 2, "name": "Bob"})),
             (
                 "pk2".to_string(),
                 250,
@@ -152,12 +142,7 @@ mod tests {
             ("pk1".to_string(), 100, false, serde_json::json!({"id": 1})),
             ("pk2".to_string(), 150, false, serde_json::json!({"id": 2})),
             ("pk3".to_string(), 120, false, serde_json::json!({"id": 3})),
-            (
-                "pk1".to_string(),
-                300,
-                false,
-                serde_json::json!({"id": 1, "updated": true}),
-            ),
+            ("pk1".to_string(), 300, false, serde_json::json!({"id": 1, "updated": true})),
         ];
 
         let resolved = resolve_latest_version_from_rows(rows);

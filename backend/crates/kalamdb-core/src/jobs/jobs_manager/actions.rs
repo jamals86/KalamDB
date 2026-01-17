@@ -10,13 +10,13 @@ use log::Level;
 
 impl JobsManager {
     /// Insert a job in the database asynchronously via Raft or direct write
-    /// 
+    ///
     /// Uses Raft command when executor is available for cluster replication,
     /// otherwise falls back to direct provider write.
     async fn insert_job_async(&self, job: Job) -> Result<(), KalamDbError> {
         let app_ctx = self.get_attached_app_context();
         let executor = app_ctx.executor();
-        
+
         // Use Raft command for cluster replication
         let now = Utc::now();
         let cmd = MetaCommand::CreateJob {
@@ -31,10 +31,12 @@ impl JobsManager {
             node_id: job.node_id.clone(),
             created_at: now,
         };
-        
-        executor.execute_meta(cmd).await
+
+        executor
+            .execute_meta(cmd)
+            .await
             .map_err(|e| KalamDbError::Other(format!("Failed to create job via Raft: {}", e)))?;
-        
+
         Ok(())
     }
 
@@ -79,6 +81,7 @@ impl JobsManager {
             job_id: job_id.clone(),
             job_type,
             status: JobStatus::Queued,
+            leader_status: None,
             parameters: Some(parameters.to_string()),
             message: None,
             exception_trace: None,
@@ -92,6 +95,7 @@ impl JobsManager {
             started_at: None,
             finished_at: None,
             node_id: self.node_id.clone(),
+            leader_node_id: None,
             queue: None,
             priority: None,
         };
@@ -106,12 +110,27 @@ impl JobsManager {
         // Persist job
         self.insert_job_async(job.clone()).await?;
 
+        // Create per-node job entries (fan-out)
+        let app_ctx = self.get_attached_app_context();
+        let executor = app_ctx.executor();
+        let node_ids = self.active_cluster_node_ids();
+        let created_at = Utc::now();
+
+        for node_id in node_ids {
+            let cmd = MetaCommand::CreateJobNode {
+                job_id: job_id.clone(),
+                node_id,
+                status: JobStatus::Queued,
+                created_at,
+            };
+
+            executor.execute_meta(cmd).await.map_err(|e| {
+                KalamDbError::Other(format!("Failed to create job_node via Raft: {}", e))
+            })?;
+        }
+
         // Log job creation
-        self.log_job_event(
-            &job_id,
-            &Level::Debug,
-            &format!("Job created: type={:?}", job_type),
-        );
+        self.log_job_event(&job_id, &Level::Debug, &format!("Job created: type={:?}", job_type));
 
         Ok(job_id)
     }
@@ -151,10 +170,8 @@ impl JobsManager {
 
         // Call executor's pre_validate to check if job should be created
         let app_ctx = self.get_attached_app_context();
-        let should_create = self
-            .job_registry
-            .pre_validate(&app_ctx, &job_type, &params_json)
-            .await?;
+        let should_create =
+            self.job_registry.pre_validate(&app_ctx, &job_type, &params_json).await?;
 
         if !should_create {
             // Log skip and return a special "skipped" job ID (or error)
@@ -172,8 +189,7 @@ impl JobsManager {
             .into_kalamdb_error("Failed to parse job parameters")?;
 
         // Delegate to existing create_job method
-        self.create_job(job_type, parameters, idempotency_key, options)
-            .await
+        self.create_job(job_type, parameters, idempotency_key, options).await
     }
 
     /// Cancel a running or queued job
@@ -191,10 +207,7 @@ impl JobsManager {
             .ok_or_else(|| KalamDbError::NotFound(format!("Job {} not found", job_id)))?;
 
         // Can only cancel New, Queued, or Running jobs
-        if !matches!(
-            job.status,
-            JobStatus::New | JobStatus::Queued | JobStatus::Running
-        ) {
+        if !matches!(job.status, JobStatus::New | JobStatus::Queued | JobStatus::Running) {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Cannot cancel job in status {:?}",
                 job.status
@@ -208,8 +221,11 @@ impl JobsManager {
             reason: "Cancelled by user".to_string(),
             cancelled_at: Utc::now(),
         };
-        
-        app_ctx.executor().execute_meta(cmd).await
+
+        app_ctx
+            .executor()
+            .execute_meta(cmd)
+            .await
             .map_err(|e| KalamDbError::Other(format!("Failed to cancel job via Raft: {}", e)))?;
 
         // Log cancellation
@@ -232,16 +248,21 @@ impl JobsManager {
         message: Option<String>,
     ) -> Result<(), KalamDbError> {
         let success_message = message.unwrap_or_else(|| "Job completed successfully".to_string());
-        
+
         // Use Raft command to complete job
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::CompleteJob {
             job_id: job_id.clone(),
-            result_json: Some(serde_json::json!({ "message": success_message.clone() }).to_string()),
+            result_json: Some(
+                serde_json::json!({ "message": success_message.clone() }).to_string(),
+            ),
             completed_at: Utc::now(),
         };
-        
-        app_ctx.executor().execute_meta(cmd).await
+
+        app_ctx
+            .executor()
+            .execute_meta(cmd)
+            .await
             .map_err(|e| KalamDbError::Other(format!("Failed to complete job via Raft: {}", e)))?;
 
         self.log_job_event(job_id, &Level::Info, &success_message);
@@ -268,9 +289,10 @@ impl JobsManager {
             error_message: error_message.clone(),
             failed_at: Utc::now(),
         };
-        
-        app_ctx.executor().execute_meta(cmd).await
-            .map_err(|e| KalamDbError::Other(format!("Failed to mark job as failed via Raft: {}", e)))?;
+
+        app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
+            KalamDbError::Other(format!("Failed to mark job as failed via Raft: {}", e))
+        })?;
 
         self.log_job_event(job_id, &Level::Error, &format!("Job failed: {}", error_message));
         Ok(())

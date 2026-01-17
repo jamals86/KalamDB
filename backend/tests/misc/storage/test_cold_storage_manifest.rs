@@ -14,7 +14,6 @@
 //! - Manifest-based file pruning by seq range
 //! - Fallback to directory scan when manifest missing
 
-
 use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
 
@@ -67,7 +66,10 @@ async fn test_user_table_cold_storage_uses_manifest() {
             .execute_sql_as_user(
                 &format!(
                     "INSERT INTO {}.items (id, name, value) VALUES ({}, 'item_{}', {})",
-                    ns, i, i, i * 10
+                    ns,
+                    i,
+                    i,
+                    i * 10
                 ),
                 &user,
             )
@@ -83,28 +85,18 @@ async fn test_user_table_cold_storage_uses_manifest() {
 
     // Check manifest cache count before flush
     let manifest_count_before = server.app_context.manifest_service().count().unwrap();
-    println!(
-        "📊 Manifest cache entries before flush: {}",
-        manifest_count_before
-    );
+    println!("📊 Manifest cache entries before flush: {}", manifest_count_before);
 
     // Flush the table to Parquet (this creates manifest entry)
     let flush_result = flush_helpers::execute_flush_synchronously(&server, &ns, "items").await;
-    assert!(
-        flush_result.is_ok(),
-        "Flush failed: {:?}",
-        flush_result.err()
-    );
+    assert!(flush_result.is_ok(), "Flush failed: {:?}", flush_result.err());
     let flush_stats = flush_result.unwrap();
     println!("✅ Flushed {} rows to Parquet", flush_stats.rows_flushed);
     assert!(flush_stats.rows_flushed > 0, "Expected rows to be flushed");
 
     // Check manifest cache count after flush - for a fresh namespace, count should increase
     let manifest_count_after = server.app_context.manifest_service().count().unwrap();
-    println!(
-        "📊 Manifest cache entries after flush: {}",
-        manifest_count_after
-    );
+    println!("📊 Manifest cache entries after flush: {}", manifest_count_after);
     // Note: We verify the flush worked by querying data, not by counting manifests
     // as previous test runs may have left manifest entries
 
@@ -185,7 +177,10 @@ async fn test_shared_table_cold_storage_uses_manifest() {
         let insert_response = server
             .execute_sql(&format!(
                 "INSERT INTO {}.products (id, name, price) VALUES ({}, 'product_{}', {})",
-                ns, i, i, i * 100
+                ns,
+                i,
+                i,
+                i * 100
             ))
             .await;
         assert_eq!(
@@ -199,40 +194,24 @@ async fn test_shared_table_cold_storage_uses_manifest() {
 
     // Check manifest cache count before flush
     let manifest_count_before = server.app_context.manifest_service().count().unwrap();
-    println!(
-        "📊 Manifest cache entries before flush: {}",
-        manifest_count_before
-    );
+    println!("📊 Manifest cache entries before flush: {}", manifest_count_before);
 
     // Flush the table to Parquet
     let flush_result =
         flush_helpers::execute_shared_flush_synchronously(&server, &ns, "products").await;
-    assert!(
-        flush_result.is_ok(),
-        "Shared table flush failed: {:?}",
-        flush_result.err()
-    );
+    assert!(flush_result.is_ok(), "Shared table flush failed: {:?}", flush_result.err());
     let flush_stats = flush_result.unwrap();
-    println!(
-        "✅ Flushed {} rows to Parquet (shared table)",
-        flush_stats.rows_flushed
-    );
+    println!("✅ Flushed {} rows to Parquet (shared table)", flush_stats.rows_flushed);
 
     // Check manifest cache count after flush
     let manifest_count_after = server.app_context.manifest_service().count().unwrap();
-    println!(
-        "📊 Manifest cache entries after flush: {}",
-        manifest_count_after
-    );
+    println!("📊 Manifest cache entries after flush: {}", manifest_count_after);
     // Note: We verify the flush worked by querying data, not by counting manifests
     // as previous test runs may have left manifest entries
 
     // Query cold storage data - should use manifest
     let select_response = server
-        .execute_sql(&format!(
-            "SELECT id, name, price FROM {}.products WHERE id = 20",
-            ns
-        ))
+        .execute_sql(&format!("SELECT id, name, price FROM {}.products WHERE id = 20", ns))
         .await;
     assert_eq!(
         select_response.status,
@@ -296,10 +275,7 @@ async fn test_manifest_tracks_multiple_flush_segments() {
     let flush1 =
         flush_helpers::execute_flush_synchronously(&server, "multi_flush_ns", "events").await;
     assert!(flush1.is_ok(), "First flush failed");
-    println!(
-        "✅ First flush: {} rows",
-        flush1.unwrap().rows_flushed
-    );
+    println!("✅ First flush: {} rows", flush1.unwrap().rows_flushed);
 
     // Second batch: Insert and flush 20 more rows
     for i in 21..=40 {
@@ -317,10 +293,7 @@ async fn test_manifest_tracks_multiple_flush_segments() {
     let flush2 =
         flush_helpers::execute_flush_synchronously(&server, "multi_flush_ns", "events").await;
     assert!(flush2.is_ok(), "Second flush failed");
-    println!(
-        "✅ Second flush: {} rows",
-        flush2.unwrap().rows_flushed
-    );
+    println!("✅ Second flush: {} rows", flush2.unwrap().rows_flushed);
 
     // Query should find rows from both segments
     let select_batch1 = server
@@ -347,10 +320,7 @@ async fn test_manifest_tracks_multiple_flush_segments() {
 
     // Count all rows from both segments
     let count_all = server
-        .execute_sql_as_user(
-            "SELECT COUNT(*) as cnt FROM multi_flush_ns.events",
-            "multi_user",
-        )
+        .execute_sql_as_user("SELECT COUNT(*) as cnt FROM multi_flush_ns.events", "multi_user")
         .await;
     assert_eq!(count_all.status, ResponseStatus::Success);
     let rows = count_all.results[0].rows_as_maps();
@@ -439,11 +409,7 @@ async fn test_cold_storage_version_resolution_after_update() {
         "updated",
         "Expected updated status"
     );
-    assert_eq!(
-        rows[0].get("count").unwrap().as_i64().unwrap(),
-        999,
-        "Expected updated count"
-    );
+    assert_eq!(rows[0].get("count").unwrap().as_i64().unwrap(), 999, "Expected updated count");
 
     // Other rows should still be from cold storage with original values
     let select_other = server
@@ -468,10 +434,7 @@ async fn test_cold_storage_version_resolution_after_update() {
 
     // Count should still be 10 (no duplicates from version resolution)
     let count_all = server
-        .execute_sql_as_user(
-            "SELECT COUNT(*) as cnt FROM version_res_ns.records",
-            "version_user",
-        )
+        .execute_sql_as_user("SELECT COUNT(*) as cnt FROM version_res_ns.records", "version_user")
         .await;
     assert_eq!(count_all.status, ResponseStatus::Success);
     let rows = count_all.results[0].rows_as_maps();
@@ -538,14 +501,15 @@ async fn test_cold_storage_delete_creates_tombstone() {
         )
         .await;
     assert_eq!(select_before.status, ResponseStatus::Success);
-    assert_eq!(select_before.results[0].rows.as_ref().map(|r| r.len()).unwrap_or(0), 1, "Expected row to exist before delete");
+    assert_eq!(
+        select_before.results[0].rows.as_ref().map(|r| r.len()).unwrap_or(0),
+        1,
+        "Expected row to exist before delete"
+    );
 
     // Delete a row from cold storage
     let delete_response = server
-        .execute_sql_as_user(
-            "DELETE FROM delete_cold_ns.entries WHERE id = 7",
-            "delete_cold_user",
-        )
+        .execute_sql_as_user("DELETE FROM delete_cold_ns.entries WHERE id = 7", "delete_cold_user")
         .await;
     assert_eq!(
         delete_response.status,
@@ -562,7 +526,11 @@ async fn test_cold_storage_delete_creates_tombstone() {
         )
         .await;
     assert_eq!(select_after.status, ResponseStatus::Success);
-    assert_eq!(select_after.results[0].rows.as_ref().map(|r| r.len()).unwrap_or(0), 0, "Expected deleted row to not be returned");
+    assert_eq!(
+        select_after.results[0].rows.as_ref().map(|r| r.len()).unwrap_or(0),
+        0,
+        "Expected deleted row to not be returned"
+    );
 
     // Count should be 14 (one deleted)
     let count_all = server

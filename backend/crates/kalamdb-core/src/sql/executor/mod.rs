@@ -49,10 +49,8 @@ impl SqlExecutor {
         app_context: Arc<crate::app_context::AppContext>,
         enforce_password_complexity: bool,
     ) -> Self {
-        let handler_registry = Arc::new(HandlerRegistry::new(
-            app_context.clone(),
-            enforce_password_complexity,
-        ));
+        let handler_registry =
+            Arc::new(HandlerRegistry::new(app_context.clone(), enforce_password_complexity));
         let plan_cache = Arc::new(PlanCache::new());
         Self {
             app_context,
@@ -78,8 +76,7 @@ impl SqlExecutor {
         exec_ctx: &ExecutionContext,
         params: Vec<ScalarValue>,
     ) -> Result<ExecutionResult, KalamDbError> {
-        self.execute_with_metadata(sql, exec_ctx, None, params)
-            .await
+        self.execute_with_metadata(sql, exec_ctx, None, params).await
     }
 
     /// Execute a statement with optional metadata.
@@ -117,7 +114,7 @@ impl SqlExecutor {
         .map_err(|e| match e {
             kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
                 KalamDbError::Unauthorized(msg)
-            }
+            },
             kalamdb_sql::classifier::StatementClassificationError::InvalidSql {
                 sql: _,
                 message,
@@ -136,7 +133,7 @@ impl SqlExecutor {
             // Authorization already checked in classifier
             SqlStatementKind::DataFusionMetaCommand => {
                 self.execute_meta_command(sql, exec_ctx).await
-            }
+            },
 
             // DDL operations that modify table/view structure require plan cache invalidation
             // This prevents stale cached plans from referencing dropped/altered tables
@@ -146,10 +143,7 @@ impl SqlExecutor {
             | SqlStatementKind::CreateView(_)
             | SqlStatementKind::CreateNamespace(_)
             | SqlStatementKind::DropNamespace(_) => {
-                let result = self
-                    .handler_registry
-                    .handle(classified, params, exec_ctx)
-                    .await;
+                let result = self.handler_registry.handle(classified, params, exec_ctx).await;
                 // Clear plan cache after DDL to invalidate any cached plans
                 // that may reference the modified schema
                 if result.is_ok() {
@@ -157,14 +151,10 @@ impl SqlExecutor {
                     log::debug!("Plan cache cleared after DDL operation");
                 }
                 result
-            }
+            },
 
             // All other statements: Delegate to handler registry (no cache invalidation needed)
-            _ => {
-                self.handler_registry
-                    .handle(classified, params, exec_ctx)
-                    .await
-            }
+            _ => self.handler_registry.handle(classified, params, exec_ctx).await,
         }
     }
 
@@ -176,7 +166,9 @@ impl SqlExecutor {
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         use crate::sql::executor::default_ordering::apply_default_order_by;
-        use crate::sql::executor::parameter_binding::{replace_placeholders_in_plan, validate_params};
+        use crate::sql::executor::parameter_binding::{
+            replace_placeholders_in_plan, validate_params,
+        };
 
         // Validate parameters if present
         if !params.is_empty() {
@@ -191,11 +183,8 @@ impl SqlExecutor {
         // Try to get cached plan first (only if no params - parameterized queries can't use cached plans)
         // Note: Cached plans already have default ORDER BY applied
         // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan time
-        let cache_key = PlanCacheKey::new(
-            exec_ctx.default_namespace().clone(),
-            exec_ctx.user_role,
-            sql,
-        );
+        let cache_key =
+            PlanCacheKey::new(exec_ctx.default_namespace().clone(), exec_ctx.user_role, sql);
 
         let df = if params.is_empty() {
             if let Some(plan) = self.plan_cache.get(&cache_key) {
@@ -213,10 +202,11 @@ impl SqlExecutor {
                                 // Apply default ORDER BY for consistency
                                 let plan = df.logical_plan().clone();
                                 let ordered_plan = apply_default_order_by(plan, &self.app_context)?;
-                                session.execute_logical_plan(ordered_plan).await.map_err(|e| {
-                                    KalamDbError::ExecutionError(e.to_string())
-                                })?
-                            }
+                                session
+                                    .execute_logical_plan(ordered_plan)
+                                    .await
+                                    .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
+                            },
                             Err(e) => {
                                 if Self::is_table_not_found_error(&e) {
                                     log::warn!(
@@ -229,22 +219,25 @@ impl SqlExecutor {
                                     match retry_session.sql(sql).await {
                                         Ok(df) => {
                                             let plan = df.logical_plan().clone();
-                                            let ordered_plan = apply_default_order_by(plan, &self.app_context)?;
+                                            let ordered_plan =
+                                                apply_default_order_by(plan, &self.app_context)?;
                                             retry_session
                                                 .execute_logical_plan(ordered_plan)
                                                 .await
-                                                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
-                                        }
+                                                .map_err(|e| {
+                                                KalamDbError::ExecutionError(e.to_string())
+                                            })?
+                                        },
                                         Err(e2) => {
                                             return Err(self.log_sql_error(sql, exec_ctx, e2));
-                                        }
+                                        },
                                     }
                                 } else {
                                     return Err(self.log_sql_error(sql, exec_ctx, e));
                                 }
-                            }
+                            },
                         }
-                    }
+                    },
                 }
             } else {
                 // Cache miss: Parse SQL and get DataFrame (with detailed logging on failure)
@@ -259,10 +252,11 @@ impl SqlExecutor {
                         self.plan_cache.insert(cache_key, ordered_plan.clone());
 
                         // Execute the ordered plan
-                        session.execute_logical_plan(ordered_plan).await.map_err(|e| {
-                            KalamDbError::ExecutionError(e.to_string())
-                        })?
-                    }
+                        session
+                            .execute_logical_plan(ordered_plan)
+                            .await
+                            .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
+                    },
                     Err(e) => {
                         if Self::is_table_not_found_error(&e) {
                             log::warn!(
@@ -275,7 +269,8 @@ impl SqlExecutor {
                             match retry_session.sql(sql).await {
                                 Ok(df) => {
                                     let plan = df.logical_plan().clone();
-                                    let ordered_plan = apply_default_order_by(plan, &self.app_context)?;
+                                    let ordered_plan =
+                                        apply_default_order_by(plan, &self.app_context)?;
 
                                     self.plan_cache.insert(cache_key, ordered_plan.clone());
 
@@ -283,15 +278,15 @@ impl SqlExecutor {
                                         .execute_logical_plan(ordered_plan)
                                         .await
                                         .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
-                                }
+                                },
                                 Err(e2) => {
                                     return Err(self.log_sql_error(sql, exec_ctx, e2));
-                                }
+                                },
                             }
                         } else {
                             return Err(self.log_sql_error(sql, exec_ctx, e));
                         }
-                    }
+                    },
                 }
             }
         } else {
@@ -312,12 +307,12 @@ impl SqlExecutor {
                             Ok(df) => df,
                             Err(e2) => {
                                 return Err(self.log_sql_error(sql, exec_ctx, e2));
-                            }
+                            },
                         }
                     } else {
                         return Err(self.log_sql_error(sql, exec_ctx, e));
                     }
-                }
+                },
             };
 
             // Get the logical plan and replace placeholders with parameter values
@@ -339,7 +334,7 @@ impl SqlExecutor {
                         e
                     );
                     return Err(KalamDbError::ExecutionError(e.to_string()));
-                }
+                },
             }
         };
 
@@ -364,7 +359,7 @@ impl SqlExecutor {
                     e
                 );
                 return Err(KalamDbError::Other(format!("Error executing query: {}", e)));
-            }
+            },
         };
 
         // Calculate total row count
@@ -404,7 +399,7 @@ impl SqlExecutor {
                     e
                 );
                 return Err(KalamDbError::ExecutionError(e.to_string()));
-            }
+            },
         };
 
         // Capture schema before collecting
@@ -422,11 +417,8 @@ impl SqlExecutor {
                     exec_ctx.user_id.as_str(),
                     e
                 );
-                return Err(KalamDbError::Other(format!(
-                    "Error executing meta command: {}",
-                    e
-                )));
-            }
+                return Err(KalamDbError::Other(format!("Error executing meta command: {}", e)));
+            },
         };
 
         let row_count: usize = batches.iter().map(|b| b.num_rows()).sum();
@@ -531,23 +523,25 @@ impl SqlExecutor {
 
             // Get Arrow schema from cache (memoized in CachedTableData)
             // This populates cache with table definition + computes arrow schema once
-            let arrow_schema = match schema_registry.get_arrow_schema(app_context.as_ref(), &table_id) {
-                Ok(schema) => schema,
-                Err(e) => {
-                    log::error!(
-                        "Failed to get Arrow schema for {}.{}: {}",
-                        table_def.namespace_id.as_str(),
-                        table_def.table_name.as_str(),
-                        e
-                    );
-                    continue;
-                }
-            };
+            let arrow_schema =
+                match schema_registry.get_arrow_schema(app_context.as_ref(), &table_id) {
+                    Ok(schema) => schema,
+                    Err(e) => {
+                        log::error!(
+                            "Failed to get Arrow schema for {}.{}: {}",
+                            table_def.namespace_id.as_str(),
+                            table_def.table_name.as_str(),
+                            e
+                        );
+                        continue;
+                    },
+                };
 
             // Register provider based on type
             match table_def.table_type {
                 TableType::User => {
-                    if let Err(e) = register_user_table_provider(app_context, &table_id, arrow_schema)
+                    if let Err(e) =
+                        register_user_table_provider(app_context, &table_id, arrow_schema)
                     {
                         if is_already_registered(&e) {
                             log::debug!(
@@ -560,7 +554,7 @@ impl SqlExecutor {
                         return Err(e);
                     }
                     user_count += 1;
-                }
+                },
                 TableType::Shared => {
                     if let Err(e) =
                         register_shared_table_provider(app_context, &table_id, arrow_schema)
@@ -576,7 +570,7 @@ impl SqlExecutor {
                         return Err(e);
                     }
                     shared_count += 1;
-                }
+                },
                 TableType::Stream => {
                     // Extract TTL from table_options
                     let ttl_seconds =
@@ -604,11 +598,11 @@ impl SqlExecutor {
                         return Err(e);
                     }
                     stream_count += 1;
-                }
+                },
                 TableType::System => {
                     // Already handled above
                     unreachable!()
-                }
+                },
             }
         }
 
@@ -653,25 +647,24 @@ impl SqlExecutor {
             LogicalPlan::TableScan(scan) => {
                 // Resolve table reference to TableId
                 let (ns, tbl) = match &scan.table_name {
-                    datafusion::common::TableReference::Bare { table } => (
-                        NamespaceId::new("default"),
-                        TableName::new(table.to_string()),
-                    ),
-                    datafusion::common::TableReference::Partial { schema, table } => (
-                        NamespaceId::new(schema.to_string()),
-                        TableName::new(table.to_string()),
-                    ),
-                    datafusion::common::TableReference::Full { schema, table, .. } => (
-                        NamespaceId::new(schema.to_string()),
-                        TableName::new(table.to_string()),
-                    ),
+                    datafusion::common::TableReference::Bare { table } => {
+                        (NamespaceId::new("default"), TableName::new(table.to_string()))
+                    },
+                    datafusion::common::TableReference::Partial { schema, table } => {
+                        (NamespaceId::new(schema.to_string()), TableName::new(table.to_string()))
+                    },
+                    datafusion::common::TableReference::Full { schema, table, .. } => {
+                        (NamespaceId::new(schema.to_string()), TableName::new(table.to_string()))
+                    },
                 };
 
                 let table_id = TableId::new(ns.clone(), tbl.clone());
 
                 // Get table definition
                 let schema_registry = self.app_context.schema_registry();
-                if let Ok(Some(def)) = schema_registry.get_table_if_exists(self.app_context.as_ref(), &table_id) {
+                if let Ok(Some(def)) =
+                    schema_registry.get_table_if_exists(self.app_context.as_ref(), &table_id)
+                {
                     if matches!(def.table_type, TableType::Shared) {
                         let access_level = if let TableOptions::Shared(opts) = &def.table_options {
                             opts.access_level.unwrap_or(TableAccess::Private)
@@ -679,8 +672,7 @@ impl SqlExecutor {
                             TableAccess::Private
                         };
 
-                        if !can_access_shared_table(access_level, false, exec_ctx.user_role)
-                        {
+                        if !can_access_shared_table(access_level, false, exec_ctx.user_role) {
                             return Err(KalamDbError::Unauthorized(format!(
                                 "Insufficient privileges to read shared table '{}.{}' (Access Level: {:?})",
                                 ns.as_str(),
@@ -721,12 +713,12 @@ impl SqlExecutor {
                         }
                     }
                 }
-            }
+            },
             _ => {
                 for input in plan.inputs() {
                     self.check_plan_permissions(input, exec_ctx)?;
                 }
-            }
+            },
         }
         Ok(())
     }

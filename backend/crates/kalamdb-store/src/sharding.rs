@@ -308,10 +308,8 @@ impl ShardingRegistry {
     /// * `name` - Unique name for the strategy
     /// * `strategy` - Strategy implementation
     pub fn register(&self, name: impl Into<String>, strategy: Arc<dyn ShardingStrategy>) {
-        let mut strategies = self
-            .strategies
-            .write()
-            .expect("ShardingRegistry lock poisoned during write");
+        let mut strategies =
+            self.strategies.write().expect("ShardingRegistry lock poisoned during write");
         strategies.insert(name.into(), strategy);
     }
 
@@ -325,19 +323,15 @@ impl ShardingRegistry {
     ///
     /// Some(strategy) if found, None otherwise
     pub fn get(&self, name: &str) -> Option<Arc<dyn ShardingStrategy>> {
-        let strategies = self
-            .strategies
-            .read()
-            .expect("ShardingRegistry lock poisoned during read");
+        let strategies =
+            self.strategies.read().expect("ShardingRegistry lock poisoned during read");
         strategies.get(name).cloned()
     }
 
     /// List all registered strategy names
     pub fn list_strategies(&self) -> Vec<String> {
-        let strategies = self
-            .strategies
-            .read()
-            .expect("ShardingRegistry lock poisoned during read");
+        let strategies =
+            self.strategies.read().expect("ShardingRegistry lock poisoned during read");
         strategies.keys().cloned().collect()
     }
 }

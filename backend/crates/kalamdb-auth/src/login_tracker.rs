@@ -64,10 +64,7 @@ impl LoginTracker {
                 user.username, remaining_minutes
             );
 
-            return Err(AuthError::AccountLocked(format!(
-                "{} minute(s)",
-                remaining_minutes
-            )));
+            return Err(AuthError::AccountLocked(format!("{} minute(s)", remaining_minutes)));
         }
 
         Ok(())
@@ -117,15 +114,12 @@ impl LoginTracker {
         }
 
         let had_failed_attempts = user.failed_login_attempts > 0;
-        
+
         // Only update the database if there were failed attempts to clear
         // This avoids writing to the database on every successful request
         if had_failed_attempts {
             user.record_successful_login();
-            info!(
-                "Successful login, reset failed attempts: username={}",
-                user.username
-            );
+            info!("Successful login, reset failed attempts: username={}", user.username);
             repo.update_user(user).await
         } else {
             // No failed attempts - skip database write for performance

@@ -1,9 +1,9 @@
-use kalamdb_core::schema_registry::{CachedTableData, SchemaRegistry};
 use datafusion::catalog::TableProvider;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
 use kalamdb_commons::schemas::TableType;
+use kalamdb_core::schema_registry::{CachedTableData, SchemaRegistry};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::thread;
@@ -135,19 +135,12 @@ fn test_storage_path_resolution() {
     let data_arc = Arc::new(data);
 
     // Test PathResolver::get_relative_storage_path (doesn't require AppContext)
-    let relative_path = PathResolver::get_relative_storage_path(
-        &data_arc,
-        Some(&UserId::new("alice")),
-        Some(0),
-    )
-    .expect("Should resolve relative path");
+    let relative_path =
+        PathResolver::get_relative_storage_path(&data_arc, Some(&UserId::new("alice")), Some(0))
+            .expect("Should resolve relative path");
 
     let expected = "data/my_ns/messages/alice/shard_0/";
-    assert_eq!(
-        relative_path, expected,
-        "Expected '{}', got '{}'",
-        expected, relative_path
-    );
+    assert_eq!(relative_path, expected, "Expected '{}', got '{}'", expected, relative_path);
 
     println!("✅ Storage path resolution test passed (using get_relative_storage_path)");
 }
@@ -194,10 +187,7 @@ fn test_metrics() {
     // Generate hits and misses
     cache.get(&table_id); // Hit
     cache.get(&table_id); // Hit
-    cache.get(&TableId::new(
-        NamespaceId::new("ns1"),
-        TableName::new("nonexistent"),
-    )); // Miss
+    cache.get(&TableId::new(NamespaceId::new("ns1"), TableName::new("nonexistent"))); // Miss
 
     let (size, hits, misses, hit_rate) = cache.stats();
     assert_eq!(size, 1);
@@ -516,7 +506,8 @@ fn test_provider_cache_insert_and_get() {
 
     // Now insert provider into the cached data
     let stats_view = Arc::new(StatsView::new());
-    let provider = Arc::new(StatsTableProvider::new(stats_view)) as Arc<dyn TableProvider + Send + Sync>;
+    let provider =
+        Arc::new(StatsTableProvider::new(stats_view)) as Arc<dyn TableProvider + Send + Sync>;
 
     // Get the cached data and set provider directly (tests CachedTableData.set_provider)
     let cached = cache.get(&table_id).expect("should have cached data");
@@ -525,20 +516,17 @@ fn test_provider_cache_insert_and_get() {
     // Retrieve via get_provider
     let retrieved = cache.get_provider(&table_id).expect("provider present");
 
-    assert!(
-        Arc::ptr_eq(&provider, &retrieved),
-        "must return same Arc instance"
-    );
+    assert!(Arc::ptr_eq(&provider, &retrieved), "must return same Arc instance");
 
     println!("✅ Provider cache insert and get test passed");
 }
 
 #[test]
 fn test_cached_table_data_includes_system_columns() {
-    use kalamdb_core::system_columns::SystemColumnsService;
     use arrow::datatypes::DataType;
     use kalamdb_commons::models::datatypes::KalamDataType;
     use kalamdb_commons::models::schemas::{ColumnDefinition, TableOptions, TableType};
+    use kalamdb_core::system_columns::SystemColumnsService;
 
     // Create a table definition with user columns
     let user_col = ColumnDefinition::new(
@@ -568,11 +556,7 @@ fn test_cached_table_data_includes_system_columns() {
     sys_cols.add_system_columns(&mut table_def).unwrap();
 
     // Verify columns were added
-    assert_eq!(
-        table_def.columns.len(),
-        3,
-        "Should have 1 user column + 2 system columns"
-    );
+    assert_eq!(table_def.columns.len(), 3, "Should have 1 user column + 2 system columns");
     assert_eq!(table_def.columns[0].column_name, "user_name");
     assert_eq!(table_def.columns[1].column_name, "_seq");
     assert_eq!(table_def.columns[2].column_name, "_deleted");
@@ -581,16 +565,10 @@ fn test_cached_table_data_includes_system_columns() {
     let cached_data = CachedTableData::new(Arc::new(table_def));
 
     // Get Arrow schema (should include system columns)
-    let arrow_schema = cached_data
-        .arrow_schema()
-        .expect("Arrow schema should be available");
+    let arrow_schema = cached_data.arrow_schema().expect("Arrow schema should be available");
 
     // Verify Arrow schema has all columns including system columns
-    assert_eq!(
-        arrow_schema.fields().len(),
-        3,
-        "Arrow schema should have 3 columns"
-    );
+    assert_eq!(arrow_schema.fields().len(), 3, "Arrow schema should have 3 columns");
     assert_eq!(arrow_schema.field(0).name(), "user_name");
     assert_eq!(arrow_schema.field(1).name(), "_seq");
     assert_eq!(arrow_schema.field(2).name(), "_deleted");

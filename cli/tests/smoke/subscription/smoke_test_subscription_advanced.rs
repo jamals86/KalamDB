@@ -50,10 +50,7 @@ impl SubscriptionListenerAdvanced {
             runtime.block_on(async move {
                 let client = match KalamLinkClient::builder()
                     .base_url(server_url())
-                    .auth(AuthProvider::basic_auth(
-                        "root".to_string(),
-                        root_password().to_string(),
-                    ))
+                    .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
                     .timeouts(
                         KalamLinkTimeouts::builder()
                             .connection_timeout_secs(5)
@@ -70,7 +67,7 @@ impl SubscriptionListenerAdvanced {
                     Err(e) => {
                         let _ = event_tx.send(format!("ERROR: Failed to create client: {}", e));
                         return;
-                    }
+                    },
                 };
 
                 // Generate unique subscription ID
@@ -93,7 +90,7 @@ impl SubscriptionListenerAdvanced {
                     Err(e) => {
                         let _ = event_tx.send(format!("ERROR: Failed to subscribe: {}", e));
                         return;
-                    }
+                    },
                 };
 
                 let mut stop_rx = stop_rx;
@@ -141,15 +138,12 @@ impl SubscriptionListenerAdvanced {
             Ok(line) => Ok(Some(line)),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 Err("Timeout waiting for subscription data".into())
-            }
+            },
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Ok(None),
         }
     }
 
-    pub fn collect_events_until_ready(
-        &mut self,
-        timeout: Duration,
-    ) -> Vec<String> {
+    pub fn collect_events_until_ready(&mut self, timeout: Duration) -> Vec<String> {
         let mut events = Vec::new();
         let deadline = std::time::Instant::now() + timeout;
 
@@ -158,11 +152,12 @@ impl SubscriptionListenerAdvanced {
                 Ok(Some(line)) => {
                     events.push(line.clone());
                     // Check if batch loading is complete
-                    if line.contains("status: Ready") || 
-                       (line.contains("Ack") && !line.contains("has_more: true")) {
+                    if line.contains("status: Ready")
+                        || (line.contains("Ack") && !line.contains("has_more: true"))
+                    {
                         break;
                     }
-                }
+                },
                 Ok(None) => break,
                 Err(_) => continue,
             }
@@ -218,12 +213,18 @@ fn smoke_subscription_multi_batch_initial_data() {
     for i in 1..=total_rows {
         let insert_sql = format!(
             "INSERT INTO {} (id, data, created_at) VALUES ({}, 'row_{}', {})",
-            full, i, i, 1730497770045_i64 + i as i64
+            full,
+            i,
+            i,
+            1730497770045_i64 + i as i64
         );
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
 
-    println!("[TEST] Inserted {} rows, subscribing with batch_size={}", total_rows, batch_size);
+    println!(
+        "[TEST] Inserted {} rows, subscribing with batch_size={}",
+        total_rows, batch_size
+    );
 
     // Small delay to ensure data is visible
     std::thread::sleep(Duration::from_millis(500));
@@ -231,24 +232,23 @@ fn smoke_subscription_multi_batch_initial_data() {
     // Subscribe with small batch size to force multiple batches
     let query = format!("SELECT * FROM {}", full);
     let options = SubscriptionOptions::default().with_batch_size(batch_size);
-    let mut listener = start_subscription_with_config(&query, Some(options))
-        .expect("subscription should start");
+    let mut listener =
+        start_subscription_with_config(&query, Some(options)).expect("subscription should start");
 
     // Collect all initial data events
     let events = listener.collect_events_until_ready(Duration::from_secs(60));
 
     // Count InitialDataBatch events and rows
-    let batch_events: Vec<&String> = events
-        .iter()
-        .filter(|e| e.contains("InitialDataBatch"))
-        .collect();
-    
-    let ack_events: Vec<&String> = events
-        .iter()
-        .filter(|e| e.contains("Ack"))
-        .collect();
+    let batch_events: Vec<&String> =
+        events.iter().filter(|e| e.contains("InitialDataBatch")).collect();
 
-    println!("[TEST] Received {} InitialDataBatch events, {} Ack events", batch_events.len(), ack_events.len());
+    let ack_events: Vec<&String> = events.iter().filter(|e| e.contains("Ack")).collect();
+
+    println!(
+        "[TEST] Received {} InitialDataBatch events, {} Ack events",
+        batch_events.len(),
+        ack_events.len()
+    );
     for (i, event) in batch_events.iter().enumerate() {
         println!("[TEST] Batch {}: {}...", i + 1, &event[..std::cmp::min(150, event.len())]);
     }
@@ -263,10 +263,8 @@ fn smoke_subscription_multi_batch_initial_data() {
 
     // Verify some of our rows are present in the data
     let all_events_str = events.join("\n");
-    let found_rows = (1..=5)
-        .filter(|i| all_events_str.contains(&format!("row_{}", i)))
-        .count();
-    
+    let found_rows = (1..=5).filter(|i| all_events_str.contains(&format!("row_{}", i))).count();
+
     assert!(
         found_rows >= 3,
         "Should find at least 3 of our test rows in initial data. Found: {}. Events sample: {}",
@@ -275,9 +273,11 @@ fn smoke_subscription_multi_batch_initial_data() {
     );
 
     // Verify final batch indicates completion (has_more: false or status: Ready)
-    let last_batch_or_ack = events.iter().rev()
+    let last_batch_or_ack = events
+        .iter()
+        .rev()
         .find(|e| e.contains("InitialDataBatch") || e.contains("Ack"));
-    
+
     if let Some(last) = last_batch_or_ack {
         assert!(
             !last.contains("has_more: true") || last.contains("status: Ready"),
@@ -310,18 +310,14 @@ fn smoke_subscription_resume_from_seq_id() {
     create_namespace(&namespace);
 
     // Create table
-    let create_sql = format!(
-        "CREATE TABLE {} (id INT PRIMARY KEY, value VARCHAR) WITH (TYPE = 'USER')",
-        full
-    );
+    let create_sql =
+        format!("CREATE TABLE {} (id INT PRIMARY KEY, value VARCHAR) WITH (TYPE = 'USER')", full);
     execute_sql_as_root_via_client(&create_sql).expect("create user table should succeed");
 
     // Insert initial rows
     for i in 1..=5 {
-        let insert_sql = format!(
-            "INSERT INTO {} (id, value) VALUES ({}, 'initial_{}')",
-            full, i, i
-        );
+        let insert_sql =
+            format!("INSERT INTO {} (id, value) VALUES ({}, 'initial_{}')", full, i, i);
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
 
@@ -340,7 +336,8 @@ fn smoke_subscription_resume_from_seq_id() {
     execute_sql_as_root_via_client(&format!(
         "INSERT INTO {} (id, value) VALUES (100, '{}')",
         full, test_value
-    )).expect("insert should succeed");
+    ))
+    .expect("insert should succeed");
 
     // Wait for the insert event
     let mut last_seq_id: Option<String> = None;
@@ -362,7 +359,7 @@ fn smoke_subscription_resume_from_seq_id() {
                     }
                     break;
                 }
-            }
+            },
             Ok(None) => break,
             Err(_) => continue,
         }
@@ -376,21 +373,24 @@ fn smoke_subscription_resume_from_seq_id() {
     execute_sql_as_root_via_client(&format!(
         "INSERT INTO {} (id, value) VALUES (101, '{}')",
         full, change2_value
-    )).expect("insert should succeed");
+    ))
+    .expect("insert should succeed");
     execute_sql_as_root_via_client(&format!(
         "INSERT INTO {} (id, value) VALUES (102, '{}')",
         full, change3_value
-    )).expect("insert should succeed");
+    ))
+    .expect("insert should succeed");
 
     std::thread::sleep(Duration::from_millis(300));
 
     // Second subscription - resuming from seq_id should skip initial data
     // and only receive changes after that seq_id
     println!("[TEST] Starting second subscription");
-    
+
     // Note: Even if we don't have a valid seq_id, we can still test the subscription
     // The server should handle from_seq_id gracefully
-    let mut listener2 = SubscriptionListener::start(&query).expect("second subscription should start");
+    let mut listener2 =
+        SubscriptionListener::start(&query).expect("second subscription should start");
 
     // Collect events from second subscription
     let mut events2: Vec<String> = Vec::new();
@@ -400,39 +400,37 @@ fn smoke_subscription_resume_from_seq_id() {
             Ok(Some(line)) => {
                 println!("[SECOND_SUB] Event: {}...", &line[..std::cmp::min(200, line.len())]);
                 events2.push(line.clone());
-                
+
                 // Look for our new changes
                 if line.contains(&change2_value) || line.contains(&change3_value) {
                     break;
                 }
-                
+
                 // If we got initial data including our new rows, that's also valid
                 if events2.len() >= 3 {
                     break;
                 }
-            }
+            },
             Ok(None) => break,
             Err(_) => {
                 if !events2.is_empty() {
                     break;
                 }
                 continue;
-            }
+            },
         }
     }
 
     listener2.stop().ok();
 
     // Verify we received data from the second subscription
-    assert!(
-        !events2.is_empty(),
-        "Second subscription should receive events"
-    );
+    assert!(!events2.is_empty(), "Second subscription should receive events");
 
     // The new data should be present (either as initial data or change events)
     let events2_str = events2.join("\n");
-    let found_new_data = events2_str.contains(&change2_value) || events2_str.contains(&change3_value);
-    
+    let found_new_data =
+        events2_str.contains(&change2_value) || events2_str.contains(&change3_value);
+
     assert!(
         found_new_data || events2_str.contains("change"),
         "Second subscription should see the new changes. Events: {:?}",
@@ -487,29 +485,34 @@ fn smoke_subscription_high_volume_changes() {
 
     println!("[TEST] Starting {} rapid inserts...", num_inserts);
     let start = std::time::Instant::now();
-    
+
     for i in 1..=num_inserts {
         let insert_sql = format!(
             "INSERT INTO {} (id, counter, updated_at) VALUES ({}, {}, {})",
-            full, i, i * 100, 1730497770045 + i
+            full,
+            i,
+            i * 100,
+            1730497770045 + i
         );
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
-    
+
     println!("[TEST] Inserts completed in {:?}", start.elapsed());
 
     // Perform rapid updates on existing rows
     println!("[TEST] Starting {} rapid updates...", num_updates);
     let update_start = std::time::Instant::now();
-    
+
     for i in 1..=num_updates {
         let update_sql = format!(
             "UPDATE {} SET counter = {} WHERE id = {}",
-            full, (i * 100) + test_id as i64, i
+            full,
+            (i * 100) + test_id as i64,
+            i
         );
         execute_sql_as_root_via_client(&update_sql).expect("update should succeed");
     }
-    
+
     println!("[TEST] Updates completed in {:?}", update_start.elapsed());
 
     // Collect all change events with adequate timeout
@@ -522,7 +525,7 @@ fn smoke_subscription_high_volume_changes() {
         match listener.try_read_line(Duration::from_millis(500)) {
             Ok(Some(line)) => {
                 all_events.push(line.clone());
-                
+
                 if line.contains("Insert") {
                     insert_count += 1;
                 } else if line.contains("Update") || line.contains(&update_marker) {
@@ -533,12 +536,12 @@ fn smoke_subscription_high_volume_changes() {
                 if insert_count >= num_inserts && update_count >= num_updates {
                     break;
                 }
-                
+
                 // Also break if we've been collecting for a while with no new events
                 if all_events.len() > (num_inserts + num_updates) as usize {
                     break;
                 }
-            }
+            },
             Ok(None) => break,
             Err(_) => {
                 // If we have some events and timeout, check if we have enough
@@ -546,7 +549,7 @@ fn smoke_subscription_high_volume_changes() {
                     break;
                 }
                 continue;
-            }
+            },
         }
     }
 
@@ -581,13 +584,17 @@ fn smoke_subscription_high_volume_changes() {
     // Verify no errors in the event stream
     let error_count = all_events.iter().filter(|e| e.contains("ERROR")).count();
     assert_eq!(
-        error_count, 0,
+        error_count,
+        0,
         "Should not receive any error events. Errors: {:?}",
         all_events.iter().filter(|e| e.contains("ERROR")).collect::<Vec<_>>()
     );
 
     listener.stop().ok();
-    println!("[TEST] High-volume changes test passed! {} inserts, {} updates received", insert_count, update_count);
+    println!(
+        "[TEST] High-volume changes test passed! {} inserts, {} updates received",
+        insert_count, update_count
+    );
 }
 
 // ============================================================================
@@ -609,18 +616,13 @@ fn smoke_subscription_delete_events() {
 
     create_namespace(&namespace);
 
-    let create_sql = format!(
-        "CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE = 'USER')",
-        full
-    );
+    let create_sql =
+        format!("CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE = 'USER')", full);
     execute_sql_as_root_via_client(&create_sql).expect("create user table should succeed");
 
     // Insert some rows first
     for i in 1..=5 {
-        let insert_sql = format!(
-            "INSERT INTO {} (id, name) VALUES ({}, 'item_{}')",
-            full, i, i
-        );
+        let insert_sql = format!("INSERT INTO {} (id, name) VALUES ({}, 'item_{}')", full, i, i);
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
 
@@ -656,21 +658,18 @@ fn smoke_subscription_delete_events() {
                         break;
                     }
                 }
-            }
+            },
             Ok(None) => break,
             Err(_) => {
                 if !delete_events.is_empty() {
                     break;
                 }
                 continue;
-            }
+            },
         }
     }
 
-    assert!(
-        !delete_events.is_empty(),
-        "Should receive DELETE events"
-    );
+    assert!(!delete_events.is_empty(), "Should receive DELETE events");
 
     // Verify delete events contain old row data
     let delete_events_str = delete_events.join("\n");
@@ -684,7 +683,10 @@ fn smoke_subscription_delete_events() {
     );
 
     listener.stop().ok();
-    println!("[TEST] Delete events test passed! {} delete events received", delete_events.len());
+    println!(
+        "[TEST] Delete events test passed! {} delete events received",
+        delete_events.len()
+    );
 }
 
 // Helper extension for SubscriptionListener to collect until ready
@@ -702,11 +704,12 @@ impl SubscriptionListenerExt for SubscriptionListener {
                 Ok(Some(line)) => {
                     events.push(line.clone());
                     // Check if batch loading is complete
-                    if line.contains("status: Ready") ||
-                       (line.contains("Ack") && !line.contains("has_more: true")) {
+                    if line.contains("status: Ready")
+                        || (line.contains("Ack") && !line.contains("has_more: true"))
+                    {
                         break;
                     }
-                }
+                },
                 Ok(None) => break,
                 Err(_) => continue,
             }
@@ -777,27 +780,28 @@ fn smoke_subscription_column_projection() {
                 println!("[TEST] Initial event: {}", &line[..std::cmp::min(400, line.len())]);
                 initial_events.push(line.clone());
                 // Check if we're done with initial loading
-                if line.contains("status: Ready") || 
-                   (line.contains("Ack") && !line.contains("has_more: true")) {
+                if line.contains("status: Ready")
+                    || (line.contains("Ack") && !line.contains("has_more: true"))
+                {
                     ready = true;
                 }
-            }
+            },
             Ok(None) => break,
             Err(_) => continue,
         }
     }
-    
+
     println!("[TEST] Total initial events received: {}", initial_events.len());
 
     // Verify initial data contains username but NOT other columns
     let initial_str = initial_events.join("\n");
-    
+
     // Check if we got initial data at all - the data should be in InitialDataBatch or Ack
     // If total_rows: 0 in Ack, the row may not have been visible yet
-    let has_initial_data = initial_str.contains("InitialDataBatch") || 
-                           initial_str.contains(&test_username) ||
-                           initial_str.contains("total_rows: 1");
-    
+    let has_initial_data = initial_str.contains("InitialDataBatch")
+        || initial_str.contains(&test_username)
+        || initial_str.contains("total_rows: 1");
+
     if !has_initial_data {
         // The initial snapshot may have missed the row - wait for it as an Insert event
         println!("[TEST] No initial data found, waiting for Insert event...");
@@ -806,13 +810,16 @@ fn smoke_subscription_column_projection() {
         while std::time::Instant::now() < insert_deadline {
             match listener.try_read_line(Duration::from_millis(500)) {
                 Ok(Some(line)) => {
-                    println!("[TEST] Event while waiting: {}", &line[..std::cmp::min(300, line.len())]);
+                    println!(
+                        "[TEST] Event while waiting: {}",
+                        &line[..std::cmp::min(300, line.len())]
+                    );
                     initial_events.push(line.clone());
                     if line.contains(&test_username) || line.contains("Insert") {
                         found_insert = true;
                         break;
                     }
-                }
+                },
                 Ok(None) => break,
                 Err(_) => continue,
             }
@@ -874,21 +881,18 @@ fn smoke_subscription_column_projection() {
                 if line.contains("Update") || line.contains(&updated_username) {
                     break;
                 }
-            }
+            },
             Ok(None) => break,
             Err(_) => {
                 if !update_events.is_empty() {
                     break;
                 }
                 continue;
-            }
+            },
         }
     }
 
-    assert!(
-        !update_events.is_empty(),
-        "Should receive update event"
-    );
+    assert!(!update_events.is_empty(), "Should receive update event");
 
     let update_str = update_events.join("\n");
 
@@ -921,13 +925,16 @@ fn smoke_subscription_column_projection() {
     );
 
     // Verify InitialDataBatch had _seq (system column) along with username
-    let has_seq_in_initial = initial_events.iter().any(|e| 
-        e.contains("InitialDataBatch") && e.contains("_seq")
-    );
+    let has_seq_in_initial = initial_events
+        .iter()
+        .any(|e| e.contains("InitialDataBatch") && e.contains("_seq"));
     assert!(
         has_seq_in_initial,
         "InitialDataBatch should contain _seq system column. Events: {:?}",
-        initial_events.iter().filter(|e| e.contains("InitialDataBatch")).collect::<Vec<_>>()
+        initial_events
+            .iter()
+            .filter(|e| e.contains("InitialDataBatch"))
+            .collect::<Vec<_>>()
     );
 
     listener.stop().ok();

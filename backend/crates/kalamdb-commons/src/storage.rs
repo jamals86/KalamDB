@@ -102,7 +102,7 @@ impl fmt::Display for StorageError {
             StorageError::Unsupported(msg) => write!(f, "Unsupported operation: {}", msg),
             StorageError::UniqueConstraintViolation(msg) => {
                 write!(f, "Unique constraint violation: {}", msg)
-            }
+            },
             StorageError::LockPoisoned(msg) => write!(f, "Lock poisoned: {}", msg),
             StorageError::Other(msg) => write!(f, "Storage error: {}", msg),
         }
@@ -276,7 +276,7 @@ mod tests {
                 assert_eq!(partition.name(), "test");
                 assert_eq!(key, b"key1");
                 assert_eq!(value, b"value1");
-            }
+            },
             _ => panic!("Wrong operation type"),
         }
     }

@@ -5,7 +5,6 @@
 //! - DELETE returns count of rows that were soft-deleted
 //! - Row counts are accurate and match expectations
 
-
 use super::test_support::{fixtures, TestServer};
 use kalam_link::models::{QueryResponse, ResponseStatus};
 

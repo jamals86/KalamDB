@@ -34,11 +34,9 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let users = self.app_context.system_tables().users();
-        let existing = users
-            .get_user_by_username(&statement.username)?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!("User '{}' not found", statement.username))
-            })?;
+        let existing = users.get_user_by_username(&statement.username)?.ok_or_else(|| {
+            KalamDbError::NotFound(format!("User '{}' not found", statement.username))
+        })?;
 
         let mut updated = existing.clone();
 
@@ -61,14 +59,14 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                 }
                 updated.password_hash = bcrypt::hash(new_pw, bcrypt::DEFAULT_COST)
                     .into_kalamdb_error("Password hash error")?;
-                
+
                 // For Internal auth type users (system users like root), automatically enable
                 // remote access when a password is set. This is the expected behavior since
                 // setting a password implies wanting to authenticate remotely.
                 if updated.auth_type == AuthType::Internal {
                     updated.auth_data = Some(r#"{"allow_remote":true}"#.to_string());
                 }
-            }
+            },
             UserModification::SetRole(new_role) => {
                 if !context.is_admin() {
                     return Err(KalamDbError::Unauthorized(
@@ -76,7 +74,7 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                     ));
                 }
                 updated.role = new_role;
-            }
+            },
             UserModification::SetEmail(ref new_email) => {
                 let is_self = context.user_id.as_str() == updated.id.as_str();
                 if !is_self && !context.is_admin() {
@@ -85,7 +83,7 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                     ));
                 }
                 updated.email = Some(new_email.clone());
-            }
+            },
         }
 
         updated.updated_at = chrono::Utc::now().timestamp_millis();

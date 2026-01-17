@@ -64,11 +64,7 @@ impl SnowflakeIdFunction {
     /// # Panics
     /// Panics if node_id exceeds MAX_NODE_ID (1023)
     pub fn with_node_id(node_id: u16) -> Self {
-        assert!(
-            node_id <= MAX_NODE_ID,
-            "Node ID must be between 0 and {}",
-            MAX_NODE_ID
-        );
+        assert!(node_id <= MAX_NODE_ID, "Node ID must be between 0 and {}", MAX_NODE_ID);
         Self { node_id }
     }
 
@@ -123,9 +119,7 @@ impl ScalarUDFImpl for SnowflakeIdFunction {
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
         if !args.args.is_empty() {
-            return Err(DataFusionError::Plan(
-                "SNOWFLAKE_ID() takes no arguments".to_string(),
-            ));
+            return Err(DataFusionError::Plan("SNOWFLAKE_ID() takes no arguments".to_string()));
         }
         let id = self.generate_id();
         let array = Int64Array::from(vec![id]);
@@ -189,10 +183,7 @@ mod tests {
         let timestamp = (id as u64) >> TIMESTAMP_SHIFT;
 
         // Current timestamp in milliseconds
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
 
         // Timestamp should be close to now (within 1 second)
         assert!(

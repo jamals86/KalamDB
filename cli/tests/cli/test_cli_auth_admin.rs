@@ -13,8 +13,8 @@
 //! ```
 //TODO: Remove this since we have most of the tests covered by the integration tests
 #![allow(unused_imports)]
-use assert_cmd::Command;
 use crate::common::*;
+use assert_cmd::Command;
 use std::time::Duration;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -39,13 +39,14 @@ async fn test_root_can_create_namespace() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Create namespace as root
-    let result = match execute_sql_via_http_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("execute_sql_as_root failed: {:?}", e);
-            panic!("execute_sql_as_root failed: {:?}", e);
-        }
-    };
+    let result =
+        match execute_sql_via_http_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("execute_sql_as_root failed: {:?}", e);
+                panic!("execute_sql_as_root failed: {:?}", e);
+            },
+        };
 
     // Should succeed
     if result["status"] != "success" {
@@ -89,7 +90,8 @@ async fn test_root_can_create_namespace() {
     );
 
     // Cleanup
-    let _ = execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+    let _ =
+        execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }
 
 /// Test that root user can create and drop tables
@@ -104,11 +106,9 @@ async fn test_root_can_create_drop_tables() {
     let namespace_name = generate_unique_namespace("test_tables_ns");
 
     // Ensure namespace exists
-    let _ = execute_sql_via_http_as_root(&format!(
-        "CREATE NAMESPACE IF NOT EXISTS {}",
-        namespace_name
-    ))
-    .await;
+    let _ =
+        execute_sql_via_http_as_root(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace_name))
+            .await;
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     // Create table as root
@@ -130,13 +130,11 @@ async fn test_root_can_create_drop_tables() {
         .await
         .unwrap();
 
-    assert_eq!(
-        result["status"], "success",
-        "Root user should be able to drop tables"
-    );
+    assert_eq!(result["status"], "success", "Root user should be able to drop tables");
 
     // Cleanup
-    let _ = execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+    let _ =
+        execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }
 
 /// Test CREATE NAMESPACE via CLI with root authentication
@@ -191,7 +189,8 @@ async fn test_cli_create_namespace_as_root() {
     assert_eq!(result["status"], "success");
 
     // Cleanup
-    let _ = execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+    let _ =
+        execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }
 
 /// Test that non-admin users cannot create namespaces
@@ -206,7 +205,8 @@ async fn test_regular_user_cannot_create_namespace() {
     let _ = execute_sql_via_http_as_root("DROP USER IF EXISTS testuser").await;
     tokio::time::sleep(Duration::from_millis(20)).await;
 
-    let result = execute_sql_via_http_as_root("CREATE USER testuser PASSWORD 'testpass' ROLE user").await;
+    let result =
+        execute_sql_via_http_as_root("CREATE USER testuser PASSWORD 'testpass' ROLE user").await;
 
     if result.is_err() || result.as_ref().unwrap()["status"] != "success" {
         eprintln!("⚠️  Failed to create test user, skipping test");
@@ -216,20 +216,15 @@ async fn test_regular_user_cannot_create_namespace() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Try to create namespace as regular user
-    let result = execute_sql_via_http_as("testuser", "testpass", "CREATE NAMESPACE user_test_ns").await;
+    let result =
+        execute_sql_via_http_as("testuser", "testpass", "CREATE NAMESPACE user_test_ns").await;
 
     // Should fail with authorization error
     if let Ok(response) = result {
         assert!(
             response["status"] == "error"
-                && (response["error"]
-                    .as_str()
-                    .unwrap_or("")
-                    .contains("Admin privileges")
-                    || response["error"]
-                        .as_str()
-                        .unwrap_or("")
-                        .contains("Unauthorized")),
+                && (response["error"].as_str().unwrap_or("").contains("Admin privileges")
+                    || response["error"].as_str().unwrap_or("").contains("Unauthorized")),
             "Regular user should not be able to create namespaces: {:?}",
             response
         );
@@ -319,7 +314,8 @@ SELECT * FROM {}.users;
     );
 
     // Cleanup
-    let _ = execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+    let _ =
+        execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }
 
 /// Test SHOW NAMESPACES command
@@ -331,18 +327,12 @@ async fn test_cli_show_namespaces() {
     }
 
     let mut cmd = create_cli_command_with_root_auth();
-    cmd.arg("--command")
-        .arg("SHOW NAMESPACES")
-        .timeout(TEST_TIMEOUT);
+    cmd.arg("--command").arg("SHOW NAMESPACES").timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    assert!(
-        output.status.success(),
-        "SHOW NAMESPACES command should succeed: {}",
-        stdout
-    );
+    assert!(output.status.success(), "SHOW NAMESPACES command should succeed: {}", stdout);
 
     // Should show table format with column headers
     assert!(
@@ -382,11 +372,7 @@ async fn test_cli_flush_table() {
     .await
     .unwrap();
 
-    assert_eq!(
-        result["status"], "success",
-        "Should create user table: {:?}",
-        result
-    );
+    assert_eq!(result["status"], "success", "Should create user table: {:?}", result);
 
     // Insert some data to trigger potential flush
     for i in 1..=3 {
@@ -428,9 +414,7 @@ async fn test_cli_flush_table() {
     // Extract job ID from output (format: "Job ID: flush-...")
     let job_id = if let Some(job_id_start) = stdout.find("Job ID: ") {
         let id_start = job_id_start + "Job ID: ".len();
-        let id_end = stdout[id_start..]
-            .find('\n')
-            .unwrap_or(stdout[id_start..].len());
+        let id_end = stdout[id_start..].find('\n').unwrap_or(stdout[id_start..].len());
         Some(stdout[id_start..id_start + id_end].trim().to_string())
     } else {
         None
@@ -511,20 +495,14 @@ async fn test_cli_flush_table() {
         // Build an object map {column_name: value} using returned schema metadata
         let mut obj = serde_json::Map::new();
         // Schema format: [{"data_type":"Text","index":0,"name":"job_id"}, ...]
-        let schema_vec = jobs_result["results"][0]["schema"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let schema_vec =
+            jobs_result["results"][0]["schema"].as_array().cloned().unwrap_or_default();
         let values = jobs_data[0].as_array().unwrap();
         for schema_entry in schema_vec.iter() {
-            if let (Some(col_name), Some(idx)) = (
-                schema_entry["name"].as_str(),
-                schema_entry["index"].as_u64(),
-            ) {
-                let val = values
-                    .get(idx as usize)
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
+            if let (Some(col_name), Some(idx)) =
+                (schema_entry["name"].as_str(), schema_entry["index"].as_u64())
+            {
+                let val = values.get(idx as usize).cloned().unwrap_or(serde_json::Value::Null);
                 obj.insert(col_name.to_string(), val);
             }
         }
@@ -542,11 +520,7 @@ async fn test_cli_flush_table() {
         );
     }
 
-    assert_eq!(
-        job["job_type"].as_str().unwrap(),
-        "flush",
-        "Job type should be 'flush'"
-    );
+    assert_eq!(job["job_type"].as_str().unwrap(), "flush", "Job type should be 'flush'");
 
     let params = job["parameters"].as_str().and_then(|s| {
         if s.is_empty() {
@@ -561,8 +535,7 @@ async fn test_cli_flush_table() {
     let table_id = params["table_id"].as_str().unwrap_or("");
     let expected_table_id = format!("{}.metrics", namespace_name);
     assert_eq!(
-        table_id,
-        expected_table_id,
+        table_id, expected_table_id,
         "Job parameters should reference correct table_id (namespace.table format)"
     );
 
@@ -581,28 +554,20 @@ async fn test_cli_flush_table() {
 
         // Requery current job status
         let refetch = execute_sql_via_http_as_root(&jobs_query).await.unwrap();
-        let rows = refetch["results"][0]["rows"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let rows = refetch["results"][0]["rows"].as_array().cloned().unwrap_or_default();
         if let Some(updated) = rows.first() {
             // DataFusion may return rows as arrays; normalize using schema metadata if needed.
             let status = if updated.is_array() {
                 let mut obj = serde_json::Map::new();
-                let schema_vec = refetch["results"][0]["schema"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default();
+                let schema_vec =
+                    refetch["results"][0]["schema"].as_array().cloned().unwrap_or_default();
                 let values = updated.as_array().unwrap();
                 for schema_entry in schema_vec.iter() {
-                    if let (Some(col_name), Some(idx)) = (
-                        schema_entry["name"].as_str(),
-                        schema_entry["index"].as_u64(),
-                    ) {
-                        let val = values
-                            .get(idx as usize)
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Null);
+                    if let (Some(col_name), Some(idx)) =
+                        (schema_entry["name"].as_str(), schema_entry["index"].as_u64())
+                    {
+                        let val =
+                            values.get(idx as usize).cloned().unwrap_or(serde_json::Value::Null);
                         obj.insert(col_name.to_string(), val);
                     }
                 }
@@ -638,7 +603,8 @@ async fn test_cli_flush_table() {
     assert_eq!(result["status"], "success");
 
     // Cleanup
-    let _ = execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+    let _ =
+        execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }
 
 /// Test STORAGE FLUSH ALL command via CLI
@@ -742,11 +708,8 @@ async fn test_cli_flush_all_tables() {
 
     // If we have job IDs, query for those specific jobs
     let jobs_query = if !job_ids.is_empty() {
-        let job_id_list = job_ids
-            .iter()
-            .map(|id| format!("'{}'", id))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let job_id_list =
+            job_ids.iter().map(|id| format!("'{}'", id)).collect::<Vec<_>>().join(", ");
         format!(
             "SELECT job_id, job_type, status, parameters, result FROM system.jobs \
              WHERE job_id IN ({}) \
@@ -792,10 +755,7 @@ async fn test_cli_flush_all_tables() {
     };
 
     // Normalize rows to objects if DataFusion returns arrays.
-    let schema_vec = jobs_result["results"][0]["schema"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let schema_vec = jobs_result["results"][0]["schema"].as_array().cloned().unwrap_or_default();
     let jobs_data: Vec<serde_json::Value> = jobs_data
         .iter()
         .map(|row| {
@@ -803,14 +763,11 @@ async fn test_cli_flush_all_tables() {
                 let mut obj = serde_json::Map::new();
                 let values = row.as_array().unwrap();
                 for schema_entry in schema_vec.iter() {
-                    if let (Some(col_name), Some(idx)) = (
-                        schema_entry["name"].as_str(),
-                        schema_entry["index"].as_u64(),
-                    ) {
-                        let val = values
-                            .get(idx as usize)
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Null);
+                    if let (Some(col_name), Some(idx)) =
+                        (schema_entry["name"].as_str(), schema_entry["index"].as_u64())
+                    {
+                        let val =
+                            values.get(idx as usize).cloned().unwrap_or(serde_json::Value::Null);
                         obj.insert(col_name.to_string(), val);
                     }
                 }
@@ -824,10 +781,7 @@ async fn test_cli_flush_all_tables() {
     // Note: May have 0 jobs if tables were empty and nothing to flush
     if jobs_data.is_empty() {
         if !job_ids.is_empty() {
-            panic!(
-                "Expected to find jobs with IDs {:?}, but found none",
-                job_ids
-            );
+            panic!("Expected to find jobs with IDs {:?}, but found none", job_ids);
         }
         eprintln!(
             "Warning: No flush jobs found. Tables may have been empty or jobs not created yet."
@@ -836,10 +790,8 @@ async fn test_cli_flush_all_tables() {
 
     // If we extracted job IDs, verify we found all of them
     if !job_ids.is_empty() && !jobs_data.is_empty() {
-        let found_job_ids: Vec<&str> = jobs_data
-            .iter()
-            .filter_map(|job| job["job_id"].as_str())
-            .collect();
+        let found_job_ids: Vec<&str> =
+            jobs_data.iter().filter_map(|job| job["job_id"].as_str()).collect();
 
         for expected_job_id in &job_ids {
             assert!(
@@ -893,5 +845,6 @@ async fn test_cli_flush_all_tables() {
     }
 
     // Cleanup
-    let _ = execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+    let _ =
+        execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }

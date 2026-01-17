@@ -233,9 +233,7 @@ impl RaftPartitionStore {
         let prefix = self.make_key("log:");
         let start_key = self.log_key(start);
 
-        let iter = self
-            .backend
-            .scan(&self.partition, Some(&prefix), Some(&start_key), None)?;
+        let iter = self.backend.scan(&self.partition, Some(&prefix), Some(&start_key), None)?;
 
         let mut entries = Vec::with_capacity((end - start) as usize);
         for (key, value) in iter {
@@ -262,9 +260,7 @@ impl RaftPartitionStore {
         // Scan all log keys with log prefix
         let prefix = self.make_key("log:");
 
-        let iter = self
-            .backend
-            .scan(&self.partition, Some(&prefix), None, None)?;
+        let iter = self.backend.scan(&self.partition, Some(&prefix), None, None)?;
 
         let ops: Vec<Operation> = iter
             .filter_map(|(key, _)| {
@@ -293,9 +289,7 @@ impl RaftPartitionStore {
         // Scan all log entries and find the max index
         let prefix = self.make_key("log:");
 
-        let iter = self
-            .backend
-            .scan(&self.partition, Some(&prefix), None, None)?;
+        let iter = self.backend.scan(&self.partition, Some(&prefix), None, None)?;
 
         // Get the last entry (keys are sorted, so last is highest)
         let mut last_index: Option<u64> = None;
@@ -312,9 +306,7 @@ impl RaftPartitionStore {
     pub fn first_log_index(&self) -> Result<Option<u64>> {
         let prefix = self.make_key("log:");
 
-        let iter = self
-            .backend
-            .scan(&self.partition, Some(&prefix), None, Some(1))?;
+        let iter = self.backend.scan(&self.partition, Some(&prefix), None, Some(1))?;
 
         for (key, _) in iter {
             if let Some(index) = Self::parse_log_index_from_key(&key) {
@@ -369,7 +361,7 @@ impl RaftPartitionStore {
             Some(log_id) => {
                 let value = log_id.encode()?;
                 self.backend.put(&self.partition, &key, &value)
-            }
+            },
             None => self.backend.delete(&self.partition, &key),
         }
     }
@@ -390,7 +382,7 @@ impl RaftPartitionStore {
             Some(log_id) => {
                 let value = log_id.encode()?;
                 self.backend.put(&self.partition, &key, &value)
-            }
+            },
             None => self.backend.delete(&self.partition, &key),
         }
     }
@@ -419,7 +411,7 @@ impl RaftPartitionStore {
             Some(log_id) => {
                 let value = log_id.encode()?;
                 self.backend.put(&self.partition, &key, &value)
-            }
+            },
             None => self.backend.delete(&self.partition, &key),
         }
     }
@@ -512,9 +504,7 @@ mod tests {
     fn create_test_store(group_id: GroupId) -> RaftPartitionStore {
         let backend = Arc::new(InMemoryBackend::new());
         // Create the raft_data partition
-        backend
-            .create_partition(&Partition::new(RAFT_PARTITION_NAME))
-            .unwrap();
+        backend.create_partition(&Partition::new(RAFT_PARTITION_NAME)).unwrap();
         RaftPartitionStore::new(backend, group_id)
     }
 
@@ -713,7 +703,10 @@ mod tests {
 
         // Save snapshot meta
         let meta = RaftSnapshotMeta {
-            last_log_id: Some(RaftLogId { term: 5, index: 100 }),
+            last_log_id: Some(RaftLogId {
+                term: 5,
+                index: 100,
+            }),
             snapshot_id: "snap-001".to_string(),
             size_bytes: 1024,
         };
@@ -752,9 +745,7 @@ mod tests {
     #[test]
     fn test_different_groups_isolated() {
         let backend = Arc::new(InMemoryBackend::new());
-        backend
-            .create_partition(&Partition::new(RAFT_PARTITION_NAME))
-            .unwrap();
+        backend.create_partition(&Partition::new(RAFT_PARTITION_NAME)).unwrap();
 
         let store1 = RaftPartitionStore::new(backend.clone(), GroupId::Meta);
         let store2 = RaftPartitionStore::new(backend.clone(), GroupId::DataUserShard(0));

@@ -10,10 +10,10 @@
 use crate::schema_registry::PathResolver;
 use crate::schema_registry::SchemaRegistry;
 use crate::storage::storage_registry::StorageRegistry;
-use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_commons::models::types::{Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::{NamespaceId, StorageKey, TableId, TableName, UserId};
+use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{StorageBackend, StorageError};
 use kalamdb_system::providers::manifest::{new_manifest_store, ManifestCacheKey, ManifestStore};
@@ -188,14 +188,7 @@ impl ManifestService {
         etag: Option<String>,
         source_path: String,
     ) -> Result<(), StorageError> {
-        self.upsert_cache_entry(
-            table_id,
-            user_id,
-            manifest,
-            etag,
-            source_path,
-            SyncState::InSync,
-        )
+        self.upsert_cache_entry(table_id, user_id, manifest, etag, source_path, SyncState::InSync)
     }
 
     /// Stage manifest metadata in the cache before the first flush writes manifest.json to disk.
@@ -271,7 +264,11 @@ impl ManifestService {
     }
 
     /// Validate freshness of cached entry based on TTL.
-    pub fn validate_freshness(&self, table_id: &TableId, user_id: Option<&UserId>) -> Result<bool, StorageError> {
+    pub fn validate_freshness(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<bool, StorageError> {
         let cache_key = (table_id.clone(), user_id.cloned());
         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
 
@@ -328,10 +325,7 @@ impl ManifestService {
             }
         }
 
-        debug!(
-            "Invalidated {} manifest cache entries for table {}",
-            invalidated, table_id
-        );
+        debug!("Invalidated {} manifest cache entries for table {}", invalidated, table_id);
 
         Ok(invalidated)
     }
@@ -509,10 +503,10 @@ impl ManifestService {
                 let manifest_path = format!("{}/manifest.json", storage_path);
                 self.stage_before_flush(table_id, user_id, &manifest, manifest_path)?;
                 return Ok(manifest);
-            }
+            },
             Err(_) => {
                 // Manifest doesn't exist or can't be read, create new one
-            }
+            },
         }
 
         // 3. Create New (In-Memory only)
@@ -560,16 +554,9 @@ impl ManifestService {
         if let Some(entry) = self.hot_cache.get(&cache_key) {
             let (store, storage, _) = self.get_storage_context(table_id, user_id)?;
             self.write_manifest_via_store(store, &storage, table_id, user_id, &entry.manifest)?;
-            debug!(
-                "Flushed manifest for {} (ver: {})",
-                table_id,
-                entry.manifest.version
-            );
+            debug!("Flushed manifest for {} (ver: {})", table_id, entry.manifest.version);
         } else {
-            warn!(
-                "Attempted to flush manifest for {} but it was not in cache",
-                table_id
-            );
+            warn!("Attempted to flush manifest for {} but it was not in cache", table_id);
         }
         Ok(())
     }
@@ -735,11 +722,7 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<
-        (
-            Arc<dyn object_store::ObjectStore>,
-            kalamdb_commons::system::Storage,
-            String,
-        ),
+        (Arc<dyn object_store::ObjectStore>, kalamdb_commons::system::Storage, String),
         StorageError,
     > {
         let (schema_registry, storage_registry) = self.registries()?;
@@ -846,11 +829,7 @@ impl ManifestService {
         storage: &kalamdb_commons::system::Storage,
         parquet_path: &str,
     ) -> Result<Option<SegmentMetadata>, StorageError> {
-        let file_name = parquet_path
-            .rsplit('/')
-            .next()
-            .unwrap_or(parquet_path)
-            .to_string();
+        let file_name = parquet_path.rsplit('/').next().unwrap_or(parquet_path).to_string();
 
         let id = file_name.clone();
 
@@ -858,15 +837,7 @@ impl ManifestService {
             .map(|m| m.size_bytes as u64)
             .unwrap_or(0);
 
-        Ok(Some(SegmentMetadata::new(
-            id,
-            file_name,
-            HashMap::new(),
-            0,
-            0,
-            0,
-            size_bytes,
-        )))
+        Ok(Some(SegmentMetadata::new(id, file_name, HashMap::new(), 0, 0, 0, size_bytes)))
     }
 }
 
@@ -912,9 +883,7 @@ mod tests {
         let service = create_test_service();
         let table_id = build_table_id("ns1", "tbl1");
 
-        let result = service
-            .get_or_load(&table_id, Some(&UserId::from("u_123")))
-            .unwrap();
+        let result = service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap();
         assert!(result.is_none());
     }
 
@@ -934,9 +903,7 @@ mod tests {
             )
             .unwrap();
 
-        let cached = service
-            .get_or_load(&table_id, Some(&UserId::from("u_123")))
-            .unwrap();
+        let cached = service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap();
         assert!(cached.is_some());
         let entry = cached.unwrap();
         assert_eq!(entry.etag, Some("etag123".to_string()));
@@ -959,9 +926,7 @@ mod tests {
             )
             .unwrap();
 
-        let result = service
-            .get_or_load(&table_id, Some(&UserId::from("u_123")))
-            .unwrap();
+        let result = service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap();
         assert!(result.is_some());
 
         assert!(service.is_in_hot_cache(&table_id, Some(&UserId::from("u_123"))));
@@ -985,19 +950,11 @@ mod tests {
             )
             .unwrap();
 
-        assert!(service
-            .get_or_load(&table_id, Some(&UserId::from("u_123")))
-            .unwrap()
-            .is_some());
+        assert!(service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap().is_some());
 
-        service
-            .invalidate(&table_id, Some(&UserId::from("u_123")))
-            .unwrap();
+        service.invalidate(&table_id, Some(&UserId::from("u_123"))).unwrap();
 
-        assert!(service
-            .get_or_load(&table_id, Some(&UserId::from("u_123")))
-            .unwrap()
-            .is_none());
+        assert!(service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap().is_none());
     }
 
     #[test]
@@ -1016,20 +973,13 @@ mod tests {
             )
             .unwrap();
 
-        let cached = service
-            .get_or_load(&table_id, Some(&UserId::from("u_123")))
-            .unwrap()
-            .unwrap();
+        let cached = service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap().unwrap();
         assert_eq!(cached.sync_state, SyncState::InSync);
 
-        service
-            .mark_syncing(&table_id, Some(&UserId::from("u_123")))
-            .unwrap();
+        service.mark_syncing(&table_id, Some(&UserId::from("u_123"))).unwrap();
 
-        let cached_after = service
-            .get_or_load(&table_id, Some(&UserId::from("u_123")))
-            .unwrap()
-            .unwrap();
+        let cached_after =
+            service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap().unwrap();
         assert_eq!(cached_after.sync_state, SyncState::Syncing);
     }
 

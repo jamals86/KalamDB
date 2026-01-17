@@ -20,21 +20,15 @@ use kalamdb_sql::statement_classifier::SqlStatement;
 use std::sync::Arc;
 
 // Import all typed handlers
-use crate::sql::executor::handlers::dml::{DeleteHandler, InsertHandler, UpdateHandler};
+use crate::sql::executor::handlers::cluster::{
+    ClusterClearHandler, ClusterJoinHandler, ClusterLeaveHandler, ClusterListHandler,
+    ClusterPurgeHandler, ClusterSnapshotHandler, ClusterStepdownHandler,
+    ClusterTransferLeaderHandler, ClusterTriggerElectionHandler,
+};
 use crate::sql::executor::handlers::compact::{CompactAllTablesHandler, CompactTableHandler};
+use crate::sql::executor::handlers::dml::{DeleteHandler, InsertHandler, UpdateHandler};
 use crate::sql::executor::handlers::flush::{FlushAllTablesHandler, FlushTableHandler};
 use crate::sql::executor::handlers::jobs::{KillJobHandler, KillLiveQueryHandler};
-use crate::sql::executor::handlers::cluster::{
-    ClusterSnapshotHandler,
-    ClusterPurgeHandler,
-    ClusterTriggerElectionHandler,
-    ClusterTransferLeaderHandler,
-    ClusterStepdownHandler,
-    ClusterClearHandler,
-    ClusterListHandler,
-    ClusterJoinHandler,
-    ClusterLeaveHandler,
-};
 use crate::sql::executor::handlers::namespace::{
     AlterNamespaceHandler, CreateNamespaceHandler, DropNamespaceHandler, ShowNamespacesHandler,
     UseNamespaceHandler,
@@ -743,7 +737,7 @@ mod tests {
         match result.unwrap() {
             ExecutionResult::Success { message } => {
                 assert!(message.contains("test_registry_ns"));
-            }
+            },
             _ => panic!("Expected Success result"),
         }
     }
@@ -774,7 +768,7 @@ mod tests {
         match result {
             Err(KalamDbError::InvalidOperation(msg)) => {
                 assert!(msg.contains("No handler registered"));
-            }
+            },
             _ => panic!("Expected InvalidOperation error"),
         }
     }
@@ -786,11 +780,8 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let registry = HandlerRegistry::new(app_ctx, false);
-        let user_ctx = ExecutionContext::new(
-            UserId::from("regular_user"),
-            Role::User,
-            create_test_session(),
-        );
+        let user_ctx =
+            ExecutionContext::new(UserId::from("regular_user"), Role::User, create_test_session());
 
         let stmt = SqlStatement::new(
             "CREATE NAMESPACE unauthorized_ns".to_string(),
@@ -805,7 +796,7 @@ mod tests {
         assert!(result.is_err());
 
         match result {
-            Err(KalamDbError::Unauthorized(_)) => {}
+            Err(KalamDbError::Unauthorized(_)) => {},
             _ => panic!("Expected Unauthorized error"),
         }
     }
@@ -833,7 +824,7 @@ mod tests {
 
         // Handler is now fully implemented, expect table not found error
         match result {
-            Err(KalamDbError::InvalidOperation(msg)) if msg.contains("does not exist") => {}
+            Err(KalamDbError::InvalidOperation(msg)) if msg.contains("does not exist") => {},
             Err(e) => panic!("Unexpected error: {:?}", e),
             Ok(_) => panic!("Expected table not found error"),
         }
@@ -862,7 +853,7 @@ mod tests {
 
         // Expect table not found error since test table doesn't exist
         match result {
-            Err(KalamDbError::NotFound(msg)) if msg.contains("Table") => {}
+            Err(KalamDbError::NotFound(msg)) if msg.contains("Table") => {},
             Err(e) => panic!("Unexpected error: {:?}", e),
             Ok(_) => panic!("Expected table not found error"),
         }
@@ -891,7 +882,7 @@ mod tests {
 
         // Handler is now fully implemented, expect table not found error
         match result {
-            Err(KalamDbError::NotFound(msg)) if msg.contains("not found") => {}
+            Err(KalamDbError::NotFound(msg)) if msg.contains("not found") => {},
             Err(e) => panic!("Unexpected error: {:?}", e),
             Ok(_) => panic!("Expected table not found error"),
         }

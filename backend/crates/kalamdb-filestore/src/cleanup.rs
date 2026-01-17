@@ -35,7 +35,7 @@ pub fn delete_parquet_tree_for_table(
             if let Some((prefix, _)) = rel.split_once("{userId}") {
                 // Clean trailing slash from prefix
                 let prefix = prefix.trim_end_matches('/');
-                
+
                 // Check if prefix exists
                 let files = list_files_sync(Arc::clone(&store), storage, prefix)?;
                 if files.is_empty() {
@@ -48,7 +48,7 @@ pub fn delete_parquet_tree_for_table(
                 // No {userId}; treat like shared
                 delete_prefix_sync(Arc::clone(&store), storage, rel)?
             }
-        }
+        },
         TableType::Shared => {
             let target = if let Some((prefix, _)) = rel.split_once("{shard}") {
                 prefix.trim_end_matches('/')
@@ -56,13 +56,13 @@ pub fn delete_parquet_tree_for_table(
                 rel
             };
             delete_prefix_sync(Arc::clone(&store), storage, target)?
-        }
+        },
         TableType::Stream => 0,
         TableType::System => {
             return Err(FilestoreError::Other(
                 "Attempted to delete Parquet for system table".to_string(),
             ));
-        }
+        },
     };
 
     Ok(bytes_freed)
@@ -114,13 +114,7 @@ mod tests {
         ];
 
         for file in &files {
-            write_file_sync(
-                Arc::clone(&store),
-                &storage,
-                file,
-                Bytes::from("test data"),
-            )
-            .unwrap();
+            write_file_sync(Arc::clone(&store), &storage, file, Bytes::from("test data")).unwrap();
         }
 
         // Delete the shared table
@@ -155,13 +149,7 @@ mod tests {
         ];
 
         for file in &files {
-            write_file_sync(
-                Arc::clone(&store),
-                &storage,
-                file,
-                Bytes::from("test data"),
-            )
-            .unwrap();
+            write_file_sync(Arc::clone(&store), &storage, file, Bytes::from("test data")).unwrap();
         }
 
         // Delete using template with {shard}
@@ -197,13 +185,7 @@ mod tests {
         ];
 
         for file in &files {
-            write_file_sync(
-                Arc::clone(&store),
-                &storage,
-                file,
-                Bytes::from("test data"),
-            )
-            .unwrap();
+            write_file_sync(Arc::clone(&store), &storage, file, Bytes::from("test data")).unwrap();
         }
 
         // Delete all user data using {userId} placeholder
@@ -252,11 +234,7 @@ mod tests {
 
         // Verify file still exists
         let remaining = list_files_sync(store, &storage, "namespace1/stream_table").unwrap();
-        assert_eq!(
-            remaining.len(),
-            1,
-            "Stream table files should not be deleted"
-        );
+        assert_eq!(remaining.len(), 1, "Stream table files should not be deleted");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
@@ -271,12 +249,8 @@ mod tests {
         let store = build_object_store(&storage).expect("Failed to build store");
 
         // Attempt to delete system table should error
-        let result = delete_parquet_tree_for_table(
-            store,
-            &storage,
-            "system/tables",
-            TableType::System,
-        );
+        let result =
+            delete_parquet_tree_for_table(store, &storage, "system/tables", TableType::System);
         assert!(result.is_err(), "Should error for system tables");
 
         let _ = fs::remove_dir_all(&temp_dir);

@@ -39,7 +39,7 @@ fn latest_sst_mtime(root: &Path) -> Option<SystemTime> {
                         match latest {
                             Some(current) if modified > *current => *latest = Some(modified),
                             None => *latest = Some(modified),
-                            _ => {}
+                            _ => {},
                         }
                     }
                 }
@@ -92,10 +92,7 @@ async fn wait_for_compact_jobs(
                 continue;
             };
 
-            let status = row
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
+            let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
 
             match status {
                 "completed" => {
@@ -108,13 +105,13 @@ async fn wait_for_compact_jobs(
                             );
                         }
                     }
-                }
+                },
                 "failed" | "cancelled" => {
                     anyhow::bail!("Compaction job for {} ended with status {}", needle, status);
-                }
+                },
                 _ => {
                     all_completed = false;
-                }
+                },
             }
 
             if let Some(job_id) = row.get("job_id").and_then(|v| v.as_str()) {
@@ -195,13 +192,8 @@ async fn test_storage_compact_table_and_all_commands() -> Result<()> {
     let resp = server.execute_sql(&compact_user_sql).await;
     assert_eq!(resp.status, ResponseStatus::Success, "compact user table failed");
 
-    wait_for_compact_jobs(
-        &server,
-        &namespace,
-        &[user_table.clone()],
-        Duration::from_secs(20),
-    )
-    .await?;
+    wait_for_compact_jobs(&server, &namespace, &[user_table.clone()], Duration::from_secs(20))
+        .await?;
 
     let compact_all_sql = format!("STORAGE COMPACT ALL IN {}", namespace);
     let resp = server.execute_sql(&compact_all_sql).await;
@@ -216,10 +208,7 @@ async fn test_storage_compact_table_and_all_commands() -> Result<()> {
     .await?;
 
     if let (Some(before), Some(after)) = (before_compact, latest_sst_mtime(&rocksdb_path)) {
-        assert!(
-            after >= before,
-            "Expected RocksDB SST files to update after compaction"
-        );
+        assert!(after >= before, "Expected RocksDB SST files to update after compaction");
     }
 
     Ok(())
@@ -244,25 +233,13 @@ async fn test_storage_compact_rejects_stream_and_empty_namespace() -> Result<()>
     let compact_stream = format!("STORAGE COMPACT TABLE {}.{}", namespace, stream_table);
     let resp = server.execute_sql(&compact_stream).await;
     assert_eq!(resp.status, ResponseStatus::Error, "compact stream should fail");
-    let message = resp
-        .error
-        .as_ref()
-        .map(|e| e.message.clone())
-        .unwrap_or_default();
-    assert!(
-        message.contains("STREAM"),
-        "expected STREAM error, got: {}",
-        message
-    );
+    let message = resp.error.as_ref().map(|e| e.message.clone()).unwrap_or_default();
+    assert!(message.contains("STREAM"), "expected STREAM error, got: {}", message);
 
     let compact_all = format!("STORAGE COMPACT ALL IN {}", namespace);
     let resp = server.execute_sql(&compact_all).await;
     assert_eq!(resp.status, ResponseStatus::Error, "compact all should fail");
-    let message = resp
-        .error
-        .as_ref()
-        .map(|e| e.message.clone())
-        .unwrap_or_default();
+    let message = resp.error.as_ref().map(|e| e.message.clone()).unwrap_or_default();
     assert!(
         message.contains("No compactable tables"),
         "expected no compactable tables error, got: {}",

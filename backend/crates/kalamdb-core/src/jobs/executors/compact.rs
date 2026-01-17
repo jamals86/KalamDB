@@ -84,28 +84,23 @@ impl JobExecutor for CompactExecutor {
             TableType::User => format!("{}{}", ColumnFamilyNames::USER_TABLE_PREFIX, table_id),
             TableType::Shared => {
                 format!("{}{}", ColumnFamilyNames::SHARED_TABLE_PREFIX, table_id)
-            }
+            },
             TableType::Stream => {
                 return Ok(JobDecision::Failed {
-                    message: "STORAGE COMPACT TABLE is not supported for STREAM tables"
-                        .to_string(),
+                    message: "STORAGE COMPACT TABLE is not supported for STREAM tables".to_string(),
                     exception_trace: None,
                 })
-            }
+            },
             TableType::System => {
                 return Ok(JobDecision::Failed {
-                    message: "STORAGE COMPACT TABLE is not supported for SYSTEM tables"
-                        .to_string(),
+                    message: "STORAGE COMPACT TABLE is not supported for SYSTEM tables".to_string(),
                     exception_trace: None,
                 })
-            }
+            },
         };
 
         let partition = Partition::new(partition_name);
-        ctx.log_debug(&format!(
-            "Running RocksDB compaction for partition {}",
-            partition.name()
-        ));
+        ctx.log_debug(&format!("Running RocksDB compaction for partition {}", partition.name()));
 
         let backend = ctx.app_ctx.storage_backend();
         match backend.compact_partition_async(&partition).await {
@@ -118,7 +113,7 @@ impl JobExecutor for CompactExecutor {
                     message: format!("Compaction failed for {}: {}", table_id, e),
                     exception_trace: Some(e.to_string()),
                 })
-            }
+            },
         }
     }
 }

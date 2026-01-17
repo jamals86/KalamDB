@@ -76,7 +76,7 @@ pub async fn initialize_system_tables(
             let mut version_bytes = [0u8; 4];
             version_bytes.copy_from_slice(&bytes);
             Some(u32::from_be_bytes(version_bytes))
-        }
+        },
         None => None, // First initialization - no version stored yet
     };
 
@@ -84,14 +84,11 @@ pub async fn initialize_system_tables(
     match stored_version_opt {
         None => {
             // First-time initialization
-            log::info!(
-                "Initializing system schema at v{} (first startup)",
-                current_version
-            );
+            log::info!("Initializing system schema at v{} (first startup)", current_version);
 
             // All 7 system tables created on first access by EntityStore providers
             // No explicit migration needed
-        }
+        },
         Some(stored_version) if stored_version < current_version => {
             // Upgrade from older version
             log::info!(
@@ -106,20 +103,20 @@ pub async fn initialize_system_tables(
                     // Future: v1 -> v2 migration
                     // Example: add new system table
                     log::info!("Migrating v1 -> v2: adding new system tables");
-                }
+                },
                 _ => {
                     log::warn!(
                         "Unknown stored schema version {} - upgrading to v{}",
                         stored_version,
                         current_version
                     );
-                }
+                },
             }
-        }
+        },
         Some(stored_version) if stored_version == current_version => {
             // Already at current version - no action needed
             log::debug!("System schema version v{} is current", current_version);
-        }
+        },
         Some(stored_version) => {
             // Stored version is NEWER than current (downgrade not supported)
             return Err(SystemError::Other(format!(
@@ -127,7 +124,7 @@ pub async fn initialize_system_tables(
                  Please upgrade to a newer server version.",
                 stored_version, current_version
             )));
-        }
+        },
     }
 
     // Store/update current version in RocksDB
@@ -163,9 +160,7 @@ mod tests {
 
         // Verify version stored
         let version_key = SYSTEM_SCHEMA_VERSION_KEY.as_bytes();
-        let stored = backend
-            .get(&default_partition, version_key)
-            .expect("Failed to read version");
+        let stored = backend.get(&default_partition, version_key).expect("Failed to read version");
         assert!(stored.is_some(), "Version not stored after initialization");
 
         let version_bytes = stored.unwrap();
@@ -180,9 +175,7 @@ mod tests {
         let (backend, _temp) = create_test_backend();
 
         // Initialize once
-        initialize_system_tables(backend.clone())
-            .await
-            .expect("First init failed");
+        initialize_system_tables(backend.clone()).await.expect("First init failed");
 
         // Initialize again - should be idempotent
         let result = initialize_system_tables(backend.clone()).await;
@@ -206,9 +199,7 @@ mod tests {
         assert!(result.is_ok(), "Upgrade initialization failed");
 
         // Verify version updated
-        let stored = backend
-            .get(&default_partition, version_key)
-            .expect("Failed to read version");
+        let stored = backend.get(&default_partition, version_key).expect("Failed to read version");
         let version_bytes = stored.unwrap();
         let mut bytes = [0u8; 4];
         bytes.copy_from_slice(&version_bytes);
@@ -225,11 +216,7 @@ mod tests {
         let version_key = SYSTEM_SCHEMA_VERSION_KEY.as_bytes();
         let future_version = 999u32;
         backend
-            .put(
-                &default_partition,
-                version_key,
-                &future_version.to_be_bytes(),
-            )
+            .put(&default_partition, version_key, &future_version.to_be_bytes())
             .expect("Failed to store v999");
 
         // Initialize should reject downgrade
@@ -237,10 +224,7 @@ mod tests {
         assert!(result.is_err(), "Downgrade should be rejected");
 
         let err = result.unwrap_err();
-        assert!(
-            matches!(err, SystemError::Other(_)),
-            "Expected Other error for downgrade"
-        );
+        assert!(matches!(err, SystemError::Other(_)), "Expected Other error for downgrade");
     }
 
     #[tokio::test]
@@ -259,9 +243,6 @@ mod tests {
         assert!(result.is_err(), "Invalid version data should be rejected");
 
         let err = result.unwrap_err();
-        assert!(
-            matches!(err, SystemError::Other(_)),
-            "Expected Other error for invalid data"
-        );
+        assert!(matches!(err, SystemError::Other(_)), "Expected Other error for invalid data");
     }
 }

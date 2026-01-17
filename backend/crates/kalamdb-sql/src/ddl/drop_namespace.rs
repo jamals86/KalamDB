@@ -17,7 +17,7 @@ pub struct DropNamespaceStatement {
 
     /// If true, don't error if namespace doesn't exist
     pub if_exists: bool,
-    
+
     /// If true, drop all tables in the namespace first
     pub cascade: bool,
 }
@@ -33,19 +33,22 @@ impl DropNamespaceStatement {
     pub fn parse(sql: &str) -> DdlResult<Self> {
         let trimmed = sql.trim().trim_end_matches(';');
         let tokens: Vec<&str> = trimmed.split_whitespace().collect();
-        
+
         // Check for CASCADE at the end
         let cascade = tokens.last().map(|t| t.eq_ignore_ascii_case("CASCADE")).unwrap_or(false);
-        
+
         // Remove CASCADE token if present for parsing the rest
         let sql_without_cascade = if cascade {
-            tokens[..tokens.len()-1].join(" ")
+            tokens[..tokens.len() - 1].join(" ")
         } else {
             trimmed.to_string()
         };
-        
-        let (name, if_exists) =
-            parsing::parse_create_drop_statement(&sql_without_cascade, "DROP NAMESPACE", "IF EXISTS")?;
+
+        let (name, if_exists) = parsing::parse_create_drop_statement(
+            &sql_without_cascade,
+            "DROP NAMESPACE",
+            "IF EXISTS",
+        )?;
 
         Ok(Self {
             name: NamespaceId::new(name),
@@ -74,7 +77,7 @@ mod tests {
         assert!(stmt.if_exists);
         assert!(!stmt.cascade);
     }
-    
+
     #[test]
     fn test_parse_drop_namespace_cascade() {
         let stmt = DropNamespaceStatement::parse("DROP NAMESPACE app CASCADE").unwrap();
@@ -82,7 +85,7 @@ mod tests {
         assert!(!stmt.if_exists);
         assert!(stmt.cascade);
     }
-    
+
     #[test]
     fn test_parse_drop_namespace_if_exists_cascade() {
         let stmt = DropNamespaceStatement::parse("DROP NAMESPACE IF EXISTS app CASCADE").unwrap();
@@ -90,7 +93,7 @@ mod tests {
         assert!(stmt.if_exists);
         assert!(stmt.cascade);
     }
-    
+
     #[test]
     fn test_parse_drop_namespace_cascade_lowercase() {
         let stmt = DropNamespaceStatement::parse("drop namespace myapp cascade").unwrap();

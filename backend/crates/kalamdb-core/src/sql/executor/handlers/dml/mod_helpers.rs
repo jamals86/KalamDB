@@ -74,7 +74,7 @@ pub fn scalar_from_sql_value(
             } else {
                 Err(KalamDbError::InvalidOperation(format!("Invalid number: {}", n)))
             }
-        }
+        },
         Value::SingleQuotedString(s)
         | Value::DoubleQuotedString(s)
         | Value::EscapedStringLiteral(s)
@@ -97,10 +97,10 @@ pub fn coerce_scalar_to_type(
                 KalamDbError::InvalidOperation(format!("Invalid UUID string '{}': {}", s, e))
             })?;
             Ok(ScalarValue::FixedSizeBinary(16, Some(uuid.as_bytes().to_vec())))
-        }
+        },
         (KalamDataType::Uuid, ScalarValue::Utf8(None)) => {
             Ok(ScalarValue::FixedSizeBinary(16, None))
-        }
+        },
         _ => Ok(value),
     }
 }
@@ -149,31 +149,31 @@ pub fn function_args_to_json(
                         return Err(KalamDbError::InvalidOperation(
                             "Named function arguments not supported".into(),
                         ));
-                    }
+                    },
                     FunctionArg::ExprNamed { .. } => {
                         return Err(KalamDbError::InvalidOperation(
                             "Named function arguments not supported".into(),
                         ));
-                    }
+                    },
                     FunctionArg::Unnamed(arg_expr) => match arg_expr {
                         FunctionArgExpr::Expr(expr) => {
                             args.push(expr_to_json_arg(expr, params, user_id, app_context)?);
-                        }
+                        },
                         _ => {
                             return Err(KalamDbError::InvalidOperation(
                                 "Unsupported function argument expression type".into(),
                             ));
-                        }
+                        },
                     },
                 }
             }
-        }
-        FunctionArguments::None => {}
+        },
+        FunctionArguments::None => {},
         _ => {
             return Err(KalamDbError::InvalidOperation(
                 "Unsupported function argument format".into(),
             ));
-        }
+        },
     }
     Ok(args)
 }
@@ -189,7 +189,7 @@ pub fn expr_to_json_arg(
             Value::Placeholder(ph) => {
                 let value = scalar_from_placeholder(ph, params)?;
                 scalar_value_to_json(&value)
-            }
+            },
             Value::Number(n, _) => {
                 if let Ok(i) = n.parse::<i64>() {
                     Ok(JsonValue::Number(i.into()))
@@ -200,10 +200,10 @@ pub fn expr_to_json_arg(
                 } else {
                     Err(KalamDbError::InvalidOperation(format!("Invalid number: {}", n)))
                 }
-            }
+            },
             Value::SingleQuotedString(s) | Value::DoubleQuotedString(s) => {
                 Ok(JsonValue::String(s.clone()))
-            }
+            },
             Value::Boolean(b) => Ok(JsonValue::Bool(*b)),
             Value::Null => Ok(JsonValue::Null),
             _ => Ok(JsonValue::String(val_with_span.to_string())),
@@ -211,11 +211,11 @@ pub fn expr_to_json_arg(
         Expr::Identifier(ident) if ident.value.starts_with('$') => {
             let value = scalar_from_placeholder(&ident.value, params)?;
             scalar_value_to_json(&value)
-        }
+        },
         Expr::Function(func) => {
             let scalar = function_expr_to_scalar(func, params, user_id, app_context)?;
             scalar_value_to_json(&scalar)
-        }
+        },
         _ => Ok(JsonValue::String(expr.to_string())),
     }
 }

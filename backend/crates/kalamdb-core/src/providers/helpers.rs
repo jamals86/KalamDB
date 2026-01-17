@@ -75,7 +75,7 @@ pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<Seq
                     (None, None) => None,
                 };
                 (min, max)
-            }
+            },
             Operator::Eq | Operator::Gt | Operator::GtEq | Operator::Lt | Operator::LtEq => {
                 let (op, val) = match normalize_seq_comparison(binary) {
                     Some(result) => result,
@@ -86,7 +86,7 @@ pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<Seq
                     Operator::Eq => {
                         let since = val.saturating_sub(1);
                         (Some(SeqId::from(since)), Some(SeqId::from(val)))
-                    }
+                    },
                     Operator::Gt | Operator::GtEq => {
                         let since = if op == Operator::Gt {
                             val
@@ -94,7 +94,7 @@ pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<Seq
                             val.saturating_sub(1)
                         };
                         (Some(SeqId::from(since)), None)
-                    }
+                    },
                     Operator::Lt | Operator::LtEq => {
                         let until = if op == Operator::Lt {
                             val.saturating_sub(1)
@@ -102,10 +102,10 @@ pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<Seq
                             val
                         };
                         (None, Some(SeqId::from(until)))
-                    }
+                    },
                     _ => (None, None),
                 }
-            }
+            },
             _ => (None, None),
         },
         _ => (None, None),

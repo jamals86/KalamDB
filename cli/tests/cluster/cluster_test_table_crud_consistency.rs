@@ -12,11 +12,7 @@ fn assert_rows_on_all_nodes(urls: &[String], sql: &str, expected: &[String]) {
     for (idx, url) in urls.iter().enumerate() {
         let rows = fetch_normalized_rows(url, sql)
             .unwrap_or_else(|e| panic!("Node {} query failed: {}", idx, e));
-        assert_eq!(
-            rows, expected_rows,
-            "Node {} data mismatch for query: {}",
-            idx, sql
-        );
+        assert_eq!(rows, expected_rows, "Node {} data mismatch for query: {}", idx, sql);
     }
 }
 
@@ -33,17 +29,15 @@ fn assert_rows_on_all_nodes_as_user(
     for (idx, url) in urls.iter().enumerate() {
         let rows = fetch_normalized_rows_as_user(url, username, password, sql)
             .unwrap_or_else(|e| panic!("Node {} query failed: {}", idx, e));
-        assert_eq!(
-            rows, expected_rows,
-            "Node {} data mismatch for query: {}",
-            idx, sql
-        );
+        assert_eq!(rows, expected_rows, "Node {} data mismatch for query: {}", idx, sql);
     }
 }
 
 #[test]
 fn cluster_test_table_crud_consistency() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: CRUD Consistency for User/Shared/Stream Tables ===\n");
 
@@ -58,10 +52,7 @@ fn cluster_test_table_crud_consistency() {
 
     execute_on_node(
         &urls[0],
-        &format!(
-            "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
-            test_user, user_password
-        ),
+        &format!("CREATE USER {} WITH PASSWORD '{}' ROLE 'user'", test_user, user_password),
     )
     .expect("Failed to create test user");
 
@@ -121,18 +112,12 @@ fn cluster_test_table_crud_consistency() {
         &urls[0],
         &test_user,
         user_password,
-        &format!(
-            "UPDATE {}.user_crud SET value = 'u2_updated' WHERE id = 2",
-            namespace
-        ),
+        &format!("UPDATE {}.user_crud SET value = 'u2_updated' WHERE id = 2", namespace),
     )
     .expect("Failed to update user table");
     execute_on_node(
         &urls[0],
-        &format!(
-            "UPDATE {}.shared_crud SET value = 's2_updated' WHERE id = 2",
-            namespace
-        ),
+        &format!("UPDATE {}.shared_crud SET value = 's2_updated' WHERE id = 2", namespace),
     )
     .expect("Failed to update shared table");
     // STREAM tables don't support UPDATE; validate insert/delete consistency instead.
@@ -144,41 +129,26 @@ fn cluster_test_table_crud_consistency() {
         &format!("DELETE FROM {}.user_crud WHERE id = 1", namespace),
     )
     .expect("Failed to delete from user table");
-    execute_on_node(
-        &urls[0],
-        &format!("DELETE FROM {}.shared_crud WHERE id = 1", namespace),
-    )
-    .expect("Failed to delete from shared table");
-    execute_on_node(
-        &urls[0],
-        &format!("DELETE FROM {}.stream_crud WHERE id = 1", namespace),
-    )
-    .expect("Failed to delete from stream table");
+    execute_on_node(&urls[0], &format!("DELETE FROM {}.shared_crud WHERE id = 1", namespace))
+        .expect("Failed to delete from shared table");
+    execute_on_node(&urls[0], &format!("DELETE FROM {}.stream_crud WHERE id = 1", namespace))
+        .expect("Failed to delete from stream table");
 
     assert_rows_on_all_nodes_as_user(
         &urls,
         &test_user,
         user_password,
-        &format!(
-            "SELECT id, value FROM {}.user_crud ORDER BY id",
-            namespace
-        ),
+        &format!("SELECT id, value FROM {}.user_crud ORDER BY id", namespace),
         &["2|u2_updated".to_string(), "3|u3".to_string()],
     );
     assert_rows_on_all_nodes(
         &urls,
-        &format!(
-            "SELECT id, value FROM {}.shared_crud ORDER BY id",
-            namespace
-        ),
+        &format!("SELECT id, value FROM {}.shared_crud ORDER BY id", namespace),
         &["2|s2_updated".to_string(), "3|s3".to_string()],
     );
     assert_rows_on_all_nodes(
         &urls,
-        &format!(
-            "SELECT id, value FROM {}.stream_crud ORDER BY id",
-            namespace
-        ),
+        &format!("SELECT id, value FROM {}.stream_crud ORDER BY id", namespace),
         &["2|t2".to_string(), "3|t3".to_string()],
     );
 

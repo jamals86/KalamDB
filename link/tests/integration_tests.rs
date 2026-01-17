@@ -62,7 +62,7 @@ async fn is_server_running() -> bool {
 fn create_client() -> Result<KalamLinkClient, KalamLinkError> {
     KalamLinkClient::builder()
         .base_url(SERVER_URL)
-    .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(30))
         .auth(AuthProvider::system_user_auth("".to_string()))
         .build()
 }
@@ -76,16 +76,14 @@ async fn setup_namespace(ns: &str) {
     // Wait for drop to complete (cleanup is async)
     sleep(Duration::from_millis(50)).await;
     // Create the namespace
-    let _ = client
-        .execute_query(&format!("CREATE NAMESPACE {}", ns), None, None)
-        .await;
+    let _ = client.execute_query(&format!("CREATE NAMESPACE {}", ns), None, None).await;
     sleep(Duration::from_millis(20)).await;
 }
 
 async fn cleanup_namespace(ns: &str) {
     let client = create_client().unwrap();
     let _ = client
-    .execute_query(&format!("DROP NAMESPACE {} CASCADE", ns), None, None)
+        .execute_query(&format!("DROP NAMESPACE {} CASCADE", ns), None, None)
         .await;
 }
 
@@ -136,7 +134,10 @@ async fn test_client_builder_missing_url() {
 
 #[tokio::test]
 async fn test_execute_simple_query() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
 
@@ -151,7 +152,10 @@ async fn test_execute_simple_query() {
 
 #[tokio::test]
 async fn test_execute_query_with_results() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
 
@@ -183,9 +187,7 @@ async fn test_execute_query_with_results() {
         .ok();
 
     // Query
-    let result = client
-        .execute_query(&format!("SELECT * FROM {}.items", ns), None, None)
-        .await;
+    let result = client.execute_query(&format!("SELECT * FROM {}.items", ns), None, None).await;
 
     assert!(result.is_ok());
     let response = result.unwrap();
@@ -201,7 +203,10 @@ async fn test_execute_query_with_results() {
 
 #[tokio::test]
 async fn test_execute_query_error_handling() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
 
@@ -217,7 +222,10 @@ async fn test_execute_query_error_handling() {
 
 #[tokio::test]
 async fn test_health_check() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
 
@@ -260,7 +268,10 @@ async fn test_subscription_config_creation() {
 
 #[tokio::test]
 async fn test_subscription_basic() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
     let ns = unique_ident("ws_link_test");
@@ -292,16 +303,13 @@ async fn test_subscription_basic() {
     match sub_result {
         Ok(Ok(_subscription)) => {
             // Success - WebSocket is working
-        }
+        },
         Ok(Err(e)) => {
-            eprintln!(
-                "⚠️  Subscription failed (may not be fully implemented): {}",
-                e
-            );
-        }
+            eprintln!("⚠️  Subscription failed (may not be fully implemented): {}", e);
+        },
         Err(_) => {
             eprintln!("⚠️  Subscription timed out");
-        }
+        },
     }
 
     cleanup_namespace(&ns).await;
@@ -309,7 +317,10 @@ async fn test_subscription_basic() {
 
 #[tokio::test]
 async fn test_subscription_with_custom_config() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
     let ns = unique_ident("ws_link_config");
@@ -339,13 +350,13 @@ async fn test_subscription_with_custom_config() {
     match sub_result {
         Ok(Ok(_subscription)) => {
             // Success
-        }
+        },
         Ok(Err(e)) => {
             eprintln!("⚠️  Custom config subscription failed: {}", e);
-        }
+        },
         Err(_) => {
             eprintln!("⚠️  Subscription timed out");
-        }
+        },
     }
 
     cleanup_namespace(&ns).await;
@@ -393,13 +404,11 @@ fn test_change_event_subscription_id() {
         subscription_id: "sub-ack".to_string(),
         total_rows: 0,
         batch_control: sample_batch_control(),
-        schema: vec![
-            SchemaField {
-                name: "id".to_string(),
-                data_type: KalamDataType::BigInt,
-                index: 0,
-            },
-        ],
+        schema: vec![SchemaField {
+            name: "id".to_string(),
+            data_type: KalamDataType::BigInt,
+            index: 0,
+        }],
     };
     assert_eq!(ack.subscription_id(), Some("sub-ack"));
 
@@ -434,7 +443,10 @@ fn test_error_display() {
 
 #[tokio::test]
 async fn test_create_namespace() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
 
@@ -444,18 +456,12 @@ async fn test_create_namespace() {
 
     // Cleanup first
     let _ = client
-        .execute_query(
-            &format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns),
-            None,
-            None,
-        )
+        .execute_query(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns), None, None)
         .await;
     sleep(Duration::from_millis(20)).await;
 
     // Create
-    let result = client
-        .execute_query(&format!("CREATE NAMESPACE {}", ns), None, None)
-        .await;
+    let result = client.execute_query(&format!("CREATE NAMESPACE {}", ns), None, None).await;
     assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
 
     // Cleanup
@@ -464,7 +470,10 @@ async fn test_create_namespace() {
 
 #[tokio::test]
 async fn test_create_and_drop_table() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
     let ns = unique_ident("crud_test");
@@ -486,9 +495,7 @@ async fn test_create_and_drop_table() {
     assert!(create.is_ok(), "CREATE TABLE should succeed");
 
     // Drop table
-    let drop = client
-        .execute_query(&format!("DROP TABLE {}.test", ns), None, None)
-        .await;
+    let drop = client.execute_query(&format!("DROP TABLE {}.test", ns), None, None).await;
     assert!(drop.is_ok(), "DROP TABLE should succeed");
 
     cleanup_namespace(&ns).await;
@@ -496,7 +503,10 @@ async fn test_create_and_drop_table() {
 
 #[tokio::test]
 async fn test_insert_and_select() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
     let ns = unique_ident("insert_test");
@@ -544,7 +554,10 @@ async fn test_insert_and_select() {
 
 #[tokio::test]
 async fn test_update_operation() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
     let ns = unique_ident("update_test");
@@ -575,11 +588,7 @@ async fn test_update_operation() {
 
     // Update
     let update = client
-        .execute_query(
-            &format!("UPDATE {}.items SET status = 'new' WHERE id = 1", ns),
-            None,
-            None,
-        )
+        .execute_query(&format!("UPDATE {}.items SET status = 'new' WHERE id = 1", ns), None, None)
         .await;
     assert!(update.is_ok(), "UPDATE should succeed");
 
@@ -588,7 +597,10 @@ async fn test_update_operation() {
 
 #[tokio::test]
 async fn test_delete_operation() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
     let ns = unique_ident("delete_test");
@@ -628,7 +640,7 @@ async fn test_delete_operation() {
         .execute_query(&format!("SELECT * FROM {} WHERE id = 1", full_table), None, None)
         .await;
     assert!(select_result.is_ok(), "SELECT should succeed: {:?}", select_result.err());
-    
+
     // Check the result has rows
     if let Ok(ref qr) = select_result {
         eprintln!("SELECT result: {:?}", qr);
@@ -649,7 +661,10 @@ async fn test_delete_operation() {
 
 #[tokio::test]
 async fn test_query_system_users() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
 
@@ -663,21 +678,25 @@ async fn test_query_system_users() {
 
 #[tokio::test]
 async fn test_query_system_namespaces() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
 
     let client = create_client().unwrap();
-    let result = client
-        .execute_query("SELECT * FROM system.namespaces", None, None)
-        .await;
+    let result = client.execute_query("SELECT * FROM system.namespaces", None, None).await;
 
     assert!(result.is_ok(), "Should query system.namespaces");
 }
 
 #[tokio::test]
 async fn test_query_system_tables() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
 
@@ -693,7 +712,10 @@ async fn test_query_system_tables() {
 
 #[tokio::test]
 async fn test_where_clause_operators() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
     let ns = unique_ident("where_test");
@@ -716,10 +738,11 @@ async fn test_where_clause_operators() {
 
     for i in 1..=5 {
         client
-            .execute_query(&format!(
-                "INSERT INTO {}.data (id, val) VALUES ({}, 'value{}')",
-                ns, i, i
-            ), None, None)
+            .execute_query(
+                &format!("INSERT INTO {}.data (id, val) VALUES ({}, 'value{}')", ns, i, i),
+                None,
+                None,
+            )
             .await
             .ok();
     }
@@ -732,11 +755,7 @@ async fn test_where_clause_operators() {
 
     // Test LIKE
     let like = client
-        .execute_query(
-            &format!("SELECT * FROM {}.data WHERE val LIKE '%3%'", ns),
-            None,
-            None,
-        )
+        .execute_query(&format!("SELECT * FROM {}.data WHERE val LIKE '%3%'", ns), None, None)
         .await;
     assert!(like.is_ok(), "LIKE operator should work");
 
@@ -745,7 +764,10 @@ async fn test_where_clause_operators() {
 
 #[tokio::test]
 async fn test_limit_clause() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
     let ns = unique_ident("limit_test");
@@ -756,10 +778,7 @@ async fn test_limit_clause() {
     // Setup
     client
         .execute_query(
-            &format!(
-                "CREATE TABLE {}.items (id INT PRIMARY KEY) WITH (TYPE = 'USER')",
-                ns
-            ),
+            &format!("CREATE TABLE {}.items (id INT PRIMARY KEY) WITH (TYPE = 'USER')", ns),
             None,
             None,
         )
@@ -768,11 +787,7 @@ async fn test_limit_clause() {
 
     for i in 1..=10 {
         client
-            .execute_query(
-                &format!("INSERT INTO {}.items (id) VALUES ({})", ns, i),
-                None,
-                None,
-            )
+            .execute_query(&format!("INSERT INTO {}.items (id) VALUES ({})", ns, i), None, None)
             .await
             .ok();
     }
@@ -793,7 +808,10 @@ async fn test_limit_clause() {
 
 #[tokio::test]
 async fn test_order_by_clause() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
     let ns = unique_ident("order_test");
@@ -804,10 +822,7 @@ async fn test_order_by_clause() {
     // Setup
     client
         .execute_query(
-            &format!(
-                "CREATE TABLE {}.data (val VARCHAR PRIMARY KEY) WITH (TYPE = 'USER')",
-                ns
-            ),
+            &format!("CREATE TABLE {}.data (val VARCHAR PRIMARY KEY) WITH (TYPE = 'USER')", ns),
             None,
             None,
         )
@@ -825,11 +840,7 @@ async fn test_order_by_clause() {
 
     // Test ORDER BY
     let result = client
-        .execute_query(
-            &format!("SELECT * FROM {}.data ORDER BY val ASC", ns),
-            None,
-            None,
-        )
+        .execute_query(&format!("SELECT * FROM {}.data ORDER BY val ASC", ns), None, None)
         .await;
 
     assert!(result.is_ok(), "ORDER BY should work");
@@ -843,7 +854,10 @@ async fn test_order_by_clause() {
 
 #[tokio::test]
 async fn test_concurrent_queries() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
     let ns = unique_ident("concurrent_test");
@@ -854,10 +868,7 @@ async fn test_concurrent_queries() {
     // Setup table
     client
         .execute_query(
-            &format!(
-                "CREATE TABLE {}.data (id INT PRIMARY KEY) WITH (TYPE = 'USER')",
-                ns
-            ),
+            &format!("CREATE TABLE {}.data (id INT PRIMARY KEY) WITH (TYPE = 'USER')", ns),
             None,
             None,
         )
@@ -871,11 +882,7 @@ async fn test_concurrent_queries() {
         let ns = ns.clone();
         let handle = tokio::spawn(async move {
             client_clone
-                .execute_query(&format!(
-                    "INSERT INTO {}.data (id) VALUES ({})",
-                    ns,
-                    i
-                ), None, None)
+                .execute_query(&format!("INSERT INTO {}.data (id) VALUES ({})", ns, i), None, None)
                 .await
         });
         handles.push(handle);
@@ -896,7 +903,10 @@ async fn test_concurrent_queries() {
 
 #[tokio::test]
 async fn test_custom_timeout() {
-    if !is_server_running().await { eprintln!("⚠️  Server not running. Skipping test."); return; }
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
 
     let _permit = acquire_test_permit().await;
 

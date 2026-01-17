@@ -11,22 +11,22 @@
 //! - CLUSTER JOIN: Join an existing cluster (stub - not implemented)
 //! - CLUSTER LEAVE: Leave the cluster (stub - not implemented)
 
-pub mod snapshot;
-pub mod purge;
-pub mod trigger_election;
-pub mod transfer_leader;
-pub mod stepdown;
 pub mod clear;
-pub mod list;
 pub mod join;
 pub mod leave;
+pub mod list;
+pub mod purge;
+pub mod snapshot;
+pub mod stepdown;
+pub mod transfer_leader;
+pub mod trigger_election;
 
-pub use snapshot::ClusterSnapshotHandler;
-pub use purge::ClusterPurgeHandler;
-pub use trigger_election::ClusterTriggerElectionHandler;
-pub use transfer_leader::ClusterTransferLeaderHandler;
-pub use stepdown::ClusterStepdownHandler;
 pub use clear::ClusterClearHandler;
-pub use list::ClusterListHandler;
 pub use join::ClusterJoinHandler;
 pub use leave::ClusterLeaveHandler;
+pub use list::ClusterListHandler;
+pub use purge::ClusterPurgeHandler;
+pub use snapshot::ClusterSnapshotHandler;
+pub use stepdown::ClusterStepdownHandler;
+pub use transfer_leader::ClusterTransferLeaderHandler;
+pub use trigger_election::ClusterTriggerElectionHandler;

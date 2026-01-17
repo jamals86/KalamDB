@@ -5,7 +5,6 @@
 //! 2. Verifies that EXPLAIN works without errors
 //! 3. The actual query results may vary depending on server bootstrap state
 
-
 use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
 

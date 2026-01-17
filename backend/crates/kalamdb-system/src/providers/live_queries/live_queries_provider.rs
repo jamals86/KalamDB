@@ -9,7 +9,6 @@ use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
@@ -17,6 +16,7 @@ use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::ConnectionId;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::types::LiveQueryStatus;
+use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::{LiveQueryId, NodeId, StorageKey, TableId, UserId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
@@ -101,10 +101,7 @@ impl LiveQueriesTableProvider {
     ) -> Result<Option<LiveQuery>, SystemError> {
         let live_query_id = LiveQueryId::from_string(live_id)
             .map_err(|e| SystemError::InvalidOperation(format!("Invalid LiveQueryId: {}", e)))?;
-        self.store
-            .get_async(live_query_id)
-            .await
-            .into_system_error("get_async error")
+        self.store.get_async(live_query_id).await.into_system_error("get_async error")
     }
 
     /// Update an existing live query entry
@@ -185,10 +182,7 @@ impl LiveQueriesTableProvider {
     /// Get live queries by user ID
     pub fn get_by_user_id(&self, user_id: &UserId) -> Result<Vec<LiveQuery>, SystemError> {
         let all_queries = self.list_live_queries()?;
-        Ok(all_queries
-            .into_iter()
-            .filter(|lq| lq.user_id == *user_id)
-            .collect())
+        Ok(all_queries.into_iter().filter(|lq| lq.user_id == *user_id).collect())
     }
 
     /// Async version of `get_by_user_id()` - offloads to blocking thread pool.
@@ -238,9 +232,8 @@ impl LiveQueriesTableProvider {
         let prefix_bytes = prefix.as_bytes();
 
         // Scan all keys with this prefix (max ~10 per user)
-        let results = self
-            .store
-            .scan_limited_with_prefix_and_start(Some(prefix_bytes), None, 100)?;
+        let results =
+            self.store.scan_limited_with_prefix_and_start(Some(prefix_bytes), None, 100)?;
 
         // Delete each matching key (uses atomic WriteBatch internally)
         for (key_bytes, _) in results {
@@ -301,11 +294,10 @@ impl LiveQueriesTableProvider {
     /// Async version of `clear_all()`.
     pub async fn clear_all_async(&self) -> Result<usize, SystemError> {
         let store = self.store.clone();
-        let all: Vec<(Vec<u8>, LiveQuery)> = tokio::task::spawn_blocking(move || {
-            store.scan_all(None, None, None)
-        })
-        .await
-        .into_system_error("Join error")??;
+        let all: Vec<(Vec<u8>, LiveQuery)> =
+            tokio::task::spawn_blocking(move || store.scan_all(None, None, None))
+                .await
+                .into_system_error("Join error")??;
 
         let count = all.len();
         for (key_bytes, _) in all {
@@ -365,9 +357,7 @@ impl LiveQueriesTableProvider {
             .await?
             .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
 
-        live_query.changes = live_query
-            .changes
-            .saturating_add(delta as i64);
+        live_query.changes = live_query.changes.saturating_add(delta as i64);
         live_query.last_update = timestamp;
 
         self.update_live_query_async(live_query).await?;
@@ -381,7 +371,10 @@ impl LiveQueriesTableProvider {
     }
 
     /// Helper to create RecordBatch from live queries
-    fn create_batch(&self, live_queries: Vec<(Vec<u8>, LiveQuery)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch(
+        &self,
+        live_queries: Vec<(Vec<u8>, LiveQuery)>,
+    ) -> Result<RecordBatch, SystemError> {
         // Extract data into vectors
         let mut live_ids = Vec::with_capacity(live_queries.len());
         let mut connection_ids = Vec::with_capacity(live_queries.len());
@@ -465,17 +458,19 @@ impl LiveQueriesTableProvider {
     /// Returns all subscriptions owned by the specified node.
     pub fn list_by_node(&self, node_id: NodeId) -> Result<Vec<LiveQuery>, SystemError> {
         let all_queries = self.list_live_queries()?;
-        Ok(all_queries
-            .into_iter()
-            .filter(|lq| lq.node_id == node_id)
-            .collect())
+        Ok(all_queries.into_iter().filter(|lq| lq.node_id == node_id).collect())
     }
 
     /// Update subscription status
     ///
     /// Used for marking subscriptions as completed during failover cleanup.
-    pub fn update_status(&self, live_id: &LiveQueryId, status: LiveQueryStatus) -> Result<(), SystemError> {
-        let mut live_query = self.get_live_query_by_id(live_id)?
+    pub fn update_status(
+        &self,
+        live_id: &LiveQueryId,
+        status: LiveQueryStatus,
+    ) -> Result<(), SystemError> {
+        let mut live_query = self
+            .get_live_query_by_id(live_id)?
             .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
 
         live_query.status = status;
@@ -486,8 +481,13 @@ impl LiveQueriesTableProvider {
     /// Update last ping timestamp
     ///
     /// Called periodically by WebSocket handlers to keep subscriptions alive.
-    pub fn update_last_ping(&self, live_id: &LiveQueryId, timestamp_ms: i64) -> Result<(), SystemError> {
-        let mut live_query = self.get_live_query_by_id(live_id)?
+    pub fn update_last_ping(
+        &self,
+        live_id: &LiveQueryId,
+        timestamp_ms: i64,
+    ) -> Result<(), SystemError> {
+        let mut live_query = self
+            .get_live_query_by_id(live_id)?
             .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
 
         live_query.last_ping_at = timestamp_ms;
@@ -556,11 +556,9 @@ impl TableProvider for LiveQueriesTableProvider {
                 "[system.live_queries] Full table scan (no index match) for filters: {:?}",
                 filters
             );
-            self.store
-                .scan_all(limit, None, None)
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to scan live_queries: {}", e))
-                })?
+            self.store.scan_all(limit, None, None).map_err(|e| {
+                DataFusionError::Execution(format!("Failed to scan live_queries: {}", e))
+            })?
         };
 
         let batch = self.create_batch(live_queries).map_err(|e| {
@@ -627,9 +625,7 @@ mod tests {
 
         provider.create_live_query(live_query.clone()).unwrap();
 
-        let retrieved = provider
-            .get_live_query(live_query.live_id.as_ref())
-            .unwrap();
+        let retrieved = provider.get_live_query(live_query.live_id.as_ref()).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.live_id, live_query.live_id);
@@ -647,10 +643,7 @@ mod tests {
         provider.update_live_query(live_query.clone()).unwrap();
 
         // Verify
-        let retrieved = provider
-            .get_live_query(live_query.live_id.as_ref())
-            .unwrap()
-            .unwrap();
+        let retrieved = provider.get_live_query(live_query.live_id.as_ref()).unwrap().unwrap();
         assert_eq!(retrieved.changes, 5);
     }
 
@@ -660,13 +653,9 @@ mod tests {
         let live_query = create_test_live_query("user1-conn1-test-q1", "user1", "test");
 
         provider.create_live_query(live_query.clone()).unwrap();
-        provider
-            .delete_live_query_str(live_query.live_id.as_ref())
-            .unwrap();
+        provider.delete_live_query_str(live_query.live_id.as_ref()).unwrap();
 
-        let retrieved = provider
-            .get_live_query(live_query.live_id.as_ref())
-            .unwrap();
+        let retrieved = provider.get_live_query(live_query.live_id.as_ref()).unwrap();
         assert!(retrieved.is_none());
     }
 

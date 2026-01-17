@@ -129,12 +129,12 @@ impl TableVersionId {
         match self.version {
             None => {
                 key.extend_from_slice(LATEST_MARKER.as_bytes());
-            }
+            },
             Some(v) => {
                 key.extend_from_slice(VERSION_MARKER.as_bytes());
                 // Zero-pad to 8 digits for lexicographic ordering
                 key.extend_from_slice(format!("{:08}", v).as_bytes());
-            }
+            },
         }
 
         key

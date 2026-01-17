@@ -1,6 +1,5 @@
 //! Manifest flush behavior over the real HTTP SQL API.
 
-
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::types::Manifest;
 use tokio::time::{sleep, Duration, Instant};
@@ -33,7 +32,9 @@ async fn wait_for_flush_job_completed(
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let resp = server
-            .execute_sql("SELECT job_type, status, parameters FROM system.jobs WHERE job_type = 'flush'")
+            .execute_sql(
+                "SELECT job_type, status, parameters FROM system.jobs WHERE job_type = 'flush'",
+            )
             .await?;
 
         if resp.status == ResponseStatus::Success {
@@ -56,11 +57,7 @@ async fn wait_for_flush_job_completed(
         }
 
         if Instant::now() >= deadline {
-            anyhow::bail!(
-                "Timed out waiting for flush job to complete for {}.{}",
-                ns,
-                table
-            );
+            anyhow::bail!("Timed out waiting for flush job to complete for {}.{}", ns, table);
         }
         sleep(Duration::from_millis(50)).await;
     }
@@ -72,71 +69,69 @@ async fn test_shared_flush_creates_manifest_json_over_http() -> anyhow::Result<(
     let namespace = format!("test_manifest_flush_{}", std::process::id());
     let table = "products";
 
-    let resp = server
-                .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
-                .await?;
+    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await?;
     assert_eq!(resp.status, ResponseStatus::Success);
 
-            let resp = server
+    let resp = server
                 .execute_sql(&format!(
                     "CREATE TABLE {}.{} (id INT PRIMARY KEY, name TEXT) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'rows:5')",
                     namespace, table
                 ))
                 .await?;
-            assert_eq!(resp.status, ResponseStatus::Success);
+    assert_eq!(resp.status, ResponseStatus::Success);
 
-            for i in 1..=7 {
-                let resp = server
-                    .execute_sql(&format!(
-                        "INSERT INTO {}.{} (id, name) VALUES ({}, 'item_{}')",
-                        namespace, table, i, i
-                    ))
-                    .await?;
-                assert_eq!(resp.status, ResponseStatus::Success);
-            }
+    for i in 1..=7 {
+        let resp = server
+            .execute_sql(&format!(
+                "INSERT INTO {}.{} (id, name) VALUES ({}, 'item_{}')",
+                namespace, table, i, i
+            ))
+            .await?;
+        assert_eq!(resp.status, ResponseStatus::Success);
+    }
 
-            let resp = server
-                .execute_sql(&format!("STORAGE FLUSH TABLE {}.{}", namespace, table))
-                .await?;
-            assert_eq!(resp.status, ResponseStatus::Success);
+    let resp = server
+        .execute_sql(&format!("STORAGE FLUSH TABLE {}.{}", namespace, table))
+        .await?;
+    assert_eq!(resp.status, ResponseStatus::Success);
 
-            wait_for_flush_job_completed(server, &namespace, table).await?;
+    wait_for_flush_job_completed(server, &namespace, table).await?;
 
-            let storage_root = server.storage_root();
-            let deadline = Instant::now() + Duration::from_secs(5);
-            let manifest_path = loop {
-                let candidates = find_manifest_files(&storage_root);
-                if let Some(path) = candidates.iter().find(|p| {
-                    p.to_string_lossy().contains(&namespace) && p.to_string_lossy().contains(table)
-                }) {
-                    break path.to_path_buf();
-                }
+    let storage_root = server.storage_root();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let manifest_path = loop {
+        let candidates = find_manifest_files(&storage_root);
+        if let Some(path) = candidates.iter().find(|p| {
+            p.to_string_lossy().contains(&namespace) && p.to_string_lossy().contains(table)
+        }) {
+            break path.to_path_buf();
+        }
 
-                if Instant::now() >= deadline {
-                    anyhow::bail!(
-                        "Expected manifest.json for {}.{} under {} (found: {:?})",
-                        namespace,
-                        table,
-                        storage_root.display(),
-                        candidates
-                    );
-                }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "Expected manifest.json for {}.{} under {} (found: {:?})",
+                namespace,
+                table,
+                storage_root.display(),
+                candidates
+            );
+        }
 
-                sleep(Duration::from_millis(50)).await;
-            };
+        sleep(Duration::from_millis(50)).await;
+    };
 
-            let manifest_json = std::fs::read_to_string(&manifest_path)?;
-            let manifest: Manifest = serde_json::from_str(&manifest_json)?;
+    let manifest_json = std::fs::read_to_string(&manifest_path)?;
+    let manifest: Manifest = serde_json::from_str(&manifest_json)?;
 
-            assert_eq!(manifest.table_id.namespace_id().as_str(), namespace);
-            assert_eq!(manifest.table_id.table_name().as_str(), table);
-            assert!(manifest.user_id.is_none(), "Shared table should have no user_id");
-            assert!(!manifest.segments.is_empty(), "Should have at least one segment");
+    assert_eq!(manifest.table_id.namespace_id().as_str(), namespace);
+    assert_eq!(manifest.table_id.table_name().as_str(), table);
+    assert!(manifest.user_id.is_none(), "Shared table should have no user_id");
+    assert!(!manifest.segments.is_empty(), "Should have at least one segment");
 
-            let resp = server
-                .execute_sql(&format!("SELECT COUNT(*) AS count FROM {}.{}", namespace, table))
-                .await?;
-            assert_eq!(resp.status, ResponseStatus::Success);
+    let resp = server
+        .execute_sql(&format!("SELECT COUNT(*) AS count FROM {}.{}", namespace, table))
+        .await?;
+    assert_eq!(resp.status, ResponseStatus::Success);
 
     Ok(())
 }

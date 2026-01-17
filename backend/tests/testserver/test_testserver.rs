@@ -7,16 +7,16 @@
 mod test_support;
 
 // Include test modules organized by category
-mod tables;
-mod sql;
-mod system;
-mod flush;
-mod storage;
-mod manifest;
-mod subscription;
-mod observability;
-mod stress;
 mod cluster;
+mod flush;
+mod manifest;
+mod observability;
+mod sql;
+mod storage;
+mod stress;
+mod subscription;
+mod system;
+mod tables;
 
 // Include standalone smoke test
 mod test_http_test_server_smoke;

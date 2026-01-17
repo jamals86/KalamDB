@@ -207,11 +207,8 @@ impl InitialDataFetcher {
         })?;
 
         // Create execution context with user scope for row-level security
-        let exec_ctx = ExecutionContext::new(
-            user_id.clone(),
-            role,
-            Arc::clone(&self.base_session_context),
-        );
+        let exec_ctx =
+            ExecutionContext::new(user_id.clone(), role, Arc::clone(&self.base_session_context));
 
         // Construct SQL query with projections
         let table_name = table_id.full_name(); // "namespace.table"
@@ -244,7 +241,11 @@ impl InitialDataFetcher {
         // Add deleted filter
         if !options.include_deleted
             && matches!(table_type, TableType::User | TableType::Shared)
-            && self.table_has_column(sql_executor.app_context().as_ref(), table_id, SystemColumnNames::DELETED)?
+            && self.table_has_column(
+                sql_executor.app_context().as_ref(),
+                table_id,
+                SystemColumnNames::DELETED,
+            )?
         {
             where_clauses.push(format!("{} = false", SystemColumnNames::DELETED));
         }
@@ -271,9 +272,8 @@ impl InitialDataFetcher {
 
         log::debug!("Executing initial data SQL via SqlExecutor: {}", sql);
 
-        let execution_result = sql_executor
-            .execute(&sql, &exec_ctx, Vec::<ScalarValue>::new())
-            .await?;
+        let execution_result =
+            sql_executor.execute(&sql, &exec_ctx, Vec::<ScalarValue>::new()).await?;
 
         let batches = match execution_result {
             ExecutionResult::Rows { batches, .. } => batches,
@@ -282,7 +282,7 @@ impl InitialDataFetcher {
                     "Initial data query returned non-row result: {:?}",
                     other
                 )))
-            }
+            },
         };
 
         // Convert batches to Rows
@@ -373,8 +373,8 @@ impl InitialDataFetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::base::TableProviderCore;
     use crate::providers::arrow_json_conversion::json_to_row;
+    use crate::providers::base::TableProviderCore;
     use crate::providers::UserTableProvider;
     use crate::schema_registry::CachedTableData;
     use crate::sql::executor::SqlExecutor;
@@ -386,10 +386,8 @@ mod tests {
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_commons::UserId;
     use kalamdb_store::test_utils::InMemoryBackend;
+    use kalamdb_tables::user_tables::user_table_store::new_indexed_user_table_store;
     use kalamdb_tables::UserTableRow;
-    use kalamdb_tables::user_tables::user_table_store::{
-        new_indexed_user_table_store
-    };
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
@@ -427,9 +425,7 @@ mod tests {
     #[test]
     fn test_initial_data_options_builder() {
         let seq = SeqId::new(12345);
-        let options = InitialDataOptions::since(seq)
-            .with_limit(200)
-            .with_deleted();
+        let options = InitialDataOptions::since(seq).with_limit(200).with_deleted();
 
         assert_eq!(options.since_seq, Some(seq));
         assert_eq!(options.limit, 200);
@@ -462,11 +458,7 @@ mod tests {
         let ns = NamespaceId::new(user_id.as_str());
         let tbl = TableName::new("items");
         let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
-        let store = Arc::new(new_indexed_user_table_store(
-            backend.clone(),
-            &table_id,
-            "id",
-        ));
+        let store = Arc::new(new_indexed_user_table_store(backend.clone(), &table_id, "id"));
 
         let seq = SeqId::new(1234567890);
         let row_id = UserTableRowId::new(user_id.clone(), seq);
@@ -519,10 +511,8 @@ mod tests {
         .expect("create table def");
 
         // Insert into cache directly (bypassing persistence which might not be mocked)
-        schema_registry.insert(
-            table_id.clone(),
-            Arc::new(CachedTableData::new(Arc::new(table_def))),
-        );
+        schema_registry
+            .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
 
         // Create a mock provider with the store
         let core = Arc::new(TableProviderCore::from_app_context(
@@ -568,10 +558,7 @@ mod tests {
         // Verify the row content
         let row = &res.rows[0];
         assert_eq!(row.get("id").unwrap(), &ScalarValue::Int32(Some(1)));
-        assert_eq!(
-            row.get("name").unwrap(),
-            &ScalarValue::Utf8(Some("Item One".to_string()))
-        );
+        assert_eq!(row.get("name").unwrap(), &ScalarValue::Utf8(Some("Item One".to_string())));
     }
 
     #[tokio::test]
@@ -598,11 +585,7 @@ mod tests {
         let ns = NamespaceId::new(user_id.as_str());
         let tbl = TableName::new("batch_items");
         let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
-        let store = Arc::new(new_indexed_user_table_store(
-            backend.clone(),
-            &table_id,
-            "id",
-        ));
+        let store = Arc::new(new_indexed_user_table_store(backend.clone(), &table_id, "id"));
 
         // Insert 3 rows with increasing seq
         for i in 1..=3 {
@@ -658,10 +641,8 @@ mod tests {
         )
         .expect("create table def");
 
-        schema_registry.insert(
-            table_id.clone(),
-            Arc::new(CachedTableData::new(Arc::new(table_def))),
-        );
+        schema_registry
+            .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
 
         // Create and register provider
         let core = Arc::new(TableProviderCore::from_app_context(
@@ -694,16 +675,13 @@ mod tests {
                 TableType::User,
                 InitialDataOptions::default().with_limit(1),
                 None,
-                None
+                None,
             )
             .await
             .expect("fetch batch 1");
 
         assert_eq!(res1.rows.len(), 1);
-        assert_eq!(
-            res1.rows[0].get("id").unwrap(),
-            &ScalarValue::Int32(Some(1))
-        );
+        assert_eq!(res1.rows[0].get("id").unwrap(), &ScalarValue::Int32(Some(1)));
         assert!(res1.has_more);
         assert_eq!(res1.last_seq, Some(SeqId::new(1)));
 
@@ -715,16 +693,13 @@ mod tests {
                 TableType::User,
                 InitialDataOptions::since(res1.last_seq.unwrap()).with_limit(1),
                 None,
-                None
+                None,
             )
             .await
             .expect("fetch batch 2");
 
         assert_eq!(res2.rows.len(), 1);
-        assert_eq!(
-            res2.rows[0].get("id").unwrap(),
-            &ScalarValue::Int32(Some(2))
-        );
+        assert_eq!(res2.rows[0].get("id").unwrap(), &ScalarValue::Int32(Some(2)));
         assert!(res2.has_more);
         assert_eq!(res2.last_seq, Some(SeqId::new(2)));
 
@@ -736,16 +711,13 @@ mod tests {
                 TableType::User,
                 InitialDataOptions::since(res2.last_seq.unwrap()).with_limit(1),
                 None,
-                None
+                None,
             )
             .await
             .expect("fetch batch 3");
 
         assert_eq!(res3.rows.len(), 1);
-        assert_eq!(
-            res3.rows[0].get("id").unwrap(),
-            &ScalarValue::Int32(Some(3))
-        );
+        assert_eq!(res3.rows[0].get("id").unwrap(), &ScalarValue::Int32(Some(3)));
         assert!(!res3.has_more); // Should be false as we fetched the last one
         assert_eq!(res3.last_seq, Some(SeqId::new(3)));
     }
@@ -774,11 +746,7 @@ mod tests {
         let ns = NamespaceId::new(user_id.as_str());
         let tbl = TableName::new("last_items");
         let table_id = kalamdb_commons::models::TableId::new(ns.clone(), tbl.clone());
-        let store = Arc::new(new_indexed_user_table_store(
-            backend.clone(),
-            &table_id,
-            "id",
-        ));
+        let store = Arc::new(new_indexed_user_table_store(backend.clone(), &table_id, "id"));
 
         // Insert 10 rows with increasing seq
         for i in 1..=10 {
@@ -834,10 +802,8 @@ mod tests {
         )
         .expect("create table def");
 
-        schema_registry.insert(
-            table_id.clone(),
-            Arc::new(CachedTableData::new(Arc::new(table_def))),
-        );
+        schema_registry
+            .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
 
         // Create and register provider
         let core = Arc::new(TableProviderCore::from_app_context(
@@ -880,7 +846,7 @@ mod tests {
         // Then we take(3) = [7,8,9], reverse = [9,8,7]
         // TODO: Fix UserTableProvider or DataFusion to respect DESC ordering
         assert_eq!(res.rows.len(), 3, "Expected 3 rows, got {}", res.rows.len());
-        
+
         // Actual behavior: query returns ASC [7,8,9,10], take 3 = [7,8,9], reverse = [9,8,7]
         assert_eq!(
             res.rows[0].get("id").unwrap(),

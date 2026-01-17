@@ -97,10 +97,10 @@
 //! # }
 //! ```
 
+pub mod compression;
 pub mod error;
 pub mod live;
 pub mod models;
-pub mod compression;
 #[cfg(feature = "tokio-runtime")]
 mod normalize;
 pub mod seq_id;
@@ -141,7 +141,7 @@ pub use models::{
 pub use seq_id::SeqId;
 pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};
 pub use timestamp::{
-    TimestampFormat, TimestampFormatter, TimestampFormatterConfig, now, parse_iso8601,
+    now, parse_iso8601, TimestampFormat, TimestampFormatter, TimestampFormatterConfig,
 };
 
 #[cfg(feature = "tokio-runtime")]

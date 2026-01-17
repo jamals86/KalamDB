@@ -27,7 +27,9 @@ pub use error::AuthError;
 pub use extractor::{AuthExtractError, AuthSession, OptionalAuth};
 pub use impersonation::{ImpersonationContext, ImpersonationOrigin};
 pub use ip_extractor::{extract_client_ip_secure, is_localhost_address};
-pub use jwt_auth::{generate_jwt_token, refresh_jwt_token, JwtClaims, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER};
+pub use jwt_auth::{
+    generate_jwt_token, refresh_jwt_token, JwtClaims, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER,
+};
 pub use login_tracker::{LoginTracker, LoginTrackingConfig};
 pub use unified::{
     authenticate, extract_username_for_audit, AuthMethod, AuthRequest, AuthenticationResult,

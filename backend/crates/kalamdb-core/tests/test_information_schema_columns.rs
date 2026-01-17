@@ -26,26 +26,16 @@ async fn test_information_schema_columns_query() {
     let result = session.sql(sql).await;
 
     // Should not return an error
-    assert!(
-        result.is_ok(),
-        "Query failed with error: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Query failed with error: {:?}", result.err());
 
     let df = result.unwrap();
     let batches = df.collect().await.expect("Failed to collect batches");
 
     // Verify we got results
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
-    assert!(
-        total_rows > 0,
-        "Expected at least 1 row from information_schema.columns, got 0"
-    );
+    assert!(total_rows > 0, "Expected at least 1 row from information_schema.columns, got 0");
 
-    println!(
-        "✅ information_schema.columns query succeeded with {} rows",
-        total_rows
-    );
+    println!("✅ information_schema.columns query succeeded with {} rows", total_rows);
 }
 
 #[tokio::test]
@@ -77,8 +67,5 @@ async fn test_information_schema_columns_shows_system_jobs() {
         total_rows
     );
 
-    println!(
-        "✅ system.jobs has {} columns in information_schema.columns",
-        total_rows
-    );
+    println!("✅ system.jobs has {} columns in information_schema.columns", total_rows);
 }

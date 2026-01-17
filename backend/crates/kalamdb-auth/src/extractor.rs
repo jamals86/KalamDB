@@ -209,19 +209,19 @@ impl FromRequest for AuthSession {
             let start_time = std::time::Instant::now();
 
             // Get user repository from app data - MUST be registered
-            let repo: Arc<dyn UserRepository> =
-                if let Some(repo) = req.app_data::<actix_web::web::Data<Arc<dyn UserRepository>>>()
-                {
-                    repo.get_ref().clone()
-                } else {
-                    let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                    return Err(AuthExtractError::new(
+            let repo: Arc<dyn UserRepository> = if let Some(repo) =
+                req.app_data::<actix_web::web::Data<Arc<dyn UserRepository>>>()
+            {
+                repo.get_ref().clone()
+            } else {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return Err(AuthExtractError::new(
                         AuthError::DatabaseError(
                             "User repository not configured. Ensure Arc<dyn UserRepository> is registered as app data.".to_string(),
                         ),
                         took,
                     ));
-                };
+            };
 
             // Extract Authorization header
             let auth_header = match req.headers().get("Authorization") {
@@ -235,7 +235,7 @@ impl FromRequest for AuthSession {
                             ),
                             took,
                         ));
-                    }
+                    },
                 },
                 None => {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -245,7 +245,7 @@ impl FromRequest for AuthSession {
                         ),
                         took,
                     ));
-                }
+                },
             };
 
             // Extract client IP with security checks
@@ -263,7 +263,7 @@ impl FromRequest for AuthSession {
                 Err(e) => {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
                     Err(AuthExtractError::new(e, took))
-                }
+                },
             }
         })
     }
@@ -297,19 +297,19 @@ impl FromRequest for AuthenticatedUser {
             let start_time = std::time::Instant::now();
 
             // Get user repository from app data - MUST be registered
-            let repo: Arc<dyn UserRepository> =
-                if let Some(repo) = req.app_data::<actix_web::web::Data<Arc<dyn UserRepository>>>()
-                {
-                    repo.get_ref().clone()
-                } else {
-                    let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                    return Err(AuthExtractError::new(
+            let repo: Arc<dyn UserRepository> = if let Some(repo) =
+                req.app_data::<actix_web::web::Data<Arc<dyn UserRepository>>>()
+            {
+                repo.get_ref().clone()
+            } else {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return Err(AuthExtractError::new(
                         AuthError::DatabaseError(
                             "User repository not configured. Ensure Arc<dyn UserRepository> is registered as app data.".to_string(),
                         ),
                         took,
                     ));
-                };
+            };
 
             // Extract Authorization header
             let auth_header = match req.headers().get("Authorization") {
@@ -323,7 +323,7 @@ impl FromRequest for AuthenticatedUser {
                             ),
                             took,
                         ));
-                    }
+                    },
                 },
                 None => {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -333,7 +333,7 @@ impl FromRequest for AuthenticatedUser {
                         ),
                         took,
                     ));
-                }
+                },
             };
 
             // Extract client IP with security checks
@@ -347,7 +347,7 @@ impl FromRequest for AuthenticatedUser {
                 Err(e) => {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
                     Err(AuthExtractError::new(e, took))
-                }
+                },
             }
         })
     }
@@ -414,13 +414,13 @@ impl FromRequest for OptionalAuth {
             }
 
             // Try to get user repository
-            let repo: Option<Arc<dyn UserRepository>> =
-                if let Some(repo) = req.app_data::<actix_web::web::Data<Arc<dyn UserRepository>>>()
-                {
-                    Some(repo.get_ref().clone())
-                } else {
-                    None
-                };
+            let repo: Option<Arc<dyn UserRepository>> = if let Some(repo) =
+                req.app_data::<actix_web::web::Data<Arc<dyn UserRepository>>>()
+            {
+                Some(repo.get_ref().clone())
+            } else {
+                None
+            };
 
             let Some(repo) = repo else {
                 // No repository available, treat as anonymous
@@ -455,17 +455,12 @@ mod tests {
 
     #[test]
     fn test_auth_extract_error_codes() {
-        let err = AuthExtractError::new(
-            AuthError::MissingAuthorization("test".to_string()),
-            10.0,
-        );
+        let err = AuthExtractError::new(AuthError::MissingAuthorization("test".to_string()), 10.0);
         assert_eq!(err.error_code(), "MISSING_AUTHORIZATION");
         assert_eq!(err.status_code(), StatusCode::UNAUTHORIZED);
 
-        let err = AuthExtractError::new(
-            AuthError::MalformedAuthorization("test".to_string()),
-            10.0,
-        );
+        let err =
+            AuthExtractError::new(AuthError::MalformedAuthorization("test".to_string()), 10.0);
         assert_eq!(err.error_code(), "MALFORMED_AUTHORIZATION");
         assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
 
@@ -473,10 +468,8 @@ mod tests {
         assert_eq!(err.error_code(), "TOKEN_EXPIRED");
         assert_eq!(err.status_code(), StatusCode::UNAUTHORIZED);
 
-        let err = AuthExtractError::new(
-            AuthError::InsufficientPermissions("test".to_string()),
-            10.0,
-        );
+        let err =
+            AuthExtractError::new(AuthError::InsufficientPermissions("test".to_string()), 10.0);
         assert_eq!(err.error_code(), "INSUFFICIENT_PERMISSIONS");
         assert_eq!(err.status_code(), StatusCode::FORBIDDEN);
     }

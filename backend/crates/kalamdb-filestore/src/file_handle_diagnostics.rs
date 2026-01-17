@@ -31,9 +31,9 @@
 //! println!("Active handles: {}", stats.active_handles);
 //! ```
 
+use log::{debug, warn};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use log::{debug, warn};
 
 /// Global file handle tracker
 static TRACKER: FileHandleTracker = FileHandleTracker::new();
@@ -102,7 +102,7 @@ pub fn record_open<P: AsRef<Path>>(context: &str, path: P) {
     let path = path.as_ref();
     let new_count = TRACKER.active_handles.fetch_add(1, Ordering::SeqCst) + 1;
     TRACKER.total_opened.fetch_add(1, Ordering::Relaxed);
-    
+
     // Update peak if needed
     let mut current_peak = TRACKER.peak_handles.load(Ordering::Relaxed);
     while new_count > current_peak {
@@ -171,7 +171,7 @@ pub fn check_for_leaks() -> Option<i64> {
     let opened = TRACKER.total_opened.load(Ordering::Relaxed) as i64;
     let closed = TRACKER.total_closed.load(Ordering::Relaxed) as i64;
     let diff = opened - closed;
-    
+
     if diff != 0 {
         Some(diff)
     } else {
@@ -189,12 +189,9 @@ pub fn log_stats_summary() {
         stats.total_closed,
         stats.peak_handles
     );
-    
+
     if let Some(leak_count) = check_for_leaks() {
-        warn!(
-            "[FILE_HANDLE] POTENTIAL LEAK: {} unclosed handles detected",
-            leak_count
-        );
+        warn!("[FILE_HANDLE] POTENTIAL LEAK: {} unclosed handles detected", leak_count);
     }
 }
 
@@ -243,7 +240,7 @@ mod tests {
         for i in 0..5 {
             record_open("test", &format!("/path/{}", i));
         }
-        
+
         let stats = FileHandleTracker::stats();
         assert_eq!(stats.peak_handles, 5);
 

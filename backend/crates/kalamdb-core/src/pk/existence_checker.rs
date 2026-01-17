@@ -82,8 +82,8 @@ impl PkExistenceChecker {
             // Check if the default value is AUTO_INCREMENT function
             matches!(
                 &pk_col.default_value,
-                ColumnDefault::FunctionCall { name, .. } 
-                    if name.eq_ignore_ascii_case("auto_increment") 
+                ColumnDefault::FunctionCall { name, .. }
+                    if name.eq_ignore_ascii_case("auto_increment")
                     || name.eq_ignore_ascii_case("snowflake_id")
             )
         } else {
@@ -103,11 +103,7 @@ impl PkExistenceChecker {
 
     /// Get the primary key column_id from a table definition
     pub fn get_pk_column_id(table_def: &TableDefinition) -> Option<u64> {
-        table_def
-            .columns
-            .iter()
-            .find(|col| col.is_primary_key)
-            .map(|col| col.column_id)
+        table_def.columns.iter().find(|col| col.is_primary_key).map(|col| col.column_id)
     }
 
     /// Check if a PK value exists, using optimized manifest-based pruning
@@ -148,16 +144,10 @@ impl PkExistenceChecker {
 
         // Step 2: Get PK column name and id
         let pk_column = Self::get_pk_column_name(table_def).ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!(
-                "Table {} has no primary key column",
-                table_id
-            ))
+            KalamDbError::InvalidOperation(format!("Table {} has no primary key column", table_id))
         })?;
         let pk_column_id = Self::get_pk_column_id(table_def).ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!(
-                "Table {} has no primary key column",
-                table_id
-            ))
+            KalamDbError::InvalidOperation(format!("Table {} has no primary key column", table_id))
         })?;
 
         // Step 3-6: Use the optimized cold storage check from base provider
@@ -207,7 +197,7 @@ impl PkExistenceChecker {
                     scope_label
                 );
                 return Ok(None);
-            }
+            },
         };
 
         // 2. Get Storage from registry
@@ -226,7 +216,7 @@ impl PkExistenceChecker {
                     scope_label
                 );
                 return Ok(None);
-            }
+            },
         };
 
         let object_store = cached
@@ -242,11 +232,8 @@ impl PkExistenceChecker {
         )?;
 
         // Check if any files exist
-        let all_files = kalamdb_filestore::list_files_sync(
-            Arc::clone(&object_store),
-            &storage,
-            &storage_path,
-        );
+        let all_files =
+            kalamdb_filestore::list_files_sync(Arc::clone(&object_store), &storage, &storage_path);
 
         let all_files = match all_files {
             Ok(f) => f,
@@ -258,7 +245,7 @@ impl PkExistenceChecker {
                     scope_label
                 );
                 return Ok(None);
-            }
+            },
         };
 
         if all_files.is_empty() {
@@ -273,8 +260,7 @@ impl PkExistenceChecker {
 
         // 4. Load manifest from cache (L1 → L2 → storage)
         let manifest_service = self.app_context.manifest_service();
-        let manifest: Option<Manifest> = match manifest_service.get_or_load(table_id, user_id)
-        {
+        let manifest: Option<Manifest> = match manifest_service.get_or_load(table_id, user_id) {
             Ok(Some(entry)) => {
                 log::trace!(
                     "[PkExistenceChecker] Manifest loaded from cache for {}.{} {}",
@@ -283,7 +269,7 @@ impl PkExistenceChecker {
                     scope_label
                 );
                 Some(entry.manifest.clone())
-            }
+            },
             Ok(None) => {
                 log::trace!(
                     "[PkExistenceChecker] No manifest in cache for {}.{} {} - will check all files",
@@ -292,12 +278,8 @@ impl PkExistenceChecker {
                     scope_label
                 );
                 // Try to load from storage (manifest.json file)
-                self.load_manifest_from_storage(
-                    Arc::clone(&object_store),
-                    &storage,
-                    &storage_path,
-                )?
-            }
+                self.load_manifest_from_storage(Arc::clone(&object_store), &storage, &storage_path)?
+            },
             Err(e) => {
                 log::warn!(
                     "[PkExistenceChecker] Manifest cache error for {}.{} {}: {}",
@@ -307,7 +289,7 @@ impl PkExistenceChecker {
                     e
                 );
                 None
-            }
+            },
         };
 
         // 5. Use manifest to prune segments by min/max or check all Parquet files
@@ -336,10 +318,7 @@ impl PkExistenceChecker {
             pruned_paths
         } else {
             // No manifest - check all Parquet files
-            all_files
-                .into_iter()
-                .filter(|p| p.ends_with(".parquet"))
-                .collect()
+            all_files.into_iter().filter(|p| p.ends_with(".parquet")).collect()
         };
 
         if files_to_scan.is_empty() {
@@ -390,11 +369,11 @@ impl PkExistenceChecker {
                     manifest.segments.len()
                 );
                 Ok(Some(manifest))
-            }
+            },
             Err(_) => {
                 log::trace!("[PkExistenceChecker] No manifest.json found at {}", manifest_path);
                 Ok(None)
-            }
+            },
         }
     }
 
@@ -528,7 +507,9 @@ impl PkExistenceChecker {
 mod tests {
     use super::*;
     use kalamdb_commons::models::datatypes::KalamDataType;
-    use kalamdb_commons::models::schemas::{ColumnDefinition, ColumnDefault, TableDefinition, TableType};
+    use kalamdb_commons::models::schemas::{
+        ColumnDefault, ColumnDefinition, TableDefinition, TableType,
+    };
     use kalamdb_commons::{NamespaceId, TableName};
 
     fn create_test_table_def(pk_default: ColumnDefault) -> TableDefinition {

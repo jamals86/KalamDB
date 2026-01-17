@@ -63,8 +63,8 @@ fn smoke_test_alter_table_with_data_verification() {
 
     // Verify initial data
     let select1 = format!("SELECT * FROM {}.{} ORDER BY id", namespace, table);
-    let output1 = execute_sql_as_root_via_client_json(&select1)
-        .expect("Failed to query initial data");
+    let output1 =
+        execute_sql_as_root_via_client_json(&select1).expect("Failed to query initial data");
 
     let rows1 = extract_rows_from_json(&output1);
     assert_eq!(rows1.len(), 3, "Expected 3 initial rows");
@@ -72,18 +72,9 @@ fn smoke_test_alter_table_with_data_verification() {
     // Verify schema has 3 columns
     let schema1 = extract_schema_from_json(&output1);
     assert_eq!(schema1.len(), 3, "Expected 3 columns initially (got {:?})", schema1);
-    assert!(
-        schema1.iter().any(|col| col == "id"),
-        "Missing 'id' column"
-    );
-    assert!(
-        schema1.iter().any(|col| col == "name"),
-        "Missing 'name' column"
-    );
-    assert!(
-        schema1.iter().any(|col| col == "price"),
-        "Missing 'price' column"
-    );
+    assert!(schema1.iter().any(|col| col == "id"), "Missing 'id' column");
+    assert!(schema1.iter().any(|col| col == "name"), "Missing 'name' column");
+    assert!(schema1.iter().any(|col| col == "price"), "Missing 'price' column");
 
     println!("✅ Verified initial data: 3 rows, 3 columns");
 
@@ -92,18 +83,15 @@ fn smoke_test_alter_table_with_data_verification() {
     // ========================================================================
     println!("\n➕ Phase 2: ALTER TABLE ADD COLUMN");
 
-    let alter_add = format!(
-        "ALTER TABLE {}.{} ADD COLUMN stock INT DEFAULT 0",
-        namespace, table
-    );
+    let alter_add = format!("ALTER TABLE {}.{} ADD COLUMN stock INT DEFAULT 0", namespace, table);
     execute_sql_as_root_via_client(&alter_add).expect("Failed to add column");
 
     println!("✅ Added 'stock' column");
 
     // SELECT immediately and verify new column appears
     let select2 = format!("SELECT * FROM {}.{} ORDER BY id", namespace, table);
-    let output2 = execute_sql_as_root_via_client_json(&select2)
-        .expect("Failed to query after ADD COLUMN");
+    let output2 =
+        execute_sql_as_root_via_client_json(&select2).expect("Failed to query after ADD COLUMN");
 
     let rows2 = extract_rows_from_json(&output2);
     assert_eq!(rows2.len(), 3, "Expected 3 rows after ADD COLUMN");
@@ -126,12 +114,7 @@ fn smoke_test_alter_table_with_data_verification() {
     // Verify each row has the stock column with default value
     for (i, row) in rows2.iter().enumerate() {
         let stock_val = row.get("stock");
-        assert!(
-            stock_val.is_some(),
-            "Row {} missing 'stock' column: {:?}",
-            i + 1,
-            row
-        );
+        assert!(stock_val.is_some(), "Row {} missing 'stock' column: {:?}", i + 1, row);
     }
 
     println!("✅ Verified new column 'stock' appears in SELECT results");
@@ -147,15 +130,14 @@ fn smoke_test_alter_table_with_data_verification() {
         (5, 'Webcam', 89.99, 8)",
         namespace, table
     );
-    execute_sql_as_root_via_client(&insert_sql2)
-        .expect("Failed to insert data with new column");
+    execute_sql_as_root_via_client(&insert_sql2).expect("Failed to insert data with new column");
 
     println!("✅ Inserted 2 new rows with stock values");
 
     // Query and verify all 5 rows
     let select3 = format!("SELECT * FROM {}.{} ORDER BY id", namespace, table);
-    let output3 = execute_sql_as_root_via_client_json(&select3)
-        .expect("Failed to query after insert");
+    let output3 =
+        execute_sql_as_root_via_client_json(&select3).expect("Failed to query after insert");
 
     let rows3 = extract_rows_from_json(&output3);
     assert_eq!(rows3.len(), 5, "Expected 5 rows total");
@@ -177,21 +159,11 @@ fn smoke_test_alter_table_with_data_verification() {
     // Verify new rows (4-5) have explicit stock values
     let row4 = &rows3[3];
     let stock4 = extract_int_from_row(row4, "stock");
-    assert_eq!(
-        stock4,
-        Some(15),
-        "New row 4 should have stock=15, got {:?}",
-        stock4
-    );
+    assert_eq!(stock4, Some(15), "New row 4 should have stock=15, got {:?}", stock4);
 
     let row5 = &rows3[4];
     let stock5 = extract_int_from_row(row5, "stock");
-    assert_eq!(
-        stock5,
-        Some(8),
-        "New row 5 should have stock=8, got {:?}",
-        stock5
-    );
+    assert_eq!(stock5, Some(8), "New row 5 should have stock=8, got {:?}", stock5);
 
     println!("✅ Verified old rows have default values, new rows have explicit values");
 
@@ -241,8 +213,8 @@ fn smoke_test_alter_table_with_data_verification() {
 
     // SELECT and verify column is gone
     let select5 = format!("SELECT * FROM {}.{} ORDER BY id", namespace, table);
-    let output5 = execute_sql_as_root_via_client_json(&select5)
-        .expect("Failed to query after DROP COLUMN");
+    let output5 =
+        execute_sql_as_root_via_client_json(&select5).expect("Failed to query after DROP COLUMN");
 
     let schema5 = extract_schema_from_json(&output5);
     assert_eq!(
@@ -274,25 +246,20 @@ fn smoke_test_alter_table_with_data_verification() {
         (6, 'Headset', 149.99, 'Audio')",
         namespace, table
     );
-    execute_sql_as_root_via_client(&insert_sql3)
-        .expect("Failed to insert after DROP COLUMN");
+    execute_sql_as_root_via_client(&insert_sql3).expect("Failed to insert after DROP COLUMN");
 
     println!("✅ Inserted 1 new row after DROP");
 
     // Final verification
     let select_final = format!("SELECT * FROM {}.{} ORDER BY id", namespace, table);
-    let output_final = execute_sql_as_root_via_client_json(&select_final)
-        .expect("Failed to query final state");
+    let output_final =
+        execute_sql_as_root_via_client_json(&select_final).expect("Failed to query final state");
 
     let rows_final = extract_rows_from_json(&output_final);
     assert_eq!(rows_final.len(), 6, "Expected 6 rows in final state");
 
     let schema_final = extract_schema_from_json(&output_final);
-    assert_eq!(
-        schema_final.len(),
-        4,
-        "Expected 4 columns in final state"
-    );
+    assert_eq!(schema_final.len(), 4, "Expected 4 columns in final state");
 
     // Verify final schema
     assert!(schema_final.iter().any(|col| col == "id"));
@@ -314,7 +281,8 @@ fn smoke_test_alter_table_with_data_verification() {
     println!("   ✓ All operations maintain data integrity");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -324,9 +292,8 @@ fn smoke_test_alter_table_with_data_verification() {
 /// Extract schema (column names) from JSON response
 /// Filters out system columns (_seq, _deleted)
 fn extract_schema_from_json(json_str: &str) -> Vec<String> {
-    let json: serde_json::Value = serde_json::from_str(json_str)
-        .expect("Failed to parse JSON");
-    
+    let json: serde_json::Value = serde_json::from_str(json_str).expect("Failed to parse JSON");
+
     json.get("results")
         .and_then(serde_json::Value::as_array)
         .and_then(|results| results.first())
@@ -343,33 +310,36 @@ fn extract_schema_from_json(json_str: &str) -> Vec<String> {
 
 /// Extract rows from JSON response as objects
 fn extract_rows_from_json(json_str: &str) -> Vec<serde_json::Value> {
-    let json: serde_json::Value = serde_json::from_str(json_str)
-        .expect("Failed to parse JSON");
-    
+    let json: serde_json::Value = serde_json::from_str(json_str).expect("Failed to parse JSON");
+
     // Get schema for column names
-    let schema = json.get("results")
+    let schema = json
+        .get("results")
         .and_then(serde_json::Value::as_array)
         .and_then(|results| results.first())
         .and_then(|result| result.get("schema"))
         .and_then(serde_json::Value::as_array)
         .cloned()
         .unwrap_or_default();
-    
-    let column_names: Vec<String> = schema.iter()
+
+    let column_names: Vec<String> = schema
+        .iter()
         .filter_map(|col| col.get("name").and_then(serde_json::Value::as_str).map(String::from))
         .collect();
-    
+
     // Get rows as arrays
-    let rows_arrays = json.get("results")
+    let rows_arrays = json
+        .get("results")
         .and_then(serde_json::Value::as_array)
         .and_then(|results| results.first())
         .and_then(|result| result.get("rows"))
         .and_then(serde_json::Value::as_array)
         .cloned()
         .unwrap_or_default();
-    
+
     // Convert each row array to an object with column names as keys
-    rows_arrays.iter()
+    rows_arrays
+        .iter()
         .filter_map(|row| {
             let arr = row.as_array()?;
             let mut obj = serde_json::Map::new();
@@ -386,7 +356,7 @@ fn extract_rows_from_json(json_str: &str) -> Vec<serde_json::Value> {
 /// Extract integer value from a row object
 fn extract_int_from_row(row: &serde_json::Value, column: &str) -> Option<i64> {
     let val = row.get(column)?;
-    
+
     // Handle different JSON formats
     if let Some(obj) = val.as_object() {
         // Arrow format: {"Int64": 123} or {"Int32": 123}
@@ -394,16 +364,16 @@ fn extract_int_from_row(row: &serde_json::Value, column: &str) -> Option<i64> {
             return v.as_i64();
         }
     }
-    
+
     // Direct integer
     if let Some(i) = val.as_i64() {
         return Some(i);
     }
-    
+
     // String representation (for BigInt)
     if let Some(s) = val.as_str() {
         return s.parse::<i64>().ok();
     }
-    
+
     None
 }

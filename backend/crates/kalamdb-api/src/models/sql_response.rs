@@ -283,8 +283,16 @@ mod tests {
     #[test]
     fn test_array_rows_format() {
         let rows = vec![
-            vec![serde_json::json!("123"), serde_json::json!("Alice"), serde_json::json!(1699000000000000i64)],
-            vec![serde_json::json!("456"), serde_json::json!("Bob"), serde_json::json!(1699000001000000i64)],
+            vec![
+                serde_json::json!("123"),
+                serde_json::json!("Alice"),
+                serde_json::json!(1699000000000000i64),
+            ],
+            vec![
+                serde_json::json!("456"),
+                serde_json::json!("Bob"),
+                serde_json::json!(1699000001000000i64),
+            ],
         ];
         let schema = vec![
             SchemaField::new("id", KalamDataType::BigInt, 0),
@@ -316,10 +324,7 @@ mod tests {
         assert_eq!(result.row_count, 0);
         assert!(result.rows.is_none());
         assert!(result.schema.is_empty());
-        assert_eq!(
-            result.message,
-            Some("Table created successfully".to_string())
-        );
+        assert_eq!(result.message, Some("Table created successfully".to_string()));
     }
 
     #[test]

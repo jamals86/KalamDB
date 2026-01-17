@@ -4,7 +4,6 @@
 
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::{NamespaceId, NodeId, StorageId};
-use kalamdb_system::{StoragePartition, SystemTable};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobRegistry, RestoreExecutor,
@@ -12,6 +11,7 @@ use kalamdb_core::jobs::executors::{
 };
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
+use kalamdb_system::{StoragePartition, SystemTable};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use std::sync::Once;

@@ -4,7 +4,9 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::{ExecutionContext, ExecutionResult, ScalarValue, StatementHandler};
+use crate::sql::executor::handlers::{
+    ExecutionContext, ExecutionResult, ScalarValue, StatementHandler,
+};
 use kalamdb_raft::RaftExecutor;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::sync::Arc;
@@ -44,9 +46,10 @@ impl StatementHandler for ClusterPurgeHandler {
         };
 
         let manager = raft_executor.manager();
-        let results = manager.purge_all_logs(*upto).await.map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to purge logs: {}", e))
-        })?;
+        let results = manager
+            .purge_all_logs(*upto)
+            .await
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to purge logs: {}", e)))?;
 
         let success_count = results.iter().filter(|r| r.success).count();
         let total_count = results.len();

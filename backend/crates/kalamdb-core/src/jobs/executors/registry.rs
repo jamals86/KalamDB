@@ -40,11 +40,29 @@ pub(crate) trait DynJobExecutor: Send + Sync {
         params_json: &str,
     ) -> Result<bool, KalamDbError>;
 
-    /// Executes the job with dynamic parameter deserialization
+    /// Executes the job with dynamic parameter deserialization (legacy single-phase)
     ///
     /// Deserializes parameters from JSON, validates them, creates typed
     /// JobContext, and delegates to type-safe execute method.
     async fn execute_dyn(
+        &self,
+        app_ctx: Arc<AppContext>,
+        job: &Job,
+    ) -> Result<JobDecision, KalamDbError>;
+
+    /// Execute local work phase (runs on ALL nodes)
+    ///
+    /// Deserializes parameters and delegates to executor's execute_local method.
+    async fn execute_local_dyn(
+        &self,
+        app_ctx: Arc<AppContext>,
+        job: &Job,
+    ) -> Result<JobDecision, KalamDbError>;
+
+    /// Execute leader-only phase (runs ONLY on leader)
+    ///
+    /// Deserializes parameters and delegates to executor's execute_leader method.
+    async fn execute_leader_dyn(
         &self,
         app_ctx: Arc<AppContext>,
         job: &Job,
@@ -106,6 +124,54 @@ where
 
         // Call type-safe execute method
         self.execute(&ctx).await
+    }
+
+    async fn execute_local_dyn(
+        &self,
+        app_ctx: Arc<AppContext>,
+        job: &Job,
+    ) -> Result<JobDecision, KalamDbError> {
+        // Deserialize parameters from JSON string
+        let params_json = job
+            .parameters
+            .as_ref()
+            .ok_or_else(|| KalamDbError::InvalidOperation("Missing job parameters".to_string()))?;
+
+        let params: T = serde_json::from_str(params_json)
+            .into_serde_error("Failed to deserialize job parameters")?;
+
+        // Validate parameters
+        params.validate()?;
+
+        // Create typed JobContext with validated parameters
+        let ctx = JobContext::new(app_ctx, job.job_id.as_str().to_string(), params);
+
+        // Call type-safe execute_local method
+        self.execute_local(&ctx).await
+    }
+
+    async fn execute_leader_dyn(
+        &self,
+        app_ctx: Arc<AppContext>,
+        job: &Job,
+    ) -> Result<JobDecision, KalamDbError> {
+        // Deserialize parameters from JSON string
+        let params_json = job
+            .parameters
+            .as_ref()
+            .ok_or_else(|| KalamDbError::InvalidOperation("Missing job parameters".to_string()))?;
+
+        let params: T = serde_json::from_str(params_json)
+            .into_serde_error("Failed to deserialize job parameters")?;
+
+        // Validate parameters
+        params.validate()?;
+
+        // Create typed JobContext with validated parameters
+        let ctx = JobContext::new(app_ctx, job.job_id.as_str().to_string(), params);
+
+        // Call type-safe execute_leader method
+        self.execute_leader(&ctx).await
     }
 
     async fn cancel_dyn(&self, app_ctx: Arc<AppContext>, job: &Job) -> Result<(), KalamDbError> {
@@ -215,10 +281,7 @@ impl JobRegistry {
         params_json: &str,
     ) -> Result<bool, KalamDbError> {
         let executor = self.executors.get(job_type).ok_or_else(|| {
-            KalamDbError::NotFound(format!(
-                "No executor registered for job type: {:?}",
-                job_type
-            ))
+            KalamDbError::NotFound(format!("No executor registered for job type: {:?}", job_type))
         })?;
 
         executor.pre_validate_dyn(app_ctx, params_json).await
@@ -252,6 +315,65 @@ impl JobRegistry {
         })?;
 
         executor.execute_dyn(app_ctx, job).await
+    }
+
+    /// Execute local work phase of a job (runs on ALL nodes)
+    ///
+    /// Looks up the executor by job type and executes the local work phase.
+    /// This is called on every node in the cluster, not just the leader.
+    ///
+    /// # Arguments
+    /// * `app_ctx` - Application context
+    /// * `job` - Job to execute local phase for
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - No executor registered for job type
+    /// - Parameter deserialization fails
+    /// - Execution fails
+    pub async fn execute_local(
+        &self,
+        app_ctx: Arc<AppContext>,
+        job: &Job,
+    ) -> Result<JobDecision, KalamDbError> {
+        let executor = self.executors.get(&job.job_type).ok_or_else(|| {
+            KalamDbError::NotFound(format!(
+                "No executor registered for job type: {:?}",
+                job.job_type
+            ))
+        })?;
+
+        executor.execute_local_dyn(app_ctx, job).await
+    }
+
+    /// Execute leader-only phase of a job (runs ONLY on leader)
+    ///
+    /// Looks up the executor by job type and executes the leader-only phase.
+    /// This should only be called on the leader node for jobs that have
+    /// leader actions (`job.job_type.has_leader_actions() == true`).
+    ///
+    /// # Arguments
+    /// * `app_ctx` - Application context
+    /// * `job` - Job to execute leader phase for
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - No executor registered for job type
+    /// - Parameter deserialization fails
+    /// - Execution fails
+    pub async fn execute_leader(
+        &self,
+        app_ctx: Arc<AppContext>,
+        job: &Job,
+    ) -> Result<JobDecision, KalamDbError> {
+        let executor = self.executors.get(&job.job_type).ok_or_else(|| {
+            KalamDbError::NotFound(format!(
+                "No executor registered for job type: {:?}",
+                job.job_type
+            ))
+        })?;
+
+        executor.execute_leader_dyn(app_ctx, job).await
     }
 
     /// Cancel a running job using the registered executor
@@ -357,6 +479,7 @@ mod tests {
             job_id: JobId::new("TEST-001"),
             job_type,
             status: JobStatus::Running,
+            leader_status: None,
             parameters: Some(params.to_string()),
             message: None,
             exception_trace: None,
@@ -370,6 +493,7 @@ mod tests {
             started_at: Some(now),
             finished_at: None,
             node_id: NodeId::default_node(),
+            leader_node_id: None,
             queue: None,
             priority: None,
         }
@@ -436,7 +560,7 @@ mod tests {
 
         assert!(result.is_ok());
         match result.unwrap() {
-            JobDecision::Completed { .. } => {}
+            JobDecision::Completed { .. } => {},
             _ => panic!("Expected Completed decision"),
         }
     }
@@ -451,10 +575,7 @@ mod tests {
 
         let result = registry.execute(app_ctx, &job).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("No executor registered"));
+        assert!(result.unwrap_err().to_string().contains("No executor registered"));
     }
 
     #[test]

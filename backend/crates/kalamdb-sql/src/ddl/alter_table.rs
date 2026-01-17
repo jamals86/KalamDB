@@ -83,7 +83,9 @@ impl AlterTableStatement {
             return Err("Expected ALTER TABLE statement".to_string());
         };
 
-        let sqlparser::ast::AlterTable { name, operations, .. } = alter_table;
+        let sqlparser::ast::AlterTable {
+            name, operations, ..
+        } = alter_table;
 
         if operations.len() != 1 {
             return Err("Only one ALTER TABLE operation is supported per statement".to_string());
@@ -102,15 +104,10 @@ impl AlterTableStatement {
 
 fn normalize_alter_sql(sql: &str) -> String {
     let trimmed = sql.trim().trim_end_matches(';');
-    let without_legacy = LEGACY_ALTER_PREFIX_RE
-        .replace(trimmed, "ALTER TABLE ")
-        .into_owned();
+    let without_legacy = LEGACY_ALTER_PREFIX_RE.replace(trimmed, "ALTER TABLE ").into_owned();
     SET_ACCESS_LEVEL_RE
         .replace(&without_legacy, |caps: &Captures| {
-            format!(
-                "SET TBLPROPERTIES (ACCESS_LEVEL = '{}')",
-                caps[1].to_uppercase()
-            )
+            format!("SET TBLPROPERTIES (ACCESS_LEVEL = '{}')", caps[1].to_uppercase())
         })
         .into_owned()
 }
@@ -125,11 +122,8 @@ fn resolve_table_reference(
             let table_ident = parts[0]
                 .as_ident()
                 .ok_or_else(|| "Function-based table references are not supported".to_string())?;
-            Ok((
-                current_namespace.clone(),
-                TableName::from(table_ident.value.as_str()),
-            ))
-        }
+            Ok((current_namespace.clone(), TableName::from(table_ident.value.as_str())))
+        },
         2 => {
             let namespace_ident = parts[0].as_ident().ok_or_else(|| {
                 "Function-based namespace references are not supported".to_string()
@@ -141,7 +135,7 @@ fn resolve_table_reference(
                 NamespaceId::from(namespace_ident.value.as_str()),
                 TableName::from(table_ident.value.as_str()),
             ))
-        }
+        },
         _ => Err("Invalid table reference. Use 'table' or 'namespace.table'".to_string()),
     }
 }
@@ -157,7 +151,7 @@ fn convert_operation(operation: &AlterTableOperation) -> DdlResult<ColumnOperati
                 return Err("Column position modifiers (FIRST/AFTER) are not supported".to_string());
             }
             build_add_column_operation(column_def)
-        }
+        },
         AlterTableOperation::DropColumn {
             column_names,
             drop_behavior,
@@ -173,7 +167,7 @@ fn convert_operation(operation: &AlterTableOperation) -> DdlResult<ColumnOperati
                 return Err("Column position modifiers (FIRST/AFTER) are not supported".to_string());
             }
             build_modify_column_operation(col_name, data_type, options)
-        }
+        },
         AlterTableOperation::RenameColumn {
             old_column_name,
             new_column_name,
@@ -183,7 +177,7 @@ fn convert_operation(operation: &AlterTableOperation) -> DdlResult<ColumnOperati
         }),
         AlterTableOperation::SetTblProperties { table_properties } => {
             build_set_access_level_operation(table_properties)
-        }
+        },
         _ => Err("Unsupported ALTER TABLE operation".to_string()),
     }
 }
@@ -229,7 +223,7 @@ fn build_modify_column_operation(
         match option {
             ColumnOption::NotNull => nullable = Some(false),
             ColumnOption::Null => nullable = Some(true),
-            _ => {}
+            _ => {},
         }
     }
 
@@ -262,8 +256,8 @@ fn extract_column_options(
             ColumnOption::Null => nullable = true,
             ColumnOption::Default(expr) => {
                 default_value = Some(expr_to_literal(expr));
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -316,7 +310,7 @@ fn extract_access_level(option: &SqlOption) -> DdlResult<Option<TableAccess>> {
                         "Invalid ACCESS_LEVEL '{}'. Supported values: PUBLIC, PRIVATE, RESTRICTED",
                         other
                     ))
-                }
+                },
             };
             return Ok(Some(access_level));
         }
@@ -353,7 +347,7 @@ mod tests {
                 assert_eq!(data_type, "INT");
                 assert!(nullable);
                 assert_eq!(default_value, None);
-            }
+            },
             _ => panic!("Expected Add operation"),
         }
     }
@@ -369,7 +363,7 @@ mod tests {
         match stmt.operation {
             ColumnOperation::Add { nullable, .. } => {
                 assert!(!nullable);
-            }
+            },
             _ => panic!("Expected Add operation"),
         }
     }
@@ -390,7 +384,7 @@ mod tests {
             } => {
                 assert_eq!(column_name, "age");
                 assert_eq!(default_value, Some("0".to_string()));
-            }
+            },
             _ => panic!("Expected Add operation"),
         }
     }
@@ -406,7 +400,7 @@ mod tests {
         match stmt.operation {
             ColumnOperation::Drop { column_name } => {
                 assert_eq!(column_name, "age");
-            }
+            },
             _ => panic!("Expected Drop operation"),
         }
     }
@@ -419,7 +413,7 @@ mod tests {
         match stmt.operation {
             ColumnOperation::Drop { column_name } => {
                 assert_eq!(column_name, "age");
-            }
+            },
             _ => panic!("Expected Drop operation"),
         }
     }
@@ -443,7 +437,7 @@ mod tests {
                 assert_eq!(column_name, "age");
                 assert_eq!(new_data_type, "BIGINT");
                 assert_eq!(nullable, None);
-            }
+            },
             _ => panic!("Expected Modify operation"),
         }
     }
@@ -459,7 +453,7 @@ mod tests {
         match stmt.operation {
             ColumnOperation::Modify { nullable, .. } => {
                 assert_eq!(nullable, Some(false));
-            }
+            },
             _ => panic!("Expected Modify operation"),
         }
     }
@@ -518,7 +512,7 @@ mod tests {
         match stmt.operation {
             ColumnOperation::SetAccessLevel { access_level } => {
                 assert_eq!(access_level, TableAccess::Public);
-            }
+            },
             _ => panic!("Expected SetAccessLevel operation"),
         }
     }
@@ -534,7 +528,7 @@ mod tests {
         match stmt.operation {
             ColumnOperation::SetAccessLevel { access_level } => {
                 assert_eq!(access_level, TableAccess::Private);
-            }
+            },
             _ => panic!("Expected SetAccessLevel operation"),
         }
     }
@@ -550,7 +544,7 @@ mod tests {
         match stmt.operation {
             ColumnOperation::SetAccessLevel { access_level } => {
                 assert_eq!(access_level, TableAccess::Restricted);
-            }
+            },
             _ => panic!("Expected SetAccessLevel operation"),
         }
     }

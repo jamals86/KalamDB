@@ -218,14 +218,14 @@ impl LiveQueriesTableSchema {
 
     /// Get the cached Arrow schema for system.live_queries table
     pub fn schema() -> SchemaRef {
-            static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-            SCHEMA
-                .get_or_init(|| {
-                    Self::definition()
-                        .to_arrow_schema()
-                        .expect("Failed to convert live_queries TableDefinition to Arrow schema")
-                })
-                .clone()
+        static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+        SCHEMA
+            .get_or_init(|| {
+                Self::definition()
+                    .to_arrow_schema()
+                    .expect("Failed to convert live_queries TableDefinition to Arrow schema")
+            })
+            .clone()
     }
 
     /// Get the table name

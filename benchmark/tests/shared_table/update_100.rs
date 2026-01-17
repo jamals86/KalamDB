@@ -9,10 +9,8 @@ fn shared_table_update_100() -> anyhow::Result<()> {
     std::thread::sleep(Duration::from_millis(200));
 
     for i in 1..=100 {
-        let sql = format!(
-            "INSERT INTO bench_shared.items (value) VALUES ('benchmark_value_{}')",
-            i
-        );
+        let sql =
+            format!("INSERT INTO bench_shared.items (value) VALUES ('benchmark_value_{}')", i);
         execute_cli_timed_root(&sql)?;
     }
     std::thread::sleep(Duration::from_millis(100));

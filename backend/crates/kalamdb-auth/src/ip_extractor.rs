@@ -40,7 +40,7 @@ pub fn extract_client_ip_secure(req: &HttpRequest) -> ConnectionInfo {
         if let Ok(header_value) = forwarded_for.to_str() {
             // Take first IP in comma-separated list (original client)
             let first_ip = header_value.split(',').next().unwrap_or("").trim();
-            
+
             // Security check: Reject localhost values in X-Forwarded-For
             // This prevents bypass attempts like: X-Forwarded-For: 127.0.0.1
             if is_localhost_address(first_ip) {
@@ -56,7 +56,9 @@ pub fn extract_client_ip_secure(req: &HttpRequest) -> ConnectionInfo {
     }
 
     // Fallback to peer address (direct TCP connection)
-    req.peer_addr().map(|addr| ConnectionInfo::new(Some(addr.ip().to_string()))).unwrap_or_else(|| ConnectionInfo::new(None))
+    req.peer_addr()
+        .map(|addr| ConnectionInfo::new(Some(addr.ip().to_string())))
+        .unwrap_or_else(|| ConnectionInfo::new(None))
 }
 
 /// Check if an IP address string represents localhost
@@ -94,15 +96,15 @@ mod tests {
         assert!(is_localhost_address("127.0.0.1"));
         assert!(is_localhost_address("127.1.2.3"));
         assert!(is_localhost_address("127.255.255.255"));
-        
+
         // IPv6 localhost
         assert!(is_localhost_address("::1"));
-        
+
         // Hostname
         assert!(is_localhost_address("localhost"));
         assert!(is_localhost_address("LOCALHOST"));
         assert!(is_localhost_address("LocalHost"));
-        
+
         // Non-localhost addresses
         assert!(!is_localhost_address("192.168.1.1"));
         assert!(!is_localhost_address("10.0.0.1"));

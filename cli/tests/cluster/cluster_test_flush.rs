@@ -18,7 +18,9 @@ use std::time::Duration;
 /// 5. Verify row counts match on all nodes
 #[test]
 fn cluster_test_flush_data_consistency() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Cluster Flush Data Consistency ===\n");
 
@@ -44,10 +46,8 @@ fn cluster_test_flush_data_consistency() {
 
     // Step 2: Create shared table
     println!("  2. Creating shared table...");
-    let create_sql = format!(
-        "CREATE SHARED TABLE {} (id INT PRIMARY KEY, name TEXT, value INT)",
-        full_table
-    );
+    let create_sql =
+        format!("CREATE SHARED TABLE {} (id INT PRIMARY KEY, name TEXT, value INT)", full_table);
     execute_on_node(&urls[0], &create_sql).expect("Failed to create table");
     std::thread::sleep(Duration::from_millis(500));
 
@@ -69,7 +69,10 @@ fn cluster_test_flush_data_consistency() {
     for i in 0..insert_count {
         let insert_sql = format!(
             "INSERT INTO {} (id, name, value) VALUES ({}, 'item_{}', {})",
-            full_table, i, i, i * 10
+            full_table,
+            i,
+            i,
+            i * 10
         );
         execute_on_node(&urls[0], &insert_sql).expect(&format!("Failed to insert row {}", i));
     }
@@ -87,7 +90,7 @@ fn cluster_test_flush_data_consistency() {
     // Step 5: Verify row count on all nodes
     println!("  6. Verifying row count on all nodes...");
     let count_sql = format!("SELECT count(*) FROM {}", full_table);
-    
+
     for (idx, url) in urls.iter().enumerate() {
         let count = query_count_on_url(url, &count_sql);
         println!("     Node {}: {} rows", idx, count);
@@ -101,18 +104,14 @@ fn cluster_test_flush_data_consistency() {
     // Step 6: Verify data content matches on all nodes
     println!("  7. Verifying data content on all nodes...");
     let select_sql = format!("SELECT id, name, value FROM {} ORDER BY id LIMIT 5", full_table);
-    
-    let baseline_rows = fetch_normalized_rows(&urls[0], &select_sql)
-        .expect("Failed to fetch baseline rows");
-    
+
+    let baseline_rows =
+        fetch_normalized_rows(&urls[0], &select_sql).expect("Failed to fetch baseline rows");
+
     for (idx, url) in urls.iter().enumerate().skip(1) {
         let node_rows = fetch_normalized_rows(url, &select_sql)
             .expect(&format!("Failed to fetch rows from node {}", idx));
-        assert_eq!(
-            baseline_rows, node_rows,
-            "Data mismatch between node 0 and node {}",
-            idx
-        );
+        assert_eq!(baseline_rows, node_rows, "Data mismatch between node 0 and node {}", idx);
         println!("     Node {} matches baseline ✓", idx);
     }
 
@@ -122,7 +121,7 @@ fn cluster_test_flush_data_consistency() {
         "SELECT table_name, schema_version FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table_name
     );
-    
+
     for (idx, url) in urls.iter().enumerate() {
         let result = execute_on_node(url, &metadata_sql);
         assert!(result.is_ok(), "Failed to query metadata on node {}", idx);
@@ -150,7 +149,9 @@ fn cluster_test_flush_data_consistency() {
 /// 5. Verify all data is present and consistent
 #[test]
 fn cluster_test_multiple_flushes() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Cluster Multiple Flushes ===\n");
 
@@ -221,7 +222,7 @@ fn cluster_test_multiple_flushes() {
     // Verify total count on all nodes
     println!("  5. Verifying total row count on all nodes...");
     let count_sql = format!("SELECT count(*) FROM {}", full_table);
-    
+
     for (idx, url) in urls.iter().enumerate() {
         let count = query_count_on_url(url, &count_sql);
         println!("     Node {}: {} rows", idx, count);
@@ -232,7 +233,7 @@ fn cluster_test_multiple_flushes() {
     println!("  6. Verifying batch distribution...");
     let batch1_sql = format!("SELECT count(*) FROM {} WHERE batch = 1", full_table);
     let batch2_sql = format!("SELECT count(*) FROM {} WHERE batch = 2", full_table);
-    
+
     for (idx, url) in urls.iter().enumerate() {
         let batch1_count = query_count_on_url(url, &batch1_sql);
         let batch2_count = query_count_on_url(url, &batch2_sql);
@@ -252,7 +253,9 @@ fn cluster_test_multiple_flushes() {
 /// Verifies that flushing doesn't block or corrupt concurrent read operations
 #[test]
 fn cluster_test_flush_during_reads() {
-    if !require_cluster_running() { return; }
+    if !require_cluster_running() {
+        return;
+    }
 
     println!("\n=== TEST: Cluster Flush During Reads ===\n");
 
@@ -303,7 +306,7 @@ fn cluster_test_flush_during_reads() {
     // Start flush and immediately query from another node
     println!("  2. Flushing and querying concurrently...");
     let _ = execute_on_node(&urls[0], &format!("STORAGE FLUSH TABLE {}", full_table));
-    
+
     // Query from another node during flush
     let read_result = execute_on_node(&urls[1], &format!("SELECT count(*) FROM {}", full_table));
     assert!(read_result.is_ok(), "Read during flush should not fail");

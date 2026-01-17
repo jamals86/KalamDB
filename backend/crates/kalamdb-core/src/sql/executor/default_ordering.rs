@@ -2,7 +2,7 @@
 //!
 //! This module ensures that SELECT queries on USER, SHARED, and STREAM tables
 //! return results in a consistent order, even when no explicit ORDER BY is specified.
-//! 
+//!
 //! **Note**: System tables (system.*) and information_schema tables do NOT get
 //! default ordering applied, as they don't have the _seq system column.
 //!
@@ -39,16 +39,16 @@ fn extract_table_reference(plan: &LogicalPlan) -> Option<TableId> {
             let table_id = match &scan.table_name {
                 datafusion::common::TableReference::Bare { table } => {
                     TableId::from_strings("default", table.as_ref())
-                }
+                },
                 datafusion::common::TableReference::Partial { schema, table } => {
                     TableId::from_strings(schema.as_ref(), table.as_ref())
-                }
+                },
                 datafusion::common::TableReference::Full { schema, table, .. } => {
                     TableId::from_strings(schema.as_ref(), table.as_ref())
-                }
+                },
             };
             Some(table_id)
-        }
+        },
         // For other plan nodes, check their inputs
         _ => {
             for input in plan.inputs() {
@@ -57,7 +57,7 @@ fn extract_table_reference(plan: &LogicalPlan) -> Option<TableId> {
                 }
             }
             None
-        }
+        },
     }
 }
 
@@ -72,21 +72,24 @@ fn get_default_sort_columns(
     let schema_registry = app_context.schema_registry();
 
     // Try to get table definition
-    if let Ok(Some(table_def)) = schema_registry.get_table_if_exists(app_context.as_ref(), table_id) {
+    if let Ok(Some(table_def)) = schema_registry.get_table_if_exists(app_context.as_ref(), table_id)
+    {
         let pk_columns = table_def.get_primary_key_columns();
 
         if !pk_columns.is_empty() {
             // Use primary key columns
-            return Ok(Some(pk_columns
-                .into_iter()
-                .map(|col_name| {
-                    SortExpr::new(
-                        datafusion::logical_expr::col(col_name),
-                        true,  // ascending
-                        false, // nulls_first
-                    )
-                })
-                .collect()));
+            return Ok(Some(
+                pk_columns
+                    .into_iter()
+                    .map(|col_name| {
+                        SortExpr::new(
+                            datafusion::logical_expr::col(col_name),
+                            true,  // ascending
+                            false, // nulls_first
+                        )
+                    })
+                    .collect(),
+            ));
         }
 
         // Fallback: use _seq system column (user/shared/stream tables always have this)
@@ -161,7 +164,7 @@ pub fn apply_default_order_by(
             // No table found (might be a function call like SELECT NOW())
             log::trace!(target: "sql::ordering", "No table reference found, skipping default ORDER BY");
             return Ok(plan);
-        }
+        },
     };
 
     // Skip system namespace tables - they don't have _seq column
@@ -185,7 +188,7 @@ pub fn apply_default_order_by(
                 table_id.full_name()
             );
             return Ok(plan);
-        }
+        },
         Err(e) => {
             log::warn!(
                 target: "sql::ordering",
@@ -194,7 +197,7 @@ pub fn apply_default_order_by(
                 e
             );
             return Ok(plan);
-        }
+        },
     };
 
     // Skip if sort columns are not in the output schema

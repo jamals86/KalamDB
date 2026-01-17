@@ -93,7 +93,7 @@ impl From<FlushPolicyHuman> for FlushPolicy {
             FlushPolicyHuman::RowLimit { row_limit } => FlushPolicy::RowLimit { row_limit },
             FlushPolicyHuman::TimeInterval { interval_seconds } => {
                 FlushPolicy::TimeInterval { interval_seconds }
-            }
+            },
             FlushPolicyHuman::Combined {
                 row_limit,
                 interval_seconds,
@@ -131,7 +131,7 @@ impl From<FlushPolicyBinary> for FlushPolicy {
             FlushPolicyBinary::RowLimit { row_limit } => FlushPolicy::RowLimit { row_limit },
             FlushPolicyBinary::TimeInterval { interval_seconds } => {
                 FlushPolicy::TimeInterval { interval_seconds }
-            }
+            },
             FlushPolicyBinary::Combined {
                 row_limit,
                 interval_seconds,
@@ -183,7 +183,7 @@ impl FlushPolicy {
                     return Err("Row limit must be less than 1,000,000".to_string());
                 }
                 Ok(())
-            }
+            },
             FlushPolicy::TimeInterval { interval_seconds } => {
                 if *interval_seconds == 0 {
                     return Err("Interval must be greater than 0".to_string());
@@ -192,7 +192,7 @@ impl FlushPolicy {
                     return Err("Interval must be less than 86400 seconds (24 hours)".to_string());
                 }
                 Ok(())
-            }
+            },
             FlushPolicy::Combined {
                 row_limit,
                 interval_seconds,
@@ -212,7 +212,7 @@ impl FlushPolicy {
                     return Err("Interval must be less than 86400 seconds (24 hours)".to_string());
                 }
                 Ok(())
-            }
+            },
         }
     }
 

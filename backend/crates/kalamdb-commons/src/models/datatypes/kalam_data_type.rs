@@ -130,10 +130,7 @@ impl KalamDataType {
     /// Validate EMBEDDING dimension is within allowed range
     pub fn validate_embedding_dimension(dim: usize) -> Result<(), String> {
         if !(1..=8192).contains(&dim) {
-            Err(format!(
-                "EMBEDDING dimension must be between 1 and 8192, got {}",
-                dim
-            ))
+            Err(format!("EMBEDDING dimension must be between 1 and 8192, got {}", dim))
         } else {
             Ok(())
         }
@@ -142,10 +139,7 @@ impl KalamDataType {
     /// Validate DECIMAL precision and scale
     pub fn validate_decimal_params(precision: u8, scale: u8) -> Result<(), String> {
         if !(1..=38).contains(&precision) {
-            return Err(format!(
-                "DECIMAL precision must be between 1 and 38, got {}",
-                precision
-            ));
+            return Err(format!("DECIMAL precision must be between 1 and 38, got {}", precision));
         }
         if scale > precision {
             return Err(format!(
@@ -175,7 +169,7 @@ impl KalamDataType {
             KalamDataType::Uuid => "UUID".to_string(),
             KalamDataType::Decimal { precision, scale } => {
                 format!("DECIMAL({}, {})", precision, scale)
-            }
+            },
             KalamDataType::SmallInt => "SMALLINT".to_string(),
         }
     }
@@ -220,16 +214,10 @@ mod tests {
 
     #[test]
     fn test_from_tag() {
-        assert_eq!(
-            KalamDataType::from_tag(0x01).unwrap(),
-            KalamDataType::Boolean
-        );
+        assert_eq!(KalamDataType::from_tag(0x01).unwrap(), KalamDataType::Boolean);
         assert_eq!(KalamDataType::from_tag(0x06).unwrap(), KalamDataType::Text);
         assert_eq!(KalamDataType::from_tag(0x0E).unwrap(), KalamDataType::Uuid);
-        assert_eq!(
-            KalamDataType::from_tag(0x10).unwrap(),
-            KalamDataType::SmallInt
-        );
+        assert_eq!(KalamDataType::from_tag(0x10).unwrap(), KalamDataType::SmallInt);
         assert!(KalamDataType::from_tag(0xFF).is_err());
         // DECIMAL and EMBEDDING require parameters
         assert!(KalamDataType::from_tag(0x0D).is_err());

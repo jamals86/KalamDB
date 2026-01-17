@@ -84,7 +84,8 @@ impl Serialize for ManifestCacheEntry {
         S: serde::Serializer,
     {
         let raw = ManifestCacheEntryRaw {
-            manifest_json: serde_json::to_string(&self.manifest).unwrap_or_else(|_| "{}".to_string()),
+            manifest_json: serde_json::to_string(&self.manifest)
+                .unwrap_or_else(|_| "{}".to_string()),
             etag: self.etag.clone(),
             last_refreshed: self.last_refreshed,
             source_path: self.source_path.clone(),
@@ -100,8 +101,9 @@ impl<'de> Deserialize<'de> for ManifestCacheEntry {
         D: serde::Deserializer<'de>,
     {
         let raw = ManifestCacheEntryRaw::deserialize(deserializer)?;
-        let manifest: Manifest = serde_json::from_str(&raw.manifest_json)
-            .map_err(|e| serde::de::Error::custom(format!("Failed to parse manifest JSON: {}", e)))?;
+        let manifest: Manifest = serde_json::from_str(&raw.manifest_json).map_err(|e| {
+            serde::de::Error::custom(format!("Failed to parse manifest JSON: {}", e))
+        })?;
         Ok(ManifestCacheEntry {
             manifest,
             etag: raw.etag,
@@ -151,7 +153,7 @@ impl ManifestCacheEntry {
     }
 
     /// Mark entry as syncing (Parquet write in progress to temp location)
-    /// 
+    ///
     /// This state indicates the flush is in progress:
     /// - Parquet file is being written to a temp location
     /// - If crash occurs, temp files can be cleaned up on restart
@@ -334,7 +336,7 @@ impl Manifest {
                 self.last_sequence_number = batch_num;
             }
         }
-        
+
         self.segments.push(segment);
         self.updated_at = chrono::Utc::now().timestamp();
         self.version += 1;
@@ -344,11 +346,7 @@ impl Manifest {
     fn extract_batch_number(path: &str) -> Option<u64> {
         let filename = std::path::Path::new(path).file_name()?.to_str()?;
         if filename.starts_with("batch-") && filename.ends_with(".parquet") {
-            filename
-                .strip_prefix("batch-")?
-                .strip_suffix(".parquet")?
-                .parse::<u64>()
-                .ok()
+            filename.strip_prefix("batch-")?.strip_suffix(".parquet")?.parse::<u64>().ok()
         } else {
             None
         }
@@ -391,13 +389,8 @@ mod tests {
     fn test_manifest_cache_entry_state_transitions() {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
-        let mut entry = ManifestCacheEntry::new(
-            manifest,
-            None,
-            1000,
-            "path".to_string(),
-            SyncState::InSync,
-        );
+        let mut entry =
+            ManifestCacheEntry::new(manifest, None, 1000, "path".to_string(), SyncState::InSync);
 
         entry.mark_stale();
         assert_eq!(entry.sync_state, SyncState::Stale);
@@ -437,13 +430,8 @@ mod tests {
     fn test_sync_state_syncing_to_error() {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
-        let mut entry = ManifestCacheEntry::new(
-            manifest,
-            None,
-            1000,
-            "path".to_string(),
-            SyncState::InSync,
-        );
+        let mut entry =
+            ManifestCacheEntry::new(manifest, None, 1000, "path".to_string(), SyncState::InSync);
 
         // Transition: InSync -> Syncing (new flush started)
         entry.mark_syncing();
@@ -476,7 +464,11 @@ mod tests {
 
         for (state, expected_json) in states {
             let json = serde_json::to_string(&state).unwrap();
-            assert_eq!(json, expected_json, "SyncState {:?} should serialize to {}", state, expected_json);
+            assert_eq!(
+                json, expected_json,
+                "SyncState {:?} should serialize to {}",
+                state, expected_json
+            );
 
             let deserialized: SyncState = serde_json::from_str(&json).unwrap();
             assert_eq!(deserialized, state, "SyncState should round-trip through JSON");
@@ -607,7 +599,7 @@ mod tests {
         assert_eq!(Manifest::extract_batch_number("batch-1.parquet"), Some(1));
         assert_eq!(Manifest::extract_batch_number("batch-42.parquet"), Some(42));
         assert_eq!(Manifest::extract_batch_number("batch-999.parquet"), Some(999));
-        
+
         // Invalid formats
         assert_eq!(Manifest::extract_batch_number("other-0.parquet"), None);
         assert_eq!(Manifest::extract_batch_number("batch-0.csv"), None);

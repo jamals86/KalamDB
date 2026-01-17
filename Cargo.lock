@@ -3512,6 +3512,7 @@ dependencies = [
  "kalamdb-commons",
  "kalamdb-configs",
  "kalamdb-filestore",
+ "kalamdb-observability",
  "kalamdb-raft",
  "kalamdb-sharding",
  "kalamdb-sql",
@@ -3531,7 +3532,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlparser 0.60.0",
- "sysinfo",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
@@ -3562,6 +3562,19 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "kalamdb-observability"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "kalamdb-commons",
+ "log",
+ "sysinfo",
+ "thiserror 2.0.17",
+ "tokio",
 ]
 
 [[package]]

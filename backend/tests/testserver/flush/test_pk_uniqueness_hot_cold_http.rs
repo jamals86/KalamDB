@@ -1,13 +1,15 @@
 //! Primary key uniqueness checks in hot storage and after flush (cold Parquet), over HTTP.
 
-
+use super::test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_table};
+use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use super::test_support::http_server::HttpTestServer;
-use super::test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_table};
 use tokio::time::Duration;
 
-async fn create_user(server: &super::test_support::http_server::HttpTestServer, username: &str) -> anyhow::Result<String> {
+async fn create_user(
+    server: &super::test_support::http_server::HttpTestServer,
+    username: &str,
+) -> anyhow::Result<String> {
     let password = "UserPass123!";
     let resp = server
         .execute_sql(&format!(
@@ -19,12 +21,14 @@ async fn create_user(server: &super::test_support::http_server::HttpTestServer, 
     Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
 }
 
-async fn count_rows(server: &super::test_support::http_server::HttpTestServer, auth: &str, ns: &str, table: &str) -> anyhow::Result<i64> {
+async fn count_rows(
+    server: &super::test_support::http_server::HttpTestServer,
+    auth: &str,
+    ns: &str,
+    table: &str,
+) -> anyhow::Result<i64> {
     let resp = server
-        .execute_sql_with_auth(
-            &format!("SELECT COUNT(*) AS cnt FROM {}.{}", ns, table),
-            auth,
-        )
+        .execute_sql_with_auth(&format!("SELECT COUNT(*) AS cnt FROM {}.{}", ns, table), auth)
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "COUNT failed: {:?}", resp.error);
 
@@ -50,10 +54,7 @@ async fn get_name_for_id(
     id: i64,
 ) -> anyhow::Result<String> {
     let resp = server
-        .execute_sql(&format!(
-            "SELECT name FROM {}.{} WHERE id = {} LIMIT 1",
-            ns, table, id
-        ))
+        .execute_sql(&format!("SELECT name FROM {}.{} WHERE id = {} LIMIT 1", ns, table, id))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "SELECT failed: {:?}", resp.error);
 

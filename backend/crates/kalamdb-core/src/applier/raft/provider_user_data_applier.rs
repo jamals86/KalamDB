@@ -60,8 +60,9 @@ impl UserDataApplier for ProviderUserDataApplier {
             user_id,
             rows.len()
         );
-        
-        self.executor.dml()
+
+        self.executor
+            .dml()
             .insert_user_data(table_id, user_id, rows)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
@@ -80,8 +81,9 @@ impl UserDataApplier for ProviderUserDataApplier {
             user_id,
             updates.len()
         );
-        
-        self.executor.dml()
+
+        self.executor
+            .dml()
             .update_user_data(table_id, user_id, updates, filter)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
@@ -93,13 +95,10 @@ impl UserDataApplier for ProviderUserDataApplier {
         user_id: &UserId,
         pk_values: Option<&[String]>,
     ) -> Result<usize, RaftError> {
-        log::debug!(
-            "ProviderUserDataApplier: Deleting from {} for user {}",
-            table_id,
-            user_id
-        );
-        
-        self.executor.dml()
+        log::debug!("ProviderUserDataApplier: Deleting from {} for user {}", table_id, user_id);
+
+        self.executor
+            .dml()
             .delete_user_data(table_id, user_id, pk_values)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))

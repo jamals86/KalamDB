@@ -2,7 +2,8 @@ use super::types::JobsManager;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use kalamdb_commons::system::JobFilter;
-use kalamdb_commons::{JobId, JobStatus, JobType};
+use kalamdb_commons::{JobId, JobStatus, JobType, NodeId};
+use kalamdb_raft::NodeStatus;
 use log::Level;
 
 impl JobsManager {
@@ -23,6 +24,32 @@ impl JobsManager {
         // Generate UUID for uniqueness
         let uuid = uuid::Uuid::new_v4().to_string().replace("-", "");
         JobId::new(format!("{}-{}", prefix, &uuid[..12]))
+    }
+
+    /// Get active cluster node IDs for job fan-out.
+    ///
+    /// In cluster mode, returns nodes with status Active.
+    /// In standalone mode (or if no nodes are reported), returns only this node.
+    pub(crate) fn active_cluster_node_ids(&self) -> Vec<NodeId> {
+        let app_ctx = self.get_attached_app_context();
+        let cluster_info = app_ctx.executor().get_cluster_info();
+
+        if !cluster_info.is_cluster_mode || cluster_info.nodes.is_empty() {
+            return vec![self.node_id.clone()];
+        }
+
+        let mut nodes: Vec<NodeId> = cluster_info
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.status, NodeStatus::Active))
+            .map(|n| n.node_id.clone())
+            .collect();
+
+        if nodes.is_empty() {
+            nodes.push(cluster_info.current_node_id);
+        }
+
+        nodes
     }
 
     /// Log job event to jobs.log file
@@ -50,6 +77,51 @@ impl JobsManager {
     /// Marks all Running jobs as Failed with "Server restarted" error.
     /// Uses provider's async methods which handle spawn_blocking internally.
     pub(crate) async fn recover_incomplete_jobs(&self) -> Result<(), KalamDbError> {
+        let app_ctx = self.get_attached_app_context();
+
+        if app_ctx.executor().is_cluster_mode() {
+            let statuses = vec![JobStatus::Running, JobStatus::Retrying];
+            let job_nodes = self
+                .job_nodes_provider
+                .list_for_node_with_statuses_async(&self.node_id, &statuses, 100000)
+                .await
+                .into_kalamdb_error("Failed to list job_nodes for recovery")?;
+
+            if job_nodes.is_empty() {
+                log::debug!("No incomplete job_nodes to recover for this node");
+                return Ok(());
+            }
+
+            log::warn!(
+                "Recovering {} incomplete job_nodes from previous run",
+                job_nodes.len()
+            );
+
+            for node in job_nodes {
+                let job_id = node.job_id.clone();
+                let cmd = kalamdb_raft::commands::MetaCommand::UpdateJobNodeStatus {
+                    job_id,
+                    node_id: self.node_id.clone(),
+                    status: JobStatus::Queued,
+                    error_message: Some("Node restarted".to_string()),
+                    updated_at: chrono::Utc::now(),
+                };
+
+                app_ctx
+                    .executor()
+                    .execute_meta(cmd)
+                    .await
+                    .map_err(|e| {
+                        KalamDbError::Other(format!(
+                            "Failed to recover job_node via Raft: {}",
+                            e
+                        ))
+                    })?;
+            }
+
+            return Ok(());
+        }
+
         let filter = JobFilter {
             status: Some(JobStatus::Running),
             ..Default::default()
@@ -62,10 +134,7 @@ impl JobsManager {
             return Ok(());
         }
 
-        log::warn!(
-            "Recovering {} incomplete jobs from previous run",
-            running_jobs.len()
-        );
+        log::warn!("Recovering {} incomplete jobs from previous run", running_jobs.len());
 
         let now_ms = chrono::Utc::now().timestamp_millis();
 

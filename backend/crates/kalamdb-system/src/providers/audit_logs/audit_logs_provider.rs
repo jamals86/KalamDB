@@ -9,13 +9,13 @@ use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::AuditLogId;
 use kalamdb_commons::system::AuditLogEntry;
+use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::StorageKey;
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
@@ -88,10 +88,7 @@ impl AuditLogsTableProvider {
         &self,
         audit_id: &AuditLogId,
     ) -> Result<Option<AuditLogEntry>, SystemError> {
-        self.store
-            .get_async(audit_id)
-            .await
-            .into_system_error("get_async error")
+        self.store.get_async(audit_id).await.into_system_error("get_async error")
     }
 
     /// Helper to create RecordBatch from entries
@@ -243,11 +240,11 @@ impl TableProvider for AuditLogsTableProvider {
                                 match binary.op {
                                     Operator::Eq => {
                                         prefix = Some(AuditLogId::new(s));
-                                    }
+                                    },
                                     Operator::Gt | Operator::GtEq => {
                                         start_key = Some(AuditLogId::new(s));
-                                    }
-                                    _ => {}
+                                    },
+                                    _ => {},
                                 }
                             }
                         }
@@ -441,11 +438,8 @@ mod tests {
         assert_eq!(batch.num_rows(), 3);
 
         // Verify timestamps column exists
-        let timestamps_col = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<TimestampMillisecondArray>()
-            .unwrap();
+        let timestamps_col =
+            batch.column(1).as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
         assert_eq!(timestamps_col.len(), 3);
     }
 

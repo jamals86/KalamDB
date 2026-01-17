@@ -41,9 +41,7 @@ pub struct UserCleanupParams {
 impl JobParams for UserCleanupParams {
     fn validate(&self) -> Result<(), KalamDbError> {
         if self.username.is_empty() {
-            return Err(KalamDbError::InvalidOperation(
-                "username cannot be empty".to_string(),
-            ));
+            return Err(KalamDbError::InvalidOperation("username cannot be empty".to_string()));
         }
         Ok(())
     }

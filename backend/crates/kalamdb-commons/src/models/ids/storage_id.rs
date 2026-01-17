@@ -32,32 +32,30 @@ impl StorageId {
     /// Validates a storage ID for security issues.
     fn validate(id: &str) -> Result<(), StorageIdValidationError> {
         if id.is_empty() {
-            return Err(StorageIdValidationError(
-                "Storage ID cannot be empty".to_string(),
-            ));
+            return Err(StorageIdValidationError("Storage ID cannot be empty".to_string()));
         }
-        
+
         // Check for path traversal
         if id.contains("..") || id.contains('/') || id.contains('\\') {
             return Err(StorageIdValidationError(
                 "Storage ID cannot contain path traversal characters".to_string(),
             ));
         }
-        
+
         // Check for null bytes
         if id.contains('\0') {
             return Err(StorageIdValidationError(
                 "Storage ID cannot contain null bytes".to_string(),
             ));
         }
-        
+
         // Check for SQL injection characters
         if id.contains('\'') || id.contains('"') || id.contains(';') {
             return Err(StorageIdValidationError(
                 "Storage ID cannot contain quotes or semicolons".to_string(),
             ));
         }
-        
+
         Ok(())
     }
 
@@ -69,7 +67,7 @@ impl StorageId {
     pub fn new(id: impl Into<String>) -> Self {
         Self::try_new(id).expect("StorageId contains invalid characters")
     }
-    
+
     /// Creates a new StorageId from a string, returning an error if validation fails.
     pub fn try_new(id: impl Into<String>) -> Result<Self, StorageIdValidationError> {
         let id = id.into();
@@ -144,8 +142,6 @@ impl StorageKey for StorageId {
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
-        String::from_utf8(bytes.to_vec())
-            .map(StorageId)
-            .map_err(|e| e.to_string())
+        String::from_utf8(bytes.to_vec()).map(StorageId).map_err(|e| e.to_string())
     }
 }

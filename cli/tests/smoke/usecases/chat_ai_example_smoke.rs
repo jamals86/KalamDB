@@ -62,10 +62,8 @@ fn smoke_chat_ai_example_from_readme() {
     execute_sql_as_root_via_client(&create_typing).expect("failed to create typing_events table");
 
     // 2. Insert a conversation
-    let insert_conv_sql = format!(
-        "INSERT INTO {} (title) VALUES ('Chat with AI');",
-        conversations_table
-    );
+    let insert_conv_sql =
+        format!("INSERT INTO {} (title) VALUES ('Chat with AI');", conversations_table);
     execute_sql_as_root_via_client(&insert_conv_sql).expect("failed to insert conversation");
 
     // For smoke purposes, we'll use conversation_id = 1
@@ -89,14 +87,8 @@ fn smoke_chat_ai_example_from_readme() {
     let history = execute_sql_as_root_via_client_json(&select_msgs_sql)
         .expect("failed to query message history");
 
-    assert!(
-        history.contains("Hello, AI!"),
-        "expected user message in history"
-    );
-    assert!(
-        history.contains("How can I help"),
-        "expected assistant message in history"
-    );
+    assert!(history.contains("Hello, AI!"), "expected user message in history");
+    assert!(history.contains("How can I help"), "expected assistant message in history");
 
     // 5. Test stream table with subscription
     let typing_query = format!(
@@ -138,16 +130,13 @@ fn smoke_chat_ai_example_from_readme() {
                     received_event = true;
                     break;
                 }
-            }
+            },
             Ok(None) => break,  // EOF
             Err(_) => continue, // Timeout, keep trying
         }
     }
 
-    assert!(
-        received_event,
-        "expected to receive at least one typing event via subscription"
-    );
+    assert!(received_event, "expected to receive at least one typing event via subscription");
 
     // Stop subscription
     listener.stop().ok();
@@ -157,12 +146,6 @@ fn smoke_chat_ai_example_from_readme() {
     let events_output = execute_sql_as_root_via_client_json(&verify_events_sql)
         .expect("failed to query typing events");
 
-    assert!(
-        events_output.contains("typing"),
-        "expected 'typing' event in stream table"
-    );
-    assert!(
-        events_output.contains("thinking"),
-        "expected 'thinking' event in stream table"
-    );
+    assert!(events_output.contains("typing"), "expected 'typing' event in stream table");
+    assert!(events_output.contains("thinking"), "expected 'thinking' event in stream table");
 }

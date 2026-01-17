@@ -91,7 +91,7 @@ pub struct ClusterInfo {
 /// ```rust,ignore
 /// // In a DDL handler:
 /// async fn create_table(ctx: &AppContext, table: TableDefinition) -> Result<()> {
-///     let cmd = MetaCommand::CreateTable { 
+///     let cmd = MetaCommand::CreateTable {
 ///         table_id: table.id.clone(),
 ///         table_type: TableType::User,
 ///         schema_json: serde_json::to_string(&table)?,
@@ -106,7 +106,11 @@ pub trait CommandExecutor: Send + Sync + Debug {
     async fn execute_meta(&self, cmd: MetaCommand) -> Result<MetaResponse>;
 
     /// Execute a user data command (routed by user_id to correct shard)
-    async fn execute_user_data(&self, user_id: &UserId, cmd: UserDataCommand) -> Result<DataResponse>;
+    async fn execute_user_data(
+        &self,
+        user_id: &UserId,
+        cmd: UserDataCommand,
+    ) -> Result<DataResponse>;
 
     /// Execute a shared data command (routed to shared shard)
     async fn execute_shared_data(&self, cmd: SharedDataCommand) -> Result<DataResponse>;
@@ -128,32 +132,32 @@ pub trait CommandExecutor: Send + Sync + Debug {
 
     /// Get the current node's ID (NodeId::default() for standalone)
     fn node_id(&self) -> NodeId;
-    
+
     /// Get cluster information including all nodes, their roles, and status
     ///
     /// In standalone mode, returns a single-node cluster info.
     /// In cluster mode, returns info about all configured nodes.
     fn get_cluster_info(&self) -> ClusterInfo;
-    
+
     /// Start the executor (initialize Raft groups, begin consensus participation)
     ///
     /// In standalone mode, this is a no-op.
     /// In cluster mode, this starts all Raft groups.
     async fn start(&self) -> Result<()>;
-    
+
     /// Initialize the cluster (bootstrap first node only)
     ///
     /// In standalone mode, this is a no-op.
     /// In cluster mode, this bootstraps all Raft groups with initial membership.
     /// Only call this on the first node when creating a new cluster.
     async fn initialize_cluster(&self) -> Result<()>;
-    
+
     /// Gracefully shutdown the executor
     ///
     /// In standalone mode, this is a no-op.
     /// In cluster mode, this stops all Raft groups and optionally transfers leadership.
     async fn shutdown(&self) -> Result<()>;
-    
+
     /// Downcast to concrete type (for accessing implementation-specific methods)
     ///
     /// This is used sparingly during initialization to wire up appliers.

@@ -31,7 +31,8 @@ fn smoke_test_user_table_flush_manifest() {
     println!("🧪 Testing manifest.json for USER table flush");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -67,8 +68,9 @@ fn smoke_test_user_table_flush_manifest() {
 
     // Trigger manual flush to ensure data is flushed
     println!("🚀 Triggering manual STORAGE FLUSH TABLE...");
-    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
-        .expect("Failed to flush table");
+    let flush_output =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
+            .expect("Failed to flush table");
 
     println!("Flush output: {}", flush_output);
 
@@ -114,7 +116,8 @@ fn smoke_test_shared_table_flush_manifest() {
     println!("🧪 Testing manifest.json for SHARED table flush");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -152,8 +155,9 @@ fn smoke_test_shared_table_flush_manifest() {
 
     // Trigger manual flush
     println!("🚀 Triggering manual STORAGE FLUSH TABLE...");
-    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
-        .expect("Failed to flush table");
+    let flush_output =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
+            .expect("Failed to flush table");
 
     let job_id = parse_job_id_from_flush_output(&flush_output)
         .expect("Failed to parse job ID from flush output");
@@ -195,7 +199,8 @@ fn smoke_test_manifest_updated_on_second_flush() {
     println!("🧪 Testing manifest.json updates on second flush");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -218,15 +223,13 @@ fn smoke_test_manifest_updated_on_second_flush() {
     // First flush cycle
     println!("📝 First flush: Inserting 15 rows...");
     for i in 1..=15 {
-        let insert_sql = format!(
-            "INSERT INTO {} (data) VALUES ('Batch1-Row{}')",
-            full_table, i
-        );
+        let insert_sql = format!("INSERT INTO {} (data) VALUES ('Batch1-Row{}')", full_table, i);
         execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
     }
 
-    let flush1_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
-        .expect("Failed to flush table (first)");
+    let flush1_output =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
+            .expect("Failed to flush table (first)");
     let job1_id =
         parse_job_id_from_flush_output(&flush1_output).expect("Failed to parse job ID (first)");
     verify_job_completed(&job1_id, Duration::from_secs(120))
@@ -247,23 +250,18 @@ fn smoke_test_manifest_updated_on_second_flush() {
     }
     let parquet_count_after_first_flush = first_result.parquet_file_count;
 
-    println!(
-        "  Parquet files after first flush: {}",
-        parquet_count_after_first_flush
-    );
+    println!("  Parquet files after first flush: {}", parquet_count_after_first_flush);
 
     // Second flush cycle
     println!("📝 Second flush: Inserting another 15 rows...");
     for i in 1..=15 {
-        let insert_sql = format!(
-            "INSERT INTO {} (data) VALUES ('Batch2-Row{}')",
-            full_table, i
-        );
+        let insert_sql = format!("INSERT INTO {} (data) VALUES ('Batch2-Row{}')", full_table, i);
         execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
     }
 
-    let flush2_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
-        .expect("Failed to flush table (second)");
+    let flush2_output =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
+            .expect("Failed to flush table (second)");
     let job2_id =
         parse_job_id_from_flush_output(&flush2_output).expect("Failed to parse job ID (second)");
     verify_job_completed(&job2_id, Duration::from_secs(120))
@@ -285,10 +283,7 @@ fn smoke_test_manifest_updated_on_second_flush() {
     }
     let parquet_count_after_second_flush = second_result.parquet_file_count;
 
-    println!(
-        "  Parquet files after second flush: {}",
-        parquet_count_after_second_flush
-    );
+    println!("  Parquet files after second flush: {}", parquet_count_after_second_flush);
 
     // Verify more parquet files exist after second flush
     if first_valid && second_valid {
@@ -325,7 +320,8 @@ fn smoke_test_flush_stream_table_error() {
     println!("🧪 Testing STORAGE FLUSH TABLE error on STREAM table");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -344,7 +340,8 @@ fn smoke_test_flush_stream_table_error() {
     println!("✅ Created STREAM table");
 
     // Try to flush stream table (should fail)
-    let flush_result = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table));
+    let flush_result =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table));
 
     match flush_result {
         Err(e) => {
@@ -357,7 +354,7 @@ fn smoke_test_flush_stream_table_error() {
                 "Expected error message about stream tables not supporting flush, got: {}",
                 e
             );
-        }
+        },
         Ok(output) => {
             // Check if output contains error message
             let output_lower = output.to_lowercase();
@@ -368,7 +365,7 @@ fn smoke_test_flush_stream_table_error() {
                 "Expected error when flushing stream table, got success: {}",
                 output
             );
-        }
+        },
     }
 
     println!("✅ Verified STORAGE FLUSH TABLE on STREAM table returns error");

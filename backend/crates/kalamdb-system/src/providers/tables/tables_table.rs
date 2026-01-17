@@ -230,9 +230,7 @@ impl TablesTableSchema {
 
     /// Get the column family name in RocksDB
     pub fn column_family_name() -> &'static str {
-        SystemTable::Tables
-            .column_family_name()
-            .expect("Tables is a table, not a view")
+        SystemTable::Tables.column_family_name().expect("Tables is a table, not a view")
     }
 
     /// Get the partition key for storage
@@ -250,7 +248,7 @@ mod tests {
     fn test_tables_table_schema() {
         let schema = TablesTableSchema::schema();
         // Schema built from TableDefinition, verify field count matches definition
-        // Expecting 14 fields: table_id, table_name, namespace_id, table_type, created_at, 
+        // Expecting 14 fields: table_id, table_name, namespace_id, table_type, created_at,
         // schema_version, columns, table_comment, updated_at, options, access_level, is_latest,
         // storage_id, use_user_storage
         assert_eq!(schema.fields().len(), 14);
@@ -273,9 +271,7 @@ mod tests {
         assert_eq!(TablesTableSchema::table_name(), "tables");
         assert_eq!(
             TablesTableSchema::column_family_name(),
-            SystemTable::Tables
-                .column_family_name()
-                .expect("Tables is a table, not a view")
+            SystemTable::Tables.column_family_name().expect("Tables is a table, not a view")
         );
     }
 

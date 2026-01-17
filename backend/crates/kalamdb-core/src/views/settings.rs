@@ -17,12 +17,12 @@ use super::view_base::VirtualView;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use kalamdb_configs::ServerConfig;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::schemas::{
     ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
 };
 use kalamdb_commons::{NamespaceId, TableName};
+use kalamdb_configs::ServerConfig;
 use kalamdb_system::SystemTable;
 use std::sync::{Arc, OnceLock, RwLock};
 
@@ -174,13 +174,34 @@ impl VirtualView for SettingsView {
 
         if let Some(config) = config_guard.as_ref() {
             // Server Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("server.host", config.server.host, "Server bind address", "server"),
-                ("server.port", config.server.port, "Server port number", "server"),
-                ("server.workers", config.server.workers, "Number of worker threads (0 = auto-detect CPU cores)", "server"),
-                ("server.enable_http2", config.server.enable_http2, "Enable HTTP/2 protocol support", "server"),
-                ("server.api_version", config.server.api_version, "API version prefix (e.g., v1)", "server"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    ("server.host", config.server.host, "Server bind address", "server"),
+                    ("server.port", config.server.port, "Server port number", "server"),
+                    (
+                        "server.workers",
+                        config.server.workers,
+                        "Number of worker threads (0 = auto-detect CPU cores)",
+                        "server"
+                    ),
+                    (
+                        "server.enable_http2",
+                        config.server.enable_http2,
+                        "Enable HTTP/2 protocol support",
+                        "server"
+                    ),
+                    (
+                        "server.api_version",
+                        config.server.api_version,
+                        "API version prefix (e.g., v1)",
+                        "server"
+                    ),
+                ]
+            );
 
             // Cluster Settings (optional)
             if let Some(cluster) = &config.cluster {
@@ -191,105 +212,365 @@ impl VirtualView for SettingsView {
             }
 
             // Storage Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("storage.data_path", config.storage.data_path, "Base data directory (auto-creates rocksdb/, storage/, snapshots/ subdirs)", "storage"),
-                ("storage.rocksdb.write_buffer_size", config.storage.rocksdb.write_buffer_size, "Write buffer size per column family in bytes", "storage"),
-                ("storage.rocksdb.max_write_buffers", config.storage.rocksdb.max_write_buffers, "Maximum number of write buffers", "storage"),
-                ("storage.rocksdb.block_cache_size", config.storage.rocksdb.block_cache_size, "Block cache size for reads in bytes", "storage"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    (
+                        "storage.data_path",
+                        config.storage.data_path,
+                        "Base data directory (auto-creates rocksdb/, storage/, snapshots/ subdirs)",
+                        "storage"
+                    ),
+                    (
+                        "storage.rocksdb.write_buffer_size",
+                        config.storage.rocksdb.write_buffer_size,
+                        "Write buffer size per column family in bytes",
+                        "storage"
+                    ),
+                    (
+                        "storage.rocksdb.max_write_buffers",
+                        config.storage.rocksdb.max_write_buffers,
+                        "Maximum number of write buffers",
+                        "storage"
+                    ),
+                    (
+                        "storage.rocksdb.block_cache_size",
+                        config.storage.rocksdb.block_cache_size,
+                        "Block cache size for reads in bytes",
+                        "storage"
+                    ),
+                ]
+            );
 
             // DataFusion Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("datafusion.memory_limit", config.datafusion.memory_limit, "Memory limit for query execution in bytes", "datafusion"),
-                ("datafusion.batch_size", config.datafusion.batch_size, "Batch size for query processing", "datafusion"),
-                ("datafusion.query_parallelism", config.datafusion.query_parallelism, "Number of parallel threads for query execution", "datafusion"),
-                ("datafusion.max_partitions", config.datafusion.max_partitions, "Maximum number of partitions per query", "datafusion"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    (
+                        "datafusion.memory_limit",
+                        config.datafusion.memory_limit,
+                        "Memory limit for query execution in bytes",
+                        "datafusion"
+                    ),
+                    (
+                        "datafusion.batch_size",
+                        config.datafusion.batch_size,
+                        "Batch size for query processing",
+                        "datafusion"
+                    ),
+                    (
+                        "datafusion.query_parallelism",
+                        config.datafusion.query_parallelism,
+                        "Number of parallel threads for query execution",
+                        "datafusion"
+                    ),
+                    (
+                        "datafusion.max_partitions",
+                        config.datafusion.max_partitions,
+                        "Maximum number of partitions per query",
+                        "datafusion"
+                    ),
+                ]
+            );
 
             // Limits Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("limits.max_message_size", config.limits.max_message_size, "Maximum message size for REST API requests", "limits"),
-                ("limits.max_query_limit", config.limits.max_query_limit, "Maximum rows returned in a single query", "limits"),
-                ("limits.default_query_limit", config.limits.default_query_limit, "Default LIMIT for queries", "limits"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    (
+                        "limits.max_message_size",
+                        config.limits.max_message_size,
+                        "Maximum message size for REST API requests",
+                        "limits"
+                    ),
+                    (
+                        "limits.max_query_limit",
+                        config.limits.max_query_limit,
+                        "Maximum rows returned in a single query",
+                        "limits"
+                    ),
+                    (
+                        "limits.default_query_limit",
+                        config.limits.default_query_limit,
+                        "Default LIMIT for queries",
+                        "limits"
+                    ),
+                ]
+            );
 
             // Logging Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("logging.level", config.logging.level, "Log level filter", "logging"),
-                ("logging.format", config.logging.format, "Log format (text, json)", "logging"),
-                ("logging.logs_path", config.logging.logs_path, "Directory for log files", "logging"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    ("logging.level", config.logging.level, "Log level filter", "logging"),
+                    ("logging.format", config.logging.format, "Log format (text, json)", "logging"),
+                    (
+                        "logging.logs_path",
+                        config.logging.logs_path,
+                        "Directory for log files",
+                        "logging"
+                    ),
+                ]
+            );
 
             // Flush Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("flush.default_row_limit", config.flush.default_row_limit, "Default row limit for flush policies", "flush"),
-                ("flush.default_time_interval", config.flush.default_time_interval, "Default time interval for flush (seconds)", "flush"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    (
+                        "flush.default_row_limit",
+                        config.flush.default_row_limit,
+                        "Default row limit for flush policies",
+                        "flush"
+                    ),
+                    (
+                        "flush.default_time_interval",
+                        config.flush.default_time_interval,
+                        "Default time interval for flush (seconds)",
+                        "flush"
+                    ),
+                ]
+            );
 
             // Manifest Cache Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("manifest_cache.max_entries", config.manifest_cache.max_entries, "Maximum manifest cache entries", "manifest_cache"),
-                ("manifest_cache.eviction_ttl_days", config.manifest_cache.eviction_ttl_days, "Cache eviction TTL in days", "manifest_cache"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    (
+                        "manifest_cache.max_entries",
+                        config.manifest_cache.max_entries,
+                        "Maximum manifest cache entries",
+                        "manifest_cache"
+                    ),
+                    (
+                        "manifest_cache.eviction_ttl_days",
+                        config.manifest_cache.eviction_ttl_days,
+                        "Cache eviction TTL in days",
+                        "manifest_cache"
+                    ),
+                ]
+            );
 
             // Retention Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("retention.default_deleted_retention_hours", config.retention.default_deleted_retention_hours, "Default retention hours for soft-deleted rows", "retention"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [(
+                    "retention.default_deleted_retention_hours",
+                    config.retention.default_deleted_retention_hours,
+                    "Default retention hours for soft-deleted rows",
+                    "retention"
+                ),]
+            );
 
             // Stream Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("stream.default_ttl_seconds", config.stream.default_ttl_seconds, "Default TTL for stream rows (seconds)", "stream"),
-                ("stream.default_max_buffer", config.stream.default_max_buffer, "Default maximum buffer size", "stream"),
-                ("stream.eviction_interval_seconds", config.stream.eviction_interval_seconds, "Stream eviction check interval (seconds)", "stream"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    (
+                        "stream.default_ttl_seconds",
+                        config.stream.default_ttl_seconds,
+                        "Default TTL for stream rows (seconds)",
+                        "stream"
+                    ),
+                    (
+                        "stream.default_max_buffer",
+                        config.stream.default_max_buffer,
+                        "Default maximum buffer size",
+                        "stream"
+                    ),
+                    (
+                        "stream.eviction_interval_seconds",
+                        config.stream.eviction_interval_seconds,
+                        "Stream eviction check interval (seconds)",
+                        "stream"
+                    ),
+                ]
+            );
 
             // WebSocket Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("websocket.client_timeout_secs", config.websocket.client_timeout_secs.unwrap_or(10), "WebSocket client timeout (seconds)", "websocket"),
-                ("websocket.heartbeat_interval_secs", config.websocket.heartbeat_interval_secs.unwrap_or(5), "WebSocket heartbeat interval (seconds)", "websocket"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    (
+                        "websocket.client_timeout_secs",
+                        config.websocket.client_timeout_secs.unwrap_or(10),
+                        "WebSocket client timeout (seconds)",
+                        "websocket"
+                    ),
+                    (
+                        "websocket.heartbeat_interval_secs",
+                        config.websocket.heartbeat_interval_secs.unwrap_or(5),
+                        "WebSocket heartbeat interval (seconds)",
+                        "websocket"
+                    ),
+                ]
+            );
 
             // Rate Limit Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("rate_limit.max_queries_per_sec", config.rate_limit.max_queries_per_sec, "Maximum SQL queries per second per user", "rate_limit"),
-                ("rate_limit.max_subscriptions_per_user", config.rate_limit.max_subscriptions_per_user, "Maximum concurrent live query subscriptions", "rate_limit"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    (
+                        "rate_limit.max_queries_per_sec",
+                        config.rate_limit.max_queries_per_sec,
+                        "Maximum SQL queries per second per user",
+                        "rate_limit"
+                    ),
+                    (
+                        "rate_limit.max_subscriptions_per_user",
+                        config.rate_limit.max_subscriptions_per_user,
+                        "Maximum concurrent live query subscriptions",
+                        "rate_limit"
+                    ),
+                ]
+            );
 
             // Auth Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("auth.bcrypt_cost", config.auth.bcrypt_cost, "Bcrypt cost factor for password hashing", "auth"),
-                ("auth.min_password_length", config.auth.min_password_length, "Minimum password length", "auth"),
-                ("auth.allow_remote_access", config.auth.allow_remote_access, "Allow remote access for system users", "auth"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    (
+                        "auth.bcrypt_cost",
+                        config.auth.bcrypt_cost,
+                        "Bcrypt cost factor for password hashing",
+                        "auth"
+                    ),
+                    (
+                        "auth.min_password_length",
+                        config.auth.min_password_length,
+                        "Minimum password length",
+                        "auth"
+                    ),
+                    (
+                        "auth.allow_remote_access",
+                        config.auth.allow_remote_access,
+                        "Allow remote access for system users",
+                        "auth"
+                    ),
+                ]
+            );
 
             // Jobs Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("jobs.max_concurrent", config.jobs.max_concurrent, "Maximum number of concurrent jobs", "jobs"),
-                ("jobs.max_retries", config.jobs.max_retries, "Maximum retry attempts per job", "jobs"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    (
+                        "jobs.max_concurrent",
+                        config.jobs.max_concurrent,
+                        "Maximum number of concurrent jobs",
+                        "jobs"
+                    ),
+                    (
+                        "jobs.max_retries",
+                        config.jobs.max_retries,
+                        "Maximum retry attempts per job",
+                        "jobs"
+                    ),
+                ]
+            );
 
             // Execution Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("execution.handler_timeout_seconds", config.execution.handler_timeout_seconds, "Handler execution timeout in seconds", "execution"),
-                ("execution.max_parameters", config.execution.max_parameters, "Maximum number of parameters per statement", "execution"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    (
+                        "execution.handler_timeout_seconds",
+                        config.execution.handler_timeout_seconds,
+                        "Handler execution timeout in seconds",
+                        "execution"
+                    ),
+                    (
+                        "execution.max_parameters",
+                        config.execution.max_parameters,
+                        "Maximum number of parameters per statement",
+                        "execution"
+                    ),
+                ]
+            );
 
             // Security Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("security.max_request_body_size", config.security.max_request_body_size, "Maximum request body size in bytes", "security"),
-                ("security.max_ws_message_size", config.security.max_ws_message_size, "Maximum WebSocket message size in bytes", "security"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [
+                    (
+                        "security.max_request_body_size",
+                        config.security.max_request_body_size,
+                        "Maximum request body size in bytes",
+                        "security"
+                    ),
+                    (
+                        "security.max_ws_message_size",
+                        config.security.max_ws_message_size,
+                        "Maximum WebSocket message size in bytes",
+                        "security"
+                    ),
+                ]
+            );
 
             // Shutdown Settings
-            add_settings!(names, values, descriptions, categories, [
-                ("shutdown.flush.timeout", config.shutdown.flush.timeout, "Timeout in seconds to wait for flush jobs during shutdown", "shutdown"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [(
+                    "shutdown.flush.timeout",
+                    config.shutdown.flush.timeout,
+                    "Timeout in seconds to wait for flush jobs during shutdown",
+                    "shutdown"
+                ),]
+            );
         } else {
             // No config available yet
-            add_settings!(names, values, descriptions, categories, [
-                ("status", "not_initialized", "Configuration not yet loaded", "system"),
-            ]);
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [("status", "not_initialized", "Configuration not yet loaded", "system"),]
+            );
         }
 
         RecordBatch::try_new(

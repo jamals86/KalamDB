@@ -1,6 +1,5 @@
 //! SQL-based user management commands over the real HTTP SQL API.
 
-
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
 

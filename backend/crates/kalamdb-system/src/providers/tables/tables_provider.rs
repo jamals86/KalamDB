@@ -9,13 +9,13 @@ use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::RecordBatchBuilder;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
@@ -77,10 +77,7 @@ impl TablesTableProvider {
     ) -> Result<(), SystemError> {
         // Check if table exists
         if self.store.get_latest(table_id)?.is_none() {
-            return Err(SystemError::NotFound(format!(
-                "Table not found: {}",
-                table_id
-            )));
+            return Err(SystemError::NotFound(format!("Table not found: {}", table_id)));
         }
 
         Ok(self.store.put_version(table_id, table_def)?)
@@ -98,10 +95,7 @@ impl TablesTableProvider {
         tokio::task::spawn_blocking(move || {
             // Check if table exists
             if store.get_latest(&table_id)?.is_none() {
-                return Err(SystemError::NotFound(format!(
-                    "Table not found: {}",
-                    table_id
-                )));
+                return Err(SystemError::NotFound(format!("Table not found: {}", table_id)));
             }
             store.put_version(&table_id, &table_def)?;
             Ok(())
@@ -207,11 +201,11 @@ impl TablesTableProvider {
     pub fn scan_all_tables(&self) -> Result<RecordBatch, SystemError> {
         use kalamdb_commons::models::TableId;
         use std::collections::HashMap;
-        
+
         // Return ALL versions including historical ones for schema evolution support
         // (the store has both <lat> pointer AND <ver>N entries - we skip <lat> and use <ver> entries)
         let entries = self.store.scan_all_with_versions()?;
-        
+
         // First pass: find the max version for each table to compute is_latest
         let mut max_versions: HashMap<TableId, u32> = HashMap::new();
         for (version_key, table_def, _) in &entries {
@@ -252,48 +246,39 @@ impl TablesTableProvider {
             if version_key.is_latest() {
                 continue;
             }
-            
+
             // Compute is_latest by comparing with the max version for this table
             let table_id = version_key.table_id();
             let max_version = max_versions.get(table_id).copied().unwrap_or(0);
             let is_latest = table_def.schema_version == max_version;
-            
+
             // Convert TableId to string format
-            let table_id_str = format!(
-                "{}:{}",
-                table_def.namespace_id.as_str(),
-                table_def.table_name.as_str()
-            );
+            let table_id_str =
+                format!("{}:{}", table_def.namespace_id.as_str(), table_def.table_name.as_str());
             table_ids.push(Some(table_id_str));
             table_names.push(Some(table_def.table_name.as_str().to_string()));
             namespaces.push(Some(table_def.namespace_id.as_str().to_string()));
             table_types.push(Some(table_def.table_type.as_str().to_string()));
             created_ats.push(Some(table_def.created_at.timestamp_millis()));
             schema_versions.push(Some(table_def.schema_version as i32));
-            
+
             // Serialize columns as JSON array
             let col_json = match serde_json::to_string(&table_def.columns) {
                 Ok(json) => json,
-                Err(e) => format!(
-                    "{{\"error\":\"failed to serialize columns: {}\"}}",
-                    e
-                ),
+                Err(e) => format!("{{\"error\":\"failed to serialize columns: {}\"}}", e),
             };
             columns_json.push(Some(col_json));
-            
+
             table_comments.push(table_def.table_comment);
             updated_ats.push(Some(table_def.updated_at.timestamp_millis()));
-            
+
             // Serialize TableOptions
             let opt_json = match serde_json::to_string(&table_def.table_options) {
                 Ok(json) => json,
-                Err(e) => format!(
-                    "{{\"error\":\"failed to serialize options: {}\"}}",
-                    e
-                ),
+                Err(e) => format!("{{\"error\":\"failed to serialize options: {}\"}}", e),
             };
             options_json.push(Some(opt_json));
-            
+
             // Access Level (only for Shared tables)
             use kalamdb_commons::schemas::TableOptions;
             let access_level = if let TableOptions::Shared(opts) = &table_def.table_options {
@@ -302,7 +287,7 @@ impl TablesTableProvider {
                 None
             };
             access_levels.push(access_level);
-            
+
             // is_latest flag
             is_latest_flags.push(Some(is_latest));
 
@@ -516,7 +501,7 @@ mod tests {
         // Create table with multiple versions
         let (table_id, mut table_def) = create_test_table("default", "users");
         provider.create_table(&table_id, &table_def).unwrap();
-        
+
         table_def.schema_version = 2;
         provider.update_table(&table_id, &table_def).unwrap();
 

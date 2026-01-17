@@ -23,8 +23,9 @@ fn smoke_cli_stats_command() {
 
     // Query system.stats directly (this is what \stats does internally)
     let result = execute_sql_as_root_via_client(
-        "SELECT metric_name, metric_value FROM system.stats ORDER BY metric_name"
-    ).expect("Failed to query system.stats");
+        "SELECT metric_name, metric_value FROM system.stats ORDER BY metric_name",
+    )
+    .expect("Failed to query system.stats");
 
     // Verify we get some metrics back
     assert!(
@@ -139,18 +140,10 @@ fn smoke_cli_format_json_command() {
 
     // Verify it's valid JSON
     let parsed: Result<serde_json::Value, _> = serde_json::from_str(&result);
-    assert!(
-        parsed.is_ok(),
-        "Output should be valid JSON: {}",
-        result
-    );
+    assert!(parsed.is_ok(), "Output should be valid JSON: {}", result);
 
     let json = parsed.unwrap();
-    assert!(
-        json.get("results").is_some(),
-        "JSON should have results field: {}",
-        result
-    );
+    assert!(json.get("results").is_some(), "JSON should have results field: {}", result);
 
     println!("✅ smoke_cli_format_json_command passed!");
 }
@@ -169,7 +162,8 @@ fn smoke_cli_sql_execution() {
     let full_table = format!("{}.{}", namespace, table);
 
     // Test CREATE NAMESPACE
-    let result = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let result =
+        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     assert!(result.is_ok(), "CREATE NAMESPACE should succeed: {:?}", result);
 
     // Test CREATE TABLE
@@ -187,10 +181,9 @@ fn smoke_cli_sql_execution() {
     assert!(result.is_ok(), "INSERT should succeed: {:?}", result);
 
     // Test SELECT
-    let result = execute_sql_as_root_via_client(&format!(
-        "SELECT * FROM {} ORDER BY id",
-        full_table
-    )).expect("SELECT should succeed");
+    let result =
+        execute_sql_as_root_via_client(&format!("SELECT * FROM {} ORDER BY id", full_table))
+            .expect("SELECT should succeed");
     assert!(result.contains("100"), "Should contain value 100: {}", result);
     assert!(result.contains("200"), "Should contain value 200: {}", result);
     assert!(result.contains("300"), "Should contain value 300: {}", result);
@@ -217,7 +210,8 @@ fn smoke_cli_sql_execution() {
     let result = execute_sql_as_root_via_client(&format!(
         "SELECT COUNT(*) as cnt, SUM(value) as total FROM {}",
         full_table
-    )).expect("SELECT with aggregation should succeed");
+    ))
+    .expect("SELECT with aggregation should succeed");
     assert!(result.contains("3"), "Count should be 3: {}", result);
     assert!(result.contains("600"), "Sum should be 600: {}", result);
 
@@ -229,25 +223,29 @@ fn smoke_cli_sql_execution() {
     assert!(result.is_ok(), "UPDATE should succeed: {:?}", result);
 
     // Verify UPDATE
-    let result = execute_sql_as_root_via_client(&format!(
-        "SELECT value FROM {} WHERE id = 1",
-        full_table
-    )).expect("SELECT after UPDATE should succeed");
+    let result =
+        execute_sql_as_root_via_client(&format!("SELECT value FROM {} WHERE id = 1", full_table))
+            .expect("SELECT after UPDATE should succeed");
     assert!(result.contains("150"), "Value should be updated to 150: {}", result);
 
     // Test DELETE
-    let result = execute_sql_as_root_via_client(&format!(
-        "DELETE FROM {} WHERE id = 3",
-        full_table
-    ));
+    let result =
+        execute_sql_as_root_via_client(&format!("DELETE FROM {} WHERE id = 3", full_table));
     assert!(result.is_ok(), "DELETE should succeed: {:?}", result);
 
     // Verify DELETE
-    let result = execute_sql_as_root_via_client(&format!(
-        "SELECT * FROM {} ORDER BY id",
-        full_table
-    )).expect("SELECT after DELETE should succeed");
-    assert!(!result.contains("300"), "Value 300 should be deleted: {}", result);
+    let result =
+        execute_sql_as_root_via_client_json(&format!("SELECT * FROM {} ORDER BY id", full_table))
+            .expect("SELECT after DELETE should succeed");
+    let json: serde_json::Value =
+        serde_json::from_str(&result).expect("Failed to parse JSON output");
+    let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
+    let values: Vec<i64> = rows
+        .iter()
+        .filter_map(|row| row.get("value"))
+        .filter_map(|value| extract_typed_value(value).as_i64())
+        .collect();
+    assert!(!values.contains(&300), "Value 300 should be deleted: {:?}", values);
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
@@ -266,33 +264,44 @@ fn smoke_cli_system_tables() {
     }
 
     // Test system.users
-    let result = execute_sql_as_root_via_client("SELECT user_id, username, role FROM system.users LIMIT 5");
+    let result =
+        execute_sql_as_root_via_client("SELECT user_id, username, role FROM system.users LIMIT 5");
     assert!(result.is_ok(), "system.users should be queryable: {:?}", result);
     let output = result.unwrap();
     assert!(output.contains("root"), "Should see root user: {}", output);
 
     // Test system.namespaces
-    let result = execute_sql_as_root_via_client("SELECT namespace_id, name FROM system.namespaces LIMIT 5");
+    let result =
+        execute_sql_as_root_via_client("SELECT namespace_id, name FROM system.namespaces LIMIT 5");
     assert!(result.is_ok(), "system.namespaces should be queryable: {:?}", result);
 
     // Test system.tables
-    let result = execute_sql_as_root_via_client("SELECT namespace_id, table_name, table_type FROM system.tables LIMIT 5");
+    let result = execute_sql_as_root_via_client(
+        "SELECT namespace_id, table_name, table_type FROM system.tables LIMIT 5",
+    );
     assert!(result.is_ok(), "system.tables should be queryable: {:?}", result);
 
     // Test system.jobs
-    let result = execute_sql_as_root_via_client("SELECT job_id, job_type, status FROM system.jobs LIMIT 5");
+    let result =
+        execute_sql_as_root_via_client("SELECT job_id, job_type, status FROM system.jobs LIMIT 5");
     assert!(result.is_ok(), "system.jobs should be queryable: {:?}", result);
 
     // Test system.stats
-    let result = execute_sql_as_root_via_client("SELECT metric_name, metric_value FROM system.stats LIMIT 5");
+    let result = execute_sql_as_root_via_client(
+        "SELECT metric_name, metric_value FROM system.stats LIMIT 5",
+    );
     assert!(result.is_ok(), "system.stats should be queryable: {:?}", result);
 
     // Test information_schema.tables
-    let result = execute_sql_as_root_via_client("SELECT table_schema, table_name FROM information_schema.tables LIMIT 5");
+    let result = execute_sql_as_root_via_client(
+        "SELECT table_schema, table_name FROM information_schema.tables LIMIT 5",
+    );
     assert!(result.is_ok(), "information_schema.tables should be queryable: {:?}", result);
 
     // Test information_schema.columns
-    let result = execute_sql_as_root_via_client("SELECT table_schema, table_name, column_name FROM information_schema.columns LIMIT 5");
+    let result = execute_sql_as_root_via_client(
+        "SELECT table_schema, table_name, column_name FROM information_schema.columns LIMIT 5",
+    );
     assert!(result.is_ok(), "information_schema.columns should be queryable: {:?}", result);
 
     println!("✅ smoke_cli_system_tables passed!");
@@ -366,7 +375,8 @@ fn smoke_cli_user_management() {
     let result = execute_sql_as_root_via_client(&format!(
         "SELECT username, role FROM system.users WHERE username = '{}'",
         username
-    )).expect("Failed to query user");
+    ))
+    .expect("Failed to query user");
     assert!(result.contains(&username), "User should exist: {}", result);
     assert!(result.contains("user"), "User role should be 'user': {}", result);
 
@@ -385,7 +395,8 @@ fn smoke_cli_user_management() {
     let _result = execute_sql_as_root_via_client(&format!(
         "SELECT deleted_at FROM system.users WHERE username = '{}'",
         username
-    )).expect("Failed to query deleted user");
+    ))
+    .expect("Failed to query deleted user");
     // The result should show a non-null deleted_at timestamp (or user may be filtered out)
 
     println!("✅ smoke_cli_user_management passed!");
@@ -410,11 +421,13 @@ fn smoke_cli_namespace_management() {
     let result = execute_sql_as_root_via_client(&format!(
         "SELECT name FROM system.namespaces WHERE name = '{}'",
         namespace
-    )).expect("Failed to query namespace");
+    ))
+    .expect("Failed to query namespace");
     assert!(result.contains(&namespace), "Namespace should exist: {}", result);
 
     // Test CREATE NAMESPACE IF NOT EXISTS (should not error)
-    let result = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let result =
+        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     assert!(result.is_ok(), "CREATE NAMESPACE IF NOT EXISTS should succeed: {:?}", result);
 
     // Test DROP NAMESPACE
@@ -468,10 +481,8 @@ fn smoke_cli_alter_table() {
     assert!(result.is_ok(), "INSERT with new column should succeed: {:?}", result);
 
     // Verify data
-    let result = execute_sql_as_root_via_client(&format!(
-        "SELECT * FROM {}",
-        full_table
-    )).expect("SELECT should succeed");
+    let result = execute_sql_as_root_via_client(&format!("SELECT * FROM {}", full_table))
+        .expect("SELECT should succeed");
     assert!(result.contains("test@example.com"), "Email should be stored: {}", result);
 
     // Cleanup
@@ -495,7 +506,9 @@ fn smoke_cli_error_handling() {
     assert!(result.is_err(), "Invalid SQL should fail");
 
     // Test querying non-existent table
-    let result = execute_sql_as_root_via_client("SELECT * FROM nonexistent_namespace_12345.nonexistent_table_67890");
+    let result = execute_sql_as_root_via_client(
+        "SELECT * FROM nonexistent_namespace_12345.nonexistent_table_67890",
+    );
     assert!(result.is_err(), "Non-existent table should fail");
 
     // Test invalid column reference

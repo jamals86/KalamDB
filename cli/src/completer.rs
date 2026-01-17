@@ -113,16 +113,16 @@ impl StyledPair {
         let display = match category {
             CompletionCategory::Keyword => {
                 format!("{}  {}", text.blue().bold(), "keyword".dimmed())
-            }
+            },
             CompletionCategory::Table => format!("{}  {}", text.green(), "table".dimmed()),
             CompletionCategory::Column => format!("{}  {}", text.yellow(), "column".dimmed()),
             CompletionCategory::MetaCommand => {
                 format!("{}  {}", text.cyan().bold(), "command".dimmed())
-            }
+            },
             CompletionCategory::Type => format!("{}  {}", text.magenta(), "type".dimmed()),
             CompletionCategory::Namespace => {
                 format!("{}  {}", text.cyan(), "namespace".dimmed())
-            }
+            },
         };
 
         Self {
@@ -167,10 +167,7 @@ pub struct AutoCompleter {
 impl AutoCompleter {
     /// Create a new auto-completer
     pub fn new() -> Self {
-        let keywords = SQL_KEYWORDS
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<String>>();
+        let keywords = SQL_KEYWORDS.iter().map(|s| s.to_string()).collect::<Vec<String>>();
 
         let meta_commands = vec![
             "\\quit",
@@ -279,11 +276,7 @@ impl AutoCompleter {
                     let table_name = before_dot[word_start + 1..].trim().to_string();
                     // If the token before dot matches a known namespace, assume namespace.table completion
                     let ns_upper = table_name.to_ascii_uppercase();
-                    if self
-                        .namespaces
-                        .iter()
-                        .any(|ns| ns.to_ascii_uppercase() == ns_upper)
-                    {
+                    if self.namespaces.iter().any(|ns| ns.to_ascii_uppercase() == ns_upper) {
                         return CompletionContext::NamespaceTable(table_name);
                     }
                     return CompletionContext::Column(table_name);
@@ -305,10 +298,7 @@ impl AutoCompleter {
         if input.starts_with('\\') {
             for cmd in &self.meta_commands {
                 if cmd.to_uppercase().starts_with(&input_upper) {
-                    results.push(StyledPair::new(
-                        cmd.clone(),
-                        CompletionCategory::MetaCommand,
-                    ));
+                    results.push(StyledPair::new(cmd.clone(), CompletionCategory::MetaCommand));
                 }
             }
             return results;
@@ -327,10 +317,8 @@ impl AutoCompleter {
                     let tbl_part_upper = tbl_part.to_ascii_uppercase();
 
                     // Exact namespace match
-                    if let Some((ns_name, tables)) = self
-                        .ns_tables
-                        .iter()
-                        .find(|(k, _)| k.to_ascii_uppercase() == ns_part_upper)
+                    if let Some((ns_name, tables)) =
+                        self.ns_tables.iter().find(|(k, _)| k.to_ascii_uppercase() == ns_part_upper)
                     {
                         for t in tables {
                             let candidate = if t.contains('.') {
@@ -340,10 +328,7 @@ impl AutoCompleter {
                             };
 
                             if candidate.to_ascii_uppercase().starts_with(&tbl_part_upper) {
-                                results.push(StyledPair::new(
-                                    candidate,
-                                    CompletionCategory::Table,
-                                ));
+                                results.push(StyledPair::new(candidate, CompletionCategory::Table));
                             }
                         }
                     }
@@ -373,7 +358,7 @@ impl AutoCompleter {
                         }
                     }
                 }
-            }
+            },
             CompletionContext::Column(ref table_name) => {
                 // Only suggest column names for the specific table
                 if let Some(cols) = self.columns.get(table_name) {
@@ -383,7 +368,7 @@ impl AutoCompleter {
                         }
                     }
                 }
-            }
+            },
             CompletionContext::NamespaceTable(ref namespace) => {
                 if let Some(cols) = self.ns_tables.get(namespace) {
                     // Here `cols` are tables within the namespace
@@ -398,7 +383,7 @@ impl AutoCompleter {
                         }
                     }
                 }
-            }
+            },
             CompletionContext::Mixed => {
                 // Suggest keywords
                 for kw in &self.keywords {
@@ -418,7 +403,7 @@ impl AutoCompleter {
                         results.push(StyledPair::new(table.clone(), CompletionCategory::Table));
                     }
                 }
-            }
+            },
         }
 
         results.sort_by(|a, b| a.replacement.cmp(&b.replacement));

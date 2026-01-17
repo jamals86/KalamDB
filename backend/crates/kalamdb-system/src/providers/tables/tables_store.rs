@@ -98,8 +98,8 @@ impl TablesStore {
 
         // Scan and delete all versioned entries
         let prefix = TableVersionId::version_scan_prefix(table_id);
-        let partition = Partition::new(EntityStore::partition(self));
-        let iter = EntityStore::backend(self).scan(&partition, Some(&prefix), None, None)?;
+        let partition = Partition::new(self.partition());
+        let iter = self.backend().scan(&partition, Some(&prefix), None, None)?;
 
         for (key_bytes, _) in iter {
             if let Some(version_key) = TableVersionId::from_storage_key(&key_bytes) {
@@ -119,14 +119,14 @@ impl TablesStore {
         table_id: &TableId,
     ) -> Result<Vec<(u32, TableDefinition)>, kalamdb_store::StorageError> {
         let prefix = TableVersionId::version_scan_prefix(table_id);
-        let partition = Partition::new(EntityStore::partition(self));
-        let iter = EntityStore::backend(self).scan(&partition, Some(&prefix), None, None)?;
+        let partition = Partition::new(self.partition());
+        let iter = self.backend().scan(&partition, Some(&prefix), None, None)?;
 
         let mut versions = Vec::new();
         for (key_bytes, value_bytes) in iter {
             if let Some(version_key) = TableVersionId::from_storage_key(&key_bytes) {
                 if let Some(version) = version_key.version() {
-                    if let Ok(table_def) = EntityStore::deserialize(self, &value_bytes) {
+                    if let Ok(table_def) = self.deserialize(&value_bytes) {
                         versions.push((version, table_def));
                     }
                 }
@@ -144,8 +144,7 @@ impl TablesStore {
         &self,
         table_id: &TableId,
     ) -> Result<Option<u32>, kalamdb_store::StorageError> {
-        self.get_latest(table_id)
-            .map(|opt| opt.map(|def| def.schema_version))
+        self.get_latest(table_id).map(|opt| opt.map(|def| def.schema_version))
     }
 
     /// Scan all tables (latest versions only) in a specific namespace
@@ -157,15 +156,15 @@ impl TablesStore {
         let prefix = format!("{}:", namespace_id.as_str());
         let prefix_bytes = prefix.as_bytes();
 
-        let partition = Partition::new(EntityStore::partition(self));
-        let iter = EntityStore::backend(self).scan(&partition, Some(prefix_bytes), None, None)?;
+        let partition = Partition::new(self.partition());
+        let iter = self.backend().scan(&partition, Some(prefix_bytes), None, None)?;
 
         let mut result = Vec::new();
         for (key_bytes, value_bytes) in iter {
             if let Some(version_key) = TableVersionId::from_storage_key(&key_bytes) {
                 // Only include latest entries
                 if version_key.is_latest() {
-                    if let Ok(table_def) = EntityStore::deserialize(self, &value_bytes) {
+                    if let Ok(table_def) = self.deserialize(&value_bytes) {
                         result.push((version_key.table_id().clone(), table_def));
                     }
                 }
@@ -181,13 +180,13 @@ impl TablesStore {
     pub fn scan_all_with_versions(
         &self,
     ) -> Result<Vec<(TableVersionId, TableDefinition, bool)>, kalamdb_store::StorageError> {
-        let partition = Partition::new(EntityStore::partition(self));
-        let iter = EntityStore::backend(self).scan(&partition, None, None, None)?;
+        let partition = Partition::new(self.partition());
+        let iter = self.backend().scan(&partition, None, None, None)?;
 
         let mut result = Vec::new();
         for (key_bytes, value_bytes) in iter {
             if let Some(version_key) = TableVersionId::from_storage_key(&key_bytes) {
-                if let Ok(table_def) = EntityStore::deserialize(self, &value_bytes) {
+                if let Ok(table_def) = self.deserialize(&value_bytes) {
                     let is_latest = version_key.is_latest();
                     result.push((version_key, table_def, is_latest));
                 }
@@ -229,7 +228,11 @@ mod tests {
         new_tables_store(backend)
     }
 
-    fn create_test_table(namespace: &str, table_name: &str, version: u32) -> (TableId, TableDefinition) {
+    fn create_test_table(
+        namespace: &str,
+        table_name: &str,
+        version: u32,
+    ) -> (TableId, TableDefinition) {
         let namespace_id = NamespaceId::new(namespace);
         let table_name_id = TableName::new(table_name);
         let table_id = TableId::new(namespace_id.clone(), table_name_id.clone());
@@ -278,9 +281,7 @@ mod tests {
         let store = create_test_store();
         assert_eq!(
             store.partition(),
-            SystemTable::Tables
-                .column_family_name()
-                .expect("Tables is a table, not a view")
+            SystemTable::Tables.column_family_name().expect("Tables is a table, not a view")
         );
     }
 
@@ -355,7 +356,7 @@ mod tests {
     #[test]
     fn test_scan_all_with_versions() {
         let store = create_test_store();
-        
+
         // Insert multiple tables with versions
         let (table1_id, mut table1_def) = create_test_table("default", "users", 1);
         store.put_version(&table1_id, &table1_def).unwrap();

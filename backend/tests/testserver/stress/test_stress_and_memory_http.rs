@@ -3,19 +3,18 @@
 //! These are intentionally short (seconds, not minutes) and run through the real
 //! HTTP surface to cover business logic without flaking CI.
 
-
+use super::test_support::http_server::HttpTestServer;
 use futures_util::future::try_join_all;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
-use super::test_support::http_server::HttpTestServer;
 
-async fn create_user(server: &super::test_support::http_server::HttpTestServer, user: &str) -> anyhow::Result<String> {
+async fn create_user(
+    server: &super::test_support::http_server::HttpTestServer,
+    user: &str,
+) -> anyhow::Result<String> {
     let password = "UserPass123!";
     let resp = server
-        .execute_sql(&format!(
-            "CREATE USER '{}' WITH PASSWORD '{}' ROLE 'user'",
-            user, password
-        ))
+        .execute_sql(&format!("CREATE USER '{}' WITH PASSWORD '{}' ROLE 'user'", user, password))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE USER failed: {:?}", resp.error);
     Ok(HttpTestServer::basic_auth_header(&UserName::new(user), password))
@@ -28,10 +27,7 @@ async fn count_rows(
     table: &str,
 ) -> anyhow::Result<i64> {
     let resp = server
-        .execute_sql_with_auth(
-            &format!("SELECT COUNT(*) AS cnt FROM {}.{}", ns, table),
-            auth,
-        )
+        .execute_sql_with_auth(&format!("SELECT COUNT(*) AS cnt FROM {}.{}", ns, table), auth)
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "COUNT failed: {:?}", resp.error);
 

@@ -63,9 +63,7 @@ impl ScalarUDFImpl for CurrentUserFunction {
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
         if !args.args.is_empty() {
-            return Err(DataFusionError::Plan(
-                "CURRENT_USER() takes no arguments".to_string(),
-            ));
+            return Err(DataFusionError::Plan("CURRENT_USER() takes no arguments".to_string()));
         }
 
         let user_id = self.user_id.as_ref().ok_or_else(|| {

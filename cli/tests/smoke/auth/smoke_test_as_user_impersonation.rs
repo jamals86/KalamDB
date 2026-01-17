@@ -17,10 +17,7 @@ fn create_test_namespace(suffix: &str) -> String {
 }
 
 fn create_user_with_retry(username: &str, password: &str, role: &str) {
-    let sql = format!(
-        "CREATE USER {} WITH PASSWORD '{}' ROLE '{}'",
-        username, password, role
-    );
+    let sql = format!("CREATE USER {} WITH PASSWORD '{}' ROLE '{}'", username, password, role);
     let mut last_err = None;
     for attempt in 0..3 {
         match execute_sql_as_root_via_client(&sql) {
@@ -28,10 +25,7 @@ fn create_user_with_retry(username: &str, password: &str, role: &str) {
             Err(err) => {
                 let msg = err.to_string();
                 if msg.contains("Already exists") {
-                    let alter_sql = format!(
-                        "ALTER USER {} SET PASSWORD '{}'",
-                        username, password
-                    );
+                    let alter_sql = format!("ALTER USER {} SET PASSWORD '{}'", username, password);
                     let _ = execute_sql_as_root_via_client(&alter_sql);
                     return;
                 }
@@ -41,7 +35,7 @@ fn create_user_with_retry(username: &str, password: &str, role: &str) {
                     continue;
                 }
                 panic!("Failed to create user {}: {}", username, msg);
-            }
+            },
         }
     }
     panic!(
@@ -54,16 +48,13 @@ fn create_user_with_retry(username: &str, password: &str, role: &str) {
 /// Helper to get user_id from username by querying system.users
 /// AS USER requires the user_id (UUID), not the username
 fn get_user_id_for_username(username: &str) -> Option<String> {
-    let query = format!(
-        "SELECT user_id FROM system.users WHERE username = '{}'",
-        username
-    );
+    let query = format!("SELECT user_id FROM system.users WHERE username = '{}'", username);
     let result = execute_sql_as_root_via_client_json(&query).ok()?;
-    
+
     // Parse JSON response
     let json: serde_json::Value = serde_json::from_str(&result).ok()?;
     let rows = get_rows_as_hashmaps(&json)?;
-    
+
     if let Some(row) = rows.first() {
         let user_id_value = row.get("user_id").map(extract_typed_value)?;
         return user_id_value.as_str().map(|s| s.to_string());
@@ -103,8 +94,8 @@ fn smoke_as_user_blocked_for_regular_user() {
     create_user_with_retry(&target_user, password, "user");
 
     // Get the target user's user_id (UUID)
-    let target_user_id = get_user_id_for_username(&target_user)
-        .expect("Failed to get target user_id");
+    let target_user_id =
+        get_user_id_for_username(&target_user).expect("Failed to get target user_id");
 
     // Attempt INSERT AS USER as regular user - should FAIL
     let insert_sql = format!(
@@ -121,7 +112,9 @@ fn smoke_as_user_blocked_for_regular_user() {
 
     let error_msg = result.unwrap_err().to_string().to_lowercase();
     assert!(
-        error_msg.contains("not authorized") || error_msg.contains("unauthorized") || error_msg.contains("permission"),
+        error_msg.contains("not authorized")
+            || error_msg.contains("unauthorized")
+            || error_msg.contains("permission"),
         "Error should mention authorization: {}",
         error_msg
     );
@@ -167,8 +160,8 @@ fn smoke_as_user_insert_with_service_role() {
     create_user_with_retry(&target_user, password, "user");
 
     // Get user_ids
-    let target_user_id = get_user_id_for_username(&target_user)
-        .expect("Failed to get target user_id");
+    let target_user_id =
+        get_user_id_for_username(&target_user).expect("Failed to get target user_id");
 
     // INSERT AS USER target_user (executed by service user)
     let insert_sql = format!(
@@ -176,19 +169,12 @@ fn smoke_as_user_insert_with_service_role() {
         full_table, target_user_id
     );
     let result = execute_sql_via_client_as(&service_user, password, &insert_sql);
-    assert!(
-        result.is_ok(),
-        "Service role should be able to use AS USER: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "Service role should be able to use AS USER: {:?}", result);
 
     // Verify: target_user can see the record (RLS)
-    let select_result = execute_sql_via_client_as(
-        &target_user,
-        password,
-        &format!("SELECT * FROM {}", full_table),
-    )
-    .expect("Failed to select as target user");
+    let select_result =
+        execute_sql_via_client_as(&target_user, password, &format!("SELECT * FROM {}", full_table))
+            .expect("Failed to select as target user");
 
     assert!(
         select_result.contains("99.99"),
@@ -249,16 +235,15 @@ fn smoke_as_user_update_with_dba_role() {
     create_user_with_retry(&target_user, password, "user");
 
     // Get user_id
-    let target_user_id = get_user_id_for_username(&target_user)
-        .expect("Failed to get target user_id");
+    let target_user_id =
+        get_user_id_for_username(&target_user).expect("Failed to get target user_id");
 
     // INSERT AS USER first
     let insert_sql = format!(
         "INSERT INTO {} (id, status) VALUES (1, 'active') AS USER '{}'",
         full_table, target_user_id
     );
-    execute_sql_via_client_as(&dba_user, password, &insert_sql)
-        .expect("Failed to INSERT AS USER");
+    execute_sql_via_client_as(&dba_user, password, &insert_sql).expect("Failed to INSERT AS USER");
 
     // UPDATE AS USER
     let update_sql = format!(
@@ -266,11 +251,7 @@ fn smoke_as_user_update_with_dba_role() {
         full_table, target_user_id
     );
     let result = execute_sql_via_client_as(&dba_user, password, &update_sql);
-    assert!(
-        result.is_ok(),
-        "DBA should be able to UPDATE AS USER: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "DBA should be able to UPDATE AS USER: {:?}", result);
 
     // Verify: target_user sees the updated record
     let select_result = execute_sql_via_client_as(
@@ -326,24 +307,20 @@ fn smoke_as_user_delete_with_dba_role() {
     create_user_with_retry(&target_user, password, "user");
 
     // Get user_id
-    let target_user_id = get_user_id_for_username(&target_user)
-        .expect("Failed to get target user_id");
+    let target_user_id =
+        get_user_id_for_username(&target_user).expect("Failed to get target user_id");
 
     // INSERT AS USER first
     let insert_sql = format!(
         "INSERT INTO {} (id, active) VALUES (1, true) AS USER '{}'",
         full_table, target_user_id
     );
-    execute_sql_via_client_as(&dba_user, password, &insert_sql)
-        .expect("Failed to INSERT AS USER");
+    execute_sql_via_client_as(&dba_user, password, &insert_sql).expect("Failed to INSERT AS USER");
 
     // Verify record exists
-    let before_delete = execute_sql_via_client_as(
-        &target_user,
-        password,
-        &format!("SELECT * FROM {}", full_table),
-    )
-    .expect("Failed to select before delete");
+    let before_delete =
+        execute_sql_via_client_as(&target_user, password, &format!("SELECT * FROM {}", full_table))
+            .expect("Failed to select before delete");
     assert!(
         before_delete.contains("true") || before_delete.contains("1"),
         "Record should exist before delete: {}",
@@ -351,24 +328,15 @@ fn smoke_as_user_delete_with_dba_role() {
     );
 
     // DELETE AS USER
-    let delete_sql = format!(
-        "DELETE FROM {} WHERE id = 1 AS USER '{}'",
-        full_table, target_user_id
-    );
+    let delete_sql =
+        format!("DELETE FROM {} WHERE id = 1 AS USER '{}'", full_table, target_user_id);
     let result = execute_sql_via_client_as(&dba_user, password, &delete_sql);
-    assert!(
-        result.is_ok(),
-        "DBA should be able to DELETE AS USER: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "DBA should be able to DELETE AS USER: {:?}", result);
 
     // Verify: record is deleted
-    let after_delete = execute_sql_via_client_as(
-        &target_user,
-        password,
-        &format!("SELECT * FROM {}", full_table),
-    )
-    .expect("Failed to select after delete");
+    let after_delete =
+        execute_sql_via_client_as(&target_user, password, &format!("SELECT * FROM {}", full_table))
+            .expect("Failed to select after delete");
 
     assert!(
         after_delete.contains("0 rows") || !after_delete.contains("true"),
@@ -417,8 +385,8 @@ fn smoke_as_user_rejected_on_shared_table() {
     create_user_with_retry(&target_user, password, "user");
 
     // Get user_id
-    let target_user_id = get_user_id_for_username(&target_user)
-        .expect("Failed to get target user_id");
+    let target_user_id =
+        get_user_id_for_username(&target_user).expect("Failed to get target user_id");
 
     // Attempt INSERT AS USER on SHARED table - should FAIL
     let insert_sql = format!(
@@ -482,10 +450,8 @@ fn smoke_as_user_full_workflow() {
     create_user_with_retry(&user_bob, password, "user");
 
     // Get user_ids
-    let alice_user_id = get_user_id_for_username(&user_alice)
-        .expect("Failed to get alice user_id");
-    let bob_user_id = get_user_id_for_username(&user_bob)
-        .expect("Failed to get bob user_id");
+    let alice_user_id = get_user_id_for_username(&user_alice).expect("Failed to get alice user_id");
+    let bob_user_id = get_user_id_for_username(&user_bob).expect("Failed to get bob user_id");
 
     // 1. INSERT AS USER alice (service user acting on behalf of alice)
     execute_sql_via_client_as(
@@ -546,11 +512,7 @@ fn smoke_as_user_full_workflow() {
     )
     .expect("Failed to select as bob");
 
-    assert!(
-        bob_select.contains("Bob Task 1"),
-        "Bob should see his task: {}",
-        bob_select
-    );
+    assert!(bob_select.contains("Bob Task 1"), "Bob should see his task: {}", bob_select);
     assert!(
         !bob_select.contains("Alice Task"),
         "Bob should NOT see Alice's tasks: {}",
@@ -561,10 +523,7 @@ fn smoke_as_user_full_workflow() {
     execute_sql_via_client_as(
         &service_user,
         password,
-        &format!(
-            "UPDATE {} SET done = true WHERE id = 1 AS USER '{}'",
-            full_table, alice_user_id
-        ),
+        &format!("UPDATE {} SET done = true WHERE id = 1 AS USER '{}'", full_table, alice_user_id),
     )
     .expect("Failed to UPDATE AS USER alice");
 
@@ -586,20 +545,14 @@ fn smoke_as_user_full_workflow() {
     execute_sql_via_client_as(
         &service_user,
         password,
-        &format!(
-            "DELETE FROM {} WHERE id = 2 AS USER '{}'",
-            full_table, alice_user_id
-        ),
+        &format!("DELETE FROM {} WHERE id = 2 AS USER '{}'", full_table, alice_user_id),
     )
     .expect("Failed to DELETE AS USER alice");
 
     // 8. Verify delete
-    let alice_after_delete = execute_sql_via_client_as(
-        &user_alice,
-        password,
-        &format!("SELECT * FROM {}", full_table),
-    )
-    .expect("Failed to select after delete");
+    let alice_after_delete =
+        execute_sql_via_client_as(&user_alice, password, &format!("SELECT * FROM {}", full_table))
+            .expect("Failed to select after delete");
 
     assert!(
         !alice_after_delete.contains("Alice Task 2"),

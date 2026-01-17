@@ -19,9 +19,8 @@ use std::collections::HashSet;
 ///
 /// This is built from `RESERVED_NAMESPACE_NAMES` constant in `constants.rs`.
 /// Use this for O(1) lookups instead of iterating over the array.
-pub static RESERVED_NAMESPACES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    RESERVED_NAMESPACE_NAMES.iter().copied().collect()
-});
+pub static RESERVED_NAMESPACES: Lazy<HashSet<&'static str>> =
+    Lazy::new(|| RESERVED_NAMESPACE_NAMES.iter().copied().collect());
 
 /// Reserved column names that cannot be used by users
 /// These are system columns that are automatically managed
@@ -108,11 +107,10 @@ impl std::fmt::Display for ValidationError {
             ValidationError::Empty => write!(f, "Name cannot be empty"),
             ValidationError::TooLong(len) => {
                 write!(f, "Name is too long ({} characters, max 64)", len)
-            }
-            ValidationError::StartsWithUnderscore => write!(
-                f,
-                "Name cannot start with underscore (reserved for system columns)"
-            ),
+            },
+            ValidationError::StartsWithUnderscore => {
+                write!(f, "Name cannot start with underscore (reserved for system columns)")
+            },
             ValidationError::InvalidCharacters(name) => write!(
                 f,
                 "Name '{}' contains invalid characters (only alphanumeric and underscore allowed)",
@@ -120,15 +118,13 @@ impl std::fmt::Display for ValidationError {
             ),
             ValidationError::ReservedNamespace(name) => {
                 write!(f, "Namespace '{}' is reserved and cannot be used", name)
-            }
+            },
             ValidationError::ReservedColumnName(name) => {
                 write!(f, "Column name '{}' is reserved and cannot be used", name)
-            }
-            ValidationError::ReservedSqlKeyword(name) => write!(
-                f,
-                "Name '{}' is a reserved SQL keyword and cannot be used",
-                name
-            ),
+            },
+            ValidationError::ReservedSqlKeyword(name) => {
+                write!(f, "Name '{}' is a reserved SQL keyword and cannot be used", name)
+            },
             ValidationError::StartsWithNumber => write!(f, "Name cannot start with a number"),
             ValidationError::ContainsSpaces => write!(f, "Name cannot contain spaces"),
         }
@@ -193,7 +189,7 @@ pub fn validate_column_name(name: &str) -> Result<(), ValidationError> {
     if is_reserved_case_insensitive(&RESERVED_COLUMN_NAMES, name) {
         return Err(ValidationError::ReservedColumnName(name.to_string()));
     }
-    
+
     validate_identifier_base(name)?;
     ensure_not_reserved_sql_keyword(name)?;
     Ok(())
@@ -249,10 +245,7 @@ fn ensure_not_reserved_sql_keyword(name: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
-fn is_reserved_case_insensitive(
-    reserved: &HashSet<&'static str>,
-    name: &str,
-) -> bool {
+fn is_reserved_case_insensitive(reserved: &HashSet<&'static str>, name: &str) -> bool {
     if reserved.contains(name) {
         return true;
     }
@@ -318,9 +311,7 @@ mod tests {
         );
         assert_eq!(
             validate_namespace_name("information_schema"),
-            Err(ValidationError::ReservedNamespace(
-                "information_schema".to_string()
-            ))
+            Err(ValidationError::ReservedNamespace("information_schema".to_string()))
         );
     }
 
@@ -341,14 +332,8 @@ mod tests {
 
     #[test]
     fn test_starts_with_underscore() {
-        assert_eq!(
-            validate_column_name("_custom"),
-            Err(ValidationError::StartsWithUnderscore)
-        );
-        assert_eq!(
-            validate_table_name("_table"),
-            Err(ValidationError::StartsWithUnderscore)
-        );
+        assert_eq!(validate_column_name("_custom"), Err(ValidationError::StartsWithUnderscore));
+        assert_eq!(validate_table_name("_table"), Err(ValidationError::StartsWithUnderscore));
         assert_eq!(
             validate_namespace_name("_namespace"),
             Err(ValidationError::StartsWithUnderscore)
@@ -357,26 +342,14 @@ mod tests {
 
     #[test]
     fn test_starts_with_number() {
-        assert_eq!(
-            validate_column_name("123field"),
-            Err(ValidationError::StartsWithNumber)
-        );
-        assert_eq!(
-            validate_table_name("1table"),
-            Err(ValidationError::StartsWithNumber)
-        );
+        assert_eq!(validate_column_name("123field"), Err(ValidationError::StartsWithNumber));
+        assert_eq!(validate_table_name("1table"), Err(ValidationError::StartsWithNumber));
     }
 
     #[test]
     fn test_contains_spaces() {
-        assert_eq!(
-            validate_column_name("user name"),
-            Err(ValidationError::ContainsSpaces)
-        );
-        assert_eq!(
-            validate_table_name("my table"),
-            Err(ValidationError::ContainsSpaces)
-        );
+        assert_eq!(validate_column_name("user name"), Err(ValidationError::ContainsSpaces));
+        assert_eq!(validate_table_name("my table"), Err(ValidationError::ContainsSpaces));
     }
 
     #[test]
@@ -398,10 +371,7 @@ mod tests {
     #[test]
     fn test_too_long() {
         let long_name = "a".repeat(65);
-        assert_eq!(
-            validate_column_name(&long_name),
-            Err(ValidationError::TooLong(65))
-        );
+        assert_eq!(validate_column_name(&long_name), Err(ValidationError::TooLong(65)));
     }
 
     #[test]
@@ -426,11 +396,9 @@ mod tests {
         );
         assert_eq!(
             validate_column_name(SystemColumnNames::DELETED),
-            Err(ValidationError::ReservedColumnName(
-                SystemColumnNames::DELETED.to_string()
-            ))
+            Err(ValidationError::ReservedColumnName(SystemColumnNames::DELETED.to_string()))
         );
-        
+
         // Common system-like column names should be rejected
         assert_eq!(
             validate_column_name("_id"),
@@ -444,7 +412,7 @@ mod tests {
             validate_column_name("_updated"),
             Err(ValidationError::ReservedColumnName("_updated".to_string()))
         );
-        
+
         // Case-insensitive check
         assert_eq!(
             validate_column_name("_SEQ"),
@@ -454,7 +422,7 @@ mod tests {
             validate_column_name("_ID"),
             Err(ValidationError::ReservedColumnName("_ID".to_string()))
         );
-        
+
         // Valid user columns should pass
         assert!(validate_column_name("id").is_ok());
         assert!(validate_column_name("user_id").is_ok());

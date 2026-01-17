@@ -62,8 +62,8 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
 
         // Validate credentials JSON (if provided)
         let normalized_credentials = if let Some(raw) = statement.credentials.as_ref() {
-            let value: serde_json::Value = serde_json::from_str(raw)
-                .into_invalid_operation("Invalid credentials JSON")?;
+            let value: serde_json::Value =
+                serde_json::from_str(raw).into_invalid_operation("Invalid credentials JSON")?;
 
             if !value.is_object() {
                 return Err(KalamDbError::InvalidOperation(
@@ -71,16 +71,18 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
                 ));
             }
 
-            Some(serde_json::to_string(&value)
-                .into_invalid_operation("Failed to normalize credentials JSON")?)
+            Some(
+                serde_json::to_string(&value)
+                    .into_invalid_operation("Failed to normalize credentials JSON")?,
+            )
         } else {
             None
         };
 
         // Validate config JSON (if provided)
         let normalized_config_json = if let Some(raw) = statement.config_json.as_ref() {
-            let value: serde_json::Value = serde_json::from_str(raw)
-                .into_invalid_operation("Invalid CONFIG JSON")?;
+            let value: serde_json::Value =
+                serde_json::from_str(raw).into_invalid_operation("Invalid CONFIG JSON")?;
 
             if !value.is_object() {
                 return Err(KalamDbError::InvalidOperation(
@@ -88,8 +90,10 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
                 ));
             }
 
-            Some(serde_json::to_string(&value)
-                .into_invalid_operation("Failed to normalize CONFIG JSON")?)
+            Some(
+                serde_json::to_string(&value)
+                    .into_invalid_operation("Failed to normalize CONFIG JSON")?,
+            )
         } else {
             None
         };
@@ -109,10 +113,12 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        // Insert into system.storages
-        storages_provider
-            .insert_storage(storage)
-            .into_kalamdb_error("Failed to create storage")?;
+        // Delegate to unified applier (handles standalone vs cluster internally)
+        self.app_context
+            .applier()
+            .create_storage(storage)
+            .await
+            .map_err(|e| KalamDbError::ExecutionError(format!("CREATE STORAGE failed: {}", e)))?;
 
         Ok(ExecutionResult::Success {
             message: format!("Storage '{}' created successfully", statement.storage_id),

@@ -5,7 +5,9 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::{ExecutionContext, ExecutionResult, ScalarValue, StatementHandler};
+use crate::sql::executor::handlers::{
+    ExecutionContext, ExecutionResult, ScalarValue, StatementHandler,
+};
 use kalamdb_raft::{GroupId, NodeRole, RaftExecutor};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use std::sync::Arc;
@@ -41,16 +43,16 @@ impl StatementHandler for ClusterListHandler {
         let executor = self.app_context.executor();
         let Some(raft_executor) = executor.as_any().downcast_ref::<RaftExecutor>() else {
             return Err(KalamDbError::InvalidOperation(
-                "CLUSTER LIST requires cluster mode (Raft executor not available)".to_string()
+                "CLUSTER LIST requires cluster mode (Raft executor not available)".to_string(),
             ));
         };
 
         let manager = raft_executor.manager();
         let cluster_info = executor.get_cluster_info();
-        
+
         // Build formatted output
         let mut output = String::new();
-        
+
         // Header with cluster info
         output.push_str(&format!(
             "╔══════════════════════════════════════════════════════════════════╗\n\
@@ -65,46 +67,39 @@ impl StatementHandler for ClusterListHandler {
              ║   • Shared Shards: {:<47} ║\n\
              ╠══════════════════════════════════════════════════════════════════╣\n",
             cluster_info.cluster_id,
-            if cluster_info.is_cluster_mode { "Cluster" } else { "Single-Node" },
+            if cluster_info.is_cluster_mode {
+                "Cluster"
+            } else {
+                "Single-Node"
+            },
             cluster_info.current_node_id.as_u64(),
             cluster_info.total_groups,
             cluster_info.user_shards,
             cluster_info.shared_shards,
         ));
-        
+
         // Cluster-wide metrics (if available)
         if let Some(term) = cluster_info.last_log_index {
-            output.push_str(&format!(
-                "║ Raft Term: {:<55} ║\n",
-                cluster_info.current_term
-            ));
-            output.push_str(&format!(
-                "║ Last Log Index: {:<50} ║\n",
-                term
-            ));
+            output.push_str(&format!("║ Raft Term: {:<55} ║\n", cluster_info.current_term));
+            output.push_str(&format!("║ Last Log Index: {:<50} ║\n", term));
             if let Some(applied) = cluster_info.last_applied {
-                output.push_str(&format!(
-                    "║ Last Applied: {:<52} ║\n",
-                    applied
-                ));
+                output.push_str(&format!("║ Last Applied: {:<52} ║\n", applied));
             }
             if let Some(ms) = cluster_info.millis_since_quorum_ack {
-                output.push_str(&format!(
-                    "║ Quorum ACK: {:<54} ║\n",
-                    format!("{}ms ago", ms)
-                ));
+                output.push_str(&format!("║ Quorum ACK: {:<54} ║\n", format!("{}ms ago", ms)));
             }
-            output.push_str("╠══════════════════════════════════════════════════════════════════╣\n");
+            output
+                .push_str("╠══════════════════════════════════════════════════════════════════╣\n");
         }
-        
+
         // Nodes section
         output.push_str("║                         NODES                                    ║\n");
         output.push_str("╠══════════════════════════════════════════════════════════════════╣\n");
-        
+
         for node in &cluster_info.nodes {
             let self_marker = if node.is_self { " (this)" } else { "" };
             let leader_marker = if node.is_leader { " ★" } else { "" };
-            
+
             // Status with color codes (ANSI escape sequences)
             let status_str = format!("{:?}", node.status);
             let role_str = match node.role {
@@ -114,45 +109,27 @@ impl StatementHandler for ClusterListHandler {
                 NodeRole::Learner => "LEARNER",
                 NodeRole::Shutdown => "SHUTDOWN",
             };
-            
+
             output.push_str(&format!(
                 "║ Node {}{}{:<57} ║\n",
                 node.node_id.as_u64(),
                 self_marker,
                 leader_marker
             ));
-            output.push_str(&format!(
-                "║   Role: {:<58} ║\n",
-                role_str
-            ));
-            output.push_str(&format!(
-                "║   Status: {:<56} ║\n",
-                status_str
-            ));
-            output.push_str(&format!(
-                "║   API: {:<59} ║\n",
-                node.api_addr
-            ));
-            output.push_str(&format!(
-                "║   RPC: {:<59} ║\n",
-                node.rpc_addr
-            ));
+            output.push_str(&format!("║   Role: {:<58} ║\n", role_str));
+            output.push_str(&format!("║   Status: {:<56} ║\n", status_str));
+            output.push_str(&format!("║   API: {:<59} ║\n", node.api_addr));
+            output.push_str(&format!("║   RPC: {:<59} ║\n", node.rpc_addr));
             output.push_str(&format!(
                 "║   Groups Leading: {:<48} ║\n",
                 format!("{}/{}", node.groups_leading, node.total_groups)
             ));
-            
+
             if let Some(term) = node.current_term {
-                output.push_str(&format!(
-                    "║   Term: {:<58} ║\n",
-                    term
-                ));
+                output.push_str(&format!("║   Term: {:<58} ║\n", term));
             }
             if let Some(applied) = node.last_applied_log {
-                output.push_str(&format!(
-                    "║   Last Applied: {:<50} ║\n",
-                    applied
-                ));
+                output.push_str(&format!("║   Last Applied: {:<50} ║\n", applied));
             }
             if let Some(lag) = node.replication_lag {
                 output.push_str(&format!(
@@ -161,26 +138,24 @@ impl StatementHandler for ClusterListHandler {
                 ));
             }
             if let Some(pct) = node.catchup_progress_pct {
-                output.push_str(&format!(
-                    "║   Catchup Progress: {:<46} ║\n",
-                    format!("{}%", pct)
-                ));
+                output.push_str(&format!("║   Catchup Progress: {:<46} ║\n", format!("{}%", pct)));
             }
-            
-            output.push_str("║                                                                  ║\n");
+
+            output
+                .push_str("║                                                                  ║\n");
         }
-        
+
         // Group status summary
         output.push_str("╠══════════════════════════════════════════════════════════════════╣\n");
         output.push_str("║                    GROUP STATUS SUMMARY                          ║\n");
         output.push_str("╠══════════════════════════════════════════════════════════════════╣\n");
-        
+
         // Collect group metrics
         let all_groups = manager.all_group_ids();
         let mut leaders = 0;
         let mut followers = 0;
         let mut unknown = 0;
-        
+
         for group_id in &all_groups {
             if manager.is_leader(*group_id) {
                 leaders += 1;
@@ -190,50 +165,67 @@ impl StatementHandler for ClusterListHandler {
                 unknown += 1;
             }
         }
-        
-        output.push_str(&format!(
-            "║ Leading: {:<57} ║\n",
-            leaders
-        ));
-        output.push_str(&format!(
-            "║ Following: {:<55} ║\n",
-            followers
-        ));
+
+        output.push_str(&format!("║ Leading: {:<57} ║\n", leaders));
+        output.push_str(&format!("║ Following: {:<55} ║\n", followers));
         if unknown > 0 {
-            output.push_str(&format!(
-                "║ Unknown/Pending: {:<49} ║\n",
-                unknown
-            ));
+            output.push_str(&format!("║ Unknown/Pending: {:<49} ║\n", unknown));
         }
-        
+
         // Show sample of groups (first 5 of each type)
         output.push_str("╠══════════════════════════════════════════════════════════════════╣\n");
         output.push_str("║ Group │ Type        │ State    │ Leader │ Snapshot │ Applied    ║\n");
         output.push_str("╠══════════════════════════════════════════════════════════════════╣\n");
-        
+
         // Meta group
         if let Some(metrics) = manager.group_metrics(GroupId::Meta) {
             let state = format!("{:?}", metrics.state);
-            let leader = metrics.current_leader.map(|id| id.to_string()).unwrap_or_else(|| "-".to_string());
-            let snapshot = metrics.snapshot.map(|l| l.index.to_string()).unwrap_or_else(|| "-".to_string());
-            let applied = metrics.last_applied.map(|l| l.index.to_string()).unwrap_or_else(|| "-".to_string());
+            let leader = metrics
+                .current_leader
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "-".to_string());
+            let snapshot =
+                metrics.snapshot.map(|l| l.index.to_string()).unwrap_or_else(|| "-".to_string());
+            let applied = metrics
+                .last_applied
+                .map(|l| l.index.to_string())
+                .unwrap_or_else(|| "-".to_string());
             output.push_str(&format!(
                 "║ {:<5} │ {:<11} │ {:<8} │ {:<6} │ {:<8} │ {:<10} ║\n",
-                "Meta", "meta", &state[..state.len().min(8)], leader, snapshot, applied
+                "Meta",
+                "meta",
+                &state[..state.len().min(8)],
+                leader,
+                snapshot,
+                applied
             ));
         }
-        
+
         // Sample user shards (first 3)
         for shard in 0..cluster_info.user_shards.min(3) {
             let group_id = GroupId::DataUserShard(shard);
             if let Some(metrics) = manager.group_metrics(group_id) {
                 let state = format!("{:?}", metrics.state);
-                let leader = metrics.current_leader.map(|id| id.to_string()).unwrap_or_else(|| "-".to_string());
-                let snapshot = metrics.snapshot.map(|l| l.index.to_string()).unwrap_or_else(|| "-".to_string());
-                let applied = metrics.last_applied.map(|l| l.index.to_string()).unwrap_or_else(|| "-".to_string());
+                let leader = metrics
+                    .current_leader
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                let snapshot = metrics
+                    .snapshot
+                    .map(|l| l.index.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                let applied = metrics
+                    .last_applied
+                    .map(|l| l.index.to_string())
+                    .unwrap_or_else(|| "-".to_string());
                 output.push_str(&format!(
                     "║ U{:<4} │ {:<11} │ {:<8} │ {:<6} │ {:<8} │ {:<10} ║\n",
-                    shard, "user_data", &state[..state.len().min(8)], leader, snapshot, applied
+                    shard,
+                    "user_data",
+                    &state[..state.len().min(8)],
+                    leader,
+                    snapshot,
+                    applied
                 ));
             }
         }
@@ -243,24 +235,38 @@ impl StatementHandler for ClusterListHandler {
                 cluster_info.user_shards - 3
             ));
         }
-        
+
         // Sample shared shards (first 2)
         for shard in 0..cluster_info.shared_shards.min(2) {
             let group_id = GroupId::DataSharedShard(shard);
             if let Some(metrics) = manager.group_metrics(group_id) {
                 let state = format!("{:?}", metrics.state);
-                let leader = metrics.current_leader.map(|id| id.to_string()).unwrap_or_else(|| "-".to_string());
-                let snapshot = metrics.snapshot.map(|l| l.index.to_string()).unwrap_or_else(|| "-".to_string());
-                let applied = metrics.last_applied.map(|l| l.index.to_string()).unwrap_or_else(|| "-".to_string());
+                let leader = metrics
+                    .current_leader
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                let snapshot = metrics
+                    .snapshot
+                    .map(|l| l.index.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                let applied = metrics
+                    .last_applied
+                    .map(|l| l.index.to_string())
+                    .unwrap_or_else(|| "-".to_string());
                 output.push_str(&format!(
                     "║ S{:<4} │ {:<11} │ {:<8} │ {:<6} │ {:<8} │ {:<10} ║\n",
-                    shard, "shared_data", &state[..state.len().min(8)], leader, snapshot, applied
+                    shard,
+                    "shared_data",
+                    &state[..state.len().min(8)],
+                    leader,
+                    snapshot,
+                    applied
                 ));
             }
         }
-        
+
         output.push_str("╚══════════════════════════════════════════════════════════════════╝\n");
-        
+
         Ok(ExecutionResult::Success { message: output })
     }
 }

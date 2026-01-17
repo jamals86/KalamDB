@@ -25,40 +25,40 @@ pub const DEFAULT_SHARED_DATA_SHARDS: u32 = 1;
 pub struct RaftManagerConfig {
     /// Cluster identifier
     pub cluster_id: String,
-    
+
     /// This node's ID (must be >= 1)
     pub node_id: NodeId,
-    
+
     /// This node's RPC address for Raft communication
     pub rpc_addr: String,
-    
+
     /// This node's API address for client requests
     pub api_addr: String,
-    
+
     /// Peer nodes in the cluster
     pub peers: Vec<PeerNode>,
-    
+
     /// Number of user data shards (default: 32)
     pub user_shards: u32,
-    
+
     /// Number of shared data shards (default: 1)
     pub shared_shards: u32,
-    
+
     /// Raft heartbeat interval in milliseconds
     pub heartbeat_interval_ms: u64,
-    
+
     /// Raft election timeout range (min, max) in milliseconds
     pub election_timeout_ms: (u64, u64),
-    
+
     /// Snapshot policy (default: "LogsSinceLast(1000)")
     pub snapshot_policy: String,
-    
+
     /// Maximum number of snapshots to keep
     pub max_snapshots_to_keep: u32,
-    
+
     /// Replication timeout for learner catchup during cluster membership changes
     pub replication_timeout_ms: u64,
-    
+
     /// Timeout for waiting for learner catchup during cluster membership changes
     pub replication_timeout: Duration,
 
@@ -105,13 +105,13 @@ impl RaftManagerConfig {
             node_id: NodeId::new(1),
             rpc_addr: "127.0.0.1:0".to_string(), // Port 0 = OS assigns random available port
             api_addr,
-            peers: vec![], // No peers - single node cluster
-            user_shards: 1,  // Single shard - no distribution needed
+            peers: vec![],    // No peers - single node cluster
+            user_shards: 1,   // Single shard - no distribution needed
             shared_shards: 1, // Single shard - no distribution needed
             heartbeat_interval_ms: 250,
             election_timeout_ms: (500, 1000),
             snapshot_policy: "LogsSinceLast(1000)".to_string(),
-            max_snapshots_to_keep: 1,  // Keep only most recent snapshot for single-node
+            max_snapshots_to_keep: 1, // Keep only most recent snapshot for single-node
             replication_timeout_ms: 5000,
             replication_timeout: Duration::from_secs(5),
             reconnect_interval_ms: 3000,
@@ -146,10 +146,10 @@ impl From<kalamdb_configs::ClusterConfig> for RaftManagerConfig {
 pub struct PeerNode {
     /// Peer's node ID
     pub node_id: NodeId,
-    
+
     /// Peer's RPC address for Raft communication
     pub rpc_addr: String,
-    
+
     /// Peer's API address for client requests
     pub api_addr: String,
 }
@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = RaftManagerConfig::default();
-        
+
         assert_eq!(config.node_id, NodeId::new(1));
         assert_eq!(config.user_shards, DEFAULT_USER_DATA_SHARDS);
         assert_eq!(config.shared_shards, DEFAULT_SHARED_DATA_SHARDS);
@@ -185,9 +185,9 @@ mod tests {
             rpc_addr: "127.0.0.1:9101".to_string(),
             api_addr: "127.0.0.1:8081".to_string(),
         };
-        
+
         let peer = PeerNode::from(peer_config);
-        
+
         assert_eq!(peer.node_id, NodeId::new(2));
         assert_eq!(peer.rpc_addr, "127.0.0.1:9101");
         assert_eq!(peer.api_addr, "127.0.0.1:8081");

@@ -53,19 +53,19 @@ impl AlterTableHandler {
 
         let registry = self.app_context.schema_registry();
         let table_def_arc = registry
-                .get_table_if_exists(self.app_context.as_ref(), &table_id)?
+            .get_table_if_exists(self.app_context.as_ref(), &table_id)?
             .ok_or_else(|| {
-            log::warn!(
-                "⚠️  ALTER TABLE failed: Table '{}' not found in namespace '{}'",
-                statement.table_name.as_str(),
-                namespace_id.as_str()
-            );
-            KalamDbError::NotFound(format!(
-                "Table '{}' not found in namespace '{}'",
-                statement.table_name.as_str(),
-                namespace_id.as_str()
-            ))
-        })?;
+                log::warn!(
+                    "⚠️  ALTER TABLE failed: Table '{}' not found in namespace '{}'",
+                    statement.table_name.as_str(),
+                    namespace_id.as_str()
+                );
+                KalamDbError::NotFound(format!(
+                    "Table '{}' not found in namespace '{}'",
+                    statement.table_name.as_str(),
+                    namespace_id.as_str()
+                ))
+            })?;
 
         let mut table_def: TableDefinition = (*table_def_arc).clone();
 
@@ -91,7 +91,8 @@ impl AlterTableHandler {
         }
 
         // Apply operation and get change description + whether anything actually changed
-        let (change_desc, changed) = apply_alter_operation(&mut table_def, &statement.operation, &table_id)?;
+        let (change_desc, changed) =
+            apply_alter_operation(&mut table_def, &statement.operation, &table_id)?;
 
         // Only increment version if actual changes were made
         if changed {
@@ -126,7 +127,8 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         let table_id = TableId::from_strings(namespace_id.as_str(), statement.table_name.as_str());
 
         // Build the altered table definition (validate + apply mutation)
-        let (table_def, change_desc, changed) = self.build_altered_table_definition(&statement, context)?;
+        let (table_def, change_desc, changed) =
+            self.build_altered_table_definition(&statement, context)?;
 
         // Only apply changes if something actually changed
         if changed {
@@ -143,7 +145,10 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                 "ALTER",
                 "TABLE",
                 &format!("{}.{}", namespace_id.as_str(), statement.table_name.as_str()),
-                Some(format!("Operation: {}, New Version: {}", change_desc, table_def.schema_version)),
+                Some(format!(
+                    "Operation: {}, New Version: {}",
+                    change_desc, table_def.schema_version
+                )),
                 None,
             );
             audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
@@ -201,7 +206,7 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         let table_id = TableId::from_strings(namespace_id.as_str(), statement.table_name.as_str());
 
         let registry = self.app_context.schema_registry();
-            if let Ok(Some(def)) = registry.get_table_if_exists(self.app_context.as_ref(), &table_id) {
+        if let Ok(Some(def)) = registry.get_table_if_exists(self.app_context.as_ref(), &table_id) {
             let is_owner = matches!(def.table_type, TableType::User);
 
             if !crate::auth::rbac::can_alter_table(context.user_role, def.table_type, is_owner) {
@@ -242,8 +247,16 @@ fn apply_alter_operation(
                 )));
             }
             // Perform case-insensitive check to prevent duplicates like 'col1' vs 'COL1'
-            if table_def.columns.iter().any(|c| c.column_name.eq_ignore_ascii_case(column_name)) {
-                log::error!("❌ ALTER TABLE failed: Column '{}' already exists in {}", column_name, table_id);
+            if table_def
+                .columns
+                .iter()
+                .any(|c| c.column_name.eq_ignore_ascii_case(column_name))
+            {
+                log::error!(
+                    "❌ ALTER TABLE failed: Column '{}' already exists in {}",
+                    column_name,
+                    table_id
+                );
                 return Err(KalamDbError::InvalidOperation(format!(
                     "Column '{}' already exists",
                     column_name
@@ -268,9 +281,14 @@ fn apply_alter_operation(
                 None,
             ));
             table_def.next_column_id += 1;
-            log::debug!("✓ Added column {} (type: {}, nullable: {})", column_name, data_type, nullable);
+            log::debug!(
+                "✓ Added column {} (type: {}, nullable: {})",
+                column_name,
+                data_type,
+                nullable
+            );
             Ok((format!("ADD COLUMN {} {}", column_name, data_type), true))
-        }
+        },
         ColumnOperation::Drop { column_name } => {
             // Block dropping system columns
             if is_system_column(column_name) {
@@ -285,8 +303,15 @@ fn apply_alter_operation(
                 .iter()
                 .position(|c| c.column_name == *column_name)
                 .ok_or_else(|| {
-                    log::error!("❌ ALTER TABLE failed: Column '{}' does not exist in {}", column_name, table_id);
-                    KalamDbError::InvalidOperation(format!("Column '{}' does not exist", column_name))
+                    log::error!(
+                        "❌ ALTER TABLE failed: Column '{}' does not exist in {}",
+                        column_name,
+                        table_id
+                    );
+                    KalamDbError::InvalidOperation(format!(
+                        "Column '{}' does not exist",
+                        column_name
+                    ))
                 })?;
             table_def.columns.remove(idx);
             for (i, c) in table_def.columns.iter_mut().enumerate() {
@@ -294,7 +319,7 @@ fn apply_alter_operation(
             }
             log::debug!("✓ Dropped column {}", column_name);
             Ok((format!("DROP COLUMN {}", column_name), true))
-        }
+        },
         ColumnOperation::Modify {
             column_name,
             new_data_type,
@@ -313,37 +338,51 @@ fn apply_alter_operation(
                 .iter_mut()
                 .find(|c| c.column_name == *column_name)
                 .ok_or_else(|| {
-                    log::error!("❌ ALTER TABLE failed: Column '{}' does not exist in {}", column_name, table_id);
-                    KalamDbError::InvalidOperation(format!("Column '{}' does not exist", column_name))
+                    log::error!(
+                        "❌ ALTER TABLE failed: Column '{}' does not exist in {}",
+                        column_name,
+                        table_id
+                    );
+                    KalamDbError::InvalidOperation(format!(
+                        "Column '{}' does not exist",
+                        column_name
+                    ))
                 })?;
-            
+
             // Track if anything actually changes
             let new_type = map_string_type(new_data_type)?;
             let type_changed = col.data_type != new_type;
             let nullable_changed = nullable.map_or(false, |n| col.is_nullable != n);
             let changed = type_changed || nullable_changed;
-            
+
             if type_changed {
                 col.data_type = new_type;
             }
             if let Some(n) = nullable {
                 col.is_nullable = *n;
             }
-            
+
             if changed {
                 log::debug!("✓ Modified column {} (new type: {})", column_name, new_data_type);
             } else {
-                log::debug!("⊙ No changes to column {} (already type: {})", column_name, new_data_type);
+                log::debug!(
+                    "⊙ No changes to column {} (already type: {})",
+                    column_name,
+                    new_data_type
+                );
             }
             Ok((format!("MODIFY COLUMN {} {}", column_name, new_data_type), changed))
-        }
+        },
         ColumnOperation::Rename {
             old_column_name,
             new_column_name,
         } => {
             // Block renaming system columns (both renaming FROM or TO a system column name)
             if is_system_column(old_column_name) {
-                log::error!("❌ ALTER TABLE failed: Cannot rename system column '{}'", old_column_name);
+                log::error!(
+                    "❌ ALTER TABLE failed: Cannot rename system column '{}'",
+                    old_column_name
+                );
                 return Err(KalamDbError::InvalidOperation(format!(
                     "Cannot rename column '{}': system column cannot be modified",
                     old_column_name
@@ -357,25 +396,35 @@ fn apply_alter_operation(
                 )));
             }
             if !table_def.columns.iter().any(|c| c.column_name == *old_column_name) {
-                log::error!("❌ ALTER TABLE failed: Column '{}' does not exist in {}", old_column_name, table_id);
+                log::error!(
+                    "❌ ALTER TABLE failed: Column '{}' does not exist in {}",
+                    old_column_name,
+                    table_id
+                );
                 return Err(KalamDbError::InvalidOperation(format!(
                     "Column '{}' does not exist",
                     old_column_name
                 )));
             }
             if table_def.columns.iter().any(|c| c.column_name == *new_column_name) {
-                log::error!("❌ ALTER TABLE failed: Column '{}' already exists in {}", new_column_name, table_id);
+                log::error!(
+                    "❌ ALTER TABLE failed: Column '{}' already exists in {}",
+                    new_column_name,
+                    table_id
+                );
                 return Err(KalamDbError::InvalidOperation(format!(
                     "Column '{}' already exists",
                     new_column_name
                 )));
             }
-            if let Some(col) = table_def.columns.iter_mut().find(|c| c.column_name == *old_column_name) {
+            if let Some(col) =
+                table_def.columns.iter_mut().find(|c| c.column_name == *old_column_name)
+            {
                 col.column_name = new_column_name.clone();
             }
             log::debug!("✓ Renamed column {} to {}", old_column_name, new_column_name);
             Ok((format!("RENAME COLUMN {} TO {}", old_column_name, new_column_name), true))
-        }
+        },
         ColumnOperation::SetAccessLevel { access_level } => {
             if table_def.table_type != TableType::Shared {
                 log::error!("❌ ALTER TABLE failed: ACCESS LEVEL can only be set on SHARED tables");
@@ -383,7 +432,9 @@ fn apply_alter_operation(
                     "ACCESS LEVEL can only be set on SHARED tables".to_string(),
                 ));
             }
-            let changed = if let kalamdb_commons::schemas::TableOptions::Shared(opts) = &mut table_def.table_options {
+            let changed = if let kalamdb_commons::schemas::TableOptions::Shared(opts) =
+                &mut table_def.table_options
+            {
                 let current = opts.access_level;
                 let new_level = Some(*access_level);
                 let changed = current != new_level;
@@ -392,14 +443,14 @@ fn apply_alter_operation(
             } else {
                 false
             };
-            
+
             if changed {
                 log::debug!("✓ Set access level to {:?}", access_level);
             } else {
                 log::debug!("⊙ No change to access level (already {:?})", access_level);
             }
             Ok((format!("SET ACCESS LEVEL {:?}", access_level), changed))
-        }
+        },
     }
 }
 
@@ -421,7 +472,7 @@ fn map_string_type(dt: &str) -> Result<KalamDataType, KalamDbError> {
                 "Unsupported data type '{}' for ALTER TABLE",
                 other
             )))
-        }
+        },
     };
     Ok(t)
 }
@@ -429,10 +480,23 @@ fn map_string_type(dt: &str) -> Result<KalamDataType, KalamDbError> {
 /// Get a summary string for the operation for logging
 fn get_operation_summary(op: &ColumnOperation) -> String {
     match op {
-        ColumnOperation::Add { column_name, data_type, .. } => format!("ADD COLUMN {} {}", column_name, data_type),
+        ColumnOperation::Add {
+            column_name,
+            data_type,
+            ..
+        } => format!("ADD COLUMN {} {}", column_name, data_type),
         ColumnOperation::Drop { column_name } => format!("DROP COLUMN {}", column_name),
-        ColumnOperation::Modify { column_name, new_data_type, .. } => format!("MODIFY COLUMN {} {}", column_name, new_data_type),
-        ColumnOperation::Rename { old_column_name, new_column_name } => format!("RENAME COLUMN {} TO {}", old_column_name, new_column_name),
-        ColumnOperation::SetAccessLevel { access_level } => format!("SET ACCESS LEVEL {:?}", access_level),
+        ColumnOperation::Modify {
+            column_name,
+            new_data_type,
+            ..
+        } => format!("MODIFY COLUMN {} {}", column_name, new_data_type),
+        ColumnOperation::Rename {
+            old_column_name,
+            new_column_name,
+        } => format!("RENAME COLUMN {} TO {}", old_column_name, new_column_name),
+        ColumnOperation::SetAccessLevel { access_level } => {
+            format!("SET ACCESS LEVEL {:?}", access_level)
+        },
     }
 }

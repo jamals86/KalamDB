@@ -82,10 +82,7 @@ impl StoragesTableProvider {
         &self,
         storage_id: &StorageId,
     ) -> Result<Option<Storage>, SystemError> {
-        self.store
-            .get_async(storage_id)
-            .await
-            .into_system_error("get_async error")
+        self.store.get_async(storage_id).await.into_system_error("get_async error")
     }
 
     /// Alias for get_storage_by_id (for backward compatibility)
@@ -191,10 +188,7 @@ impl StoragesTableProvider {
             } else if storage_b.storage_id.is_local() {
                 std::cmp::Ordering::Greater
             } else {
-                storage_a
-                    .storage_id
-                    .as_str()
-                    .cmp(storage_b.storage_id.as_str())
+                storage_a.storage_id.as_str().cmp(storage_b.storage_id.as_str())
             }
         });
 
@@ -239,7 +233,7 @@ impl StoragesTableProvider {
             .add_string_column_owned(user_templates)
             .add_timestamp_micros_column(created_ats)
             .add_timestamp_micros_column(updated_ats);
-        
+
         let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
 
         Ok(batch)
@@ -348,10 +342,7 @@ mod tests {
         // Verify
         let storage_id = StorageId::local();
         let retrieved = provider.get_storage(&storage_id).unwrap().unwrap();
-        assert_eq!(
-            retrieved.description,
-            Some("Updated description".to_string())
-        );
+        assert_eq!(retrieved.description, Some("Updated description".to_string()));
     }
 
     #[test]

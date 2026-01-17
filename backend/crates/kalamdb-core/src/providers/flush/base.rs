@@ -118,8 +118,8 @@ impl FlushDedupStats {
     /// Calculate deduplication ratio as percentage
     pub fn dedup_ratio(&self) -> f64 {
         if self.rows_before_dedup > 0 {
-            (self.rows_before_dedup - self.rows_after_dedup) as f64 
-                / self.rows_before_dedup as f64 * 100.0
+            (self.rows_before_dedup - self.rows_after_dedup) as f64 / self.rows_before_dedup as f64
+                * 100.0
         } else {
             0.0
         }
@@ -130,7 +130,8 @@ impl FlushDedupStats {
     pub fn log_summary(&self, table_ref: &str) {
         log::debug!(
             "📊 [FLUSH DEDUP] Scanned {} total rows from hot storage (table={})",
-            self.rows_before_dedup, table_ref
+            self.rows_before_dedup,
+            table_ref
         );
         log::debug!(
             "📊 [FLUSH DEDUP] Version resolution complete: {} rows → {} unique (dedup: {:.1}%, deleted: {})",
@@ -138,7 +139,8 @@ impl FlushDedupStats {
         );
         log::debug!(
             "📊 [FLUSH DEDUP] Final: {} rows to flush ({} tombstones filtered)",
-            self.rows_after_dedup - self.tombstones_filtered, self.tombstones_filtered
+            self.rows_after_dedup - self.tombstones_filtered,
+            self.tombstones_filtered
         );
     }
 }

@@ -84,6 +84,46 @@ impl JobType {
             _ => None,
         }
     }
+
+    /// Whether this job has leader-only actions (external storage, shared metadata).
+    ///
+    /// Leader actions include:
+    /// - Writing Parquet files to external storage
+    /// - Updating shared manifest metadata
+    /// - Deleting files from external storage
+    /// - Global backup/restore operations
+    ///
+    /// These actions must only be performed by the leader to maintain consistency.
+    pub fn has_leader_actions(&self) -> bool {
+        matches!(
+            self,
+            JobType::Flush |       // Parquet upload + manifest update
+            JobType::Cleanup |     // Delete external Parquet + metadata
+            JobType::Backup |      // External storage upload
+            JobType::Restore |     // External storage download
+            JobType::JobCleanup |  // Raft-replicated job table cleanup
+            JobType::UserCleanup   // Cascade via Raft
+        )
+    }
+
+    /// Whether this job has local work that all nodes should perform.
+    ///
+    /// Local work includes:
+    /// - RocksDB compaction (each node owns its local files)
+    /// - Local cache eviction (node-local only)
+    /// - Deleting flushed rows from local RocksDB
+    ///
+    /// This work is safe to run on all nodes independently.
+    pub fn has_local_work(&self) -> bool {
+        matches!(
+            self,
+            JobType::Flush |            // Delete flushed rows from RocksDB + compact
+            JobType::Compact |          // RocksDB compaction (local files)
+            JobType::ManifestEviction | // Local cache eviction
+            JobType::StreamEviction |   // Local stream log cleanup
+            JobType::Retention          // Local soft-delete cleanup
+        )
+    }
 }
 
 impl FromStr for JobType {

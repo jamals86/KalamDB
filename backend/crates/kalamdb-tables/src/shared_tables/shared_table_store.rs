@@ -136,10 +136,7 @@ pub fn new_indexed_shared_table_store(
     ensure_partition(&backend, &name);
 
     // Create PK index
-    let pk_index = create_shared_table_pk_index(
-        table_id,
-        pk_field_name,
-    );
+    let pk_index = create_shared_table_pk_index(table_id, pk_field_name);
 
     // Create index partition
     let index_partition_name = format!("shared_{}_pk_idx", table_id);
@@ -159,10 +156,7 @@ mod tests {
     fn create_test_store() -> SharedTableStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
         let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
-        new_shared_table_store(
-            backend,
-            &table_id,
-        )
+        new_shared_table_store(backend, &table_id)
     }
 
     fn create_test_row(seq: i64, name: &str) -> SharedTableRow {

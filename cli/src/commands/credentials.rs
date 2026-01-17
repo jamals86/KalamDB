@@ -29,11 +29,9 @@ pub fn handle_credentials(cli: &Cli, credential_store: &mut FileCredentialStore)
     }
 
     if cli.show_credentials {
-        match credential_store
-            .get_credentials(&cli.instance)
-            .map_err(|e| {
-                CLIError::ConfigurationError(format!("Failed to get credentials: {}", e))
-            })? {
+        match credential_store.get_credentials(&cli.instance).map_err(|e| {
+            CLIError::ConfigurationError(format!("Failed to get credentials: {}", e))
+        })? {
             Some(creds) => {
                 println!("Instance: {}", creds.instance);
                 if let Some(ref user) = creds.username {
@@ -47,20 +45,18 @@ pub fn handle_credentials(cli: &Cli, credential_store: &mut FileCredentialStore)
                 if let Some(ref url) = creds.server_url {
                     println!("Server URL: {}", url);
                 }
-            }
+            },
             None => {
                 println!("No credentials stored for instance '{}'", cli.instance);
-            }
+            },
         }
         return Ok(true);
     }
 
     if cli.delete_credentials {
-        credential_store
-            .delete_credentials(&cli.instance)
-            .map_err(|e| {
-                CLIError::ConfigurationError(format!("Failed to delete credentials: {}", e))
-            })?;
+        credential_store.delete_credentials(&cli.instance).map_err(|e| {
+            CLIError::ConfigurationError(format!("Failed to delete credentials: {}", e))
+        })?;
         println!("Deleted credentials for instance '{}'", cli.instance);
         return Ok(true);
     }
@@ -113,9 +109,10 @@ pub async fn login_and_store_credentials(
         .build()
         .map_err(|e| CLIError::ConfigurationError(format!("Failed to create client: {}", e)))?;
 
-    let login_response = client.login(&username, &password).await.map_err(|e| {
-        CLIError::ConfigurationError(format!("Login failed: {}", e))
-    })?;
+    let login_response = client
+        .login(&username, &password)
+        .await
+        .map_err(|e| CLIError::ConfigurationError(format!("Login failed: {}", e)))?;
 
     // Store the JWT token
     let creds = Credentials::with_details(
@@ -126,9 +123,9 @@ pub async fn login_and_store_credentials(
         Some(server_url),
     );
 
-    credential_store.set_credentials(&creds).map_err(|e| {
-        CLIError::ConfigurationError(format!("Failed to save credentials: {}", e))
-    })?;
+    credential_store
+        .set_credentials(&creds)
+        .map_err(|e| CLIError::ConfigurationError(format!("Failed to save credentials: {}", e)))?;
 
     println!("Successfully logged in and saved credentials for instance '{}'", cli.instance);
     println!("Token expires: {}", login_response.expires_at);

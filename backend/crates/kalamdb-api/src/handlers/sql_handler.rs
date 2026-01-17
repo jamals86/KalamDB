@@ -4,7 +4,6 @@
 //! Authentication is handled automatically by the `AuthSession` extractor.
 
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
-use reqwest::Client;
 use kalamdb_auth::AuthSession;
 use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
 use kalamdb_commons::schemas::SchemaField;
@@ -14,6 +13,7 @@ use kalamdb_core::providers::arrow_json_conversion::{
 use kalamdb_core::sql::executor::models::ExecutionContext;
 use kalamdb_core::sql::executor::{ExecutorMetadataAlias, ScalarValue, SqlExecutor};
 use kalamdb_core::sql::ExecutionResult;
+use reqwest::Client;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -106,11 +106,11 @@ pub async fn execute_sql_v1(
                             &format!("Parameter ${} invalid: {}", idx + 1, err),
                             took,
                         ));
-                    }
+                    },
                 }
             }
             scalar_params
-        }
+        },
         None => Vec::new(),
     };
 
@@ -124,7 +124,7 @@ pub async fn execute_sql_v1(
                 &format!("Failed to parse SQL batch: {}", err),
                 took,
             ));
-        }
+        },
     };
 
     if statements.is_empty() {
@@ -216,7 +216,7 @@ pub async fn execute_sql_v1(
                 }
 
                 results.push(result);
-            }
+            },
             Err(err) => {
                 let took = start_time.elapsed().as_secs_f64() * 1000.0;
                 return HttpResponse::BadRequest().json(SqlResponse::error_with_details(
@@ -225,7 +225,7 @@ pub async fn execute_sql_v1(
                     sql,
                     took,
                 ));
-            }
+            },
         }
     }
 
@@ -294,7 +294,7 @@ async fn forward_sql_if_follower(
         Err(_) => {
             // If we can't parse, forward to leader to let it handle the error
             return forward_to_leader(http_req, req, &leader.api_addr).await;
-        }
+        },
     };
 
     // Classify each statement to check if any are writes
@@ -347,25 +347,19 @@ async fn forward_to_leader(
         Ok(resp) => resp,
         Err(err) => {
             log::warn!("Failed to forward SQL request to leader {}: {}", leader_url, err);
-            return Some(
-                HttpResponse::ServiceUnavailable().json(SqlResponse::error(
-                    "CLUSTER_FORWARD_FAILED",
-                    "Failed to forward request to cluster leader",
-                    0.0,
-                )),
-            );
-        }
+            return Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
+                "CLUSTER_FORWARD_FAILED",
+                "Failed to forward request to cluster leader",
+                0.0,
+            )));
+        },
     };
 
     let status = actix_web::http::StatusCode::from_u16(response.status().as_u16())
         .unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY);
     let body = response.bytes().await.unwrap_or_default();
 
-    Some(
-        HttpResponse::build(status)
-            .content_type("application/json")
-            .body(body),
-    )
+    Some(HttpResponse::build(status).content_type("application/json").body(body))
 }
 
 /// Execute a single SQL statement
@@ -380,7 +374,7 @@ async fn execute_single_statement(
     namespace_id: Option<String>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     use kalamdb_commons::NamespaceId;
-    
+
     let base_session = app_context.base_session_context();
     let mut exec_ctx = ExecutionContext::new(
         session.user.user_id.clone(),
@@ -400,15 +394,12 @@ async fn execute_single_statement(
         exec_ctx = exec_ctx.with_ip(ip.clone());
     }
 
-    match sql_executor
-        .execute_with_metadata(sql, &exec_ctx, metadata, params)
-        .await
-    {
+    match sql_executor.execute_with_metadata(sql, &exec_ctx, metadata, params).await {
         Ok(exec_result) => match exec_result {
             ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
-            ExecutionResult::Rows { batches, schema, .. } => {
-                record_batch_to_query_result(batches, schema, Some(session.user.role))
-            }
+            ExecutionResult::Rows {
+                batches, schema, ..
+            } => record_batch_to_query_result(batches, schema, Some(session.user.role)),
             ExecutionResult::Inserted { rows_affected } => Ok(QueryResult::with_affected_rows(
                 rows_affected,
                 Some(format!("Inserted {} row(s)", rows_affected)),
@@ -426,11 +417,7 @@ async fn execute_single_statement(
                 bytes_written,
             } => Ok(QueryResult::with_affected_rows(
                 tables.len(),
-                Some(format!(
-                    "Flushed {} table(s), {} bytes written",
-                    tables.len(),
-                    bytes_written
-                )),
+                Some(format!("Flushed {} table(s), {} bytes written", tables.len(), bytes_written)),
             )),
             ExecutionResult::Subscription {
                 subscription_id,
@@ -447,17 +434,17 @@ async fn execute_single_statement(
                     "message": "WebSocket subscription created. Connect to ws_url to receive updates."
                 });
                 Ok(QueryResult::subscription(sub_data))
-            }
-            ExecutionResult::JobKilled { job_id, status } => Ok(QueryResult::with_message(
-                format!("Job {} killed: {}", job_id, status),
-            )),
+            },
+            ExecutionResult::JobKilled { job_id, status } => {
+                Ok(QueryResult::with_message(format!("Job {} killed: {}", job_id, status)))
+            },
         },
         Err(e) => Err(Box::new(e)),
     }
 }
 
 /// Convert Arrow RecordBatches to QueryResult
-/// 
+///
 /// Uses the unified record_batch_to_json_arrays function.
 /// Builds schema with KalamDataType from Arrow schema using FromArrowType trait.
 /// Returns rows as arrays of values ordered by schema index.
@@ -474,9 +461,7 @@ fn record_batch_to_query_result(
         s
     } else {
         // No batches and no schema - truly empty result
-        return Ok(QueryResult::with_message(
-            "Query executed successfully".to_string(),
-        ));
+        return Ok(QueryResult::with_message("Query executed successfully".to_string()));
     };
 
     // Build SchemaField with KalamDataType from Arrow schema
@@ -493,7 +478,7 @@ fn record_batch_to_query_result(
                 .and_then(|s| serde_json::from_str::<KalamDataType>(s).ok())
                 .or_else(|| KalamDataType::from_arrow_type(field.data_type()).ok())
                 .unwrap_or(KalamDataType::Text); // Fallback to Text for unsupported types
-            
+
             SchemaField::new(field.name().clone(), kalam_type, index)
         })
         .collect();
@@ -545,5 +530,8 @@ fn mask_sensitive_column_array(
 /// SECURITY: Uses role-based check, not user ID string matching.
 /// Only DBA and System roles are considered admins.
 fn is_admin_role(role: Option<kalamdb_commons::models::Role>) -> bool {
-    matches!(role, Some(kalamdb_commons::models::Role::Dba) | Some(kalamdb_commons::models::Role::System))
+    matches!(
+        role,
+        Some(kalamdb_commons::models::Role::Dba) | Some(kalamdb_commons::models::Role::System)
+    )
 }

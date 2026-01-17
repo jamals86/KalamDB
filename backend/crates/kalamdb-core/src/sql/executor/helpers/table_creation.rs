@@ -33,11 +33,7 @@ pub fn create_table(
     user_id: &UserId,
     user_role: Role,
 ) -> Result<String, KalamDbError> {
-    let table_id_str = format!(
-        "{}.{}",
-        stmt.namespace_id.as_str(),
-        stmt.table_name.as_str()
-    );
+    let table_id_str = format!("{}.{}", stmt.namespace_id.as_str(), stmt.table_name.as_str());
     let table_type = stmt.table_type;
     let user_id_str = user_id.as_str().to_string();
 
@@ -70,7 +66,7 @@ pub fn create_table(
             Err(KalamDbError::InvalidOperation(
                 "Cannot create SYSTEM tables via SQL".to_string(),
             ))
-        }
+        },
     };
 
     // Log success here; detailed error logging is handled in type-specific helpers
@@ -102,15 +98,11 @@ pub fn build_table_definition(
     user_role: Role,
 ) -> Result<kalamdb_commons::models::schemas::TableDefinition, KalamDbError> {
     use super::tables::validate_table_name;
-    use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableOptions};
     use kalamdb_commons::datatypes::{FromArrowType, KalamDataType};
+    use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableOptions};
     use kalamdb_commons::schemas::ColumnDefault;
 
-    let table_id_str = format!(
-        "{}.{}",
-        stmt.namespace_id.as_str(),
-        stmt.table_name.as_str()
-    );
+    let table_id_str = format!("{}.{}", stmt.namespace_id.as_str(), stmt.table_name.as_str());
 
     log::debug!(
         "🔨 BUILD TABLE DEFINITION: {} (type: {:?}, user: {}, role: {:?})",
@@ -176,24 +168,21 @@ pub fn build_table_definition(
                     stmt.table_type
                 )));
             }
-        }
+        },
         TableType::Stream => {
             // TTL validation
             if stmt.ttl_seconds.is_none() {
-                log::error!(
-                    "❌ CREATE TABLE STREAM {}: TTL clause is required",
-                    table_id_str
-                );
+                log::error!("❌ CREATE TABLE STREAM {}: TTL clause is required", table_id_str);
                 return Err(KalamDbError::InvalidOperation(
                     "STREAM tables require TTL clause (e.g., TTL 3600)".to_string(),
                 ));
             }
-        }
+        },
         TableType::System => {
             return Err(KalamDbError::InvalidOperation(
                 "Cannot create SYSTEM tables via SQL".to_string(),
             ));
-        }
+        },
     }
 
     // Check if table already exists
@@ -205,17 +194,11 @@ pub fn build_table_definition(
 
     if existing_def.is_some() {
         if stmt.if_not_exists {
-            log::info!(
-                "ℹ️  TABLE {} already exists (IF NOT EXISTS)",
-                table_id_str
-            );
+            log::info!("ℹ️  TABLE {} already exists (IF NOT EXISTS)", table_id_str);
             // Return the existing definition
             return Ok((*existing_def.unwrap()).clone());
         } else {
-            log::warn!(
-                "❌ CREATE TABLE failed: {} already exists",
-                table_id_str
-            );
+            log::warn!("❌ CREATE TABLE failed: {} already exists", table_id_str);
             return Err(KalamDbError::AlreadyExists(format!(
                 "Table {} already exists",
                 table_id_str
@@ -227,7 +210,8 @@ pub fn build_table_definition(
     let (storage_id, _storage_type) = resolve_storage_info(&app_context, stmt.storage_id.as_ref())?;
 
     // Build columns from Arrow schema
-    let columns: Vec<ColumnDefinition> = stmt.schema
+    let columns: Vec<ColumnDefinition> = stmt
+        .schema
         .fields()
         .iter()
         .enumerate()
@@ -243,17 +227,11 @@ pub fn build_table_definition(
             let kalam_type =
                 KalamDataType::from_arrow_type(field.data_type()).unwrap_or(KalamDataType::Text);
 
-            let is_pk = stmt
-                .primary_key_column
-                .as_ref()
-                .map(|pk| pk == field.name())
-                .unwrap_or(false);
+            let is_pk =
+                stmt.primary_key_column.as_ref().map(|pk| pk == field.name()).unwrap_or(false);
 
-            let default_val = stmt
-                .column_defaults
-                .get(field.name())
-                .cloned()
-                .unwrap_or(ColumnDefault::None);
+            let default_val =
+                stmt.column_defaults.get(field.name()).cloned().unwrap_or(ColumnDefault::None);
 
             Ok(ColumnDefinition::new(
                 (idx + 1) as u64,
@@ -294,7 +272,7 @@ pub fn build_table_definition(
             opts.storage_id = storage_id.clone();
             opts.use_user_storage = stmt.use_user_storage;
             opts.flush_policy = stmt.flush_policy.clone();
-        }
+        },
         (TableOptions::Shared(opts), TableType::Shared) => {
             opts.storage_id = storage_id.clone();
             // Only override access_level if explicitly specified in SQL; otherwise keep the default (Private)
@@ -302,13 +280,13 @@ pub fn build_table_definition(
                 opts.access_level = Some(access);
             }
             opts.flush_policy = stmt.flush_policy.clone();
-        }
+        },
         (TableOptions::Stream(opts), TableType::Stream) => {
             if let Some(ttl) = stmt.ttl_seconds {
                 opts.ttl_seconds = ttl;
             }
-        }
-        _ => {}
+        },
+        _ => {},
     }
 
     // Inject system columns (_seq, _deleted)
@@ -353,8 +331,8 @@ fn persist_table_and_prime_cache(
     table_type: TableType,
     storage_id: &StorageId,
 ) -> Result<std::sync::Arc<kalamdb_commons::models::schemas::TableDefinition>, KalamDbError> {
-    use crate::schema_registry::CachedTableData;
     use super::tables::save_table_definition;
+    use crate::schema_registry::CachedTableData;
 
     let schema_registry = app_context.schema_registry();
 
@@ -397,7 +375,7 @@ fn persist_table_and_prime_cache(
         template.clone(),
     );
     schema_registry.insert(table_id.clone(), std::sync::Arc::new(data));
-    
+
     log::debug!(
         "Primed cache for {:?} table {} with template: {}",
         table_type,
@@ -491,7 +469,8 @@ pub fn create_user_table(
                 );
 
                 // Use cached Arrow schema (memoized in CachedTableData) instead of to_arrow_schema()
-                let arrow_schema = schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
+                let arrow_schema =
+                    schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
                 register_user_table_provider(&app_context, &table_id, arrow_schema)?;
             }
 
@@ -544,7 +523,8 @@ pub fn create_user_table(
 
     // Register UserTableProvider for INSERT/UPDATE/DELETE/SELECT operations
     // Use cached Arrow schema from SchemaRegistry (memoized in CachedTableData)
-    let provider_arrow_schema = schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
+    let provider_arrow_schema =
+        schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
     register_user_table_provider(&app_context, &table_id, provider_arrow_schema)?;
 
     // Log detailed success with table options
@@ -650,7 +630,8 @@ pub fn create_shared_table(
                 );
 
                 // Use cached Arrow schema (memoized in CachedTableData) instead of to_arrow_schema()
-                let arrow_schema = schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
+                let arrow_schema =
+                    schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
                 register_shared_table_provider(&app_context, &table_id, arrow_schema)?;
             }
 
@@ -704,7 +685,8 @@ pub fn create_shared_table(
     )?;
 
     // Register SharedTableProvider for CRUD/query access
-    let provider_arrow_schema = schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
+    let provider_arrow_schema =
+        schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
     register_shared_table_provider(&app_context, &table_id, provider_arrow_schema)?;
 
     // Log detailed success with table options
@@ -730,22 +712,12 @@ fn resolve_storage_info(
     requested: Option<&StorageId>,
 ) -> Result<(StorageId, StorageType), KalamDbError> {
     let storages_provider = app_context.system_tables().storages();
-    let storage_id = requested
-        .cloned()
-        .unwrap_or_else(|| StorageId::from("local"));
+    let storage_id = requested.cloned().unwrap_or_else(|| StorageId::from("local"));
 
-    let storage = storages_provider
-        .get_storage_by_id(&storage_id)?
-        .ok_or_else(|| {
-            log::error!(
-                "❌ CREATE TABLE failed: Storage '{}' does not exist",
-                storage_id.as_str()
-            );
-            KalamDbError::InvalidOperation(format!(
-                "Storage '{}' does not exist",
-                storage_id.as_str()
-            ))
-        })?;
+    let storage = storages_provider.get_storage_by_id(&storage_id)?.ok_or_else(|| {
+        log::error!("❌ CREATE TABLE failed: Storage '{}' does not exist", storage_id.as_str());
+        KalamDbError::InvalidOperation(format!("Storage '{}' does not exist", storage_id.as_str()))
+    })?;
 
     let storage_type = storage.storage_type;
     Ok((storage_id, storage_type))
@@ -803,7 +775,8 @@ pub fn create_stream_table(
                 );
 
                 // Use cached Arrow schema (memoized in CachedTableData) instead of to_arrow_schema()
-                let arrow_schema = schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
+                let arrow_schema =
+                    schema_registry.get_arrow_schema(app_context.as_ref(), &table_id)?;
 
                 // Extract TTL from table options if available, otherwise use default
                 let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(opts) =
@@ -814,12 +787,7 @@ pub fn create_stream_table(
                     stmt.ttl_seconds
                 };
 
-                register_stream_table_provider(
-                    &app_context,
-                    &table_id,
-                    arrow_schema,
-                    ttl_seconds,
-                )?;
+                register_stream_table_provider(&app_context, &table_id, arrow_schema, ttl_seconds)?;
             }
 
             log::info!(

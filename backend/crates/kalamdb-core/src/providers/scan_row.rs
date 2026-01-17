@@ -17,10 +17,8 @@ pub fn inject_system_columns(
     deleted_value: bool,
 ) {
     if schema.field_with_name(SystemColumnNames::SEQ).is_ok() {
-        row.values.insert(
-            SystemColumnNames::SEQ.to_string(),
-            ScalarValue::Int64(Some(seq_value)),
-        );
+        row.values
+            .insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq_value)));
     }
     if schema.field_with_name(SystemColumnNames::DELETED).is_ok() {
         row.values.insert(
@@ -114,12 +112,7 @@ where
 
         enrich_row(&mut materialized, &row);
 
-        inject_system_columns(
-            schema,
-            &mut materialized,
-            row.seq_value(),
-            row.deleted_flag(),
-        );
+        inject_system_columns(schema, &mut materialized, row.seq_value(), row.deleted_flag());
         rows.push(materialized);
     }
 

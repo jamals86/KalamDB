@@ -63,12 +63,7 @@ impl StreamEvictionScheduler {
 
             // Create eviction job
             match jobs_manager
-                .create_job_typed(
-                    JobType::StreamEviction,
-                    params,
-                    Some(idempotency_key),
-                    None,
-                )
+                .create_job_typed(JobType::StreamEviction, params, Some(idempotency_key), None)
                 .await
             {
                 Ok(job_id) => {
@@ -79,7 +74,7 @@ impl StreamEvictionScheduler {
                         table_id,
                         ttl_seconds
                     );
-                }
+                },
                 Err(e) => {
                     let err_msg = e.to_string();
                     // Idempotency errors are expected (job already exists for this hour)
@@ -95,13 +90,9 @@ impl StreamEvictionScheduler {
                             table_id
                         );
                     } else {
-                        log::warn!(
-                            "Failed to create stream eviction job for {}: {}",
-                            table_id,
-                            e
-                        );
+                        log::warn!("Failed to create stream eviction job for {}: {}", table_id, e);
                     }
-                }
+                },
             }
         }
 

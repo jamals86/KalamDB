@@ -104,10 +104,10 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         use crate::sql::executor::helpers::guards::block_anonymous_write;
-        
+
         // T050: Block anonymous users from DDL operations
         block_anonymous_write(context, "CREATE TABLE")?;
-        
+
         // Authorization check is handled inside table_creation helpers
         // (they call can_create_table for each table type)
         // This allows unified error messages
@@ -145,11 +145,7 @@ mod tests {
         let storage_id = kalamdb_commons::models::StorageId::from("local");
 
         // Check if "local" storage exists, create if not
-        if storages_provider
-            .get_storage_by_id(&storage_id)
-            .unwrap()
-            .is_none()
-        {
+        if storages_provider.get_storage_by_id(&storage_id).unwrap().is_none() {
             use kalamdb_sql::Storage;
             let storage = Storage {
                 storage_id: storage_id.clone(),
@@ -206,18 +202,12 @@ mod tests {
         // User role CANNOT create tables (DML only)
         let user_ctx = create_test_context(Role::User);
         let result = handler.check_authorization(&stmt, &user_ctx).await;
-        assert!(
-            result.is_ok(),
-            "User role should be able to create USER tables"
-        );
+        assert!(result.is_ok(), "User role should be able to create USER tables");
 
         // User role CANNOT create SHARED tables
         let stmt_shared = create_test_statement(TableType::Shared);
         let result = handler.check_authorization(&stmt_shared, &user_ctx).await;
-        assert!(
-            result.is_err(),
-            "User role should NOT be able to create SHARED tables"
-        );
+        assert!(result.is_err(), "User role should NOT be able to create SHARED tables");
 
         // Dba role CAN create USER tables
         let dba_ctx = create_test_context(Role::Dba);
@@ -260,11 +250,7 @@ mod tests {
         ensure_default_storage();
         let namespaces_provider = app_ctx.system_tables().namespaces();
         let namespace_id = NamespaceId::new("default");
-        if namespaces_provider
-            .get_namespace(&namespace_id)
-            .unwrap()
-            .is_none()
-        {
+        if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
             let namespace = kalamdb_commons::system::Namespace {
                 namespace_id: namespace_id.clone(),
                 name: "default".to_string(),
@@ -298,11 +284,7 @@ mod tests {
         ensure_default_storage();
         let namespaces_provider = app_ctx.system_tables().namespaces();
         let namespace_id = NamespaceId::new("default");
-        if namespaces_provider
-            .get_namespace(&namespace_id)
-            .unwrap()
-            .is_none()
-        {
+        if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
             let namespace = kalamdb_commons::system::Namespace {
                 namespace_id: namespace_id.clone(),
                 name: "default".to_string(),

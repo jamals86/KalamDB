@@ -160,10 +160,7 @@ fn test_cli_json_output_format() {
         .arg(root_password())
         .arg("--json")
         .arg("--command")
-        .arg(format!(
-            "SELECT * FROM {} WHERE content = 'JSON Test'",
-            full_table_name
-        ));
+        .arg(format!("SELECT * FROM {} WHERE content = 'JSON Test'", full_table_name));
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -217,10 +214,7 @@ fn test_cli_csv_output_format() {
         .arg(root_password())
         .arg("--csv")
         .arg("--command")
-        .arg(format!(
-            "SELECT content FROM {} WHERE content LIKE 'CSV%'",
-            full_table_name
-        ));
+        .arg(format!("SELECT content FROM {} WHERE content LIKE 'CSV%'", full_table_name));
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -259,10 +253,8 @@ fn test_cli_multiline_query() {
     ));
 
     // Multi-line query with newlines
-    let multi_line_query = format!(
-        "SELECT \n  id, \n  content \nFROM \n  {} \nLIMIT 5",
-        full_table_name
-    );
+    let multi_line_query =
+        format!("SELECT \n  id, \n  content \nFROM \n  {} \nLIMIT 5", full_table_name);
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")
@@ -305,10 +297,7 @@ fn test_cli_query_with_comments() {
 
     let output = cmd.output().unwrap();
 
-    assert!(
-        output.status.success(),
-        "Should handle queries successfully"
-    );
+    assert!(output.status.success(), "Should handle queries successfully");
 }
 
 /// T066: Test empty query handling

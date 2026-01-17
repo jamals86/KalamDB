@@ -9,8 +9,8 @@ use kalamdb_core::sql::executor::models::ExecutionContext;
 use kalamdb_core::sql::executor::models::ExecutionResult;
 use kalamdb_core::sql::executor::SqlExecutor;
 mod test_helpers;
-use test_helpers::create_test_session;
 use std::sync::Arc;
+use test_helpers::create_test_session;
 
 fn init_app_context() -> Arc<AppContext> {
     // Use test helper to initialize AppContext
@@ -34,7 +34,7 @@ async fn test_typed_handler_create_namespace() {
         ExecutionResult::Success { message } => {
             assert!(message.contains("integration_test_ns"));
             assert!(message.contains("created successfully"));
-        }
+        },
         _ => panic!("Expected Success result"),
     }
 }
@@ -43,20 +43,14 @@ async fn test_typed_handler_create_namespace() {
 async fn test_typed_handler_authorization() {
     let app_ctx = init_app_context();
     let executor = SqlExecutor::new(app_ctx, false);
-    let user_ctx = ExecutionContext::new(
-        UserId::from("regular_user"),
-        Role::User,
-        create_test_session(),
-    );
+    let user_ctx =
+        ExecutionContext::new(UserId::from("regular_user"), Role::User, create_test_session());
 
     // Regular users cannot create namespaces
     let sql = "CREATE NAMESPACE unauthorized_ns";
     let result = executor.execute(sql, &user_ctx, vec![]).await;
 
-    assert!(
-        result.is_err(),
-        "Regular users should not create namespaces"
-    );
+    assert!(result.is_err(), "Regular users should not create namespaces");
 }
 
 #[tokio::test]

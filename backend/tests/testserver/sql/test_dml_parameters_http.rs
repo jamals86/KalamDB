@@ -5,26 +5,27 @@
 //! - Parameter validation (max 50 params, 512KB each)
 //! - Params not allowed with multi-statement batches
 
-
+use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::UserName;
 use serde_json::json;
-use super::test_support::http_server::HttpTestServer;
 use tokio::time::{sleep, Duration, Instant};
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
     let password = "UserPass123!";
     let resp = server
-        .execute_sql(&format!(
-            "CREATE USER '{}' WITH PASSWORD '{}' ROLE 'dba'",
-            username, password
-        ))
+        .execute_sql(&format!("CREATE USER '{}' WITH PASSWORD '{}' ROLE 'dba'", username, password))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE USER failed: {:?}", resp.error);
     Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
 }
 
-async fn count_rows(server: &HttpTestServer, auth: &str, ns: &str, table: &str) -> anyhow::Result<i64> {
+async fn count_rows(
+    server: &HttpTestServer,
+    auth: &str,
+    ns: &str,
+    table: &str,
+) -> anyhow::Result<i64> {
     let resp = server
         .execute_sql_with_auth(&format!("SELECT COUNT(*) AS cnt FROM {}.{}", ns, table), auth)
         .await?;

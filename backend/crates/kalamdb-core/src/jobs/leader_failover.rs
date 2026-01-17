@@ -94,10 +94,7 @@ impl LeaderFailoverHandler {
 
         // Find all running jobs
         let running_jobs = self.find_running_jobs().await?;
-        log::debug!(
-            "[FailoverHandler] Found {} running jobs to check",
-            running_jobs.len()
-        );
+        log::debug!("[FailoverHandler] Found {} running jobs to check", running_jobs.len());
 
         for job in running_jobs {
             let action = self.determine_recovery_action(&job);
@@ -111,13 +108,17 @@ impl LeaderFailoverHandler {
             match action {
                 JobRecoveryAction::Requeue => {
                     if let Err(e) = self.requeue_job(&job).await {
-                        log::error!("[FailoverHandler] Failed to requeue job {}: {}", job.job_id, e);
+                        log::error!(
+                            "[FailoverHandler] Failed to requeue job {}: {}",
+                            job.job_id,
+                            e
+                        );
                         report.failed.push((job.job_id.clone(), e.to_string()));
                     } else {
                         log::info!("[FailoverHandler] Requeued orphaned job {}", job.job_id);
                         report.requeued.push(job.job_id.clone());
                     }
-                }
+                },
                 JobRecoveryAction::Fail { reason } => {
                     if let Err(e) = self.fail_job(&job, &reason).await {
                         log::error!("[FailoverHandler] Failed to fail job {}: {}", job.job_id, e);
@@ -130,17 +131,14 @@ impl LeaderFailoverHandler {
                         );
                         report.marked_failed.push(job.job_id.clone());
                     }
-                }
+                },
                 JobRecoveryAction::Continue => {
-                    log::debug!(
-                        "[FailoverHandler] Job {} was ours, will continue",
-                        job.job_id
-                    );
+                    log::debug!("[FailoverHandler] Job {} was ours, will continue", job.job_id);
                     report.continued.push(job.job_id.clone());
-                }
+                },
                 JobRecoveryAction::Skip => {
                     // Job is not orphaned, skip
-                }
+                },
             }
         }
 
@@ -157,14 +155,12 @@ impl LeaderFailoverHandler {
     /// Find all jobs with Running status
     async fn find_running_jobs(&self) -> Result<Vec<Job>, KalamDbError> {
         // Get all jobs and filter by Running status
-        let all_jobs = self.jobs_provider
+        let all_jobs = self
+            .jobs_provider
             .list_jobs()
             .map_err(|e| KalamDbError::io_message(format!("Failed to query jobs: {}", e)))?;
 
-        Ok(all_jobs
-            .into_iter()
-            .filter(|job| job.status == JobStatus::Running)
-            .collect())
+        Ok(all_jobs.into_iter().filter(|job| job.status == JobStatus::Running).collect())
     }
 
     /// Determine recovery action for a job
@@ -187,7 +183,7 @@ impl LeaderFailoverHandler {
         if let Some(started_at) = job.started_at {
             let now = Utc::now().timestamp_millis();
             let elapsed_secs = (now - started_at) / 1000;
-            
+
             if elapsed_secs > ORPHAN_DETECTION_TIMEOUT_SECS {
                 log::warn!(
                     "[FailoverHandler] Job {} has been running for {} seconds, may be orphaned",
@@ -231,19 +227,14 @@ impl LeaderFailoverHandler {
 
             // Unknown job type - fail safely
             _ => JobRecoveryAction::Fail {
-                reason: format!(
-                    "Unknown job type running on offline node {}",
-                    job.node_id
-                ),
+                reason: format!("Unknown job type running on offline node {}", job.node_id),
             },
         }
     }
 
     /// Requeue a job for execution
     async fn requeue_job(&self, job: &Job) -> Result<(), KalamDbError> {
-        self.job_guard
-            .release_job(&job.job_id, "Requeued by leader failover")
-            .await
+        self.job_guard.release_job(&job.job_id, "Requeued by leader failover").await
     }
 
     /// Fail a job permanently
@@ -276,10 +267,7 @@ impl RecoveryReport {
 
     /// Total number of jobs processed
     pub fn total(&self) -> usize {
-        self.requeued.len()
-            + self.marked_failed.len()
-            + self.continued.len()
-            + self.failed.len()
+        self.requeued.len() + self.marked_failed.len() + self.continued.len() + self.failed.len()
     }
 }
 

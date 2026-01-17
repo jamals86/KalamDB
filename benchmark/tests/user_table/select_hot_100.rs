@@ -9,10 +9,7 @@ fn user_table_select_hot_100() -> anyhow::Result<()> {
     std::thread::sleep(Duration::from_millis(200));
 
     for i in 1..=100 {
-        let sql = format!(
-            "INSERT INTO bench_user.items (value) VALUES ('benchmark_value_{}')",
-            i
-        );
+        let sql = format!("INSERT INTO bench_user.items (value) VALUES ('benchmark_value_{}')", i);
         execute_cli_timed_root(&sql)?;
     }
     std::thread::sleep(Duration::from_millis(100));
@@ -37,11 +34,7 @@ fn user_table_select_hot_100() -> anyhow::Result<()> {
         "SELECT 100 rows from hot storage",
     );
 
-    result.set_timings(
-        execution.cli_total_ms,
-        execution.server_time_ms,
-        execution.server_time_ms,
-    );
+    result.set_timings(execution.cli_total_ms, execution.server_time_ms, execution.server_time_ms);
     result.set_memory(mem_before, mem_after);
     result.set_disk(disk_before, disk_after);
     result.set_requests(1, execution.server_time_ms);

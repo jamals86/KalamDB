@@ -24,10 +24,7 @@ fn stream_table_insert_50k() -> anyhow::Result<()> {
             values.push(format!("('benchmark_value_{}')", idx));
         }
 
-        let sql = format!(
-            "INSERT INTO bench_stream.events (value) VALUES {}",
-            values.join(", ")
-        );
+        let sql = format!("INSERT INTO bench_stream.events (value) VALUES {}", values.join(", "));
         let execution = execute_cli_timed_root(&sql)?;
         total_cli_ms += execution.cli_total_ms;
         total_server_ms += execution.server_time_ms;

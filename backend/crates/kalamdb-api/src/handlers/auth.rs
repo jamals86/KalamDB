@@ -6,11 +6,13 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{Duration, Utc};
 use kalamdb_auth::{
-    authenticate, extract_client_ip_secure, AuthError, AuthRequest,
+    authenticate,
     cookie::{extract_auth_token, CookieConfig},
-    create_auth_cookie, create_logout_cookie,
-    jwt_auth::{validate_jwt_token, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER, create_and_sign_token},
-    UserRepository,
+    create_auth_cookie, create_logout_cookie, extract_client_ip_secure,
+    jwt_auth::{
+        create_and_sign_token, validate_jwt_token, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER,
+    },
+    AuthError, AuthRequest, UserRepository,
 };
 use kalamdb_commons::Role;
 use kalamdb_configs::ServerConfig;
@@ -161,24 +163,30 @@ pub async fn login_handler(
         password: body.password.clone(),
     };
 
-    let auth_result = match authenticate(auth_request, &connection_info, user_repo.get_ref()).await {
+    let auth_result = match authenticate(auth_request, &connection_info, user_repo.get_ref()).await
+    {
         Ok(result) => result,
         Err(err) => return map_auth_error_to_response(err),
     };
 
     // Check role - only dba and system can access admin UI
     if !matches!(auth_result.user.role, Role::Dba | Role::System) {
-        return HttpResponse::Forbidden().json(AuthErrorResponse::new("forbidden", "Admin UI access requires dba or system role"));
+        return HttpResponse::Forbidden().json(AuthErrorResponse::new(
+            "forbidden",
+            "Admin UI access requires dba or system role",
+        ));
     }
 
     // Load full user record for response fields
-    let username_typed = kalamdb_commons::models::UserName::from(auth_result.user.username.as_str());
+    let username_typed =
+        kalamdb_commons::models::UserName::from(auth_result.user.username.as_str());
     let user = match user_repo.get_user_by_username(&username_typed).await {
         Ok(user) => user,
         Err(e) => {
             log::error!("Failed to load user after authentication: {}", e);
-            return HttpResponse::InternalServerError().json(AuthErrorResponse::new("internal_error", "Authentication failed"));
-        }
+            return HttpResponse::InternalServerError()
+                .json(AuthErrorResponse::new("internal_error", "Authentication failed"));
+        },
     };
 
     // Generate JWT token
@@ -188,13 +196,14 @@ pub async fn login_handler(
         &user.role,
         user.email.as_deref(),
         Some(config.jwt_expiry_hours),
-        &config.jwt_secret
+        &config.jwt_secret,
     ) {
         Ok(t) => t,
         Err(e) => {
             log::error!("Error generating JWT: {}", e);
-            return HttpResponse::InternalServerError().json(AuthErrorResponse::new("internal_error", "Failed to generate token"));
-        }
+            return HttpResponse::InternalServerError()
+                .json(AuthErrorResponse::new("internal_error", "Failed to generate token"));
+        },
     };
 
     // Create HttpOnly cookie
@@ -202,11 +211,8 @@ pub async fn login_handler(
         secure: config.cookie_secure,
         ..Default::default()
     };
-    let cookie = create_auth_cookie(
-        &token,
-        Duration::hours(config.jwt_expiry_hours),
-        &cookie_config,
-    );
+    let cookie =
+        create_auth_cookie(&token, Duration::hours(config.jwt_expiry_hours), &cookie_config);
 
     let expires_at = Utc::now() + Duration::hours(config.jwt_expiry_hours);
 
@@ -218,20 +224,18 @@ pub async fn login_handler(
         .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339();
 
-    HttpResponse::Ok()
-        .cookie(cookie)
-        .json(LoginResponse {
-            user: UserInfo {
-                id: user.id.to_string(),
-                username: user.username.as_str().to_string(),
-                role: user.role.to_string(),
-                email: user.email,
-                created_at,
-                updated_at,
-            },
-            expires_at: expires_at.to_rfc3339(),
-            access_token: token,
-        })
+    HttpResponse::Ok().cookie(cookie).json(LoginResponse {
+        user: UserInfo {
+            id: user.id.to_string(),
+            username: user.username.as_str().to_string(),
+            role: user.role.to_string(),
+            email: user.email,
+            created_at,
+            updated_at,
+        },
+        expires_at: expires_at.to_rfc3339(),
+        access_token: token,
+    })
 }
 
 fn map_auth_error_to_response(err: AuthError) -> HttpResponse {
@@ -239,27 +243,28 @@ fn map_auth_error_to_response(err: AuthError) -> HttpResponse {
         AuthError::InvalidCredentials(_)
         | AuthError::UserNotFound(_)
         | AuthError::UserDeleted
-        | AuthError::AuthenticationFailed(_) => {
-            HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "Invalid username or password"))
-        }
+        | AuthError::AuthenticationFailed(_) => HttpResponse::Unauthorized()
+            .json(AuthErrorResponse::new("unauthorized", "Invalid username or password")),
         AuthError::AccountLocked(message) => {
             HttpResponse::Unauthorized().json(AuthErrorResponse::new("account_locked", message))
-        }
+        },
         AuthError::RemoteAccessDenied(message) | AuthError::InsufficientPermissions(message) => {
             HttpResponse::Forbidden().json(AuthErrorResponse::new("forbidden", message))
-        }
+        },
         AuthError::MalformedAuthorization(message)
         | AuthError::MissingAuthorization(message)
         | AuthError::MissingClaim(message)
         | AuthError::WeakPassword(message) => {
             HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", message))
-        }
+        },
         AuthError::TokenExpired | AuthError::InvalidSignature | AuthError::UntrustedIssuer(_) => {
-            HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "Invalid username or password"))
-        }
+            HttpResponse::Unauthorized()
+                .json(AuthErrorResponse::new("unauthorized", "Invalid username or password"))
+        },
         AuthError::DatabaseError(_) | AuthError::HashingError(_) => {
-            HttpResponse::InternalServerError().json(AuthErrorResponse::new("internal_error", "Authentication failed"))
-        }
+            HttpResponse::InternalServerError()
+                .json(AuthErrorResponse::new("internal_error", "Authentication failed"))
+        },
     }
 }
 
@@ -272,11 +277,13 @@ pub async fn refresh_handler(
     config: web::Data<AuthConfig>,
 ) -> HttpResponse {
     // Extract token from cookie
-    let token = match extract_auth_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned())) {
+    let token = match extract_auth_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned()))
+    {
         Some(t) => t,
         None => {
-            return HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "No auth token found"));
-        }
+            return HttpResponse::Unauthorized()
+                .json(AuthErrorResponse::new("unauthorized", "No auth token found"));
+        },
     };
 
     // Validate existing token
@@ -285,8 +292,9 @@ pub async fn refresh_handler(
         Ok(c) => c,
         Err(e) => {
             log::debug!("Token validation failed: {}", e);
-            return HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "Invalid or expired token"));
-        }
+            return HttpResponse::Unauthorized()
+                .json(AuthErrorResponse::new("unauthorized", "Invalid or expired token"));
+        },
     };
 
     // Verify user still exists and is active by username (we don't have find_by_id)
@@ -295,8 +303,9 @@ pub async fn refresh_handler(
     let user = match user_repo.get_user_by_username(&username_typed).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {
-            return HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "User no longer valid"));
-        }
+            return HttpResponse::Unauthorized()
+                .json(AuthErrorResponse::new("unauthorized", "User no longer valid"));
+        },
     };
 
     // Generate new token
@@ -306,13 +315,14 @@ pub async fn refresh_handler(
         &user.role,
         user.email.as_deref(),
         Some(config.jwt_expiry_hours),
-        &config.jwt_secret
+        &config.jwt_secret,
     ) {
         Ok(t) => t,
         Err(e) => {
             log::error!("Error generating JWT: {}", e);
-            return HttpResponse::InternalServerError().json(AuthErrorResponse::new("internal_error", "Failed to refresh token"));
-        }
+            return HttpResponse::InternalServerError()
+                .json(AuthErrorResponse::new("internal_error", "Failed to refresh token"));
+        },
     };
 
     // Create new cookie
@@ -320,11 +330,8 @@ pub async fn refresh_handler(
         secure: config.cookie_secure,
         ..Default::default()
     };
-    let cookie = create_auth_cookie(
-        &new_token,
-        Duration::hours(config.jwt_expiry_hours),
-        &cookie_config,
-    );
+    let cookie =
+        create_auth_cookie(&new_token, Duration::hours(config.jwt_expiry_hours), &cookie_config);
 
     let expires_at = Utc::now() + Duration::hours(config.jwt_expiry_hours);
 
@@ -336,20 +343,18 @@ pub async fn refresh_handler(
         .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339();
 
-    HttpResponse::Ok()
-        .cookie(cookie)
-        .json(LoginResponse {
-            user: UserInfo {
-                id: user.id.to_string(),
-                username: user.username.to_string(),
-                role: user.role.to_string(),
-                email: user.email,
-                created_at,
-                updated_at,
-            },
-            expires_at: expires_at.to_rfc3339(),
-            access_token: new_token,
-        })
+    HttpResponse::Ok().cookie(cookie).json(LoginResponse {
+        user: UserInfo {
+            id: user.id.to_string(),
+            username: user.username.to_string(),
+            role: user.role.to_string(),
+            email: user.email,
+            created_at,
+            updated_at,
+        },
+        expires_at: expires_at.to_rfc3339(),
+        access_token: new_token,
+    })
 }
 
 /// POST /v1/api/auth/logout
@@ -376,11 +381,13 @@ pub async fn me_handler(
     config: web::Data<AuthConfig>,
 ) -> HttpResponse {
     // Extract token from cookie
-    let token = match extract_auth_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned())) {
+    let token = match extract_auth_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned()))
+    {
         Some(t) => t,
         None => {
-            return HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "Not authenticated"));
-        }
+            return HttpResponse::Unauthorized()
+                .json(AuthErrorResponse::new("unauthorized", "Not authenticated"));
+        },
     };
 
     // Validate token
@@ -389,8 +396,9 @@ pub async fn me_handler(
         Ok(c) => c,
         Err(e) => {
             log::debug!("Token validation failed: {}", e);
-            return HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "Invalid or expired token"));
-        }
+            return HttpResponse::Unauthorized()
+                .json(AuthErrorResponse::new("unauthorized", "Invalid or expired token"));
+        },
     };
 
     // Get current user info
@@ -399,8 +407,9 @@ pub async fn me_handler(
     let user = match user_repo.get_user_by_username(&username_typed).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {
-            return HttpResponse::Unauthorized().json(AuthErrorResponse::new("unauthorized", "User not found"));
-        }
+            return HttpResponse::Unauthorized()
+                .json(AuthErrorResponse::new("unauthorized", "User not found"));
+        },
     };
 
     // Convert timestamps properly

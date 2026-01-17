@@ -145,13 +145,43 @@ impl DatatypesView {
             ("Binary", "Bytes", "BYTES", "Variable-length binary data"),
             ("LargeBinary", "Bytes", "BYTES", "Large variable-length binary data"),
             // Temporal types - Timestamps
-            ("Timestamp(Microsecond, None)", "Timestamp", "TIMESTAMP", "Timestamp with microsecond precision"),
-            ("Timestamp(Millisecond, None)", "Timestamp", "TIMESTAMP", "Timestamp with millisecond precision (legacy)"),
-            ("Timestamp(Nanosecond, None)", "Timestamp", "TIMESTAMP", "Timestamp with nanosecond precision"),
-            ("Timestamp(Second, None)", "Timestamp", "TIMESTAMP", "Timestamp with second precision"),
+            (
+                "Timestamp(Microsecond, None)",
+                "Timestamp",
+                "TIMESTAMP",
+                "Timestamp with microsecond precision",
+            ),
+            (
+                "Timestamp(Millisecond, None)",
+                "Timestamp",
+                "TIMESTAMP",
+                "Timestamp with millisecond precision (legacy)",
+            ),
+            (
+                "Timestamp(Nanosecond, None)",
+                "Timestamp",
+                "TIMESTAMP",
+                "Timestamp with nanosecond precision",
+            ),
+            (
+                "Timestamp(Second, None)",
+                "Timestamp",
+                "TIMESTAMP",
+                "Timestamp with second precision",
+            ),
             // DateTime with timezone
-            ("Timestamp(Microsecond, Some(\"UTC\"))", "DateTime", "DATETIME", "DateTime with timezone (UTC)"),
-            ("Timestamp(Millisecond, Some(\"UTC\"))", "DateTime", "DATETIME", "DateTime with timezone (UTC, legacy)"),
+            (
+                "Timestamp(Microsecond, Some(\"UTC\"))",
+                "DateTime",
+                "DATETIME",
+                "DateTime with timezone (UTC)",
+            ),
+            (
+                "Timestamp(Millisecond, Some(\"UTC\"))",
+                "DateTime",
+                "DATETIME",
+                "DateTime with timezone (UTC, legacy)",
+            ),
             // Date types
             ("Date32", "Date", "DATE", "Date (days since epoch)"),
             ("Date64", "Date", "DATE", "Date (milliseconds since epoch)"),
@@ -164,7 +194,12 @@ impl DatatypesView {
             // Decimal (pattern-based)
             ("Decimal128", "Decimal", "DECIMAL", "Fixed-point decimal number"),
             // FixedSizeList for embeddings (pattern-based)
-            ("FixedSizeList", "Embedding", "EMBEDDING", "Fixed-size float32 vector for ML embeddings"),
+            (
+                "FixedSizeList",
+                "Embedding",
+                "EMBEDDING",
+                "Fixed-size float32 vector for ML embeddings",
+            ),
         ]
     }
 }

@@ -41,11 +41,8 @@ fn smoke_test_timing_output_format() {
     .expect("create table");
 
     // Insert one row
-    execute_sql_as_root_via_cli(&format!(
-        "INSERT INTO {} (id, value) VALUES (1, 'test')",
-        full
-    ))
-    .expect("insert row");
+    execute_sql_as_root_via_cli(&format!("INSERT INTO {} (id, value) VALUES (1, 'test')", full))
+        .expect("insert row");
 
     // Execute SELECT and verify timing output
     let output =
@@ -59,10 +56,7 @@ fn smoke_test_timing_output_format() {
 
     // Sanity check: timing should be positive and reasonable (< 5 seconds)
     assert!(timing > 0.0, "Timing should be positive");
-    assert!(
-        timing < 5000.0,
-        "Single row SELECT should complete in < 5000ms"
-    );
+    assert!(timing < 5000.0, "Single row SELECT should complete in < 5000ms");
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
@@ -374,8 +368,7 @@ fn smoke_test_timing_flush_operation() {
 
     // Execute FLUSH and verify timing
     let output =
-        execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}", full))
-            .expect("flush table");
+        execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}", full)).expect("flush table");
 
     let timing = parse_timing_ms(&output);
     println!("STORAGE FLUSH TABLE timing: {:?}", timing);

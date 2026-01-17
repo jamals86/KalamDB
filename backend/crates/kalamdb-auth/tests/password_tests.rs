@@ -86,11 +86,7 @@ fn test_common_password_rejected() {
 
     for password in common_passwords {
         let result = validate_password(password);
-        assert!(
-            result.is_err(),
-            "Common password '{}' should be rejected",
-            password
-        );
+        assert!(result.is_err(), "Common password '{}' should be rejected", password);
 
         if let Err(e) = result {
             let error_msg = format!("{:?}", e);
@@ -144,10 +140,7 @@ fn test_password_minimum_length() {
 
     let password_unique = "Abcd1234"; // Exactly 8 chars, not common
     let result = validate_password(password_unique);
-    assert!(
-        result.is_ok(),
-        "8-character unique password should be valid"
-    );
+    assert!(result.is_ok(), "8-character unique password should be valid");
 }
 
 /// Test password too long rejection
@@ -194,11 +187,7 @@ fn test_valid_strong_passwords() {
 
     for password in strong_passwords {
         let result = validate_password(password);
-        assert!(
-            result.is_ok(),
-            "Strong password '{}' should be valid",
-            password
-        );
+        assert!(result.is_ok(), "Strong password '{}' should be valid", password);
     }
 }
 
@@ -209,11 +198,7 @@ fn test_password_special_characters() {
 
     for password in passwords_with_special {
         let result = validate_password(password);
-        assert!(
-            result.is_ok(),
-            "Password with special chars '{}' should be valid",
-            password
-        );
+        assert!(result.is_ok(), "Password with special chars '{}' should be valid", password);
     }
 }
 
@@ -230,11 +215,7 @@ async fn test_verify_password_invalid_hash() {
 
     for invalid_hash in invalid_hashes {
         let result = verify_password(password, invalid_hash).await;
-        assert!(
-            result.is_err(),
-            "Invalid hash '{}' should return error",
-            invalid_hash
-        );
+        assert!(result.is_err(), "Invalid hash '{}' should return error", invalid_hash);
     }
 }
 
@@ -287,10 +268,7 @@ fn test_common_password_case_insensitive() {
 
     // At least the lowercase version should be rejected
     let result = validate_password("password");
-    assert!(
-        result.is_err(),
-        "Lowercase 'password' should definitely be rejected"
-    );
+    assert!(result.is_err(), "Lowercase 'password' should definitely be rejected");
 }
 
 /// Benchmark helper: Test hashing performance (not a real benchmark, just sanity check)
@@ -305,8 +283,5 @@ async fn test_hashing_performance() {
     let duration = start.elapsed();
 
     println!("Hashing with cost 12 took: {:?}", duration);
-    assert!(
-        duration.as_millis() < 1000,
-        "Hashing should complete within 1 second"
-    );
+    assert!(duration.as_millis() < 1000, "Hashing should complete within 1 second");
 }

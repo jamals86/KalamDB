@@ -70,10 +70,7 @@ impl OutputFormatter {
     fn format_table(&self, response: &QueryResponse) -> Result<String> {
         if response.results.is_empty() {
             let exec_time_ms = response.took.unwrap_or(0.0);
-            return Ok(format!(
-                "Query OK, 0 rows affected\n\nTook: {:.3} ms",
-                exec_time_ms
-            ));
+            return Ok(format!("Query OK, 0 rows affected\n\nTook: {:.3} ms", exec_time_ms));
         }
 
         let result = &response.results[0];
@@ -234,10 +231,7 @@ impl OutputFormatter {
             // Non-query statement (INSERT, UPDATE, DELETE)
             let row_count = result.row_count;
             let exec_time_ms = response.took.unwrap_or(0.0);
-            Ok(format!(
-                "Query OK, {} rows affected\n\nTook: {:.3} ms",
-                row_count, exec_time_ms
-            ))
+            Ok(format!("Query OK, {} rows affected\n\nTook: {:.3} ms", row_count, exec_time_ms))
         }
     }
 
@@ -295,10 +289,7 @@ impl OutputFormatter {
         let mut output = String::new();
 
         if self.color {
-            output.push_str(&format!(
-                "\x1b[31mERROR {}\x1b[0m: {}\n",
-                error.code, error.message
-            ));
+            output.push_str(&format!("\x1b[31mERROR {}\x1b[0m: {}\n", error.code, error.message));
         } else {
             output.push_str(&format!("ERROR {}: {}\n", error.code, error.message));
         }
@@ -323,42 +314,40 @@ impl OutputFormatter {
                 let (type_name, inner_value) = map.iter().next().unwrap();
                 match type_name.as_str() {
                     "Null" => "NULL".to_string(),
-                    "Boolean" => {
-                        inner_value.as_bool().map(|b| b.to_string()).unwrap_or_else(|| "NULL".to_string())
-                    }
-                    "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" => {
+                    "Boolean" => inner_value
+                        .as_bool()
+                        .map(|b| b.to_string())
+                        .unwrap_or_else(|| "NULL".to_string()),
+                    "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32"
+                    | "UInt64" => {
                         // These are stored as strings to preserve precision
                         inner_value.as_str().unwrap_or("NULL").to_string()
-                    }
-                    "Float32" | "Float64" => {
-                        inner_value.as_f64().map(|f| f.to_string()).unwrap_or_else(|| "NULL".to_string())
-                    }
-                    "Utf8" | "LargeUtf8" => {
-                        inner_value.as_str().unwrap_or("NULL").to_string()
-                    }
+                    },
+                    "Float32" | "Float64" => inner_value
+                        .as_f64()
+                        .map(|f| f.to_string())
+                        .unwrap_or_else(|| "NULL".to_string()),
+                    "Utf8" | "LargeUtf8" => inner_value.as_str().unwrap_or("NULL").to_string(),
                     "Binary" | "LargeBinary" => {
                         // Binary data - show as hex or indicate it's binary
                         "<binary>".to_string()
-                    }
-                    "Date32" => {
-                        inner_value
-                            .as_i64()
-                            .map(|days| self.timestamp_formatter.format(Some(days * 86_400_000)))
-                            .unwrap_or_else(|| "NULL".to_string())
-                    }
-                    "Time64Microsecond" => {
-                        inner_value
-                            .as_i64()
-                            .map(|micros| self.timestamp_formatter.format(Some(micros / 1000)))
-                            .unwrap_or_else(|| "NULL".to_string())
-                    }
-                    "Time64Nanosecond" => {
-                        inner_value
-                            .as_i64()
-                            .map(|nanos| self.timestamp_formatter.format(Some(nanos / 1_000_000)))
-                            .unwrap_or_else(|| "NULL".to_string())
-                    }
-                    "TimestampSecond" | "TimestampMillisecond" | "TimestampMicrosecond" | "TimestampNanosecond" => {
+                    },
+                    "Date32" => inner_value
+                        .as_i64()
+                        .map(|days| self.timestamp_formatter.format(Some(days * 86_400_000)))
+                        .unwrap_or_else(|| "NULL".to_string()),
+                    "Time64Microsecond" => inner_value
+                        .as_i64()
+                        .map(|micros| self.timestamp_formatter.format(Some(micros / 1000)))
+                        .unwrap_or_else(|| "NULL".to_string()),
+                    "Time64Nanosecond" => inner_value
+                        .as_i64()
+                        .map(|nanos| self.timestamp_formatter.format(Some(nanos / 1_000_000)))
+                        .unwrap_or_else(|| "NULL".to_string()),
+                    "TimestampSecond"
+                    | "TimestampMillisecond"
+                    | "TimestampMicrosecond"
+                    | "TimestampNanosecond" => {
                         // Timestamp objects have 'value' and optionally 'timezone'
                         if let Some(obj) = inner_value.as_object() {
                             if let Some(val) = obj.get("value").and_then(|v| v.as_i64()) {
@@ -373,7 +362,7 @@ impl OutputFormatter {
                             }
                         }
                         "NULL".to_string()
-                    }
+                    },
                     "Decimal128" => {
                         // Decimal has 'value', 'precision', 'scale'
                         if let Some(obj) = inner_value.as_object() {
@@ -382,17 +371,17 @@ impl OutputFormatter {
                             }
                         }
                         "NULL".to_string()
-                    }
+                    },
                     "FixedSizeList" => {
                         // Complex array type - show abbreviated
                         "<array>".to_string()
-                    }
+                    },
                     _ => {
                         // Fallback for unknown types - show the inner value
                         inner_value.to_string()
-                    }
+                    },
                 }
-            }
+            },
             JsonValue::Array(_) | JsonValue::Object(_) => value.to_string(),
         }
     }
@@ -405,11 +394,11 @@ impl OutputFormatter {
         match data_type {
             Some(KalamDataType::Timestamp) => {
                 self.format_timestamp_value(value, TimestampUnit::Microseconds)
-            }
+            },
             Some(KalamDataType::Date) => self.format_date_value(value),
             Some(KalamDataType::DateTime) => {
                 self.format_timestamp_value(value, TimestampUnit::Auto)
-            }
+            },
             _ => self.format_json_value(value),
         }
     }
@@ -425,7 +414,10 @@ impl OutputFormatter {
             JsonValue::Object(map) if map.len() == 1 => {
                 let (type_name, inner_value) = map.iter().next().unwrap();
                 match type_name.as_str() {
-                    "TimestampSecond" | "TimestampMillisecond" | "TimestampMicrosecond" | "TimestampNanosecond" => {
+                    "TimestampSecond"
+                    | "TimestampMillisecond"
+                    | "TimestampMicrosecond"
+                    | "TimestampNanosecond" => {
                         if let Some(obj) = inner_value.as_object() {
                             if let Some(val) = obj.get("value").and_then(|v| v.as_i64()) {
                                 let ms = match type_name.as_str() {
@@ -439,7 +431,7 @@ impl OutputFormatter {
                             }
                         }
                         "NULL".to_string()
-                    }
+                    },
                     "Date32" => self.format_date_value(inner_value),
                     "Time64Microsecond" => self
                         .parse_i64(inner_value)
@@ -451,7 +443,7 @@ impl OutputFormatter {
                         .unwrap_or_else(|| "NULL".to_string()),
                     _ => self.format_json_value(inner_value),
                 }
-            }
+            },
             _ => {
                 let ms = self.parse_i64(value).map(|raw| match unit {
                     TimestampUnit::Milliseconds => raw,
@@ -463,11 +455,11 @@ impl OutputFormatter {
                         } else {
                             raw
                         }
-                    }
+                    },
                 });
                 ms.map(|val| self.timestamp_formatter.format(Some(val)))
                     .unwrap_or_else(|| "NULL".to_string())
-            }
+            },
         }
     }
 
@@ -515,10 +507,7 @@ mod tests {
         );
         assert_eq!(formatter.format_json_value(&JsonValue::Null), "NULL");
         assert_eq!(formatter.format_json_value(&JsonValue::Bool(true)), "true");
-        assert_eq!(
-            formatter.format_json_value(&JsonValue::String("test".into())),
-            "test"
-        );
+        assert_eq!(formatter.format_json_value(&JsonValue::String("test".into())), "test");
     }
 
     #[test]
@@ -529,10 +518,7 @@ mod tests {
             TimestampFormatter::new(TimestampFormat::Iso8601),
         );
         let value = JsonValue::String("hello, world".into());
-        assert_eq!(
-            formatter.format_csv_value_with_type(&value, None),
-            "\"hello, world\""
-        );
+        assert_eq!(formatter.format_csv_value_with_type(&value, None), "\"hello, world\"");
     }
 
     #[test]

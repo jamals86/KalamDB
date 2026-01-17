@@ -21,7 +21,7 @@ use tokio::sync::Notify;
 pub struct MetadataCoordinator {
     /// Current meta group last_applied_index
     current_index: AtomicU64,
-    
+
     /// Notification channel for meta advances
     notify: Notify,
 }
@@ -40,12 +40,12 @@ impl MetadataCoordinator {
             notify: Notify::new(),
         }
     }
-    
+
     /// Get the current meta index
     pub fn current_index(&self) -> u64 {
         self.current_index.load(Ordering::Acquire)
     }
-    
+
     /// Advance the meta index and notify waiters
     ///
     /// Called by MetaStateMachine after applying an entry.
@@ -57,7 +57,7 @@ impl MetadataCoordinator {
             self.notify.notify_waiters();
         }
     }
-    
+
     /// Wait for meta index to advance
     ///
     /// Returns immediately if current_index >= required_index.
@@ -68,17 +68,17 @@ impl MetadataCoordinator {
             if current >= required_index {
                 return;
             }
-            
+
             // Wait for notification
             self.notify.notified().await;
         }
     }
-    
+
     /// Check if a required_meta_index is satisfied
     pub fn is_satisfied(&self, required_meta_index: u64) -> bool {
         self.current_index.load(Ordering::Acquire) >= required_meta_index
     }
-    
+
     /// Get a future that completes when meta advances past the current index
     ///
     /// Useful for periodic drain checks without blocking.
@@ -113,25 +113,25 @@ mod tests {
     #[test]
     fn test_advance_and_check() {
         let coordinator = MetadataCoordinator::new();
-        
+
         assert_eq!(coordinator.current_index(), 0);
         assert!(!coordinator.is_satisfied(5));
-        
+
         coordinator.advance(5);
         assert_eq!(coordinator.current_index(), 5);
         assert!(coordinator.is_satisfied(5));
         assert!(!coordinator.is_satisfied(6));
-        
+
         // Advance should not go backwards
         coordinator.advance(3);
         assert_eq!(coordinator.current_index(), 5);
     }
-    
+
     #[tokio::test]
     async fn test_wait_for_already_satisfied() {
         let coordinator = MetadataCoordinator::new();
         coordinator.advance(10);
-        
+
         // Should return immediately
         coordinator.wait_for(5).await;
         coordinator.wait_for(10).await;

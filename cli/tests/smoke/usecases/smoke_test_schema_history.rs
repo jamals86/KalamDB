@@ -33,10 +33,8 @@ fn smoke_test_schema_history_in_system_tables() {
     println!("🧪 Testing schema history in system.tables");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
-        namespace
-    ));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -71,28 +69,15 @@ fn smoke_test_schema_history_in_system_tables() {
     // Parse JSON and count rows
     let v1_rows = extract_rows_from_response(&output_v1);
 
-    assert_eq!(
-        v1_rows.len(),
-        1,
-        "Expected 1 row after CREATE TABLE, got {}",
-        v1_rows.len()
-    );
+    assert_eq!(v1_rows.len(), 1, "Expected 1 row after CREATE TABLE, got {}", v1_rows.len());
 
     // Verify schema_version = 1
     let first_version = extract_i32_from_row(&v1_rows[0], "schema_version");
-    assert_eq!(
-        first_version,
-        Some(1),
-        "Expected schema_version = 1 after CREATE"
-    );
+    assert_eq!(first_version, Some(1), "Expected schema_version = 1 after CREATE");
 
     // Verify is_latest = true
     let first_is_latest = extract_bool_from_row(&v1_rows[0], "is_latest");
-    assert_eq!(
-        first_is_latest,
-        Some(true),
-        "Expected is_latest = true for version 1"
-    );
+    assert_eq!(first_is_latest, Some(true), "Expected is_latest = true for version 1");
 
     println!("✅ Verified: CREATE TABLE creates schema_version = 1 with is_latest = true");
 
@@ -110,11 +95,11 @@ fn smoke_test_schema_history_in_system_tables() {
                 println!("⚠️  ALTER TABLE not fully implemented - skipping rest of test");
                 return;
             }
-        }
+        },
         Err(e) => {
             println!("⚠️  ALTER TABLE not implemented: {:?}", e);
             return;
-        }
+        },
     }
     std::thread::sleep(Duration::from_millis(200));
 
@@ -148,16 +133,8 @@ fn smoke_test_schema_history_in_system_tables() {
     // Verify is_latest flags
     let is_latest1 = extract_bool_from_row(&v2_rows[0], "is_latest");
     let is_latest2 = extract_bool_from_row(&v2_rows[1], "is_latest");
-    assert_eq!(
-        is_latest1,
-        Some(false),
-        "Version 1 should have is_latest = false after ALTER"
-    );
-    assert_eq!(
-        is_latest2,
-        Some(true),
-        "Version 2 should have is_latest = true"
-    );
+    assert_eq!(is_latest1, Some(false), "Version 1 should have is_latest = false after ALTER");
+    assert_eq!(is_latest2, Some(true), "Version 2 should have is_latest = true");
 
     println!("✅ Verified: 2 rows after ALTER TABLE, is_latest flags correct");
 
@@ -181,20 +158,11 @@ fn smoke_test_schema_history_in_system_tables() {
 
     let v3_rows = extract_rows_from_response(&output_v3);
 
-    assert_eq!(
-        v3_rows.len(),
-        3,
-        "Expected 3 rows after 2nd ALTER TABLE, got {}",
-        v3_rows.len()
-    );
+    assert_eq!(v3_rows.len(), 3, "Expected 3 rows after 2nd ALTER TABLE, got {}", v3_rows.len());
 
     // Verify only the last version has is_latest = true
     let last_is_latest = extract_bool_from_row(&v3_rows[2], "is_latest");
-    assert_eq!(
-        last_is_latest,
-        Some(true),
-        "Only version 3 should have is_latest = true"
-    );
+    assert_eq!(last_is_latest, Some(true), "Only version 3 should have is_latest = true");
 
     println!("✅ Verified: 3 rows after second ALTER TABLE");
 
@@ -249,23 +217,18 @@ fn smoke_test_schema_history_in_system_tables() {
     for (i, row) in final_rows.iter().enumerate() {
         let is_latest = extract_bool_from_row(row, "is_latest");
         let is_last = i == final_rows.len() - 1;
-        assert_eq!(
-            is_latest,
-            Some(is_last),
-            "Row {} should have is_latest = {}",
-            i,
-            is_last
-        );
+        assert_eq!(is_latest, Some(is_last), "Row {} should have is_latest = {}", i, is_last);
     }
 
-    println!("✅ All {} schema versions preserved with correct is_latest flags", expected_rows);
+    println!(
+        "✅ All {} schema versions preserved with correct is_latest flags",
+        expected_rows
+    );
     println!("🎉 Schema history test PASSED!");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
-        namespace
-    ));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -276,33 +239,36 @@ fn smoke_test_schema_history_in_system_tables() {
 /// The response format is: {"status": "success", "results": [{"schema": [...], "rows": [[...], ...]}]}
 /// Returns rows as objects with column names as keys
 fn extract_rows_from_response(json_str: &str) -> Vec<serde_json::Value> {
-    let json: serde_json::Value = serde_json::from_str(json_str)
-        .expect("Failed to parse JSON");
-    
+    let json: serde_json::Value = serde_json::from_str(json_str).expect("Failed to parse JSON");
+
     // Get schema for column names
-    let schema = json.get("results")
+    let schema = json
+        .get("results")
         .and_then(serde_json::Value::as_array)
         .and_then(|results| results.first())
         .and_then(|result| result.get("schema"))
         .and_then(serde_json::Value::as_array)
         .cloned()
         .unwrap_or_default();
-    
-    let column_names: Vec<String> = schema.iter()
+
+    let column_names: Vec<String> = schema
+        .iter()
         .filter_map(|col| col.get("name").and_then(serde_json::Value::as_str).map(String::from))
         .collect();
-    
+
     // Get rows as arrays
-    let rows_arrays = json.get("results")
+    let rows_arrays = json
+        .get("results")
         .and_then(serde_json::Value::as_array)
         .and_then(|results| results.first())
         .and_then(|result| result.get("rows"))
         .and_then(serde_json::Value::as_array)
         .cloned()
         .unwrap_or_default();
-    
+
     // Convert each row array to an object with column names as keys
-    rows_arrays.iter()
+    rows_arrays
+        .iter()
         .filter_map(|row| {
             let arr = row.as_array()?;
             let mut obj = serde_json::Map::new();
@@ -361,20 +327,16 @@ fn smoke_test_drop_table_removes_schema_history() {
     println!("🧪 Testing DROP TABLE removes schema history");
 
     // Cleanup and setup
-    let _ = execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
-        namespace
-    ));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table and alter it twice
-    let create_sql = format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY) WITH (TYPE = 'USER')",
-        full_table
-    );
+    let create_sql =
+        format!("CREATE TABLE {} (id BIGINT PRIMARY KEY) WITH (TYPE = 'USER')", full_table);
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
     std::thread::sleep(Duration::from_millis(100));
 
@@ -421,9 +383,7 @@ fn smoke_test_drop_table_removes_schema_history() {
         let count = count_val
             .and_then(|v| {
                 if let Some(obj) = v.as_object() {
-                    obj.get("Int64")
-                        .or(obj.get("Int32"))
-                        .and_then(|x| x.as_i64())
+                    obj.get("Int64").or(obj.get("Int32")).and_then(|x| x.as_i64())
                 } else if let Some(s) = v.as_str() {
                     // BigInt values come as strings to preserve precision
                     s.parse::<i64>().ok()
@@ -444,8 +404,6 @@ fn smoke_test_drop_table_removes_schema_history() {
     println!("🎉 DROP removes history test PASSED!");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
-        namespace
-    ));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }

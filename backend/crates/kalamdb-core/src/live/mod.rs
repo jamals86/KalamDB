@@ -24,11 +24,11 @@ pub use kalamdb_commons::NodeId;
 
 // Re-export from connections_manager (consolidated connection management)
 pub use connections_manager::{
-    ConnectionEvent, ConnectionRegistration, ConnectionsManager, ConnectionState,
+    ConnectionEvent, ConnectionRegistration, ConnectionState, ConnectionsManager,
     NotificationSender, SharedConnectionState, SubscriptionState,
 };
 
-pub use failover::{LiveQueryFailoverHandler, CleanupReport as LiveQueryCleanupReport};
+pub use failover::{CleanupReport as LiveQueryCleanupReport, LiveQueryFailoverHandler};
 pub use filter_eval::{matches as filter_matches, parse_where_clause};
 pub use initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 pub use manager::LiveQueryManager;

@@ -24,7 +24,7 @@ pub fn ensure_manifest_ready(
 
     match manifest_service.get_or_load(table_id, user_id) {
         Ok(Some(_)) => return Ok(()),
-        Ok(None) => {}
+        Ok(None) => {},
         Err(e) => {
             log::warn!(
                 "[{}] Manifest cache lookup failed for {}.{} scope={} err={}",
@@ -36,23 +36,19 @@ pub fn ensure_manifest_ready(
                     .unwrap_or_else(|| "shared".to_string()),
                 e
             );
-        }
+        },
     }
 
     let manifest = manifest_service.ensure_manifest_initialized(table_id, table_type, user_id)?;
 
     // Get cached table data for path resolution using storage templates
-    let cached = core
-        .app_context
-        .schema_registry()
-        .get(table_id)
-        .ok_or_else(|| {
-            KalamDbError::TableNotFound(format!(
-                "Table {}.{} not found in schema registry",
-                namespace.as_str(),
-                table.as_str()
-            ))
-        })?;
+    let cached = core.app_context.schema_registry().get(table_id).ok_or_else(|| {
+        KalamDbError::TableNotFound(format!(
+            "Table {}.{} not found in schema registry",
+            namespace.as_str(),
+            table.as_str()
+        ))
+    })?;
 
     // Use PathResolver to get relative manifest path from storage template
     let manifest_path = PathResolver::get_manifest_relative_path(&cached, user_id, None)?;

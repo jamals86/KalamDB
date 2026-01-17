@@ -88,12 +88,7 @@ impl TableProviderCore {
             .get_table_if_exists(self.app_context.as_ref(), self.table_id())
             .ok()
             .flatten()
-            .and_then(|def| {
-                def.columns
-                    .iter()
-                    .find(|c| c.is_primary_key)
-                    .map(|c| c.column_id)
-            })
+            .and_then(|def| def.columns.iter().find(|c| c.is_primary_key).map(|c| c.column_id))
             .unwrap_or(0)
     }
 

@@ -8,22 +8,25 @@ fn extract_first_row_from_cli_json(output: &str) -> Value {
     let json: Value = parse_json_from_cli_output(output)
         .unwrap_or_else(|e| panic!("Failed to parse CLI JSON output: {e}. Raw: {output}"));
 
-    let result = json.get("results")
+    let result = json
+        .get("results")
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .unwrap_or_else(|| panic!("No results found in CLI JSON output. Raw: {output}"));
-    
+
     // Get the schema to map column names to indices
-    let schema = result.get("schema")
+    let schema = result
+        .get("schema")
         .and_then(|v| v.as_array())
         .unwrap_or_else(|| panic!("No schema found in CLI JSON output. Raw: {output}"));
-    
-    let row = result.get("rows")
+
+    let row = result
+        .get("rows")
         .and_then(|v| v.as_array())
         .and_then(|rows| rows.first())
         .and_then(|row| row.as_array())
         .unwrap_or_else(|| panic!("No rows found in CLI JSON output. Raw: {output}"));
-    
+
     // Build a map from column name to value
     let mut row_map: HashMap<String, Value> = HashMap::new();
     for (i, col) in schema.iter().enumerate() {
@@ -33,7 +36,7 @@ fn extract_first_row_from_cli_json(output: &str) -> Value {
             }
         }
     }
-    
+
     Value::Object(row_map.into_iter().collect())
 }
 
@@ -48,49 +51,48 @@ fn assert_decimal_column_eq(row: &Value, column: &str, expected: f64, raw_output
     let actual = match &value {
         Value::Object(obj) if obj.contains_key("value") && obj.contains_key("scale") => {
             // Arrow Decimal128 format: {"precision": 10, "scale": 2, "value": 20075}
-            let unscaled = obj.get("value")
-                .and_then(|v| v.as_i64())
-                .unwrap_or_else(|| panic!("Decimal128 'value' field should be i64. Got: {value}. Raw: {raw_output}")) as i128;
-            let scale = obj.get("scale")
-                .and_then(|v| v.as_u64())
-                .unwrap_or_else(|| panic!("Decimal128 'scale' field should be u64. Got: {value}. Raw: {raw_output}")) as u32;
-            
+            let unscaled = obj.get("value").and_then(|v| v.as_i64()).unwrap_or_else(|| {
+                panic!("Decimal128 'value' field should be i64. Got: {value}. Raw: {raw_output}")
+            }) as i128;
+            let scale = obj.get("scale").and_then(|v| v.as_u64()).unwrap_or_else(|| {
+                panic!("Decimal128 'scale' field should be u64. Got: {value}. Raw: {raw_output}")
+            }) as u32;
+
             let denom = 10_f64.powi(scale as i32);
             (unscaled as f64) / denom
-        }
-        Value::Number(n) => n
-            .as_f64()
-            .unwrap_or_else(|| panic!("Decimal column '{column}' was non-f64 number: {value}. Raw: {raw_output}")),
+        },
+        Value::Number(n) => n.as_f64().unwrap_or_else(|| {
+            panic!("Decimal column '{column}' was non-f64 number: {value}. Raw: {raw_output}")
+        }),
         Value::String(s) => {
             if let Ok(parsed) = s.parse::<f64>() {
                 parsed
             } else if let Some(rest) = s.strip_prefix("Some(") {
                 // Old server JSON format for DECIMAL: "Some(<unscaled>),<precision>,<scale>"
                 // Example: "Some(20075),10,2" => 200.75
-                let (unscaled_part, rest) = rest.split_once(')')
-                    .unwrap_or_else(|| panic!("Unexpected DECIMAL string format '{s}'. Raw: {raw_output}"));
-                let unscaled: i128 = unscaled_part
-                    .parse()
-                    .unwrap_or_else(|e| panic!("Invalid unscaled DECIMAL in '{s}': {e}. Raw: {raw_output}"));
+                let (unscaled_part, rest) = rest.split_once(')').unwrap_or_else(|| {
+                    panic!("Unexpected DECIMAL string format '{s}'. Raw: {raw_output}")
+                });
+                let unscaled: i128 = unscaled_part.parse().unwrap_or_else(|e| {
+                    panic!("Invalid unscaled DECIMAL in '{s}': {e}. Raw: {raw_output}")
+                });
 
                 let rest = rest.strip_prefix(',').unwrap_or(rest);
                 let mut parts = rest.split(',');
                 let _precision = parts.next();
-                let scale: u32 = parts
-                    .next()
-                    .unwrap_or("0")
-                    .parse()
-                    .unwrap_or_else(|e| panic!("Invalid DECIMAL scale in '{s}': {e}. Raw: {raw_output}"));
+                let scale: u32 = parts.next().unwrap_or("0").parse().unwrap_or_else(|e| {
+                    panic!("Invalid DECIMAL scale in '{s}': {e}. Raw: {raw_output}")
+                });
 
                 let denom = 10_f64.powi(scale as i32);
                 (unscaled as f64) / denom
             } else {
                 panic!("Decimal column '{column}' was non-numeric string '{s}'. Raw: {raw_output}")
             }
-        }
-        _ => panic!(
-            "Decimal column '{column}' had unexpected JSON type: {value}. Raw: {raw_output}"
-        ),
+        },
+        _ => {
+            panic!("Decimal column '{column}' had unexpected JSON type: {value}. Raw: {raw_output}")
+        },
     };
 
     assert!(
@@ -140,7 +142,10 @@ fn test_update_all_types_user_table() {
 
     let output = execute_sql_as_root_via_cli(&create_sql).unwrap();
     assert!(
-        output.contains("created") || output.contains("Success") || output.contains("Query OK") || output.contains("Raft consensus"),
+        output.contains("created")
+            || output.contains("Success")
+            || output.contains("Query OK")
+            || output.contains("Raft consensus"),
         "Table creation failed: {}",
         output
     );
@@ -172,11 +177,7 @@ fn test_update_all_types_user_table() {
     // Verify initial data
     let query_sql = format!("SELECT * FROM {} WHERE id = 'row1'", full_table_name);
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
-    assert!(
-        output.contains("initial text"),
-        "Initial data not found: {}",
-        output
-    );
+    assert!(output.contains("initial text"), "Initial data not found: {}", output);
     assert!(output.contains("123"), "Initial int not found");
 
     // --- NEW SCENARIO: Flush initial data to cold storage before update ---
@@ -243,11 +244,7 @@ fn test_update_all_types_user_table() {
 
     // Verify updated data (before flush)
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
-    assert!(
-        output.contains("updated text"),
-        "Updated text not found: {}",
-        output
-    );
+    assert!(output.contains("updated text"), "Updated text not found: {}", output);
     assert!(output.contains("456"), "Updated int not found");
     let row = extract_first_row_from_cli_json(&output);
     assert_decimal_column_eq(&row, "col_decimal", 200.75, &output);
@@ -330,7 +327,10 @@ fn test_update_all_types_shared_table() {
 
     let output = execute_sql_as_root_via_cli(&create_sql).unwrap();
     assert!(
-        output.contains("created") || output.contains("Success") || output.contains("Query OK") || output.contains("Raft consensus"),
+        output.contains("created")
+            || output.contains("Success")
+            || output.contains("Query OK")
+            || output.contains("Raft consensus"),
         "Table creation failed: {}",
         output
     );
@@ -362,11 +362,7 @@ fn test_update_all_types_shared_table() {
     // Verify initial data
     let query_sql = format!("SELECT * FROM {} WHERE id = 'row1'", full_table_name);
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
-    assert!(
-        output.contains("initial text"),
-        "Initial data not found: {}",
-        output
-    );
+    assert!(output.contains("initial text"), "Initial data not found: {}", output);
     assert!(output.contains("123"), "Initial int not found");
 
     // --- NEW SCENARIO: Flush initial data to cold storage before update ---
@@ -427,11 +423,7 @@ fn test_update_all_types_shared_table() {
 
     // Verify updated data (before flush)
     let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
-    assert!(
-        output.contains("updated text"),
-        "Updated text not found: {}",
-        output
-    );
+    assert!(output.contains("updated text"), "Updated text not found: {}", output);
     assert!(output.contains("456"), "Updated int not found");
     let row = extract_first_row_from_cli_json(&output);
     assert_decimal_column_eq(&row, "col_decimal", 200.75, &output);
