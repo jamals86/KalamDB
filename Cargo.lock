@@ -3476,7 +3476,6 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "sqlparser 0.60.0",
  "thiserror 2.0.17",
  "toml",
  "uuid",

@@ -116,8 +116,7 @@ async fn download_file_streaming(
         .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
 
     // Stream to local file
-    let path_str = local_path.to_string_lossy().to_string();
-    record_open("remote_materializer", &path_str);
+    record_open("remote_materializer", local_path);
     
     let mut file = fs::File::create(local_path)
         .await
@@ -133,7 +132,7 @@ async fn download_file_streaming(
 
     file.flush().await.map_err(FilestoreError::Io)?;
     drop(file); // Explicitly close file
-    record_close("remote_materializer", &path_str);
+    record_close("remote_materializer", local_path);
 
     Ok(())
 }

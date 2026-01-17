@@ -7,7 +7,7 @@ impl SqlStatement {
     /// Extract AS USER 'user_id' clause from SQL if present
     /// Returns (cleaned_sql, optional_user_id)
     pub(crate) fn extract_as_user(sql: &str) -> (String, Option<UserId>) {
-        let upper = sql.to_uppercase();
+        let upper = sql.to_ascii_uppercase();
 
         // Find "AS USER 'user_id'" or "AS USER \"user_id\"" pattern
         if let Some(as_user_pos) = upper.find(" AS USER ") {
@@ -42,9 +42,14 @@ impl SqlStatement {
                 ""
             };
 
-            let cleaned_sql = format!("{} {}", before_as_user.trim(), after_as_user_clause.trim())
-                .trim()
-                .to_string();
+            let before_trimmed = before_as_user.trim();
+            let after_trimmed = after_as_user_clause.trim();
+            let mut cleaned_sql = String::with_capacity(before_trimmed.len() + after_trimmed.len() + 1);
+            cleaned_sql.push_str(before_trimmed);
+            if !after_trimmed.is_empty() {
+                cleaned_sql.push(' ');
+                cleaned_sql.push_str(after_trimmed);
+            }
             let user_id = UserId::from(user_id_str.to_string());
 
             (cleaned_sql, Some(user_id))
@@ -103,24 +108,19 @@ impl SqlStatement {
         // Use sqlparser's tokenizer to get the first keyword (skips comments automatically)
         let dialect = sqlparser::dialect::GenericDialect {};
         let mut tokenizer = sqlparser::tokenizer::Tokenizer::new(&dialect, sql);
-        
-        // Pre-compute fallback data only once (lazy via Option)
-        let fallback_data = || -> (String, Vec<String>) {
-            let sql_upper = sql.trim().to_uppercase();
-            let words: Vec<String> = sql_upper.split_whitespace().map(|s| s.to_string()).collect();
-            (sql_upper, words)
-        };
-        
-        let tokens = match tokenizer.tokenize() {
-            Ok(t) => t,
-            Err(_) => {
-                // If tokenization fails, use simple whitespace split as fallback
-                let (_, fallback_words) = fallback_data();
-                if fallback_words.is_empty() {
+        let tokens = tokenizer.tokenize().ok();
+        let mut fallback_words: Option<Vec<String>> = None;
+        let tokens = match tokens {
+            Some(tokens) => tokens,
+            None => {
+                let mut sql_upper = sql.trim().to_string();
+                sql_upper.make_ascii_uppercase();
+                let words: Vec<String> = sql_upper.split_whitespace().map(|s| s.to_string()).collect();
+                if words.is_empty() {
                     return Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown));
                 }
-                // Continue with simple word-based matching
-                vec![]
+                fallback_words = Some(words);
+                Vec::new()
             }
         };
 
@@ -129,18 +129,33 @@ impl SqlStatement {
             tokens
                 .iter()
                 .find_map(|tok| match tok {
-                    sqlparser::tokenizer::Token::Word(w) => Some(w.value.to_uppercase()),
+                    sqlparser::tokenizer::Token::Word(w) => Some(w.value.to_ascii_uppercase()),
                     _ => None,
                 })
                 .unwrap_or_else(|| {
-                    // Fallback to simple parsing
-                    let (_, fallback_words) = fallback_data();
-                    fallback_words.first().cloned().unwrap_or_default()
+                    if fallback_words.is_none() {
+                        let mut sql_upper = sql.trim().to_string();
+                        sql_upper.make_ascii_uppercase();
+                        fallback_words = Some(
+                            sql_upper.split_whitespace().map(|s| s.to_string()).collect(),
+                        );
+                    }
+                    fallback_words
+                        .as_ref()
+                        .and_then(|words| words.first().cloned())
+                        .unwrap_or_default()
                 })
         } else {
-            // Fallback to simple parsing
-            let (_, fallback_words) = fallback_data();
-            fallback_words.first().cloned().unwrap_or_default()
+            if fallback_words.is_none() {
+                let mut sql_upper = sql.trim().to_string();
+                sql_upper.make_ascii_uppercase();
+                fallback_words =
+                    Some(sql_upper.split_whitespace().map(|s| s.to_string()).collect());
+            }
+            fallback_words
+                .as_ref()
+                .and_then(|words| words.first().cloned())
+                .unwrap_or_default()
         };
 
         // Build words list from non-comment tokens for pattern matching
@@ -148,13 +163,12 @@ impl SqlStatement {
             tokens
                 .iter()
                 .filter_map(|tok| match tok {
-                    sqlparser::tokenizer::Token::Word(w) => Some(w.value.to_uppercase()),
+                    sqlparser::tokenizer::Token::Word(w) => Some(w.value.to_ascii_uppercase()),
                     _ => None,
                 })
                 .collect()
         } else {
-            let (_, fallback_words) = fallback_data();
-            fallback_words
+            fallback_words.take().unwrap_or_default()
         };
         let word_refs: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
 
@@ -605,7 +619,7 @@ impl SqlStatement {
                 // Read-only, allowed for all users
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterList))
             }
-            ["CLUSTER", "STATUS", ..] => {
+            ["CLUSTER", "STATUS", ..] | ["CLUSTER", "LS", ..] => {
                 // Read-only, allowed for all users
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterList))
             }

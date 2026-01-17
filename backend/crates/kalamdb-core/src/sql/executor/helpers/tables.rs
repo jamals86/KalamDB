@@ -24,7 +24,7 @@ use std::sync::Arc;
 /// # Returns
 /// Ok(()) if valid, error otherwise
 pub fn validate_table_name(name: &str) -> Result<(), String> {
-    kalamdb_commons::validation::validate_table_name(name).map_err(|e| e.to_string())
+    kalamdb_sql::validation::validate_table_name(name).map_err(|e| e.to_string())
 }
 
 /// Save table definition to information_schema.tables
@@ -55,7 +55,7 @@ pub fn save_table_definition(
         .enumerate()
         .map(|(idx, field)| {
             // Validate column name
-            kalamdb_commons::validation::validate_column_name(field.name()).map_err(|e| {
+            kalamdb_sql::validation::validate_column_name(field.name()).map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Invalid column name '{}': {}",
                     field.name(),

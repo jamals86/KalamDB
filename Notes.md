@@ -999,6 +999,14 @@ make sure the backend compiles after this
 
 60) Make a new crate which has struct's which link and backend has them in common
 
+62) the crate kalamdb-core is taking long to compile i guess we can remove some of the code from inside and divide it into multiple crates for better compile times and also better code organization
+
+63) all cluster commands should be only dba or root:
+            ["CLUSTER", "STATUS", ..] | ["CLUSTER", "LS", ..] => {
+                // Read-only, allowed for all users
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterList))
+            }
+
 
 
 

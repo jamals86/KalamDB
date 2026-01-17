@@ -7,7 +7,7 @@
 //! (table aliases, column aliases, identifier restrictions, table factors), which
 //! cover the dialect-specific words that cannot safely be used as identifiers.
 
-use crate::constants::{SystemColumnNames, RESERVED_NAMESPACE_NAMES};
+use kalamdb_commons::constants::{SystemColumnNames, RESERVED_NAMESPACE_NAMES};
 use once_cell::sync::Lazy;
 use sqlparser::keywords::{
     Keyword, ALL_KEYWORDS, ALL_KEYWORDS_INDEX, RESERVED_FOR_COLUMN_ALIAS, RESERVED_FOR_IDENTIFIER,
@@ -152,8 +152,7 @@ pub const MAX_NAME_LENGTH: usize = 64;
 /// - Cannot be a reserved SQL keyword
 pub fn validate_namespace_name(name: &str) -> Result<(), ValidationError> {
     // Check if it's a reserved namespace first (more specific error message)
-    let lowercase = name.to_lowercase();
-    if RESERVED_NAMESPACES.contains(lowercase.as_str()) {
+    if is_reserved_case_insensitive(&RESERVED_NAMESPACES, name) {
         return Err(ValidationError::ReservedNamespace(name.to_string()));
     }
 
@@ -191,8 +190,7 @@ pub fn validate_table_name(name: &str) -> Result<(), ValidationError> {
 /// - Cannot be a reserved SQL keyword
 pub fn validate_column_name(name: &str) -> Result<(), ValidationError> {
     // Check reserved column names first (more specific error)
-    let lowercase = name.to_lowercase();
-    if RESERVED_COLUMN_NAMES.contains(lowercase.as_str()) {
+    if is_reserved_case_insensitive(&RESERVED_COLUMN_NAMES, name) {
         return Err(ValidationError::ReservedColumnName(name.to_string()));
     }
     
@@ -237,11 +235,34 @@ fn validate_identifier_base(name: &str) -> Result<(), ValidationError> {
 }
 
 fn ensure_not_reserved_sql_keyword(name: &str) -> Result<(), ValidationError> {
-    let uppercase = name.to_ascii_uppercase();
-    if RESERVED_SQL_KEYWORDS.contains(uppercase.as_str()) {
+    if RESERVED_SQL_KEYWORDS.contains(name) {
         return Err(ValidationError::ReservedSqlKeyword(name.to_string()));
     }
+
+    if name.bytes().any(|b| b.is_ascii_lowercase()) {
+        let uppercase = name.to_ascii_uppercase();
+        if RESERVED_SQL_KEYWORDS.contains(uppercase.as_str()) {
+            return Err(ValidationError::ReservedSqlKeyword(name.to_string()));
+        }
+    }
+
     Ok(())
+}
+
+fn is_reserved_case_insensitive(
+    reserved: &HashSet<&'static str>,
+    name: &str,
+) -> bool {
+    if reserved.contains(name) {
+        return true;
+    }
+
+    if name.bytes().any(|b| b.is_ascii_uppercase()) {
+        let lowercase = name.to_ascii_lowercase();
+        return reserved.contains(lowercase.as_str());
+    }
+
+    false
 }
 
 fn keyword_to_str(keyword: &Keyword) -> &'static str {

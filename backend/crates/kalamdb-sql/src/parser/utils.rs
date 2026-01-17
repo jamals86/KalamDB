@@ -44,8 +44,8 @@ pub fn normalize_sql(sql: &str) -> String {
 /// - No quote after keyword
 /// - Unclosed quote
 pub fn extract_quoted_keyword_value(sql: &str, keyword: &str) -> Result<String, String> {
-    let keyword_upper = keyword.to_uppercase();
-    let sql_upper = sql.to_uppercase();
+    let keyword_upper = keyword.to_ascii_uppercase();
+    let sql_upper = sql.to_ascii_uppercase();
 
     // Find keyword as a whole word (surrounded by whitespace or start/end)
     let keyword_pos = find_whole_word(&sql_upper, &keyword_upper)
@@ -84,8 +84,8 @@ pub fn extract_quoted_keyword_value(sql: &str, keyword: &str) -> Result<String, 
 /// assert_eq!(extract_keyword_value(sql2, "TYPE").unwrap(), "filesystem");
 /// ```
 pub fn extract_keyword_value(sql: &str, keyword: &str) -> Result<String, String> {
-    let keyword_upper = keyword.to_uppercase();
-    let sql_upper = sql.to_uppercase();
+    let keyword_upper = keyword.to_ascii_uppercase();
+    let sql_upper = sql.to_ascii_uppercase();
 
     let keyword_pos = find_whole_word(&sql_upper, &keyword_upper)
         .ok_or_else(|| format!("{} keyword not found", keyword))?;

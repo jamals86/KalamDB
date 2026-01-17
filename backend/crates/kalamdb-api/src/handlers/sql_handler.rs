@@ -177,7 +177,7 @@ pub async fn execute_sql_v1(
 
                 // Debug log for SQL execution (includes timing)
                 // SECURITY: Redact sensitive data (passwords) before logging
-                let safe_sql = kalamdb_commons::security::redact_sensitive_sql(sql);
+                let safe_sql = kalamdb_commons::helpers::security::redact_sensitive_sql(sql);
                 log::debug!(
                     target: "sql::exec",
                     "✅ SQL executed | sql='{}' | user='{}' | role='{:?}' | rows={} | took={:.3}ms",

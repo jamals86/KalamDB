@@ -232,7 +232,7 @@ pub fn build_table_definition(
         .iter()
         .enumerate()
         .map(|(idx, field)| {
-            kalamdb_commons::validation::validate_column_name(field.name()).map_err(|e| {
+            kalamdb_sql::validation::validate_column_name(field.name()).map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Invalid column name '{}': {}",
                     field.name(),

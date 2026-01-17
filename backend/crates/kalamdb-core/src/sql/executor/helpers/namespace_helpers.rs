@@ -46,7 +46,7 @@ pub async fn execute_create_namespace(
     let name = stmt.name.as_str();
 
     // Validate namespace name
-    Namespace::validate_name(name)?;
+    kalamdb_sql::validation::validate_namespace_name(name).map_err(|e| e.to_string())?;
 
     // Check if namespace already exists
     let namespace_id = NamespaceId::new(name);

@@ -85,6 +85,11 @@ impl ConnectionTracker {
             .entry(target)
             .or_insert_with(|| ConnectionState::new(now, retry_interval));
 
+        if !entry.is_unreachable {
+            entry.last_attempt = now;
+            return true;
+        }
+
         if now.duration_since(entry.last_attempt) >= retry_interval {
             entry.last_attempt = now;
             true

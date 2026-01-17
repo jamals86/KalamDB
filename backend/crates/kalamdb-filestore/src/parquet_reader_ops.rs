@@ -28,11 +28,12 @@ pub async fn read_parquet_batches(
     let builder = ParquetRecordBatchReaderBuilder::try_new(bytes)
         .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
     
+    let row_group_count = builder.metadata().num_row_groups();
     let reader = builder
         .build()
         .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
-    
-    let mut batches = Vec::new();
+
+    let mut batches = Vec::with_capacity(row_group_count);
     for batch_result in reader {
         let batch = batch_result.map_err(|e| FilestoreError::Parquet(e.to_string()))?;
         batches.push(batch);

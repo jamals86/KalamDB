@@ -173,7 +173,7 @@ impl SubscriptionValidator {
 
     /// Validate table name format
     pub fn validate_table_name(table_name: &str) -> Result<()> {
-        kalamdb_commons::validation::validate_table_name(table_name).map_err(|e| {
+        kalamdb_sql::validation::validate_table_name(table_name).map_err(|e| {
             LiveError::InvalidSubscription {
                 reason: e.to_string(),
                 field: "table_name".to_string(),

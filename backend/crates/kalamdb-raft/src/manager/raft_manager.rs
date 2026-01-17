@@ -390,50 +390,67 @@ impl RaftManager {
         };
 
         if should_attempt_peer_join && !self.config.peers.is_empty() {
-            // Only perform membership operations when we lead all groups.
-            let leader_for_all_groups = self.meta.is_leader()
-                && self.user_data_shards.iter().all(|g| g.is_leader())
-                && self.shared_data_shards.iter().all(|g| g.is_leader());
+            let peers = self.config.peers.clone();
+            let meta = self.meta.clone();
+            let user_data_shards = self.user_data_shards.clone();
+            let shared_data_shards = self.shared_data_shards.clone();
+            let replication_timeout = self.config.replication_timeout;
+            let node_id = self.node_id;
 
-            if !leader_for_all_groups {
-                log::info!(
-                    "Skipping peer join: node {} is not leader for all groups",
-                    self.node_id
-                );
-                return Ok(());
-            }
+            tokio::spawn(async move {
+                // Only perform membership operations when we lead all groups.
+                let leader_for_all_groups = meta.is_leader()
+                    && user_data_shards.iter().all(|g| g.is_leader())
+                    && shared_data_shards.iter().all(|g| g.is_leader());
 
-            log::info!("Waiting for {} peer nodes to come online...", self.config.peers.len());
-            
-            const MAX_RETRIES: u32 = 60;  // 60 retries × 0.5s initial = ~30s max wait
-            const INITIAL_DELAY_MS: u64 = 500;
-            const MAX_DELAY_MS: u64 = 2000;
-            
-            for peer in &self.config.peers {
-                log::info!("  Waiting for peer node_id={} (rpc={}) to be online...", 
-                    peer.node_id, peer.rpc_addr);
-                
-                // Wait for the peer's RPC endpoint to respond
-                match self.wait_for_peer_online(&peer.rpc_addr, MAX_RETRIES, INITIAL_DELAY_MS, MAX_DELAY_MS).await {
-                    Ok(_) => {
-                        log::info!("    ✓ Peer {} is online, adding to cluster...", peer.node_id);
-                        
-                        // Now add the node - should succeed immediately since it's online
-                        match self.add_node(peer.node_id, peer.rpc_addr.clone(), peer.api_addr.clone()).await {
-                            Ok(_) => {
-                                log::info!("    ✓ Peer {} joined cluster successfully", peer.node_id);
-                            }
-                            Err(e) => {
-                                log::error!("    ✗ Failed to add peer {} to cluster: {}", peer.node_id, e);
+                if !leader_for_all_groups {
+                    log::info!(
+                        "Skipping peer join: node {} is not leader for all groups",
+                        node_id
+                    );
+                    return;
+                }
+
+                log::info!("Waiting for {} peer nodes to come online...", peers.len());
+
+                const MAX_RETRIES: u32 = 60;  // 60 retries × 0.5s initial = ~30s max wait
+                const INITIAL_DELAY_MS: u64 = 500;
+                const MAX_DELAY_MS: u64 = 2000;
+
+                for peer in &peers {
+                    log::info!("  Waiting for peer node_id={} (rpc={}) to be online...", 
+                        peer.node_id, peer.rpc_addr);
+
+                    // Wait for the peer's RPC endpoint to respond
+                    match RaftManager::wait_for_peer_online(&peer.rpc_addr, MAX_RETRIES, INITIAL_DELAY_MS, MAX_DELAY_MS).await {
+                        Ok(_) => {
+                            log::info!("    ✓ Peer {} is online, adding to cluster...", peer.node_id);
+
+                            // Now add the node - should succeed immediately since it's online
+                            match RaftManager::add_node_with_groups(
+                                peer.node_id,
+                                peer.rpc_addr.clone(),
+                                peer.api_addr.clone(),
+                                meta.clone(),
+                                user_data_shards.clone(),
+                                shared_data_shards.clone(),
+                                replication_timeout,
+                            ).await {
+                                Ok(_) => {
+                                    log::info!("    ✓ Peer {} joined cluster successfully", peer.node_id);
+                                }
+                                Err(e) => {
+                                    log::error!("    ✗ Failed to add peer {} to cluster: {}", peer.node_id, e);
+                                }
                             }
                         }
-                    }
-                    Err(e) => {
-                        log::error!("    ✗ Peer {} did not come online: {}", peer.node_id, e);
+                        Err(e) => {
+                            log::error!("    ✗ Peer {} did not come online: {}", peer.node_id, e);
+                        }
                     }
                 }
-            }
-            log::info!("Cluster formation complete");
+                log::info!("Cluster formation complete");
+            });
         }
         
         Ok(())
@@ -444,7 +461,7 @@ impl RaftManager {
     /// This checks if the peer's RPC endpoint is responding before attempting to add it.
     /// This prevents OpenRaft from generating thousands of connection errors when trying
     /// to replicate to an offline node.
-    async fn wait_for_peer_online(&self, rpc_addr: &str, max_retries: u32, initial_delay_ms: u64, max_delay_ms: u64) -> Result<(), RaftError> {
+    async fn wait_for_peer_online(rpc_addr: &str, max_retries: u32, initial_delay_ms: u64, max_delay_ms: u64) -> Result<(), RaftError> {
         let mut attempt = 0;
         let mut delay_ms = initial_delay_ms;
         
@@ -476,6 +493,72 @@ impl RaftManager {
                 }
             }
         }
+    }
+
+    async fn add_node_with_groups(
+        node_id: NodeId,
+        rpc_addr: String,
+        api_addr: String,
+        meta: Arc<RaftGroup<MetaStateMachine>>,
+        user_data_shards: Vec<Arc<RaftGroup<UserDataStateMachine>>>,
+        shared_data_shards: Vec<Arc<RaftGroup<SharedDataStateMachine>>>,
+        replication_timeout: Duration,
+    ) -> Result<(), RaftError> {
+        let node_id_u64 = node_id.as_u64();
+        log::info!("[CLUSTER] Node {} joining cluster (rpc={}, api={})", node_id, rpc_addr, api_addr);
+        let node = KalamNode { rpc_addr: rpc_addr.clone(), api_addr: api_addr.clone() };
+
+        async fn add_learner_and_wait<SM: KalamStateMachine + Send + Sync + 'static>(
+            group: &Arc<RaftGroup<SM>>,
+            node_id_u64: u64,
+            node: &KalamNode,
+            timeout: Duration,
+        ) -> Result<(), RaftError> {
+            if !group.is_leader() {
+                return Err(RaftError::not_leader(
+                    group.group_id().to_string(),
+                    group.current_leader(),
+                ));
+            }
+            group.add_learner(node_id_u64, node.clone()).await?;
+            group.wait_for_learner_catchup(node_id_u64, timeout).await?;
+            Ok(())
+        }
+
+        async fn promote_learner<SM: KalamStateMachine + Send + Sync + 'static>(
+            group: &Arc<RaftGroup<SM>>,
+            node_id_u64: u64,
+        ) -> Result<(), RaftError> {
+            group.promote_learner(node_id_u64).await
+        }
+
+        // Add to all groups as learner first
+        log::info!("[CLUSTER] Adding node {} as learner to all {} Raft groups...", node_id, 1 + user_data_shards.len() + shared_data_shards.len());
+
+        // Add to unified meta group
+        add_learner_and_wait(&meta, node_id_u64, &node, replication_timeout).await?;
+
+        for shard in &user_data_shards {
+            add_learner_and_wait(shard, node_id_u64, &node, replication_timeout).await?;
+        }
+
+        for shard in &shared_data_shards {
+            add_learner_and_wait(shard, node_id_u64, &node, replication_timeout).await?;
+        }
+
+        log::info!("[CLUSTER] Promoting node {} to voter on all groups...", node_id);
+
+        promote_learner(&meta, node_id_u64).await?;
+
+        for shard in &user_data_shards {
+            promote_learner(shard, node_id_u64).await?;
+        }
+
+        for shard in &shared_data_shards {
+            promote_learner(shard, node_id_u64).await?;
+        }
+
+        Ok(())
     }
     
     /// Add a new node to the cluster

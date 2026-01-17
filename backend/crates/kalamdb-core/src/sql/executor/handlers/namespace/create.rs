@@ -13,7 +13,6 @@ use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::catalog::MemorySchemaProvider;
 use kalamdb_commons::models::{NamespaceId, UserId};
-use kalamdb_commons::system::Namespace;
 use kalamdb_sql::ddl::CreateNamespaceStatement;
 use std::sync::Arc;
 
@@ -83,7 +82,7 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         let name = statement.name.as_str();
 
         // Validate namespace name
-        Namespace::validate_name(name)?;
+        kalamdb_sql::validation::validate_namespace_name(name).map_err(|e| e.to_string())?;
 
         // Check if namespace already exists
         let namespace_id = NamespaceId::new(name);

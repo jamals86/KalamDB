@@ -18,7 +18,7 @@ pub mod traits;
 pub use arrow_schema::ArrowSchemaWithOptions;
 pub use cached_table_data::CachedTableData;
 pub use error::RegistryError;
-pub use kalamdb_commons::string_interner::SystemColumns;
+pub use kalamdb_commons::helpers::string_interner::SystemColumns;
 pub use path_resolver::PathResolver;
 pub use persistence::SchemaPersistence;
 pub use projection::{project_batch, schemas_compatible};

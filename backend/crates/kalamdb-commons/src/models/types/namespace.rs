@@ -69,31 +69,6 @@ impl Namespace {
         }
     }
 
-    /// Validate namespace name format
-    ///
-    /// Namespace names must:
-    /// - Not be empty
-    /// - Not exceed 64 characters
-    /// - Only contain alphanumeric characters and underscores
-    /// - Not start with an underscore or number
-    /// - Not be a reserved namespace name (system, kalamdb, etc.)
-    /// - Not be a reserved SQL keyword
-    ///
-    /// # Example
-    /// ```
-    /// use kalamdb_commons::types::Namespace;
-    ///
-    /// assert!(Namespace::validate_name("app").is_ok());
-    /// assert!(Namespace::validate_name("analytics_db").is_ok());
-    /// assert!(Namespace::validate_name("MyNamespace").is_ok());
-    /// assert!(Namespace::validate_name("system").is_err());  // reserved
-    /// assert!(Namespace::validate_name("kalamdb").is_err()); // reserved
-    /// assert!(Namespace::validate_name("_private").is_err()); // starts with _
-    /// ```
-    pub fn validate_name(name: &str) -> Result<(), String> {
-        crate::validation::validate_namespace_name(name).map_err(|e| e.to_string())
-    }
-
     /// Check if this namespace can be deleted (has no tables)
     #[inline]
     pub fn can_delete(&self) -> bool {

@@ -6,10 +6,10 @@
 //!
 //! Runs in DataUserShard(N) Raft groups where N = user_id % 32.
 //!
-//! ## Watermark Buffering
+//! ## Watermark Synchronization
 //!
-//! Commands with `required_meta_index > current_meta_index` are buffered
-//! until Meta catches up. This ensures data operations don't run before
+//! Commands with `required_meta_index > current_meta_index` wait for Meta
+//! to catch up before applying. This ensures data operations don't run before
 //! their dependent metadata (tables, users) is applied locally.
 
 use async_trait::async_trait;
@@ -73,11 +73,11 @@ struct UserDataSnapshot {
 /// Note: Row data is persisted via the UserDataApplier after Raft consensus.
 /// All nodes (leader and followers) call the applier, ensuring consistent data.
 ///
-/// ## Watermark Buffering
+/// ## Watermark Synchronization
 ///
-/// Commands with `required_meta_index > current_meta_index` are buffered
-/// in `pending_buffer` until Meta catches up. When Meta applies new entries,
-/// it notifies data shards via `MetadataCoordinator`, triggering drain.
+/// Commands with `required_meta_index > current_meta_index` wait for Meta
+/// to catch up before applying. Pending commands restored from snapshots
+/// are drained once Meta is satisfied.
 pub struct UserDataStateMachine {
     /// Which shard this state machine handles (0-31)
     shard: u32,
@@ -416,27 +416,13 @@ impl KalamStateMachine for UserDataStateMachine {
         let required_meta = cmd.required_meta_index();
         let current_meta = get_coordinator().current_index();
         
-        // Check watermark: if Meta is behind, buffer this command
+        // Check watermark: if Meta is behind, wait for it to catch up
         if required_meta > current_meta {
             log::debug!(
-                "UserDataStateMachine[{}]: Buffering entry {} (required_meta={} > current_meta={})",
-                self.shard, index, required_meta, current_meta
+                "UserDataStateMachine[{}]: Waiting for meta (required_meta={} > current_meta={})",
+                self.shard, required_meta, current_meta
             );
-            
-            // Buffer the command for later
-            self.pending_buffer.add(PendingCommand {
-                log_index: index,
-                log_term: term,
-                required_meta_index: required_meta,
-                command_bytes: command.to_vec(),
-            });
-            
-            // Advance last_applied (the entry is applied to state, just deferred side effects)
-            self.last_applied_index.store(index, Ordering::Release);
-            self.last_applied_term.store(term, Ordering::Release);
-            
-            // Return Ok with empty data (response will come when drained)
-            return Ok(ApplyResult::ok_with_data(encode(&DataResponse::Ok)?));
+            get_coordinator().wait_for(required_meta).await;
         }
         
         // First drain any pending commands that are now satisfied

@@ -31,6 +31,7 @@
 //! println!("Active handles: {}", stats.active_handles);
 //! ```
 
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use log::{debug, warn};
 
@@ -97,7 +98,8 @@ impl FileHandleTracker {
 /// # Arguments
 /// * `context` - Description of what's opening the file (e.g., "parquet_reader")
 /// * `path` - Path being opened (for logging)
-pub fn record_open(context: &str, path: &str) {
+pub fn record_open<P: AsRef<Path>>(context: &str, path: P) {
+    let path = path.as_ref();
     let new_count = TRACKER.active_handles.fetch_add(1, Ordering::SeqCst) + 1;
     TRACKER.total_opened.fetch_add(1, Ordering::Relaxed);
     
@@ -118,7 +120,7 @@ pub fn record_open(context: &str, path: &str) {
     debug!(
         "[FILE_HANDLE] OPEN: context={}, path={}, active={}, total_opened={}",
         context,
-        path,
+        path.display(),
         new_count,
         TRACKER.total_opened.load(Ordering::Relaxed)
     );
@@ -127,7 +129,9 @@ pub fn record_open(context: &str, path: &str) {
     if new_count > 1000 {
         warn!(
             "[FILE_HANDLE] HIGH HANDLE COUNT: {} handles open (context={}, path={})",
-            new_count, context, path
+            new_count,
+            context,
+            path.display()
         );
     }
 }
@@ -137,14 +141,15 @@ pub fn record_open(context: &str, path: &str) {
 /// # Arguments
 /// * `context` - Description of what's closing the file
 /// * `path` - Path being closed (for logging)
-pub fn record_close(context: &str, path: &str) {
+pub fn record_close<P: AsRef<Path>>(context: &str, path: P) {
+    let path = path.as_ref();
     let old_count = TRACKER.active_handles.fetch_sub(1, Ordering::SeqCst);
     TRACKER.total_closed.fetch_add(1, Ordering::Relaxed);
 
     debug!(
         "[FILE_HANDLE] CLOSE: context={}, path={}, active={}, total_closed={}",
         context,
-        path,
+        path.display(),
         old_count.saturating_sub(1),
         TRACKER.total_closed.load(Ordering::Relaxed)
     );
@@ -153,7 +158,8 @@ pub fn record_close(context: &str, path: &str) {
     if old_count == 0 {
         warn!(
             "[FILE_HANDLE] UNDERFLOW: Closed more files than opened! context={}, path={}",
-            context, path
+            context,
+            path.display()
         );
     }
 }

@@ -269,6 +269,7 @@ pub fn init_simple_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::helpers::security::redact_sensitive_sql;
 
     #[test]
     fn test_parse_log_level() {
@@ -288,8 +289,6 @@ mod tests {
 
     #[test]
     fn test_redact_sensitive_sql_passwords() {
-        use kalamdb_commons::security::redact_sensitive_sql;
-
         // ALTER USER with SET PASSWORD
         let sql = "ALTER USER 'alice' SET PASSWORD 'SuperSecret123!'";
         let redacted = redact_sensitive_sql(sql);
@@ -305,8 +304,6 @@ mod tests {
 
     #[test]
     fn test_redact_sensitive_sql_preserves_safe_queries() {
-        use kalamdb_commons::security::redact_sensitive_sql;
-
         let sql = "SELECT * FROM users WHERE name = 'alice'";
         let redacted = redact_sensitive_sql(sql);
         assert_eq!(sql, redacted);

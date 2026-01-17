@@ -27,10 +27,7 @@ pub fn delete_parquet_tree_for_table(
     relative_template: &str,
     table_type: TableType,
 ) -> Result<u64> {
-    let mut rel = relative_template.to_string();
-    if rel.starts_with('/') {
-        rel = rel.trim_start_matches('/').to_string();
-    }
+    let rel = relative_template.trim_start_matches('/');
 
     let bytes_freed = match table_type {
         TableType::User => {
@@ -49,16 +46,16 @@ pub fn delete_parquet_tree_for_table(
                 }
             } else {
                 // No {userId}; treat like shared
-                delete_prefix_sync(Arc::clone(&store), storage, &rel)?
+                delete_prefix_sync(Arc::clone(&store), storage, rel)?
             }
         }
         TableType::Shared => {
             let target = if let Some((prefix, _)) = rel.split_once("{shard}") {
-                prefix.trim_end_matches('/').to_string()
+                prefix.trim_end_matches('/')
             } else {
                 rel
             };
-            delete_prefix_sync(Arc::clone(&store), storage, &target)?
+            delete_prefix_sync(Arc::clone(&store), storage, target)?
         }
         TableType::Stream => 0,
         TableType::System => {

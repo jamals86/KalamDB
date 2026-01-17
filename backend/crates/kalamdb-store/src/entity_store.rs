@@ -58,6 +58,7 @@ use kalamdb_commons::{
     StorageKey, UserId,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 /// Directional scanning for entity stores
@@ -203,7 +204,7 @@ where
             ScanDirection::Older => {
                 let start_bytes = start_key.map(|k| k.storage_key());
                 let iter = self.backend().scan(&partition, None, None, None)?;
-                let mut collected: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+                let mut collected: VecDeque<(Vec<u8>, Vec<u8>)> = VecDeque::with_capacity(limit);
 
                 for (key_bytes, value_bytes) in iter {
                     if let Some(start) = &start_bytes {
@@ -211,18 +212,14 @@ where
                             break;
                         }
                     }
-                    collected.push((key_bytes, value_bytes));
+                    if collected.len() == limit {
+                        collected.pop_front();
+                    }
+                    collected.push_back((key_bytes, value_bytes));
                 }
 
-                // Keep only the closest `limit` rows before the start key.
-                if collected.len() > limit {
-                    let drain_end = collected.len() - limit;
-                    collected.drain(0..drain_end);
-                }
-
-                collected.reverse();
                 let mut rows = Vec::with_capacity(collected.len());
-                for (key_bytes, value_bytes) in collected {
+                for (key_bytes, value_bytes) in collected.into_iter().rev() {
                     let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
                     let entity = self.deserialize(&value_bytes)?;
                     rows.push(Ok((key, entity)));
