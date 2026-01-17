@@ -150,7 +150,29 @@ impl KSerializable for ManifestCacheEntry {}
 
 impl KSerializable for AuditLogEntry {}
 
-impl KSerializable for Job {}
+impl KSerializable for Job {
+    fn encode(&self) -> Result<Vec<u8>> {
+        let config = standard();
+        encode_to_vec(self, config)
+            .map_err(|e| StorageError::SerializationError(format!("bincode encode failed: {}", e)))
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self> {
+        let config = standard();
+        match decode_from_slice(bytes, config) {
+            Ok((entity, _)) => Ok(entity),
+            Err(err) => {
+                // Backward-compat: allow JSON-encoded job rows from older formats.
+                serde_json::from_slice(bytes).map_err(|json_err| {
+                    StorageError::SerializationError(format!(
+                        "bincode decode failed: {} (json decode also failed: {})",
+                        err, json_err
+                    ))
+                })
+            }
+        }
+    }
+}
 
 impl KSerializable for JobNode {}
 

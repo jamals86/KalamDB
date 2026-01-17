@@ -23,6 +23,104 @@ pub use std::os::unix::fs::PermissionsExt;
 
 static SERVER_URL: OnceLock<String> = OnceLock::new();
 static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
+static TEST_CONTEXT: OnceLock<TestContext> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+pub struct TestContext {
+    pub server_url: String,
+    pub username: String,
+    pub password: String,
+    pub is_cluster: bool,
+    pub cluster_urls: Vec<String>,
+}
+
+fn parse_test_arg(name: &str) -> Option<String> {
+    let prefix = format!("{}=", name);
+    for arg in std::env::args() {
+        if let Some(value) = arg.strip_prefix(&prefix) {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+fn parse_test_urls() -> Option<Vec<String>> {
+    let raw = parse_test_arg("--urls")?;
+    let urls: Vec<String> = raw
+        .split(',')
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .collect();
+    if urls.is_empty() {
+        None
+    } else {
+        Some(urls)
+    }
+}
+
+pub fn test_context() -> &'static TestContext {
+    TEST_CONTEXT.get_or_init(|| {
+        let server_url = parse_test_arg("--url")
+            .or_else(|| std::env::var("KALAMDB_SERVER_URL").ok())
+            .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
+
+        let username = parse_test_arg("--user")
+            .or_else(|| std::env::var("KALAMDB_USER").ok())
+            .unwrap_or_else(|| "root".to_string());
+
+        let password = parse_test_arg("--password")
+            .or_else(|| std::env::var("KALAMDB_ROOT_PASSWORD").ok())
+            .unwrap_or_else(|| "".to_string());
+
+        let cluster_default = "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
+        let cluster_urls: Vec<String> = parse_test_urls()
+            .or_else(|| std::env::var("KALAMDB_CLUSTER_URLS").ok().map(|s| {
+                s.split(',')
+                    .map(|url| url.trim().to_string())
+                    .filter(|url| !url.is_empty())
+                    .collect()
+            }))
+            .unwrap_or_else(|| {
+                cluster_default
+                    .split(',')
+                    .map(|url| url.trim().to_string())
+                    .filter(|url| !url.is_empty())
+                    .collect()
+            });
+
+        let healthy_cluster_nodes: Vec<String> = cluster_urls
+            .iter()
+            .filter(|url| {
+                let host_port = url
+                    .trim_start_matches("http://")
+                    .trim_start_matches("https://")
+                    .split('/')
+                    .next()
+                    .unwrap_or("127.0.0.1:8081");
+                std::net::TcpStream::connect(host_port)
+                    .map(|_| true)
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+
+        let (is_cluster, cluster_urls) = if let Some(explicit_urls) = parse_test_urls() {
+            (explicit_urls.len() > 1, explicit_urls)
+        } else if !healthy_cluster_nodes.is_empty() {
+            (true, healthy_cluster_nodes)
+        } else {
+            (false, vec![server_url.clone()])
+        };
+
+        TestContext {
+            server_url,
+            username,
+            password,
+            is_cluster,
+            cluster_urls,
+        }
+    })
+}
 
 /// Get the server URL for tests.
 ///
@@ -41,8 +139,15 @@ static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
 pub fn server_url() -> &'static str {
     SERVER_URL
         .get_or_init(|| {
-            std::env::var("KALAMDB_SERVER_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
+            let ctx = test_context();
+            if ctx.is_cluster {
+                ctx.cluster_urls
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| ctx.server_url.clone())
+            } else {
+                ctx.server_url.clone()
+            }
         })
         .as_str()
 }
@@ -67,7 +172,7 @@ pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// ```
 pub fn root_password() -> &'static str {
     ROOT_PASSWORD
-        .get_or_init(|| std::env::var("KALAMDB_ROOT_PASSWORD").unwrap_or_else(|_| "".to_string()))
+    .get_or_init(|| test_context().password.clone())
         .as_str()
 }
 
@@ -247,6 +352,16 @@ pub fn parse_cli_json_output(
     Ok(value)
 }
 
+/// Detect leader-related errors for cluster failover attempts.
+pub fn is_leader_error(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("not leader")
+        || lower.contains("unknown leader")
+        || lower.contains("leader is node none")
+        || lower.contains("raft insert failed")
+        || lower.contains("raft update failed")
+}
+
 /// Check if the KalamDB server is running
 pub fn is_server_running() -> bool {
     if !is_server_reachable() {
@@ -330,47 +445,22 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
 
 /// Get available server URLs (cluster mode or single-node)
 pub fn get_available_server_urls() -> Vec<String> {
-    // First check for cluster URLs
-    let cluster_default = "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
-    let cluster_urls: Vec<String> = std::env::var("KALAMDB_CLUSTER_URLS")
-        .unwrap_or_else(|_| cluster_default.to_string())
-        .split(',')
-        .map(|url| url.trim().to_string())
-        .filter(|url| !url.is_empty())
-        .collect();
-
-    // Test if any cluster node is available
-    let healthy_cluster_nodes: Vec<String> = cluster_urls
-        .iter()
-        .filter(|url| {
-            let host_port = url
-                .trim_start_matches("http://")
-                .trim_start_matches("https://")
-                .split('/')
-                .next()
-                .unwrap_or("127.0.0.1:8081");
-            std::net::TcpStream::connect(host_port).map(|_| true).unwrap_or(false)
-        })
-        .cloned()
-        .collect();
-
-    if !healthy_cluster_nodes.is_empty() {
-        return healthy_cluster_nodes;
+    let ctx = test_context();
+    if ctx.is_cluster {
+        return ctx.cluster_urls.clone();
     }
 
-    // Fall back to single-node server
-    let single_node_url = server_url().to_string();
+    let single_node_url = ctx.server_url.clone();
     if is_server_running() {
         return vec![single_node_url];
     }
 
-    // No servers available
     vec![]
 }
 
 /// Check if we're running in cluster mode (multiple nodes available)
 pub fn is_cluster_mode() -> bool {
-    get_available_server_urls().len() > 1
+    test_context().is_cluster
 }
 
 pub fn server_host_port() -> String {
@@ -574,6 +664,17 @@ pub fn execute_sql_via_cli_as(
     password: &str,
     sql: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    let ctx = test_context();
+    let username = if username.is_empty() {
+        ctx.username.as_str()
+    } else {
+        username
+    };
+    let password = if password.is_empty() {
+        ctx.password.as_str()
+    } else {
+        password
+    };
     execute_sql_via_cli_as_with_args(username, password, sql, &[])
 }
 
@@ -592,74 +693,96 @@ fn execute_sql_via_cli_as_with_args(
         sql.to_string()
     };
 
-    let spawn_start = Instant::now();
     eprintln!("[TEST_CLI] Executing as {}: \"{}\"", username, sql_preview.replace('\n', " "));
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
-        .arg("-u")
-        .arg(server_url())
-        .arg("--username")
-        .arg(username)
-        .arg("--password")
-        .arg(password)
-        .arg("--no-spinner")     // Disable spinner for cleaner output
-        .args(extra_args)
-        .arg("--command")
-        .arg(sql)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
+    let urls = if is_cluster_mode() {
+        get_available_server_urls()
+    } else {
+        vec![server_url().to_string()]
+    };
 
-    let spawn_duration = spawn_start.elapsed();
-    eprintln!("[TEST_CLI] Process spawned in {:?}", spawn_duration);
+    for _ in 0..3 {
+        for (idx, url) in urls.iter().enumerate() {
+            let spawn_start = Instant::now();
 
-    let wait_start = Instant::now();
+            let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
+                .arg("-u")
+                .arg(url)
+                .arg("--username")
+                .arg(username)
+                .arg("--password")
+                .arg(password)
+                .arg("--no-spinner")     // Disable spinner for cleaner output
+                .args(extra_args)
+                .arg("--command")
+                .arg(sql)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?;
 
-    // Wait for child with timeout to avoid hanging tests
-    let timeout_duration = Duration::from_secs(60);
-    match child.wait_timeout(timeout_duration)? {
-        Some(status) => {
-            let wait_duration = wait_start.elapsed();
-            let total_duration_ms = spawn_start.elapsed().as_millis();
+            let spawn_duration = spawn_start.elapsed();
+            eprintln!("[TEST_CLI] Process spawned in {:?}", spawn_duration);
 
-            // Now read stdout/stderr since the process completed
-            let mut stdout = String::new();
-            let mut stderr = String::new();
-            if let Some(ref mut out) = child.stdout {
-                use std::io::Read;
-                out.read_to_string(&mut stdout)?;
-            }
-            if let Some(ref mut err) = child.stderr {
-                use std::io::Read;
-                err.read_to_string(&mut stderr)?;
-            }
+            let wait_start = Instant::now();
 
-            if status.success() {
-                if !stderr.is_empty() {
-                    eprintln!("[TEST_CLI] stderr: {}", stderr);
+            // Wait for child with timeout to avoid hanging tests
+            let timeout_duration = Duration::from_secs(60);
+            match child.wait_timeout(timeout_duration)? {
+                Some(status) => {
+                    let wait_duration = wait_start.elapsed();
+                    let total_duration_ms = spawn_start.elapsed().as_millis();
+
+                    // Now read stdout/stderr since the process completed
+                    let mut stdout = String::new();
+                    let mut stderr = String::new();
+                    if let Some(ref mut out) = child.stdout {
+                        use std::io::Read;
+                        out.read_to_string(&mut stdout)?;
+                    }
+                    if let Some(ref mut err) = child.stderr {
+                        use std::io::Read;
+                        err.read_to_string(&mut stderr)?;
+                    }
+
+                    if status.success() {
+                        if !stderr.is_empty() {
+                            eprintln!("[TEST_CLI] stderr: {}", stderr);
+                        }
+                        eprintln!(
+                            "[TEST_CLI] Success: spawn={:?} wait={:?} total={}ms",
+                            spawn_duration, wait_duration, total_duration_ms
+                        );
+                        return Ok(stdout);
+                    } else {
+                        eprintln!(
+                            "[TEST_CLI] Failed: spawn={:?} wait={:?} total={}ms stderr={}",
+                            spawn_duration, wait_duration, total_duration_ms, stderr
+                        );
+                        let err_msg = format!("CLI command failed: {}", stderr);
+                        if is_leader_error(&err_msg) && idx + 1 < urls.len() {
+                            continue;
+                        }
+                        return Err(err_msg.into());
+                    }
                 }
-                eprintln!(
-                    "[TEST_CLI] Success: spawn={:?} wait={:?} total={}ms",
-                    spawn_duration, wait_duration, total_duration_ms
-                );
-                Ok(stdout)
-            } else {
-                eprintln!(
-                    "[TEST_CLI] Failed: spawn={:?} wait={:?} total={}ms stderr={}",
-                    spawn_duration, wait_duration, total_duration_ms, stderr
-                );
-                Err(format!("CLI command failed: {}", stderr).into())
+                None => {
+                    // Timeout - kill the child and return error
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let wait_duration = wait_start.elapsed();
+                    eprintln!("[TEST_CLI] TIMEOUT after {:?}", wait_duration);
+                    let err_msg = format!("CLI command timed out after {:?}", timeout_duration);
+                    if idx + 1 < urls.len() {
+                        continue;
+                    }
+                    return Err(err_msg.into());
+                }
             }
-        },
-        None => {
-            // Timeout - kill the child and return error
-            let _ = child.kill();
-            let _ = child.wait();
-            let wait_duration = wait_start.elapsed();
-            eprintln!("[TEST_CLI] TIMEOUT after {:?}", wait_duration);
-            Err(format!("CLI command timed out after {:?}", timeout_duration).into())
-        },
+        }
+        std::thread::sleep(Duration::from_millis(200));
     }
+
+    Err("CLI command failed on all cluster nodes".into())
 }
 
 /// Helper to execute SQL as root user via CLI
@@ -898,22 +1021,21 @@ pub fn execute_sql_via_client_as_with_args(
 
     runtime.spawn(async move {
         let result = async {
-            let base_url = get_available_server_urls()
+            let urls = get_available_server_urls();
+            let base_url = urls
                 .first()
                 .cloned()
                 .unwrap_or_else(|| server_url().to_string());
 
-            if is_root {
-                // Reuse shared root client to avoid creating new TCP connections
-                let client = get_shared_root_client();
-                let response = client.execute_query(&sql, None, None).await?;
-                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response)
-            } else {
-                // For non-root users, we need a client with different auth
-                // These are less common, so creating a new client is acceptable
+            async fn execute_once(
+                url: &str,
+                username: &str,
+                password: &str,
+                sql: &str,
+            ) -> Result<kalam_link::QueryResponse, Box<dyn std::error::Error + Send + Sync>> {
                 let client = KalamLinkClient::builder()
-                    .base_url(&base_url)
-                    .auth(AuthProvider::basic_auth(username_owned, password_owned))
+                    .base_url(url)
+                    .auth(AuthProvider::basic_auth(username.to_string(), password.to_string()))
                     .timeouts(
                         KalamLinkTimeouts::builder()
                             .connection_timeout_secs(5)
@@ -925,7 +1047,40 @@ pub fn execute_sql_via_client_as_with_args(
                             .build(),
                     )
                     .build()?;
+                let response = client.execute_query(sql, None, None).await?;
+                Ok(response)
+            }
+
+            // In cluster mode, try all nodes to find the leader for writes.
+            if is_cluster_mode() && urls.len() > 1 {
+                let mut last_err: Option<Box<dyn std::error::Error + Send + Sync>> = None;
+                for _ in 0..3 {
+                    for url in &urls {
+                        match execute_once(url, &username_owned, &password_owned, &sql).await {
+                            Ok(response) => return Ok(response),
+                            Err(e) => {
+                                let msg = e.to_string();
+                                if is_leader_error(&msg) {
+                                    last_err = Some(e);
+                                    continue;
+                                }
+                                return Err(e);
+                            }
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+                return Err(last_err.unwrap_or_else(|| "All cluster nodes failed".into()));
+            }
+
+            if is_root {
+                // Reuse shared root client to avoid creating new TCP connections
+                let client = get_shared_root_client();
                 let response = client.execute_query(&sql, None, None).await?;
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response)
+            } else {
+                let response =
+                    execute_once(&base_url, &username_owned, &password_owned, &sql).await?;
                 Ok(response)
             }
         }
@@ -1850,7 +2005,6 @@ impl FlushStorageVerificationResult {
 }
 
 /// Verify flush storage files for a SHARED table
-///
 /// Checks that manifest.json and batch-*.parquet files exist with non-zero size
 /// in the expected storage path for a shared table.
 ///

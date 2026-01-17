@@ -12,7 +12,6 @@ use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_commons::{NodeId, UserId};
 use kalamdb_sharding::ShardRouter;
 use kalamdb_store::RocksDbInit;
-use kalamdb_system::providers::live_queries::LiveQueriesTableProvider;
 use kalamdb_tables::{
     new_shared_table_store, new_stream_table_store, new_user_table_store, StreamTableStoreConfig,
 };
@@ -45,7 +44,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
     let backend: Arc<dyn kalamdb_store::StorageBackend> =
         Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
 
-    let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(backend.clone()));
+    let live_queries_provider = AppContext::get().system_tables().live_queries();
     let schema_registry = Arc::new(SchemaRegistry::new(128));
     let base_session_context = create_test_session();
     schema_registry.set_base_session_context(Arc::clone(&base_session_context));

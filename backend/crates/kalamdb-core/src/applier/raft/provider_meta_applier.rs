@@ -473,7 +473,16 @@ impl MetaApplier for ProviderMetaApplier {
         {
             let job_type = job.job_type.clone();
             job.status = JobStatus::Completed;
-            job.message = result_json.map(|s| s.to_string());
+            job.message = Some(
+                result_json
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        serde_json::json!({ "message": "Job completed successfully" }).to_string()
+                    }),
+            );
+            if job.started_at.is_none() {
+                job.started_at = Some(completed_at);
+            }
             job.finished_at = Some(completed_at);
             job.updated_at = completed_at;
 

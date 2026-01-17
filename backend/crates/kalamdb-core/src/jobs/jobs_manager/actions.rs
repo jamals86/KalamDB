@@ -228,6 +228,13 @@ impl JobsManager {
             .await
             .map_err(|e| KalamDbError::Other(format!("Failed to cancel job via Raft: {}", e)))?;
 
+        self.finalize_job_nodes(
+            job_id,
+            JobStatus::Cancelled,
+            Some("Cancelled by user".to_string()),
+        )
+        .await?;
+
         // Log cancellation
         self.log_job_event(job_id, &Level::Warn, "Job cancelled by user");
 
@@ -265,6 +272,9 @@ impl JobsManager {
             .await
             .map_err(|e| KalamDbError::Other(format!("Failed to complete job via Raft: {}", e)))?;
 
+        self.finalize_job_nodes(job_id, JobStatus::Completed, None)
+            .await?;
+
         self.log_job_event(job_id, &Level::Info, &success_message);
         Ok(())
     }
@@ -293,6 +303,9 @@ impl JobsManager {
         app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
             KalamDbError::Other(format!("Failed to mark job as failed via Raft: {}", e))
         })?;
+
+        self.finalize_job_nodes(job_id, JobStatus::Failed, Some(error_message.clone()))
+            .await?;
 
         self.log_job_event(job_id, &Level::Error, &format!("Job failed: {}", error_message));
         Ok(())

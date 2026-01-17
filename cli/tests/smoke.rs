@@ -103,3 +103,5 @@ mod smoke_test_queries_benchmark;
 mod smoke_test_system_and_users;
 #[path = "smoke/system/smoke_test_system_tables_extended.rs"]
 mod smoke_test_system_tables_extended;
+#[path = "smoke/system/smoke_test_cleanup_job.rs"]
+mod smoke_test_cleanup_job;

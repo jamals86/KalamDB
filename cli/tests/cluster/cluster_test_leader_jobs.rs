@@ -11,7 +11,7 @@
 use crate::cluster_common::*;
 use crate::common::*;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Test: Only leader executes flush jobs
 ///
@@ -75,18 +75,31 @@ fn cluster_test_leader_only_flush_jobs() {
     }
 
     // Step 4: Wait for job to complete
-    thread::sleep(Duration::from_secs(2));
+    let job_id = wait_for_latest_job_id_by_type(&leader_url, "Flush", Duration::from_secs(3))
+        .expect("Failed to find flush job id");
+    assert!(
+        wait_for_job_status(&leader_url, &job_id, "Completed", Duration::from_secs(6)),
+        "Flush job did not complete in time"
+    );
+
+    let leader_node_id = get_self_node_id(&leader_url).expect("Failed to resolve leader node_id");
 
     // Step 5: Query system.jobs to verify job was executed by leader
-    let jobs_query = format!(
-        "SELECT job_id, job_type, status, node_id FROM system.jobs WHERE job_type = 'Flush' ORDER BY created_at DESC LIMIT 5"
-    );
+    let jobs_query = "SELECT job_id, job_type, status, node_id FROM system.jobs WHERE job_id = '".to_string()
+        + &job_id
+        + "'";
 
     for (i, url) in urls.iter().enumerate() {
         let result = execute_on_node(url, &jobs_query);
         match result {
             Ok(resp) => {
                 println!("  → Node {} job view: {}", i, truncate_for_display(&resp, 200));
+                assert!(
+                    resp.contains(&leader_node_id),
+                    "Node {} did not report leader node_id {} in job row",
+                    i,
+                    leader_node_id
+                );
             },
             Err(e) => {
                 println!("  ✗ Node {} failed to query jobs: {}", i, e);
@@ -125,9 +138,11 @@ fn cluster_test_jobs_table_consistency() {
     // All nodes should see the same count (replicated via Raft)
     let first_count = counts.first().unwrap();
     for (i, count) in counts.iter().enumerate() {
-        if count != first_count {
-            println!("  ⚠ Node {} has different count: {} vs {}", i, count, first_count);
-        }
+        assert_eq!(
+            count, first_count,
+            "Node {} has different count: {} vs {}",
+            i, count, first_count
+        );
     }
 
     // Query recent jobs and verify node_id field is populated
@@ -135,15 +150,26 @@ fn cluster_test_jobs_table_consistency() {
 
     println!("\n  Recent jobs (from leader):");
     let leader_url = find_leader_url(&urls);
-    let result = execute_on_node(&leader_url, recent_jobs_sql);
-    match result {
-        Ok(resp) => {
-            println!("  {}", truncate_for_display(&resp, 500));
-        },
-        Err(e) => {
-            println!("  Query failed: {}", e);
-        },
-    }
+    let result = execute_on_node_response(&leader_url, recent_jobs_sql)
+        .expect("Failed to query recent jobs");
+    let rows = result.results.first().and_then(|r| r.rows.as_ref());
+
+    let has_node_id = rows
+        .map(|rows| {
+            rows.iter().any(|row| {
+                row.get(2)
+                    .map(|val| {
+                        extract_typed_value(val)
+                            .as_str()
+                            .map(|s| !s.is_empty())
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false);
+
+    assert!(has_node_id, "Expected recent jobs to have a populated node_id");
 
     println!("\n  ✅ Jobs table consistency test completed\n");
 }
@@ -167,20 +193,113 @@ fn cluster_test_job_claiming() {
     assert!(!leader_url.is_empty(), "No leader found in cluster");
     println!("  ✓ Leader identified: {}", leader_url);
 
-    // Query for running jobs (if any)
-    let running_jobs_sql = "SELECT count(*) FROM system.jobs WHERE status = 'Running'";
-    let running_count = query_count_on_url(&leader_url, running_jobs_sql);
-    println!("  Currently running jobs: {}", running_count);
+    let namespace = generate_unique_namespace("job_claim");
+    let table_name = format!("claim_{}", rand_suffix());
+    let full_table = format!("{}.{}", namespace, table_name);
 
-    // In a healthy cluster, we shouldn't have stuck 'Running' jobs
-    // (unless a job is actively executing)
+    let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    thread::sleep(Duration::from_millis(200));
 
-    // Check for any failed jobs that might indicate claiming issues
-    let failed_jobs_sql = "SELECT count(*) FROM system.jobs WHERE status = 'Failed'";
-    let failed_count = query_count_on_url(&leader_url, failed_jobs_sql);
-    println!("  Failed jobs: {}", failed_count);
+    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+        .expect("Failed to create namespace");
+    thread::sleep(Duration::from_millis(200));
+
+    execute_on_node(
+        &leader_url,
+        &format!("CREATE SHARED TABLE {} (id INT PRIMARY KEY)", full_table),
+    )
+    .expect("Failed to create table");
+    thread::sleep(Duration::from_millis(200));
+
+    execute_on_node(&leader_url, &format!("INSERT INTO {} (id) VALUES (1)", full_table))
+        .expect("Failed to insert row");
+
+    execute_on_node(&leader_url, &format!("STORAGE FLUSH TABLE {}", full_table))
+        .expect("Failed to flush");
+
+    let job_id = wait_for_latest_job_id_by_type(&leader_url, "Flush", Duration::from_secs(3))
+        .expect("Failed to find flush job id");
+
+    let job_count = query_count_on_url(
+        &leader_url,
+        &format!("SELECT count(*) FROM system.jobs WHERE job_id = '{}'", job_id),
+    );
+    assert_eq!(job_count, 1, "Expected a single job row for job_id");
+
+    let expected_nodes = urls.len();
+    let completed = wait_for_job_nodes_completed(&leader_url, &job_id, expected_nodes, Duration::from_secs(8));
+    assert!(completed, "Job nodes did not complete for all nodes");
 
     println!("\n  ✅ Job claiming test completed\n");
+}
+
+/// Test: Job nodes track per-node completion for flush jobs
+///
+/// Ensures system.job_nodes has one row per cluster node and all are Completed
+/// after a flush job finishes.
+#[test]
+fn cluster_test_flush_job_nodes_completion() {
+    if !require_cluster_running() {
+        return;
+    }
+
+    println!("\n=== TEST: Flush Job Nodes Completion ===\n");
+
+    let urls = cluster_urls();
+    if urls.len() < 2 {
+        println!("  ⏭ Skipping test: need at least 2 nodes");
+        return;
+    }
+
+    let leader_url = find_leader_url(&urls);
+    let namespace = generate_unique_namespace("job_nodes_flush");
+    let table_name = format!("flush_nodes_{}", rand_suffix());
+    let full_table = format!("{}.{}", namespace, table_name);
+
+    let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    thread::sleep(Duration::from_millis(200));
+
+    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+        .expect("Failed to create namespace");
+    thread::sleep(Duration::from_millis(200));
+
+    let create_sql =
+        format!("CREATE SHARED TABLE {} (id INT PRIMARY KEY, value TEXT)", full_table);
+    execute_on_node(&leader_url, &create_sql).expect("Failed to create table");
+    thread::sleep(Duration::from_millis(300));
+
+    for i in 0..20 {
+        let insert_sql =
+            format!("INSERT INTO {} (id, value) VALUES ({}, 'v{}')", full_table, i, i);
+        execute_on_node(&leader_url, &insert_sql).expect("Failed to insert row");
+    }
+
+    let flush_sql = format!("STORAGE FLUSH TABLE {}", full_table);
+    execute_on_node(&leader_url, &flush_sql).expect("Failed to flush");
+
+    let job_id = wait_for_latest_job_id_by_type(&leader_url, "Flush", Duration::from_secs(3))
+        .expect("Failed to find flush job id");
+
+    let expected_nodes = urls.len();
+    let completed = wait_for_job_nodes_completed(&leader_url, &job_id, expected_nodes, Duration::from_secs(8));
+    assert!(completed, "Job nodes did not complete for all nodes");
+
+    // Verify all nodes see job_nodes rows
+    for (idx, url) in urls.iter().enumerate() {
+        let count = query_count_on_url(
+            url,
+            &format!("SELECT count(*) FROM system.job_nodes WHERE job_id = '{}'", job_id),
+        );
+        assert_eq!(
+            count as usize, expected_nodes,
+            "Node {} sees {} job_nodes (expected {})",
+            idx, count, expected_nodes
+        );
+    }
+
+    let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE {} CASCADE", namespace));
+
+    println!("\n  ✅ Flush job_nodes completion test passed\n");
 }
 
 /// Helper: Find the leader node URL
@@ -213,4 +332,64 @@ fn rand_suffix() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos();
     format!("{:08x}", nanos)
+}
+
+fn wait_for_job_nodes_completed(
+    leader_url: &str,
+    job_id: &str,
+    expected_nodes: usize,
+    timeout: Duration,
+) -> bool {
+    let start = Instant::now();
+    let sql = format!(
+        "SELECT node_id, status FROM system.job_nodes WHERE job_id = '{}' ORDER BY node_id",
+        job_id
+    );
+
+    while start.elapsed() < timeout {
+        if let Ok(response) = execute_on_node_response(leader_url, &sql) {
+            if let Some(result) = response.results.first() {
+                if let Some(rows) = &result.rows {
+                    if rows.len() == expected_nodes {
+                        let all_completed = rows.iter().all(|row| {
+                            row.get(1).map(|val| {
+                                extract_typed_value(val)
+                                    .as_str()
+                                    .map(|s| s.eq_ignore_ascii_case("completed"))
+                                    .unwrap_or(false)
+                            })
+                            .unwrap_or(false)
+                        });
+
+                        if all_completed {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        thread::sleep(Duration::from_millis(200));
+    }
+
+    false
+}
+
+fn get_self_node_id(leader_url: &str) -> Option<String> {
+    let sql = "SELECT node_id FROM system.cluster WHERE is_self = true LIMIT 1";
+    if let Ok(response) = execute_on_node_response(leader_url, sql) {
+        if let Some(result) = response.results.first() {
+            if let Some(rows) = &result.rows {
+                if let Some(row) = rows.first() {
+                    if let Some(value) = row.first() {
+                        return extract_typed_value(value)
+                            .as_str()
+                            .map(|s| s.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }

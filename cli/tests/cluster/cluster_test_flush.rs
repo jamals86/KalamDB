@@ -84,8 +84,13 @@ fn cluster_test_flush_data_consistency() {
     let flush_result = execute_on_node(&urls[0], &flush_sql);
     assert!(flush_result.is_ok(), "FLUSH command failed: {:?}", flush_result);
 
-    // Give time for flush job to complete
-    std::thread::sleep(Duration::from_secs(3));
+    // Wait for flush job to complete
+    let job_id = wait_for_latest_job_id_by_type(&urls[0], "Flush", Duration::from_secs(3))
+        .expect("Failed to find flush job id");
+    assert!(
+        wait_for_job_status(&urls[0], &job_id, "Completed", Duration::from_secs(6)),
+        "Flush job did not complete in time"
+    );
 
     // Step 5: Verify row count on all nodes
     println!("  6. Verifying row count on all nodes...");
@@ -202,7 +207,12 @@ fn cluster_test_multiple_flushes() {
     println!("  2. Flushing batch 1...");
     execute_on_node(&urls[0], &format!("STORAGE FLUSH TABLE {}", full_table))
         .expect("Failed to flush batch 1");
-    std::thread::sleep(Duration::from_secs(2));
+    let job_id = wait_for_latest_job_id_by_type(&urls[0], "Flush", Duration::from_secs(3))
+        .expect("Failed to find flush job id");
+    assert!(
+        wait_for_job_status(&urls[0], &job_id, "Completed", Duration::from_secs(6)),
+        "Flush job did not complete in time"
+    );
 
     // Insert second batch and flush
     println!("  3. Inserting batch 2 (10 rows)...");
@@ -217,7 +227,12 @@ fn cluster_test_multiple_flushes() {
     println!("  4. Flushing batch 2...");
     execute_on_node(&urls[0], &format!("STORAGE FLUSH TABLE {}", full_table))
         .expect("Failed to flush batch 2");
-    std::thread::sleep(Duration::from_secs(2));
+    let job_id = wait_for_latest_job_id_by_type(&urls[0], "Flush", Duration::from_secs(3))
+        .expect("Failed to find flush job id");
+    assert!(
+        wait_for_job_status(&urls[0], &job_id, "Completed", Duration::from_secs(6)),
+        "Flush job did not complete in time"
+    );
 
     // Verify total count on all nodes
     println!("  5. Verifying total row count on all nodes...");

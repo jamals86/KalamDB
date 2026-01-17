@@ -140,6 +140,7 @@ impl SystemTablesRegistry {
                 (SystemTable::Storages, StoragesTableSchema::schema()),
                 (SystemTable::LiveQueries, LiveQueriesTableSchema::schema()),
                 (SystemTable::Jobs, JobsTableSchema::schema()),
+                (SystemTable::JobNodes, JobNodesTableSchema::schema()),
                 (SystemTable::AuditLog, AuditLogsTableSchema::schema()),
                 (SystemTable::Manifest, ManifestTableSchema::schema()),
             ]
@@ -264,6 +265,10 @@ impl SystemTablesRegistry {
         let mut providers = vec![
             (SystemTable::Users, self.users.clone() as Arc<dyn TableProvider>),
             (SystemTable::Jobs, self.jobs.clone() as Arc<dyn TableProvider>),
+            (
+                SystemTable::JobNodes,
+                self.job_nodes.clone() as Arc<dyn TableProvider>,
+            ),
             (SystemTable::Namespaces, self.namespaces.clone() as Arc<dyn TableProvider>),
             (SystemTable::Storages, self.storages.clone() as Arc<dyn TableProvider>),
             (SystemTable::LiveQueries, self.live_queries.clone() as Arc<dyn TableProvider>),

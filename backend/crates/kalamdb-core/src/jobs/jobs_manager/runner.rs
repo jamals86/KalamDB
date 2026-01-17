@@ -21,19 +21,19 @@ enum JobNodeQuorumResult {
 }
 
 impl JobsManager {
-    /// Update job status to Running via Raft (for cluster replication)
+    /// Claim job and mark it Running via Raft (sets `started_at`)
     async fn mark_job_running(&self, job_id: &JobId) -> Result<(), KalamDbError> {
         let app_ctx = self.get_attached_app_context();
-        let cmd = MetaCommand::UpdateJobStatus {
+        let cmd = MetaCommand::ClaimJob {
             job_id: job_id.clone(),
-            status: JobStatus::Running,
-            updated_at: chrono::Utc::now(),
+            node_id: self.node_id.clone(),
+            claimed_at: chrono::Utc::now(),
         };
         app_ctx
             .executor()
             .execute_meta(cmd)
             .await
-            .map_err(|e| KalamDbError::Other(format!("Failed to mark job running via Raft: {}", e)))?;
+            .map_err(|e| KalamDbError::Other(format!("Failed to claim job via Raft: {}", e)))?;
         Ok(())
     }
 
@@ -85,9 +85,12 @@ impl JobsManager {
         message: Option<String>,
     ) -> Result<(), KalamDbError> {
         let app_ctx = self.get_attached_app_context();
+        let success_message = message.unwrap_or_else(|| "Job completed successfully".to_string());
         let cmd = MetaCommand::CompleteJob {
             job_id: job_id.clone(),
-            result_json: message.map(|m| serde_json::json!({ "message": m }).to_string()),
+            result_json: Some(
+                serde_json::json!({ "message": success_message }).to_string(),
+            ),
             completed_at: chrono::Utc::now(),
         };
         app_ctx
@@ -95,6 +98,9 @@ impl JobsManager {
             .execute_meta(cmd)
             .await
             .map_err(|e| KalamDbError::Other(format!("Failed to complete job via Raft: {}", e)))?;
+
+        self.finalize_job_nodes(job_id, JobStatus::Completed, None)
+            .await?;
         Ok(())
     }
 
@@ -107,12 +113,14 @@ impl JobsManager {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::FailJob {
             job_id: job_id.clone(),
-            error_message,
+            error_message: error_message.clone(),
             failed_at: chrono::Utc::now(),
         };
         app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
             KalamDbError::Other(format!("Failed to mark job as failed via Raft: {}", e))
         })?;
+        self.finalize_job_nodes(job_id, JobStatus::Failed, Some(error_message))
+            .await?;
         Ok(())
     }
 

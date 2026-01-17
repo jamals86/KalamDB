@@ -17,35 +17,54 @@ fn verify_data_identical_with_retry(
     urls: &[String],
     sql: &str,
     expected_rows: usize,
-    _max_retries: usize,
+    max_retries: usize,
 ) -> Result<(), String> {
-    let mut all_data: Vec<Vec<String>> = Vec::new();
+    let mut last_err: Option<String> = None;
 
-    for url in urls {
-        let rows = fetch_normalized_rows(url, sql).unwrap_or_default();
-        all_data.push(rows);
-    }
+    for _ in 0..=max_retries {
+        let mut all_data: Vec<Vec<String>> = Vec::new();
 
-    let reference = &all_data[0];
-    if reference.len() != expected_rows {
-        return Err(format!(
-            "Row counts don't match expected {}. Counts: {:?}",
-            expected_rows,
-            all_data.iter().map(|d| d.len()).collect::<Vec<_>>()
-        ));
-    }
-
-    for (i, data) in all_data.iter().enumerate().skip(1) {
-        if data != reference {
-            let ref_set: HashSet<_> = reference.iter().collect();
-            let data_set: HashSet<_> = data.iter().collect();
-            let missing: Vec<_> = ref_set.difference(&data_set).collect();
-            let extra: Vec<_> = data_set.difference(&ref_set).collect();
-            return Err(format!("Node {} differs. Missing: {:?}, Extra: {:?}", i, missing, extra));
+        for url in urls {
+            let rows = fetch_normalized_rows(url, sql).unwrap_or_default();
+            all_data.push(rows);
         }
+
+        let reference = &all_data[0];
+        if reference.len() != expected_rows {
+            last_err = Some(format!(
+                "Row counts don't match expected {}. Counts: {:?}",
+                expected_rows,
+                all_data.iter().map(|d| d.len()).collect::<Vec<_>>()
+            ));
+            std::thread::sleep(Duration::from_millis(200));
+            continue;
+        }
+
+        let mut mismatch: Option<String> = None;
+        for (i, data) in all_data.iter().enumerate().skip(1) {
+            if data != reference {
+                let ref_set: HashSet<_> = reference.iter().collect();
+                let data_set: HashSet<_> = data.iter().collect();
+                let missing: Vec<_> = ref_set.difference(&data_set).collect();
+                let extra: Vec<_> = data_set.difference(&ref_set).collect();
+                mismatch = Some(format!(
+                    "Node {} differs. Missing: {:?}, Extra: {:?}",
+                    i, missing, extra
+                ));
+                break;
+            }
+        }
+
+        if let Some(err) = mismatch {
+            last_err = Some(err);
+            std::thread::sleep(Duration::from_millis(200));
+            continue;
+        }
+
+        return Ok(());
     }
 
-    Ok(())
+    Err(last_err.unwrap_or_else(|| "Data verification failed".to_string()))
 }
 
 /// Test: Inserted rows are byte-for-byte identical across all nodes

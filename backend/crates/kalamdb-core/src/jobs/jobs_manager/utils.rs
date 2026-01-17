@@ -1,8 +1,10 @@
 use super::types::JobsManager;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use chrono::Utc;
 use kalamdb_commons::system::JobFilter;
 use kalamdb_commons::{JobId, JobStatus, JobType, NodeId};
+use kalamdb_raft::commands::MetaCommand;
 use kalamdb_raft::NodeStatus;
 use log::Level;
 
@@ -153,6 +155,53 @@ impl JobsManager {
                 .into_kalamdb_error("Failed to recover job")?;
 
             self.log_job_event(&job_id, &Level::Error, "Job marked as failed (server restart)");
+        }
+
+        Ok(())
+    }
+
+    /// Finalize job_nodes for a job once the job reaches a terminal status.
+    ///
+    /// Ensures queued/running job_nodes do not remain stuck after the job
+    /// is completed, failed, or cancelled.
+    pub(crate) async fn finalize_job_nodes(
+        &self,
+        job_id: &JobId,
+        status: JobStatus,
+        error_message: Option<String>,
+    ) -> Result<(), KalamDbError> {
+        let job_nodes = self
+            .job_nodes_provider
+            .list_for_job_id_async(job_id)
+            .await
+            .into_kalamdb_error("Failed to list job_nodes for job finalization")?;
+
+        if job_nodes.is_empty() {
+            return Ok(());
+        }
+
+        let app_ctx = self.get_attached_app_context();
+        let now = Utc::now();
+
+        for node in job_nodes {
+            if matches!(node.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled) {
+                continue;
+            }
+
+            let cmd = MetaCommand::UpdateJobNodeStatus {
+                job_id: job_id.clone(),
+                node_id: node.node_id.clone(),
+                status,
+                error_message: error_message.clone(),
+                updated_at: now,
+            };
+
+            app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to finalize job_node via Raft: {}",
+                    e
+                ))
+            })?;
         }
 
         Ok(())
