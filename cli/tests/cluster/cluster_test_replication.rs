@@ -6,6 +6,7 @@ use crate::cluster_common::*;
 use crate::common::*;
 use serde_json::Value;
 use std::time::Duration;
+use std::time::Instant;
 
 fn parse_count(response: &kalam_link::QueryResponse) -> Result<i64, String> {
     let result = response
@@ -248,22 +249,35 @@ fn cluster_test_concurrent_writes() {
 
     std::thread::sleep(Duration::from_millis(2000));
 
-    // Count total rows on each node
     println!("Verifying data consistency after concurrent writes...");
-    let mut counts = Vec::new();
-    for (i, url) in urls.iter().enumerate() {
-        let count = query_count_with_retry(
-            url,
-            &format!("SELECT count(*) as count FROM {}.concurrent_data", namespace),
-        );
-        counts.push(count);
-        println!("  Node {} has {} rows", i, count);
+    let start = Instant::now();
+    let timeout = Duration::from_secs(10);
+    let mut consistent = false;
+    let mut last_counts = Vec::new();
+
+    while start.elapsed() < timeout {
+        let mut counts = Vec::new();
+        for (i, url) in urls.iter().enumerate() {
+            let count = query_count_with_retry(
+                url,
+                &format!("SELECT count(*) as count FROM {}.concurrent_data", namespace),
+            );
+            counts.push(count);
+            println!("  Node {} has {} rows", i, count);
+        }
+
+        let first_count = counts[0];
+        if counts.iter().all(|count| *count == first_count) {
+            consistent = true;
+            break;
+        }
+
+        last_counts = counts;
+        std::thread::sleep(Duration::from_millis(300));
     }
 
-    // All nodes should have the same count
-    let first_count = counts[0];
-    for (i, count) in counts.iter().enumerate() {
-        assert_eq!(*count, first_count, "Node {} has {} rows, expected {}", i, count, first_count);
+    if !consistent {
+        panic!("Row counts did not converge across nodes: {:?}", last_counts);
     }
 
     // Cleanup

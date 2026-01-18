@@ -201,6 +201,7 @@ fn test_cli_load_config_file() {
 
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("kalam.toml");
+    let (_creds_temp_dir, creds_path) = create_temp_credentials_path();
 
     std::fs::write(
         &config_path,
@@ -216,6 +217,7 @@ timeout = 30
     .unwrap();
 
     let mut cmd = create_cli_command();
+    with_credentials_path(&mut cmd, &creds_path);
     cmd.arg("--config")
         .arg(config_path.to_str().unwrap())
         .arg("--username")

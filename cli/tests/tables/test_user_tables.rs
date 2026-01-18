@@ -82,14 +82,16 @@ fn test_cli_table_output_formatting() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table and data via CLI
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
-    let _ = execute_sql_as_root_via_cli(&format!(
+    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .expect("CREATE NAMESPACE failed");
+    execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
             content VARCHAR NOT NULL
         ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
         full_table_name
-    ));
+    ))
+    .expect("CREATE TABLE failed");
 
     let _ = execute_sql_as_root_via_cli(&format!(
         "INSERT INTO {} (content) VALUES ('Hello World'), ('Test Message')",
@@ -351,10 +353,11 @@ fn test_cli_result_pagination() {
 
     // Insert multiple rows via CLI
     for i in 1..=20 {
-        let _ = execute_sql_as_root_via_cli(&format!(
+        execute_sql_as_root_via_cli(&format!(
             "INSERT INTO {} (content) VALUES ('Message {}')",
             full_table_name, i
-        ));
+        ))
+        .expect("INSERT failed");
     }
 
     // Query all rows via CLI

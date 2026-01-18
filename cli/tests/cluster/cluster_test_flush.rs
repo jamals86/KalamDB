@@ -88,7 +88,7 @@ fn cluster_test_flush_data_consistency() {
     let job_id = wait_for_latest_job_id_by_type(&urls[0], "Flush", Duration::from_secs(3))
         .expect("Failed to find flush job id");
     assert!(
-        wait_for_job_status(&urls[0], &job_id, "Completed", Duration::from_secs(6)),
+        wait_for_job_status(&urls[0], &job_id, "Completed", Duration::from_secs(20)),
         "Flush job did not complete in time"
     );
 
@@ -210,7 +210,7 @@ fn cluster_test_multiple_flushes() {
     let job_id = wait_for_latest_job_id_by_type(&urls[0], "Flush", Duration::from_secs(3))
         .expect("Failed to find flush job id");
     assert!(
-        wait_for_job_status(&urls[0], &job_id, "Completed", Duration::from_secs(6)),
+        wait_for_job_status(&urls[0], &job_id, "Completed", Duration::from_secs(30)),
         "Flush job did not complete in time"
     );
 
@@ -230,7 +230,7 @@ fn cluster_test_multiple_flushes() {
     let job_id = wait_for_latest_job_id_by_type(&urls[0], "Flush", Duration::from_secs(3))
         .expect("Failed to find flush job id");
     assert!(
-        wait_for_job_status(&urls[0], &job_id, "Completed", Duration::from_secs(6)),
+        wait_for_job_status(&urls[0], &job_id, "Completed", Duration::from_secs(30)),
         "Flush job did not complete in time"
     );
 

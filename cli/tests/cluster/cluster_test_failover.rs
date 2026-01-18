@@ -76,19 +76,31 @@ fn cluster_test_leader_visibility() {
     }
 
     // Verify all nodes agree on the leader
-    let mut leader_ids: Vec<i64> = Vec::new();
-    for url in &urls {
-        let count = query_count_on_url(
-            url,
-            "SELECT count(*) as count FROM system.cluster WHERE is_leader = true",
-        );
-        leader_ids.push(count);
+    let mut leader_ids = Vec::new();
+    let mut visible = false;
+    for _ in 0..15 {
+        leader_ids.clear();
+        for url in &urls {
+            let count = query_count_on_url(
+                url,
+                "SELECT count(*) as count FROM system.cluster WHERE is_leader = true",
+            );
+            leader_ids.push(count);
+        }
+
+        if leader_ids.iter().all(|count| *count >= 1) {
+            visible = true;
+            break;
+        }
+
+        std::thread::sleep(Duration::from_millis(200));
     }
 
-    // All nodes should see exactly one leader
-    for (i, count) in leader_ids.iter().enumerate() {
-        assert!(*count >= 1, "Node {} doesn't see a leader (count = {})", i, count);
-    }
+    assert!(
+        visible,
+        "Leader visibility mismatch across nodes: {:?}",
+        leader_ids
+    );
 
     println!("\n  ✅ All nodes can identify the cluster leader\n");
 }

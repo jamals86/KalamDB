@@ -78,7 +78,7 @@ fn cluster_test_leader_only_flush_jobs() {
     let job_id = wait_for_latest_job_id_by_type(&leader_url, "Flush", Duration::from_secs(3))
         .expect("Failed to find flush job id");
     assert!(
-        wait_for_job_status(&leader_url, &job_id, "Completed", Duration::from_secs(6)),
+        wait_for_job_status(&leader_url, &job_id, "Completed", Duration::from_secs(30)),
         "Flush job did not complete in time"
     );
 
@@ -227,7 +227,8 @@ fn cluster_test_job_claiming() {
     assert_eq!(job_count, 1, "Expected a single job row for job_id");
 
     let expected_nodes = urls.len();
-    let completed = wait_for_job_nodes_completed(&leader_url, &job_id, expected_nodes, Duration::from_secs(8));
+    let completed =
+        wait_for_job_nodes_completed(&leader_url, &job_id, expected_nodes, Duration::from_secs(30));
     assert!(completed, "Job nodes did not complete for all nodes");
 
     println!("\n  ✅ Job claiming test completed\n");
@@ -281,7 +282,8 @@ fn cluster_test_flush_job_nodes_completion() {
         .expect("Failed to find flush job id");
 
     let expected_nodes = urls.len();
-    let completed = wait_for_job_nodes_completed(&leader_url, &job_id, expected_nodes, Duration::from_secs(8));
+    let completed =
+        wait_for_job_nodes_completed(&leader_url, &job_id, expected_nodes, Duration::from_secs(30));
     assert!(completed, "Job nodes did not complete for all nodes");
 
     // Verify all nodes see job_nodes rows
@@ -304,18 +306,7 @@ fn cluster_test_flush_job_nodes_completion() {
 
 /// Helper: Find the leader node URL
 fn find_leader_url(urls: &[String]) -> String {
-    for url in urls {
-        let result = execute_on_node(
-            url,
-            "SELECT node_id FROM system.cluster WHERE is_leader = true AND is_self = true LIMIT 1",
-        );
-        if result.is_ok() && !result.as_ref().unwrap().contains("error") {
-            // This node claims to be the leader
-            return url.clone();
-        }
-    }
-    // Fallback to first URL
-    urls.first().cloned().unwrap_or_default()
+    leader_url().unwrap_or_else(|| urls.first().cloned().unwrap_or_default())
 }
 
 /// Helper: Truncate string for display

@@ -25,7 +25,12 @@ mod cluster_common {
 
     /// Get cluster node URLs from environment or use defaults
     pub fn cluster_urls() -> Vec<String> {
-        test_context().cluster_urls.clone()
+        get_available_server_urls()
+    }
+
+    /// Get cluster node URLs in configuration order (no leader reordering)
+    pub fn cluster_urls_config_order() -> Vec<String> {
+        crate::common::cluster_urls_config_order()
     }
 
     /// Shared tokio runtime for cluster tests
@@ -91,6 +96,10 @@ mod cluster_common {
         cluster_runtime()
             .block_on(async move { client.execute_query(&sql, None, None).await })
             .map(|response| {
+                if !response.success() {
+                    let err_msg = response_error_message(&response);
+                    panic!("Cluster count query failed: {}", err_msg);
+                }
                 let result = response.results.first().expect("Missing query result for count");
                 let rows =
                     result.rows.as_ref().and_then(|rows| rows.first()).expect("Missing count row");
@@ -105,20 +114,182 @@ mod cluster_common {
             .expect("Cluster count query failed")
     }
 
+    fn response_error_message(response: &QueryResponse) -> String {
+        if let Some(error) = &response.error {
+            if let Some(details) = &error.details {
+                return format!("{} ({})", error.message, details);
+            }
+            return error.message.clone();
+        }
+
+        format!("Query failed: {:?}", response)
+    }
+
+    fn is_read_only_sql(sql: &str) -> bool {
+        let trimmed = sql.trim_start();
+        let first_token = trimmed
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        matches!(
+            first_token.as_str(),
+            "SELECT" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "WITH"
+        )
+    }
+
+    fn should_wait_for_cluster_after_sql(sql: &str) -> bool {
+        let upper = sql.trim_start().to_ascii_uppercase();
+        upper.starts_with("CREATE NAMESPACE")
+            || upper.starts_with("CREATE TABLE")
+            || upper.starts_with("CREATE SHARED TABLE")
+            || upper.starts_with("CREATE USER TABLE")
+            || upper.starts_with("CREATE STREAM TABLE")
+            || upper.starts_with("DROP NAMESPACE")
+            || upper.starts_with("DROP TABLE")
+            || upper.starts_with("ALTER TABLE")
+    }
+
+    fn clean_identifier_token(token: &str) -> String {
+        token
+            .trim_end_matches(';')
+            .trim_end_matches('(')
+            .trim_matches('"')
+            .trim_matches('`')
+            .to_string()
+    }
+
+    fn split_full_table_name(token: &str) -> Option<(String, String)> {
+        let cleaned = clean_identifier_token(token);
+        let mut parts = cleaned.splitn(2, '.');
+        let namespace = parts.next()?.to_string();
+        let table = parts.next()?.to_string();
+        if namespace.is_empty() || table.is_empty() {
+            return None;
+        }
+        Some((namespace, table))
+    }
+
+    fn extract_created_namespace(sql: &str) -> Option<String> {
+        let tokens: Vec<&str> = sql.split_whitespace().collect();
+        if tokens.len() >= 3
+            && tokens[0].eq_ignore_ascii_case("CREATE")
+            && tokens[1].eq_ignore_ascii_case("NAMESPACE")
+        {
+            return Some(clean_identifier_token(tokens[2]));
+        }
+        None
+    }
+
+    fn extract_created_table(sql: &str) -> Option<(String, String)> {
+        let tokens: Vec<&str> = sql.split_whitespace().collect();
+        if tokens.len() >= 3
+            && tokens[0].eq_ignore_ascii_case("CREATE")
+            && tokens[1].eq_ignore_ascii_case("TABLE")
+        {
+            return split_full_table_name(tokens[2]);
+        }
+        if tokens.len() >= 4
+            && tokens[0].eq_ignore_ascii_case("CREATE")
+            && tokens[1].eq_ignore_ascii_case("SHARED")
+            && tokens[2].eq_ignore_ascii_case("TABLE")
+        {
+            return split_full_table_name(tokens[3]);
+        }
+        if tokens.len() >= 4
+            && tokens[0].eq_ignore_ascii_case("CREATE")
+            && tokens[1].eq_ignore_ascii_case("USER")
+            && tokens[2].eq_ignore_ascii_case("TABLE")
+        {
+            return split_full_table_name(tokens[3]);
+        }
+        if tokens.len() >= 4
+            && tokens[0].eq_ignore_ascii_case("CREATE")
+            && tokens[1].eq_ignore_ascii_case("STREAM")
+            && tokens[2].eq_ignore_ascii_case("TABLE")
+        {
+            return split_full_table_name(tokens[3]);
+        }
+        None
+    }
+
+    fn wait_for_cluster_after_sql(sql: &str) {
+        if !should_wait_for_cluster_after_sql(sql) {
+            return;
+        }
+
+        if let Some(namespace) = extract_created_namespace(sql) {
+            let _ = wait_for_namespace_on_all_nodes(&namespace, 12000);
+            return;
+        }
+
+        if let Some((namespace, table)) = extract_created_table(sql) {
+            let _ = wait_for_table_on_all_nodes(&namespace, &table, 15000);
+            return;
+        }
+
+        std::thread::sleep(Duration::from_millis(600));
+    }
+
+    fn ordered_urls_for_query(base_url: &str, sql: &str, enforce_leader: bool) -> Vec<String> {
+        let mut urls = cluster_urls();
+        if urls.is_empty() {
+            return vec![base_url.to_string()];
+        }
+
+        if enforce_leader && !is_read_only_sql(sql) {
+            if let Some(leader) = leader_url() {
+                urls.retain(|url| url != &leader);
+                let mut ordered = Vec::with_capacity(urls.len() + 1);
+                ordered.push(leader);
+                ordered.extend(urls);
+                return ordered;
+            }
+        }
+
+        urls.retain(|url| url != base_url);
+        let mut ordered = Vec::with_capacity(urls.len() + 1);
+        ordered.push(base_url.to_string());
+        ordered.extend(urls);
+        ordered
+    }
+
     /// Execute SQL on a specific cluster node
     pub fn execute_on_node(base_url: &str, sql: &str) -> Result<String, String> {
+        execute_on_node_internal(base_url, sql, true)
+    }
+
+    /// Execute SQL on a specific cluster node without leader routing
+    pub fn execute_on_node_raw(base_url: &str, sql: &str) -> Result<String, String> {
+        execute_on_node_internal(base_url, sql, false)
+    }
+
+    fn execute_on_node_internal(
+        base_url: &str,
+        sql: &str,
+        enforce_leader: bool,
+    ) -> Result<String, String> {
         let sql = sql.to_string();
-        let urls = cluster_urls();
         let mut last_err: Option<String> = None;
 
-        for _ in 0..3 {
-            for url in std::iter::once(base_url.to_string()).chain(urls.iter().cloned()) {
+        for _ in 0..5 {
+            let urls = ordered_urls_for_query(base_url, &sql, enforce_leader);
+            for url in urls.iter().cloned() {
                 let client = create_cluster_client(&url);
                 let sql_value = sql.clone();
                 match cluster_runtime()
                     .block_on(async move { client.execute_query(&sql_value, None, None).await })
                 {
                     Ok(response) => {
+                        if !response.success() {
+                            let err_msg = response_error_message(&response);
+                            if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
+                                last_err = Some(err_msg);
+                                continue;
+                            }
+                            return Err(err_msg);
+                        }
+                        wait_for_cluster_after_sql(&sql);
                         return Ok(
                             serde_json::to_string_pretty(&response)
                                 .unwrap_or_else(|_| format!("{:?}", response)),
@@ -126,7 +297,7 @@ mod cluster_common {
                     }
                     Err(e) => {
                         let msg = e.to_string();
-                        if is_leader_error(&msg) {
+                        if is_retryable_cluster_error_for_sql(&sql, &msg) {
                             last_err = Some(msg);
                             continue;
                         }
@@ -135,7 +306,7 @@ mod cluster_common {
                 }
             }
 
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(300));
         }
 
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
@@ -143,21 +314,45 @@ mod cluster_common {
 
     /// Execute SQL on a specific cluster node and return the structured response
     pub fn execute_on_node_response(base_url: &str, sql: &str) -> Result<QueryResponse, String> {
+        execute_on_node_response_internal(base_url, sql, true)
+    }
+
+    /// Execute SQL on a specific cluster node and return the structured response without leader routing
+    pub fn execute_on_node_response_raw(base_url: &str, sql: &str) -> Result<QueryResponse, String> {
+        execute_on_node_response_internal(base_url, sql, false)
+    }
+
+    fn execute_on_node_response_internal(
+        base_url: &str,
+        sql: &str,
+        enforce_leader: bool,
+    ) -> Result<QueryResponse, String> {
         let sql = sql.to_string();
-        let urls = cluster_urls();
         let mut last_err: Option<String> = None;
 
-        for _ in 0..3 {
-            for url in std::iter::once(base_url.to_string()).chain(urls.iter().cloned()) {
+        for _ in 0..5 {
+            let urls = ordered_urls_for_query(base_url, &sql, enforce_leader);
+            for url in urls.iter().cloned() {
                 let client = create_cluster_client(&url);
                 let sql_value = sql.clone();
                 match cluster_runtime()
                     .block_on(async move { client.execute_query(&sql_value, None, None).await })
                 {
-                    Ok(response) => return Ok(response),
+                    Ok(response) => {
+                        if !response.success() {
+                            let err_msg = response_error_message(&response);
+                            if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
+                                last_err = Some(err_msg);
+                                continue;
+                            }
+                            return Err(err_msg);
+                        }
+                        wait_for_cluster_after_sql(&sql);
+                        return Ok(response);
+                    }
                     Err(e) => {
                         let msg = e.to_string();
-                        if is_leader_error(&msg) {
+                        if is_retryable_cluster_error_for_sql(&sql, &msg) {
                             last_err = Some(msg);
                             continue;
                         }
@@ -166,7 +361,7 @@ mod cluster_common {
                 }
             }
 
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(300));
         }
 
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
@@ -179,18 +374,47 @@ mod cluster_common {
         password: &str,
         sql: &str,
     ) -> Result<String, String> {
+        execute_on_node_as_user_internal(base_url, username, password, sql, true)
+    }
+
+    /// Execute SQL on a specific cluster node as a custom user without leader routing
+    pub fn execute_on_node_as_user_raw(
+        base_url: &str,
+        username: &str,
+        password: &str,
+        sql: &str,
+    ) -> Result<String, String> {
+        execute_on_node_as_user_internal(base_url, username, password, sql, false)
+    }
+
+    fn execute_on_node_as_user_internal(
+        base_url: &str,
+        username: &str,
+        password: &str,
+        sql: &str,
+        enforce_leader: bool,
+    ) -> Result<String, String> {
         let sql = sql.to_string();
-        let urls = cluster_urls();
         let mut last_err: Option<String> = None;
 
-        for _ in 0..3 {
-            for url in std::iter::once(base_url.to_string()).chain(urls.iter().cloned()) {
+        for _ in 0..5 {
+            let urls = ordered_urls_for_query(base_url, &sql, enforce_leader);
+            for url in urls.iter().cloned() {
                 let client = create_cluster_client_with_auth(&url, username, password);
                 let sql_value = sql.clone();
                 match cluster_runtime()
                     .block_on(async move { client.execute_query(&sql_value, None, None).await })
                 {
                     Ok(response) => {
+                        if !response.success() {
+                            let err_msg = response_error_message(&response);
+                            if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
+                                last_err = Some(err_msg);
+                                continue;
+                            }
+                            return Err(err_msg);
+                        }
+                        wait_for_cluster_after_sql(&sql);
                         return Ok(
                             serde_json::to_string_pretty(&response)
                                 .unwrap_or_else(|_| format!("{:?}", response)),
@@ -198,7 +422,7 @@ mod cluster_common {
                     }
                     Err(e) => {
                         let msg = e.to_string();
-                        if is_leader_error(&msg) {
+                        if is_retryable_cluster_error_for_sql(&sql, &msg) {
                             last_err = Some(msg);
                             continue;
                         }
@@ -207,7 +431,7 @@ mod cluster_common {
                 }
             }
 
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(300));
         }
 
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
@@ -220,21 +444,52 @@ mod cluster_common {
         password: &str,
         sql: &str,
     ) -> Result<QueryResponse, String> {
+        execute_on_node_as_user_response_internal(base_url, username, password, sql, true)
+    }
+
+    /// Execute SQL on a specific cluster node as a custom user and return the response without leader routing
+    pub fn execute_on_node_as_user_response_raw(
+        base_url: &str,
+        username: &str,
+        password: &str,
+        sql: &str,
+    ) -> Result<QueryResponse, String> {
+        execute_on_node_as_user_response_internal(base_url, username, password, sql, false)
+    }
+
+    fn execute_on_node_as_user_response_internal(
+        base_url: &str,
+        username: &str,
+        password: &str,
+        sql: &str,
+        enforce_leader: bool,
+    ) -> Result<QueryResponse, String> {
         let sql = sql.to_string();
-        let urls = cluster_urls();
         let mut last_err: Option<String> = None;
 
-        for _ in 0..3 {
-            for url in std::iter::once(base_url.to_string()).chain(urls.iter().cloned()) {
+        for _ in 0..5 {
+            let urls = ordered_urls_for_query(base_url, &sql, enforce_leader);
+            for url in urls.iter().cloned() {
                 let client = create_cluster_client_with_auth(&url, username, password);
                 let sql_value = sql.clone();
                 match cluster_runtime()
                     .block_on(async move { client.execute_query(&sql_value, None, None).await })
                 {
-                    Ok(response) => return Ok(response),
+                    Ok(response) => {
+                        if !response.success() {
+                            let err_msg = response_error_message(&response);
+                            if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
+                                last_err = Some(err_msg);
+                                continue;
+                            }
+                            return Err(err_msg);
+                        }
+                        wait_for_cluster_after_sql(&sql);
+                        return Ok(response);
+                    }
                     Err(e) => {
                         let msg = e.to_string();
-                        if is_leader_error(&msg) {
+                        if is_retryable_cluster_error_for_sql(&sql, &msg) {
                             last_err = Some(msg);
                             continue;
                         }
@@ -243,7 +498,7 @@ mod cluster_common {
                 }
             }
 
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(300));
         }
 
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
@@ -301,7 +556,8 @@ mod cluster_common {
         let client = create_cluster_client(base_url);
         cluster_runtime()
             .block_on(async move { client.execute_query("SELECT 1", None, None).await })
-            .is_ok()
+            .map(|response| response.success())
+            .unwrap_or(false)
     }
 
     /// Require cluster to be running (skip test if not available)
@@ -420,6 +676,8 @@ mod cluster_common {
         timeout: Duration,
     ) -> Option<String> {
         let start = std::time::Instant::now();
+        let timeout = extend_job_timeout(timeout);
+        let job_type = job_type.to_lowercase();
         let sql = format!(
             "SELECT job_id FROM system.jobs WHERE job_type = '{}' ORDER BY created_at DESC LIMIT 1",
             job_type
@@ -455,6 +713,7 @@ mod cluster_common {
         timeout: Duration,
     ) -> bool {
         let start = std::time::Instant::now();
+        let timeout = extend_job_timeout(timeout);
         let sql = format!(
             "SELECT status FROM system.jobs WHERE job_id = '{}' LIMIT 1",
             job_id
@@ -483,6 +742,14 @@ mod cluster_common {
         }
 
         false
+    }
+
+    fn extend_job_timeout(timeout: Duration) -> Duration {
+        if cluster_urls().len() > 1 {
+            timeout + Duration::from_secs(12)
+        } else {
+            timeout
+        }
     }
 }
 

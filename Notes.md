@@ -1141,3 +1141,21 @@ i think we need to have a scheduler one which runs on the leader and awaken all 
 
 71) Is it better to use macros for MetaCommand and other commands to make the code runs faster and more clear?
 
+72) stuck stream_Evicted statuses:
+● KalamDB[local-cluster] root@http://127.0.0.1:8081 ❯ select * from system.jobs where status = 'queued';
+┌─────────────────┬─────────────────┬────────┬──────────────────────────────┬────────┬───────┬─────────────┬──────────┬──────────────────────────┬────────────┬──────────────┬─────────┬────────────────┬───────────────┬───────────────┐
+│ job_id          │ job_type        │ status │ parameters                   │ result │ trace │ memory_used │ cpu_used │ created_at               │ started_at │ completed_at │ node_id │ leader_node_id │ leader_status │ error_message │
+├─────────────────┼─────────────────┼────────┼──────────────────────────────┼────────┼───────┼─────────────┼──────────┼──────────────────────────┼────────────┼──────────────┼─────────┼────────────────┼───────────────┼───────────────┤
+│ SE-ba462ba28bc8 │ stream_eviction │ queued │ {"batch_size":10000,"tabl... │ NULL   │ NULL  │ NULL        │ NULL     │ 2026-01-18T06:21:57.662Z │ NULL       │ NULL         │ 1       │ NULL           │ NULL          │ NULL          │
+│ SE-fd5dd6e84662 │ stream_eviction │ queued │ {"batch_size":10000,"tabl... │ NULL   │ NULL  │ NULL        │ NULL     │ 2026-01-18T06:21:58.819Z │ NULL       │ NULL         │ 1       │ NULL           │ NULL          │ NULL          │
+│ SE-3c627c965c7f │ stream_eviction │ queued │ {"batch_size":10000,"tabl... │ NULL   │ NULL  │ NULL        │ NULL     │ 2026-01-18T06:21:58.828Z │ NULL       │ NULL         │ 1       │ NULL           │ NULL          │ NULL          │
+│ SE-4969f747ad19 │ stream_eviction │ queued │ {"batch_size":10000,"tabl... │ NULL   │ NULL  │ NULL        │ NULL     │ 2026-01-18T06:22:09.386Z │ NULL       │ NULL         │ 2       │ NULL           │ NULL          │ NULL          │
+│ SE-26eef6eed61f │ stream_eviction │ queued │ {"batch_size":10000,"tabl... │ NULL   │ NULL  │ NULL        │ NULL     │ 2026-01-18T06:22:09.397Z │ NULL       │ NULL         │ 2       │ NULL           │ NULL          │ NULL          │
+│ SE-87c3f54210ef │ stream_eviction │ queued │ {"batch_size":10000,"tabl... │ NULL   │ NULL  │ NULL        │ NULL     │ 2026-01-18T06:22:09.399Z │ NULL       │ NULL         │ 2       │ NULL           │ NULL          │ NULL          │
+│ SE-1c1050aa820c │ stream_eviction │ queued │ {"batch_size":10000,"tabl... │ NULL   │ NULL  │ NULL        │ NULL     │ 2026-01-18T06:22:09.407Z │ NULL       │ NULL         │ 2       │ NULL           │ NULL          │ NULL          │
+└─────────────────┴─────────────────┴────────┴──────────────────────────────┴────────┴───────┴─────────────┴──────────┴──────────────────────────┴────────────┴──────────────┴─────────┴────────────────┴───────────────┴───────────────┘
+(7 rows)
+
+73) add test which check the server health and cpompliance after some of the big tests before/after which check jobs stuck, cluster not in sync and memory usages being skyrocketing
+
+74) Add another columns which are computed ones from manifest table

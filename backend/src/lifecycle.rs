@@ -183,17 +183,6 @@ pub async fn bootstrap(
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
 
-    // Start JobsManager run loop (Phase 9, T163)
-    let job_manager = app_context.job_manager();
-    let max_concurrent = config.jobs.max_concurrent;
-    tokio::spawn(async move {
-        debug!("Starting JobsManager run loop with max {} concurrent jobs", max_concurrent);
-        if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
-            log::error!("JobsManager run loop failed: {}", e);
-        }
-    });
-    debug!("JobsManager background task spawned");
-
     // Seed default storage if necessary (using SystemTablesRegistry)
     let phase_start = std::time::Instant::now();
     let storages_provider = app_context.system_tables().storages();
@@ -257,6 +246,17 @@ pub async fn bootstrap(
     // internal last_applied_index to prevent duplicate application of log entries.
     // The state machine idempotency checks use this index to skip already-applied entries.
     app_context.restore_raft_state_machines().await;
+
+    // Start JobsManager run loop (Phase 9, T163) after state restore.
+    let job_manager = app_context.job_manager();
+    let max_concurrent = config.jobs.max_concurrent;
+    tokio::spawn(async move {
+        debug!("Starting JobsManager run loop with max {} concurrent jobs", max_concurrent);
+        if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
+            log::error!("JobsManager run loop failed: {}", e);
+        }
+    });
+    debug!("JobsManager background task spawned");
 
     // Rate limiter
     let rate_limit_config = RateLimitConfig {
@@ -393,15 +393,6 @@ pub async fn bootstrap_isolated(
     // Initialize system tables
     kalamdb_system::initialize_system_tables(backend.clone()).await?;
 
-    // Start JobsManager run loop
-    let job_manager = app_context.job_manager();
-    let max_concurrent = config.jobs.max_concurrent;
-    tokio::spawn(async move {
-        if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
-            log::error!("JobsManager run loop failed: {}", e);
-        }
-    });
-
     // Seed default storage if necessary
     let storages_provider = app_context.system_tables().storages();
     let existing_storages = storages_provider.scan_all_storages()?;
@@ -442,6 +433,15 @@ pub async fn bootstrap_isolated(
 
     // Now that all infrastructure is ready, restore state machines from snapshots
     app_context.restore_raft_state_machines().await;
+
+    // Start JobsManager run loop after state restore
+    let job_manager = app_context.job_manager();
+    let max_concurrent = config.jobs.max_concurrent;
+    tokio::spawn(async move {
+        if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
+            log::error!("JobsManager run loop failed: {}", e);
+        }
+    });
 
     // Rate limiter
     let rate_limit_config = RateLimitConfig {

@@ -50,10 +50,13 @@ fn test_datatypes_json_preservation() {
 
     // Query the data using JSON output format
     let select_sql = format!("SELECT * FROM {}.{}", namespace, table_name);
-    let result = common::execute_sql_as_root_via_cli_json(&select_sql);
-    assert!(result.is_ok(), "Should query data successfully: {:?}", result.err());
-
-    let output = result.unwrap();
+    let output = common::wait_for_query_contains_with(
+        &select_sql,
+        "test_string",
+        Duration::from_secs(5),
+        common::execute_sql_as_root_via_cli_json,
+    )
+    .expect("Should query data successfully");
     println!("Query output: {}", output);
 
     // Parse JSON output

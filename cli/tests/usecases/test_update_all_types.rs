@@ -176,7 +176,13 @@ fn test_update_all_types_user_table() {
 
     // Verify initial data
     let query_sql = format!("SELECT * FROM {} WHERE id = 'row1'", full_table_name);
-    let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
+    let output = wait_for_query_contains_with(
+        &query_sql,
+        "initial text",
+        Duration::from_secs(5),
+        execute_sql_as_root_via_cli_json,
+    )
+    .unwrap();
     assert!(output.contains("initial text"), "Initial data not found: {}", output);
     assert!(output.contains("123"), "Initial int not found");
 
@@ -361,7 +367,13 @@ fn test_update_all_types_shared_table() {
 
     // Verify initial data
     let query_sql = format!("SELECT * FROM {} WHERE id = 'row1'", full_table_name);
-    let output = execute_sql_as_root_via_cli_json(&query_sql).unwrap();
+    let output = wait_for_query_contains_with(
+        &query_sql,
+        "initial text",
+        Duration::from_secs(5),
+        execute_sql_as_root_via_cli_json,
+    )
+    .unwrap();
     assert!(output.contains("initial text"), "Initial data not found: {}", output);
     assert!(output.contains("123"), "Initial int not found");
 

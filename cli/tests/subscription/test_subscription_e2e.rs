@@ -43,9 +43,15 @@ fn test_cli_subscription_initial_and_changes() {
         },
     };
 
+    let event_timeout = if is_cluster_mode() {
+        Duration::from_secs(15)
+    } else {
+        Duration::from_secs(5)
+    };
+
     // Expect an InitialDataBatch event with 1 row
     let snapshot_line = listener
-        .wait_for_event("InitialDataBatch", Duration::from_secs(5))
+        .wait_for_event("InitialDataBatch", event_timeout)
         .expect("expected InitialDataBatch event");
     assert!(
         snapshot_line.contains("rows:") || snapshot_line.contains("Initial"),
@@ -59,7 +65,7 @@ fn test_cli_subscription_initial_and_changes() {
         table_full
     ));
     let insert_line = listener
-        .wait_for_event("Insert", Duration::from_secs(5))
+        .wait_for_event("Insert", event_timeout)
         .expect("expected Insert event");
     assert!(
         insert_line.contains("Second") || insert_line.contains("rows"),
@@ -73,7 +79,7 @@ fn test_cli_subscription_initial_and_changes() {
         table_full
     ));
     let update_line = listener
-        .wait_for_event("Update", Duration::from_secs(5))
+        .wait_for_event("Update", event_timeout)
         .expect("expected Update event");
     assert!(
         update_line.contains("Updated Second") || update_line.contains("rows"),
@@ -84,7 +90,7 @@ fn test_cli_subscription_initial_and_changes() {
     // Perform DELETE and wait for Delete event
     let _ = execute_sql_as_root_via_cli(&format!("DELETE FROM {} WHERE id = 2", table_full));
     let delete_line = listener
-        .wait_for_event("Delete", Duration::from_secs(5))
+        .wait_for_event("Delete", event_timeout)
         .expect("expected Delete event");
     assert!(
         delete_line.contains("old_rows") || delete_line.contains("rows"),

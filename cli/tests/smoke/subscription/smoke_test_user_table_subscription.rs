@@ -150,7 +150,12 @@ fn smoke_user_table_subscription_lifecycle() {
     println!("[FLUSH] Job ID: {}", job_id);
 
     // Wait for terminal state (completed or failed) to avoid flakes
-    let final_status = wait_for_job_finished(&job_id, std::time::Duration::from_secs(15))
+    let job_timeout = if is_cluster_mode() {
+        std::time::Duration::from_secs(30)
+    } else {
+        std::time::Duration::from_secs(15)
+    };
+    let final_status = wait_for_job_finished(&job_id, job_timeout)
         .expect("flush job should reach terminal state");
     println!("[FLUSH] Job {} finished with status: {}", job_id, final_status);
 

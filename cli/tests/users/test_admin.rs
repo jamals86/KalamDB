@@ -143,9 +143,10 @@ SELECT * FROM {};"#,
     .unwrap();
 
     // Execute batch file
+    let target_url = leader_url().unwrap_or_else(|| server_url().to_string());
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(server_url())
+        .arg(target_url)
         .arg("--username")
         .arg("root")
         .arg("--password")
@@ -154,9 +155,29 @@ SELECT * FROM {};"#,
         .arg(sql_file.to_str().unwrap())
         .timeout(TEST_TIMEOUT);
 
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut output = cmd.output().unwrap();
+    let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() && is_leader_error(&stderr) {
+        if let Some(leader) = leader_url() {
+            let mut retry_cmd = create_cli_command();
+            retry_cmd
+                .arg("-u")
+                .arg(leader)
+                .arg("--username")
+                .arg("root")
+                .arg("--password")
+                .arg(root_password())
+                .arg("--file")
+                .arg(sql_file.to_str().unwrap())
+                .timeout(TEST_TIMEOUT);
+
+            output = retry_cmd.output().unwrap();
+            stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        }
+    }
 
     // Verify execution - should show Query OK messages and final result
     assert!(

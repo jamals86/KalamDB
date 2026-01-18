@@ -10,6 +10,7 @@
 //! not retroactively to existing rows (standard SQL behavior).
 
 use crate::common::*;
+use std::time::{Duration, Instant};
 
 /// Test ALTER TABLE ADD/DROP COLUMN with actual data verification
 ///
@@ -63,10 +64,18 @@ fn smoke_test_alter_table_with_data_verification() {
 
     // Verify initial data
     let select1 = format!("SELECT * FROM {}.{} ORDER BY id", namespace, table);
-    let output1 =
-        execute_sql_as_root_via_client_json(&select1).expect("Failed to query initial data");
-
-    let rows1 = extract_rows_from_json(&output1);
+    let mut output1 = String::new();
+    let mut rows1 = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while Instant::now() < deadline {
+        output1 =
+            execute_sql_as_root_via_client_json(&select1).expect("Failed to query initial data");
+        rows1 = extract_rows_from_json(&output1);
+        if rows1.len() == 3 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
     assert_eq!(rows1.len(), 3, "Expected 3 initial rows");
 
     // Verify schema has 3 columns

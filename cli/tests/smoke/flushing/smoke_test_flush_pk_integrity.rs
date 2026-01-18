@@ -198,10 +198,12 @@ fn smoke_test_flush_pk_integrity_user_table() {
 
     // Step 9: Verify post-flush UPDATE worked
     println!("🔍 Step 9: Verify post-flush UPDATE worked");
-    let select_post_update = execute_sql_as_root_via_client(&format!(
-        "SELECT id, name, value FROM {} WHERE id = 2",
-        full_table_name
-    ))
+    let select_post_update = wait_for_query_contains_with(
+        &format!("SELECT id, name, value FROM {} WHERE id = 2", full_table_name),
+        "PostFlushUpdate2",
+        Duration::from_secs(5),
+        execute_sql_as_root_via_client,
+    )
     .expect("Failed to query updated row post-flush");
 
     assert!(

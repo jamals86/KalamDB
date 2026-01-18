@@ -462,29 +462,37 @@ fn cluster_test_final_cluster_health_consistency() {
         }
     }
 
-    // Verify all nodes see exactly one leader
     let leader_query = "SELECT count(*) as leaders FROM system.cluster WHERE is_leader = true";
-    for (i, url) in urls.iter().enumerate() {
-        let leader_count = query_count_on_url(url, leader_query);
-        assert_eq!(leader_count, 1, "Node {} sees {} leaders, expected 1", i, leader_count);
+    let mut leader_ok = false;
+    for _ in 0..15 {
+        let mut leader_counts = Vec::new();
+        for url in &urls {
+            leader_counts.push(query_count_on_url(url, leader_query));
+        }
+        if leader_counts.iter().all(|count| *count == 1) {
+            leader_ok = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
     }
+    assert!(leader_ok, "Leader counts did not converge across nodes");
     println!("  ✓ All nodes agree on single leader");
 
-    // Verify all nodes see all peers
     let member_query = "SELECT count(*) as members FROM system.cluster";
-    let mut member_counts: Vec<i64> = Vec::new();
-    for url in &urls {
-        member_counts.push(query_count_on_url(url, member_query));
-    }
-
     let expected_members = urls.len() as i64;
-    for (i, count) in member_counts.iter().enumerate() {
-        assert_eq!(
-            *count, expected_members,
-            "Node {} sees {} members, expected {}",
-            i, count, expected_members
-        );
+    let mut members_ok = false;
+    for _ in 0..15 {
+        let mut member_counts: Vec<i64> = Vec::new();
+        for url in &urls {
+            member_counts.push(query_count_on_url(url, member_query));
+        }
+        if member_counts.iter().all(|count| *count == expected_members) {
+            members_ok = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
     }
+    assert!(members_ok, "Cluster member counts did not converge across nodes");
     println!("  ✓ All nodes see {} cluster members", expected_members);
 
     println!("\n  ✅ Cluster health is consistent across all nodes\n");

@@ -286,6 +286,13 @@ impl RaftManager {
             );
         }
 
+        // Register this node for leader forwarding (covers self-forward when leader detection lags).
+        self.register_peer(
+            self.node_id,
+            self.config.rpc_addr.clone(),
+            self.config.api_addr.clone(),
+        );
+
         // Register peers from config
         log::debug!("Registering {} peers...", self.config.peers.len());
         for peer in &self.config.peers {

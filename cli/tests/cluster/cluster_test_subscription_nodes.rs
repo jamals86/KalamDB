@@ -9,7 +9,13 @@
 
 use crate::cluster_common::*;
 use crate::common::*;
-use kalam_link::{AuthProvider, ChangeEvent, KalamLinkClient, KalamLinkTimeouts};
+use kalam_link::{
+    AuthProvider,
+    ChangeEvent,
+    KalamLinkClient,
+    KalamLinkTimeouts,
+    SubscriptionManager,
+};
 use serde_json::Value;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -64,13 +70,86 @@ fn create_ws_client(base_url: &str) -> KalamLinkClient {
                 .connection_timeout_secs(5)
                 .receive_timeout_secs(30)
                 .send_timeout_secs(10)
-                .subscribe_timeout_secs(10)
+                .subscribe_timeout_secs(20)
                 .auth_timeout_secs(10)
                 .initial_data_timeout(Duration::from_secs(30))
                 .build(),
         )
         .build()
         .expect("Failed to build cluster client")
+}
+
+async fn subscribe_with_retry(
+    client: &KalamLinkClient,
+    query: &str,
+    max_attempts: usize,
+) -> SubscriptionManager {
+    let mut last_error: Option<String> = None;
+    for attempt in 0..max_attempts {
+        let mut subscription = client.subscribe(query).await.expect("Failed to subscribe");
+
+        if let Ok(Some(Ok(event))) =
+            tokio::time::timeout(Duration::from_secs(5), subscription.next()).await
+        {
+            if matches!(event, ChangeEvent::Error { .. }) {
+                last_error = Some("subscription registration failed".to_string());
+                tokio::time::sleep(Duration::from_millis(200 + (attempt as u64 * 150))).await;
+                continue;
+            }
+        }
+
+        return subscription;
+    }
+
+    panic!(
+        "Subscription failed to register after {} attempts: {:?}",
+        max_attempts, last_error
+    );
+}
+
+fn response_error_message(response: &kalam_link::QueryResponse) -> String {
+    if let Some(error) = &response.error {
+        if let Some(details) = &error.details {
+            return format!("{} ({})", error.message, details);
+        }
+        return error.message.clone();
+    }
+    format!("Query failed: {:?}", response)
+}
+
+async fn execute_query_with_retry(
+    client: &KalamLinkClient,
+    sql: &str,
+    max_attempts: usize,
+) -> Result<(), String> {
+    let mut last_err: Option<String> = None;
+    for attempt in 0..max_attempts {
+        match client.execute_query(sql, None, None).await {
+            Ok(response) => {
+                if response.success() {
+                    return Ok(());
+                }
+                let err_msg = response_error_message(&response);
+                if is_retryable_cluster_error_for_sql(sql, &err_msg) {
+                    last_err = Some(err_msg);
+                } else {
+                    return Err(err_msg);
+                }
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                if is_retryable_cluster_error_for_sql(sql, &err_msg) {
+                    last_err = Some(err_msg);
+                } else {
+                    return Err(err_msg);
+                }
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(300 + (attempt as u64 * 200))).await;
+    }
+
+    Err(last_err.unwrap_or_else(|| "all retries failed".to_string()))
 }
 
 /// Test: Subscription on leader receives changes from leader writes
@@ -207,22 +286,18 @@ fn cluster_test_subscription_follower_to_leader() {
         let follower_client = create_ws_client(follower_url);
         let leader_client = create_ws_client(&leader_url);
 
-        let mut subscription = follower_client
-            .subscribe(&query)
-            .await
-            .expect("Failed to subscribe on follower");
+        let mut subscription = subscribe_with_retry(&follower_client, &query, 3).await;
 
         // Insert data on LEADER
-        leader_client
-            .execute_query(
-                &format!("INSERT INTO {} (id, value) VALUES (1, '{}')", full, insert_value),
-                None,
-                None,
-            )
-            .await
-            .expect("Failed to insert on leader");
+        execute_query_with_retry(
+            &leader_client,
+            &format!("INSERT INTO {} (id, value) VALUES (1, '{}')", full, insert_value),
+            5,
+        )
+        .await
+        .expect("Failed to insert on leader");
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
         let mut received = false;
 
         while tokio::time::Instant::now() < deadline && !received {

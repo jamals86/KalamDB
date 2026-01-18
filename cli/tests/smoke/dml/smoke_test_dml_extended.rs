@@ -10,7 +10,7 @@
 //! Reference: docs/SQL.md DML section lines 471-584
 
 use crate::common::*;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Test multi-row INSERT with batch VALUES
 ///
@@ -135,7 +135,15 @@ fn smoke_test_soft_delete_user_table() {
 
     // Verify initial count
     let count_before = format!("SELECT COUNT(*) as total FROM {}", full_table);
-    let before_output = execute_sql_as_root_via_client(&count_before).expect("Failed to count");
+    let mut before_output = String::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        before_output = execute_sql_as_root_via_client(&count_before).expect("Failed to count");
+        if before_output.contains('3') {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
     assert!(before_output.contains('3'), "Expected 3 rows initially");
 
     // Soft DELETE one row

@@ -7,10 +7,11 @@ use std::io::{BufRead, BufReader};
 use std::process::Command;
 use std::process::{Child, Stdio};
 use std::sync::mpsc as std_mpsc;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
+use tokio::runtime::{Handle, Runtime};
 
 // Re-export commonly used types for credential tests
 pub use kalam_cli::FileCredentialStore;
@@ -24,6 +25,7 @@ pub use std::os::unix::fs::PermissionsExt;
 static SERVER_URL: OnceLock<String> = OnceLock::new();
 static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
 static TEST_CONTEXT: OnceLock<TestContext> = OnceLock::new();
+static LAST_LEADER_URL: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct TestContext {
@@ -32,6 +34,7 @@ pub struct TestContext {
     pub password: String,
     pub is_cluster: bool,
     pub cluster_urls: Vec<String>,
+    pub cluster_urls_raw: Vec<String>,
 }
 
 fn parse_test_arg(name: &str) -> Option<String> {
@@ -56,6 +59,173 @@ fn parse_test_urls() -> Option<Vec<String>> {
     } else {
         Some(urls)
     }
+}
+
+fn json_value_is_true(value: &serde_json::Value) -> bool {
+    value
+        .as_bool()
+        .or_else(|| value.as_str().map(|s| s.eq_ignore_ascii_case("true")))
+        .unwrap_or(false)
+}
+
+fn sql_body_is_self_leader(body: &serde_json::Value) -> Option<bool> {
+    let status = body.get("status")?.as_str()?;
+    if status != "success" {
+        return None;
+    }
+
+    let value = body
+        .get("results")?
+        .as_array()?
+        .first()?
+        .get("rows")?
+        .as_array()?
+        .first()?
+        .as_array()?
+        .first()?;
+
+    let extracted = extract_typed_value(value);
+    Some(json_value_is_true(&extracted))
+}
+
+fn leader_cache() -> &'static Mutex<Option<String>> {
+    LAST_LEADER_URL.get_or_init(|| Mutex::new(None))
+}
+
+fn cache_leader_url(url: &str) {
+    if let Ok(mut guard) = leader_cache().lock() {
+        *guard = Some(url.to_string());
+    }
+}
+
+fn cached_leader_url() -> Option<String> {
+    leader_cache()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
+fn extract_leader_url(message: &str) -> Option<String> {
+    let start = message
+        .find("http://")
+        .or_else(|| message.find("https://"))?;
+    let rest = &message[start..];
+    let end = rest
+        .find(|c: char| {
+            c.is_whitespace() || matches!(c, '"' | '\'' | ')' | '}' | ',' | '\\')
+        })
+        .unwrap_or(rest.len());
+    let url = rest[..end].to_string();
+    if url.is_empty() { None } else { Some(url) }
+}
+
+fn detect_leader_url(urls: &[String], username: &str, password: &str) -> Option<String> {
+    if urls.is_empty() {
+        return None;
+    }
+
+    let urls = urls.to_vec();
+    let username = username.to_string();
+    let password = password.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::spawn(move || {
+        let runtime = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(_) => {
+                let _ = tx.send(None);
+                return;
+            },
+        };
+
+        let leader = runtime.block_on(async move {
+            let client = Client::new();
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            for _ in 0..15 {
+                for url in &urls {
+                    if tokio::time::Instant::now() >= deadline {
+                        return None;
+                    }
+
+                    let sql_url = format!("{}/v1/api/sql", url);
+                    let mut sql_request = client
+                        .post(sql_url)
+                        .timeout(Duration::from_millis(1500))
+                        .json(&json!({
+                            "sql": "SELECT is_leader FROM system.cluster WHERE is_self = true LIMIT 1"
+                        }));
+                    if !username.is_empty() || !password.is_empty() {
+                        sql_request =
+                            sql_request.basic_auth(username.as_str(), Some(password.as_str()));
+                    }
+
+                    if let Ok(sql_response) = sql_request.send().await {
+                        if let Ok(body) = sql_response.json::<serde_json::Value>().await {
+                            if let Some(true) = sql_body_is_self_leader(&body) {
+                                return Some(url.clone());
+                            }
+                        }
+                    }
+
+                    let health_url = format!("{}/v1/api/cluster/health", url);
+                    let mut request = client.get(health_url).timeout(Duration::from_millis(1500));
+                    if !username.is_empty() || !password.is_empty() {
+                        request = request.basic_auth(username.as_str(), Some(password.as_str()));
+                    }
+                    let response = request.send().await;
+
+                    let Ok(response) = response else {
+                        continue;
+                    };
+
+                    let Ok(body) = response.json::<serde_json::Value>().await else {
+                        continue;
+                    };
+
+                    let is_leader = body
+                        .get("is_leader")
+                        .map(json_value_is_true)
+                        .or_else(|| {
+                            body.get("data")
+                                .and_then(|data| data.get("is_leader").map(json_value_is_true))
+                        })
+                        .unwrap_or(false);
+
+                    if is_leader {
+                        return Some(url.clone());
+                    }
+                }
+
+                if tokio::time::Instant::now() >= deadline {
+                    break;
+                }
+
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+
+            None
+        });
+
+        let _ = tx.send(leader);
+    });
+
+    rx.recv_timeout(Duration::from_secs(6)).ok().flatten()
+}
+
+fn reorder_cluster_urls_by_leader(
+    mut urls: Vec<String>,
+    username: &str,
+    password: &str,
+) -> Vec<String> {
+    let Some(leader_url) = detect_leader_url(&urls, username, password) else {
+        return urls;
+    };
+
+    urls.retain(|url| url != &leader_url);
+    let mut ordered = Vec::with_capacity(urls.len() + 1);
+    ordered.push(leader_url);
+    ordered.extend(urls);
+    ordered
 }
 
 pub fn test_context() -> &'static TestContext {
@@ -104,7 +274,7 @@ pub fn test_context() -> &'static TestContext {
             .cloned()
             .collect();
 
-        let (is_cluster, cluster_urls) = if let Some(explicit_urls) = parse_test_urls() {
+        let (is_cluster, mut cluster_urls) = if let Some(explicit_urls) = parse_test_urls() {
             (explicit_urls.len() > 1, explicit_urls)
         } else if !healthy_cluster_nodes.is_empty() {
             (true, healthy_cluster_nodes)
@@ -112,12 +282,18 @@ pub fn test_context() -> &'static TestContext {
             (false, vec![server_url.clone()])
         };
 
+        let cluster_urls_raw = cluster_urls.clone();
+        if is_cluster {
+            cluster_urls = reorder_cluster_urls_by_leader(cluster_urls, &username, &password);
+        }
+
         TestContext {
             server_url,
             username,
             password,
             is_cluster,
             cluster_urls,
+            cluster_urls_raw,
         }
     })
 }
@@ -141,15 +317,39 @@ pub fn server_url() -> &'static str {
         .get_or_init(|| {
             let ctx = test_context();
             if ctx.is_cluster {
-                ctx.cluster_urls
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| ctx.server_url.clone())
+                leader_url().unwrap_or_else(|| {
+                    ctx.cluster_urls
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| ctx.server_url.clone())
+                })
             } else {
                 ctx.server_url.clone()
             }
         })
         .as_str()
+}
+
+pub fn leader_or_server_url() -> String {
+    if is_cluster_mode() {
+        leader_url().unwrap_or_else(|| server_url().to_string())
+    } else {
+        server_url().to_string()
+    }
+}
+
+pub fn leader_url() -> Option<String> {
+    let ctx = test_context();
+    if !ctx.is_cluster {
+        return Some(ctx.server_url.clone());
+    }
+
+    if let Some(leader) = detect_leader_url(&ctx.cluster_urls_raw, &ctx.username, &ctx.password) {
+        cache_leader_url(&leader);
+        return Some(leader);
+    }
+
+    cached_leader_url().or_else(|| ctx.cluster_urls.first().cloned())
 }
 
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -183,16 +383,43 @@ pub async fn execute_sql_via_http_as(
     sql: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let client = Client::new();
-    let response = client
-        .post(format!("{}/v1/api/sql", server_url()))
-        .basic_auth(username, Some(password))
-        .json(&json!({ "sql": sql }))
-        .send()
-        .await?;
+    let mut last_parsed: Option<serde_json::Value> = None;
 
-    let body = response.text().await?;
-    let parsed: serde_json::Value = serde_json::from_str(&body)?;
-    Ok(parsed)
+    for attempt in 0..5 {
+        let response = client
+            .post(format!("{}/v1/api/sql", server_url()))
+            .basic_auth(username, Some(password))
+            .json(&json!({ "sql": sql }))
+            .send()
+            .await?;
+
+        let body = response.text().await?;
+        let parsed: serde_json::Value = serde_json::from_str(&body)?;
+        last_parsed = Some(parsed.clone());
+
+        let status = parsed
+            .get("status")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+
+        if status.eq_ignore_ascii_case("success") {
+            if is_cluster_mode() {
+                wait_for_cluster_after_sql(sql);
+            }
+            return Ok(parsed);
+        }
+
+        let err_msg = json_error_message(&parsed).unwrap_or_default();
+        if is_leader_error(&err_msg) && attempt < 4 {
+            let delay_ms = 300 + attempt * 200;
+            tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
+            continue;
+        }
+
+        return Ok(parsed);
+    }
+
+    Ok(last_parsed.unwrap_or_else(|| json!({"status": "error", "error": {"message": "No response"}})))
 }
 
 /// Execute SQL over HTTP as root user.
@@ -355,11 +582,84 @@ pub fn parse_cli_json_output(
 /// Detect leader-related errors for cluster failover attempts.
 pub fn is_leader_error(message: &str) -> bool {
     let lower = message.to_lowercase();
-    lower.contains("not leader")
+    let is_leader = lower.contains("not leader")
         || lower.contains("unknown leader")
+        || lower.contains("no cluster leader")
+        || lower.contains("no raft leader")
         || lower.contains("leader is node none")
+        || lower.contains("forward request to cluster leader")
+        || lower.contains("failed to forward request to cluster leader")
+        || lower.contains("forward to leader")
+        || lower.contains("forwardtoleader")
+        || lower.contains("forward_to_leader")
         || lower.contains("raft insert failed")
-        || lower.contains("raft update failed")
+        || lower.contains("raft update failed");
+
+    if is_leader {
+        if let Some(url) = extract_leader_url(message) {
+            cache_leader_url(&url);
+        }
+    }
+
+    is_leader
+}
+
+fn is_flush_sql(sql: &str) -> bool {
+    sql.trim_start()
+        .to_ascii_uppercase()
+        .starts_with("STORAGE FLUSH")
+}
+
+fn is_idempotent_conflict(message: &str) -> bool {
+    message.to_ascii_lowercase().contains("idempotent conflict")
+}
+
+fn is_network_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("network error")
+        || lower.contains("error sending request")
+        || lower.contains("connection refused")
+        || lower.contains("connection reset")
+        || lower.contains("connection closed")
+        || lower.contains("broken pipe")
+        || lower.contains("connection error")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+}
+
+fn is_transient_missing_relation(sql: &str, message: &str) -> bool {
+    let lower_msg = message.to_ascii_lowercase();
+    if !lower_msg.contains("does not exist") && !lower_msg.contains("not found") {
+        return false;
+    }
+
+    let lower_sql = sql.trim_start().to_ascii_lowercase();
+    lower_sql.starts_with("insert ")
+        || lower_sql.starts_with("update ")
+        || lower_sql.starts_with("delete ")
+        || lower_sql.starts_with("storage flush")
+        || lower_sql.starts_with("create table")
+        || lower_sql.starts_with("create shared table")
+        || lower_sql.starts_with("create user table")
+        || lower_sql.starts_with("create stream table")
+        || lower_sql.starts_with("alter table")
+}
+
+pub fn is_retryable_cluster_error_for_sql(sql: &str, message: &str) -> bool {
+    is_leader_error(message) || is_network_error(message) || is_transient_missing_relation(sql, message)
+}
+
+fn cli_output_error(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("Error:")
+            || trimmed.starts_with("ERROR ")
+            || trimmed.starts_with("ERROR:")
+        {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
 }
 
 /// Check if the KalamDB server is running
@@ -447,7 +747,12 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
 pub fn get_available_server_urls() -> Vec<String> {
     let ctx = test_context();
     if ctx.is_cluster {
-        return ctx.cluster_urls.clone();
+        let mut urls = ctx.cluster_urls_raw.clone();
+        if let Some(leader) = leader_url() {
+            urls.retain(|url| url != &leader);
+            urls.insert(0, leader);
+        }
+        return urls;
     }
 
     let single_node_url = ctx.server_url.clone();
@@ -456,6 +761,162 @@ pub fn get_available_server_urls() -> Vec<String> {
     }
 
     vec![]
+}
+
+pub fn cluster_urls_config_order() -> Vec<String> {
+    test_context().cluster_urls_raw.clone()
+}
+
+fn should_wait_for_cluster_after_sql(sql: &str) -> bool {
+    let upper = sql.trim_start().to_ascii_uppercase();
+    upper.starts_with("CREATE NAMESPACE")
+        || upper.starts_with("CREATE TABLE")
+        || upper.starts_with("CREATE SHARED TABLE")
+        || upper.starts_with("CREATE USER TABLE")
+        || upper.starts_with("CREATE STREAM TABLE")
+        || upper.starts_with("DROP NAMESPACE")
+        || upper.starts_with("DROP TABLE")
+        || upper.starts_with("ALTER TABLE")
+}
+
+fn parse_create_namespace(sql: &str) -> Option<String> {
+    let trimmed = sql.trim_start();
+    let lower = trimmed.to_ascii_lowercase();
+    let prefix = "create namespace";
+    if !lower.starts_with(prefix) {
+        return None;
+    }
+
+    let mut rest = trimmed[prefix.len()..].trim();
+    if rest.to_ascii_lowercase().starts_with("if not exists") {
+        rest = rest["if not exists".len()..].trim();
+    }
+    let name = rest.split_whitespace().next()?.trim_end_matches(';');
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+fn parse_create_table(sql: &str) -> Option<(String, String)> {
+    let trimmed = sql.trim_start();
+    let lower = trimmed.to_ascii_lowercase();
+    let prefix = if lower.starts_with("create table") {
+        "create table"
+    } else if lower.starts_with("create shared table") {
+        "create shared table"
+    } else if lower.starts_with("create user table") {
+        "create user table"
+    } else if lower.starts_with("create stream table") {
+        "create stream table"
+    } else {
+        return None;
+    };
+
+    let mut rest = trimmed[prefix.len()..].trim();
+    if rest.to_ascii_lowercase().starts_with("if not exists") {
+        rest = rest["if not exists".len()..].trim();
+    }
+
+    let target = rest
+        .split_whitespace()
+        .next()?
+        .trim_end_matches('(')
+        .trim_end_matches(';');
+    let mut parts = target.split('.');
+    let namespace = parts.next()?;
+    let table = parts.next()?;
+    if namespace.is_empty() || table.is_empty() {
+        return None;
+    }
+    Some((namespace.to_string(), table.to_string()))
+}
+
+fn wait_for_namespace_on_all_nodes(namespace: &str, timeout: Duration) -> bool {
+    if !is_cluster_mode() {
+        return true;
+    }
+    let urls = test_context().cluster_urls_raw.clone();
+    let sql = format!(
+        "SELECT namespace_id FROM system.namespaces WHERE namespace_id = '{}'",
+        namespace
+    );
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        let all_visible = urls.iter().all(|url| {
+            matches!(execute_sql_on_node(url, &sql), Ok(output) if output.contains(namespace))
+        });
+        if all_visible {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    false
+}
+
+fn wait_for_table_on_all_nodes(namespace: &str, table: &str, timeout: Duration) -> bool {
+    if !is_cluster_mode() {
+        return true;
+    }
+    let urls = test_context().cluster_urls_raw.clone();
+    let sql = format!(
+        "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        namespace, table
+    );
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        let all_visible = urls.iter().all(|url| {
+            matches!(execute_sql_on_node(url, &sql), Ok(output) if output.contains(table))
+        });
+        if all_visible {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    false
+}
+
+fn wait_for_cluster_after_sql(sql: &str) {
+    if !is_cluster_mode() {
+        return;
+    }
+
+    if let Some(namespace) = parse_create_namespace(sql) {
+        let _ = wait_for_namespace_on_all_nodes(&namespace, Duration::from_secs(20));
+        return;
+    }
+
+    if let Some((namespace, table)) = parse_create_table(sql) {
+        let _ = wait_for_table_on_all_nodes(&namespace, &table, Duration::from_secs(30));
+        return;
+    }
+
+    if !should_wait_for_cluster_after_sql(sql) {
+        return;
+    }
+
+    std::thread::sleep(Duration::from_millis(600));
+}
+
+fn query_response_error_message(response: &kalam_link::QueryResponse) -> String {
+    if let Some(error) = &response.error {
+        if let Some(details) = &error.details {
+            return format!("{} ({})", error.message, details);
+        }
+        return error.message.clone();
+    }
+
+    format!("Query failed: {:?}", response)
+}
+
+fn json_error_message(parsed: &serde_json::Value) -> Option<String> {
+    let error = parsed.get("error")?;
+    let message = error.get("message")?.as_str().unwrap_or("");
+    let details = error.get("details").and_then(|d| d.as_str());
+    if let Some(details) = details {
+        return Some(format!("{} ({})", message, details));
+    }
+    Some(message.to_string())
 }
 
 /// Check if we're running in cluster mode (multiple nodes available)
@@ -469,10 +930,12 @@ pub fn server_host_port() -> String {
 }
 
 pub fn websocket_url() -> String {
-    let base_url = get_available_server_urls()
-        .first()
-        .cloned()
-        .unwrap_or_else(|| server_url().to_string());
+    let base_url = leader_url().unwrap_or_else(|| {
+        get_available_server_urls()
+            .first()
+            .cloned()
+            .unwrap_or_else(|| server_url().to_string())
+    });
 
     let base = if base_url.starts_with("https://") {
         base_url.replacen("https://", "wss://", 1)
@@ -695,13 +1158,16 @@ fn execute_sql_via_cli_as_with_args(
 
     eprintln!("[TEST_CLI] Executing as {}: \"{}\"", username, sql_preview.replace('\n', " "));
 
-    let urls = if is_cluster_mode() {
-        get_available_server_urls()
-    } else {
-        vec![server_url().to_string()]
-    };
+    let max_attempts = if is_cluster_mode() { 10 } else { 1 };
+    let mut last_err: Option<String> = None;
 
-    for _ in 0..3 {
+    for attempt in 0..max_attempts {
+        let urls = if is_cluster_mode() {
+            get_available_server_urls()
+        } else {
+            vec![server_url().to_string()]
+        };
+        let mut retry_after_attempt = false;
         for (idx, url) in urls.iter().enumerate() {
             let spawn_start = Instant::now();
 
@@ -748,10 +1214,30 @@ fn execute_sql_via_cli_as_with_args(
                         if !stderr.is_empty() {
                             eprintln!("[TEST_CLI] stderr: {}", stderr);
                         }
+                        if let Some(output_err) = cli_output_error(&stdout) {
+                            let err_msg = format!("CLI output error: {}", output_err);
+                            if is_flush_sql(sql) && is_idempotent_conflict(&err_msg) {
+                                return Ok(stdout);
+                            }
+                            if is_cluster_mode()
+                                && is_retryable_cluster_error_for_sql(sql, &err_msg)
+                            {
+                                last_err = Some(err_msg);
+                                if idx + 1 < urls.len() {
+                                    continue;
+                                }
+                                retry_after_attempt = true;
+                                break;
+                            }
+                            return Err(err_msg.into());
+                        }
                         eprintln!(
                             "[TEST_CLI] Success: spawn={:?} wait={:?} total={}ms",
                             spawn_duration, wait_duration, total_duration_ms
                         );
+                        if is_cluster_mode() {
+                            wait_for_cluster_after_sql(sql);
+                        }
                         return Ok(stdout);
                     } else {
                         eprintln!(
@@ -759,8 +1245,23 @@ fn execute_sql_via_cli_as_with_args(
                             spawn_duration, wait_duration, total_duration_ms, stderr
                         );
                         let err_msg = format!("CLI command failed: {}", stderr);
-                        if is_leader_error(&err_msg) && idx + 1 < urls.len() {
-                            continue;
+                        if is_flush_sql(sql) && is_idempotent_conflict(&err_msg) {
+                            eprintln!(
+                                "[TEST_CLI] Flush already queued; treating as success: {}",
+                                err_msg
+                            );
+                            if is_cluster_mode() {
+                                wait_for_cluster_after_sql(sql);
+                            }
+                            return Ok(stdout);
+                        }
+                        if is_cluster_mode() && is_retryable_cluster_error_for_sql(sql, &err_msg) {
+                            last_err = Some(err_msg);
+                            if idx + 1 < urls.len() {
+                                continue;
+                            }
+                            retry_after_attempt = true;
+                            break;
                         }
                         return Err(err_msg.into());
                     }
@@ -772,17 +1273,27 @@ fn execute_sql_via_cli_as_with_args(
                     let wait_duration = wait_start.elapsed();
                     eprintln!("[TEST_CLI] TIMEOUT after {:?}", wait_duration);
                     let err_msg = format!("CLI command timed out after {:?}", timeout_duration);
-                    if idx + 1 < urls.len() {
-                        continue;
+                    if is_cluster_mode() && is_retryable_cluster_error_for_sql(sql, &err_msg) {
+                        last_err = Some(err_msg);
+                        if idx + 1 < urls.len() {
+                            continue;
+                        }
+                        retry_after_attempt = true;
+                        break;
                     }
                     return Err(err_msg.into());
                 }
             }
         }
-        std::thread::sleep(Duration::from_millis(200));
+        if retry_after_attempt {
+            let delay_ms = 300 + attempt * 200;
+            std::thread::sleep(Duration::from_millis(delay_ms as u64));
+        }
     }
 
-    Err("CLI command failed on all cluster nodes".into())
+    Err(last_err
+        .unwrap_or_else(|| "CLI command failed on all cluster nodes".to_string())
+        .into())
 }
 
 /// Helper to execute SQL as root user via CLI
@@ -802,7 +1313,6 @@ pub fn execute_sql_as_root_via_cli_json(sql: &str) -> Result<String, Box<dyn std
 /// A shared tokio runtime for client-based query execution.
 /// Using a shared runtime avoids the overhead of creating a new runtime for each query.
 fn get_shared_runtime() -> &'static tokio::runtime::Runtime {
-    use std::sync::OnceLock;
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
@@ -822,139 +1332,168 @@ fn get_shared_runtime() -> &'static tokio::runtime::Runtime {
 /// JWT authentication verifies the token signature (< 1ms) - 100-300x faster!
 ///
 /// This version automatically uses the first available server (cluster or single-node)
-fn get_shared_root_client() -> &'static KalamLinkClient {
-    use std::sync::OnceLock;
-    static CLIENT: OnceLock<KalamLinkClient> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        let base_url = get_available_server_urls()
-            .first()
-            .cloned()
-            .unwrap_or_else(|| server_url().to_string());
+struct RootClientCache {
+    base_url: String,
+    client: KalamLinkClient,
+}
 
-        let auth_required = server_requires_auth_for_url(&base_url).unwrap_or(true);
-        if !auth_required {
-            return KalamLinkClient::builder()
-                .base_url(&base_url)
-                .auth(AuthProvider::none())
+fn shared_root_client_cache() -> &'static Mutex<Option<RootClientCache>> {
+    static CLIENT_CACHE: OnceLock<Mutex<Option<RootClientCache>>> = OnceLock::new();
+    CLIENT_CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn build_root_client(base_url: &str) -> KalamLinkClient {
+    let auth_required = server_requires_auth_for_url(base_url).unwrap_or(true);
+    if !auth_required {
+        return KalamLinkClient::builder()
+            .base_url(base_url)
+            .auth(AuthProvider::none())
+            .timeouts(
+                KalamLinkTimeouts::builder()
+                    .connection_timeout_secs(5)
+                    .receive_timeout_secs(120)
+                    .send_timeout_secs(30)
+                    .subscribe_timeout_secs(10)
+                    .auth_timeout_secs(10)
+                    .initial_data_timeout(Duration::from_secs(120))
+                    .build(),
+            )
+            .build()
+            .expect("Failed to create shared root client without auth");
+    }
+
+    if root_password().is_empty() {
+        return KalamLinkClient::builder()
+            .base_url(base_url)
+            .auth(AuthProvider::basic_auth("root".to_string(), "".to_string()))
+            .timeouts(
+                KalamLinkTimeouts::builder()
+                    .connection_timeout_secs(5)
+                    .receive_timeout_secs(120)
+                    .send_timeout_secs(30)
+                    .subscribe_timeout_secs(10)
+                    .auth_timeout_secs(10)
+                    .initial_data_timeout(Duration::from_secs(120))
+                    .build(),
+            )
+            .build()
+            .expect("Failed to create shared root client with empty password");
+    }
+
+    // PERFORMANCE: Try to login once to get JWT token, then use token for all requests
+    // This avoids running bcrypt verification on every single query
+    // If login fails (e.g., no password set), fall back to Basic Auth
+    let (tx, rx) = std::sync::mpsc::channel();
+    let base_url_clone = base_url.to_string();
+    let password = root_password().to_string();
+
+    std::thread::spawn(move || {
+        let rt = Runtime::new().expect("Failed to create runtime for login");
+        let auth_result = rt.block_on(async {
+            // Create temporary client with Basic Auth just for login
+            let login_client = KalamLinkClient::builder()
+                .base_url(&base_url_clone)
+                .auth(AuthProvider::basic_auth("root".to_string(), password.clone()))
                 .timeouts(
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
-                        .receive_timeout_secs(120)
+                        .receive_timeout_secs(30)
                         .send_timeout_secs(30)
                         .subscribe_timeout_secs(10)
                         .auth_timeout_secs(10)
-                        .initial_data_timeout(Duration::from_secs(120))
+                        .initial_data_timeout(Duration::from_secs(30))
                         .build(),
                 )
                 .build()
-                .expect("Failed to create shared root client without auth");
-        }
+                .expect("Failed to create login client");
 
-        if root_password().is_empty() {
-            return KalamLinkClient::builder()
-                .base_url(&base_url)
-                .auth(AuthProvider::basic_auth("root".to_string(), "".to_string()))
-                .timeouts(
-                    KalamLinkTimeouts::builder()
-                        .connection_timeout_secs(5)
-                        .receive_timeout_secs(120)
-                        .send_timeout_secs(30)
-                        .subscribe_timeout_secs(10)
-                        .auth_timeout_secs(10)
-                        .initial_data_timeout(Duration::from_secs(120))
-                        .build(),
-                )
-                .build()
-                .expect("Failed to create shared root client with empty password");
-        }
-        
-        // PERFORMANCE: Try to login once to get JWT token, then use token for all requests
-        // This avoids running bcrypt verification on every single query
-        // If login fails (e.g., no password set), fall back to Basic Auth
-        
-        let (tx, rx) = std::sync::mpsc::channel();
-        let base_url_clone = base_url.clone();
-        let password = root_password().to_string();
-        
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime for login");
-            let auth_result = rt.block_on(async {
-                // Create temporary client with Basic Auth just for login
-                let login_client = KalamLinkClient::builder()
-                    .base_url(&base_url_clone)
-                    .auth(AuthProvider::basic_auth("root".to_string(), password.clone()))
-                    .timeouts(
-                        KalamLinkTimeouts::builder()
-                            .connection_timeout_secs(5)
-                            .receive_timeout_secs(30)
-                            .send_timeout_secs(30)
-                            .subscribe_timeout_secs(10)
-                            .auth_timeout_secs(10)
-                            .initial_data_timeout(Duration::from_secs(30))
-                            .build(),
-                    )
-                    .build()
-                    .expect("Failed to create login client");
-                
-                // Try to login to get JWT token
-                match login_client.login("root", &password).await {
-                    Ok(login_response) => {
-                        eprintln!("[TEST_CLIENT] ✓ Using JWT authentication (fast - no bcrypt on every request)");
-                        Ok(login_response.access_token)
-                    }
-                    Err(e) => {
-                        // Login failed - fall back to Basic Auth
-                        // This happens when password is not set or authentication is disabled
-                        eprintln!("[TEST_CLIENT] ⚠ JWT login failed ({}), falling back to Basic Auth (slow - bcrypt on every request)", e);
-                        Err(password)
-                    }
+            // Try to login to get JWT token
+            match login_client.login("root", &password).await {
+                Ok(login_response) => {
+                    eprintln!(
+                        "[TEST_CLIENT] ✓ Using JWT authentication (fast - no bcrypt on every request)"
+                    );
+                    Ok(login_response.access_token)
                 }
-            });
-            let _ = tx.send(auth_result);
-        });
-        
-        let auth_result = rx.recv().expect("Failed to receive auth result from login thread");
-        
-        // Create the client with either JWT or Basic Auth
-        match auth_result {
-            Ok(jwt_token) => {
-                // JWT authentication - fast!
-                KalamLinkClient::builder()
-                    .base_url(&base_url)
-                    .auth(AuthProvider::jwt_token(jwt_token))
-                    .timeouts(
-                        KalamLinkTimeouts::builder()
-                            .connection_timeout_secs(5)
-                            .receive_timeout_secs(120)
-                            .send_timeout_secs(30)
-                            .subscribe_timeout_secs(10)
-                            .auth_timeout_secs(10)
-                            .initial_data_timeout(Duration::from_secs(120))
-                            .build(),
-                    )
-                    .build()
-                    .expect("Failed to create shared root client with JWT")
+                Err(e) => {
+                    // Login failed - fall back to Basic Auth
+                    // This happens when password is not set or authentication is disabled
+                    eprintln!(
+                        "[TEST_CLIENT] ⚠ JWT login failed ({}), falling back to Basic Auth (slow - bcrypt on every request)",
+                        e
+                    );
+                    Err(password)
+                }
             }
-            Err(password) => {
-                // Fall back to Basic Auth - slow but works
-                KalamLinkClient::builder()
-                    .base_url(&base_url)
-                    .auth(AuthProvider::basic_auth("root".to_string(), password))
-                    .timeouts(
-                        KalamLinkTimeouts::builder()
-                            .connection_timeout_secs(5)
-                            .receive_timeout_secs(120)
-                            .send_timeout_secs(30)
-                            .subscribe_timeout_secs(10)
-                            .auth_timeout_secs(10)
-                            .initial_data_timeout(Duration::from_secs(120))
-                            .build(),
-                    )
-                    .build()
-                    .expect("Failed to create shared root client with Basic Auth")
+        });
+        let _ = tx.send(auth_result);
+    });
+
+    let auth_result = rx.recv().expect("Failed to receive auth result from login thread");
+
+    // Create the client with either JWT or Basic Auth
+    match auth_result {
+        Ok(jwt_token) => {
+            // JWT authentication - fast!
+            KalamLinkClient::builder()
+                .base_url(base_url)
+                .auth(AuthProvider::jwt_token(jwt_token))
+                .timeouts(
+                    KalamLinkTimeouts::builder()
+                        .connection_timeout_secs(5)
+                        .receive_timeout_secs(120)
+                        .send_timeout_secs(30)
+                        .subscribe_timeout_secs(10)
+                        .auth_timeout_secs(10)
+                        .initial_data_timeout(Duration::from_secs(120))
+                        .build(),
+                )
+                .build()
+                .expect("Failed to create shared root client with JWT")
+        }
+        Err(password) => {
+            // Fall back to Basic Auth - slow but works
+            KalamLinkClient::builder()
+                .base_url(base_url)
+                .auth(AuthProvider::basic_auth("root".to_string(), password))
+                .timeouts(
+                    KalamLinkTimeouts::builder()
+                        .connection_timeout_secs(5)
+                        .receive_timeout_secs(120)
+                        .send_timeout_secs(30)
+                        .subscribe_timeout_secs(10)
+                        .auth_timeout_secs(10)
+                        .initial_data_timeout(Duration::from_secs(120))
+                        .build(),
+                )
+                .build()
+                .expect("Failed to create shared root client with Basic Auth")
+        }
+    }
+}
+
+fn get_shared_root_client() -> KalamLinkClient {
+    let base_url = get_available_server_urls()
+        .first()
+        .cloned()
+        .unwrap_or_else(|| server_url().to_string());
+
+    if let Ok(mut guard) = shared_root_client_cache().lock() {
+        if let Some(cache) = guard.as_ref() {
+            if cache.base_url == base_url {
+                return cache.client.clone();
             }
         }
-    })
+
+        let client = build_root_client(&base_url);
+        *guard = Some(RootClientCache {
+            base_url: base_url.clone(),
+            client: client.clone(),
+        });
+        return client;
+    }
+
+    build_root_client(&base_url)
 }
 
 /// Execute SQL via kalam-link client directly (avoids CLI process spawning).
@@ -989,8 +1528,6 @@ pub fn execute_sql_via_client_as_with_args(
     sql: &str,
     json_output: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    use std::sync::mpsc;
-
     let runtime = get_shared_runtime();
 
     let sql_preview = if sql.len() > 60 {
@@ -1012,12 +1549,13 @@ pub fn execute_sql_via_client_as_with_args(
 
     // Clone values for the async block only if needed
     let sql = sql.to_string();
+    let sql_for_wait = sql.clone();
     let username_owned = username.to_string();
     let password_owned = password.to_string();
 
     // Use a channel to receive the result from the async task
     // This avoids the block_on deadlock issue when called from multiple std threads
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = std_mpsc::channel();
 
     runtime.spawn(async move {
         let result = async {
@@ -1041,7 +1579,7 @@ pub fn execute_sql_via_client_as_with_args(
                             .connection_timeout_secs(5)
                             .receive_timeout_secs(120)
                             .send_timeout_secs(30)
-                            .subscribe_timeout_secs(10)
+                            .subscribe_timeout_secs(20)
                             .auth_timeout_secs(10)
                             .initial_data_timeout(Duration::from_secs(120))
                             .build(),
@@ -1053,22 +1591,69 @@ pub fn execute_sql_via_client_as_with_args(
 
             // In cluster mode, try all nodes to find the leader for writes.
             if is_cluster_mode() && urls.len() > 1 {
+                let max_attempts = 12;
                 let mut last_err: Option<Box<dyn std::error::Error + Send + Sync>> = None;
-                for _ in 0..3 {
-                    for url in &urls {
-                        match execute_once(url, &username_owned, &password_owned, &sql).await {
-                            Ok(response) => return Ok(response),
+
+                for attempt in 0..max_attempts {
+                    let urls = get_available_server_urls();
+                    let leader_url = urls.first().cloned();
+                    let mut retry_after_attempt = false;
+                    for (idx, url) in urls.iter().enumerate() {
+                        let response = if is_root && leader_url.as_ref() == Some(url) {
+                            let client = get_shared_root_client();
+                            client
+                                .execute_query(&sql, None, None)
+                                .await
+                                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                        } else {
+                            execute_once(url, &username_owned, &password_owned, &sql).await
+                        };
+
+                        match response {
+                            Ok(response) => {
+                                if !response.success() {
+                                    let err_msg = query_response_error_message(&response);
+                                    if is_flush_sql(&sql) && is_idempotent_conflict(&err_msg) {
+                                        return Ok(response);
+                                    }
+                                    if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
+                                        last_err = Some(err_msg.into());
+                                        if idx + 1 < urls.len() {
+                                            continue;
+                                        }
+                                        retry_after_attempt = true;
+                                        break;
+                                    }
+                                    return Err(err_msg.into());
+                                }
+                                return Ok(response);
+                            }
                             Err(e) => {
                                 let msg = e.to_string();
-                                if is_leader_error(&msg) {
+                                if is_flush_sql(&sql) && is_idempotent_conflict(&msg) {
+                                    return Ok(kalam_link::QueryResponse {
+                                        status: kalam_link::models::ResponseStatus::Success,
+                                        results: Vec::new(),
+                                        took: None,
+                                        error: None,
+                                    });
+                                }
+                                if is_retryable_cluster_error_for_sql(&sql, &msg) {
                                     last_err = Some(e);
-                                    continue;
+                                    if idx + 1 < urls.len() {
+                                        continue;
+                                    }
+                                    retry_after_attempt = true;
+                                    break;
                                 }
                                 return Err(e);
                             }
                         }
                     }
-                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    if retry_after_attempt {
+                        let delay_ms = 300 + attempt * 200;
+                        tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
+                    }
                 }
                 return Err(last_err.unwrap_or_else(|| "All cluster nodes failed".into()));
             }
@@ -1077,10 +1662,24 @@ pub fn execute_sql_via_client_as_with_args(
                 // Reuse shared root client to avoid creating new TCP connections
                 let client = get_shared_root_client();
                 let response = client.execute_query(&sql, None, None).await?;
+                if !response.success() {
+                    let err_msg = query_response_error_message(&response);
+                    if is_flush_sql(&sql) && is_idempotent_conflict(&err_msg) {
+                        return Ok(response);
+                    }
+                    return Err(err_msg.into());
+                }
                 Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response)
             } else {
                 let response =
                     execute_once(&base_url, &username_owned, &password_owned, &sql).await?;
+                if !response.success() {
+                    let err_msg = query_response_error_message(&response);
+                    if is_flush_sql(&sql) && is_idempotent_conflict(&err_msg) {
+                        return Ok(response);
+                    }
+                    return Err(err_msg.into());
+                }
                 Ok(response)
             }
         }
@@ -1091,7 +1690,7 @@ pub fn execute_sql_via_client_as_with_args(
 
     // Wait for the result with a timeout
     let result = rx
-        .recv_timeout(Duration::from_secs(60))
+        .recv_timeout(Duration::from_secs(120))
         .map_err(|e| format!("Query timed out or channel error: {}", e))?;
 
     let duration = start.elapsed();
@@ -1102,7 +1701,11 @@ pub fn execute_sql_via_client_as_with_args(
 
             if json_output {
                 // Return raw JSON
-                Ok(serde_json::to_string_pretty(&response)?)
+                let output = serde_json::to_string_pretty(&response)?;
+                if is_cluster_mode() {
+                    wait_for_cluster_after_sql(&sql_for_wait);
+                }
+                Ok(output)
             } else {
                 // Return a simple formatted output
                 let mut output = String::new();
@@ -1184,6 +1787,9 @@ pub fn execute_sql_via_client_as_with_args(
                     output.push_str(&format!("Error: {}\n", error.message));
                 }
 
+                if is_cluster_mode() {
+                    wait_for_cluster_after_sql(&sql_for_wait);
+                }
                 Ok(output)
             }
         },
@@ -1372,9 +1978,23 @@ pub fn create_cli_command() -> assert_cmd::Command {
 
 /// Helper to create a CLI command with explicit authentication and URL.
 pub fn create_cli_command_with_auth(username: &str, password: &str) -> assert_cmd::Command {
+    let base_url = if is_cluster_mode() {
+        leader_url().unwrap_or_else(|| server_url().to_string())
+    } else {
+        server_url().to_string()
+    };
+    create_cli_command_with_auth_for_server(username, password, &base_url)
+}
+
+/// Helper to create a CLI command with explicit authentication and server override.
+pub fn create_cli_command_with_auth_for_server(
+    username: &str,
+    password: &str,
+    server: &str,
+) -> assert_cmd::Command {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(server_url())
+        .arg(server)
         .arg("--username")
         .arg(username)
         .arg("--password")
@@ -1480,6 +2100,31 @@ pub fn parse_job_id_from_flush_output(output: &str) -> Result<String, Box<dyn st
         return Ok(id_token.trim().to_string());
     }
 
+    // Fallback: look up the latest flush job if output was empty (idempotent conflict, etc.)
+    let fallback_sql =
+        "SELECT job_id FROM system.jobs WHERE job_type = 'flush' ORDER BY created_at DESC LIMIT 1";
+    if let Ok(json_output) = execute_sql_as_root_via_client_json(fallback_sql) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_output) {
+            if let Some(job_id) = value
+                .get("results")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|res| res.get("rows"))
+                .and_then(|rows| rows.as_array())
+                .and_then(|rows| rows.first())
+                .and_then(|row| row.as_array())
+                .and_then(|row| row.first())
+                .and_then(|val| match val {
+                    serde_json::Value::String(s) => Some(s.to_string()),
+                    serde_json::Value::Number(n) => n.as_i64().map(|v| v.to_string()),
+                    _ => None,
+                })
+            {
+                return Ok(job_id);
+            }
+        }
+    }
+
     Err(format!("Failed to parse job ID from FLUSH output: {}", output).into())
 }
 
@@ -1545,6 +2190,11 @@ pub fn verify_job_completed(
     job_id: &str,
     timeout: Duration,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let timeout = if is_cluster_mode() {
+        timeout + Duration::from_secs(12)
+    } else {
+        timeout
+    };
     let start = std::time::Instant::now();
     let poll_interval = Duration::from_millis(200);
 
@@ -1735,10 +2385,12 @@ impl SubscriptionListener {
 
             runtime.block_on(async move {
                 // Get first available server URL (cluster or single-node)
-                let base_url = get_available_server_urls()
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| server_url().to_string());
+                let base_url = leader_url().unwrap_or_else(|| {
+                    get_available_server_urls()
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| server_url().to_string())
+                });
 
                 // Build client for subscription
                 let client = match KalamLinkClient::builder()
@@ -2227,84 +2879,111 @@ pub fn execute_sql_on_node(
     base_url: &str,
     sql: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    use tokio::runtime::Runtime;
+    fn boxed_error(message: String) -> Box<dyn std::error::Error> {
+        Box::new(std::io::Error::new(std::io::ErrorKind::Other, message))
+    }
 
-    let rt = Runtime::new()?;
-    let client = KalamLinkClient::builder()
-        .base_url(base_url)
-        .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
-        .timeouts(
-            KalamLinkTimeouts::builder()
-                .connection_timeout_secs(5)
-                .receive_timeout_secs(120)
-                .send_timeout_secs(30)
-                .subscribe_timeout_secs(10)
-                .auth_timeout_secs(10)
-                .initial_data_timeout(Duration::from_secs(120))
-                .build(),
-        )
-        .build()?;
+    fn execute_sql_on_node_internal(
+        base_url: &str,
+        sql: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let rt = Runtime::new()?;
+        let client = KalamLinkClient::builder()
+            .base_url(base_url)
+            .auth(AuthProvider::basic_auth(
+                "root".to_string(),
+                root_password().to_string(),
+            ))
+            .timeouts(
+                KalamLinkTimeouts::builder()
+                    .connection_timeout_secs(5)
+                    .receive_timeout_secs(120)
+                    .send_timeout_secs(30)
+                    .subscribe_timeout_secs(10)
+                    .auth_timeout_secs(10)
+                    .initial_data_timeout(Duration::from_secs(120))
+                    .build(),
+            )
+            .build()?;
 
-    let sql = sql.to_string();
-    let response = rt.block_on(async { client.execute_query(&sql, None, None).await })?;
+        let sql = sql.to_string();
+        let response = rt.block_on(async { client.execute_query(&sql, None, None).await })?;
 
-    // Format response similar to execute_sql_via_client_as
-    let mut output = String::new();
-    for result in response.results {
-        if let Some(ref message) = result.message {
-            output.push_str(message);
-            output.push('\n');
-        } else {
-            // Get column names
-            let columns: Vec<String> = result.column_names();
-
-            // Check if DML
-            let is_dml = result.rows.is_none()
-                || (result.rows.as_ref().map(|r| r.is_empty()).unwrap_or(false)
-                    && result.row_count > 0);
-
-            if is_dml {
-                output.push_str(&format!("{} rows affected\n", result.row_count));
+        // Format response similar to execute_sql_via_client_as
+        let mut output = String::new();
+        for result in response.results {
+            if let Some(ref message) = result.message {
+                output.push_str(message);
+                output.push('\n');
             } else {
-                // Add column headers
-                if !columns.is_empty() {
-                    output.push_str(&columns.join(" | "));
-                    output.push('\n');
-                }
+                // Get column names
+                let columns: Vec<String> = result.column_names();
 
-                // Add rows
-                if let Some(ref rows) = result.rows {
-                    for row in rows {
-                        let row_str: Vec<String> = columns
-                            .iter()
-                            .enumerate()
-                            .map(|(i, _col)| {
-                                row.get(i)
-                                    .map(|v| match v {
-                                        serde_json::Value::String(s) => s.clone(),
-                                        serde_json::Value::Null => "NULL".to_string(),
-                                        other => other.to_string(),
-                                    })
-                                    .unwrap_or_else(|| "NULL".to_string())
-                            })
-                            .collect();
-                        output.push_str(&row_str.join(" | "));
+                // Check if DML
+                let is_dml = result.rows.is_none()
+                    || (result.rows.as_ref().map(|r| r.is_empty()).unwrap_or(false)
+                        && result.row_count > 0);
+
+                if is_dml {
+                    output.push_str(&format!("{} rows affected\n", result.row_count));
+                } else {
+                    // Add column headers
+                    if !columns.is_empty() {
+                        output.push_str(&columns.join(" | "));
                         output.push('\n');
                     }
 
-                    output.push_str(&format!(
-                        "({} row{})\n",
-                        rows.len(),
-                        if rows.len() == 1 { "" } else { "s" }
-                    ));
-                } else {
-                    output.push_str("(0 rows)\n");
+                    // Add rows
+                    if let Some(ref rows) = result.rows {
+                        for row in rows {
+                            let row_str: Vec<String> = columns
+                                .iter()
+                                .enumerate()
+                                .map(|(i, _col)| {
+                                    row.get(i)
+                                        .map(|v| match v {
+                                            serde_json::Value::String(s) => s.clone(),
+                                            serde_json::Value::Null => "NULL".to_string(),
+                                            other => other.to_string(),
+                                        })
+                                        .unwrap_or_else(|| "NULL".to_string())
+                                })
+                                .collect();
+                            output.push_str(&row_str.join(" | "));
+                            output.push('\n');
+                        }
+
+                        output.push_str(&format!(
+                            "({} row{})\n",
+                            rows.len(),
+                            if rows.len() == 1 { "" } else { "s" }
+                        ));
+                    } else {
+                        output.push_str("(0 rows)\n");
+                    }
                 }
             }
         }
+
+        Ok(output)
     }
 
-    Ok(output)
+    let base_url = base_url.to_string();
+    let sql = sql.to_string();
+    if Handle::try_current().is_ok() {
+        let (tx, rx) = std_mpsc::channel();
+        std::thread::spawn(move || {
+            let result =
+                execute_sql_on_node_internal(&base_url, &sql).map_err(|err| err.to_string());
+            let _ = tx.send(result);
+        });
+        let result = rx
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|e| boxed_error(format!("Query timed out or channel error: {}", e)))?;
+        return result.map_err(boxed_error);
+    }
+
+    execute_sql_on_node_internal(&base_url, &sql)
 }
 
 /// Verify SQL result is consistent across all nodes in cluster mode
