@@ -70,7 +70,7 @@ async fn test_stream_ttl_eviction_from_sql_script() -> anyhow::Result<()> {
         .execute_sql(&format!("SELECT * FROM {}.{} ORDER BY event_id", ns, table))
         .await?;
     assert_eq!(resp.status, ResponseStatus::Success);
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     assert_eq!(rows.len(), 3, "Should have 3 events initially, got {}", rows.len());
 
     // Wait for TTL to expire (need to wait 3+ seconds for eviction to run)
@@ -80,7 +80,7 @@ async fn test_stream_ttl_eviction_from_sql_script() -> anyhow::Result<()> {
     // Query again - should have fewer or no events (depending on eviction timing)
     let resp = server.execute_sql(&format!("SELECT * FROM {}.{}", ns, table)).await?;
     assert_eq!(resp.status, ResponseStatus::Success);
-    let rows_after = resp.results[0].rows_as_maps();
+    let rows_after = resp.rows_as_maps();
 
     // After TTL expiration, we should have fewer rows than initially
     // (The exact count depends on eviction job timing, but it should be less than 3)

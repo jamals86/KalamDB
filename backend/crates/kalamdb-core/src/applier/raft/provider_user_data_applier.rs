@@ -32,20 +32,6 @@ impl ProviderUserDataApplier {
     }
 }
 
-#[cfg(test)]
-impl Default for ProviderUserDataApplier {
-    fn default() -> Self {
-        Self::new(AppContext::get())
-    }
-}
-
-#[cfg(not(test))]
-impl Default for ProviderUserDataApplier {
-    fn default() -> Self {
-        panic!("ProviderUserDataApplier::default() is for tests only; use new(Arc<AppContext>)")
-    }
-}
-
 #[async_trait]
 impl UserDataApplier for ProviderUserDataApplier {
     async fn insert(

@@ -39,7 +39,7 @@ async fn wait_for_flush_job_completed(
             .await?;
 
         if resp.status == ResponseStatus::Success {
-            let rows = resp.results[0].rows_as_maps();
+            let rows = resp.rows_as_maps();
             let maybe_job = rows.iter().find(|r| {
                 r.get("parameters")
                     .and_then(|v| v.as_str())
@@ -162,7 +162,7 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
             .await?;
         assert_eq!(resp.status, ResponseStatus::Success);
 
-        let rows = resp.results[0].rows_as_maps();
+        let rows = resp.rows_as_maps();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "evt1");
     }
@@ -247,7 +247,7 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
             .await?;
         assert_eq!(resp.status, ResponseStatus::Success);
 
-        let rows = resp.results[0].rows_as_maps();
+        let rows = resp.rows_as_maps();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].get("metric_name").unwrap().as_str().unwrap(), "cpu_usage");
     }

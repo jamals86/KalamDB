@@ -81,18 +81,17 @@ impl TypedStatementHandler<UseNamespaceStatement> for UseNamespaceHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{create_test_session, init_test_app_context};
+    use crate::test_helpers::{create_test_session_simple, test_app_context_simple};
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
 
     fn test_context() -> ExecutionContext {
-        ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session())
+        ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session_simple())
     }
 
     #[tokio::test]
     async fn test_use_namespace_not_found() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
         let handler = UseNamespaceHandler::new(app_ctx);
         let ctx = test_context();
 

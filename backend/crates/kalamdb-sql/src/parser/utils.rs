@@ -149,13 +149,11 @@ pub fn extract_identifier(sql: &str, skip_tokens: usize) -> Result<String, Strin
 /// - Table reference is not qualified (missing namespace)
 /// - Invalid format
 pub fn extract_qualified_table(table_ref: &str) -> Result<(String, String), String> {
-    let mut parts = table_ref.splitn(2, '.');
-    let namespace = parts.next();
-    let table = parts.next();
-    match (namespace, table) {
-        (Some(namespace), Some(table)) => Ok((namespace.to_string(), table.to_string())),
-        _ => Err("Table name must be qualified (namespace.table_name)".to_string()),
+    let parts: Vec<&str> = table_ref.split('.').collect();
+    if parts.len() != 2 {
+        return Err("Table name must be qualified as exactly namespace.table_name".to_string());
     }
+    Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
 /// Find whole-word match in a string (case-insensitive)

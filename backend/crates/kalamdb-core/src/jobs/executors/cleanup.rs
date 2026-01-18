@@ -98,8 +98,16 @@ impl JobExecutor for CleanupExecutor {
         "CleanupExecutor"
     }
 
-    async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
-        ctx.log_debug("Starting cleanup operation");
+    async fn execute(&self, _ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
+        // Cleanup is leader-only work, so execute_local (called via execute) does nothing.
+        // All actual cleanup work happens in execute_leader.
+        Ok(JobDecision::Completed {
+            message: Some("No local work required for cleanup".to_string()),
+        })
+    }
+
+    async fn execute_leader(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
+        ctx.log_debug("Starting cleanup operation (leader phase)");
 
         // Parameters already validated in JobContext - type-safe access
         let params = ctx.params();

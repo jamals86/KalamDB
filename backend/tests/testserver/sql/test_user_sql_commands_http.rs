@@ -33,7 +33,7 @@ async fn test_user_sql_commands_over_http() {
                 let query = "SELECT * FROM system.users WHERE username = 'alice'";
                 let result = server.execute_sql_with_auth(query, &admin_auth).await?;
                 assert!(!result.results.is_empty());
-                let rows = result.results[0].rows_as_maps();
+                let rows = result.rows_as_maps();
                 assert_eq!(rows.len(), 1);
                 let row = &rows[0];
                 assert_eq!(row.get("username").unwrap().as_str().unwrap(), "alice");
@@ -52,7 +52,7 @@ async fn test_user_sql_commands_over_http() {
 
                 let query = "SELECT * FROM system.users WHERE username = 'bob'";
                 let result = server.execute_sql_with_auth(query, &admin_auth).await?;
-                let rows = result.results[0].rows_as_maps();
+                let rows = result.rows_as_maps();
                 let row = &rows[0];
                 assert_eq!(row.get("username").unwrap().as_str().unwrap(), "bob");
                 assert_eq!(row.get("auth_type").unwrap().as_str().unwrap(), "oauth");
@@ -84,7 +84,7 @@ async fn test_user_sql_commands_over_http() {
 
                 let query = "SELECT password_hash FROM system.users WHERE username = 'dave'";
                 let result = server.execute_sql_with_auth(query, &admin_auth).await?;
-                let rows = result.results[0].rows_as_maps();
+                let rows = result.rows_as_maps();
                 let old_hash = rows[0]
                     .get("password_hash")
                     .unwrap()
@@ -97,7 +97,7 @@ async fn test_user_sql_commands_over_http() {
                 assert_eq!(result.status, ResponseStatus::Success);
 
                 let result = server.execute_sql_with_auth(query, &admin_auth).await?;
-                let rows = result.results[0].rows_as_maps();
+                let rows = result.rows_as_maps();
                 let new_hash = rows[0]
                     .get("password_hash")
                     .unwrap()
@@ -116,7 +116,7 @@ async fn test_user_sql_commands_over_http() {
 
                 let query = "SELECT role FROM system.users WHERE username = 'eve'";
                 let result = server.execute_sql_with_auth(query, &admin_auth).await?;
-                let rows = result.results[0].rows_as_maps();
+                let rows = result.rows_as_maps();
                 let role = rows[0].get("role").unwrap().as_str().unwrap();
                 assert_eq!(role, "dba");
 
@@ -130,7 +130,7 @@ async fn test_user_sql_commands_over_http() {
 
                 let query_deleted = "SELECT deleted_at FROM system.users WHERE username = 'frank' AND deleted_at IS NOT NULL";
                 let result = server.execute_sql_with_auth(query_deleted, &admin_auth).await?;
-                let rows = result.results[0].rows_as_maps();
+                let rows = result.rows_as_maps();
                 assert_eq!(rows.len(), 1);
                 assert!(!rows[0].get("deleted_at").unwrap().is_null());
 

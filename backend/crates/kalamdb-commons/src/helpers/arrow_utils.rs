@@ -5,13 +5,129 @@
 //! providers and other RecordBatch construction sites.
 
 use arrow::array::{
-    ArrayRef, BooleanArray, Float64Array, Int32Array, Int64Array, StringBuilder,
-    TimestampMicrosecondArray, TimestampMillisecondArray, UInt64Array,
+    ArrayRef, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
+    Int8Array, LargeStringArray, StringArray, StringBuilder, TimestampMicrosecondArray,
+    TimestampMillisecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
+use arrow::compute;
+use arrow::compute::kernels::aggregate::{max_string, min_string};
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
+pub use arrow_schema::DataType as ArrowDataType;
+use arrow_schema::{Field, Schema, TimeUnit};
+use serde_json::Value as JsonValue;
 use std::sync::Arc;
+
+/// Arrow UTF-8 string type.
+pub fn arrow_utf8() -> ArrowDataType {
+    ArrowDataType::Utf8
+}
+
+/// Arrow Large UTF-8 string type.
+pub fn arrow_large_utf8() -> ArrowDataType {
+    ArrowDataType::LargeUtf8
+}
+
+/// Arrow Int64 type.
+pub fn arrow_int64() -> ArrowDataType {
+    ArrowDataType::Int64
+}
+
+/// Arrow Int32 type.
+pub fn arrow_int32() -> ArrowDataType {
+    ArrowDataType::Int32
+}
+
+/// Arrow UInt64 type.
+pub fn arrow_uint64() -> ArrowDataType {
+    ArrowDataType::UInt64
+}
+
+/// Arrow UInt32 type.
+pub fn arrow_uint32() -> ArrowDataType {
+    ArrowDataType::UInt32
+}
+
+/// Arrow Float64 type.
+pub fn arrow_float64() -> ArrowDataType {
+    ArrowDataType::Float64
+}
+
+/// Arrow Float32 type.
+pub fn arrow_float32() -> ArrowDataType {
+    ArrowDataType::Float32
+}
+
+/// Arrow Boolean type.
+pub fn arrow_boolean() -> ArrowDataType {
+    ArrowDataType::Boolean
+}
+
+/// Arrow Timestamp (microsecond precision, no timezone) type.
+pub fn arrow_timestamp_micros() -> ArrowDataType {
+    ArrowDataType::Timestamp(TimeUnit::Microsecond, None)
+}
+
+/// Arrow Date32 type.
+pub fn arrow_date32() -> ArrowDataType {
+    ArrowDataType::Date32
+}
+
+/// Arrow Time64 (microsecond precision) type.
+pub fn arrow_time64_micros() -> ArrowDataType {
+    ArrowDataType::Time64(TimeUnit::Microsecond)
+}
+
+/// Build a UTF-8 field.
+pub fn field_utf8(name: &str, nullable: bool) -> Field {
+    Field::new(name, arrow_utf8(), nullable)
+}
+
+/// Build a Large UTF-8 field.
+pub fn field_large_utf8(name: &str, nullable: bool) -> Field {
+    Field::new(name, arrow_large_utf8(), nullable)
+}
+
+/// Build an Int64 field.
+pub fn field_int64(name: &str, nullable: bool) -> Field {
+    Field::new(name, arrow_int64(), nullable)
+}
+
+/// Build an Int32 field.
+pub fn field_int32(name: &str, nullable: bool) -> Field {
+    Field::new(name, arrow_int32(), nullable)
+}
+
+/// Build a UInt64 field.
+pub fn field_uint64(name: &str, nullable: bool) -> Field {
+    Field::new(name, arrow_uint64(), nullable)
+}
+
+/// Build a UInt32 field.
+pub fn field_uint32(name: &str, nullable: bool) -> Field {
+    Field::new(name, arrow_uint32(), nullable)
+}
+
+/// Build a Float64 field.
+pub fn field_float64(name: &str, nullable: bool) -> Field {
+    Field::new(name, arrow_float64(), nullable)
+}
+
+/// Build a Boolean field.
+pub fn field_boolean(name: &str, nullable: bool) -> Field {
+    Field::new(name, arrow_boolean(), nullable)
+}
+
+/// Build a Timestamp (microsecond) field.
+pub fn field_timestamp_micros(name: &str, nullable: bool) -> Field {
+    Field::new(name, arrow_timestamp_micros(), nullable)
+}
+
+/// Build a SchemaRef from fields.
+pub fn schema(fields: Vec<Field>) -> SchemaRef {
+    Arc::new(Schema::new(fields))
+}
 
 /// Builder for constructing Arrow RecordBatches with type-safe column additions.
 ///
@@ -194,6 +310,131 @@ pub fn empty_batch(schema: SchemaRef) -> Result<RecordBatch, ArrowError> {
         .map(|field| arrow::array::new_empty_array(field.data_type()))
         .collect();
     RecordBatch::try_new(schema, columns)
+}
+
+/// Compute min/max stats for a column, returning JSON values when supported.
+pub fn compute_min_max_json(array: &ArrayRef) -> (Option<JsonValue>, Option<JsonValue>) {
+    match array.data_type() {
+        ArrowDataType::Int8 => {
+            let arr = array.as_any().downcast_ref::<Int8Array>().unwrap();
+            (
+                compute::min(arr).map(|v| serde_json::json!(v)),
+                compute::max(arr).map(|v| serde_json::json!(v)),
+            )
+        },
+        ArrowDataType::Int16 => {
+            let arr = array.as_any().downcast_ref::<Int16Array>().unwrap();
+            (
+                compute::min(arr).map(|v| serde_json::json!(v)),
+                compute::max(arr).map(|v| serde_json::json!(v)),
+            )
+        },
+        ArrowDataType::Int32 => {
+            let arr = array.as_any().downcast_ref::<Int32Array>().unwrap();
+            (
+                compute::min(arr).map(|v| serde_json::json!(v)),
+                compute::max(arr).map(|v| serde_json::json!(v)),
+            )
+        },
+        ArrowDataType::Int64 => {
+            let arr = array.as_any().downcast_ref::<Int64Array>().unwrap();
+            (
+                compute::min(arr).map(|v| serde_json::json!(v)),
+                compute::max(arr).map(|v| serde_json::json!(v)),
+            )
+        },
+        ArrowDataType::UInt8 => {
+            let arr = array.as_any().downcast_ref::<UInt8Array>().unwrap();
+            (
+                compute::min(arr).map(|v| serde_json::json!(v)),
+                compute::max(arr).map(|v| serde_json::json!(v)),
+            )
+        },
+        ArrowDataType::UInt16 => {
+            let arr = array.as_any().downcast_ref::<UInt16Array>().unwrap();
+            (
+                compute::min(arr).map(|v| serde_json::json!(v)),
+                compute::max(arr).map(|v| serde_json::json!(v)),
+            )
+        },
+        ArrowDataType::UInt32 => {
+            let arr = array.as_any().downcast_ref::<UInt32Array>().unwrap();
+            (
+                compute::min(arr).map(|v| serde_json::json!(v)),
+                compute::max(arr).map(|v| serde_json::json!(v)),
+            )
+        },
+        ArrowDataType::UInt64 => {
+            let arr = array.as_any().downcast_ref::<UInt64Array>().unwrap();
+            (
+                compute::min(arr).map(|v| serde_json::json!(v)),
+                compute::max(arr).map(|v| serde_json::json!(v)),
+            )
+        },
+        ArrowDataType::Float32 => {
+            let arr = array.as_any().downcast_ref::<Float32Array>().unwrap();
+            (
+                compute::min(arr).map(|v| serde_json::json!(v)),
+                compute::max(arr).map(|v| serde_json::json!(v)),
+            )
+        },
+        ArrowDataType::Float64 => {
+            let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
+            (
+                compute::min(arr).map(|v| serde_json::json!(v)),
+                compute::max(arr).map(|v| serde_json::json!(v)),
+            )
+        },
+        ArrowDataType::Utf8 => {
+            let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
+            (
+                min_string(arr).map(|v| serde_json::json!(v)),
+                max_string(arr).map(|v| serde_json::json!(v)),
+            )
+        },
+        ArrowDataType::LargeUtf8 => {
+            let arr = array.as_any().downcast_ref::<LargeStringArray>().unwrap();
+            (
+                min_string(arr).map(|v| serde_json::json!(v)),
+                max_string(arr).map(|v| serde_json::json!(v)),
+            )
+        },
+        ArrowDataType::Boolean => (None, None),
+        _ => (None, None),
+    }
+}
+
+/// Extract a string representation of the value at `row_idx` from a supported array.
+pub fn array_value_to_string(array: &dyn arrow::array::Array, row_idx: usize) -> Option<String> {
+    match array.data_type() {
+        ArrowDataType::Int64 => array
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .map(|arr| arr.value(row_idx).to_string()),
+        ArrowDataType::Int32 => array
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .map(|arr| arr.value(row_idx).to_string()),
+        ArrowDataType::Utf8 => array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .map(|arr| arr.value(row_idx).to_string()),
+        ArrowDataType::LargeUtf8 => array
+            .as_any()
+            .downcast_ref::<LargeStringArray>()
+            .map(|arr| arr.value(row_idx).to_string()),
+        _ => None,
+    }
+}
+
+/// Check if ArrowDataType is Int64.
+pub fn is_int64(data_type: &ArrowDataType) -> bool {
+    matches!(data_type, ArrowDataType::Int64)
+}
+
+/// Check if ArrowDataType is Boolean.
+pub fn is_boolean(data_type: &ArrowDataType) -> bool {
+    matches!(data_type, ArrowDataType::Boolean)
 }
 
 #[cfg(test)]

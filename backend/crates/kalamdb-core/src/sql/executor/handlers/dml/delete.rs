@@ -28,22 +28,6 @@ impl DeleteHandler {
     }
 }
 
-#[cfg(test)]
-impl Default for DeleteHandler {
-    fn default() -> Self {
-        Self::new(AppContext::get())
-    }
-}
-
-#[cfg(not(test))]
-impl Default for DeleteHandler {
-    fn default() -> Self {
-        panic!(
-            "DeleteHandler::default() is for tests only; use DeleteHandler::new(Arc<AppContext>)"
-        )
-    }
-}
-
 #[async_trait]
 impl StatementHandler for DeleteHandler {
     async fn execute(
@@ -299,39 +283,14 @@ impl DeleteHandler {
         array: &std::sync::Arc<dyn arrow::array::Array>,
         row_idx: usize,
     ) -> Result<String, KalamDbError> {
-        use arrow::array::*;
-        use arrow::datatypes::DataType;
-
-        match array.data_type() {
-            DataType::Int64 => {
-                let arr = array.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
-                    KalamDbError::InvalidOperation("Failed to downcast Int64Array".into())
-                })?;
-                Ok(arr.value(row_idx).to_string())
+        kalamdb_commons::arrow_utils::array_value_to_string(array.as_ref(), row_idx).ok_or_else(
+            || {
+                KalamDbError::InvalidOperation(format!(
+                    "Unsupported PK type for deletion: {:?}",
+                    array.data_type()
+                ))
             },
-            DataType::Int32 => {
-                let arr = array.as_any().downcast_ref::<Int32Array>().ok_or_else(|| {
-                    KalamDbError::InvalidOperation("Failed to downcast Int32Array".into())
-                })?;
-                Ok(arr.value(row_idx).to_string())
-            },
-            DataType::Utf8 => {
-                let arr = array.as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                    KalamDbError::InvalidOperation("Failed to downcast StringArray".into())
-                })?;
-                Ok(arr.value(row_idx).to_string())
-            },
-            DataType::LargeUtf8 => {
-                let arr = array.as_any().downcast_ref::<LargeStringArray>().ok_or_else(|| {
-                    KalamDbError::InvalidOperation("Failed to downcast LargeStringArray".into())
-                })?;
-                Ok(arr.value(row_idx).to_string())
-            },
-            _ => Err(KalamDbError::InvalidOperation(format!(
-                "Unsupported PK data type: {:?}",
-                array.data_type()
-            ))),
-        }
+        )
     }
 
     /// Simple DELETE parser for basic DELETE statements
@@ -537,18 +496,17 @@ impl DeleteHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{create_test_session, init_test_app_context};
+    use crate::test_helpers::{create_test_session_simple, test_app_context_simple};
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
     use std::sync::Arc;
 
     fn init_app_context() -> Arc<AppContext> {
-        init_test_app_context();
-        AppContext::get()
+        test_app_context_simple()
     }
 
     fn test_context(role: Role) -> ExecutionContext {
-        ExecutionContext::new(UserId::from("test_user"), role, create_test_session())
+        ExecutionContext::new(UserId::from("test_user"), role, create_test_session_simple())
     }
 
     #[tokio::test]

@@ -50,7 +50,7 @@ pub struct ManifestService {
     /// Optional registries for path/object store resolution.
     ///
     /// In production these are injected via `new_with_registries()` to avoid any
-    /// global `AppContext::get()` usage. In tests we allow a fallback.
+    /// global AppContext usage.
     schema_registry: Option<Arc<SchemaRegistry>>,
     storage_registry: Option<Arc<StorageRegistry>>,
 }
@@ -130,19 +130,10 @@ impl ManifestService {
             return Ok((Arc::clone(schema_registry), Arc::clone(storage_registry)));
         }
 
-        #[cfg(test)]
-        {
-            let app_ctx = crate::app_context::AppContext::get();
-            return Ok((app_ctx.schema_registry(), app_ctx.storage_registry()));
-        }
-
-        #[cfg(not(test))]
-        {
-            Err(StorageError::Other(
-                "ManifestService missing SchemaRegistry/StorageRegistry; use new_with_registries()"
-                    .to_string(),
-            ))
-        }
+        Err(StorageError::Other(
+            "ManifestService missing SchemaRegistry/StorageRegistry; use new_with_registries()"
+                .to_string(),
+        ))
     }
 
     // ========== Hot Cache Operations (formerly ManifestCacheService) ==========

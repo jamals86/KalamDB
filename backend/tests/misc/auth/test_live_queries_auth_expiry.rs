@@ -8,7 +8,7 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn test_live_query_auth_expiry() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let manager = server.app_context.live_query_manager();
     let registry = manager.registry();
 

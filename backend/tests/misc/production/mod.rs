@@ -6,9 +6,8 @@
 //! - Production validation
 //! - High-load testing
 
-#[path = "../../common/testserver/mod.rs"]
-#[allow(dead_code)]
-pub(super) mod test_support;
+// Re-export test_support from crate root
+pub(super) use crate::test_support;
 
 // Production Tests
 mod test_mvcc_phase2;

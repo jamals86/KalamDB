@@ -21,7 +21,7 @@ fn unique_username(prefix: &str) -> String {
 
 #[tokio::test]
 async fn test_oauth_google_success() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_username = "test_admin";
     let admin_password = "AdminPass123!";
     let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
@@ -65,7 +65,7 @@ async fn test_oauth_google_success() {
 async fn test_oauth_user_password_rejected() {
     use base64::{engine::general_purpose, Engine as _};
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_username = "test_admin";
     let admin_password = "AdminPass123!";
     let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
@@ -110,7 +110,7 @@ async fn test_oauth_user_password_rejected() {
 
 #[tokio::test]
 async fn test_oauth_subject_matching() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_username = "test_admin";
     let admin_password = "AdminPass123!";
     let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
@@ -162,7 +162,7 @@ async fn test_oauth_auto_provision_disabled_by_default() {
     // will not be automatically created
 
     // Create a test server (auto-provision is disabled by default in config)
-    let _server = TestServer::new().await;
+    let _server = TestServer::new_shared().await;
 
     // Auto-provisioning behavior is now controlled by configuration
     // and the user repository - not by the authenticate function directly
@@ -171,7 +171,7 @@ async fn test_oauth_auto_provision_disabled_by_default() {
 
 #[tokio::test]
 async fn test_oauth_user_missing_fields() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_username = "test_admin";
     let admin_password = "AdminPass123!";
     let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
@@ -206,7 +206,7 @@ async fn test_oauth_user_missing_fields() {
 
 #[tokio::test]
 async fn test_oauth_azure_provider() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_username = "test_admin";
     let admin_password = "AdminPass123!";
     let admin_id = server.create_user(admin_username, admin_password, Role::System).await;

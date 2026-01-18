@@ -5,9 +5,8 @@
 //! - system.cluster and system.cluster_groups views
 //! - Snapshot creation and reuse
 
-#[path = "../../common/testserver/mod.rs"]
-#[allow(dead_code)]
-pub(super) mod test_support;
+// Re-export test_support from parent
+pub(super) use super::test_support;
 
 mod test_cluster_commands_http;
 mod test_cluster_snapshots_http;

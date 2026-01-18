@@ -438,7 +438,7 @@ impl Default for JobRegistry {
 mod tests {
     use super::*;
     use crate::jobs::executors::JobParams;
-    use crate::test_helpers::init_test_app_context;
+    use crate::test_helpers::test_app_context_simple;
     use kalamdb_commons::models::{JobId, JobStatus, NodeId};
     use serde::{Deserialize, Serialize};
 
@@ -546,8 +546,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_registry_execute() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
 
         let registry = JobRegistry::new();
         let executor = Arc::new(MockExecutor {
@@ -567,8 +566,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_registry_execute_not_found() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
 
         let registry = JobRegistry::new();
         let job = make_test_job(JobType::Flush, r#"{"value": 42}"#);

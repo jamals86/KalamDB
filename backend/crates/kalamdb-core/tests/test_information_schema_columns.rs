@@ -3,15 +3,13 @@
 //! This test verifies that the information_schema.columns table is properly
 //! registered and can be queried via SQL.
 
-use kalamdb_core::app_context::AppContext;
 mod test_helpers;
-use test_helpers::init_test_app_context;
+use test_helpers::test_app_context;
 
 #[tokio::test]
 async fn test_information_schema_columns_query() {
     // Initialize AppContext (which registers information_schema.columns)
-    init_test_app_context();
-    let app_ctx = AppContext::get();
+    let app_ctx = test_app_context();
 
     // Get the base session context
     let session = app_ctx.base_session_context();
@@ -41,8 +39,7 @@ async fn test_information_schema_columns_query() {
 #[tokio::test]
 async fn test_information_schema_columns_shows_system_jobs() {
     // Initialize AppContext
-    init_test_app_context();
-    let app_ctx = AppContext::get();
+    let app_ctx = test_app_context();
 
     // Get the base session context
     let session = app_ctx.base_session_context();

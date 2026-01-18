@@ -159,20 +159,22 @@ impl CommandExecutor for RaftExecutor {
             )
         } else {
             // Fallback to config when metrics not available
+            // Use auto-detected metadata for self node
             nodes_map.insert(
                 config.node_id.as_u64(),
-                KalamNode {
-                    rpc_addr: config.rpc_addr.clone(),
-                    api_addr: config.api_addr.clone(),
-                },
+                KalamNode::with_auto_metadata(
+                    config.rpc_addr.clone(),
+                    config.api_addr.clone(),
+                ),
             );
             for peer in &config.peers {
+                // Peers don't have metadata in fallback mode (will be NULL)
                 nodes_map.insert(
                     peer.node_id.as_u64(),
-                    KalamNode {
-                        rpc_addr: peer.rpc_addr.clone(),
-                        api_addr: peer.api_addr.clone(),
-                    },
+                    KalamNode::new(
+                        peer.rpc_addr.clone(),
+                        peer.api_addr.clone(),
+                    ),
                 );
             }
             voter_ids.extend(nodes_map.keys().copied());
@@ -271,8 +273,8 @@ impl CommandExecutor for RaftExecutor {
                 node_id: NodeId::from(node_id),
                 role,
                 status,
-                rpc_addr: node.rpc_addr,
-                api_addr: node.api_addr,
+                rpc_addr: node.rpc_addr.clone(),
+                api_addr: node.api_addr.clone(),
                 is_self,
                 is_leader,
                 groups_leading: if is_self { self_groups_leading } else { 0 },
@@ -284,6 +286,12 @@ impl CommandExecutor for RaftExecutor {
                 catchup_progress_pct,
                 millis_since_last_heartbeat: None, // TODO: heartbeat metrics are in OpenRaft 0.10+
                 replication_lag,
+                // Node metadata from KalamNode (replicated via membership)
+                hostname: node.hostname.clone(),
+                version: node.version.clone(),
+                memory_mb: node.memory_mb,
+                os: node.os.clone(),
+                arch: node.arch.clone(),
             });
         }
 

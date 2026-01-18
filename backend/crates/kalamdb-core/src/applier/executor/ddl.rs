@@ -265,10 +265,9 @@ impl DdlExecutor {
 #[cfg(test)]
 mod tests {
     use super::DdlExecutor;
-    use crate::app_context::AppContext;
     use crate::sql::executor::models::ExecutionContext;
     use crate::sql::executor::SqlExecutor;
-    use crate::test_helpers::init_test_app_context;
+    use crate::test_helpers::test_app_context_simple;
     use kalamdb_commons::models::datatypes::KalamDataType;
     use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableOptions};
     use kalamdb_commons::models::{NamespaceId, TableId, TableName};
@@ -278,8 +277,7 @@ mod tests {
 
     #[tokio::test]
     async fn ddl_applied_via_applier_clears_plan_cache() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
 
         // Register SqlExecutor into AppContext so DdlExecutor can clear plan cache.
         let sql_executor = Arc::new(SqlExecutor::new(app_ctx.clone(), false));

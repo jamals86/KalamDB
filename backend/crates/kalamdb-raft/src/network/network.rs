@@ -462,10 +462,7 @@ mod tests {
 
         factory.register_node(
             1,
-            KalamNode {
-                rpc_addr: "127.0.0.1:9000".to_string(),
-                api_addr: "127.0.0.1:8080".to_string(),
-            },
+            KalamNode::new("127.0.0.1:9000", "127.0.0.1:8080"),
         );
 
         let nodes = factory.nodes.read();

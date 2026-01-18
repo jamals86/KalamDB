@@ -482,7 +482,13 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
                             payload,
                         }),
                         Err(e) => {
-                            log::warn!("Failed to decode log entry: {:?}", e);
+                            log::warn!(
+                                "Failed to decode log entry at index={} term={}: {:?} (payload_len={})",
+                                entry.log_id.index,
+                                entry.log_id.leader_id.term,
+                                e,
+                                entry.payload.len()
+                            );
                             Some(Entry {
                                 log_id: entry.log_id,
                                 payload: EntryPayload::Blank,
@@ -740,6 +746,17 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStorage<KalamTypeConfig>
         let mut encoded_entries: Vec<(LogId<u64>, Vec<u8>)> = Vec::with_capacity(entries_vec.len());
         for entry in &entries_vec {
             let payload = encode(&entry.payload).map_err(|e| StorageIOError::write_logs(&e))?;
+            log::debug!(
+                "[RAFT] Appending log entry: index={} term={} payload_type={:?} payload_len={}",
+                entry.log_id.index,
+                entry.log_id.leader_id.term,
+                match &entry.payload {
+                    openraft::EntryPayload::Blank => "Blank",
+                    openraft::EntryPayload::Normal(_) => "Normal",
+                    openraft::EntryPayload::Membership(_) => "Membership",
+                },
+                payload.len()
+            );
             encoded_entries.push((entry.log_id, payload));
         }
 

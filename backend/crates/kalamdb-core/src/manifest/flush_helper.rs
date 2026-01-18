@@ -10,8 +10,8 @@ use crate::schema_registry::PathResolver;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute;
 use datafusion::arrow::compute::kernels::aggregate::{max_string, min_string};
-use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::record_batch::RecordBatch;
+use kalamdb_commons::arrow_utils::{compute_min_max_json, field_int32, field_int64, field_utf8};
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::types::{ColumnStats, Manifest, SegmentMetadata};
 use kalamdb_commons::{TableId, UserId};
@@ -118,7 +118,7 @@ impl FlushManifestHelper {
 
             if let Some(col) = batch.column_by_name(column_name) {
                 let null_count = col.null_count() as i64;
-                let (min, max) = Self::compute_min_max(col);
+                let (min, max) = compute_min_max_json(col);
 
                 stats.insert(
                     *column_id,
@@ -131,107 +131,6 @@ impl FlushManifestHelper {
             }
         }
         stats
-    }
-
-    fn compute_min_max(array: &ArrayRef) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
-        match array.data_type() {
-            DataType::Int8 => {
-                let arr = array.as_any().downcast_ref::<Int8Array>().unwrap();
-                (
-                    compute::min(arr).map(|v| serde_json::json!(v)),
-                    compute::max(arr).map(|v| serde_json::json!(v)),
-                )
-            },
-            DataType::Int16 => {
-                let arr = array.as_any().downcast_ref::<Int16Array>().unwrap();
-                (
-                    compute::min(arr).map(|v| serde_json::json!(v)),
-                    compute::max(arr).map(|v| serde_json::json!(v)),
-                )
-            },
-            DataType::Int32 => {
-                let arr = array.as_any().downcast_ref::<Int32Array>().unwrap();
-                (
-                    compute::min(arr).map(|v| serde_json::json!(v)),
-                    compute::max(arr).map(|v| serde_json::json!(v)),
-                )
-            },
-            DataType::Int64 => {
-                let arr = array.as_any().downcast_ref::<Int64Array>().unwrap();
-                (
-                    compute::min(arr).map(|v| serde_json::json!(v)),
-                    compute::max(arr).map(|v| serde_json::json!(v)),
-                )
-            },
-            DataType::UInt8 => {
-                let arr = array.as_any().downcast_ref::<UInt8Array>().unwrap();
-                (
-                    compute::min(arr).map(|v| serde_json::json!(v)),
-                    compute::max(arr).map(|v| serde_json::json!(v)),
-                )
-            },
-            DataType::UInt16 => {
-                let arr = array.as_any().downcast_ref::<UInt16Array>().unwrap();
-                (
-                    compute::min(arr).map(|v| serde_json::json!(v)),
-                    compute::max(arr).map(|v| serde_json::json!(v)),
-                )
-            },
-            DataType::UInt32 => {
-                let arr = array.as_any().downcast_ref::<UInt32Array>().unwrap();
-                (
-                    compute::min(arr).map(|v| serde_json::json!(v)),
-                    compute::max(arr).map(|v| serde_json::json!(v)),
-                )
-            },
-            DataType::UInt64 => {
-                let arr = array.as_any().downcast_ref::<UInt64Array>().unwrap();
-                (
-                    compute::min(arr).map(|v| serde_json::json!(v)),
-                    compute::max(arr).map(|v| serde_json::json!(v)),
-                )
-            },
-            DataType::Float32 => {
-                let arr = array.as_any().downcast_ref::<Float32Array>().unwrap();
-                (
-                    compute::min(arr).map(|v| serde_json::json!(v)),
-                    compute::max(arr).map(|v| serde_json::json!(v)),
-                )
-            },
-            DataType::Float64 => {
-                let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
-                (
-                    compute::min(arr).map(|v| serde_json::json!(v)),
-                    compute::max(arr).map(|v| serde_json::json!(v)),
-                )
-            },
-            DataType::Utf8 => {
-                let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
-                (
-                    min_string(arr).map(|v| serde_json::json!(v)),
-                    max_string(arr).map(|v| serde_json::json!(v)),
-                )
-            },
-            DataType::LargeUtf8 => {
-                let arr = array.as_any().downcast_ref::<LargeStringArray>().unwrap();
-                (
-                    min_string(arr).map(|v| serde_json::json!(v)),
-                    max_string(arr).map(|v| serde_json::json!(v)),
-                )
-            },
-            DataType::Boolean => {
-                let _arr = array.as_any().downcast_ref::<BooleanArray>().unwrap();
-                // Boolean min/max is not directly supported by compute::min/max in older arrow versions?
-                // But let's try. If not, we can implement manually.
-                // Actually compute::min_boolean exists or generic min works.
-                // Let's assume generic min works or use a workaround.
-                // For boolean, min is false (0), max is true (1).
-                // If all true, min=true. If all false, max=false.
-                // Let's skip boolean stats for now or implement simple check.
-                (None, None)
-            },
-            _ => (None, None), // Unsupported types for stats
-        }
     }
 
     /// Update manifest and cache after successful flush

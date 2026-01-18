@@ -73,7 +73,7 @@ fn create_test_jwt_token(
 /// T059 - Test successful JWT authentication with valid token
 #[actix_web::test]
 async fn test_jwt_auth_success() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create test user
     let username = "alice";
@@ -132,7 +132,7 @@ async fn test_jwt_auth_success() {
 /// T060 - Test authentication failure with expired JWT token
 #[actix_web::test]
 async fn test_jwt_auth_expired_token() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create test user
     let username = "bob";
@@ -181,7 +181,7 @@ async fn test_jwt_auth_expired_token() {
 /// T061 - Test authentication failure with invalid JWT signature
 #[actix_web::test]
 async fn test_jwt_auth_invalid_signature() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create test user
     let username = "charlie";
@@ -230,7 +230,7 @@ async fn test_jwt_auth_invalid_signature() {
 /// T062 - Test authentication failure with untrusted JWT issuer
 #[actix_web::test]
 async fn test_jwt_auth_untrusted_issuer() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create test user
     let username = "diana";
@@ -279,7 +279,7 @@ async fn test_jwt_auth_untrusted_issuer() {
 /// T063 - Test authentication failure with missing 'sub' claim
 #[actix_web::test]
 async fn test_jwt_auth_missing_sub_claim() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create JWT token WITHOUT 'sub' claim (malformed)
     let secret = jwt_secret_for_tests();
@@ -344,7 +344,7 @@ async fn test_jwt_auth_missing_sub_claim() {
 /// T064 - Test authentication failure with malformed Bearer token header
 #[actix_web::test]
 async fn test_jwt_auth_malformed_header() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Test various malformed Bearer headers
     let malformed_headers = vec![

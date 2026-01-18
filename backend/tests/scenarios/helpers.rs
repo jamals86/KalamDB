@@ -19,11 +19,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::time::{sleep, timeout, Instant};
 
-/// Test harness path for HttpTestServer
-#[path = "../common/testserver/mod.rs"]
-pub mod test_support;
-
-use test_support::http_server::HttpTestServer;
+use crate::test_support::http_server::HttpTestServer;
 
 // =============================================================================
 // QueryResponse Helpers (for link client)
@@ -445,12 +441,12 @@ pub async fn wait_for_flush_complete(
     table: &str,
     timeout_duration: Duration,
 ) -> Result<()> {
-    test_support::flush::wait_for_flush_jobs_settled(server, ns, table).await
+    crate::test_support::flush::wait_for_flush_jobs_settled(server, ns, table).await
 }
 
 /// Trigger flush and wait for completion
 pub async fn flush_and_wait(server: &HttpTestServer, ns: &str, table: &str) -> Result<()> {
-    test_support::flush::flush_table_and_wait(server, ns, table).await
+    crate::test_support::flush::flush_table_and_wait(server, ns, table).await
 }
 
 /// Assert that manifest.json exists for a table
@@ -482,7 +478,7 @@ pub fn assert_parquet_exists_and_nonempty(
     ns: &str,
     table: &str,
 ) -> Result<()> {
-    let parquets = test_support::flush::find_parquet_files(storage_root);
+    let parquets = crate::test_support::flush::find_parquet_files(storage_root);
     let matching: Vec<_> = parquets
         .into_iter()
         .filter(|p| {

@@ -10,7 +10,7 @@ use kalam_link::models::ResponseStatus;
 
 #[actix_web::test]
 async fn test_explain_username_equality() {
-    let server: TestServer = TestServer::new().await;
+    let server: TestServer = TestServer::new_shared().await;
 
     // Run EXPLAIN VERBOSE for equality query - this should always work
     let explain_sql = "EXPLAIN VERBOSE SELECT * FROM system.users WHERE username = 'system'";
@@ -31,7 +31,7 @@ async fn test_explain_username_equality() {
 
 #[actix_web::test]
 async fn test_explain_username_like() {
-    let server: TestServer = TestServer::new().await;
+    let server: TestServer = TestServer::new_shared().await;
 
     // Run EXPLAIN VERBOSE for LIKE query - this should always work
     let explain_sql = "EXPLAIN VERBOSE SELECT * FROM system.users WHERE username LIKE 'sys%'";
@@ -52,7 +52,7 @@ async fn test_explain_username_like() {
 
 #[actix_web::test]
 async fn test_explain_job_status() {
-    let server: TestServer = TestServer::new().await;
+    let server: TestServer = TestServer::new_shared().await;
 
     // system.jobs is auto-populated by the system, so we can query it directly
 
@@ -68,14 +68,14 @@ async fn test_explain_job_status() {
 
 #[actix_web::test]
 async fn test_index_usage_log_output() {
-    let server: TestServer = TestServer::new().await;
+    let server: TestServer = TestServer::new_shared().await;
 
     // Query all users first to see what exists
     println!("\n=== Querying all users ===");
     let all_users_sql = "SELECT user_id, username FROM system.users";
     let all_response = server.execute_sql(all_users_sql).await;
     assert_eq!(all_response.status, ResponseStatus::Success);
-    let all_rows = all_response.results[0].rows_as_maps();
+    let all_rows = all_response.rows_as_maps();
     println!("Found {} users total", all_rows.len());
     for row in &all_rows {
         println!("  - username: {:?}", row.get("username"));
@@ -89,7 +89,7 @@ async fn test_index_usage_log_output() {
     assert_eq!(response.status, ResponseStatus::Success);
     println!("Query response has {} results", response.results.len());
     if !response.results.is_empty() {
-        let rows = response.results[0].rows_as_maps();
+        let rows = response.rows_as_maps();
         println!("Query returned {} rows", rows.len());
     }
 

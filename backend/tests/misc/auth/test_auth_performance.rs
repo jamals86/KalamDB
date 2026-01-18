@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 #[actix_web::test]
 #[ignore = "Known actix-web test framework limitation with connection_info()"]
 async fn benchmark_basic_auth_performance() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create test user
     let username = "perf_test_user";
@@ -95,7 +95,7 @@ async fn benchmark_basic_auth_performance() {
 /// Performance benchmark for JWT authentication
 #[actix_web::test]
 async fn benchmark_jwt_auth_performance() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create test user
     let username = "jwt_perf_user";
@@ -180,7 +180,7 @@ async fn benchmark_jwt_auth_performance() {
 #[actix_web::test]
 #[ignore = "Known actix-web test framework limitation with connection_info()"]
 async fn test_auth_cache_effectiveness() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create test user
     let username = "cache_test_user";
@@ -278,7 +278,7 @@ async fn test_concurrent_auth_load() {
     use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
     use std::sync::Arc;
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create multiple test users
     let num_users = 10;

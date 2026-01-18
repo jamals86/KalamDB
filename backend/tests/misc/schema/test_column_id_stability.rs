@@ -14,7 +14,7 @@ use std::collections::HashMap;
 /// Test that column_id is stable across ADD, DROP, RENAME operations
 #[actix_web::test]
 async fn test_column_id_stability_across_schema_changes() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = format!("col_id_stable_{}", std::process::id());
 
     // Step 1: Create table with initial columns
@@ -150,7 +150,7 @@ async fn test_column_id_stability_across_schema_changes() {
 /// Test that column statistics in manifest use column_id keys after flush
 #[actix_web::test]
 async fn test_column_stats_use_column_id() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = format!("col_stats_{}", std::process::id());
 
     // Step 1: Create table with initial schema
@@ -220,7 +220,7 @@ async fn test_column_stats_use_column_id() {
         resp.error
     );
 
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     assert_eq!(rows.len(), 1, "Expected 1 row");
 
     // Note: Full schema evolution (column aliasing) may not be implemented yet
@@ -246,7 +246,7 @@ async fn test_column_stats_use_column_id() {
     let resp = server.execute_sql_as_user(&select_all, "user1").await;
     assert_eq!(resp.status, ResponseStatus::Success, "Query all data failed: {:?}", resp.error);
 
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     assert_eq!(rows.len(), 5, "Expected 5 rows total");
 
     println!("✅ test_column_stats_use_column_id passed");
@@ -267,7 +267,7 @@ async fn test_column_stats_use_column_id() {
 /// 10. Query and verify only correct columns are returned
 #[actix_web::test]
 async fn test_full_lifecycle_with_alter_and_flush() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = format!("lifecycle_{}", std::process::id());
 
     // ========== Step 1: Create table ==========
@@ -336,7 +336,7 @@ async fn test_full_lifecycle_with_alter_and_flush() {
         resp.error
     );
 
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     assert_eq!(rows.len(), 3, "Should have 3 rows");
 
     // Verify old data has NULL for new column
@@ -412,7 +412,7 @@ async fn test_full_lifecycle_with_alter_and_flush() {
     let resp = server.execute_sql_as_user(&query_final, "user1").await;
     assert_eq!(resp.status, ResponseStatus::Success, "Final query failed: {:?}", resp.error);
 
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     assert_eq!(rows.len(), 5, "Should have 5 total rows");
 
     // Verify columns in result
@@ -472,7 +472,7 @@ async fn get_table_schema(
     let resp = server.execute_sql_as_user(&query, "root").await;
     assert_eq!(resp.status, ResponseStatus::Success, "Failed to query schema: {:?}", resp.error);
 
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     assert_eq!(rows.len(), 1, "Expected 1 table definition");
 
     // Extract columns field - it's returned as a JSON string

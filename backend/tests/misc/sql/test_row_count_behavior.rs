@@ -41,7 +41,7 @@ fn assert_row_count(response: &QueryResponse, expected: usize, verbs: &[&str]) {
 
 #[actix_web::test]
 async fn test_update_returns_correct_row_count() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_ns_upd").await;
@@ -101,7 +101,7 @@ async fn test_update_returns_correct_row_count() {
 
 #[actix_web::test]
 async fn test_update_same_values_still_counts() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_ns_same").await;
@@ -142,7 +142,7 @@ async fn test_update_same_values_still_counts() {
 
 #[actix_web::test]
 async fn test_delete_returns_correct_row_count() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_ns_del").await;
@@ -200,7 +200,7 @@ async fn test_delete_returns_correct_row_count() {
 
 #[actix_web::test]
 async fn test_delete_already_deleted_returns_zero() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_ns_deldel").await;
@@ -250,7 +250,7 @@ async fn test_delete_already_deleted_returns_zero() {
 
 #[actix_web::test]
 async fn test_delete_multiple_rows_count() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_ns_multi").await;

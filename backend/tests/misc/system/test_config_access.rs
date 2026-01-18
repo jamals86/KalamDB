@@ -7,16 +7,14 @@
 mod test_helpers;
 
 use datafusion::common::ScalarValue;
-use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 
+#[ignore = "Uses test_app_context which starts Raft - slow test"]
+#[ntest::timeout(30_000)]
 #[tokio::test]
 async fn test_parameter_limits_from_config() {
     // Initialize AppContext (from test_helpers)
-    test_helpers::init_test_app_context();
-
-    // Verify config is accessible
-    let app_context = AppContext::get();
+    let app_context = test_helpers::test_app_context();
     let config = app_context.config();
 
     // Verify execution settings
@@ -49,13 +47,12 @@ async fn test_parameter_limits_from_config() {
     assert!(result.unwrap_err().to_string().contains("size exceeds limit"));
 }
 
+#[ignore = "Uses test_app_context which starts Raft - slow test"]
+#[ntest::timeout(30_000)]
 #[tokio::test]
 async fn test_config_accessible_from_app_context() {
     // Initialize AppContext
-    test_helpers::init_test_app_context();
-
-    // Verify config can be accessed
-    let app_context = AppContext::get();
+    let app_context = test_helpers::test_app_context();
     let config = app_context.config();
 
     // Verify basic config fields

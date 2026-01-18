@@ -359,10 +359,11 @@ impl RaftManager {
             .map(|m| m.membership_config.voter_ids().collect())
             .unwrap_or_default();
 
-        let self_node = KalamNode {
-            rpc_addr: self.config.rpc_addr.clone(),
-            api_addr: self.config.api_addr.clone(),
-        };
+        // Create self node with auto-detected system metadata (hostname, version, memory, os, arch)
+        let self_node = KalamNode::with_auto_metadata(
+            self.config.rpc_addr.clone(),
+            self.config.api_addr.clone(),
+        );
 
         if already_initialized {
             let meta_last_applied = self.meta.get_last_applied().map(|id| id.index).unwrap_or(0);
@@ -564,10 +565,9 @@ impl RaftManager {
             rpc_addr,
             api_addr
         );
-        let node = KalamNode {
-            rpc_addr: rpc_addr.clone(),
-            api_addr: api_addr.clone(),
-        };
+        // Note: Node metadata is not available during add_learner (only rpc/api addrs)
+        // The node's own metadata is populated when it initializes via with_auto_metadata
+        let node = KalamNode::new(rpc_addr.clone(), api_addr.clone());
 
         async fn add_learner_and_wait<SM: KalamStateMachine + Send + Sync + 'static>(
             group: &Arc<RaftGroup<SM>>,
@@ -640,10 +640,9 @@ impl RaftManager {
             rpc_addr,
             api_addr
         );
-        let node = KalamNode {
-            rpc_addr: rpc_addr.clone(),
-            api_addr: api_addr.clone(),
-        };
+        // Note: Node metadata is not available during add_learner (only rpc/api addrs)
+        // The node's own metadata is populated when it initializes via with_auto_metadata
+        let node = KalamNode::new(rpc_addr.clone(), api_addr.clone());
 
         async fn add_learner_and_wait<SM: KalamStateMachine + Send + Sync + 'static>(
             group: &Arc<RaftGroup<SM>>,
@@ -904,7 +903,7 @@ impl RaftManager {
     /// Register a peer node with all groups
     pub fn register_peer(&self, node_id: NodeId, rpc_addr: String, api_addr: String) {
         let node_id_u64 = node_id.as_u64();
-        let node = KalamNode { rpc_addr, api_addr };
+        let node = KalamNode::new(rpc_addr, api_addr);
 
         // Register with unified meta group
         self.meta.register_peer(node_id_u64, node.clone());

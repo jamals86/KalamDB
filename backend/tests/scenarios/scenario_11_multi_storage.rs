@@ -20,7 +20,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Main multi-storage routing test
 #[tokio::test]
 async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     // =========================================================
     // Step 1: Query existing storages
     // =========================================================
@@ -158,7 +158,7 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
 /// Test storage validation and constraints
 #[tokio::test]
 async fn test_scenario_11_storage_constraints() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("storage_constraints");
 
     // Create namespace
@@ -217,7 +217,7 @@ async fn test_scenario_11_storage_constraints() -> anyhow::Result<()> {
 /// Test flush behavior with different table types to different storage paths
 #[tokio::test]
 async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("types_storage");
 
     // Create namespace

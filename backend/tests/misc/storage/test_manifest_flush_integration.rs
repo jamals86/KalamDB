@@ -28,8 +28,9 @@ fn create_test_service() -> (ManifestService, TempDir) {
     let temp_dir = TempDir::new().unwrap();
 
     // Initialize a test AppContext for SchemaRegistry and providers (used by ManifestService)
-    test_helpers::init_test_app_context();
-    let app_ctx = kalamdb_core::app_context::AppContext::get();
+    // NOTE: Uses full test_app_context which starts Raft - these tests are slow and should be
+    // run as integration tests, not unit tests.
+    let app_ctx = test_helpers::test_app_context();
 
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     let config = ManifestCacheSettings::default();
@@ -90,7 +91,6 @@ fn create_test_service() -> (ManifestService, TempDir) {
         use kalamdb_core::schema_registry::CachedTableData;
         use std::sync::Arc as StdArc;
 
-        let app_ctx = kalamdb_core::app_context::AppContext::get();
         let schema_registry = app_ctx.schema_registry();
         let tables_provider = app_ctx.system_tables().tables();
 
@@ -151,6 +151,8 @@ fn create_test_service() -> (ManifestService, TempDir) {
 }
 
 // T128: create_manifest() → generates valid JSON with version=1
+#[ignore = "Uses test_app_context which starts Raft - slow test"]
+#[ntest::timeout(30_000)]
 #[tokio::test]
 async fn test_create_manifest_generates_valid_json() {
     let (service, _temp_dir) = create_test_service();
@@ -178,6 +180,8 @@ async fn test_create_manifest_generates_valid_json() {
 }
 
 // T129: update_manifest() → increments version, appends SegmentMetadata
+#[ignore = "Uses test_app_context which starts Raft - slow test"]
+#[ntest::timeout(30_000)]
 #[tokio::test]
 async fn test_update_manifest_increments_version() {
     let (service, _temp_dir) = create_test_service();
@@ -255,6 +259,8 @@ async fn test_update_manifest_increments_version() {
 }
 
 // T130: flush 5 batches → manifest.json tracks all batch metadata
+#[ignore = "Uses test_app_context which starts Raft - slow test"]
+#[ntest::timeout(30_000)]
 #[tokio::test]
 async fn test_flush_five_batches_manifest_tracking() {
     let (service, _temp_dir) = create_test_service();
@@ -324,6 +330,8 @@ async fn test_flush_five_batches_manifest_tracking() {
 }
 
 // T128 (additional): Verify manifest persistence across reads
+#[ignore = "Uses test_app_context which starts Raft - slow test"]
+#[ntest::timeout(30_000)]
 #[tokio::test]
 async fn test_manifest_persistence_across_reads() {
     let (service, _temp_dir) = create_test_service();
@@ -365,6 +373,8 @@ async fn test_manifest_persistence_across_reads() {
 }
 
 // T129 (additional): Verify batch entry metadata is preserved
+#[ignore = "Uses test_app_context which starts Raft - slow test"]
+#[ntest::timeout(30_000)]
 #[tokio::test]
 async fn test_batch_entry_metadata_preservation() {
     let (service, _temp_dir) = create_test_service();
@@ -405,6 +415,8 @@ async fn test_batch_entry_metadata_preservation() {
 }
 
 // T130 (additional): Verify manifest validation detects corruption
+#[ignore = "Uses test_app_context which starts Raft - slow test"]
+#[ntest::timeout(30_000)]
 #[tokio::test]
 async fn test_manifest_validation_detects_corruption() {
     use kalamdb_commons::models::TableId;

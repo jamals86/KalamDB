@@ -5,9 +5,8 @@
 //! - Manifest persistence
 //! - Manifest metadata management
 
-#[path = "../../common/testserver/mod.rs"]
-#[allow(dead_code)]
-pub(super) mod test_support;
+// Re-export test_support from parent
+pub(super) use super::test_support;
 
 // Manifest Tests
 mod test_manifest_flush_http_v2;

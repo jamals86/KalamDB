@@ -32,7 +32,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// Main offline sync scenario - tests 10 parallel users syncing
 #[tokio::test]
 async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("sync");
 
     // =========================================================
@@ -210,7 +210,7 @@ async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
 /// Test simulated offline drift and resume
 #[tokio::test]
 async fn test_scenario_02_offline_drift_resume() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("sync_drift");
 
     // Create namespace and table
@@ -296,7 +296,7 @@ async fn test_scenario_02_offline_drift_resume() -> anyhow::Result<()> {
 /// Test changes during initial snapshot loading
 #[tokio::test]
 async fn test_scenario_02_changes_during_snapshot() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("sync_concurrent");
 
     // Create namespace and table

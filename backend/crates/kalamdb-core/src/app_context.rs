@@ -1,6 +1,6 @@
-//! AppContext singleton for KalamDB (Phase 5, T204)
+//! AppContext for KalamDB (Phase 5, T204)
 //!
-//! Provides global access to all core resources with simplified 3-parameter initialization.
+//! Provides access to all core resources with simplified 3-parameter initialization.
 //! Uses constants from kalamdb_commons for table prefixes.
 
 use crate::applier::UnifiedApplier;
@@ -34,15 +34,10 @@ use crate::metrics::runtime::collect_runtime_metrics;
 
 // Use RwLock instead of OnceLock to allow resetting in tests
 // The RwLock is wrapped in a OnceLock for lazy initialization
-use once_cell::sync::Lazy;
-use std::sync::RwLock as StdRwLock;
-
-static APP_CONTEXT: Lazy<StdRwLock<Option<Arc<AppContext>>>> = Lazy::new(|| StdRwLock::new(None));
-
-/// AppContext singleton
+/// AppContext
 ///
 /// Central registry of all shared resources. Services and executors fetch
-/// dependencies via AppContext::get() instead of storing them, enabling:
+/// dependencies via explicit passing instead of global access, enabling:
 /// - Zero duplication across layers
 /// - Stateless services (zero-sized structs)
 /// - Memory-efficient per-request operations
@@ -133,7 +128,7 @@ impl std::fmt::Debug for AppContext {
 }
 
 impl AppContext {
-    /// Initialize AppContext singleton with config-driven NodeId
+    /// Initialize AppContext with config-driven NodeId
     ///
     /// Creates all dependencies internally using constants from kalamdb_commons.
     /// Table prefixes are read from constants::USER_TABLE_PREFIX, etc.
@@ -169,31 +164,13 @@ impl AppContext {
         storage_base_path: String,
         config: ServerConfig,
     ) -> Arc<AppContext> {
-        // Check if already initialized
-        {
-            let guard = APP_CONTEXT.read().expect("APP_CONTEXT lock poisoned");
-            if let Some(existing) = guard.as_ref() {
-                return existing.clone();
-            }
-        }
-
-        // Initialize
-        let app_ctx = Self::create_impl(storage_backend, node_id, storage_base_path, config);
-        {
-            let mut guard = APP_CONTEXT.write().expect("APP_CONTEXT lock poisoned");
-            *guard = Some(app_ctx.clone());
-        }
-        app_ctx
+        Self::create_impl(storage_backend, node_id, storage_base_path, config)
     }
 
     /// Create an isolated AppContext instance for tests
     ///
-    /// Unlike `init()`, this **replaces** the global singleton, ensuring the
-    /// new instance is used by all code that calls `AppContext::get()`.
-    /// The previous AppContext is dropped.
-    ///
     /// This is essential for test isolation where each test needs its own
-    /// independent state (separate RocksDB, Raft groups, etc.)
+    /// independent state (separate RocksDB, Raft groups, etc.).
     ///
     /// **Warning**: Only use this in tests! Production code should use `init()`.
     pub fn create_isolated(
@@ -202,13 +179,7 @@ impl AppContext {
         storage_base_path: String,
         config: ServerConfig,
     ) -> Arc<AppContext> {
-        let app_ctx = Self::create_impl(storage_backend, node_id, storage_base_path, config);
-        // Replace the global singleton so AppContext::get() returns the new instance
-        {
-            let mut guard = APP_CONTEXT.write().expect("APP_CONTEXT lock poisoned");
-            *guard = Some(app_ctx.clone());
-        }
-        app_ctx
+        Self::create_impl(storage_backend, node_id, storage_base_path, config)
     }
 
     /// Internal implementation that creates an AppContext
@@ -564,8 +535,8 @@ impl AppContext {
     /// Create a minimal AppContext for unit testing
     ///
     /// This factory method creates a lightweight AppContext with only essential
-    /// dependencies initialized. Use this in unit tests instead of AppContext::get()
-    /// to avoid singleton initialization requirements.
+    /// dependencies initialized. Use this in unit tests to avoid relying on any
+    /// global AppContext state.
     ///
     /// **Phase 12, US5**: Test-specific factory with SystemColumnsService (worker_id=0)
     ///
@@ -720,24 +691,6 @@ impl AppContext {
         }
 
         app_ctx
-    }
-
-    /// Get the AppContext singleton
-    ///
-    /// # Panics
-    /// Panics if AppContext::init() has not been called yet
-    pub fn get() -> Arc<AppContext> {
-        APP_CONTEXT
-            .read()
-            .expect("APP_CONTEXT lock poisoned")
-            .as_ref()
-            .expect("AppContext not initialized")
-            .clone()
-    }
-
-    /// Try to get the AppContext singleton without panicking
-    pub fn try_get() -> Option<Arc<AppContext>> {
-        APP_CONTEXT.read().ok().and_then(|guard| guard.as_ref().cloned())
     }
 
     // ===== Getters =====

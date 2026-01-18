@@ -73,13 +73,47 @@ impl TablesStore {
 
         // Store the versioned entry
         let version_key = TableVersionId::versioned(table_id.clone(), version);
+        log::debug!(
+            "[TablesStore::put_version] table_id={}, version={}, version_key={:?}",
+            table_id,
+            version,
+            String::from_utf8_lossy(&version_key.as_storage_key())
+        );
         self.put(&version_key, table_def)?;
 
         // Update the latest pointer
         let latest_key = TableVersionId::latest(table_id.clone());
+        log::debug!(
+            "[TablesStore::put_version] table_id={}, latest_key={:?}",
+            table_id,
+            String::from_utf8_lossy(&latest_key.as_storage_key())
+        );
         self.put(&latest_key, table_def)?;
 
         Ok(())
+    }
+
+    /// Debug: dump all keys in the store matching a table_id prefix
+    #[allow(dead_code)]
+    pub fn debug_dump_keys_for_table(&self, table_id: &TableId) {
+        let prefix = table_id.as_storage_key();
+        let partition = Partition::new(self.partition());
+        log::debug!("[TablesStore::debug_dump] Backend ptr: {:p}, Partition: {}, prefix_bytes: {:?}", 
+            Arc::as_ptr(self.backend()), self.partition(), &prefix);
+        match self.backend().scan(&partition, Some(&prefix), None, None) {
+            Ok(iter) => {
+                log::debug!("[TablesStore::debug_dump] Keys for table_id={}:", table_id);
+                let mut count = 0;
+                for (key_bytes, _) in iter {
+                    log::debug!("  Key bytes: {:?}", &key_bytes);
+                    count += 1;
+                }
+                log::debug!("[TablesStore::debug_dump] Total keys found: {}", count);
+            }
+            Err(e) => {
+                log::debug!("[TablesStore::debug_dump] Error scanning: {:?}", e);
+            }
+        }
     }
 
     /// Delete all versions of a table (for DROP TABLE)

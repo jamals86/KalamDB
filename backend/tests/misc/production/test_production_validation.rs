@@ -10,7 +10,7 @@ use kalamdb_commons::Role;
 /// Verify syntax errors return clear, helpful messages
 #[tokio::test]
 async fn syntax_error_messages_are_clear() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Typo in SELECT
     let resp = server.execute_sql("SELCT * FROM system.tables").await;
@@ -34,7 +34,7 @@ async fn syntax_error_messages_are_clear() {
 /// Verify table-not-found errors are clear
 #[tokio::test]
 async fn table_not_found_error_is_clear() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let resp = server.execute_sql("SELECT * FROM nonexistent.table").await;
 
@@ -56,7 +56,7 @@ async fn table_not_found_error_is_clear() {
 /// Verify namespace creation with invalid name fails with clear error
 #[tokio::test]
 async fn invalid_namespace_name_rejected() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Namespace names must be lowercase and start with letter
     let invalid_names = vec![
@@ -88,7 +88,7 @@ async fn invalid_namespace_name_rejected() {
 /// Verify table creation without PRIMARY KEY is rejected
 #[tokio::test]
 async fn table_without_primary_key_rejected() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let resp = server
         .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_nopk", "root")
@@ -120,7 +120,7 @@ async fn table_without_primary_key_rejected() {
 /// Verify NULL constraint violations are caught
 #[tokio::test]
 async fn null_constraint_violation_detected() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let resp = server
         .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_null", "root")
@@ -165,7 +165,7 @@ async fn null_constraint_violation_detected() {
 /// Verify operations on wrong table types fail clearly
 #[tokio::test]
 async fn flush_on_stream_table_rejected() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let resp = server
         .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_stream", "root")
@@ -200,7 +200,7 @@ async fn flush_on_stream_table_rejected() {
 /// Verify user isolation - users cannot access other users' data
 #[tokio::test]
 async fn user_isolation_in_user_tables() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let resp = server
         .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_isolation", "root")
@@ -252,7 +252,7 @@ async fn user_isolation_in_user_tables() {
 /// Verify duplicate PRIMARY KEY insertion fails with clear error
 #[tokio::test]
 async fn duplicate_primary_key_rejected() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let resp = server
         .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_dupkey", "root")
@@ -307,7 +307,7 @@ async fn duplicate_primary_key_rejected() {
 /// Verify DROP TABLE on non-existent table fails gracefully
 #[tokio::test]
 async fn drop_nonexistent_table_error_is_clear() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let resp = server.execute_sql("DROP TABLE nonexistent.table").await;
 
@@ -328,7 +328,7 @@ async fn drop_nonexistent_table_error_is_clear() {
 /// Verify invalid data type in INSERT fails with clear error
 #[tokio::test]
 async fn invalid_data_type_in_insert_rejected() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let resp = server
         .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_datatype", "root")
@@ -367,7 +367,7 @@ async fn invalid_data_type_in_insert_rejected() {
 /// Verify SELECT with invalid column name fails clearly
 #[tokio::test]
 async fn select_invalid_column_error_is_clear() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let resp = server
         .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_selcol", "root")
@@ -411,7 +411,7 @@ async fn select_invalid_column_error_is_clear() {
 /// Verify permission denied errors are clear
 #[tokio::test]
 async fn permission_denied_error_is_clear() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create regular user (not DBA)
     let user_id = server.create_user("regularuser", "Pass123!", Role::User).await;

@@ -13,9 +13,7 @@ use std::sync::Arc;
 use test_helpers::create_test_session;
 
 fn init_app_context() -> Arc<AppContext> {
-    // Use test helper to initialize AppContext
-    let _test_db = test_helpers::init_test_app_context();
-    AppContext::get()
+    test_helpers::test_app_context()
 }
 
 #[tokio::test]

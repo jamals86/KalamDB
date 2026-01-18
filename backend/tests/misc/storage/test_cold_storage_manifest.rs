@@ -16,6 +16,8 @@
 
 use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
+use kalam_link::parse_i64;
+use serde_json::Value as JsonValue;
 
 /// Test: User table cold storage query uses manifest cache
 ///
@@ -29,7 +31,7 @@ use kalam_link::models::ResponseStatus;
 /// 4. Verify manifest cache was hit (via query success + manifest count)
 #[actix_web::test]
 async fn test_user_table_cold_storage_uses_manifest() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Use unique namespace per test to avoid parallel test interference
     let ns = format!("test_manifest_user_{}", std::process::id());
@@ -115,10 +117,10 @@ async fn test_user_table_cold_storage_uses_manifest() {
     );
 
     // Verify data is correct
-    let rows = select_response.results[0].rows_as_maps();
+    let rows = select_response.rows_as_maps();
     assert_eq!(rows.len(), 1, "Expected 1 row from cold storage query");
-    assert_eq!(rows[0].get("id").unwrap().as_i64().unwrap(), 15);
-    assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 150);
+    assert_eq!(rows[0].get("id").map(parse_i64).unwrap(), 15);
+    assert_eq!(rows[0].get("value").map(parse_i64).unwrap(), 150);
 
     // Query all rows - verifies manifest is used for full table scan
     let select_all_response = server
@@ -131,9 +133,9 @@ async fn test_user_table_cold_storage_uses_manifest() {
         select_all_response.error
     );
 
-    let rows = select_all_response.results[0].rows_as_maps();
+    let rows = select_all_response.rows_as_maps();
     assert_eq!(rows.len(), 1);
-    let count = rows[0].get("cnt").unwrap().as_i64().unwrap();
+    let count = rows[0].get("cnt").map(parse_i64).unwrap();
     assert_eq!(count, 30, "Expected 30 rows total");
 
     println!("✅ User table cold storage query uses manifest cache successfully");
@@ -145,7 +147,7 @@ async fn test_user_table_cold_storage_uses_manifest() {
 /// manifest cache for efficient Parquet file selection.
 #[actix_web::test]
 async fn test_shared_table_cold_storage_uses_manifest() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Use unique namespace per test to avoid parallel test interference
     let ns = format!("test_manifest_shared_{}", std::process::id());
@@ -221,10 +223,10 @@ async fn test_shared_table_cold_storage_uses_manifest() {
     );
 
     // Verify data is correct
-    let rows = select_response.results[0].rows_as_maps();
+    let rows = select_response.rows_as_maps();
     assert_eq!(rows.len(), 1, "Expected 1 row from cold storage query");
-    assert_eq!(rows[0].get("id").unwrap().as_i64().unwrap(), 20);
-    assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 2000);
+    assert_eq!(rows[0].get("id").map(parse_i64).unwrap(), 20);
+    assert_eq!(rows[0].get("price").map(parse_i64).unwrap(), 2000);
 
     println!("✅ Shared table cold storage query uses manifest cache successfully");
 }
@@ -235,7 +237,7 @@ async fn test_shared_table_cold_storage_uses_manifest() {
 /// manifest, and queries correctly read from all segments.
 #[actix_web::test]
 async fn test_manifest_tracks_multiple_flush_segments() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "multi_flush_ns").await;
@@ -303,7 +305,7 @@ async fn test_manifest_tracks_multiple_flush_segments() {
         )
         .await;
     assert_eq!(select_batch1.status, ResponseStatus::Success);
-    let rows = select_batch1.results[0].rows_as_maps();
+    let rows = select_batch1.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("event_type").unwrap().as_str().unwrap(), "batch1");
 
@@ -314,7 +316,7 @@ async fn test_manifest_tracks_multiple_flush_segments() {
         )
         .await;
     assert_eq!(select_batch2.status, ResponseStatus::Success);
-    let rows = select_batch2.results[0].rows_as_maps();
+    let rows = select_batch2.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("event_type").unwrap().as_str().unwrap(), "batch2");
 
@@ -323,8 +325,8 @@ async fn test_manifest_tracks_multiple_flush_segments() {
         .execute_sql_as_user("SELECT COUNT(*) as cnt FROM multi_flush_ns.events", "multi_user")
         .await;
     assert_eq!(count_all.status, ResponseStatus::Success);
-    let rows = count_all.results[0].rows_as_maps();
-    let count = rows[0].get("cnt").unwrap().as_i64().unwrap();
+    let rows = count_all.rows_as_maps();
+    let count = rows[0].get("cnt").map(parse_i64).unwrap();
     assert_eq!(count, 40, "Expected 40 rows from both segments");
 
     println!("✅ Manifest correctly tracks multiple flush segments");
@@ -338,7 +340,7 @@ async fn test_manifest_tracks_multiple_flush_segments() {
 /// 3. The manifest still tracks the old Parquet segment
 #[actix_web::test]
 async fn test_cold_storage_version_resolution_after_update() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "version_res_ns").await;
@@ -402,14 +404,14 @@ async fn test_cold_storage_version_resolution_after_update() {
         )
         .await;
     assert_eq!(select_updated.status, ResponseStatus::Success);
-    let rows = select_updated.results[0].rows_as_maps();
+    let rows = select_updated.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].get("status").unwrap().as_str().unwrap(),
         "updated",
         "Expected updated status"
     );
-    assert_eq!(rows[0].get("count").unwrap().as_i64().unwrap(), 999, "Expected updated count");
+    assert_eq!(rows[0].get("count").map(parse_i64).unwrap(), 999, "Expected updated count");
 
     // Other rows should still be from cold storage with original values
     let select_other = server
@@ -419,7 +421,7 @@ async fn test_cold_storage_version_resolution_after_update() {
         )
         .await;
     assert_eq!(select_other.status, ResponseStatus::Success);
-    let rows = select_other.results[0].rows_as_maps();
+    let rows = select_other.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].get("status").unwrap().as_str().unwrap(),
@@ -427,7 +429,7 @@ async fn test_cold_storage_version_resolution_after_update() {
         "Expected original status for non-updated row"
     );
     assert_eq!(
-        rows[0].get("count").unwrap().as_i64().unwrap(),
+        rows[0].get("count").map(parse_i64).unwrap(),
         15,
         "Expected original count (3 * 5 = 15)"
     );
@@ -437,8 +439,8 @@ async fn test_cold_storage_version_resolution_after_update() {
         .execute_sql_as_user("SELECT COUNT(*) as cnt FROM version_res_ns.records", "version_user")
         .await;
     assert_eq!(count_all.status, ResponseStatus::Success);
-    let rows = count_all.results[0].rows_as_maps();
-    let count = rows[0].get("cnt").unwrap().as_i64().unwrap();
+    let rows = count_all.rows_as_maps();
+    let count = rows[0].get("cnt").map(parse_i64).unwrap();
     assert_eq!(count, 10, "Expected 10 rows (no duplicates)");
 
     println!("✅ Version resolution correctly handles hot+cold storage after UPDATE");
@@ -452,7 +454,7 @@ async fn test_cold_storage_version_resolution_after_update() {
 /// 3. The row no longer appears in query results
 #[actix_web::test]
 async fn test_cold_storage_delete_creates_tombstone() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "delete_cold_ns").await;
@@ -540,8 +542,8 @@ async fn test_cold_storage_delete_creates_tombstone() {
         )
         .await;
     assert_eq!(count_all.status, ResponseStatus::Success);
-    let rows = count_all.results[0].rows_as_maps();
-    let count = rows[0].get("cnt").unwrap().as_i64().unwrap();
+    let rows = count_all.rows_as_maps();
+    let count = rows[0].get("cnt").map(parse_i64).unwrap();
     assert_eq!(count, 14, "Expected 14 rows after delete");
 
     println!("✅ DELETE on cold storage row creates tombstone correctly");
@@ -553,7 +555,7 @@ async fn test_cold_storage_delete_creates_tombstone() {
 /// between different shared tables.
 #[actix_web::test]
 async fn test_shared_table_manifest_isolation() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup two tables in same namespace
     fixtures::create_namespace(&server, "manifest_iso_ns").await;
@@ -618,7 +620,7 @@ async fn test_shared_table_manifest_isolation() {
         .execute_sql("SELECT id, name FROM manifest_iso_ns.products WHERE id = 5")
         .await;
     assert_eq!(select_products.status, ResponseStatus::Success);
-    let rows = select_products.results[0].rows_as_maps();
+    let rows = select_products.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("name").unwrap().as_str().unwrap(), "product_5");
 
@@ -626,7 +628,7 @@ async fn test_shared_table_manifest_isolation() {
         .execute_sql("SELECT id, name FROM manifest_iso_ns.categories WHERE id = 5")
         .await;
     assert_eq!(select_categories.status, ResponseStatus::Success);
-    let rows = select_categories.results[0].rows_as_maps();
+    let rows = select_categories.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("name").unwrap().as_str().unwrap(), "category_5");
 

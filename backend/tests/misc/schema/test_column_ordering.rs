@@ -18,7 +18,7 @@ fn unique_namespace(prefix: &str) -> String {
 #[tokio::test]
 #[ntest::timeout(60000)]
 async fn test_select_star_returns_columns_in_ordinal_order() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create a table with columns defined out of order
     let namespace = unique_namespace("test_ns");
@@ -87,7 +87,7 @@ async fn test_select_star_returns_columns_in_ordinal_order() {
 #[tokio::test]
 #[ntest::timeout(60000)]
 async fn test_alter_table_add_column_assigns_next_ordinal() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let namespace = unique_namespace("test_ns");
     let test_namespace = NamespaceId::from(namespace.as_str());
@@ -149,7 +149,7 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
 #[tokio::test]
 #[ntest::timeout(60000)]
 async fn test_alter_table_drop_column_preserves_ordinals() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let namespace = unique_namespace("test_ns");
     let test_namespace = NamespaceId::from(namespace.as_str());
@@ -218,7 +218,7 @@ async fn test_alter_table_drop_column_preserves_ordinals() {
 #[ntest::timeout(60000)]
 async fn test_system_tables_have_correct_column_ordering() {
     use datafusion::datasource::TableProvider;
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Test system.users table
     // Note: System tables are not stored in system.tables, so we access the provider directly

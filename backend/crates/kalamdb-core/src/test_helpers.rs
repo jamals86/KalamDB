@@ -16,6 +16,7 @@ use std::sync::Once;
 
 static TEST_DB: OnceCell<Arc<TestDb>> = OnceCell::new();
 static TEST_RUNTIME: OnceCell<Arc<tokio::runtime::Runtime>> = OnceCell::new();
+static TEST_APP_CONTEXT: OnceCell<Arc<AppContext>> = OnceCell::new();
 static INIT: Once = Once::new();
 static BOOTSTRAP_INIT: Once = Once::new();
 
@@ -44,14 +45,22 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         test_config.execution.max_parameters = 50;
         test_config.execution.max_parameter_size_bytes = 512 * 1024;
 
-        AppContext::init(storage_backend, NodeId::new(1), "data/storage".to_string(), test_config);
+        let app_ctx = AppContext::init(
+            storage_backend,
+            NodeId::new(1),
+            "data/storage".to_string(),
+            test_config,
+        );
+        TEST_APP_CONTEXT
+            .set(app_ctx)
+            .expect("TEST_APP_CONTEXT already initialized");
     });
 
     // One-time bootstrap that matches server startup behavior closely:
     // - Start + initialize single-node Raft so meta operations have a leader
     // - Seed default namespace + default local storage so scans can resolve storage paths
     BOOTSTRAP_INIT.call_once(|| {
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context();
         let executor = app_ctx.executor();
 
         // Keep a dedicated Tokio runtime alive for the lifetime of the test process.
@@ -79,7 +88,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
             .expect("raft bootstrap result")
             .expect("raft bootstrap should succeed");
 
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context();
 
         // Ensure default namespace exists
         let namespaces = app_ctx.system_tables().namespaces();
@@ -121,6 +130,48 @@ pub fn init_test_app_context() -> Arc<TestDb> {
     TEST_DB.get().expect("TEST_DB should be initialized").clone()
 }
 
+pub fn test_app_context() -> Arc<AppContext> {
+    init_test_app_context();
+    TEST_APP_CONTEXT
+        .get()
+        .expect("TEST_APP_CONTEXT should be initialized")
+        .clone()
+}
+
+/// Returns an AppContext without starting Raft bootstrap.
+///
+/// Use this for unit tests that only need schema registry, system tables, etc.
+/// but do NOT need Raft consensus or leader election.
+///
+/// This creates a fresh AppContext per call (no shared statics) and is much
+/// faster than `test_app_context()` which starts a full Raft cluster.
+pub fn test_app_context_simple() -> Arc<AppContext> {
+    let mut column_families: Vec<&'static str> = SystemTable::all_tables()
+        .iter()
+        .filter_map(|t| t.column_family_name())
+        .collect();
+    column_families.push(StoragePartition::InformationSchemaTables.name());
+    column_families.push("shared_table:app:config");
+    column_families.push("stream_table:app:events");
+
+    let test_db = TestDb::new(&column_families).expect("create test db");
+
+    let storage_backend: Arc<dyn StorageBackend> =
+        Arc::new(RocksDBBackend::new(test_db.db.clone()));
+
+    let mut test_config = kalamdb_configs::ServerConfig::default();
+    test_config.storage.data_path = "data".to_string();
+    test_config.execution.max_parameters = 50;
+    test_config.execution.max_parameter_size_bytes = 512 * 1024;
+
+    AppContext::init(
+        storage_backend,
+        NodeId::new(1),
+        "data/storage".to_string(),
+        test_config,
+    )
+}
+
 pub fn create_test_job_registry() -> JobRegistry {
     let registry = JobRegistry::new();
 
@@ -137,6 +188,12 @@ pub fn create_test_job_registry() -> JobRegistry {
 }
 
 pub fn create_test_session() -> Arc<SessionContext> {
-    init_test_app_context();
-    Arc::new(AppContext::get().session_factory().create_session())
+    let app_ctx = test_app_context();
+    Arc::new(app_ctx.session_factory().create_session())
+}
+
+/// Creates a SessionContext using test_app_context_simple() (no Raft bootstrap).
+pub fn create_test_session_simple() -> Arc<SessionContext> {
+    let app_ctx = test_app_context_simple();
+    Arc::new(app_ctx.session_factory().create_session())
 }

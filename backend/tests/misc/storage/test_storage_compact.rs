@@ -138,7 +138,7 @@ async fn wait_for_compact_jobs(
 #[tokio::test]
 #[ntest::timeout(90000)]
 async fn test_storage_compact_table_and_all_commands() -> Result<()> {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let namespace = unique_name("compact_ns");
     let user_table = unique_name("compact_user");
     let shared_table = unique_name("compact_shared");
@@ -217,14 +217,14 @@ async fn test_storage_compact_table_and_all_commands() -> Result<()> {
 #[tokio::test]
 #[ntest::timeout(60000)]
 async fn test_storage_compact_rejects_stream_and_empty_namespace() -> Result<()> {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let namespace = unique_name("compact_stream_ns");
     let stream_table = unique_name("compact_stream");
 
     fixtures::create_namespace(&server, &namespace).await;
 
     let create_stream = format!(
-        "CREATE TABLE {}.{} (id INT PRIMARY KEY, value TEXT) WITH (TYPE = 'STREAM')",
+        "CREATE TABLE {}.{} (id INT PRIMARY KEY, value TEXT) WITH (TYPE = 'STREAM', TTL_SECONDS = 3600)",
         namespace, stream_table
     );
     let resp = server.execute_sql(&create_stream).await;

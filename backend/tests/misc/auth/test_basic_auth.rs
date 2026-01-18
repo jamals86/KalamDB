@@ -16,7 +16,7 @@ use std::sync::Arc;
 /// Test successful Basic Auth with valid credentials
 #[tokio::test]
 async fn test_basic_auth_success() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create test user with password
     let username = "alice";
@@ -62,7 +62,7 @@ async fn test_basic_auth_success() {
 /// Test authentication failure with invalid password
 #[tokio::test]
 async fn test_basic_auth_invalid_credentials() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create test user
     let username = "bob";
@@ -102,7 +102,7 @@ async fn test_basic_auth_missing_header() {
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
     use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
     // Create user repository adapter
@@ -125,7 +125,7 @@ async fn test_basic_auth_malformed_header() {
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
     use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
     // Create user repository adapter
@@ -163,7 +163,7 @@ async fn test_basic_auth_nonexistent_user() {
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
     use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
     // Create user repository adapter

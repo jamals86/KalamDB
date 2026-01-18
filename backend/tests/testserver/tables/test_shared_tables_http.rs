@@ -52,7 +52,7 @@ async fn test_shared_tables_lifecycle_over_http() -> anyhow::Result<()> {
         .execute_sql(&format!("SELECT id FROM {}.{} ORDER BY id", ns, table))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     anyhow::ensure!(rows.len() == 2);
 
     // UPDATE
@@ -95,7 +95,7 @@ async fn test_shared_tables_lifecycle_over_http() -> anyhow::Result<()> {
     let msg = drop_resp.results.first().and_then(|r| r.message.as_deref()).unwrap_or("");
 
     if let Some(job_id) = extract_cleanup_job_id(msg) {
-        let _ = wait_for_job_completion(server, &job_id, Duration::from_secs(15)).await?;
+        wait_for_job_completion(server, &job_id, Duration::from_secs(15)).await?;
     }
 
     anyhow::ensure!(

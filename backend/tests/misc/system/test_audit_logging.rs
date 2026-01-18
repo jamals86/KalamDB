@@ -47,7 +47,7 @@ fn find_audit_entry<'a>(
 
 #[actix_web::test]
 async fn test_audit_log_for_user_management() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_id = create_system_user(&server, "audit_admin_1").await;
 
     let resp = server
@@ -88,7 +88,7 @@ async fn test_audit_log_for_user_management() {
 
 #[actix_web::test]
 async fn test_audit_log_for_table_access_change() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_id = create_system_user(&server, "audit_admin_2").await;
 
     let resp = server
@@ -140,7 +140,7 @@ async fn test_audit_log_password_masking() {
     // **Test that passwords are NEVER stored in audit logs**
     // Verifies that ALTER USER SET PASSWORD entries mask the actual password
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_id = create_system_user(&server, "audit_admin_3").await;
 
     // Create a test user

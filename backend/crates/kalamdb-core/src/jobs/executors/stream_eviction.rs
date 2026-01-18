@@ -237,7 +237,7 @@ mod tests {
     use crate::providers::base::{BaseTableProvider, TableProviderCore};
     use crate::providers::StreamTableProvider;
     use crate::schema_registry::CachedTableData;
-    use crate::test_helpers::init_test_app_context;
+    use crate::test_helpers::test_app_context_simple;
     use chrono::Utc;
     use datafusion::datasource::TableProvider;
     use kalamdb_commons::models::datatypes::KalamDataType;
@@ -416,8 +416,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_evicts_expired_rows_from_provider_store() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
         let harness = setup_stream_table(&app_ctx);
         let provider = harness.provider.clone();
 
@@ -472,8 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pre_validate_skips_when_no_expired_rows() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
         let harness = setup_stream_table(&app_ctx);
 
         let user = UserId::new("user-prevalidate-no-expired");
@@ -498,8 +496,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pre_validate_detects_expired_rows() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
         let harness = setup_stream_table(&app_ctx);
 
         let user = UserId::new("user-prevalidate-expired");

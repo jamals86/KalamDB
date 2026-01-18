@@ -71,7 +71,7 @@ pub struct ClusterView {
 impl ClusterView {
     /// Get the TableDefinition for system.cluster view
     ///
-    /// Schema (16 columns):
+    /// Schema (21 columns):
     /// - cluster_id TEXT NOT NULL
     /// - node_id BIGINT NOT NULL
     /// - role TEXT NOT NULL
@@ -88,6 +88,11 @@ impl ClusterView {
     /// - snapshot_index BIGINT (nullable)
     /// - catchup_progress_pct TINYINT (nullable)
     /// - replication_lag BIGINT (nullable)
+    /// - hostname TEXT (nullable - node metadata)
+    /// - version TEXT (nullable)
+    /// - memory_mb BIGINT (nullable)
+    /// - os TEXT (nullable)
+    /// - arch TEXT (nullable)
     pub fn definition() -> TableDefinition {
         let columns = vec![
             ColumnDefinition::new(
@@ -267,6 +272,62 @@ impl ClusterView {
                 ColumnDefault::None,
                 Some("Replication lag (entries behind leader)".to_string()),
             ),
+            // Node metadata (replicated via OpenRaft membership)
+            ColumnDefinition::new(
+                17,
+                "hostname",
+                17,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Machine hostname".to_string()),
+            ),
+            ColumnDefinition::new(
+                18,
+                "version",
+                18,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("KalamDB version".to_string()),
+            ),
+            ColumnDefinition::new(
+                19,
+                "memory_mb",
+                19,
+                KalamDataType::BigInt,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Total system memory in MB".to_string()),
+            ),
+            ColumnDefinition::new(
+                20,
+                "os",
+                20,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Operating system".to_string()),
+            ),
+            ColumnDefinition::new(
+                21,
+                "arch",
+                21,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("CPU architecture".to_string()),
+            ),
         ];
 
         TableDefinition::new(
@@ -332,6 +393,12 @@ impl VirtualView for ClusterView {
         let mut snapshot_indexes = Vec::with_capacity(num_nodes);
         let mut catchup_progress_pcts = Vec::with_capacity(num_nodes);
         let mut replication_lags = Vec::with_capacity(num_nodes);
+        // Node metadata columns
+        let mut hostnames: Vec<Option<&str>> = Vec::with_capacity(num_nodes);
+        let mut versions: Vec<Option<&str>> = Vec::with_capacity(num_nodes);
+        let mut memory_mbs: Vec<Option<i64>> = Vec::with_capacity(num_nodes);
+        let mut oses: Vec<Option<&str>> = Vec::with_capacity(num_nodes);
+        let mut archs: Vec<Option<&str>> = Vec::with_capacity(num_nodes);
 
         // Single pass through nodes - collect all data
         for node in &info.nodes {
@@ -351,6 +418,12 @@ impl VirtualView for ClusterView {
             snapshot_indexes.push(node.snapshot_index.map(|v| v as i64));
             catchup_progress_pcts.push(node.catchup_progress_pct.map(|v| v as i16));
             replication_lags.push(node.replication_lag.map(|v| v as i64));
+            // Node metadata
+            hostnames.push(node.hostname.as_deref());
+            versions.push(node.version.as_deref());
+            memory_mbs.push(node.memory_mb.map(|v| v as i64));
+            oses.push(node.os.as_deref());
+            archs.push(node.arch.as_deref());
         }
 
         // Build RecordBatch with direct Arrow array construction
@@ -373,6 +446,12 @@ impl VirtualView for ClusterView {
                 Arc::new(Int64Array::from(snapshot_indexes)) as ArrayRef,
                 Arc::new(Int16Array::from(catchup_progress_pcts)) as ArrayRef,
                 Arc::new(Int64Array::from(replication_lags)) as ArrayRef,
+                // Node metadata columns
+                Arc::new(StringArray::from(hostnames)) as ArrayRef,
+                Arc::new(StringArray::from(versions)) as ArrayRef,
+                Arc::new(Int64Array::from(memory_mbs)) as ArrayRef,
+                Arc::new(StringArray::from(oses)) as ArrayRef,
+                Arc::new(StringArray::from(archs)) as ArrayRef,
             ],
         )
         .map_err(|e| RegistryError::Other(format!("Failed to build cluster batch: {}", e)))
@@ -396,11 +475,17 @@ mod tests {
     #[test]
     fn test_schema() {
         let schema = cluster_schema();
-        assert_eq!(schema.fields().len(), 16);
+        assert_eq!(schema.fields().len(), 21);
         assert_eq!(schema.field(0).name(), "cluster_id");
         assert_eq!(schema.field(1).name(), "node_id");
         assert_eq!(schema.field(2).name(), "role");
         assert_eq!(schema.field(7).name(), "is_leader");
+        // Node metadata columns
+        assert_eq!(schema.field(16).name(), "hostname");
+        assert_eq!(schema.field(17).name(), "version");
+        assert_eq!(schema.field(18).name(), "memory_mb");
+        assert_eq!(schema.field(19).name(), "os");
+        assert_eq!(schema.field(20).name(), "arch");
     }
 
     #[test]

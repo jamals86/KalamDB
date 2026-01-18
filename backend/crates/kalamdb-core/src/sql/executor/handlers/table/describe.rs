@@ -6,7 +6,9 @@ use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::arrow::array::{ArrayRef, BooleanArray, RecordBatch, StringArray, UInt32Array};
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use kalamdb_commons::arrow_utils::{
+    field_boolean, field_uint32, field_utf8, schema,
+};
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_sql::ddl::DescribeTableStatement;
@@ -74,15 +76,15 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
 }
 
 fn build_describe_batch(def: &TableDefinition) -> Result<RecordBatch, KalamDbError> {
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("column_name", DataType::Utf8, false),
-        Field::new("ordinal_position", DataType::UInt32, false),
-        Field::new("data_type", DataType::Utf8, false),
-        Field::new("is_nullable", DataType::Boolean, false),
-        Field::new("is_primary_key", DataType::Boolean, false),
-        Field::new("column_default", DataType::Utf8, true),
-        Field::new("column_comment", DataType::Utf8, true),
-    ]));
+    let schema = schema(vec![
+        field_utf8("column_name", false),
+        field_uint32("ordinal_position", false),
+        field_utf8("data_type", false),
+        field_boolean("is_nullable", false),
+        field_boolean("is_primary_key", false),
+        field_utf8("column_default", true),
+        field_utf8("column_comment", true),
+    ]);
 
     // Pre-allocate based on column count
     let col_count = def.columns.len();

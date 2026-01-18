@@ -12,13 +12,15 @@
 //! - T063: RocksDB prefix scan `{user_id}:` → efficiently returns only that user's rows
 //! - T064: RocksDB range scan `_seq > threshold` → efficiently skips older versions
 
-use super::test_support::{fixtures, QueryResultTestExt, TestServer};
+use super::test_support::{fixtures, TestServer};
 use kalam_link::models::ResponseStatus;
+use kalam_link::parse_i64;
+use serde_json::Value as JsonValue;
 
 /// T051: CREATE TABLE without PK should be rejected
 #[actix_web::test]
 async fn test_create_table_without_pk_rejected() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     let ns_response = fixtures::create_namespace(&server, "test_ns_t051").await;
@@ -69,7 +71,7 @@ async fn test_create_table_without_pk_rejected() {
 /// T052: CREATE TABLE with user PK → verify `_seq` and `_deleted` auto-added to schema
 #[actix_web::test]
 async fn test_create_table_auto_adds_system_columns() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_ns_t052").await;
@@ -114,22 +116,23 @@ async fn test_create_table_auto_adds_system_columns() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1, "Should return exactly 1 row");
     let row = &rows[0];
 
     // Verify user columns
     assert_eq!(row.get("id").unwrap().as_str().unwrap(), "prod1");
     assert_eq!(row.get("name").unwrap().as_str().unwrap(), "Widget");
-    assert_eq!(row.get("price").unwrap().as_i64().unwrap(), 100);
+    assert_eq!(parse_i64(row.get("price").unwrap()), 100);
 
     // Verify system columns exist
     assert!(row.contains_key("_seq"), "_seq column should be auto-added");
     assert!(row.contains_key("_deleted"), "_deleted column should be auto-added");
 
-    // Verify _seq is a valid i64 (SeqId)
+    // Verify _seq is a valid i64 (SeqId) - it's returned as a string for JavaScript precision
     let seq = row.get("_seq").unwrap();
-    assert!(seq.is_i64() || seq.is_u64(), "_seq should be numeric (SeqId), got: {:?}", seq);
+    let seq_str = seq.as_str().expect("_seq should be a string representation of i64");
+    seq_str.parse::<i64>().expect("_seq string should parse as i64");
 
     // Verify _deleted defaults to false
     assert_eq!(
@@ -144,7 +147,7 @@ async fn test_create_table_auto_adds_system_columns() {
 /// T053: INSERT → verify storage key format for user and shared tables
 #[actix_web::test]
 async fn test_insert_storage_key_format() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     let resp = fixtures::create_namespace(&server, "test_ns_t053").await;
@@ -233,7 +236,7 @@ async fn test_insert_storage_key_format() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1, "Should retrieve user table record");
 
     let response = server
@@ -241,7 +244,7 @@ async fn test_insert_storage_key_format() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1, "Should retrieve shared table record");
 
     println!("✅ T053: INSERT storage key format works for user and shared tables");
@@ -250,7 +253,7 @@ async fn test_insert_storage_key_format() {
 /// T054: INSERT → verify UserTableRow structure (user_id, _seq, _deleted, fields)
 #[actix_web::test]
 async fn test_user_table_row_structure() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     let resp = fixtures::create_namespace(&server, "test_ns_t054").await;
@@ -295,7 +298,7 @@ async fn test_user_table_row_structure() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
 
@@ -308,9 +311,10 @@ async fn test_user_table_row_structure() {
     assert!(row.contains_key("_seq"), "_seq should exist");
     assert!(row.contains_key("_deleted"), "_deleted should exist");
 
-    // Verify _seq is numeric (SeqId wrapper)
+    // Verify _seq is numeric (SeqId wrapper) - returned as string for JavaScript precision
     let seq = row.get("_seq").unwrap();
-    assert!(seq.is_i64() || seq.is_u64(), "_seq should be numeric, got: {:?}", seq);
+    let seq_str = seq.as_str().expect("_seq should be string representation of i64");
+    seq_str.parse::<i64>().expect("_seq string should parse as i64");
 
     // Verify _deleted is boolean
     assert_eq!(row.get("_deleted").unwrap().as_bool(), Some(false), "_deleted should be false");
@@ -324,7 +328,7 @@ async fn test_user_table_row_structure() {
 /// T055: INSERT to shared table → verify SharedTableRow structure (_seq, _deleted, fields only)
 #[actix_web::test]
 async fn test_shared_table_row_structure() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup - namespace and shared table created via system user
     let resp = fixtures::create_namespace(&server, "test_ns_t055").await;
@@ -369,7 +373,7 @@ async fn test_shared_table_row_structure() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
 
@@ -389,9 +393,10 @@ async fn test_shared_table_row_structure() {
         "access_level should NOT be in SharedTableRow (cached in schema)"
     );
 
-    // Verify _seq is numeric
+    // Verify _seq is numeric - returned as string for JavaScript precision
     let seq = row.get("_seq").unwrap();
-    assert!(seq.is_i64() || seq.is_u64(), "_seq should be numeric, got: {:?}", seq);
+    let seq_str = seq.as_str().expect("_seq should be string representation of i64");
+    seq_str.parse::<i64>().expect("_seq string should parse as i64");
 
     // SharedTableRow structure: { _seq: SeqId, _deleted: bool, fields: JsonValue }
     // NO user_id (not user-scoped), NO access_level (in schema cache)
@@ -410,7 +415,7 @@ async fn test_shared_table_row_structure() {
 /// the system correctly rejects duplicates.
 #[actix_web::test]
 async fn test_insert_duplicate_pk_rejected() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_ns_t060").await;
@@ -473,7 +478,7 @@ async fn test_insert_duplicate_pk_rejected() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1, "Should only have 1 record (duplicate rejected)");
     assert_eq!(
         rows[0].get("name").unwrap().as_str().unwrap(),
@@ -502,7 +507,7 @@ async fn test_insert_duplicate_pk_rejected() {
 /// T062: Incremental sync `WHERE _seq > X` → returns all versions after threshold
 #[actix_web::test]
 async fn test_incremental_sync_seq_threshold() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     let resp = fixtures::create_namespace(&server, "test_ns_t062").await;
@@ -558,11 +563,14 @@ async fn test_incremental_sync_seq_threshold() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let all_rows = response.results[0].rows_as_maps();
+    let all_rows = response.rows_as_maps();
     assert_eq!(all_rows.len(), 3);
 
-    // Get the _seq of the second record
-    let threshold_seq = all_rows[1].get("_seq").unwrap().as_i64().unwrap();
+    // Get the _seq of the second record (handle both i64 and string)
+    let threshold_seq = all_rows[1]
+        .get("_seq")
+        .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok())))
+        .expect("_seq should be present and numeric");
 
     // Query with WHERE _seq > threshold (should return only rec3)
     let response = server
@@ -576,7 +584,7 @@ async fn test_incremental_sync_seq_threshold() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1, "Should return only records after threshold");
     assert_eq!(
         rows[0].get("id").unwrap().as_str().unwrap(),
@@ -584,7 +592,7 @@ async fn test_incremental_sync_seq_threshold() {
         "Should return rec3 (latest)"
     );
 
-    let returned_seq = rows[0].get("_seq").unwrap().as_i64().unwrap();
+    let returned_seq = parse_i64(rows[0].get("_seq").unwrap());
     assert!(returned_seq > threshold_seq, "Returned _seq should be greater than threshold");
 
     println!("✅ T062: Incremental sync with WHERE _seq > X works correctly");
@@ -593,7 +601,7 @@ async fn test_incremental_sync_seq_threshold() {
 /// T063: RocksDB prefix scan `{user_id}:` → efficiently returns only that user's rows
 #[actix_web::test]
 async fn test_rocksdb_prefix_scan_user_isolation() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_ns_t063").await;
@@ -645,7 +653,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 2, "User1 should only see their own 2 notes");
     assert_eq!(rows[0].get("content").unwrap().as_str().unwrap(), "User1 Note 1");
     assert_eq!(rows[1].get("content").unwrap().as_str().unwrap(), "User1 Note 2");
@@ -659,7 +667,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1, "User2 should only see their own 1 note");
     assert_eq!(rows[0].get("content").unwrap().as_str().unwrap(), "User2 Note 1");
 
@@ -671,7 +679,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
 /// The range scan logic works correctly, but UPDATE fails with "Row not found".
 #[actix_web::test]
 async fn test_rocksdb_range_scan_efficiency() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_ns_t064").await;
@@ -701,7 +709,12 @@ async fn test_rocksdb_range_scan_efficiency() {
         .execute_sql_as_user("SELECT id, value, _seq FROM test_ns_t064.versioned_data", "user1")
         .await;
 
-    let initial_seq = response.results[0].rows_as_maps()[0].get("_seq").unwrap().as_i64().unwrap();
+    let rows = response.rows_as_maps();
+    assert!(!rows.is_empty(), "Should have at least one row");
+    let initial_seq = rows[0]
+        .get("_seq")
+        .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok())))
+        .expect("_seq should be present and numeric");
 
     // Update record (creates new version)
     server
@@ -731,13 +744,13 @@ async fn test_rocksdb_range_scan_efficiency() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     // Should return the latest version (value=3) since version resolution
     // applies MAX(_seq) AFTER the range filter
     assert_eq!(rows.len(), 1, "Should return 1 row (latest version)");
-    assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 3, "Should return latest value");
+    assert_eq!(parse_i64(rows[0].get("value").unwrap()), 3, "Should return latest value");
 
-    let returned_seq = rows[0].get("_seq").unwrap().as_i64().unwrap();
+    let returned_seq = parse_i64(rows[0].get("_seq").unwrap());
     assert!(returned_seq > initial_seq, "Returned _seq should be > initial_seq");
 
     println!("✅ T064: RocksDB range scan with _seq > threshold works efficiently");

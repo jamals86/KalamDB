@@ -73,7 +73,7 @@ async fn test_system_tables_queryable_over_http() -> anyhow::Result<()> {
         ))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
-    anyhow::ensure!(!resp.results[0].rows_as_maps().is_empty());
+    anyhow::ensure!(!resp.rows_as_maps().is_empty());
 
     // system.tables
     let resp = server
@@ -83,7 +83,7 @@ async fn test_system_tables_queryable_over_http() -> anyhow::Result<()> {
                 ))
                 .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     anyhow::ensure!(rows.len() >= 2);
 
     // system.users
@@ -94,14 +94,14 @@ async fn test_system_tables_queryable_over_http() -> anyhow::Result<()> {
         ))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
-    anyhow::ensure!(!resp.results[0].rows_as_maps().is_empty());
+    anyhow::ensure!(!resp.rows_as_maps().is_empty());
 
     // system.storages
     let resp = server
         .execute_sql("SELECT storage_id, storage_type FROM system.storages")
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     anyhow::ensure!(rows
         .iter()
         .any(|r| r.get("storage_id").and_then(|v| v.as_str()) == Some("local")));
@@ -111,6 +111,6 @@ async fn test_system_tables_queryable_over_http() -> anyhow::Result<()> {
         .execute_sql("SELECT job_type, status FROM system.jobs WHERE job_type = 'flush'")
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
-    anyhow::ensure!(!resp.results[0].rows_as_maps().is_empty());
+    anyhow::ensure!(!resp.rows_as_maps().is_empty());
     Ok(())
 }

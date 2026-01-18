@@ -174,7 +174,7 @@ async fn test_quickstart_workflow_over_http() -> anyhow::Result<()> {
             eprintln!("system.tables query failed: {:?}", resp.error);
         }
         anyhow::ensure!(resp.status == ResponseStatus::Success);
-        anyhow::ensure!(!resp.results[0].rows_as_maps().is_empty());
+        anyhow::ensure!(!resp.rows_as_maps().is_empty());
     }
     Ok(())
 }

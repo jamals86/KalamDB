@@ -13,7 +13,7 @@ async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId 
 
 #[actix_web::test]
 async fn test_explain_command_admin_allowed() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let dba = insert_user(&server, "admin_user", Role::Dba).await;
 
     // Create namespace and table for testing
@@ -39,7 +39,7 @@ async fn test_explain_command_admin_allowed() {
 
 #[actix_web::test]
 async fn test_explain_command_user_denied() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let user = insert_user(&server, "regular_user", Role::User).await;
 
     // Create namespace and table for testing
@@ -63,7 +63,7 @@ async fn test_explain_command_user_denied() {
 
 #[actix_web::test]
 async fn test_set_command_admin_allowed() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let dba = insert_user(&server, "admin_set", Role::Dba).await;
 
     // SET should work for admin
@@ -80,7 +80,7 @@ async fn test_set_command_admin_allowed() {
 
 #[actix_web::test]
 async fn test_set_command_user_denied() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let user = insert_user(&server, "regular_set_user", Role::User).await;
 
     // SET should be denied for regular user
@@ -98,7 +98,7 @@ async fn test_set_command_user_denied() {
 
 #[actix_web::test]
 async fn test_show_all_admin_allowed() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let dba = insert_user(&server, "admin_show", Role::Dba).await;
 
     // SHOW ALL should work for admin
@@ -118,7 +118,7 @@ async fn test_show_all_admin_allowed() {
 
 #[actix_web::test]
 async fn test_show_all_user_denied() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let user = insert_user(&server, "regular_show_user", Role::User).await;
 
     // SHOW ALL should be denied for regular user
@@ -136,7 +136,7 @@ async fn test_show_all_user_denied() {
 
 #[actix_web::test]
 async fn test_show_columns_admin_allowed() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let dba = insert_user(&server, "admin_cols", Role::Dba).await;
 
     // Create namespace and table
@@ -158,7 +158,7 @@ async fn test_show_columns_admin_allowed() {
 
 #[actix_web::test]
 async fn test_show_columns_user_denied() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let user = insert_user(&server, "regular_cols_user", Role::User).await;
 
     // Create namespace and table
@@ -185,7 +185,7 @@ async fn test_show_columns_user_denied() {
 
 #[actix_web::test]
 async fn test_describe_datafusion_style_admin_allowed() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let dba = insert_user(&server, "admin_desc", Role::Dba).await;
 
     // Create namespace and table
@@ -207,7 +207,7 @@ async fn test_describe_datafusion_style_admin_allowed() {
 
 #[actix_web::test]
 async fn test_describe_datafusion_style_user_denied() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let user = insert_user(&server, "regular_desc_user", Role::User).await;
 
     // Create namespace and table
@@ -230,7 +230,7 @@ async fn test_describe_datafusion_style_user_denied() {
 
 #[actix_web::test]
 async fn test_system_role_datafusion_commands() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let system = insert_user(&server, "system_user", Role::System).await;
 
     // Create namespace and table
@@ -262,7 +262,7 @@ async fn test_system_role_datafusion_commands() {
 
 #[actix_web::test]
 async fn test_service_role_datafusion_commands_denied() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let service = insert_user(&server, "service_user", Role::Service).await;
 
     // Create namespace and table

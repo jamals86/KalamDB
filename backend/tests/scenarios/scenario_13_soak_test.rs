@@ -26,7 +26,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(180);
 /// Main soak test with mixed workload
 #[tokio::test]
 async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("soak_test");
 
     // =========================================================
@@ -332,7 +332,7 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
 /// Schema evolution during active operations
 #[tokio::test]
 async fn test_scenario_13_schema_evolution_under_load() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("schema_evolution");
 
     // Setup
@@ -420,7 +420,7 @@ async fn test_scenario_13_schema_evolution_under_load() -> anyhow::Result<()> {
 /// Concurrent readers and writers stress test
 #[tokio::test]
 async fn test_scenario_13_concurrent_read_write() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("concurrent_rw");
 
     // Setup

@@ -24,7 +24,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 /// Main burst test - high-rate writes with active subscription
 #[tokio::test]
 async fn test_scenario_08_burst_writes() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("burst");
 
     // =========================================================
@@ -184,7 +184,7 @@ async fn test_scenario_08_burst_writes() -> anyhow::Result<()> {
 /// Test subscription stability under sustained load
 #[tokio::test]
 async fn test_scenario_08_sustained_load() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("sustained");
 
     // Create namespace and table
@@ -275,7 +275,7 @@ async fn test_scenario_08_sustained_load() -> anyhow::Result<()> {
 /// Test subscription recovery after reconnect
 #[tokio::test]
 async fn test_scenario_08_subscription_reconnect() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("reconnect");
 
     // Create namespace and table

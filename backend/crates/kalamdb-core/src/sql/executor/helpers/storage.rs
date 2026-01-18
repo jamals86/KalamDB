@@ -193,19 +193,18 @@ pub fn ensure_filesystem_directory(path: &str) -> Result<(), KalamDbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{create_test_session, init_test_app_context};
+    use crate::test_helpers::{create_test_session_simple, test_app_context_simple};
     use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
     use std::sync::Arc;
 
     fn init_app_context() -> Arc<AppContext> {
-        init_test_app_context();
-        AppContext::get()
+        test_app_context_simple()
     }
 
     fn test_context() -> ExecutionContext {
-        ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session())
+        ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session_simple())
     }
 
     #[tokio::test]

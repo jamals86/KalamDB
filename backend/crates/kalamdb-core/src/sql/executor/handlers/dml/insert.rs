@@ -46,22 +46,6 @@ impl InsertHandler {
     }
 }
 
-#[cfg(test)]
-impl Default for InsertHandler {
-    fn default() -> Self {
-        Self::new(AppContext::get())
-    }
-}
-
-#[cfg(not(test))]
-impl Default for InsertHandler {
-    fn default() -> Self {
-        panic!(
-            "InsertHandler::default() is for tests only; use InsertHandler::new(Arc<AppContext>)"
-        )
-    }
-}
-
 #[async_trait]
 impl StatementHandler for InsertHandler {
     async fn execute(
@@ -485,18 +469,17 @@ impl InsertHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{create_test_session, init_test_app_context};
+    use crate::test_helpers::{create_test_session_simple, test_app_context_simple};
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
     use std::sync::Arc;
 
     fn init_app_context() -> Arc<AppContext> {
-        init_test_app_context();
-        AppContext::get()
+        test_app_context_simple()
     }
 
     fn test_context(role: Role) -> ExecutionContext {
-        ExecutionContext::new(UserId::from("test_user"), role, create_test_session())
+        ExecutionContext::new(UserId::from("test_user"), role, create_test_session_simple())
     }
 
     #[tokio::test]

@@ -18,6 +18,12 @@ export interface ClusterNode {
   snapshot_index: number | null;
   catchup_progress_pct: number | null;
   replication_lag: number | null;
+  // Node metadata (replicated via Raft membership)
+  hostname: string | null;
+  version: string | null;
+  memory_mb: number | null;
+  os: string | null;
+  arch: string | null;
 }
 
 export interface ClusterHealth {
@@ -46,7 +52,8 @@ export function useCluster() {
           cluster_id, node_id, role, status, rpc_addr, api_addr,
           is_self, is_leader, groups_leading, total_groups,
           current_term, last_applied_log, leader_last_log_index,
-          snapshot_index, catchup_progress_pct, replication_lag
+          snapshot_index, catchup_progress_pct, replication_lag,
+          hostname, version, memory_mb, os, arch
         FROM system.cluster
         ORDER BY is_leader DESC, node_id ASC
       `);
@@ -68,6 +75,12 @@ export function useCluster() {
         snapshot_index: row.snapshot_index !== null ? Number(row.snapshot_index) : null,
         catchup_progress_pct: row.catchup_progress_pct !== null ? Number(row.catchup_progress_pct) : null,
         replication_lag: row.replication_lag !== null ? Number(row.replication_lag) : null,
+        // Node metadata
+        hostname: row.hostname !== null ? String(row.hostname) : null,
+        version: row.version !== null ? String(row.version) : null,
+        memory_mb: row.memory_mb !== null ? Number(row.memory_mb) : null,
+        os: row.os !== null ? String(row.os) : null,
+        arch: row.arch !== null ? String(row.arch) : null,
       }));
       
       setNodes(nodeList);

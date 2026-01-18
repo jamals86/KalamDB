@@ -450,7 +450,7 @@ mod tests {
         mf
     }
 
-    fn make_test_app_context() -> Arc<AppContext> {
+    fn make_test_app_context_simple() -> Arc<AppContext> {
         let base = std::env::temp_dir();
         let unique = format!(
             "kalamdb_test_ctx_{}",
@@ -520,7 +520,7 @@ mod tests {
         let schema: SchemaRef =
             Arc::new(Schema::new(vec![] as Vec<datafusion::arrow::datatypes::Field>));
 
-        let app_context = make_test_app_context();
+        let app_context = make_test_app_context_simple();
         let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
 
         let storage = create_test_storage(&dir);
@@ -612,7 +612,7 @@ mod tests {
         );
         mf.add_segment(s1);
 
-        let app_context = make_test_app_context();
+        let app_context = make_test_app_context_simple();
         let storage = create_test_storage(&dir);
         let store = build_object_store(&storage).unwrap();
         let planner = ManifestAccessPlanner::new();

@@ -10,9 +10,8 @@
 //! - Session Management
 //! - Soft Deletes
 
-#[path = "../../common/testserver/mod.rs"]
-#[allow(dead_code)]
-pub(super) mod test_support;
+// Re-export test_support from crate root
+pub(super) use crate::test_support;
 
 // Auth Tests
 mod test_as_user_impersonation;
