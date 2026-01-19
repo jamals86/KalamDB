@@ -10,7 +10,6 @@ use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::NamespaceId;
-use kalamdb_commons::Role;
 use kalamdb_sql::ddl::CreateViewStatement;
 use std::sync::Arc;
 
@@ -112,11 +111,13 @@ impl TypedStatementHandler<CreateViewStatement> for CreateViewHandler {
         _statement: &CreateViewStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        match context.user_role {
-            Role::System | Role::Dba => Ok(()),
-            _ => Err(KalamDbError::Unauthorized(
+        use kalamdb_session::can_create_view;
+        if can_create_view(context.user_role()) {
+            Ok(())
+        } else {
+            Err(KalamDbError::Unauthorized(
                 "Only DBA or System roles can create views".to_string(),
-            )),
+            ))
         }
     }
 }
@@ -140,7 +141,7 @@ mod tests {
         .expect("parse view");
 
         let exec_ctx =
-            ExecutionContext::new(UserId::new("tester"), Role::Dba, app_ctx.base_session_context());
+            ExecutionContext::new(UserId::new("tester"), kalamdb_commons::Role::Dba, app_ctx.base_session_context());
 
         handler.execute(stmt, vec![], &exec_ctx).await.expect("create view executed");
 
@@ -166,7 +167,7 @@ mod tests {
 
         let exec_ctx = ExecutionContext::new(
             UserId::new("tester"),
-            Role::User,
+            kalamdb_commons::Role::User,
             app_ctx.base_session_context(),
         );
 

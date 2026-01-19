@@ -39,8 +39,8 @@ impl AlterTableHandler {
             namespace_id.as_str(),
             statement.table_name.as_str(),
             get_operation_summary(&statement.operation),
-            context.user_id.as_str(),
-            context.user_role
+            context.user_id().as_str(),
+            context.user_role()
         );
 
         // Block ALTER on system tables
@@ -79,7 +79,7 @@ impl AlterTableHandler {
         // RBAC check
         let is_owner = matches!(table_def.table_type, TableType::User);
 
-        if !crate::auth::rbac::can_alter_table(context.user_role, table_def.table_type, is_owner) {
+        if !crate::auth::rbac::can_alter_table(context.user_role(), table_def.table_type, is_owner) {
             log::error!(
                 "❌ ALTER TABLE {}.{}: Insufficient privileges",
                 namespace_id.as_str(),
@@ -209,7 +209,7 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         if let Ok(Some(def)) = registry.get_table_if_exists(self.app_context.as_ref(), &table_id) {
             let is_owner = matches!(def.table_type, TableType::User);
 
-            if !crate::auth::rbac::can_alter_table(context.user_role, def.table_type, is_owner) {
+            if !crate::auth::rbac::can_alter_table(context.user_role(), def.table_type, is_owner) {
                 return Err(KalamDbError::Unauthorized(
                     "Insufficient privileges to alter table".to_string(),
                 ));

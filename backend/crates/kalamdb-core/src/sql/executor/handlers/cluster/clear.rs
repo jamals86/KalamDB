@@ -35,7 +35,7 @@ impl StatementHandler for ClusterClearHandler {
             )));
         }
 
-        log::info!("CLUSTER CLEAR initiated by user: {}", ctx.user_id);
+        log::info!("CLUSTER CLEAR initiated by user: {}", ctx.user_id());
 
         // Get snapshot directory from config
         let config = self.app_context.config();

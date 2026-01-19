@@ -152,9 +152,19 @@ request_timeout = 30
 # Keep-alive timeout in seconds (default: 75s)
 keepalive_timeout = 75
 
-# Maximum concurrent connections (default: 25000)
+# Maximum concurrent connections per worker (default: 25000)
 # Includes both REST API and WebSocket connections
 max_connections = 25000
+
+# TCP listen backlog - pending connections queue size (default: 2048)
+# Controls how many connections can wait in the kernel queue before being accepted
+# Increase for burst traffic or high-concurrency scenarios
+# Recommended values:
+#   - Development/Testing: 2048-4096 (handles burst test loads)
+#   - Production: 4096-8192 (handles traffic spikes)
+#   - High traffic: 8192+ (enterprise scale)
+# Industry standards: Nginx (511), Apache (511), Caddy (1024), Actix (1024)
+backlog = 4096
 
 [rate_limit]
 # Maximum SQL queries per second per user (default: 100)

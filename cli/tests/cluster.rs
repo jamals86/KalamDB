@@ -89,29 +89,50 @@ mod cluster_common {
     }
 
     /// Execute a query on a specific cluster node and return the count
+    /// Note: With leader-only reads (Spec 021), this will automatically use the leader node for client reads
     pub fn query_count_on_url(base_url: &str, sql: &str) -> i64 {
+        // Try the specified URL first, but if we get NOT_LEADER error, retry on leader
+        let result = query_count_on_url_internal(base_url, sql);
+        
+        // If we got a NOT_LEADER error, retry on the leader (extracted from error or cached)
+        if let Err(err_msg) = result {
+            if is_leader_error(&err_msg) {
+                // is_leader_error() will cache any leader URL found in the error message
+                if let Some(leader) = leader_url() {
+                    if leader != base_url {
+                        return query_count_on_url_internal(&leader, sql).unwrap_or_else(|e| {
+                            panic!("Cluster count query failed on leader {}: {}", leader, e);
+                        });
+                    }
+                }
+            }
+            panic!("Cluster count query failed: {}", err_msg);
+        }
+        
+        result.unwrap()
+    }
+
+    fn query_count_on_url_internal(base_url: &str, sql: &str) -> Result<i64, String> {
         let client = create_cluster_client(base_url);
         let sql = sql.to_string();
 
-        cluster_runtime()
+        let response = cluster_runtime()
             .block_on(async move { client.execute_query(&sql, None, None).await })
-            .map(|response| {
-                if !response.success() {
-                    let err_msg = response_error_message(&response);
-                    panic!("Cluster count query failed: {}", err_msg);
-                }
-                let result = response.results.first().expect("Missing query result for count");
-                let rows =
-                    result.rows.as_ref().and_then(|rows| rows.first()).expect("Missing count row");
-                let value = rows.first().expect("Missing count column");
-                let unwrapped = extract_typed_value(value);
-                match unwrapped {
-                    serde_json::Value::String(s) => s.parse::<i64>().expect("Invalid count string"),
-                    serde_json::Value::Number(n) => n.as_i64().expect("Invalid count number"),
-                    other => panic!("Unexpected count value: {}", other),
-                }
-            })
-            .expect("Cluster count query failed")
+            .map_err(|e| e.to_string())?;
+            
+        if !response.success() {
+            return Err(response_error_message(&response));
+        }
+        
+        let result = response.results.first().ok_or_else(|| "Missing query result for count".to_string())?;
+        let rows = result.rows.as_ref().and_then(|rows| rows.first()).ok_or_else(|| "Missing count row".to_string())?;
+        let value = rows.first().ok_or_else(|| "Missing count column".to_string())?;
+        let unwrapped = extract_typed_value(value);
+        match unwrapped {
+            serde_json::Value::String(s) => s.parse::<i64>().map_err(|e| format!("Invalid count string: {}", e)),
+            serde_json::Value::Number(n) => n.as_i64().ok_or_else(|| "Invalid count number".to_string()),
+            other => Err(format!("Unexpected count value: {}", other)),
+        }
     }
 
     fn response_error_message(response: &QueryResponse) -> String {

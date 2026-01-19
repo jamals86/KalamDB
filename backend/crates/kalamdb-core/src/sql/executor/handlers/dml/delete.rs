@@ -53,7 +53,7 @@ impl StatementHandler for DeleteHandler {
             self.simple_parse_delete(sql, &default_namespace)?;
 
         // T153: Use effective user_id for impersonation support (Phase 7)
-        let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
+        let effective_user_id = statement.as_user_id().unwrap_or(context.user_id());
 
         // Execute native delete
         let schema_registry = self.app_context.schema_registry();
@@ -79,6 +79,15 @@ impl StatementHandler for DeleteHandler {
 
         match def.table_type {
             TableType::User => {
+                // Check write permissions for USER tables
+                use kalamdb_session::check_user_table_write_access_level;
+                check_user_table_write_access_level(
+                    context.user_role(),
+                    &namespace,
+                    &table_name,
+                )
+                .map_err(|e| KalamDbError::Unauthorized(e.to_string()))?;
+
                 // Get provider from unified cache and downcast to UserTableProvider
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation("User table provider not found".into())
@@ -126,9 +135,9 @@ impl StatementHandler for DeleteHandler {
             },
             TableType::Shared => {
                 // Check write permissions for Shared tables
-                use kalamdb_auth::authorization::rbac::can_write_shared_table;
                 use kalamdb_commons::schemas::TableOptions;
                 use kalamdb_commons::TableAccess;
+                use kalamdb_session::check_shared_table_write_access_level;
 
                 let access_level = if let TableOptions::Shared(opts) = &def.table_options {
                     opts.access_level.unwrap_or(TableAccess::Private)
@@ -136,14 +145,13 @@ impl StatementHandler for DeleteHandler {
                     TableAccess::Private
                 };
 
-                if !can_write_shared_table(access_level, false, context.user_role) {
-                    return Err(KalamDbError::Unauthorized(format!(
-                        "Insufficient privileges to write to shared table '{}.{}' (Access Level: {:?})",
-                        namespace.as_str(),
-                        table_name.as_str(),
-                        access_level
-                    )));
-                }
+                check_shared_table_write_access_level(
+                    context.user_role(),
+                    access_level,
+                    &namespace,
+                    &table_name,
+                )
+                .map_err(|e| KalamDbError::Unauthorized(e.to_string()))?;
 
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation("Shared table provider not found".into())
@@ -191,6 +199,15 @@ impl StatementHandler for DeleteHandler {
                 }
             },
             TableType::Stream => {
+                // STREAM tables share the same write permissions as USER tables
+                use kalamdb_session::check_stream_table_write_access_level;
+                check_stream_table_write_access_level(
+                    context.user_role(),
+                    &namespace,
+                    &table_name,
+                )
+                .map_err(|e| KalamDbError::Unauthorized(e.to_string()))?;
+
                 // STREAM tables support DELETE for hard deletion
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
                     KalamDbError::InvalidOperation("Stream table provider not found".into())
@@ -261,17 +278,21 @@ impl StatementHandler for DeleteHandler {
 
         // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
         if statement.as_user_id().is_some() {
-            use kalamdb_commons::Role;
-            if !matches!(context.user_role, Role::Service | Role::Dba | Role::System) {
+            use kalamdb_session::can_impersonate_user;
+            if !can_impersonate_user(context.user_role()) {
                 return Err(KalamDbError::Unauthorized(
                     format!("Role {:?} is not authorized to use AS USER. Only Service, Dba, and System roles are permitted.", context.user_role())
                 ));
             }
         }
 
-        use kalamdb_commons::Role;
-        match context.user_role {
-            Role::System | Role::Dba | Role::Service | Role::User => Ok(()),
+        use kalamdb_session::can_execute_dml;
+        if can_execute_dml(context.user_role()) {
+            Ok(())
+        } else {
+            Err(KalamDbError::Unauthorized(
+                format!("Role {:?} is not authorized to execute DELETE.", context.user_role())
+            ))
         }
     }
 }

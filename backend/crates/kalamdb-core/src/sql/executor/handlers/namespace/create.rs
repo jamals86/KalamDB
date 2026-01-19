@@ -91,7 +91,7 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         // In cluster mode, route through executor for Raft replication
         // In standalone mode, the executor calls the provider directly
         let executor = self.app_context.executor();
-        let created_by = Some(UserId::new(context.user_id.as_str()));
+        let created_by = Some(UserId::new(context.user_id().as_str()));
         let cmd = kalamdb_raft::MetaCommand::CreateNamespace {
             namespace_id: namespace_id.clone(),
             created_by,

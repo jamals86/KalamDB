@@ -36,3 +36,6 @@ pub use datafusion_session::DataFusionSessionFactory; // KalamSessionState remov
 pub use executor::handlers::ExecutionResult;
 pub use executor::SqlExecutor;
 pub use functions::CurrentUserFunction;
+
+// Re-export permissions from kalamdb-session for backward compatibility
+pub use kalamdb_session::{PermissionChecker, SessionError as TableAccessError};

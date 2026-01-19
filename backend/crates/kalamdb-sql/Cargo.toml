@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
+kalamdb-session = { path = "../kalamdb-session" }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-store = { path = "../kalamdb-store" }
 

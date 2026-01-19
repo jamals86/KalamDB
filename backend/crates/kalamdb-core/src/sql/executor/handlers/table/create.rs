@@ -6,7 +6,6 @@ use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::Role;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
 
@@ -24,9 +23,11 @@ impl CreateTableHandler {
         statement: &CreateTableStatement,
         context: &ExecutionContext,
     ) -> TableType {
+        use kalamdb_session::can_downgrade_shared_to_user;
+
         if statement.table_type == TableType::Shared
-            && matches!(context.user_role, Role::User | Role::Service)
-            && statement.namespace_id.as_str() == context.user_id.as_str()
+            && can_downgrade_shared_to_user(context.user_role())
+            && statement.namespace_id.as_str() == context.user_id().as_str()
         {
             TableType::User
         } else {
@@ -53,8 +54,8 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
                 "Inferring USER table type for {}.{} issued by {} (role {:?})",
                 statement.namespace_id.as_str(),
                 statement.table_name.as_str(),
-                context.user_id.as_str(),
-                context.user_role
+                context.user_id().as_str(),
+                context.user_role()
             );
             statement.table_type = effective_type;
         }
@@ -69,8 +70,8 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         let table_def = table_creation::build_table_definition(
             self.app_context.clone(),
             &statement,
-            &context.user_id,
-            context.user_role,
+            context.user_id(),
+            context.user_role(),
         )?;
 
         // Delegate to unified applier - pass raw parameters
@@ -115,7 +116,7 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
 
         let effective_type = Self::resolve_table_type(statement, context);
 
-        if !can_create_table(context.user_role, effective_type) {
+        if !can_create_table(context.user_role(), effective_type) {
             return Err(KalamDbError::Unauthorized(format!(
                 "Insufficient privileges to create {} tables",
                 effective_type

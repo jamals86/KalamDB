@@ -2,6 +2,7 @@ use crate::classifier::types::{SqlStatement, SqlStatementKind, StatementClassifi
 use crate::ddl::*;
 use kalamdb_commons::models::{NamespaceId, UserId};
 use kalamdb_commons::Role;
+use kalamdb_session::is_admin_role;
 
 impl SqlStatement {
     /// Extract AS USER 'user_id' clause from SQL if present
@@ -65,19 +66,6 @@ impl SqlStatement {
         F: FnOnce() -> Option<SqlStatementKind>,
     {
         Self::new(sql.to_string(), parser().unwrap_or(SqlStatementKind::Unknown))
-    }
-
-    /// Classify and parse SQL statement with default namespace
-    ///
-    /// This is a convenience wrapper around `classify_and_parse` that uses
-    /// a default namespace for testing and simple use cases.
-    pub fn classify(sql: &str) -> Self {
-        Self::classify_and_parse(
-            sql,
-            &NamespaceId::new("default"),
-            Role::System, // Tests run as System role
-        )
-        .unwrap_or_else(|_| Self::new(sql.to_string(), SqlStatementKind::Unknown))
     }
 
     /// Classify and parse SQL statement in one pass with authorization check
@@ -175,7 +163,7 @@ impl SqlStatement {
         }
 
         // Admin users (DBA, System) can do anything - skip authorization checks
-        let is_admin = matches!(role, Role::Dba | Role::System);
+        let is_admin = is_admin_role(role);
 
         // Hot path: Check SELECT/INSERT/DELETE first (99% of queries)
         // DML statements - create typed markers for handler pattern

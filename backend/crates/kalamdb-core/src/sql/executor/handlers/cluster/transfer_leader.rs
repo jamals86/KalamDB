@@ -38,7 +38,7 @@ impl StatementHandler for ClusterTransferLeaderHandler {
 
         log::info!(
             "CLUSTER TRANSFER-LEADER initiated by user: {} (target={})",
-            ctx.user_id,
+            ctx.user_id(),
             node_id
         );
 

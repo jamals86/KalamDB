@@ -78,7 +78,7 @@ pub fn default_max_connections() -> usize {
 }
 
 pub fn default_backlog() -> u32 {
-    2048 // Pending connection queue size
+    4096 // Pending connection queue size (increased from 2048 for better burst handling)
 }
 
 pub fn default_worker_max_blocking_threads() -> usize {

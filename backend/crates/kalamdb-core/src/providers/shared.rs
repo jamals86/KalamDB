@@ -32,6 +32,8 @@ use kalamdb_commons::ids::SharedTableRowId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::TableId;
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_session::check_shared_table_access;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{SharedTableIndexedStore, SharedTablePkIndex, SharedTableRow};
 use std::any::Any;
@@ -63,6 +65,9 @@ pub struct SharedTableProvider {
 
     /// Cached Arrow schema (prevents panics if table is dropped while provider is in use)
     schema: SchemaRef,
+
+    /// Cached table definition for shared table access control
+    table_def: Arc<TableDefinition>,
 }
 
 impl SharedTableProvider {
@@ -86,6 +91,15 @@ impl SharedTableProvider {
             .get_arrow_schema(core.app_context.as_ref(), core.table_id())
             .expect("Failed to get Arrow schema from registry during provider creation");
 
+        let table_def = core
+            .app_context
+            .schema_registry()
+            .get_table_if_exists(core.app_context.as_ref(), core.table_id())
+            .expect("Failed to load table definition from registry during provider creation")
+            .unwrap_or_else(|| {
+                panic!("Table definition not found for {}", core.table_id())
+            });
+
         // Create PK index for efficient lookups
         let pk_index = SharedTablePkIndex::new(core.table_id(), &primary_key_field_name);
 
@@ -95,6 +109,7 @@ impl SharedTableProvider {
             pk_index,
             primary_key_field_name,
             schema,
+            table_def,
         }
     }
 
@@ -730,6 +745,9 @@ impl TableProvider for SharedTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        // SECURITY: Enforce shared table access rules (access_level + role)
+        check_shared_table_access(state, &self.table_def).map_err(DataFusionError::from)?;
+
         // Extract user context including read_context for leader check
         // SharedTableProvider ignores user_id for data access (no RLS) but uses read_context
         let (_user_id, _role, read_context) = extract_full_user_context(state)

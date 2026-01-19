@@ -41,7 +41,7 @@ impl StatementHandler for ClusterJoinHandler {
 
         log::warn!(
             "CLUSTER JOIN attempted by user: {} to address: {} - NOT IMPLEMENTED",
-            ctx.user_id,
+            ctx.user_id(),
             addr
         );
 

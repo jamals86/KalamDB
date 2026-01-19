@@ -344,12 +344,21 @@ pub fn leader_url() -> Option<String> {
         return Some(ctx.server_url.clone());
     }
 
+    // Check cached leader first
+    if let Some(cached) = cached_leader_url() {
+        eprintln!("DEBUG leader_url: Returning cached URL: {}", cached);
+        return Some(cached);
+    }
+
     if let Some(leader) = detect_leader_url(&ctx.cluster_urls_raw, &ctx.username, &ctx.password) {
+        eprintln!("DEBUG leader_url: Detected leader URL: {}", leader);
         cache_leader_url(&leader);
         return Some(leader);
     }
 
-    cached_leader_url().or_else(|| ctx.cluster_urls.first().cloned())
+    let fallback = ctx.cluster_urls.first().cloned();
+    eprintln!("DEBUG leader_url: Using fallback URL: {:?}", fallback);
+    fallback
 }
 
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -583,6 +592,7 @@ pub fn parse_cli_json_output(
 pub fn is_leader_error(message: &str) -> bool {
     let lower = message.to_lowercase();
     let is_leader = lower.contains("not leader")
+        || lower.contains("not_leader")  // Handles NOT_LEADER error code
         || lower.contains("unknown leader")
         || lower.contains("no cluster leader")
         || lower.contains("no raft leader")
@@ -597,7 +607,10 @@ pub fn is_leader_error(message: &str) -> bool {
 
     if is_leader {
         if let Some(url) = extract_leader_url(message) {
+            eprintln!("DEBUG is_leader_error: Extracted and caching leader URL: {}", url);
             cache_leader_url(&url);
+        } else {
+            eprintln!("DEBUG is_leader_error: No URL extracted from message");
         }
     }
 

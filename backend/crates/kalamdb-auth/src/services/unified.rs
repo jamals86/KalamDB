@@ -351,11 +351,16 @@ async fn authenticate_username_password(
             }
         }
     } else {
-        // Regular users must have a password
+        // Regular users must have a password UNLESS empty password and localhost
+        // This handles edge cases where regular users might have empty passwords in test/dev environments
         if user.password_hash.is_empty() {
-            return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
-        }
-        if !password.is_empty()
+            if is_localhost && password.is_empty() {
+                // Allow localhost users with empty password in development/test mode
+                auth_success = true;
+            } else {
+                return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
+            }
+        } else if !password.is_empty()
             && password::verify_password(password, &user.password_hash).await.unwrap_or(false)
         {
             auth_success = true;

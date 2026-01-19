@@ -1,0 +1,38 @@
+[package]
+name = "kalamdb-session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Session context, permissions, and secured table provider abstraction for KalamDB"
+keywords = ["kalamdb", "database", "session", "permissions", "security"]
+categories = ["database"]
+
+[dependencies]
+# Internal crates
+kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
+
+# Apache Arrow ecosystem
+arrow = { workspace = true }
+arrow-schema = { workspace = true }
+datafusion = { workspace = true }
+datafusion-common = { workspace = true }
+
+# Async
+async-trait = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+log = { workspace = true }
+
+[lib]
+name = "kalamdb_session"
+path = "src/lib.rs"
+doctest = false
+
+[dev-dependencies]
+tokio = { workspace = true }

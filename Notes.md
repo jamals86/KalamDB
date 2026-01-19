@@ -1134,3 +1134,34 @@ i guess we need to add a new column to the jobs table to track each node the sta
 77) UpdateLiveQueryStats is never called or emit
 
 78) no need for Running startup compaction for, we should add a command to do storage compact all
+
+79) backend/crates/kalamdb-core/src/sql/executor/mod.rs move the permission/security check into a folder backend/crates/kalamdb-core/src/sql/permissions/mod.rs to organize the code better, scan all the places where we check permissions and move them into here so we can keep an eye on them all the time
+
+80) Check that the permissions for system tables is also checked inside the provider as well, so that in case anybody tried to add query inside another query he can't bypass the security as well, make sure we always call the same quard for all permissions check make it centralized so that we can use the same code everywhere maybe adding a parent class between our code and impl TableProvider so that we can always check permissions there before going to the actual provider
+
+
+81) why we have pub struct PlanCache and also: pub struct QueryCache we can use only the plancahe for both
+
+
+82) instead of adding security and permission check for each system.table we can add permission for system namespace instead
+
+83) maybe we should go with catalog for system and catalog for public/user namespaces instead of having system tables in the same catalog as user tables
+
+
+84) backend/crates/kalamdb-sql/src/classifier/engine/core.rs i think the parsing cna be done better and use the already sqlparser or datafusion things
+
+85) pub struct ErrorDetail.code: String,
+should be an enum so we can compare it when not leader
+err_msg.contains("NOT_LEADER")
+
+87) this should be a type-safe instead of json:
+                let sub_data = serde_json::json!({
+                    "status": "active",
+                    "ws_url": channel,
+                    "subscription": {
+                        "id": subscription_id,
+                        "sql": select_query
+                    },
+                    "message": "WebSocket subscription created. Connect to ws_url to receive updates."
+                });
+                Ok(QueryResult::subscription(sub_data))

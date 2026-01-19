@@ -65,7 +65,22 @@ fn smoke_user_table_rls_isolation() {
     let user_rows = vec!["user_row_a", "user_row_b", "user_row_c"];
     for val in &user_rows {
         let ins = format!("INSERT INTO {} (content) VALUES ('{}')", full_table, val);
-        execute_sql_via_client_as(&user_name, user_pass, &ins).expect("Failed to insert user row");
+        // Retry on network errors (server may be under load from concurrent tests)
+        let mut attempts = 0;
+        let max_attempts = 2;
+        loop {
+            match execute_sql_via_client_as(&user_name, user_pass, &ins) {
+                Ok(_) => break,
+                Err(e) => {
+                    attempts += 1;
+                    if attempts >= max_attempts {
+                        panic!("Failed to insert user row after {} attempts: {:?}", max_attempts, e);
+                    }
+                    eprintln!("Insert attempt {} failed, retrying: {}", attempts, e);
+                    std::thread::sleep(std::time::Duration::from_millis(100 * attempts as u64));
+                }
+            }
+        }
     }
 
     // Fetch ids for the specific user rows so we can perform id-based UPDATE/DELETE

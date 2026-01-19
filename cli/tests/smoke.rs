@@ -111,3 +111,7 @@ mod smoke_test_system_and_users;
 mod smoke_test_system_tables_extended;
 #[path = "smoke/system/smoke_test_cleanup_job.rs"]
 mod smoke_test_cleanup_job;
+
+// Security tests
+#[path = "smoke/security/smoke_test_security_access.rs"]
+mod smoke_test_security_access;

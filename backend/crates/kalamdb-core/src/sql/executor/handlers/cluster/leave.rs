@@ -36,7 +36,7 @@ impl StatementHandler for ClusterLeaveHandler {
             )));
         }
 
-        log::warn!("CLUSTER LEAVE attempted by user: {} - NOT IMPLEMENTED", ctx.user_id);
+        log::warn!("CLUSTER LEAVE attempted by user: {} - NOT IMPLEMENTED", ctx.user_id());
 
         // Return warning message - not yet implemented
         Ok(ExecutionResult::Success {

@@ -6,6 +6,7 @@
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSession;
 use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
+use kalamdb_commons::models::{NamespaceId, Role};
 use kalamdb_commons::schemas::SchemaField;
 use kalamdb_core::providers::arrow_json_conversion::{
     json_value_to_scalar_strict, record_batch_to_json_arrays,
@@ -18,7 +19,7 @@ use reqwest::Client;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::models::{QueryRequest, QueryResult, SqlResponse};
+use crate::models::{ErrorCode, QueryRequest, QueryResult, SqlResponse};
 use crate::limiter::RateLimiter;
 
 /// POST /v1/api/sql - Execute SQL statement(s)
@@ -75,14 +76,18 @@ pub async fn execute_sql_v1(
                 session.user.user_id.as_str()
             );
             return HttpResponse::TooManyRequests().json(SqlResponse::error(
-                "RATE_LIMIT_EXCEEDED",
+                ErrorCode::RateLimitExceeded,
                 "Too many queries per second. Please slow down.",
                 took,
             ));
         }
     }
 
-    if let Some(response) = forward_sql_if_follower(&http_req, &req, app_context.get_ref()).await {
+    let default_namespace = NamespaceId::new(req.namespace_id.as_deref().unwrap_or("default"));
+
+    if let Some(response) =
+        forward_sql_if_follower(&http_req, &req, app_context.get_ref(), &default_namespace).await
+    {
         return response;
     }
 
@@ -103,7 +108,7 @@ pub async fn execute_sql_v1(
                     Err(err) => {
                         let took = start_time.elapsed().as_secs_f64() * 1000.0;
                         return HttpResponse::BadRequest().json(SqlResponse::error(
-                            "INVALID_PARAMETER",
+                            ErrorCode::InvalidParameter,
                             &format!("Parameter ${} invalid: {}", idx + 1, err),
                             took,
                         ));
@@ -121,7 +126,7 @@ pub async fn execute_sql_v1(
         Err(err) => {
             let took = start_time.elapsed().as_secs_f64() * 1000.0;
             return HttpResponse::BadRequest().json(SqlResponse::error(
-                "BATCH_PARSE_ERROR",
+                ErrorCode::BatchParseError,
                 &format!("Failed to parse SQL batch: {}", err),
                 took,
             ));
@@ -131,7 +136,7 @@ pub async fn execute_sql_v1(
     if statements.is_empty() {
         let took = start_time.elapsed().as_secs_f64() * 1000.0;
         return HttpResponse::BadRequest().json(SqlResponse::error(
-            "EMPTY_SQL",
+            ErrorCode::EmptySql,
             "No SQL statements provided",
             took,
         ));
@@ -141,7 +146,7 @@ pub async fn execute_sql_v1(
     if !params.is_empty() && statements.len() > 1 {
         let took = start_time.elapsed().as_secs_f64() * 1000.0;
         return HttpResponse::BadRequest().json(SqlResponse::error(
-            "PARAMS_WITH_BATCH",
+            ErrorCode::ParamsWithBatch,
             "Parameters not supported with multi-statement batches",
             took,
         ));
@@ -153,8 +158,8 @@ pub async fn execute_sql_v1(
     let mut total_updated = 0usize;
     let mut total_deleted = 0usize;
 
-    // Get namespace_id from request (client-provided or None for default)
-    let namespace_id = req.namespace_id.clone();
+    // Get namespace_id from request (client-provided or default)
+    let namespace_id = Some(default_namespace.as_str().to_string());
 
     for (idx, sql) in statements.iter().enumerate() {
         let stmt_start = Instant::now();
@@ -219,9 +224,22 @@ pub async fn execute_sql_v1(
                 results.push(result);
             },
             Err(err) => {
+                // Fast path: Check if NOT_LEADER error and auto-forward to leader
+                if let Some(kalamdb_err) = err.downcast_ref::<kalamdb_core::error::KalamDbError>() {
+                    if let Some(response) = handle_not_leader_error(
+                        kalamdb_err,
+                        &http_req,
+                        &req,
+                        app_context.get_ref(),
+                        start_time,
+                    ).await {
+                        return response;
+                    }
+                }
+                
                 let took = start_time.elapsed().as_secs_f64() * 1000.0;
                 return HttpResponse::BadRequest().json(SqlResponse::error_with_details(
-                    "SQL_EXECUTION_ERROR",
+                    ErrorCode::SqlExecutionError,
                     &format!("Statement {} failed: {}", idx + 1, err),
                     sql,
                     took,
@@ -278,11 +296,9 @@ async fn forward_sql_if_follower(
     http_req: &HttpRequest,
     req: &QueryRequest,
     app_context: &Arc<kalamdb_core::app_context::AppContext>,
+    default_namespace: &NamespaceId,
 ) -> Option<HttpResponse> {
     let executor = app_context.executor();
-    if !executor.is_cluster_mode() {
-        return None;
-    }
 
     if executor.is_leader(GroupId::Meta).await {
         return None;
@@ -308,7 +324,7 @@ async fn forward_sql_if_follower(
             return match leader_api_addr {
                 Some(api_addr) => forward_to_leader(http_req, req, &api_addr).await,
                 None => Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
-                    "CLUSTER_LEADER_UNKNOWN",
+                    ErrorCode::LeaderNotAvailable,
                     "No cluster leader available",
                     0.0,
                 ))),
@@ -317,9 +333,19 @@ async fn forward_sql_if_follower(
     };
 
     // Classify each statement to check if any are writes
-    // SqlStatement::classify uses default namespace and System role for classification
+    // Classification uses a default namespace passed from the handler.
     let has_write = statements.iter().any(|sql| {
-        let stmt = kalamdb_sql::statement_classifier::SqlStatement::classify(sql);
+        let stmt = kalamdb_sql::statement_classifier::SqlStatement::classify_and_parse(
+            sql,
+            default_namespace,
+            Role::System,
+        )
+        .unwrap_or_else(|_| {
+            kalamdb_sql::statement_classifier::SqlStatement::new(
+                sql.to_string(),
+                kalamdb_sql::statement_classifier::SqlStatementKind::Unknown,
+            )
+        });
         stmt.is_write_operation()
     });
 
@@ -346,7 +372,7 @@ async fn forward_sql_if_follower(
         }
 
         return Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
-            "CLUSTER_LEADER_UNKNOWN",
+            ErrorCode::ClusterUnavailable,
             "No cluster leader available",
             0.0,
         )));
@@ -386,7 +412,7 @@ async fn forward_to_leader(
         Err(err) => {
             log::warn!("Failed to forward SQL request to leader {}: {}", leader_url, err);
             return Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
-                "CLUSTER_FORWARD_FAILED",
+                ErrorCode::ForwardFailed,
                 "Failed to forward request to cluster leader",
                 0.0,
             )));
@@ -400,6 +426,76 @@ async fn forward_to_leader(
     Some(HttpResponse::build(status).content_type("application/json").body(body))
 }
 
+/// Extract leader address from NOT_LEADER error message
+/// Example: "NOT_LEADER: This node is not the leader for user root. Leader: Some("http://127.0.0.1:8083")"
+/// Or: "NOT_LEADER: This node is not the leader for shared tables"
+#[inline]
+fn extract_leader_addr_from_error(error_msg: &str) -> Option<String> {
+    // Fast path: Early exit if NOT_LEADER not present
+    if !error_msg.contains("NOT_LEADER") { //TODO: optimize with single contains check ErrorCode::NotLeader
+        return None;
+    }
+    
+    // Look for "Leader: Some("url")" pattern (from Debug formatting of Option<String>)
+    if let Some(start) = error_msg.find("Leader: Some(") {
+        let after_prefix = &error_msg[start + 13..]; // Skip "Leader: Some("
+        // Find the closing ')'
+        if let Some(paren_end) = after_prefix.find(')') {
+            let content = &after_prefix[..paren_end];
+            // Remove surrounding quotes if present
+            let url = content.trim().trim_matches('"');
+            if !url.is_empty() && url.starts_with("http") {
+                return Some(url.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Handle NOT_LEADER error by automatically forwarding to leader
+/// Returns Some(HttpResponse) if forwarding occurred, None otherwise
+async fn handle_not_leader_error(
+    err: &kalamdb_core::error::KalamDbError,
+    http_req: &HttpRequest,
+    req: &QueryRequest,
+    app_context: &kalamdb_core::app_context::AppContext,
+    start_time: Instant,
+) -> Option<HttpResponse> {
+    // Fast path: Only process in cluster mode
+    if !app_context.is_cluster_mode() {
+        return None;
+    }
+    
+    let err_msg = err.to_string();
+    
+    // Fast path: Check if NOT_LEADER (single contains check)
+    if !err_msg.contains("NOT_LEADER") {
+        return None;
+    }
+    
+    // Extract leader address from error message
+    let leader_addr = extract_leader_addr_from_error(&err_msg)?;
+    
+    log::info!(
+        "Auto-forwarding to shard leader {} due to NOT_LEADER error",
+        leader_addr
+    );
+    
+    // Forward entire request to the shard leader
+    match forward_to_leader(http_req, req, &leader_addr).await {
+        Some(response) => Some(response),
+        None => {
+            // Forward failed, return error
+            let took = start_time.elapsed().as_secs_f64() * 1000.0;
+            Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
+                ErrorCode::ForwardFailed,
+                &format!("Failed to forward request to leader: {}", err),
+                took,
+            )))
+        }
+    }
+}
+
 /// Execute a single SQL statement
 async fn execute_single_statement(
     sql: &str,
@@ -411,8 +507,6 @@ async fn execute_single_statement(
     params: Vec<ScalarValue>,
     namespace_id: Option<String>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    use kalamdb_commons::NamespaceId;
-
     let base_session = app_context.base_session_context();
     let mut exec_ctx = ExecutionContext::new(
         session.user.user_id.clone(),
@@ -477,7 +571,7 @@ async fn execute_single_statement(
                 Ok(QueryResult::with_message(format!("Job {} killed: {}", job_id, status)))
             },
         },
-        Err(e) => Err(Box::new(e)),
+        Err(e) => Err(Box::new(e) as Box<dyn std::error::Error>),
     }
 }
 

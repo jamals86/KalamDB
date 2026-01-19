@@ -36,7 +36,7 @@ impl StatementHandler for ClusterPurgeHandler {
             )));
         };
 
-        log::info!("CLUSTER PURGE initiated by user: {}", ctx.user_id);
+        log::info!("CLUSTER PURGE initiated by user: {}", ctx.user_id());
 
         let executor = self.app_context.executor();
         let Some(raft_executor) = executor.as_any().downcast_ref::<RaftExecutor>() else {

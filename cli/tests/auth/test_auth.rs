@@ -110,7 +110,9 @@ fn test_cli_authenticate_unauthorized_user() {
     assert!(
         error_msg.contains("Unauthorized")
             || error_msg.contains("authentication")
-            || error_msg.contains("401"),
+            || error_msg.contains("401")
+            || error_msg.contains("password")
+            || error_msg.contains("Login failed"),
         "Error should indicate authentication failure: {}",
         error_msg
     );

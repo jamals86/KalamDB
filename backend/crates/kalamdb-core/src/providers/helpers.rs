@@ -1,11 +1,11 @@
 use crate::error::KalamDbError;
-use crate::sql::executor::models::SessionUserContext;
 use datafusion::catalog::Session;
 use datafusion::logical_expr::{Expr, Operator};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ReadContext, Role, UserId};
+use kalamdb_session::{extract_full_user_context as extract_full_user_context_session, extract_user_context as extract_user_context_session};
 use once_cell::sync::Lazy;
 
 static SYSTEM_USER_ID: Lazy<UserId> = Lazy::new(|| UserId::from("_system"));
@@ -124,21 +124,12 @@ pub fn resolve_user_scope(scope: Option<&UserId>) -> &UserId {
 
 /// Extract (user_id, role) from DataFusion SessionState extensions.
 pub fn extract_user_context(state: &dyn Session) -> Result<(&UserId, Role), KalamDbError> {
-    let session_state = state
-        .as_any()
-        .downcast_ref::<datafusion::execution::context::SessionState>()
-        .ok_or_else(|| KalamDbError::InvalidOperation("Expected SessionState".to_string()))?;
-
-    let user_ctx = session_state
-        .config()
-        .options()
-        .extensions
-        .get::<SessionUserContext>()
-        .ok_or_else(|| {
-            KalamDbError::InvalidOperation("SessionUserContext not found in extensions".to_string())
-        })?;
-
-    Ok((&user_ctx.user_id, user_ctx.role))
+    extract_user_context_session(state).map_err(|e| {
+        KalamDbError::InvalidOperation(format!(
+            "SessionUserContext not found in extensions: {}",
+            e
+        ))
+    })
 }
 
 /// Extract full session context (user_id, role, read_context) from DataFusion SessionState extensions.
@@ -147,19 +138,10 @@ pub fn extract_user_context(state: &dyn Session) -> Result<(&UserId, Role), Kala
 pub fn extract_full_user_context(
     state: &dyn Session,
 ) -> Result<(&UserId, Role, ReadContext), KalamDbError> {
-    let session_state = state
-        .as_any()
-        .downcast_ref::<datafusion::execution::context::SessionState>()
-        .ok_or_else(|| KalamDbError::InvalidOperation("Expected SessionState".to_string()))?;
-
-    let user_ctx = session_state
-        .config()
-        .options()
-        .extensions
-        .get::<SessionUserContext>()
-        .ok_or_else(|| {
-            KalamDbError::InvalidOperation("SessionUserContext not found in extensions".to_string())
-        })?;
-
-    Ok((&user_ctx.user_id, user_ctx.role, user_ctx.read_context))
+    extract_full_user_context_session(state).map_err(|e| {
+        KalamDbError::InvalidOperation(format!(
+            "SessionUserContext not found in extensions: {}",
+            e
+        ))
+    })
 }
