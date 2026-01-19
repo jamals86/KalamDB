@@ -280,7 +280,7 @@ impl CLISession {
         let mut builder = KalamLinkClient::builder()
             .base_url(&server_url)
             .timeout(timeout)
-            .max_retries(3)
+            .max_retries(config.resolved_server().max_retries)
             .auth(auth.clone())
             .timeouts(timeouts.clone());
 

@@ -1140,3 +1140,10 @@ i guess we need to add a new column to the jobs table to track each node the sta
 75) Confirm that the forwarding to leade ris done using grpc and its fast
 
 76) add ability to the kalam-link to automatically forward to the leader
+
+
+77) No need to auto-retry conneciton on cli, whenever i connect kalam --username --password wrongpassword i get:
+[2026-01-19 07:29:41.335] [INFO ] - actix-rt|system:0|arbiter:3 - kalamdb_auth::login_tracker:97 - Failed login attempt 1/5 for username=root
+[2026-01-19 07:29:41.603] [INFO ] - actix-rt|system:0|arbiter:4 - kalamdb_auth::login_tracker:97 - Failed login attempt 2/5 for username=root
+[2026-01-19 07:29:41.812] [INFO ] - actix-rt|system:0|arbiter:4 - kalamdb_auth::login_tracker:97 - Failed login attempt 3/5 for username=root
+
