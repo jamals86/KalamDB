@@ -225,14 +225,16 @@ pub async fn execute_sql_v1(
             },
             Err(err) => {
                 // Fast path: Check if NOT_LEADER error and auto-forward to leader
-                if let Some(response) = handle_not_leader_error(
-                    &err,
-                    &http_req,
-                    &req,
-                    app_context.get_ref(),
-                    start_time,
-                ).await {
-                    return response;
+                if let Some(kalamdb_err) = err.downcast_ref::<kalamdb_core::error::KalamDbError>() {
+                    if let Some(response) = handle_not_leader_error(
+                        kalamdb_err,
+                        &http_req,
+                        &req,
+                        app_context.get_ref(),
+                        start_time,
+                    ).await {
+                        return response;
+                    }
                 }
                 
                 let took = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -322,7 +324,7 @@ async fn forward_sql_if_follower(
             return match leader_api_addr {
                 Some(api_addr) => forward_to_leader(http_req, req, &api_addr).await,
                 None => Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
-                    "CLUSTER_LEADER_UNKNOWN",
+                    ErrorCode::LeaderNotAvailable,
                     "No cluster leader available",
                     0.0,
                 ))),
@@ -569,7 +571,7 @@ async fn execute_single_statement(
                 Ok(QueryResult::with_message(format!("Job {} killed: {}", job_id, status)))
             },
         },
-        Err(e) => Err(Box::new(e)),
+        Err(e) => Err(Box::new(e) as Box<dyn std::error::Error>),
     }
 }
 
