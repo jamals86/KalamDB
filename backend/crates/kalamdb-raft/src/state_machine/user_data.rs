@@ -418,21 +418,28 @@ impl KalamStateMachine for UserDataStateMachine {
         // Deserialize command to check watermark
         let cmd: UserDataCommand = decode(command)?;
         let required_meta = cmd.required_meta_index();
-        let current_meta = get_coordinator().current_index();
 
-        // Check watermark: if Meta is behind, wait for it to catch up
-        if required_meta > current_meta {
-            log::debug!(
-                "UserDataStateMachine[{}]: Waiting for meta (required_meta={} > current_meta={})",
-                self.shard,
-                required_meta,
-                current_meta
-            );
-            get_coordinator().wait_for(required_meta).await;
+        // Check watermark: if Meta is behind AND required_meta > 0, wait for it to catch up.
+        // DML commands (INSERT/UPDATE/DELETE) set required_meta_index=0 to skip waiting
+        // since the table's existence was validated before the command was built.
+        // See spec 021 section 5.4.1 "Watermark Nuance" for detailed analysis.
+        if required_meta > 0 {
+            let current_meta = get_coordinator().current_index();
+            if required_meta > current_meta {
+                log::debug!(
+                    "UserDataStateMachine[{}]: Waiting for meta (required_meta={} > current_meta={})",
+                    self.shard,
+                    required_meta,
+                    current_meta
+                );
+                get_coordinator().wait_for(required_meta).await;
+            }
         }
 
-        // First drain any pending commands that are now satisfied
-        self.drain_pending().await?;
+        // First drain any pending commands that are now satisfied (only if buffer non-empty)
+        if self.pending_buffer.len() > 0 {
+            self.drain_pending().await?;
+        }
 
         // Apply current command
         let response = self.apply_command(cmd).await?;

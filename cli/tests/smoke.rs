@@ -87,10 +87,16 @@ mod smoke_test_ddl_alter;
 // DML tests
 #[path = "smoke/dml/smoke_test_dml_extended.rs"]
 mod smoke_test_dml_extended;
+#[path = "smoke/dml/smoke_test_dml_watermark_optimization.rs"]
+mod smoke_test_dml_watermark_optimization;
 #[path = "smoke/dml/smoke_test_dml_wide_columns.rs"]
 mod smoke_test_dml_wide_columns;
 #[path = "smoke/dml/smoke_test_insert_throughput.rs"]
 mod smoke_test_insert_throughput;
+
+// Leader-only reads tests (Spec 021)
+#[path = "smoke/leader_only_reads.rs"]
+mod leader_only_reads;
 
 // Query tests
 #[path = "smoke/query/smoke_test_00_parallel_query_burst.rs"]

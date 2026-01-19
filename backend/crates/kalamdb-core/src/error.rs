@@ -101,6 +101,18 @@ pub enum KalamDbError {
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
 
+    /// Not the leader for this shard (Raft cluster mode)
+    ///
+    /// Client should retry the request against the leader node.
+    /// The `leader_addr` field contains the API address of the current leader
+    /// (if known) to help with request redirection.
+    #[error("Not leader for shard. Leader: {leader_addr:?}")]
+    NotLeader {
+        /// API address of the current leader (e.g., "192.168.1.100:8080")
+        /// May be None if leader is unknown (during election)
+        leader_addr: Option<String>,
+    },
+
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 

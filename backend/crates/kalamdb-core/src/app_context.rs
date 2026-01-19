@@ -20,9 +20,11 @@ use crate::views::datatypes::{DatatypesTableProvider, DatatypesView};
 use crate::views::settings::{SettingsTableProvider, SettingsView};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
+use kalamdb_commons::models::UserId;
 use kalamdb_commons::{constants::ColumnFamilyNames, NodeId};
 use kalamdb_configs::ServerConfig;
 use kalamdb_raft::CommandExecutor;
+use kalamdb_sharding::GroupId;
 use kalamdb_store::StorageBackend;
 use kalamdb_system::{SystemTable, SystemTablesRegistry};
 use kalamdb_tables::{SharedTableStore, UserTableStore};
@@ -771,6 +773,109 @@ impl AppContext {
     /// Check if this node is running in cluster mode
     pub fn is_cluster_mode(&self) -> bool {
         self.executor.is_cluster_mode()
+    }
+
+    // ===== Leadership Check Methods (Spec 021 - Raft Replication Semantics) =====
+
+    /// Check if this node is the leader for a user's data shard
+    ///
+    /// In Raft cluster mode, user data is partitioned across shards based on
+    /// `hash(user_id) % num_shards`. This method checks if the current node
+    /// is the leader for the shard that contains the given user's data.
+    ///
+    /// In standalone mode (single-node), this always returns `true`.
+    ///
+    /// # Arguments
+    /// * `user_id` - The user ID to check leadership for
+    ///
+    /// # Returns
+    /// * `true` if this node is the leader for the user's shard
+    /// * `false` if this node is not the leader (follower)
+    ///
+    /// # Example
+    /// ```ignore
+    /// if !ctx.is_leader_for_user(&user_id) {
+    ///     return Err(KalamDbError::NotLeader { leader_addr: ctx.leader_addr_for_user(&user_id) });
+    /// }
+    /// ```
+    pub async fn is_leader_for_user(&self, user_id: &UserId) -> bool {
+        let group_id = self.user_shard_group_id(user_id);
+        self.executor.is_leader(group_id).await
+    }
+
+    /// Get the leader node ID for a user's data shard
+    ///
+    /// Returns the NodeId of the current leader for the shard containing
+    /// the given user's data. Returns `None` if the leader is unknown
+    /// (e.g., during an election).
+    ///
+    /// # Arguments
+    /// * `user_id` - The user ID to get the leader for
+    ///
+    /// # Returns
+    /// * `Some(NodeId)` - The leader's node ID
+    /// * `None` - If leader is unknown (election in progress)
+    pub async fn leader_for_user(&self, user_id: &UserId) -> Option<NodeId> {
+        let group_id = self.user_shard_group_id(user_id);
+        self.executor.get_leader(group_id).await
+    }
+
+    /// Get the API address of the leader for a user's data shard
+    ///
+    /// This is used to construct NOT_LEADER error responses with a redirect hint.
+    ///
+    /// # Arguments
+    /// * `user_id` - The user ID to get the leader address for
+    ///
+    /// # Returns
+    /// * `Some(String)` - The leader's API address (e.g., "192.168.1.100:8080")
+    /// * `None` - If leader is unknown or address not available
+    pub async fn leader_addr_for_user(&self, user_id: &UserId) -> Option<String> {
+        let cluster_info = self.executor.get_cluster_info();
+        let leader_node_id = self.leader_for_user(user_id).await?;
+
+        // Find the leader's API address from cluster info
+        cluster_info
+            .nodes
+            .iter()
+            .find(|node| node.node_id == leader_node_id)
+            .map(|node| node.api_addr.clone())
+    }
+
+    /// Check if this node is the leader for shared data
+    ///
+    /// Shared tables are stored in a dedicated shard (currently shard 0).
+    /// This method checks if the current node is the leader for that shard.
+    ///
+    /// In standalone mode (single-node), this always returns `true`.
+    pub async fn is_leader_for_shared(&self) -> bool {
+        let group_id = GroupId::DataSharedShard(0);
+        self.executor.is_leader(group_id).await
+    }
+
+    //TODO: Move this to kalamdb-sharding crate?
+    /// Compute the Raft group ID for a user's data shard
+    ///
+    /// Maps user_id → shard number → GroupId using consistent hashing.
+    fn user_shard_group_id(&self, user_id: &UserId) -> GroupId {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Get number of user shards from config (default 32)
+        let num_shards = self
+            .config
+            .cluster
+            .as_ref()
+            .map(|c| c.user_shards)
+            .unwrap_or(32);
+
+        // Hash user_id to determine shard
+        let mut hasher = DefaultHasher::new();
+        user_id.as_str().hash(&mut hasher);
+        let hash = hasher.finish();
+        let shard = (hash % num_shards as u64) as u32;
+
+        GroupId::DataUserShard(shard)
     }
 
     /// Get the unified applier (Phase 19 - Unified Command Applier)

@@ -5,7 +5,7 @@ use datafusion::logical_expr::{Expr, Operator};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
-use kalamdb_commons::models::{Role, UserId};
+use kalamdb_commons::models::{ReadContext, Role, UserId};
 use once_cell::sync::Lazy;
 
 static SYSTEM_USER_ID: Lazy<UserId> = Lazy::new(|| UserId::from("_system"));
@@ -141,4 +141,27 @@ pub fn extract_user_context<'a>(
         })?;
 
     Ok((&user_ctx.user_id, user_ctx.role))
+}
+
+/// Extract full session context (user_id, role, read_context) from DataFusion SessionState extensions.
+///
+/// Use this when you need to check read routing (leader-only reads in Raft cluster mode).
+pub fn extract_full_user_context<'a>(
+    state: &'a dyn Session,
+) -> Result<(&'a UserId, Role, ReadContext), KalamDbError> {
+    let session_state = state
+        .as_any()
+        .downcast_ref::<datafusion::execution::context::SessionState>()
+        .ok_or_else(|| KalamDbError::InvalidOperation("Expected SessionState".to_string()))?;
+
+    let user_ctx = session_state
+        .config()
+        .options()
+        .extensions
+        .get::<SessionUserContext>()
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation("SessionUserContext not found in extensions".to_string())
+        })?;
+
+    Ok((&user_ctx.user_id, user_ctx.role, user_ctx.read_context))
 }

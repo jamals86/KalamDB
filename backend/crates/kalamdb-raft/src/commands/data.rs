@@ -526,4 +526,76 @@ mod tests {
         assert_eq!(commands[1].required_meta_index(), 20);
         assert_eq!(commands[2].required_meta_index(), 30);
     }
+
+    #[test]
+    fn test_user_command_set_watermark_to_zero() {
+        // DML commands should support setting watermark to 0 for performance optimization
+        // See spec 021 section 5.4.1 "Watermark Nuance"
+        let user_id = UserId::from("user123");
+        let table_id = TableId::new(NamespaceId::from("ns"), TableName::from("table"));
+
+        let mut insert = UserDataCommand::Insert {
+            required_meta_index: 100, // Initially non-zero
+            table_id: table_id.clone(),
+            user_id: user_id.clone(),
+            rows: vec![],
+        };
+
+        let mut update = UserDataCommand::Update {
+            required_meta_index: 100,
+            table_id: table_id.clone(),
+            user_id: user_id.clone(),
+            updates: vec![],
+            filter: None,
+        };
+
+        let mut delete = UserDataCommand::Delete {
+            required_meta_index: 100,
+            table_id: table_id.clone(),
+            user_id: user_id.clone(),
+            pk_values: None,
+        };
+
+        // Set to 0 - this is what RaftExecutor does for DML
+        insert.set_required_meta_index(0);
+        update.set_required_meta_index(0);
+        delete.set_required_meta_index(0);
+
+        assert_eq!(insert.required_meta_index(), 0);
+        assert_eq!(update.required_meta_index(), 0);
+        assert_eq!(delete.required_meta_index(), 0);
+    }
+
+    #[test]
+    fn test_shared_command_set_watermark_to_zero() {
+        // Shared DML commands should also support watermark = 0
+        let table_id = TableId::new(NamespaceId::from("ns"), TableName::from("shared_table"));
+
+        let mut insert = SharedDataCommand::Insert {
+            required_meta_index: 100,
+            table_id: table_id.clone(),
+            rows: vec![],
+        };
+
+        let mut update = SharedDataCommand::Update {
+            required_meta_index: 100,
+            table_id: table_id.clone(),
+            updates: vec![],
+            filter: None,
+        };
+
+        let mut delete = SharedDataCommand::Delete {
+            required_meta_index: 100,
+            table_id: table_id.clone(),
+            pk_values: None,
+        };
+
+        insert.set_required_meta_index(0);
+        update.set_required_meta_index(0);
+        delete.set_required_meta_index(0);
+
+        assert_eq!(insert.required_meta_index(), 0);
+        assert_eq!(update.required_meta_index(), 0);
+        assert_eq!(delete.required_meta_index(), 0);
+    }
 }

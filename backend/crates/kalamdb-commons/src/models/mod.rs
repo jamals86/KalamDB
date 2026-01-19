@@ -40,6 +40,7 @@ mod auth_type;
 mod connection;
 mod job_status;
 mod job_type;
+mod read_context;
 
 // Row types only available with full feature (datafusion dependency)
 #[cfg(feature = "full")]
@@ -56,6 +57,7 @@ pub use auth_type::AuthType;
 pub use ids::*;
 pub use job_status::JobStatus;
 pub use job_type::JobType;
+pub use read_context::ReadContext;
 
 #[cfg(feature = "full")]
 pub use rows::{KTableRow, StreamTableRow, UserTableRow};

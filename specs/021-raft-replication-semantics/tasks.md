@@ -80,42 +80,72 @@ let applier = {
 
 ## Revised Implementation Plan
 
-### Phase 1: Leader Apply Performance (P0 - Critical)
+### Phase 1: Leader Apply Performance (P0 - Critical) ✅ COMPLETE
 
 Make the leader apply path fast. This is the critical path for write latency.
 
-| Task | Effort | Impact |
-|------|--------|--------|
-| 1.1: Remove watermark wait for DML commands | 2h | High |
-| 1.2: Cache applier without RwLock | 1h | Medium |
-| 1.3: Add apply latency metrics | 1h | Debug |
+| Task | Effort | Impact | Status |
+|------|--------|--------|--------|
+| 1.1: Remove watermark wait for DML commands | 2h | High | ✅ Done |
+| 1.2: Cache applier without RwLock | 1h | Medium | ⏳ Future |
+| 1.3: Add apply latency metrics | 1h | Debug | ⏳ Future |
 
-### Phase 2: Read Routing (P0 - Critical)
+**Completed:**
+- `RaftExecutor.execute_user_data()` sets `required_meta_index: 0`
+- `RaftExecutor.execute_shared_data()` sets `required_meta_index: 0`
+- `UserDataStateMachine.apply()` skips waiting when `required_meta_index == 0`
+- `SharedDataStateMachine.apply()` skips waiting when `required_meta_index == 0`
+- Unit tests added in `commands/data.rs`
+- Smoke tests in `cli/tests/smoke/dml/smoke_test_dml_watermark_optimization.rs`
+
+### Phase 2: Read Routing (P0 - Critical) ✅ COMPLETE
 
 Route client reads to leader for consistency.
 
-| Task | Effort | Impact |
-|------|--------|--------|
-| 2.1: Add `ReadContext` enum (simple version) | 1h | Foundation |
-| 2.2: Add `is_leader_for_user()` to AppContext | 1h | Foundation |
-| 2.3: Check ReadContext in UserTableProvider.scan() | 2h | High |
-| 2.4: Return NOT_LEADER error with leader hint | 1h | UX |
+| Task | Effort | Impact | Status |
+|------|--------|--------|--------|
+| 2.1: Add `ReadContext` enum (simple version) | 1h | Foundation | ✅ Done |
+| 2.2: Add `is_leader_for_user()` to AppContext | 1h | Foundation | ✅ Done |
+| 2.3: Check ReadContext in UserTableProvider.scan() | 2h | High | ✅ Done |
+| 2.4: Return NOT_LEADER error with leader hint | 1h | UX | ✅ Done |
 
-### Phase 3: Verification (P1 - Important)
+**Completed:**
+- `ReadContext` enum in `kalamdb-commons/src/models/read_context.rs`
+- `SessionUserContext` extended with `read_context` field
+- `is_leader_for_user()`, `leader_for_user()`, `leader_addr_for_user()` added to AppContext
+- `is_leader_for_shared()` added for shared tables
+- `extract_full_user_context()` helper for extracting ReadContext
+- Leader check in `UserTableProvider::scan()` and `SharedTableProvider::scan()`
+- `KalamDbError::NotLeader { leader_addr }` error variant
+- `create_internal_session()` for jobs/internal operations (bypasses leader check)
+
+### Phase 3: Verification (P1 - Important) ✅ COMPLETE
 
 Verify existing systems work correctly.
 
-| Task | Effort | Impact |
-|------|--------|--------|
-| 3.1: Add test: live query notification on follower | 2h | Confidence |
-| 3.2: Add test: stale read returns NOT_LEADER | 2h | Correctness |
-| 3.3: Add benchmark: write latency pre/post fix | 1h | Metrics |
+| Task | Effort | Impact | Status |
+|------|--------|--------|--------|
+| 3.1: Add test: live query notification on follower | 2h | Confidence | ✅ Done |
+| 3.2: Add test: stale read returns NOT_LEADER | 2h | Correctness | ✅ Done |
+| 3.3: Add benchmark: write latency pre/post fix | 1h | Metrics | ✅ Done |
+
+**Completed:**
+- Smoke tests created in `cli/tests/smoke/leader_only_reads.rs`:
+  - `smoke_test_leader_read_succeeds_on_leader` - Basic SELECT on leader
+  - `smoke_test_leader_read_with_filters` - Query with filters
+  - `smoke_test_leader_read_shared_table` - Shared table reads
+  - `smoke_test_system_table_reads` - System table queries
+  - `smoke_test_not_leader_error_detection` - NOT_LEADER error detection
+  - `smoke_test_read_after_write_consistency` - Read-after-write consistency
+- Unit tests for `ReadContext` enum in `kalamdb-commons`
+- Watermark optimization tests in `kalamdb-raft`
+- DML watermark smoke tests in `cli/tests/smoke/dml/smoke_test_dml_watermark_optimization.rs`
 
 ---
 
 ## Detailed Task Implementations
 
-### Task 1.1: Remove Watermark Wait for DML
+### Task 1.1: Remove Watermark Wait for DML ✅ COMPLETE
 
 **Problem**: DML commands (INSERT/UPDATE/DELETE) don't need Meta synchronization.
 The watermark was added for DDL safety but is applied to ALL commands.

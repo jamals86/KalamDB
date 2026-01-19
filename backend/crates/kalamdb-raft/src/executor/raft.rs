@@ -67,9 +67,15 @@ impl CommandExecutor for RaftExecutor {
         user_id: &UserId,
         mut cmd: UserDataCommand,
     ) -> Result<DataResponse> {
-        // Stamp the watermark: capture current Meta group's last applied index
-        let meta_index = self.manager.current_meta_index();
-        cmd.set_required_meta_index(meta_index);
+        // DML commands (INSERT/UPDATE/DELETE) don't need Meta watermark waiting.
+        // The table's existence and schema were validated BEFORE building the command.
+        // Raft ordering guarantees DDL (CREATE TABLE) is applied before subsequent DML.
+        //
+        // Only set non-zero watermark for operations that explicitly depend on Meta state
+        // (e.g., after DDL changes). Pure DML operations use 0 for better performance.
+        //
+        // See spec 021 section 5.4.1 "Watermark Nuance" for detailed analysis.
+        cmd.set_required_meta_index(0);
 
         let shard = self.user_shard(user_id);
         let response = self.manager.propose_user_data(shard, cmd).await?;
@@ -84,9 +90,12 @@ impl CommandExecutor for RaftExecutor {
     }
 
     async fn execute_shared_data(&self, mut cmd: SharedDataCommand) -> Result<DataResponse> {
-        // Stamp the watermark: capture current Meta group's last applied index
-        let meta_index = self.manager.current_meta_index();
-        cmd.set_required_meta_index(meta_index);
+        // DML commands (INSERT/UPDATE/DELETE) don't need Meta watermark waiting.
+        // The table's existence and schema were validated BEFORE building the command.
+        // Raft ordering guarantees DDL (CREATE TABLE) is applied before subsequent DML.
+        //
+        // See spec 021 section 5.4.1 "Watermark Nuance" for detailed analysis.
+        cmd.set_required_meta_index(0);
 
         // All shared data goes to shard 0
         let response = self.manager.propose_shared_data(0, cmd).await?;

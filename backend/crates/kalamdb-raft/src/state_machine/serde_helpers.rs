@@ -62,35 +62,26 @@ mod tests {
         // Create an EntryPayload::Membership
         let payload: EntryPayload<KalamTypeConfig> = EntryPayload::Membership(membership);
 
-        // Encode with standard config
-        let bytes_standard = bincode::serde::encode_to_vec(&payload, bincode::config::standard()).unwrap();
-        println!("Standard config - length: {}", bytes_standard.len());
-        println!("Standard bytes: {:02x?}", &bytes_standard);
+        // Encode with standard config (what we use in serde_helpers)
+        let bytes = encode(&payload).expect("Membership should encode");
+
+        // Decode should succeed - this was failing before the skip_serializing_if fix
+        let decoded: EntryPayload<KalamTypeConfig> = decode(&bytes)
+            .expect("Membership should decode - KalamNode must NOT use skip_serializing_if");
         
-        // Encode with legacy config
-        let bytes_legacy = bincode::serde::encode_to_vec(&payload, bincode::config::legacy()).unwrap();
-        println!("Legacy config - length: {}", bytes_legacy.len());
-        println!("Legacy bytes: {:02x?}", &bytes_legacy);
+        // Verify the decoded data matches
+        match (&payload, &decoded) {
+            (EntryPayload::Membership(m1), EntryPayload::Membership(m2)) => {
+                assert_eq!(m1.nodes().count(), m2.nodes().count(), "Node count should match");
+            },
+            _ => panic!("Decoded payload type mismatch"),
+        }
 
-        // Try decode with standard
-        let result_std: Result<(EntryPayload<KalamTypeConfig>, _), _> = 
-            bincode::serde::decode_from_slice(&bytes_standard, bincode::config::standard());
-        println!("Decode standard->standard: {:?}", result_std.is_ok());
-
-        // Try decode legacy with legacy
-        let result_leg: Result<(EntryPayload<KalamTypeConfig>, _), _> = 
-            bincode::serde::decode_from_slice(&bytes_legacy, bincode::config::legacy());
-        println!("Decode legacy->legacy: {:?}", result_leg.is_ok());
-
-        // Test blank
+        // Also verify Blank still works
         let blank: EntryPayload<KalamTypeConfig> = EntryPayload::Blank;
-        let blank_bytes = bincode::serde::encode_to_vec(&blank, bincode::config::standard()).unwrap();
-        println!("Blank bytes (standard): {:02x?}", &blank_bytes);
-        let blank_dec: Result<(EntryPayload<KalamTypeConfig>, _), _> = 
-            bincode::serde::decode_from_slice(&blank_bytes, bincode::config::standard());
-        println!("Decode blank: {:?}", blank_dec.is_ok());
-        
-        assert!(result_std.is_ok() || result_leg.is_ok(), "At least one decode should work");
+        let blank_bytes = encode(&blank).expect("Blank should encode");
+        let _: EntryPayload<KalamTypeConfig> = decode(&blank_bytes)
+            .expect("Blank should decode");
     }
 
     #[test]
@@ -103,27 +94,23 @@ mod tests {
         let node1 = KalamNode::new("127.0.0.1:9081", "http://127.0.0.1:8081");
         let node2 = KalamNode::new("127.0.0.1:9082", "http://127.0.0.1:8082");
         
-        // Create membership with node 1 as voter, node 2 as learner (in nodes but not in config)
+        // Create membership with both nodes
         let mut nodes = BTreeMap::new();
         nodes.insert(1u64, node1);
         nodes.insert(2u64, node2);
         
-        // This creates a membership with both nodes as voters
         let membership: Membership<u64, KalamNode> = nodes.into();
-
-        // Create an EntryPayload::Membership
         let payload: EntryPayload<KalamTypeConfig> = EntryPayload::Membership(membership);
 
-        // Encode
-        let bytes = encode(&payload).unwrap();
-        println!("Encoded 2-node Membership payload length: {}", bytes.len());
-
-        // Decode
-        let decoded: EntryPayload<KalamTypeConfig> = decode(&bytes).unwrap();
+        // Encode and decode roundtrip
+        let bytes = encode(&payload).expect("2-node Membership should encode");
+        let decoded: EntryPayload<KalamTypeConfig> = decode(&bytes)
+            .expect("2-node Membership should decode");
         
         match (&payload, &decoded) {
             (EntryPayload::Membership(m1), EntryPayload::Membership(m2)) => {
-                assert_eq!(m1.nodes().count(), m2.nodes().count());
+                assert_eq!(m1.nodes().count(), m2.nodes().count(), "Node count should match");
+                assert_eq!(m1.nodes().count(), 2, "Should have 2 nodes");
             },
             _ => panic!("Decoded payload type mismatch"),
         }
