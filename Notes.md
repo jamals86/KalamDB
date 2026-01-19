@@ -1137,3 +1137,6 @@ i guess we need to add a new column to the jobs table to track each node the sta
 
 74) Add another columns which are computed ones from manifest table
 
+75) Confirm that the forwarding to leade ris done using grpc and its fast
+
+76) add ability to the kalam-link to automatically forward to the leader

@@ -25,8 +25,18 @@ KalamDB is a **SQL-first, real-time database** that scales to millions of concur
 
 Get KalamDB running in seconds:
 
+Single node:
+
 ```bash
+KALAMDB_JWT_SECRET="$(openssl rand -base64 32)" \
 curl -sSL https://raw.githubusercontent.com/jamals86/KalamDB/main/docker/run/single/docker-compose.yml | docker-compose -f - up -d
+```
+
+3-node cluster:
+
+```bash
+KALAMDB_JWT_SECRET="$(openssl rand -base64 32)" \
+curl -sSL https://raw.githubusercontent.com/jamals86/KalamDB/main/docker/run/cluster/docker-compose.yml | docker-compose -f - up -d
 ```
 
 ---

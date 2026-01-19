@@ -1338,6 +1338,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export KALAMDB_JWT_SECRET="$(openssl rand -base64 32)"
           
           # Pull the just-built image
           docker pull ${{ steps.vars.outputs.docker_repo }}:${{ steps.vars.outputs.version }}-amd64
