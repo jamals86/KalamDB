@@ -171,11 +171,9 @@ pub async fn create_session(
                 false,
             )
         } else {
-            // Fallback to basic auth if login fails
-            if cli.verbose {
-                eprintln!("Login failed, falling back to basic auth for user '{}'", username);
-            }
-            (AuthProvider::basic_auth(username.clone(), password), Some(username), false)
+            return Err(CLIError::ConfigurationError(
+                "Login failed: invalid username or password".to_string(),
+            ));
         }
     } else if let Some(creds) = credential_store
         .get_credentials(&cli.instance)

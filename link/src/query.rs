@@ -12,7 +12,7 @@ use std::time::Instant;
 /// Handles SQL query execution via HTTP.
 #[derive(Clone)]
 pub struct QueryExecutor {
-    base_url: String,
+    sql_url: String,
     http_client: reqwest::Client,
     auth: AuthProvider,
     max_retries: u32,
@@ -26,7 +26,7 @@ impl QueryExecutor {
         max_retries: u32,
     ) -> Self {
         Self {
-            base_url,
+            sql_url: format!("{}/v1/api/sql", base_url),
             http_client,
             auth,
             max_retries,
@@ -125,8 +125,7 @@ impl QueryExecutor {
 
         loop {
             // Build request fresh on each attempt (can't clone request builders with bodies)
-            let url = format!("{}/v1/api/sql", self.base_url);
-            let mut req_builder = self.http_client.post(&url).json(&request);
+            let mut req_builder = self.http_client.post(&self.sql_url).json(&request);
 
             // Apply authentication
             req_builder = self.auth.apply_to_request(req_builder)?;
@@ -134,7 +133,7 @@ impl QueryExecutor {
             let attempt_start = Instant::now();
             debug!(
                 "[LINK_HTTP] Sending POST to {} (attempt {}/{})",
-                url,
+                self.sql_url,
                 retries + 1,
                 max_retries + 1
             );

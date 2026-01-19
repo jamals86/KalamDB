@@ -29,15 +29,21 @@ services:
     volumes:
       - node1_data:/data
       - shared_storage:/data/storage
-      - ./server1.toml:/data/server.toml:ro
+      # Optional: Override server.toml with your own configuration
+      # - ./server1.toml:/config/server.toml:ro
     environment:
-      RUST_LOG: "${RUST_LOG:-info,kalamdb_raft=info,openraft=warn,tracing=warn}"
-      KALAMDB_NODE_ID: "1"
+      KALAMDB_SERVER_HOST: "0.0.0.0"
+      KALAMDB_CLUSTER_ID: "${KALAMDB_CLUSTER_ID:-docker-cluster}"
+      KALAMDB_NODE_ID: "${KALAMDB_NODE_ID_NODE1:-1}"
+      KALAMDB_CLUSTER_RPC_ADDR: "${KALAMDB_CLUSTER_RPC_ADDR_NODE1:-kalamdb-node1:9090}"
+      KALAMDB_CLUSTER_API_ADDR: "${KALAMDB_CLUSTER_API_ADDR_NODE1:-http://kalamdb-node1:8080}"
+      KALAMDB_CLUSTER_PEERS: "${KALAMDB_CLUSTER_PEERS_NODE1:-2@kalamdb-node2:9090@http://kalamdb-node2:8080;3@kalamdb-node3:9090@http://kalamdb-node3:8080}"
       KALAMDB_ROOT_PASSWORD: "${KALAMDB_ROOT_PASSWORD:-kalamdb123}"
       KALAMDB_JWT_SECRET: "${KALAMDB_JWT_SECRET:-kalamdb-docker-dev-secret-please-change-32chars}"
     networks:
       - kalamdb-cluster
     restart: unless-stopped
+    command: ["/usr/local/bin/kalamdb-server", "/config/server.toml"]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/api/healthcheck"]
       interval: 10s
@@ -58,10 +64,15 @@ services:
     volumes:
       - node2_data:/data
       - shared_storage:/data/storage
-      - ./server2.toml:/data/server.toml:ro
+      # Optional: Override server.toml with your own configuration
+      # - ./server2.toml:/config/server.toml:ro
     environment:
-      RUST_LOG: "${RUST_LOG:-info,kalamdb_raft=info,openraft=warn,tracing=warn}"
-      KALAMDB_NODE_ID: "2"
+      KALAMDB_SERVER_HOST: "0.0.0.0"
+      KALAMDB_CLUSTER_ID: "${KALAMDB_CLUSTER_ID:-docker-cluster}"
+      KALAMDB_NODE_ID: "${KALAMDB_NODE_ID_NODE2:-2}"
+      KALAMDB_CLUSTER_RPC_ADDR: "${KALAMDB_CLUSTER_RPC_ADDR_NODE2:-kalamdb-node2:9090}"
+      KALAMDB_CLUSTER_API_ADDR: "${KALAMDB_CLUSTER_API_ADDR_NODE2:-http://kalamdb-node2:8080}"
+      KALAMDB_CLUSTER_PEERS: "${KALAMDB_CLUSTER_PEERS_NODE2:-1@kalamdb-node1:9090@http://kalamdb-node1:8080;3@kalamdb-node3:9090@http://kalamdb-node3:8080}"
       KALAMDB_ROOT_PASSWORD: "${KALAMDB_ROOT_PASSWORD:-kalamdb123}"
       KALAMDB_JWT_SECRET: "${KALAMDB_JWT_SECRET:-kalamdb-docker-dev-secret-please-change-32chars}"
     networks:
@@ -70,6 +81,7 @@ services:
       kalamdb-node1:
         condition: service_started
     restart: unless-stopped
+    command: ["/usr/local/bin/kalamdb-server", "/config/server.toml"]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/api/healthcheck"]
       interval: 10s
@@ -90,10 +102,15 @@ services:
     volumes:
       - node3_data:/data
       - shared_storage:/data/storage
-      - ./server3.toml:/data/server.toml:ro
+      # Optional: Override server.toml with your own configuration
+      # - ./server3.toml:/config/server.toml:ro
     environment:
-      RUST_LOG: "${RUST_LOG:-info,kalamdb_raft=info,openraft=warn,tracing=warn}"
-      KALAMDB_NODE_ID: "3"
+      KALAMDB_SERVER_HOST: "0.0.0.0"
+      KALAMDB_CLUSTER_ID: "${KALAMDB_CLUSTER_ID:-docker-cluster}"
+      KALAMDB_NODE_ID: "${KALAMDB_NODE_ID_NODE3:-3}"
+      KALAMDB_CLUSTER_RPC_ADDR: "${KALAMDB_CLUSTER_RPC_ADDR_NODE3:-kalamdb-node3:9090}"
+      KALAMDB_CLUSTER_API_ADDR: "${KALAMDB_CLUSTER_API_ADDR_NODE3:-http://kalamdb-node3:8080}"
+      KALAMDB_CLUSTER_PEERS: "${KALAMDB_CLUSTER_PEERS_NODE3:-1@kalamdb-node1:9090@http://kalamdb-node1:8080;2@kalamdb-node2:9090@http://kalamdb-node2:8080}"
       KALAMDB_ROOT_PASSWORD: "${KALAMDB_ROOT_PASSWORD:-kalamdb123}"
       KALAMDB_JWT_SECRET: "${KALAMDB_JWT_SECRET:-kalamdb-docker-dev-secret-please-change-32chars}"
     networks:
@@ -102,6 +119,7 @@ services:
       kalamdb-node1:
         condition: service_started
     restart: unless-stopped
+    command: ["/usr/local/bin/kalamdb-server", "/config/server.toml"]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/api/healthcheck"]
       interval: 10s

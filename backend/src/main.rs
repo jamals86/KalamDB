@@ -3,7 +3,7 @@
 //! The heavy lifting (initialization, middleware wiring, graceful shutdown)
 //! lives in dedicated modules so this file remains a thin orchestrator.
 
-use kalamdb_core::metrics::SERVER_VERSION;
+use kalamdb_core::metrics::{BUILD_DATE, SERVER_VERSION};
 
 mod logging;
 
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    let config = match ServerConfig::from_file(&config_path) {
+    let mut config = match ServerConfig::from_file(&config_path) {
         Ok(cfg) => {
             eprintln!(
                 "✅ Loaded config from: {}",
@@ -57,6 +57,18 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         },
     };
+
+    if let Err(e) = config.apply_env_overrides() {
+        eprintln!("❌ FATAL: Failed to apply environment overrides: {}", e);
+        eprintln!("❌ Server cannot start without valid configuration");
+        std::process::exit(1);
+    }
+
+    if let Err(e) = config.finalize() {
+        eprintln!("❌ FATAL: Invalid configuration after overrides: {}", e);
+        eprintln!("❌ Server cannot start without valid configuration");
+        std::process::exit(1);
+    }
 
     // ========================================================================
     // JWT SECRET ENVIRONMENT VARIABLE SETUP
@@ -150,6 +162,7 @@ async fn main() -> Result<()> {
 
     // Display enhanced version information
     info!("KalamDB Server v{:<37}", SERVER_VERSION);
+    info!("Build date: {}", BUILD_DATE);
 
     // Build application state and kick off background services
     let (components, app_context) = bootstrap(&config).await?;

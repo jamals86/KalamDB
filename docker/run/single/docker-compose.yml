@@ -29,11 +29,13 @@ services:
     environment:
       # These are informational - actual config is in server.toml
       # To change settings, mount a custom server.toml (see volumes above)
+      KALAMDB_SERVER_HOST: "0.0.0.0"
       RUST_LOG: "${RUST_LOG:-info}"
       # Required for non-localhost bind addresses (prevents insecure default)
       KALAMDB_JWT_SECRET: "${KALAMDB_JWT_SECRET:-kalamdb-docker-dev-secret-please-change-32chars}"
     
     restart: unless-stopped
+    command: ["/usr/local/bin/kalamdb-server", "/config/server.toml"]
     
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/v1/api/healthcheck"]

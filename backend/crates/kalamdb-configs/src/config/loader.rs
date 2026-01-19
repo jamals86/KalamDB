@@ -1,9 +1,12 @@
 use super::types::ServerConfig;
+use crate::file_helpers::normalize_dir_path;
 use std::fs;
 use std::path::Path;
 
 impl ServerConfig {
     /// Load configuration from a TOML file
+    ///
+    /// Note: Environment overrides are applied separately via `apply_env_overrides()`.
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let content = fs::read_to_string(path.as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
@@ -11,13 +14,7 @@ impl ServerConfig {
         let mut config: ServerConfig = toml::from_str(&content)
             .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))?;
 
-        // Override with environment variables if present
-        config.apply_env_overrides()?;
-
-        // Normalize local filesystem paths (rocksdb/logs/storage/snapshots)
-        config.normalize_paths();
-
-        config.validate()?;
+        config.finalize()?;
 
         Ok(config)
     }
@@ -27,85 +24,18 @@ impl ServerConfig {
     /// This keeps semantics the same (relative paths remain relative to current working dir),
     /// but avoids each subsystem re-implementing path handling.
     fn normalize_paths(&mut self) {
-        use crate::file_helpers::normalize_dir_path;
-
         self.storage.data_path = normalize_dir_path(&self.storage.data_path);
         self.logging.logs_path = normalize_dir_path(&self.logging.logs_path);
     }
 
-    /// Apply environment variable overrides for sensitive configuration
+    /// Normalize local filesystem paths and validate configuration.
     ///
-    /// Supported environment variables (T030):
-    /// - KALAMDB_SERVER_HOST: Override server.host
-    /// - KALAMDB_SERVER_PORT: Override server.port
-    /// - KALAMDB_LOG_LEVEL: Override logging.level
-    /// - KALAMDB_LOG_FILE: Override logging.file_path
-    /// - KALAMDB_LOG_TO_CONSOLE: Override logging.log_to_console
-    /// - KALAMDB_DATA_DIR: Override storage.data_path (base directory for rocksdb, storage, snapshots)
-    /// - KALAMDB_ROCKSDB_PATH: Override storage.data_path (legacy, extracts parent dir)
-    /// - KALAMDB_LOG_FILE_PATH: Override logging.file_path (legacy, prefer KALAMDB_LOG_FILE)
-    /// - KALAMDB_HOST: Override server.host (legacy, prefer KALAMDB_SERVER_HOST)
-    /// - KALAMDB_PORT: Override server.port (legacy, prefer KALAMDB_SERVER_PORT)
-    ///
-    /// Environment variables take precedence over server.toml values (T031)
-    fn apply_env_overrides(&mut self) -> anyhow::Result<()> {
-        use std::env;
+    /// Call this after applying environment overrides.
+    pub fn finalize(&mut self) -> anyhow::Result<()> {
+        // Normalize local filesystem paths (rocksdb/logs/storage/snapshots)
+        self.normalize_paths();
 
-        // Server host (new naming convention)
-        if let Ok(host) = env::var("KALAMDB_SERVER_HOST") {
-            self.server.host = host;
-        } else if let Ok(host) = env::var("KALAMDB_HOST") {
-            // Legacy fallback
-            self.server.host = host;
-        }
-
-        // Server port (new naming convention)
-        if let Ok(port_str) = env::var("KALAMDB_SERVER_PORT") {
-            self.server.port = port_str
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid KALAMDB_SERVER_PORT value: {}", port_str))?;
-        } else if let Ok(port_str) = env::var("KALAMDB_PORT") {
-            // Legacy fallback
-            self.server.port = port_str
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid KALAMDB_PORT value: {}", port_str))?;
-        }
-
-        // Log level
-        if let Ok(level) = env::var("KALAMDB_LOG_LEVEL") {
-            self.logging.level = level;
-        }
-
-        // Logs directory path (new naming convention)
-        if let Ok(path) = env::var("KALAMDB_LOGS_DIR") {
-            self.logging.logs_path = path;
-        } else if let Ok(path) = env::var("KALAMDB_LOG_FILE") {
-            // Legacy fallback - extract directory from file path
-            if let Some(parent) = std::path::Path::new(&path).parent() {
-                self.logging.logs_path = parent.to_string_lossy().to_string();
-            }
-        } else if let Ok(path) = env::var("KALAMDB_LOG_FILE_PATH") {
-            // Legacy fallback - extract directory from file path
-            if let Some(parent) = std::path::Path::new(&path).parent() {
-                self.logging.logs_path = parent.to_string_lossy().to_string();
-            }
-        }
-
-        // Log to console
-        if let Ok(val) = env::var("KALAMDB_LOG_TO_CONSOLE") {
-            self.logging.log_to_console =
-                val.to_lowercase() == "true" || val == "1" || val.to_lowercase() == "yes";
-        }
-
-        // Data directory (new naming convention)
-        if let Ok(path) = env::var("KALAMDB_DATA_DIR") {
-            self.storage.data_path = path;
-        } else if let Ok(path) = env::var("KALAMDB_ROCKSDB_PATH") {
-            // Legacy fallback - KALAMDB_ROCKSDB_PATH now sets the parent data dir
-            if let Some(parent) = std::path::Path::new(&path).parent() {
-                self.storage.data_path = parent.to_string_lossy().to_string();
-            }
-        }
+        self.validate()?;
 
         Ok(())
     }
@@ -183,14 +113,6 @@ impl ServerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn acquire_env_lock() -> MutexGuard<'static, ()> {
-        ENV_MUTEX.get_or_init(|| Mutex::new(())).lock().unwrap()
-    }
 
     #[test]
     fn test_default_config_is_valid() {
@@ -210,44 +132,5 @@ mod tests {
         let mut config = ServerConfig::default();
         config.logging.level = "invalid".to_string();
         assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn test_env_override_server_host() {
-        let _guard = acquire_env_lock();
-        env::set_var("KALAMDB_SERVER_HOST", "0.0.0.0");
-
-        let mut config = ServerConfig::default();
-        config.apply_env_overrides().unwrap();
-
-        assert_eq!(config.server.host, "0.0.0.0");
-
-        env::remove_var("KALAMDB_SERVER_HOST");
-    }
-
-    #[test]
-    fn test_env_override_server_port() {
-        let _guard = acquire_env_lock();
-        env::set_var("KALAMDB_SERVER_PORT", "9090");
-
-        let mut config = ServerConfig::default();
-        config.apply_env_overrides().unwrap();
-
-        assert_eq!(config.server.port, 9090);
-
-        env::remove_var("KALAMDB_SERVER_PORT");
-    }
-
-    #[test]
-    fn test_env_override_log_level() {
-        let _guard = acquire_env_lock();
-        env::set_var("KALAMDB_LOG_LEVEL", "debug");
-
-        let mut config = ServerConfig::default();
-        config.apply_env_overrides().unwrap();
-
-        assert_eq!(config.logging.level, "debug");
-
-        env::remove_var("KALAMDB_LOG_LEVEL");
     }
 }

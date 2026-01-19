@@ -56,7 +56,7 @@ pub struct ServerConfig {
     #[serde(default = "default_timeout")]
     pub timeout: u64,
 
-    /// Maximum retry attempts
+    /// Maximum retry attempts (0 = disabled)
     #[serde(default = "default_retries")]
     pub max_retries: u32,
 
@@ -115,7 +115,7 @@ fn default_timeout() -> u64 {
 }
 
 fn default_retries() -> u32 {
-    3
+    0
 }
 
 fn default_http_version() -> String {
