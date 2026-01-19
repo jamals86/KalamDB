@@ -4,17 +4,15 @@ use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::models::ReadContext;
 use kalamdb_commons::{NamespaceId, Role, UserId};
-use kalamdb_session::SessionUserContext;
+use kalamdb_session::{SessionUserContext, UserContext};
 use std::sync::Arc;
 use std::time::SystemTime;
 
 /// Unified execution context for SQL queries
 #[derive(Clone)]
 pub struct ExecutionContext {
-    /// User ID executing the query (public for backward compatibility)
-    pub user_id: UserId,
-    /// User's role (public for backward compatibility)
-    pub user_role: Role,
+    /// User identity executing the query
+    user_context: UserContext,
     /// Active namespace for the query (optional for backward compatibility)
     namespace_id: Option<NamespaceId>,
     /// Optional request ID for tracking
@@ -48,8 +46,7 @@ impl ExecutionContext {
         base_session_context: Arc<SessionContext>,
     ) -> Self {
         Self {
-            user_id,
-            user_role,
+            user_context: UserContext::client(user_id, user_role),
             namespace_id: None,
             request_id: None,
             ip_address: None,
@@ -66,8 +63,7 @@ impl ExecutionContext {
         base_session_context: Arc<SessionContext>,
     ) -> Self {
         Self {
-            user_id,
-            user_role,
+            user_context: UserContext::client(user_id, user_role),
             namespace_id: Some(namespace_id),
             request_id: None,
             ip_address: None,
@@ -86,8 +82,7 @@ impl ExecutionContext {
         base_session_context: Arc<SessionContext>,
     ) -> Self {
         Self {
-            user_id,
-            user_role,
+            user_context: UserContext::client(user_id, user_role),
             namespace_id,
             request_id,
             ip_address,
@@ -99,8 +94,7 @@ impl ExecutionContext {
 
     pub fn anonymous(base_session_context: Arc<SessionContext>) -> Self {
         Self {
-            user_id: UserId::from("anonymous"),
-            user_role: Role::User,
+            user_context: UserContext::client(UserId::from("anonymous"), Role::User),
             namespace_id: None,
             request_id: None,
             ip_address: None,
@@ -112,11 +106,11 @@ impl ExecutionContext {
 
     #[inline]
     pub fn is_admin(&self) -> bool {
-        matches!(self.user_role, Role::Dba | Role::System)
+        kalamdb_session::is_admin_role(self.user_context.role)
     }
     #[inline]
     pub fn is_system(&self) -> bool {
-        matches!(self.user_role, Role::System)
+        kalamdb_session::is_system_role(self.user_context.role)
     }
 
     /// Check if this is an anonymous user (not authenticated)
@@ -126,16 +120,16 @@ impl ExecutionContext {
     /// - Cannot CREATE, ALTER, DROP, INSERT, UPDATE, or DELETE
     #[inline]
     pub fn is_anonymous(&self) -> bool {
-        self.user_id.as_str() == kalamdb_commons::constants::ANONYMOUS_USER_ID
+        self.user_context.user_id.as_str() == kalamdb_commons::constants::ANONYMOUS_USER_ID
     }
 
     #[inline]
     pub fn user_id(&self) -> &UserId {
-        &self.user_id
+        &self.user_context.user_id
     }
     #[inline]
     pub fn user_role(&self) -> Role {
-        self.user_role
+        self.user_context.role
     }
     #[inline]
     pub fn namespace_id(&self) -> Option<&NamespaceId> {
@@ -176,6 +170,15 @@ impl ExecutionContext {
         self
     }
 
+    /// Set the read context (client vs internal)
+    ///
+    /// Use `ReadContext::Internal` for WebSocket subscriptions on followers
+    /// to bypass leader-only read checks while still applying RLS.
+    pub fn with_read_context(mut self, read_context: ReadContext) -> Self {
+        self.user_context.read_context = read_context;
+        self
+    }
+
     /// Create a per-request SessionContext with current user_id and role injected
     ///
     /// Clones the base SessionState and injects the current user_id and role into config.extensions.
@@ -211,12 +214,16 @@ impl ExecutionContext {
 
         // Inject current user_id, role, and read_context into session config extensions
         // TableProviders will read this during scan() for per-user filtering and leader check
-        // Default to ReadContext::Client for all external SQL queries
-        session_state.config_mut().options_mut().extensions.insert(SessionUserContext {
-            user_id: self.user_id.clone(),
-            role: self.user_role,
-            read_context: ReadContext::Client,
-        });
+        // Use the read_context from this ExecutionContext (defaults to Client)
+        session_state
+            .config_mut()
+            .options_mut()
+            .extensions
+            .insert(SessionUserContext::new(
+                self.user_context.user_id.clone(),
+                self.user_context.role,
+                self.user_context.read_context,
+            ));
 
         // Override default_schema if namespace_id is set on this context
         if let Some(ref ns) = self.namespace_id {
@@ -235,34 +242,6 @@ impl ExecutionContext {
         ctx
     }
 
-    // /// Create a SessionContext for internal operations (bypasses leader check)
-    // ///
-    // /// Use this for background jobs, live query notifications, and other internal
-    // /// operations that should read local data even when this node is not the leader.
-    // ///
-    // /// **Important**: Only use this for non-client operations. Client SQL queries
-    // /// should use `create_session_with_user()` which enforces leader-only reads.
-    // pub fn create_internal_session(&self) -> SessionContext {
-    //     let mut session_state = self.base_session_context.state();
-
-    //     // Inject user context with ReadContext::Internal (bypasses leader check)
-    //     session_state.config_mut().options_mut().extensions.insert(SessionUserContext {
-    //         user_id: self.user_id.clone(),
-    //         role: self.user_role,
-    //         read_context: ReadContext::Internal, // Allow reads on any node
-    //     });
-
-    //     if let Some(ref ns) = self.namespace_id {
-    //         session_state.config_mut().options_mut().catalog.default_schema =
-    //             ns.as_str().to_string();
-    //     }
-
-    //     let ctx = SessionContext::new_with_state(session_state);
-    //     let current_user_fn = CurrentUserFunction::with_user_id(self.user_id());
-    //     ctx.register_udf(ScalarUDF::from(current_user_fn));
-    //     ctx
-    // }
-
     /// Get the current default namespace (schema) from DataFusion session config
     ///
     /// This reads `datafusion.catalog.default_schema` from the session configuration.
@@ -277,5 +256,10 @@ impl ExecutionContext {
         let state = self.base_session_context.state();
         let default_schema = state.config().options().catalog.default_schema.clone();
         NamespaceId::new(default_schema)
+    }
+
+    #[inline]
+    pub fn user_context(&self) -> &UserContext {
+        &self.user_context
     }
 }

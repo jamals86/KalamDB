@@ -95,7 +95,7 @@ impl StatementHandler for InsertHandler {
         }
 
         // Determine effective user for AS USER before evaluating defaults
-        let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
+        let effective_user_id = statement.as_user_id().unwrap_or(context.user_id());
 
         if columns.is_empty() {
             // Positional mapping: column order from schema will be used later; here just store as v1,v2...
@@ -202,7 +202,7 @@ impl StatementHandler for InsertHandler {
             .execute_native_insert(
                 &table_id,
                 effective_user_id,
-                context.user_role,
+                context.user_role(),
                 rows,
                 table_def, // Pass already-fetched table definition to avoid redundant lookup
             )
@@ -229,17 +229,21 @@ impl StatementHandler for InsertHandler {
 
         // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
         if statement.as_user_id().is_some() {
-            use kalamdb_commons::Role;
-            if !matches!(context.user_role, Role::Service | Role::Dba | Role::System) {
+            use kalamdb_session::can_impersonate_user;
+            if !can_impersonate_user(context.user_role()) {
                 return Err(KalamDbError::Unauthorized(
                     format!("Role {:?} is not authorized to use AS USER. Only Service, Dba, and System roles are permitted.", context.user_role())
                 ));
             }
         }
 
-        use kalamdb_commons::Role;
-        match context.user_role {
-            Role::System | Role::Dba | Role::Service | Role::User => Ok(()),
+        use kalamdb_session::can_execute_dml;
+        if can_execute_dml(context.user_role()) {
+            Ok(())
+        } else {
+            Err(KalamDbError::Unauthorized(
+                format!("Role {:?} is not authorized to execute INSERT.", context.user_role())
+            ))
         }
     }
 }

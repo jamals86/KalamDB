@@ -37,7 +37,7 @@ impl StatementHandler for ClusterListHandler {
             )));
         }
 
-        log::info!("CLUSTER LIST queried by user: {}", ctx.user_id);
+        log::info!("CLUSTER LIST queried by user: {}", ctx.user_id());
 
         // Get the RaftExecutor to access cluster info
         let executor = self.app_context.executor();

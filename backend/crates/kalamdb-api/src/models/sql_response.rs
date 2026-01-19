@@ -5,6 +5,97 @@
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::schemas::SchemaField;
 use serde::{Deserialize, Serialize};
+use std::fmt;
+
+/// Error code enum for type-safe error handling
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ErrorCode {
+    /// Rate limit exceeded
+    RateLimitExceeded,
+    /// Invalid parameter
+    InvalidParameter,
+    /// Batch parse error
+    BatchParseError,
+    /// Empty SQL statement
+    EmptySql,
+    /// Parameters with batch
+    ParamsWithBatch,
+    /// SQL execution error
+    SqlExecutionError,
+    /// Forward failed
+    ForwardFailed,
+    /// NOT_LEADER error (follower node)
+    NotLeader,
+    /// Invalid SQL syntax
+    InvalidSql,
+    /// Table not found
+    TableNotFound,
+    /// Permission denied
+    PermissionDenied,
+    /// Cluster unavailable
+    ClusterUnavailable,
+    /// Leader node not available
+    LeaderNotAvailable,
+    /// Internal error
+    InternalError,
+}
+
+impl ErrorCode {
+    /// Check if this error code indicates a NOT_LEADER error
+    #[inline]
+    pub fn is_not_leader(&self) -> bool {
+        matches!(self, ErrorCode::NotLeader)
+    }
+    
+    /// Get the string representation of the error code
+    #[inline]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ErrorCode::RateLimitExceeded => "RATE_LIMIT_EXCEEDED",
+            ErrorCode::InvalidParameter => "INVALID_PARAMETER",
+            ErrorCode::BatchParseError => "BATCH_PARSE_ERROR",
+            ErrorCode::EmptySql => "EMPTY_SQL",
+            ErrorCode::ParamsWithBatch => "PARAMS_WITH_BATCH",
+            ErrorCode::SqlExecutionError => "SQL_EXECUTION_ERROR",
+            ErrorCode::ForwardFailed => "FORWARD_FAILED",
+            ErrorCode::NotLeader => "NOT_LEADER",
+            ErrorCode::InvalidSql => "INVALID_SQL",
+            ErrorCode::TableNotFound => "TABLE_NOT_FOUND",
+            ErrorCode::PermissionDenied => "PERMISSION_DENIED",
+            ErrorCode::ClusterUnavailable => "CLUSTER_UNAVAILABLE",
+            ErrorCode::LeaderNotAvailable => "LEADER_NOT_AVAILABLE",
+            ErrorCode::InternalError => "INTERNAL_ERROR",
+        }
+    }
+}
+
+impl fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl From<&str> for ErrorCode {
+    fn from(s: &str) -> Self {
+        match s {
+            "RATE_LIMIT_EXCEEDED" => ErrorCode::RateLimitExceeded,
+            "INVALID_PARAMETER" => ErrorCode::InvalidParameter,
+            "BATCH_PARSE_ERROR" => ErrorCode::BatchParseError,
+            "EMPTY_SQL" => ErrorCode::EmptySql,
+            "PARAMS_WITH_BATCH" => ErrorCode::ParamsWithBatch,
+            "SQL_EXECUTION_ERROR" => ErrorCode::SqlExecutionError,
+            "FORWARD_FAILED" => ErrorCode::ForwardFailed,
+            "NOT_LEADER" => ErrorCode::NotLeader,
+            "INVALID_SQL" => ErrorCode::InvalidSql,
+            "TABLE_NOT_FOUND" => ErrorCode::TableNotFound,
+            "PERMISSION_DENIED" => ErrorCode::PermissionDenied,
+            "CLUSTER_UNAVAILABLE" => ErrorCode::ClusterUnavailable,
+            "LEADER_NOT_AVAILABLE" => ErrorCode::LeaderNotAvailable,
+            _ => ErrorCode::InternalError,
+        }
+    }
+}
 
 /// Execution status enum
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -103,8 +194,8 @@ pub struct QueryResult {
 /// Error details for failed SQL execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorDetail {
-    /// Error code (e.g., "INVALID_SQL", "TABLE_NOT_FOUND", "PERMISSION_DENIED")
-    pub code: String,
+    /// Error code enum (type-safe)
+    pub code: ErrorCode,
 
     /// Human-readable error message
     pub message: String,
@@ -126,13 +217,13 @@ impl SqlResponse {
     }
 
     /// Create an error response
-    pub fn error(code: &str, message: &str, took: f64) -> Self {
+    pub fn error(code: ErrorCode, message: &str, took: f64) -> Self {
         Self {
             status: ResponseStatus::Error,
             results: Vec::new(),
             took,
             error: Some(ErrorDetail {
-                code: code.to_string(),
+                code,
                 message: message.to_string(),
                 details: None,
             }),
@@ -140,13 +231,13 @@ impl SqlResponse {
     }
 
     /// Create an error response with additional details
-    pub fn error_with_details(code: &str, message: &str, details: &str, took: f64) -> Self {
+    pub fn error_with_details(code: ErrorCode, message: &str, details: &str, took: f64) -> Self {
         Self {
             status: ResponseStatus::Error,
             results: Vec::new(),
             took,
             error: Some(ErrorDetail {
-                code: code.to_string(),
+                code,
                 message: message.to_string(),
                 details: Some(details.to_string()),
             }),
@@ -309,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_error_response_serialization() {
-        let response = SqlResponse::error("INVALID_SQL", "Syntax error", 5.0);
+        let response = SqlResponse::error(ErrorCode::InvalidSql, "Syntax error", 5.0);
 
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("error"));

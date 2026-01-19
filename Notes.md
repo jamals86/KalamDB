@@ -1148,3 +1148,20 @@ i guess we need to add a new column to the jobs table to track each node the sta
 83) maybe we should go with catalog for system and catalog for public/user namespaces instead of having system tables in the same catalog as user tables
 
 
+84) backend/crates/kalamdb-sql/src/classifier/engine/core.rs i think the parsing cna be done better and use the already sqlparser or datafusion things
+
+85) pub struct ErrorDetail.code: String,
+should be an enum so we can compare it when not leader
+err_msg.contains("NOT_LEADER")
+
+87) this should be a type-safe instead of json:
+                let sub_data = serde_json::json!({
+                    "status": "active",
+                    "ws_url": channel,
+                    "subscription": {
+                        "id": subscription_id,
+                        "sql": select_query
+                    },
+                    "message": "WebSocket subscription created. Connect to ws_url to receive updates."
+                });
+                Ok(QueryResult::subscription(sub_data))

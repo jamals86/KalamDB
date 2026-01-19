@@ -72,12 +72,13 @@ pub fn block_system_namespace_modification(
 /// require_admin(context, "create storage")?;
 /// ```
 pub fn require_admin(context: &ExecutionContext, action: &str) -> Result<(), KalamDbError> {
-    if !context.is_admin() {
+    use kalamdb_session::is_admin_role;
+    if !is_admin_role(context.user_role()) {
         log::error!(
             "❌ {}: Insufficient privileges (user: {}, role: {:?})",
             action,
-            context.user_id.as_str(),
-            context.user_role
+            context.user_id().as_str(),
+            context.user_role()
         );
         return Err(KalamDbError::Unauthorized(format!(
             "Insufficient privileges to {}. DBA or System role required.",

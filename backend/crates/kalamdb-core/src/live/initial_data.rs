@@ -13,7 +13,7 @@ use datafusion::execution::context::SessionContext;
 use kalamdb_commons::constants::{AuthConstants, SystemColumnNames};
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
-use kalamdb_commons::models::{TableId, UserId};
+use kalamdb_commons::models::{ReadContext, TableId, UserId};
 use kalamdb_commons::Role;
 use once_cell::sync::OnceCell;
 use std::collections::BTreeMap;
@@ -207,8 +207,10 @@ impl InitialDataFetcher {
         })?;
 
         // Create execution context with user scope for row-level security
-        let exec_ctx =
-            ExecutionContext::new(user_id.clone(), role, Arc::clone(&self.base_session_context));
+        // Use ReadContext::Internal to allow followers to read local data for subscriptions
+        // (subscriptions will receive live updates via Raft replication)
+        let exec_ctx = ExecutionContext::new(user_id.clone(), role, Arc::clone(&self.base_session_context))
+            .with_read_context(ReadContext::Internal);
 
         // Construct SQL query with projections
         let table_name = table_id.full_name(); // "namespace.table"

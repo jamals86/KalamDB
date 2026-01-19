@@ -36,7 +36,7 @@ impl StatementHandler for ClusterSnapshotHandler {
             )));
         }
 
-        log::info!("CLUSTER SNAPSHOT initiated by user: {}", ctx.user_id);
+        log::info!("CLUSTER SNAPSHOT initiated by user: {}", ctx.user_id());
 
         // Get the RaftExecutor to trigger snapshots
         let executor = self.app_context.executor();

@@ -56,7 +56,8 @@ pub use error_extensions::KalamDbResultExt;
 
 // Re-export modules that were moved to other crates
 pub mod auth {
-    pub use kalamdb_auth::authorization::{rbac, roles};
+    pub use kalamdb_auth::authorization::roles;
+    pub use kalamdb_session::rbac;
 }
 
 pub mod live_query {

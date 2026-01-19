@@ -136,6 +136,24 @@ pub fn check_user_table_access(
     }
 }
 
+/// Check if a role can read all user rows (RLS bypass).
+#[inline]
+pub fn can_read_all_users(role: Role) -> bool {
+    matches!(role, Role::System | Role::Dba | Role::Service)
+}
+
+/// Check if a role can execute DML statements.
+#[inline]
+pub fn can_execute_dml(role: Role) -> bool {
+    matches!(role, Role::System | Role::Dba | Role::Service | Role::User)
+}
+
+/// Check if a role can execute maintenance operations (flush/compact).
+#[inline]
+pub fn can_execute_maintenance(role: Role) -> bool {
+    matches!(role, Role::System | Role::Dba)
+}
+
 /// Check if a role can write (INSERT/UPDATE/DELETE) a user/stream table.
 #[inline]
 pub fn can_write_user_table(role: Role) -> bool {
@@ -191,6 +209,12 @@ pub fn check_stream_table_write_access_level(
     table_name: &TableName,
 ) -> Result<(), SessionError> {
     check_user_table_write_access_level(role, namespace_id, table_name)
+}
+
+/// Check if a role can impersonate another user (AS USER).
+#[inline]
+pub fn can_impersonate_user(role: Role) -> bool {
+    matches!(role, Role::Service | Role::Dba | Role::System)
 }
 
 /// Determine the access level for a shared table definition.

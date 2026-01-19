@@ -7,7 +7,7 @@ use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::{JobId, JobType, Role};
+use kalamdb_commons::{JobId, JobType};
 use kalamdb_sql::ddl::CompactTableStatement;
 use std::sync::Arc;
 
@@ -84,7 +84,8 @@ impl TypedStatementHandler<CompactTableStatement> for CompactTableHandler {
         _statement: &CompactTableStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        if !matches!(context.user_role(), Role::Service | Role::Dba | Role::System) {
+        use kalamdb_session::can_execute_maintenance;
+        if !can_execute_maintenance(context.user_role()) {
             return Err(KalamDbError::Unauthorized(
                 "STORAGE COMPACT TABLE requires Service, DBA, or System role".to_string(),
             ));

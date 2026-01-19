@@ -186,6 +186,7 @@ fn cluster_test_ws_follower_receives_leader_changes() {
     let insert_sql = format!("INSERT INTO {} (id, value) VALUES (1, '{}')", full, insert_value);
 
     cluster_runtime().block_on(async {
+        // Subscribe on FOLLOWER to test follower subscriptions work
         let follower_client = create_ws_client(&follower_url);
         let leader_client = create_ws_client(&leader_url);
 

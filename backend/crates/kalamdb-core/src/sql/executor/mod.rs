@@ -105,11 +105,10 @@ impl SqlExecutor {
         // Step 1: Classify, authorize, and parse statement in one pass
         // Prioritize SELECT/DML checks as they represent 99% of queries
         // Authorization happens before parsing for fail-fast behavior
-        // TODO: Pass namespace context from ExecutionContext
         let classified = SqlStatement::classify_and_parse(
             sql,
             &exec_ctx.default_namespace(),
-            exec_ctx.user_role,
+            exec_ctx.user_role(),
         )
         .map_err(|e| match e {
             kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
@@ -184,7 +183,7 @@ impl SqlExecutor {
         // Note: Cached plans already have default ORDER BY applied
         // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan time
         let cache_key =
-            PlanCacheKey::new(exec_ctx.default_namespace().clone(), exec_ctx.user_role, sql);
+            PlanCacheKey::new(exec_ctx.default_namespace().clone(), exec_ctx.user_role(), sql);
 
         let df = if params.is_empty() {
             if let Some(plan) = self.plan_cache.get(&cache_key) {
@@ -355,8 +354,8 @@ impl SqlExecutor {
                     target: "sql::exec",
                     "❌ SQL execution failed | sql='{}' | user='{}' | role='{:?}' | error='{}'",
                     sql,
-                    exec_ctx.user_id.as_str(),
-                    exec_ctx.user_role,
+                    exec_ctx.user_id().as_str(),
+                    exec_ctx.user_role(),
                     e
                 );
                 return Err(KalamDbError::Other(format!("Error executing query: {}", e)));
@@ -395,8 +394,8 @@ impl SqlExecutor {
                     target: "sql::meta",
                     "❌ Meta command failed | sql='{}' | user='{}' | role='{:?}' | error='{}'",
                     sql,
-                    exec_ctx.user_id.as_str(),
-                    exec_ctx.user_role,
+                    exec_ctx.user_id().as_str(),
+                    exec_ctx.user_role(),
                     e
                 );
                 return Err(KalamDbError::ExecutionError(e.to_string()));
@@ -415,7 +414,7 @@ impl SqlExecutor {
                     target: "sql::meta",
                     "❌ Meta command execution failed | sql='{}' | user='{}' | error='{}'",
                     sql,
-                    exec_ctx.user_id.as_str(),
+                    exec_ctx.user_id().as_str(),
                     e
                 );
                 return Err(KalamDbError::Other(format!("Error executing meta command: {}", e)));
@@ -455,8 +454,8 @@ impl SqlExecutor {
                 target: "sql::plan",
                 "⚠️  Table not found | sql='{}' | user='{}' | role='{:?}' | error='{}'",
                 sql,
-                exec_ctx.user_id.as_str(),
-                exec_ctx.user_role,
+                exec_ctx.user_id().as_str(),
+                exec_ctx.user_role(),
                 e
             );
         } else {
@@ -464,8 +463,8 @@ impl SqlExecutor {
                 target: "sql::plan",
                 "❌ SQL planning failed | sql='{}' | user='{}' | role='{:?}' | error='{}'",
                 sql,
-                exec_ctx.user_id.as_str(),
-                exec_ctx.user_role,
+                exec_ctx.user_id().as_str(),
+                exec_ctx.user_role(),
                 e
             );
         }

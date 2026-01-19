@@ -32,23 +32,29 @@
 //! | Table Type Access | `permissions` | System/User/Shared table access |
 //! | Statement Auth | `kalamdb_sql::classifier` | DDL/DML statement-level auth |
 //! | User Management | `handlers::user` | Role changes, password updates |
-//! | RBAC Functions | `kalamdb_auth::authorization::rbac` | Role-based access helpers |
+//! | RBAC Functions | `kalamdb_session::rbac` | Role-based access helpers |
 
 pub mod error;
 pub mod permissions;
+pub mod rbac;
 pub mod secured_provider;
 pub mod session_context;
+pub mod user_context;
 
 // Re-export main types
 pub use error::{SessionError, SessionResult};
 pub use permissions::{
-    can_access_shared_table, can_access_system_table, can_access_user_table, can_write_shared_table,
-    can_write_stream_table, can_write_user_table, check_shared_table_access,
+    can_access_shared_table, can_access_system_table, can_access_user_table, can_execute_dml,
+    can_execute_maintenance, can_read_all_users, can_write_shared_table, can_write_stream_table,
+    can_write_user_table,
+    check_shared_table_access,
     check_shared_table_write_access, check_shared_table_write_access_level,
     check_stream_table_write_access_level, check_system_table_access, check_user_table_access,
     check_user_table_write_access, check_user_table_write_access_level, extract_full_user_context,
     extract_session_context, extract_user_context, extract_user_id, extract_user_role,
-    shared_table_access_level, PermissionChecker,
+    shared_table_access_level, can_impersonate_user, PermissionChecker,
 };
 pub use secured_provider::{secure_provider, SecuredSystemTableProvider};
 pub use session_context::SessionUserContext;
+pub use user_context::UserContext;
+pub use rbac::*;

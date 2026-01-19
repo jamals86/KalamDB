@@ -53,7 +53,7 @@ impl StatementHandler for DeleteHandler {
             self.simple_parse_delete(sql, &default_namespace)?;
 
         // T153: Use effective user_id for impersonation support (Phase 7)
-        let effective_user_id = statement.as_user_id().unwrap_or(&context.user_id);
+        let effective_user_id = statement.as_user_id().unwrap_or(context.user_id());
 
         // Execute native delete
         let schema_registry = self.app_context.schema_registry();
@@ -82,7 +82,7 @@ impl StatementHandler for DeleteHandler {
                 // Check write permissions for USER tables
                 use kalamdb_session::check_user_table_write_access_level;
                 check_user_table_write_access_level(
-                    context.user_role,
+                    context.user_role(),
                     &namespace,
                     &table_name,
                 )
@@ -146,7 +146,7 @@ impl StatementHandler for DeleteHandler {
                 };
 
                 check_shared_table_write_access_level(
-                    context.user_role,
+                    context.user_role(),
                     access_level,
                     &namespace,
                     &table_name,
@@ -202,7 +202,7 @@ impl StatementHandler for DeleteHandler {
                 // STREAM tables share the same write permissions as USER tables
                 use kalamdb_session::check_stream_table_write_access_level;
                 check_stream_table_write_access_level(
-                    context.user_role,
+                    context.user_role(),
                     &namespace,
                     &table_name,
                 )
@@ -278,17 +278,21 @@ impl StatementHandler for DeleteHandler {
 
         // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
         if statement.as_user_id().is_some() {
-            use kalamdb_commons::Role;
-            if !matches!(context.user_role, Role::Service | Role::Dba | Role::System) {
+            use kalamdb_session::can_impersonate_user;
+            if !can_impersonate_user(context.user_role()) {
                 return Err(KalamDbError::Unauthorized(
                     format!("Role {:?} is not authorized to use AS USER. Only Service, Dba, and System roles are permitted.", context.user_role())
                 ));
             }
         }
 
-        use kalamdb_commons::Role;
-        match context.user_role {
-            Role::System | Role::Dba | Role::Service | Role::User => Ok(()),
+        use kalamdb_session::can_execute_dml;
+        if can_execute_dml(context.user_role()) {
+            Ok(())
+        } else {
+            Err(KalamDbError::Unauthorized(
+                format!("Role {:?} is not authorized to execute DELETE.", context.user_role())
+            ))
         }
     }
 }

@@ -3692,6 +3692,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "kalamdb-commons",
+ "kalamdb-session",
  "kalamdb-store",
  "kalamdb-system",
  "log",

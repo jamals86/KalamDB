@@ -31,8 +31,8 @@ use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::UserTableRowId;
 use kalamdb_commons::models::UserId;
-use kalamdb_commons::{Role, StorageKey, TableId};
-use kalamdb_session::check_user_table_access;
+use kalamdb_commons::{StorageKey, TableId};
+use kalamdb_session::{can_read_all_users, check_user_table_access};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{UserTableIndexedStore, UserTablePkIndex, UserTableRow};
 use std::any::Any;
@@ -785,7 +785,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     ) -> Result<RecordBatch, KalamDbError> {
         // Extract user_id and role from SessionState for RLS
         let (user_id, role) = extract_user_context(state)?;
-        let allow_all_users = matches!(role, Role::Service | Role::Dba | Role::System);
+        let allow_all_users = can_read_all_users(role);
 
         // Extract sequence bounds from filter to optimize RocksDB scan
         let (since_seq, _until_seq) = if let Some(expr) = filter {

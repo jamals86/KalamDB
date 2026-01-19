@@ -329,8 +329,8 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             statement.namespace_id.as_str(),
             statement.table_name.as_str(),
             statement.if_exists,
-            context.user_id.as_str(),
-            context.user_role
+            context.user_id().as_str(),
+            context.user_role()
         );
 
         // Block DROP on system tables - they are managed internally
@@ -349,13 +349,13 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
                 None => TableType::from(statement.table_type),
             };
         let is_owner = false;
-        if !crate::auth::rbac::can_delete_table(context.user_role, actual_type, is_owner) {
+        if !crate::auth::rbac::can_delete_table(context.user_role(), actual_type, is_owner) {
             log::error!(
                 "❌ DROP TABLE {}.{}: Insufficient privileges (user: {}, role: {:?}, table_type: {:?})",
                 statement.namespace_id.as_str(),
                 statement.table_name.as_str(),
-                context.user_id.as_str(),
-                context.user_role,
+                context.user_id().as_str(),
+                context.user_role(),
                 actual_type
             );
             return Err(KalamDbError::Unauthorized(

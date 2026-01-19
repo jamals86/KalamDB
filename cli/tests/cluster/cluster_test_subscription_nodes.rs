@@ -79,6 +79,34 @@ fn create_ws_client(base_url: &str) -> KalamLinkClient {
         .expect("Failed to build cluster client")
 }
 
+/// Execute a query with automatic leader retry on NOT_LEADER errors
+async fn execute_query_with_leader_retry(
+    base_url: &str,
+    query: &str,
+) -> Result<kalam_link::QueryResponse, String> {
+    let client = create_ws_client(base_url);
+    match client.execute_query(query, None, None).await {
+        Ok(response) => {
+            if !response.success() {
+                let err = response_error_message(&response);
+                // If NOT_LEADER error, retry on leader
+                if is_leader_error(&err) {
+                    if let Some(leader) = leader_url() {
+                        if leader != base_url {
+                            let leader_client = create_ws_client(&leader);
+                            return leader_client.execute_query(query, None, None).await
+                                .map_err(|e| e.to_string());
+                        }
+                    }
+                }
+                return Err(err);
+            }
+            Ok(response)
+        },
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 async fn subscribe_with_retry(
     client: &KalamLinkClient,
     query: &str,
@@ -282,7 +310,7 @@ fn cluster_test_subscription_follower_to_leader() {
     let insert_value = "follower_receives_this";
 
     cluster_runtime().block_on(async {
-        // Subscribe on FOLLOWER
+        // Subscribe on FOLLOWER to test that followers can subscribe and receive updates
         let follower_client = create_ws_client(follower_url);
         let leader_client = create_ws_client(&leader_url);
 
@@ -372,17 +400,10 @@ fn cluster_test_subscription_multi_node_identical() {
     let expected_inserts = 5;
 
     cluster_runtime().block_on(async {
-        // Create subscriptions on all nodes
-        let mut subscriptions = Vec::new();
-        let received_counts: Vec<Arc<std::sync::atomic::AtomicUsize>> = (0..urls.len())
-            .map(|_| Arc::new(std::sync::atomic::AtomicUsize::new(0)))
-            .collect();
-
-        for url in &urls {
-            let client = create_ws_client(url);
-            let sub = client.subscribe(&query).await.expect("Failed to subscribe");
-            subscriptions.push(sub);
-        }
+        // Create subscription on leader only (Spec 021: leader-only reads)
+        let leader_client = create_ws_client(&leader_url);
+        let mut subscription = leader_client.subscribe(&query).await.expect("Failed to subscribe");
+        let received_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
         // Insert multiple rows on leader
         let leader_client = create_ws_client(&leader_url);
@@ -401,45 +422,34 @@ fn cluster_test_subscription_multi_node_identical() {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        // Collect events from all subscriptions
+        // Collect events from the subscription
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let mut local_count = 0;
 
-        for (idx, sub) in subscriptions.iter_mut().enumerate() {
-            let count = received_counts[idx].clone();
-            let mut local_count = 0;
-
-            while tokio::time::Instant::now() < deadline && local_count < expected_inserts {
-                let wait = Duration::from_millis(500);
-                match tokio::time::timeout(wait, sub.next()).await {
-                    Ok(Some(Ok(ChangeEvent::Insert { rows, .. }))) => {
-                        for row in rows {
-                            if let Some(obj) = row.as_object() {
-                                if let Some(Value::String(val)) = obj.get("value") {
-                                    if val.starts_with(insert_value) {
-                                        local_count += 1;
-                                        count.fetch_add(1, Ordering::SeqCst);
-                                    }
+        while tokio::time::Instant::now() < deadline && local_count < expected_inserts {
+            let wait = Duration::from_millis(500);
+            match tokio::time::timeout(wait, subscription.next()).await {
+                Ok(Some(Ok(ChangeEvent::Insert { rows, .. }))) => {
+                    for row in rows {
+                        if let Some(obj) = row.as_object() {
+                            if let Some(Value::String(val)) = obj.get("value") {
+                                if val.starts_with(insert_value) {
+                                    local_count += 1;
+                                    received_count.fetch_add(1, Ordering::SeqCst);
                                 }
                             }
                         }
-                    },
-                    _ => {},
-                }
+                    }
+                },
+                _ => {},
             }
         }
 
-        // Verify all nodes received the same number of events
-        let mut all_counts: Vec<usize> = Vec::new();
-        for (i, count) in received_counts.iter().enumerate() {
-            let c = count.load(Ordering::SeqCst);
-            println!("  Node {} received {} events", i, c);
-            all_counts.push(c);
-        }
+        // Verify received events
+        let count = received_count.load(Ordering::SeqCst);
+        println!("  Leader subscription received {} events", count);
 
-        // All should have received at least some events (replication might have slight timing differences)
-        for (i, count) in all_counts.iter().enumerate() {
-            assert!(*count > 0, "Node {} received 0 events, expected > 0", i);
-        }
+        assert!(count > 0, "Leader subscription received 0 events, expected > 0");
     });
 
     let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE {} CASCADE", namespace));
@@ -494,15 +504,15 @@ fn cluster_test_subscription_initial_data_consistency() {
     )
     .expect("Failed to insert initial data");
 
-    // Wait for data replication - USER tables may take more time especially
-    // when the cluster is under load from other parallel tests
+    // Wait for data replication - check on leader only (Spec 021: leader-only reads)
     let mut data_replicated = false;
     for attempt in 1..=5 {
-        if wait_for_row_count_on_all_nodes(&full, 20, 15000) {
+        let count = query_count_on_url(&leader_url, &format!("SELECT count(*) as count FROM {}", full));
+        if count == 20 {
             data_replicated = true;
             break;
         }
-        println!("  ⏳ Attempt {}/5: Data not fully replicated, retrying...", attempt);
+        println!("  ⏳ Attempt {}/5: Count = {}, expected 20, retrying...", attempt, count);
         std::thread::sleep(Duration::from_millis(1000));
     }
 
@@ -517,10 +527,8 @@ fn cluster_test_subscription_initial_data_consistency() {
         let mut initial_data_sets: Vec<Vec<i64>> = Vec::new();
 
         for (idx, url) in urls.iter().enumerate() {
-            let client = create_ws_client(url);
-
-            // Query initial data via subscription
-            let response = client.execute_query(&query, None, None).await.expect("Failed to query");
+            // Query initial data with leader retry (leader-only reads per Spec 021)
+            let response = execute_query_with_leader_retry(url, &query).await.expect("Failed to query");
 
             let mut ids: Vec<i64> = Vec::new();
             if let Some(result) = response.results.first() {
