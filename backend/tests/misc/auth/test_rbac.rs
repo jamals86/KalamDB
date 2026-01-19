@@ -12,7 +12,7 @@ async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId 
 
 #[actix_web::test]
 async fn test_user_role_own_tables_access_and_isolation() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = "rbac_user";
     let u1 = insert_user(&server, "alice", Role::User).await;
     let u2 = insert_user(&server, "bob", Role::User).await;
@@ -53,7 +53,7 @@ async fn test_user_role_own_tables_access_and_isolation() {
 
 #[actix_web::test]
 async fn test_service_role_cross_user_access() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = "rbac_service";
     let svc = insert_user(&server, "svc", Role::Service).await;
     let alice = insert_user(&server, "svc_alice", Role::User).await;
@@ -77,7 +77,7 @@ async fn test_service_role_cross_user_access() {
     let resp = server.execute_sql_as_user(&select, svc.as_str()).await;
     assert_eq!(resp.status, ResponseStatus::Success, "service select should succeed");
 
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     let contents: std::collections::HashSet<_> = rows
         .iter()
         .filter_map(|row| row.get("content").and_then(|v| v.as_str()))
@@ -90,7 +90,7 @@ async fn test_service_role_cross_user_access() {
 
 #[actix_web::test]
 async fn test_service_role_flush_operations() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = "rbac_flush";
     let svc = insert_user(&server, "svc_flush", Role::Service).await;
     let user = insert_user(&server, "flush_user", Role::User).await;
@@ -112,17 +112,19 @@ async fn test_service_role_flush_operations() {
     let flush = format!("STORAGE FLUSH TABLE {}.events", ns);
     let resp = server.execute_sql_as_user(&flush, svc.as_str()).await;
     assert_eq!(resp.status, ResponseStatus::Success, "service flush should succeed");
-    assert!(resp
-        .results
-        .first()
-        .and_then(|r| r.message.as_ref())
-        .map(|msg| msg.contains("Flush started"))
-        .unwrap_or(true));
+    
+    // Verify the flush message is present (if results exist)
+    if let Some(result) = resp.results.first() {
+        if let Some(msg) = &result.message {
+            assert!(msg.contains("Flush started") || msg.contains("Job ID"), 
+                    "Flush message should indicate success, got: {}", msg);
+        }
+    }
 }
 
 #[actix_web::test]
 async fn test_service_role_cannot_manage_users() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let svc = insert_user(&server, "svc_admin", Role::Service).await;
 
     let sql = "CREATE USER 'managed' WITH PASSWORD 'StrongPass123!' ROLE user";
@@ -132,7 +134,7 @@ async fn test_service_role_cannot_manage_users() {
 
 #[actix_web::test]
 async fn test_user_cannot_manage_users() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let user = insert_user(&server, "charlie", Role::User).await;
 
     // Regular user cannot CREATE USER
@@ -146,7 +148,7 @@ async fn test_user_cannot_manage_users() {
 
 #[actix_web::test]
 async fn test_dba_can_manage_users() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let dba = insert_user(&server, "admin_dba", Role::Dba).await;
 
     let sql = "CREATE USER 'svc1' WITH PASSWORD 'StrongPass123!' ROLE service";
@@ -159,7 +161,7 @@ async fn test_dba_can_manage_users() {
 
 #[actix_web::test]
 async fn test_system_role_all_access_smoke() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let sys = insert_user(&server, "sys", Role::System).await;
 
     // System can perform namespace admin operations

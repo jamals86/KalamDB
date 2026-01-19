@@ -121,7 +121,7 @@ impl AuditLogsTableProvider {
         let mut builder = RecordBatchBuilder::new(AuditLogsTableSchema::schema());
         builder
             .add_string_column_owned(audit_ids)
-            .add_timestamp_millis_column(timestamps)
+            .add_timestamp_micros_column(timestamps)
             .add_string_column_owned(actor_user_ids)
             .add_string_column_owned(actor_usernames)
             .add_string_column_owned(actions)
@@ -274,7 +274,7 @@ impl TableProvider for AuditLogsTableProvider {
 mod tests {
     use super::*;
     use arrow::array::Array;
-    use datafusion::arrow::array::TimestampMillisecondArray;
+    use datafusion::arrow::array::TimestampMicrosecondArray;
     use kalamdb_commons::{UserId, UserName};
     use kalamdb_store::test_utils::InMemoryBackend;
     use serde_json::json;
@@ -439,7 +439,7 @@ mod tests {
 
         // Verify timestamps column exists
         let timestamps_col =
-            batch.column(1).as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
+            batch.column(1).as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
         assert_eq!(timestamps_col.len(), 3);
     }
 

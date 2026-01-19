@@ -1,6 +1,6 @@
-//! AppContext singleton for KalamDB (Phase 5, T204)
+//! AppContext for KalamDB (Phase 5, T204)
 //!
-//! Provides global access to all core resources with simplified 3-parameter initialization.
+//! Provides access to all core resources with simplified 3-parameter initialization.
 //! Uses constants from kalamdb_commons for table prefixes.
 
 use crate::applier::UnifiedApplier;
@@ -20,9 +20,11 @@ use crate::views::datatypes::{DatatypesTableProvider, DatatypesView};
 use crate::views::settings::{SettingsTableProvider, SettingsView};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
+use kalamdb_commons::models::UserId;
 use kalamdb_commons::{constants::ColumnFamilyNames, NodeId};
 use kalamdb_configs::ServerConfig;
 use kalamdb_raft::CommandExecutor;
+use kalamdb_sharding::GroupId;
 use kalamdb_store::StorageBackend;
 use kalamdb_system::{SystemTable, SystemTablesRegistry};
 use kalamdb_tables::{SharedTableStore, UserTableStore};
@@ -34,15 +36,10 @@ use crate::metrics::runtime::collect_runtime_metrics;
 
 // Use RwLock instead of OnceLock to allow resetting in tests
 // The RwLock is wrapped in a OnceLock for lazy initialization
-use once_cell::sync::Lazy;
-use std::sync::RwLock as StdRwLock;
-
-static APP_CONTEXT: Lazy<StdRwLock<Option<Arc<AppContext>>>> = Lazy::new(|| StdRwLock::new(None));
-
-/// AppContext singleton
+/// AppContext
 ///
 /// Central registry of all shared resources. Services and executors fetch
-/// dependencies via AppContext::get() instead of storing them, enabling:
+/// dependencies via explicit passing instead of global access, enabling:
 /// - Zero duplication across layers
 /// - Stateless services (zero-sized structs)
 /// - Memory-efficient per-request operations
@@ -133,7 +130,7 @@ impl std::fmt::Debug for AppContext {
 }
 
 impl AppContext {
-    /// Initialize AppContext singleton with config-driven NodeId
+    /// Initialize AppContext with config-driven NodeId
     ///
     /// Creates all dependencies internally using constants from kalamdb_commons.
     /// Table prefixes are read from constants::USER_TABLE_PREFIX, etc.
@@ -169,31 +166,13 @@ impl AppContext {
         storage_base_path: String,
         config: ServerConfig,
     ) -> Arc<AppContext> {
-        // Check if already initialized
-        {
-            let guard = APP_CONTEXT.read().expect("APP_CONTEXT lock poisoned");
-            if let Some(existing) = guard.as_ref() {
-                return existing.clone();
-            }
-        }
-
-        // Initialize
-        let app_ctx = Self::create_impl(storage_backend, node_id, storage_base_path, config);
-        {
-            let mut guard = APP_CONTEXT.write().expect("APP_CONTEXT lock poisoned");
-            *guard = Some(app_ctx.clone());
-        }
-        app_ctx
+        Self::create_impl(storage_backend, node_id, storage_base_path, config)
     }
 
     /// Create an isolated AppContext instance for tests
     ///
-    /// Unlike `init()`, this **replaces** the global singleton, ensuring the
-    /// new instance is used by all code that calls `AppContext::get()`.
-    /// The previous AppContext is dropped.
-    ///
     /// This is essential for test isolation where each test needs its own
-    /// independent state (separate RocksDB, Raft groups, etc.)
+    /// independent state (separate RocksDB, Raft groups, etc.).
     ///
     /// **Warning**: Only use this in tests! Production code should use `init()`.
     pub fn create_isolated(
@@ -202,13 +181,7 @@ impl AppContext {
         storage_base_path: String,
         config: ServerConfig,
     ) -> Arc<AppContext> {
-        let app_ctx = Self::create_impl(storage_backend, node_id, storage_base_path, config);
-        // Replace the global singleton so AppContext::get() returns the new instance
-        {
-            let mut guard = APP_CONTEXT.write().expect("APP_CONTEXT lock poisoned");
-            *guard = Some(app_ctx.clone());
-        }
-        app_ctx
+        Self::create_impl(storage_backend, node_id, storage_base_path, config)
     }
 
     /// Internal implementation that creates an AppContext
@@ -564,8 +537,8 @@ impl AppContext {
     /// Create a minimal AppContext for unit testing
     ///
     /// This factory method creates a lightweight AppContext with only essential
-    /// dependencies initialized. Use this in unit tests instead of AppContext::get()
-    /// to avoid singleton initialization requirements.
+    /// dependencies initialized. Use this in unit tests to avoid relying on any
+    /// global AppContext state.
     ///
     /// **Phase 12, US5**: Test-specific factory with SystemColumnsService (worker_id=0)
     ///
@@ -722,24 +695,6 @@ impl AppContext {
         app_ctx
     }
 
-    /// Get the AppContext singleton
-    ///
-    /// # Panics
-    /// Panics if AppContext::init() has not been called yet
-    pub fn get() -> Arc<AppContext> {
-        APP_CONTEXT
-            .read()
-            .expect("APP_CONTEXT lock poisoned")
-            .as_ref()
-            .expect("AppContext not initialized")
-            .clone()
-    }
-
-    /// Try to get the AppContext singleton without panicking
-    pub fn try_get() -> Option<Arc<AppContext>> {
-        APP_CONTEXT.read().ok().and_then(|guard| guard.as_ref().cloned())
-    }
-
     // ===== Getters =====
 
     /// Get the server configuration
@@ -818,6 +773,109 @@ impl AppContext {
     /// Check if this node is running in cluster mode
     pub fn is_cluster_mode(&self) -> bool {
         self.executor.is_cluster_mode()
+    }
+
+    // ===== Leadership Check Methods (Spec 021 - Raft Replication Semantics) =====
+
+    /// Check if this node is the leader for a user's data shard
+    ///
+    /// In Raft cluster mode, user data is partitioned across shards based on
+    /// `hash(user_id) % num_shards`. This method checks if the current node
+    /// is the leader for the shard that contains the given user's data.
+    ///
+    /// In standalone mode (single-node), this always returns `true`.
+    ///
+    /// # Arguments
+    /// * `user_id` - The user ID to check leadership for
+    ///
+    /// # Returns
+    /// * `true` if this node is the leader for the user's shard
+    /// * `false` if this node is not the leader (follower)
+    ///
+    /// # Example
+    /// ```ignore
+    /// if !ctx.is_leader_for_user(&user_id) {
+    ///     return Err(KalamDbError::NotLeader { leader_addr: ctx.leader_addr_for_user(&user_id) });
+    /// }
+    /// ```
+    pub async fn is_leader_for_user(&self, user_id: &UserId) -> bool {
+        let group_id = self.user_shard_group_id(user_id);
+        self.executor.is_leader(group_id).await
+    }
+
+    /// Get the leader node ID for a user's data shard
+    ///
+    /// Returns the NodeId of the current leader for the shard containing
+    /// the given user's data. Returns `None` if the leader is unknown
+    /// (e.g., during an election).
+    ///
+    /// # Arguments
+    /// * `user_id` - The user ID to get the leader for
+    ///
+    /// # Returns
+    /// * `Some(NodeId)` - The leader's node ID
+    /// * `None` - If leader is unknown (election in progress)
+    pub async fn leader_for_user(&self, user_id: &UserId) -> Option<NodeId> {
+        let group_id = self.user_shard_group_id(user_id);
+        self.executor.get_leader(group_id).await
+    }
+
+    /// Get the API address of the leader for a user's data shard
+    ///
+    /// This is used to construct NOT_LEADER error responses with a redirect hint.
+    ///
+    /// # Arguments
+    /// * `user_id` - The user ID to get the leader address for
+    ///
+    /// # Returns
+    /// * `Some(String)` - The leader's API address (e.g., "192.168.1.100:8080")
+    /// * `None` - If leader is unknown or address not available
+    pub async fn leader_addr_for_user(&self, user_id: &UserId) -> Option<String> {
+        let cluster_info = self.executor.get_cluster_info();
+        let leader_node_id = self.leader_for_user(user_id).await?;
+
+        // Find the leader's API address from cluster info
+        cluster_info
+            .nodes
+            .iter()
+            .find(|node| node.node_id == leader_node_id)
+            .map(|node| node.api_addr.clone())
+    }
+
+    /// Check if this node is the leader for shared data
+    ///
+    /// Shared tables are stored in a dedicated shard (currently shard 0).
+    /// This method checks if the current node is the leader for that shard.
+    ///
+    /// In standalone mode (single-node), this always returns `true`.
+    pub async fn is_leader_for_shared(&self) -> bool {
+        let group_id = GroupId::DataSharedShard(0);
+        self.executor.is_leader(group_id).await
+    }
+
+    //TODO: Move this to kalamdb-sharding crate?
+    /// Compute the Raft group ID for a user's data shard
+    ///
+    /// Maps user_id → shard number → GroupId using consistent hashing.
+    fn user_shard_group_id(&self, user_id: &UserId) -> GroupId {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Get number of user shards from config (default 32)
+        let num_shards = self
+            .config
+            .cluster
+            .as_ref()
+            .map(|c| c.user_shards)
+            .unwrap_or(32);
+
+        // Hash user_id to determine shard
+        let mut hasher = DefaultHasher::new();
+        user_id.as_str().hash(&mut hasher);
+        let hash = hasher.finish();
+        let shard = (hash % num_shards as u64) as u32;
+
+        GroupId::DataUserShard(shard)
     }
 
     /// Get the unified applier (Phase 19 - Unified Command Applier)

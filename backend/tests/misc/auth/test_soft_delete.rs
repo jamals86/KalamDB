@@ -11,7 +11,7 @@ use kalam_link::models::ResponseStatus;
 
 #[actix_web::test]
 async fn test_soft_delete_hides_rows() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_hide").await;
@@ -76,7 +76,7 @@ async fn test_soft_delete_hides_rows() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1, "Should only see 1 task after soft delete");
     assert_eq!(
         rows[0].get("id").unwrap().as_str().unwrap(),
@@ -89,7 +89,7 @@ async fn test_soft_delete_hides_rows() {
 
 #[actix_web::test]
 async fn test_soft_delete_preserves_data() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_soft_preserves").await;
@@ -143,7 +143,7 @@ async fn test_soft_delete_preserves_data() {
 
 #[actix_web::test]
 async fn test_deleted_field_default_false() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_soft_deleted_field").await;
@@ -178,7 +178,7 @@ async fn test_deleted_field_default_false() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1);
 
     let deleted_value = rows[0].get("_deleted").unwrap().as_bool();
@@ -189,7 +189,7 @@ async fn test_deleted_field_default_false() {
 
 #[actix_web::test]
 async fn test_multiple_deletes() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_soft_multi").await;
@@ -234,7 +234,7 @@ async fn test_multiple_deletes() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 3, "Should have 3 tasks after deleting 2");
 
     let ids: Vec<&str> = rows.iter().map(|r| r.get("id").unwrap().as_str().unwrap()).collect();
@@ -246,7 +246,7 @@ async fn test_multiple_deletes() {
 
 #[actix_web::test]
 async fn test_delete_with_where_clause() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_soft_where").await;
@@ -302,7 +302,7 @@ async fn test_delete_with_where_clause() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1, "Should have 1 task after conditional delete");
     assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "task2");
 
@@ -311,7 +311,7 @@ async fn test_delete_with_where_clause() {
 
 #[actix_web::test]
 async fn test_count_excludes_deleted_rows() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_soft_count").await;
@@ -347,7 +347,7 @@ async fn test_count_excludes_deleted_rows() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     // Debug print rows[0] to see exact key
     if rows.is_empty() {
         panic!("No result rows returned for COUNT(*)");
@@ -385,7 +385,7 @@ async fn test_count_excludes_deleted_rows() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     if rows.is_empty() {
         panic!("No result rows returned for COUNT(*) after delete");
     }

@@ -203,10 +203,11 @@ fn smoke_subscription_update_delete_notifications() {
     // Start subscription
     let query = format!("SELECT * FROM {}", full);
     let mut listener = SubscriptionListener::start(&query).expect("subscription should start");
+    let mut retries = 0;
 
     // Collect all events during initial loading and wait for Ready state
     let mut all_events: Vec<String> = Vec::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + Duration::from_secs(45);
     let mut initial_data_received = false;
 
     while std::time::Instant::now() < deadline {
@@ -214,6 +215,16 @@ fn smoke_subscription_update_delete_notifications() {
             Ok(Some(line)) => {
                 println!("[subscription] Event: {}", &line[..std::cmp::min(200, line.len())]);
                 all_events.push(line.clone());
+                if line.contains("SUBSCRIPTION_FAILED") || line.contains("Subscription registration failed") {
+                    if retries < 1 {
+                        retries += 1;
+                        listener.stop().ok();
+                        listener = SubscriptionListener::start(&query)
+                            .expect("subscription retry should start");
+                        continue;
+                    }
+                    break;
+                }
                 // Check if we got initial data
                 if line.contains("InitialDataBatch") || line.contains("Ack") {
                     initial_data_received = true;

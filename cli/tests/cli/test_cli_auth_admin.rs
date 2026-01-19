@@ -19,6 +19,35 @@ use std::time::Duration;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
+fn run_root_cli_command_with_retry(command: &str) -> std::process::Output {
+    fn run_root_command(command: &str, server_override: Option<&str>) -> std::process::Output {
+        let mut cmd = if let Some(server) = server_override {
+            create_cli_command_with_auth_for_server("root", root_password(), server)
+        } else {
+            create_cli_command_with_root_auth()
+        };
+        cmd.arg("--command").arg(command).timeout(TEST_TIMEOUT);
+        cmd.output().expect("Failed to execute CLI command")
+    }
+
+    let output = run_root_command(command, None);
+    if output.status.success() {
+        return output;
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if is_leader_error(&stderr) {
+        if let Some(leader) = leader_url() {
+            let retry = run_root_command(command, Some(&leader));
+            if retry.status.success() {
+                return retry;
+            }
+        }
+    }
+
+    output
+}
+
 /// Test that root user can create namespaces
 #[tokio::test]
 async fn test_root_can_create_namespace() {
@@ -294,10 +323,7 @@ SELECT * FROM {}.users;
         namespace_name, namespace_name, namespace_name, namespace_name
     );
 
-    let mut cmd = create_cli_command_with_root_auth();
-    cmd.arg("--command").arg(sql_batch).timeout(TEST_TIMEOUT);
-
-    let output = cmd.output().unwrap();
+    let output = run_root_cli_command_with_retry(&sql_batch);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -385,12 +411,8 @@ async fn test_cli_flush_table() {
     }
 
     // Execute STORAGE FLUSH TABLE via CLI
-    let mut cmd = create_cli_command_with_root_auth();
-    cmd.arg("--command")
-        .arg(format!("STORAGE FLUSH TABLE {}.metrics", namespace_name))
-        .timeout(TEST_TIMEOUT);
-
-    let output = cmd.output().unwrap();
+    let output =
+        run_root_cli_command_with_retry(&format!("STORAGE FLUSH TABLE {}.metrics", namespace_name));
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -654,21 +676,8 @@ async fn test_cli_flush_all_tables() {
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     // Execute STORAGE FLUSH ALL via CLI
-    let mut cmd = create_cli_command_with_root_auth();
-    cmd.arg("--command")
-        .arg(format!("STORAGE FLUSH ALL IN {}", namespace_name))
-        .timeout(TEST_TIMEOUT);
-
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert!(
-        output.status.success(),
-        "STORAGE FLUSH ALL should succeed.\nstdout: {}\nstderr: {}",
-        stdout,
-        stderr
-    );
+    let stdout = execute_sql_as_root_via_cli(&format!("STORAGE FLUSH ALL IN {}", namespace_name))
+        .expect("STORAGE FLUSH ALL should succeed");
 
     // Verify the command was accepted
     assert!(

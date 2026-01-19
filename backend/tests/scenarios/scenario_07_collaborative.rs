@@ -31,7 +31,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 #[tokio::test]
 #[ignore = "SHARED table subscriptions not supported by design (FR-128, FR-129)"]
 async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("docs");
 
     // =========================================================
@@ -273,7 +273,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
 /// Test presence subscription with doc_id filter
 #[tokio::test]
 async fn test_scenario_07_presence_subscription() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("docs_presence");
 
     // Create namespace and presence table

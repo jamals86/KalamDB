@@ -108,8 +108,10 @@ mod tests {
     use crate::build_object_store;
     use crate::parquet_storage_writer::write_parquet_with_store_sync;
     use arrow::array::{Array, BooleanArray, Float64Array, Int64Array, StringArray};
-    use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
+    use kalamdb_commons::arrow_utils::{
+        field_boolean, field_float64, field_int64, field_utf8, schema,
+    };
     use kalamdb_commons::models::ids::StorageId;
     use kalamdb_commons::models::storage::StorageType;
     use kalamdb_commons::models::types::Storage;
@@ -134,11 +136,11 @@ mod tests {
     }
 
     fn create_simple_batch(num_rows: usize) -> RecordBatch {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-            Field::new("name", DataType::Utf8, true),
-            Field::new("_seq", DataType::Int64, false),
-        ]));
+        let schema = schema(vec![
+            field_int64("id", false),
+            field_utf8("name", true),
+            field_int64("_seq", false),
+        ]);
 
         let ids: Vec<i64> = (0..num_rows as i64).collect();
         let names: Vec<String> = (0..num_rows).map(|i| format!("name_{}", i)).collect();
@@ -234,10 +236,10 @@ mod tests {
         let store = build_object_store(&storage).expect("Failed to build store");
 
         // Create empty batch (0 rows)
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-            Field::new("value", DataType::Utf8, true),
-        ]));
+        let schema = schema(vec![
+            field_int64("id", false),
+            field_utf8("value", true),
+        ]);
 
         let empty_batch = RecordBatch::try_new(
             Arc::clone(&schema),
@@ -321,12 +323,12 @@ mod tests {
         let store = build_object_store(&storage).expect("Failed to build store");
 
         // Schema with multiple data types
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("int_col", DataType::Int64, false),
-            Field::new("str_col", DataType::Utf8, true),
-            Field::new("float_col", DataType::Float64, true),
-            Field::new("bool_col", DataType::Boolean, false),
-        ]));
+        let schema = schema(vec![
+            field_int64("int_col", false),
+            field_utf8("str_col", true),
+            field_float64("float_col", true),
+            field_boolean("bool_col", false),
+        ]);
 
         let batch = RecordBatch::try_new(
             Arc::clone(&schema),
@@ -385,10 +387,10 @@ mod tests {
         let storage = create_test_storage(&temp_dir);
         let store = build_object_store(&storage).expect("Failed to build store");
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-            Field::new("nullable_str", DataType::Utf8, true),
-        ]));
+        let schema = schema(vec![
+            field_int64("id", false),
+            field_utf8("nullable_str", true),
+        ]);
 
         // Batch with null values
         let batch = RecordBatch::try_new(

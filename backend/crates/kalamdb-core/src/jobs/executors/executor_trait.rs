@@ -337,7 +337,7 @@ pub trait JobExecutor: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::init_test_app_context;
+    use crate::test_helpers::test_app_context_simple;
 
     #[test]
     fn test_job_decision_completed() {
@@ -393,8 +393,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_job_context_logging() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
 
         // Use dummy params for testing
         #[derive(Clone, Serialize, Deserialize)]

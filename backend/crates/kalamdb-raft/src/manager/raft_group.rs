@@ -476,7 +476,6 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         const INITIAL_BACKOFF_MS: u64 = 50;
 
         let mut last_error = None;
-        let mut command_bytes_opt = Some(command_bytes);
 
         for attempt in 0..MAX_RETRIES {
             // Get current leader
@@ -493,12 +492,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                                 attempt + 1
                             );
 
-                            // Take ownership on first attempt, clone on retries
-                            let cmd_bytes = if attempt == 0 {
-                                command_bytes_opt.take().unwrap()
-                            } else {
-                                command_bytes_opt.as_ref().unwrap().clone()
-                            };
+                            let cmd_bytes = command_bytes.clone();
 
                             // Try to forward
                             match self.forward_to_leader(&leader_node.rpc_addr, cmd_bytes).await {

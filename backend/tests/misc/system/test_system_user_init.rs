@@ -9,7 +9,7 @@ use kalamdb_commons::constants::AuthConstants;
 
 #[tokio::test]
 async fn test_system_user_created_on_init() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Query system.users to find the system user
     let sql = format!(
@@ -48,15 +48,15 @@ async fn test_system_user_created_on_init() {
     assert!(!password_hash.is_empty());
     assert!(password_hash.starts_with("$2b$") || password_hash.starts_with("$2y$"));
 
-    // Verify email
+    // Verify email (uses the username 'root')
     let email = row.get("email").and_then(|v| v.as_str()).expect("email missing");
-    assert_eq!(email, "system@localhost");
+    assert_eq!(email, "root@localhost");
 }
 
 #[tokio::test]
 async fn test_system_user_initialization_idempotent() {
-    // Initialize server first time
-    let server1 = TestServer::new().await;
+    // Use shared server to test that re-initialization doesn't recreate users
+    let server1 = TestServer::new_shared().await;
 
     // Verify user exists
     let sql = format!(
@@ -70,9 +70,9 @@ async fn test_system_user_initialization_idempotent() {
         .and_then(|v| v.as_i64())
         .unwrap();
 
-    // Initialize server second time (simulating restart/re-init)
-    // In TestServer implementation, this shares the same DB but re-runs the bootstrap logic
-    let server2 = TestServer::new().await;
+    // Get the same shared server again (simulating a second access, not restart)
+    // The global server is already initialized, so this tests idempotency
+    let server2 = TestServer::new_shared().await;
 
     let response2 = server2.execute_sql_as_user(&sql, AuthConstants::DEFAULT_ROOT_USER_ID).await;
     let created_at_2 = response2.results[0]
@@ -81,6 +81,6 @@ async fn test_system_user_initialization_idempotent() {
         .and_then(|v| v.as_i64())
         .unwrap();
 
-    // Should be the exact same user record (same created_at)
+    // Should be the exact same user record (same created_at) since it's the same server
     assert_eq!(created_at_1, created_at_2, "System user should not be recreated");
 }

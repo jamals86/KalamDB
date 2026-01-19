@@ -8,6 +8,9 @@ use kalamdb_commons::{JobId, JobStatus, NodeId};
 use kalamdb_raft::commands::MetaCommand;
 use kalamdb_raft::GroupId;
 use log::Level;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 use tokio::time::{sleep, Duration, Instant};
 
 const JOB_NODE_QUORUM_POLL_MS: u64 = 250;
@@ -139,7 +142,7 @@ impl JobsManager {
     ///
     /// In standalone mode, always returns true.
     /// In cluster mode, checks if this node is the leader of the Meta group.
-    async fn is_cluster_leader(&self) -> bool {
+    pub async fn is_cluster_leader(&self) -> bool {
         let app_ctx = self.get_attached_app_context();
 
         // Check if we're in cluster mode
@@ -190,12 +193,22 @@ impl JobsManager {
         let leadership_check_interval = Duration::from_secs(1);
         let mut last_leadership_check = Instant::now();
         let mut was_leader = false;
+        let max_concurrent = max_concurrent.max(1);
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
+        let job_manager = self.get_attached_app_context().job_manager();
+        let mut join_set = JoinSet::new();
 
         loop {
             // Check for shutdown signal (lock-free atomic check)
             if self.shutdown.load(std::sync::atomic::Ordering::Acquire) {
                 log::info!("Shutdown signal received, stopping job loop");
                 break;
+            }
+
+            while let Some(result) = join_set.try_join_next() {
+                if let Err(err) = result {
+                    log::error!("Job task panicked: {}", err);
+                }
             }
 
             // Check leadership status (for cluster mode, used for leader-only actions and scheduling)
@@ -239,23 +252,41 @@ impl JobsManager {
                 last_stream_eviction = Instant::now();
             }
 
+            if semaphore.available_permits() == 0 {
+                if let Some(result) = join_set.join_next().await {
+                    if let Err(err) = result {
+                        log::error!("Job task panicked: {}", err);
+                    }
+                }
+                continue;
+            }
+
+            let permit = match Arc::clone(&semaphore).try_acquire_owned() {
+                Ok(permit) => permit,
+                Err(_) => {
+                    sleep(Duration::from_millis(50)).await;
+                    continue;
+                },
+            };
+
             // Poll for next job (all nodes poll for jobs)
             match self.poll_next().await {
                 Ok(Some((job, job_node))) => {
-                    // TODO: Implement concurrency control (semaphore with max_concurrent)
-                    // For now, process jobs sequentially
-                    // Pass is_leader to execute_job for two-phase execution
-                    if let Err(e) = self.execute_job(job, job_node, is_leader).await {
-                        log::error!("Job execution failed critically: {}", e);
-                        // Sleep briefly to avoid tight loop on persistent errors
-                        sleep(Duration::from_secs(1)).await;
-                    }
+                    let jobs_manager = Arc::clone(&job_manager);
+                    join_set.spawn(async move {
+                        let _permit = permit;
+                        if let Err(e) = jobs_manager.execute_job(job, job_node, is_leader).await {
+                            log::error!("Job execution failed critically: {}", e);
+                        }
+                    });
                 },
                 Ok(None) => {
+                    drop(permit);
                     // No jobs available, sleep briefly
                     sleep(Duration::from_millis(100)).await;
                 },
                 Err(e) => {
+                    drop(permit);
                     log::error!("Failed to poll for next job: {}", e);
                     sleep(Duration::from_secs(1)).await;
                 },
@@ -299,6 +330,8 @@ impl JobsManager {
             return Ok(None);
         }
 
+        self.claim_job_node(&job_node.job_id).await?;
+
         Ok(Some((job, job_node)))
     }
 
@@ -323,9 +356,6 @@ impl JobsManager {
     ) -> Result<(), KalamDbError> {
         let job_id = job.job_id.clone();
         let job_type = job.job_type;
-
-        // Claim per-node job entry
-        self.claim_job_node(&job_id).await?;
 
         // Mark job as Running (leader only)
         if is_leader {
@@ -628,22 +658,38 @@ impl JobsManager {
     ///
     /// Called when this node becomes the leader in cluster mode.
     async fn handle_leader_failover(&self) {
-        let app_ctx = self.get_attached_app_context();
+        let mut jobs = Vec::new();
+        for status in [JobStatus::Running, JobStatus::Queued] {
+            let filter = JobFilter {
+                status: Some(status),
+                ..Default::default()
+            };
 
-        let filter = JobFilter {
-            status: Some(JobStatus::Running),
-            ..Default::default()
-        };
-
-        let jobs = match self.list_jobs(filter).await {
-            Ok(jobs) => jobs,
-            Err(e) => {
-                log::error!("[JobLoop] Failed to list running jobs for leader failover: {}", e);
-                return;
-            },
-        };
+            match self.list_jobs(filter).await {
+                Ok(mut listed) => jobs.append(&mut listed),
+                Err(e) => {
+                    log::error!(
+                        "[JobLoop] Failed to list {:?} jobs for leader failover: {}",
+                        status,
+                        e
+                    );
+                    return;
+                },
+            }
+        }
 
         for job in jobs {
+            if matches!(job.status, JobStatus::Queued) {
+                if let Err(e) = self.mark_job_running(&job.job_id).await {
+                    log::error!(
+                        "[JobLoop] Failed to mark queued job {} as running: {}",
+                        job.job_id,
+                        e
+                    );
+                    continue;
+                }
+            }
+
             if let Err(e) = self.resume_leader_actions(job).await {
                 log::error!("[JobLoop] Failed to resume leader actions: {}", e);
             }

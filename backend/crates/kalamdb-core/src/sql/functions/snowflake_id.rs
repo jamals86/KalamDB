@@ -9,11 +9,11 @@
 //! This ensures time-ordered, unique IDs suitable for PRIMARY KEY columns.
 
 use datafusion::arrow::array::{ArrayRef, Int64Array};
-use datafusion::arrow::datatypes::DataType;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
 };
+use kalamdb_commons::arrow_utils::{arrow_int64, ArrowDataType};
 use std::any::Any;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
@@ -113,8 +113,8 @@ impl ScalarUDFImpl for SnowflakeIdFunction {
         SIGNATURE.get_or_init(|| Signature::exact(vec![], Volatility::Volatile))
     }
 
-    fn return_type(&self, _args: &[DataType]) -> DataFusionResult<DataType> {
-        Ok(DataType::Int64)
+    fn return_type(&self, _args: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {
+        Ok(arrow_int64())
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
@@ -216,6 +216,6 @@ mod tests {
         let func_impl = SnowflakeIdFunction::new();
         let return_type = func_impl.return_type(&[]);
         assert!(return_type.is_ok());
-        assert_eq!(return_type.unwrap(), DataType::Int64);
+        assert_eq!(return_type.unwrap(), ArrowDataType::Int64);
     }
 }

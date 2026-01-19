@@ -8,9 +8,8 @@
 //! - Schema consolidation
 //! - Unified type system
 
-#[path = "../../common/testserver/mod.rs"]
-#[allow(dead_code)]
-pub(super) mod test_support;
+// Re-export test_support from crate root
+pub(super) use crate::test_support;
 
 // Schema Tests
 mod test_alter_table;

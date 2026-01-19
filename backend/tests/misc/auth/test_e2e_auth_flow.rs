@@ -19,7 +19,7 @@ use kalamdb_commons::Role;
 /// End-to-end authentication flow test
 #[actix_web::test]
 async fn test_e2e_auth_flow() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Test constants
     let username = "e2e_test_user";
@@ -138,7 +138,7 @@ async fn test_e2e_auth_flow() {
 /// Test authentication with different user roles
 #[actix_web::test]
 async fn test_role_based_auth_e2e() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let namespace = "role_test_ns";
 
@@ -242,7 +242,7 @@ async fn test_role_based_auth_e2e() {
 /// Test password security requirements
 #[actix_web::test]
 async fn test_password_security_e2e() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     println!("🔒 Testing Password Security E2E");
 

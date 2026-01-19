@@ -18,7 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// T143A: Test authentication with empty credentials returns error
 #[tokio::test]
 async fn test_empty_credentials_401() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let user_repo = server.users_repo();
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
 
@@ -40,7 +40,7 @@ async fn test_empty_credentials_401() {
 /// T143B: Test malformed Basic Auth header returns error
 #[tokio::test]
 async fn test_malformed_basic_auth_400() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let user_repo = server.users_repo();
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
 
@@ -66,7 +66,7 @@ async fn test_malformed_basic_auth_400() {
 /// T143C: Test concurrent authentication requests have no race conditions
 #[tokio::test]
 async fn test_concurrent_auth_no_race_conditions() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let username = format!(
         "concurrent_user_{}",
         SystemTime::now()
@@ -114,7 +114,7 @@ async fn test_concurrent_auth_no_race_conditions() {
 /// T143D: Test deleted user authentication is denied
 #[tokio::test]
 async fn test_deleted_user_denied() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create user
     server.create_user("deleted_user", "TestPass123", Role::User).await;
@@ -151,7 +151,7 @@ async fn test_deleted_user_denied() {
 /// T143E: Test role change applies to next request (not during session)
 #[tokio::test]
 async fn test_role_change_applies_next_request() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create user with User role
     server.create_user("role_change_user", "TestPass123", Role::User).await;
@@ -189,7 +189,7 @@ async fn test_role_change_applies_next_request() {
 /// T143F: Test maximum password length handling
 #[tokio::test]
 async fn test_maximum_password_length() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // bcrypt has a maximum of 72 bytes
     let max_password = "A".repeat(72);

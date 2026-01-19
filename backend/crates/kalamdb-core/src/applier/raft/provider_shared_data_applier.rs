@@ -31,20 +31,6 @@ impl ProviderSharedDataApplier {
     }
 }
 
-#[cfg(test)]
-impl Default for ProviderSharedDataApplier {
-    fn default() -> Self {
-        Self::new(AppContext::get())
-    }
-}
-
-#[cfg(not(test))]
-impl Default for ProviderSharedDataApplier {
-    fn default() -> Self {
-        panic!("ProviderSharedDataApplier::default() is for tests only; use new(Arc<AppContext>)")
-    }
-}
-
 #[async_trait]
 impl SharedDataApplier for ProviderSharedDataApplier {
     async fn insert(&self, table_id: &TableId, rows: &[Row]) -> Result<usize, RaftError> {

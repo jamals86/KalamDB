@@ -109,7 +109,7 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() -> anyhow::Result<
             .execute_sql_with_auth(&format!("SELECT id, content FROM {}.notes", ns), &auth1)
             .await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success);
-        let rows = resp.results[0].rows_as_maps();
+        let rows = resp.rows_as_maps();
         anyhow::ensure!(rows.len() == 1);
         anyhow::ensure!(rows[0].get("id").and_then(|v| v.as_str()) == Some("note1"));
 
@@ -117,7 +117,7 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() -> anyhow::Result<
             .execute_sql_with_auth(&format!("SELECT id, content FROM {}.notes", ns), &auth2)
             .await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success);
-        let rows = resp.results[0].rows_as_maps();
+        let rows = resp.rows_as_maps();
         anyhow::ensure!(rows.len() == 1);
         anyhow::ensure!(rows[0].get("id").and_then(|v| v.as_str()) == Some("note2"));
     }
@@ -157,13 +157,13 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() -> anyhow::Result<
             .execute_sql_with_auth(&format!("SELECT id FROM {}.notes", ns), &auth1)
             .await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success);
-        anyhow::ensure!(resp.results[0].rows_as_maps().is_empty());
+        anyhow::ensure!(resp.rows_as_maps().is_empty());
 
         let resp = server
             .execute_sql_with_auth(&format!("SELECT id FROM {}.notes", ns), &auth2)
             .await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success);
-        let rows = resp.results[0].rows_as_maps();
+        let rows = resp.rows_as_maps();
         anyhow::ensure!(rows.len() == 1);
         anyhow::ensure!(rows[0].get("id").and_then(|v| v.as_str()) == Some("note2"));
     }

@@ -13,7 +13,7 @@ use kalamdb_commons::Role;
 
 #[tokio::test]
 async fn test_public_table_read_only_for_users() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_username = "system";
     let admin_password = "SystemPass123!";
     let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
@@ -101,7 +101,7 @@ async fn test_public_table_read_only_for_users() {
 
 #[tokio::test]
 async fn test_private_table_service_dba_only() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_username = "system";
     let admin_password = "SystemPass123!";
     let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
@@ -191,7 +191,7 @@ async fn test_private_table_service_dba_only() {
 
 #[tokio::test]
 async fn test_shared_table_defaults_to_private() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_username = "system";
     let admin_password = "SystemPass123!";
     let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
@@ -275,7 +275,7 @@ async fn test_shared_table_defaults_to_private() {
 
 #[tokio::test]
 async fn test_change_access_level_requires_privileges() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_username = "system";
     let admin_password = "SystemPass123!";
     let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
@@ -353,7 +353,7 @@ async fn test_change_access_level_requires_privileges() {
 
 #[tokio::test]
 async fn test_user_cannot_modify_public_table() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_username = "system";
     let admin_password = "SystemPass123!";
     let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
@@ -461,7 +461,7 @@ async fn test_user_cannot_modify_public_table() {
 
 #[tokio::test]
 async fn test_access_level_only_on_shared_tables() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_username = "system";
     let admin_password = "SystemPass123!";
     let admin_id = server.create_user(admin_username, admin_password, Role::System).await;
@@ -516,7 +516,7 @@ async fn test_access_level_only_on_shared_tables() {
 
 #[tokio::test]
 async fn test_alter_access_level_only_on_shared_tables() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let admin_username = "system";
     let admin_password = "SystemPass123!";
     let admin_id = server.create_user(admin_username, admin_password, Role::System).await;

@@ -246,26 +246,33 @@ async fn open_authenticated_connection(
         .await
         .unwrap_or_else(|e| panic!("Failed to send auth message on websocket #{}: {}", idx, e));
 
-    let auth_response = stream
-        .next()
-        .await
-        .unwrap_or_else(|| panic!("Websocket #{} closed before auth response", idx))
-        .unwrap_or_else(|e| panic!("Websocket #{} auth response error: {}", idx, e));
+    let auth_payload = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let next = stream
+                .next()
+                .await
+                .unwrap_or_else(|| panic!("Websocket #{} closed before auth response", idx))
+                .unwrap_or_else(|e| panic!("Websocket #{} auth response error: {}", idx, e));
+            match next {
+                Message::Text(payload) => break payload,
+                Message::Ping(_) | Message::Pong(_) => continue,
+                other => panic!("Websocket #{} expected text auth response, got {:?}", idx, other),
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("Websocket #{} auth response timed out", idx));
 
-    match auth_response {
-        Message::Text(payload) => {
-            let value: serde_json::Value = serde_json::from_str(&payload).unwrap_or_else(|e| {
-                panic!("Invalid auth response JSON on websocket #{}: {}", idx, e)
-            });
-            let msg_type = value.get("type").and_then(|v| v.as_str()).unwrap_or_default();
-            assert_eq!(
-                msg_type, "auth_success",
-                "Websocket #{} expected auth_success, got {}",
-                idx, payload
-            );
-        },
-        other => panic!("Websocket #{} expected text auth response, got {:?}", idx, other),
-    }
+    let value: serde_json::Value =
+        serde_json::from_str(&auth_payload).unwrap_or_else(|e| {
+            panic!("Invalid auth response JSON on websocket #{}: {}", idx, e)
+        });
+    let msg_type = value.get("type").and_then(|v| v.as_str()).unwrap_or_default();
+    assert_eq!(
+        msg_type, "auth_success",
+        "Websocket #{} expected auth_success, got {}",
+        idx, auth_payload
+    );
 
     let subscribe_payload = json!({
         "type": "subscribe",
@@ -276,14 +283,30 @@ async fn open_authenticated_connection(
         }
     });
 
-    stream
-        .send(Message::Text(subscribe_payload.to_string().into()))
-        .await
-        .unwrap_or_else(|e| {
-            panic!("Failed to send subscribe message on websocket #{}: {}", idx, e)
-        });
+    let mut last_error: Option<String> = None;
+    for attempt in 0..3 {
+        stream
+            .send(Message::Text(subscribe_payload.to_string().into()))
+            .await
+            .unwrap_or_else(|e| {
+                panic!("Failed to send subscribe message on websocket #{}: {}", idx, e)
+            });
 
-    wait_for_subscription_ack(idx, subscription_id, &mut stream).await;
+        match wait_for_subscription_ack(idx, subscription_id, &mut stream).await {
+            Ok(()) => {
+                last_error = None;
+                break;
+            }
+            Err(err) => {
+                last_error = Some(err);
+                tokio::time::sleep(Duration::from_millis(200 + attempt * 200)).await;
+            }
+        }
+    }
+
+    if let Some(err) = last_error {
+        panic!("Websocket #{} subscription failed after retries: {}", idx, err);
+    }
 
     stream
 }
@@ -342,13 +365,17 @@ async fn count_live_query_subscriptions(prefix: String) -> usize {
     .expect("system.live_queries JSON query should succeed")
 }
 
-async fn wait_for_subscription_ack(idx: usize, expected_id: &str, stream: &mut WsStream) {
+async fn wait_for_subscription_ack(
+    idx: usize,
+    expected_id: &str,
+    stream: &mut WsStream,
+) -> Result<(), String> {
     loop {
         let message = stream
             .next()
             .await
-            .unwrap_or_else(|| panic!("Websocket #{} closed during subscription", idx))
-            .unwrap_or_else(|e| panic!("Websocket #{} subscription error: {}", idx, e));
+            .ok_or_else(|| format!("Websocket #{} closed during subscription", idx))?
+            .map_err(|e| format!("Websocket #{} subscription error: {}", idx, e))?;
 
         match message {
             Message::Ping(payload) => {
@@ -374,24 +401,29 @@ async fn wait_for_subscription_ack(idx: usize, expected_id: &str, stream: &mut W
                             "Websocket #{} subscription ack mismatch (expected {}, got {})",
                             idx, expected_id, sub_id
                         );
-                        break;
+                        return Ok(());
                     }
                     "initial_data_batch" => continue,
-                    other => panic!(
-                        "Websocket #{} received unexpected message type '{}' while awaiting ack: {}",
-                        idx, other, payload
-                    ),
+                    other => {
+                        return Err(format!(
+                            "Websocket #{} received unexpected message type '{}' while awaiting ack: {}",
+                            idx, other, payload
+                        ));
+                    }
                 }
                 }
             },
             Message::Close(frame) => {
-                panic!("Websocket #{} closed before subscription ack: {:?}", idx, frame);
+                return Err(format!(
+                    "Websocket #{} closed before subscription ack: {:?}",
+                    idx, frame
+                ));
             },
             other => {
-                panic!(
+                return Err(format!(
                     "Websocket #{} received unexpected message while awaiting subscription ack: {:?}",
                     idx, other
-                );
+                ));
             },
         }
     }

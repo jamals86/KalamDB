@@ -3586,6 +3586,7 @@ dependencies = [
  "bincode",
  "chrono",
  "dashmap",
+ "hostname",
  "kalamdb-commons",
  "kalamdb-configs",
  "kalamdb-sharding",

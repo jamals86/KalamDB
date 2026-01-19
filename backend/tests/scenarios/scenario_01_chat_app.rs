@@ -34,7 +34,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Main chat app scenario test
 #[tokio::test]
 async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("chat");
 
     // =========================================================
@@ -247,7 +247,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     let storage_root = server.storage_root();
     // Note: Parquet files might take time to appear, just check they eventually exist
     // This assertion is lenient since flush is async
-    let parquet_files = test_support::flush::find_parquet_files(&storage_root);
+    let parquet_files = crate::test_support::flush::find_parquet_files(&storage_root);
     // We don't strictly require parquet files for this test since flush might not have
     // written yet or might write to a different path
 
@@ -289,7 +289,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
 /// Test service writes AS USER
 #[tokio::test]
 async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("chat_svc");
 
     // Create namespace and table
@@ -354,7 +354,7 @@ async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
 /// Test STREAM table with TTL
 #[tokio::test]
 async fn test_scenario_01_stream_table_ttl() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("chat_stream");
 
     // Create namespace

@@ -16,6 +16,24 @@ use kalam_link::{
 };
 use std::time::Duration;
 
+fn start_subscription_with_retry(query: &str) -> SubscriptionListener {
+    for attempt in 0..2 {
+        let mut listener = SubscriptionListener::start(query)
+            .unwrap_or_else(|e| panic!("subscription should start: {}", e));
+        if let Ok(Some(line)) = listener.try_read_line(Duration::from_secs(2)) {
+            if line.contains("SUBSCRIPTION_FAILED") || line.contains("Subscription registration failed") {
+                listener.stop().ok();
+                if attempt == 1 {
+                    panic!("subscription failed to register after retry");
+                }
+                continue;
+            }
+        }
+        return listener;
+    }
+    panic!("subscription failed to register after retry");
+}
+
 /// Test: Create user table, subscribe with default options, verify events are received
 #[ntest::timeout(60000)]
 #[test]
@@ -51,7 +69,7 @@ fn test_live_subscription_default_options() {
 
     // Start subscription with default options
     let query = format!("SELECT * FROM {}", full);
-    let mut listener = SubscriptionListener::start(&query).expect("subscription should start");
+    let mut listener = start_subscription_with_retry(&query);
 
     // Insert some data
     for i in 1..=3 {
@@ -350,8 +368,8 @@ fn test_live_multiple_subscriptions() {
 
     // Start two subscriptions to the same table
     let query = format!("SELECT * FROM {}", full);
-    let mut listener1 = SubscriptionListener::start(&query).expect("subscription 1 should start");
-    let mut listener2 = SubscriptionListener::start(&query).expect("subscription 2 should start");
+    let mut listener1 = start_subscription_with_retry(&query);
+    let mut listener2 = start_subscription_with_retry(&query);
 
     // Small delay to ensure both are connected
     std::thread::sleep(Duration::from_millis(500));
@@ -534,8 +552,9 @@ fn test_live_http2_query_execution() {
 
     // Build client with Auto HTTP version (will negotiate or fall back)
     // Note: HTTP/2 prior knowledge doesn't work with servers that don't support h2c
+    let base_url = leader_or_server_url();
     let client = KalamLinkClient::builder()
-        .base_url(server_url())
+        .base_url(&base_url)
         .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
         .http_version(HttpVersion::Auto) // Auto-negotiate, falls back to HTTP/1.1
         .timeouts(KalamLinkTimeouts::fast())
@@ -561,29 +580,30 @@ fn test_live_http2_query_execution() {
 #[test]
 fn test_client_builder_http_versions() {
     // HTTP/1.1 (default)
+    let base_url = leader_or_server_url();
     let client1 = KalamLinkClient::builder()
-        .base_url(server_url())
+        .base_url(&base_url)
         .http_version(HttpVersion::Http1)
         .build();
     assert!(client1.is_ok(), "Client with HTTP/1.1 should build");
 
     // HTTP/2
     let client2 = KalamLinkClient::builder()
-        .base_url(server_url())
+        .base_url(&base_url)
         .http_version(HttpVersion::Http2)
         .build();
     assert!(client2.is_ok(), "Client with HTTP/2 should build");
 
     // Auto
     let client3 = KalamLinkClient::builder()
-        .base_url(server_url())
+        .base_url(&base_url)
         .http_version(HttpVersion::Auto)
         .build();
     assert!(client3.is_ok(), "Client with Auto HTTP version should build");
 
     // Using connection_options
     let client4 = KalamLinkClient::builder()
-        .base_url(server_url())
+        .base_url(&base_url)
         .connection_options(
             ConnectionOptions::new()
                 .with_http_version(HttpVersion::Http2)

@@ -6,7 +6,7 @@ use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringArray, UInt64Array};
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use kalamdb_commons::arrow_utils::{field_uint64, field_utf8, schema};
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_sql::ddl::ShowTableStatsStatement;
 use std::sync::Arc;
@@ -53,15 +53,15 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
         let memory_bytes = 0u64; // TODO: integrate in-memory size tracking
         let schema_version = def.schema_version as u64;
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("table_name", DataType::Utf8, false),
-            Field::new("namespace", DataType::Utf8, false),
-            Field::new("schema_version", DataType::UInt64, false),
-            Field::new("logical_rows", DataType::UInt64, false),
-            Field::new("flushed_segments", DataType::UInt64, false),
-            Field::new("active_streams", DataType::UInt64, false),
-            Field::new("memory_bytes", DataType::UInt64, false),
-        ]));
+        let schema = schema(vec![
+            field_utf8("table_name", false),
+            field_utf8("namespace", false),
+            field_uint64("schema_version", false),
+            field_uint64("logical_rows", false),
+            field_uint64("flushed_segments", false),
+            field_uint64("active_streams", false),
+            field_uint64("memory_bytes", false),
+        ]);
 
         let batch = RecordBatch::try_new(
             schema,

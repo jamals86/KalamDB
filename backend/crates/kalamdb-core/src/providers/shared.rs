@@ -16,6 +16,7 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::providers::arrow_json_conversion::coerce_rows;
 use crate::providers::base::{self, BaseTableProvider, TableProviderCore};
+use crate::providers::helpers::extract_full_user_context;
 use crate::providers::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
@@ -23,7 +24,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
 use datafusion::datasource::TableProvider;
-use datafusion::error::Result as DataFusionResult;
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::scalar::ScalarValue;
@@ -729,6 +730,24 @@ impl TableProvider for SharedTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        // Extract user context including read_context for leader check
+        // SharedTableProvider ignores user_id for data access (no RLS) but uses read_context
+        let (_user_id, _role, read_context) = extract_full_user_context(state)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to extract user context: {}", e)))?;
+
+        // Check if this is a client read that requires leader (shared data shard)
+        // Skip check for internal reads (jobs, live query notifications, etc.)
+        if read_context.requires_leader() && self.core.app_context.is_cluster_mode() {
+            let is_leader = self.core.app_context.is_leader_for_shared().await;
+            if !is_leader {
+                // For shared tables, redirect to leader
+                // We don't have a specific user, so we just report not leader
+                return Err(DataFusionError::Execution(
+                    "NOT_LEADER: This node is not the leader for shared tables".to_string()
+                ));
+            }
+        }
+
         self.base_scan(state, projection, filters, limit).await
     }
 

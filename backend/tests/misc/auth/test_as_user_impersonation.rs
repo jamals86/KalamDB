@@ -48,7 +48,7 @@ async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId 
 /// T168: Regular user role attempting AS USER is blocked (CRITICAL TEST)
 #[actix_web::test]
 async fn test_as_user_blocked_for_regular_user() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = "test_as_user_blocked";
 
     // Create regular user and target user
@@ -88,7 +88,7 @@ async fn test_as_user_blocked_for_regular_user() {
 /// T167: Service role can successfully use AS USER
 #[actix_web::test]
 async fn test_as_user_with_service_role() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = "test_as_user_service";
 
     // Create service user, DBA, and target user
@@ -134,7 +134,7 @@ async fn test_as_user_with_service_role() {
 /// T167: DBA role can successfully use AS USER
 #[actix_web::test]
 async fn test_as_user_with_dba_role() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = "test_as_user_dba";
 
     // Create DBA user and target user
@@ -179,7 +179,7 @@ async fn test_as_user_with_dba_role() {
 /// T170: INSERT AS USER creates record owned by impersonated user
 #[actix_web::test]
 async fn test_insert_as_user_ownership() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = "test_insert_ownership";
 
     let admin_user = insert_user(&server, "admin", Role::Dba).await;
@@ -222,7 +222,7 @@ async fn test_insert_as_user_ownership() {
 /// T171: UPDATE AS USER modifies record as impersonated user
 #[actix_web::test]
 async fn test_update_as_user() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = "test_update_as_user";
 
     let admin_user = insert_user(&server, "admin2", Role::Dba).await;
@@ -256,7 +256,7 @@ async fn test_update_as_user() {
     let resp = server.execute_sql_as_user(&select_sql, user_charlie.as_str()).await;
 
     assert_eq!(resp.status, ResponseStatus::Success);
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     assert_eq!(rows.len(), 1);
     // Verify the status was updated to 'inactive'
     let status = rows[0].get("status").and_then(|v| v.as_str());
@@ -266,7 +266,7 @@ async fn test_update_as_user() {
 /// T172: DELETE AS USER removes record as impersonated user
 #[actix_web::test]
 async fn test_delete_as_user() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = "test_delete_as_user";
 
     let admin_user = insert_user(&server, "admin3", Role::Dba).await;
@@ -306,7 +306,7 @@ async fn test_delete_as_user() {
 /// T173: AS USER on SHARED table is rejected
 #[actix_web::test]
 async fn test_as_user_on_shared_table_rejected() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     // Use unique namespace to avoid parallel test interference
     let ns = format!("test_as_user_shared_{}", std::process::id());
 
@@ -360,7 +360,7 @@ async fn test_as_user_on_shared_table_rejected() {
 /// T174: AS USER with non-existent user handles gracefully
 #[actix_web::test]
 async fn test_as_user_nonexistent_user() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = "test_as_user_nonexist";
 
     let admin_user = insert_user(&server, "admin5", Role::Dba).await;
@@ -390,7 +390,7 @@ async fn test_as_user_nonexistent_user() {
 async fn test_as_user_performance() {
     use std::time::Instant;
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let ns = "test_as_user_perf";
 
     let service_user = insert_user(&server, "service_perf", Role::Service).await;

@@ -12,11 +12,11 @@
 //! suitable for PRIMARY KEY columns and correlation IDs.
 
 use datafusion::arrow::array::{ArrayRef, StringArray};
-use datafusion::arrow::datatypes::DataType;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
 };
+use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
 use std::any::Any;
 use std::sync::Arc;
 use ulid::Ulid;
@@ -72,8 +72,8 @@ impl ScalarUDFImpl for UlidFunction {
         SIGNATURE.get_or_init(|| Signature::exact(vec![], Volatility::Volatile))
     }
 
-    fn return_type(&self, _args: &[DataType]) -> DataFusionResult<DataType> {
-        Ok(DataType::Utf8)
+    fn return_type(&self, _args: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {
+        Ok(arrow_utf8())
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
@@ -188,7 +188,7 @@ mod tests {
         let func_impl = UlidFunction::new();
         let return_type = func_impl.return_type(&[]);
         assert!(return_type.is_ok());
-        assert_eq!(return_type.unwrap(), DataType::Utf8);
+        assert_eq!(return_type.unwrap(), ArrowDataType::Utf8);
     }
 
     #[test]

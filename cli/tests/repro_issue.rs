@@ -3,15 +3,7 @@ use common::*;
 use std::time::Duration;
 
 async fn execute_sql(sql: &str) -> Result<String, String> {
-    let client = KalamLinkClient::builder()
-        .base_url(server_url())
-        .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let response = client.execute_query(sql, None, None).await.map_err(|e| e.to_string())?;
-
-    Ok(format!("{:?}", response))
+    execute_sql_as_root_via_client(sql).map_err(|e| e.to_string())
 }
 
 #[tokio::test]

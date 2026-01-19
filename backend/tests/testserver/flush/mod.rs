@@ -6,9 +6,8 @@
 //! - Primary key uniqueness across hot/cold storage
 //! - Flush operations on unregistered tables
 
-#[path = "../../common/testserver/mod.rs"]
-#[allow(dead_code)]
-pub(super) mod test_support;
+// Re-export test_support from parent
+pub(super) use super::test_support;
 
 // Flush Tests
 mod test_flush_jobs_http;

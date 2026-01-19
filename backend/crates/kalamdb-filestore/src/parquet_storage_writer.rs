@@ -304,11 +304,11 @@ fn is_sorted_by_seq(batch: &RecordBatch, seq_idx: usize) -> Result<bool> {
 mod tests {
     use super::*;
     use arrow::array::StringArray;
-    use arrow::datatypes::{DataType, Field, Schema};
+    use kalamdb_commons::arrow_utils::{field_int64, field_utf8, schema};
     use std::sync::Arc;
 
     fn make_test_batch() -> (SchemaRef, Vec<RecordBatch>) {
-        let schema = Arc::new(Schema::new(vec![Field::new("name", DataType::Utf8, false)]));
+        let schema = schema(vec![field_utf8("name", false)]);
         let batch = RecordBatch::try_new(
             Arc::clone(&schema),
             vec![Arc::new(StringArray::from(vec!["alice", "bob", "charlie"]))],
@@ -457,10 +457,10 @@ mod tests {
         let store = build_object_store(&storage).unwrap();
 
         // Create batch with 1024+ rows for bloom filters
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-            Field::new("_seq", DataType::Int64, false),
-        ]));
+        let schema = schema(vec![
+            field_int64("id", false),
+            field_int64("_seq", false),
+        ]);
 
         let ids: Vec<i64> = (0..1024).collect();
         let seqs: Vec<i64> = (0..1024).map(|i| i * 1000).collect();
@@ -524,7 +524,7 @@ mod tests {
         let store = build_object_store(&storage).unwrap();
 
         // Create large batch (50K rows)
-        let schema = Arc::new(Schema::new(vec![Field::new("value", DataType::Int64, false)]));
+        let schema = schema(vec![field_int64("value", false)]);
 
         let values: Vec<i64> = (0..50_000).collect();
         let batch =

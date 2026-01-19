@@ -75,7 +75,12 @@ fn test_storage_drop_requires_detached_tables() {
         execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}.{}", namespace, user_table))
             .expect("flush user table");
     if let Ok(job_id) = parse_job_id_from_flush_output(&flush_output) {
-        verify_job_completed(&job_id, std::time::Duration::from_secs(10))
+        let timeout = if is_cluster_mode() {
+            std::time::Duration::from_secs(30)
+        } else {
+            std::time::Duration::from_secs(10)
+        };
+        verify_job_completed(&job_id, timeout)
             .expect("user table flush job should complete");
     } else {
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -108,7 +113,12 @@ fn test_storage_drop_requires_detached_tables() {
         execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}.{}", namespace, shared_table))
             .expect("flush shared table");
     if let Ok(job_id) = parse_job_id_from_flush_output(&flush_output) {
-        verify_job_completed(&job_id, std::time::Duration::from_secs(10))
+        let timeout = if is_cluster_mode() {
+            std::time::Duration::from_secs(30)
+        } else {
+            std::time::Duration::from_secs(10)
+        };
+        verify_job_completed(&job_id, timeout)
             .expect("shared table flush job should complete");
     } else {
         std::thread::sleep(std::time::Duration::from_millis(200));

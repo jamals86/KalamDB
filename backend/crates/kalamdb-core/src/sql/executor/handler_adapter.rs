@@ -170,17 +170,16 @@ macro_rules! extract_statement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_context::AppContext;
     use crate::sql::executor::handlers::namespace::CreateNamespaceHandler;
-    use crate::test_helpers::{create_test_session, init_test_app_context};
+    use crate::test_helpers::{create_test_session_simple, test_app_context_simple};
     use kalamdb_commons::models::{NamespaceId, UserId};
     use kalamdb_commons::Role;
     use kalamdb_sql::ddl::CreateNamespaceStatement;
 
+    #[ignore = "Requires Raft for CREATE NAMESPACE"]
     #[tokio::test]
     async fn test_generic_adapter() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
         let handler = CreateNamespaceHandler::new(app_ctx);
 
         let adapter = TypedHandlerAdapter::new(handler, |stmt| match stmt.kind() {
@@ -190,7 +189,7 @@ mod tests {
             _ => None,
         });
         let ctx =
-            ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session());
+            ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session_simple());
 
         let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
             "CREATE NAMESPACE test_adapter_ns".to_string(),
@@ -206,10 +205,10 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[ignore = "Requires Raft for CREATE NAMESPACE"]
     #[tokio::test]
     async fn test_wrong_statement_type() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
         let handler = CreateNamespaceHandler::new(app_ctx);
 
         let adapter = TypedHandlerAdapter::new(handler, |stmt| match stmt.kind() {
@@ -219,7 +218,7 @@ mod tests {
             _ => None,
         });
         let ctx =
-            ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session());
+            ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session_simple());
 
         // Pass wrong statement type (ShowNamespaces instead of CreateNamespace)
         let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(

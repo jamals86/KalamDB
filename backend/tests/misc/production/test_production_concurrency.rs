@@ -5,12 +5,14 @@
 
 use super::test_support::{QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
+use kalam_link::parse_i64;
 use kalamdb_commons::Role;
+use serde_json::Value as JsonValue;
 
 /// Verify concurrent inserts to same user table work correctly
 #[tokio::test]
 async fn concurrent_inserts_same_user_table() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_ins").await;
@@ -70,7 +72,7 @@ async fn concurrent_inserts_same_user_table() {
     assert_eq!(resp.status, ResponseStatus::Success);
     let rows = resp.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
     if let Some(row) = rows.first() {
-        let count = row.get("count").unwrap().as_i64().unwrap();
+        let count = row.get("count").map(parse_i64).unwrap();
         assert_eq!(count, 50, "Should have 50 rows from concurrent inserts");
     }
 }
@@ -78,7 +80,7 @@ async fn concurrent_inserts_same_user_table() {
 /// Verify concurrent SELECT queries work correctly
 #[tokio::test]
 async fn concurrent_select_queries() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup with data
     let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_sel").await;
@@ -121,7 +123,7 @@ async fn concurrent_select_queries() {
             assert_eq!(resp.status, ResponseStatus::Success);
             let rows = resp.results.first().map(|r| r.rows_as_maps()).unwrap_or_default();
             if let Some(row) = rows.first() {
-                let count = row.get("count").unwrap().as_i64().unwrap();
+                let count = row.get("count").map(parse_i64).unwrap();
                 assert_eq!(count, 20, "All readers should see 20 rows");
             }
         });
@@ -143,7 +145,7 @@ async fn concurrent_select_queries() {
 /// any of them complete the write.
 #[tokio::test]
 async fn concurrent_duplicate_primary_key_handling() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_pk").await;
     assert_eq!(resp.status, ResponseStatus::Success);
@@ -202,7 +204,7 @@ async fn concurrent_duplicate_primary_key_handling() {
 
     if let Some(result) = resp.results.first() {
         let rows = result.rows_as_maps();
-        let count = rows[0].get("count").unwrap().as_i64().unwrap();
+        let count = rows[0].get("count").map(parse_i64).unwrap();
         assert_eq!(count, 1, "Should have exactly 1 row despite concurrent attempts");
     }
 }
@@ -210,7 +212,7 @@ async fn concurrent_duplicate_primary_key_handling() {
 /// Verify concurrent UPDATE operations work correctly
 #[tokio::test]
 async fn concurrent_updates_same_row() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_upd").await;
     assert_eq!(resp.status, ResponseStatus::Success);
@@ -268,7 +270,7 @@ async fn concurrent_updates_same_row() {
     assert_eq!(resp.status, ResponseStatus::Success);
     if let Some(result) = resp.results.first() {
         let rows = result.rows_as_maps();
-        let value = rows[0].get("value").unwrap().as_i64().unwrap();
+        let value = rows[0].get("value").map(parse_i64).unwrap();
         assert!(
             [10, 20, 30, 40, 50].contains(&value),
             "Final value should be one of the concurrent updates, got: {}",
@@ -280,7 +282,7 @@ async fn concurrent_updates_same_row() {
 /// Verify concurrent DELETE operations work correctly
 #[tokio::test]
 async fn concurrent_deletes() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let resp = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS app_concurrent_del").await;
     assert_eq!(resp.status, ResponseStatus::Success);
@@ -351,7 +353,7 @@ async fn concurrent_deletes() {
 
     if let Some(result) = resp.results.first() {
         let rows = result.rows_as_maps();
-        let count = rows[0].get("count").unwrap().as_i64().unwrap();
+        let count = rows[0].get("count").map(parse_i64).unwrap();
         println!("Rows remaining after concurrent deletes: {}", count);
         // We just verify the count is non-negative and the operations completed
         // The exact count depends on deletion order and timing

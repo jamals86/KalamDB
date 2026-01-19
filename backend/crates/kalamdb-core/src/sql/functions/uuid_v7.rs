@@ -12,11 +12,11 @@
 //! while maintaining global uniqueness.
 
 use datafusion::arrow::array::{ArrayRef, StringArray};
-use datafusion::arrow::datatypes::DataType;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
 };
+use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
 use std::any::Any;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -72,8 +72,8 @@ impl ScalarUDFImpl for UuidV7Function {
         SIGNATURE.get_or_init(|| Signature::exact(vec![], Volatility::Volatile))
     }
 
-    fn return_type(&self, _args: &[DataType]) -> DataFusionResult<DataType> {
-        Ok(DataType::Utf8)
+    fn return_type(&self, _args: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {
+        Ok(arrow_utf8())
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
@@ -89,7 +89,7 @@ impl ScalarUDFImpl for UuidV7Function {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::logical_expr::ScalarUDF;
+    use datafusion::{logical_expr::ScalarUDF, sql::sqlparser::ast::DataType};
     use std::collections::HashSet;
 
     #[test]
@@ -192,6 +192,6 @@ mod tests {
         let func_impl = UuidV7Function::new();
         let return_type = func_impl.return_type(&[]);
         assert!(return_type.is_ok());
-        assert_eq!(return_type.unwrap(), DataType::Utf8);
+        assert_eq!(return_type.unwrap(), ArrowDataType::Utf8);
     }
 }

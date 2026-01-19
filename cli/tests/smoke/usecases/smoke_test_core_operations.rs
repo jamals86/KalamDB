@@ -2,6 +2,7 @@
 // Tests system tables, namespaces, users, storage, and flush operations
 
 use crate::common::*;
+use std::time::Duration;
 
 #[ntest::timeout(180_000)]
 #[test]
@@ -140,8 +141,13 @@ fn test_user_operations() {
     println!("  Verifying user in system.users");
     let select_sql =
         format!("SELECT username, role FROM system.users WHERE username = '{}'", username);
-    let result = execute_sql_as_root_via_client(&select_sql)
-        .expect("SELECT from system.users should succeed");
+    let result = wait_for_query_contains_with(
+        &select_sql,
+        &username,
+        Duration::from_secs(5),
+        execute_sql_as_root_via_client,
+    )
+    .expect("SELECT from system.users should succeed");
 
     assert!(
         result.contains(&username) && (result.contains("user") || result.contains("(1 row)")),

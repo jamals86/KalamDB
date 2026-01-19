@@ -1122,22 +1122,18 @@ i guess we need to add a new column to the jobs table to track each node the sta
 
 65) Create a real-world penetration test which target the cluster and each time target a different node with a real cases of real users how they chat with each others using the kalamdb
 
-
-66) instead of setting appContxt after that construct it with appcontext from the constructor
-pub struct SubscriptionService {
-then we dont need to keep checking if appcontext is there and also no need for setters
-find other places where we have the same and change it
-also pub struct LiveQueryManager {
-
-67) global appcontext shouldnt be used anymore, since we now rely on the appcontext being passed over where needed
-static APP_CONTEXT: Lazy<StdRwLock<Option<Arc<AppContext>>>> = Lazy::new(|| StdRwLock::new(None));
-
 68) node_id should always be read from Appcontext not passed from outside
-
-69) with the jobs being running can you confirm if i query now select * from system.jobs do i see a row per node in the cluster and each jobid has a separate id? and do the jobs run for all nodes in parallel who triggers them? does each node trigger himself? or rely on the leader to do the triggering for it?
-i think we need to have a scheduler one which runs on the leader and awaken all the other nodes when its tirggering, also i think each node should 
 
 70) MetaCommand::ClaimJobNode and MetaCommand::UpdateJobNode is so similar can't we keep only Update?
 
 71) Is it better to use macros for MetaCommand and other commands to make the code runs faster and more clear?
+
+72) stuck stream_Evicted statuses:
+● KalamDB[local-cluster] root@http://127.0.0.1:8081 ❯ select * from system.jobs where status = 'queued';
+...
+(7 rows)
+
+73) add test which check the server health and cpompliance after some of the big tests before/after which check jobs stuck, cluster not in sync and memory usages being skyrocketing
+
+74) Add another columns which are computed ones from manifest table
 

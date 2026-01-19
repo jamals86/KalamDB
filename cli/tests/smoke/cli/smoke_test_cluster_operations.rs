@@ -678,14 +678,14 @@ fn smoke_test_cluster_job_tracking() {
 
     // Check system.jobs for flush jobs
     let result = execute_sql_as_root_via_client(
-        "SELECT job_id, job_type, status FROM system.jobs WHERE job_type = 'Flush' ORDER BY created_at DESC LIMIT 5"
+        "SELECT job_id, job_type, status FROM system.jobs WHERE job_type = 'flush' ORDER BY created_at DESC LIMIT 5"
     ).expect("Failed to query system.jobs");
 
     println!("  Recent flush jobs:\n{}", result);
 
     // Should have at least seen jobs or empty result
     assert!(
-        result.contains("Flush") || result.contains("(0 rows)") || result.contains("row"),
+        result.contains("flush") || result.contains("(0 rows)") || result.contains("row"),
         "Should be able to query job history"
     );
 

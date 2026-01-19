@@ -6,9 +6,8 @@
 //! - Live query deletes
 //! - Stream TTL eviction
 
-#[path = "../../common/testserver/mod.rs"]
-#[allow(dead_code)]
-pub(super) mod test_support;
+// Re-export test_support from parent
+pub(super) use super::test_support;
 
 // Subscription Tests
 mod test_live_query_deletes;

@@ -116,7 +116,7 @@ fn cluster_test_node_rejoin_system_metadata() {
 
     println!("\n=== TEST: Node Rejoin - System Metadata ===\n");
 
-    let urls = cluster_urls();
+    let urls = crate::cluster_common::cluster_urls_config_order();
     let namespace = generate_unique_namespace("rejoin_sys");
 
     // Use node3 as the one we'll stop (not the leader)
@@ -277,7 +277,7 @@ fn cluster_test_node_rejoin_dml_operations() {
 
     println!("\n=== TEST: Node Rejoin - DML Operations ===\n");
 
-    let urls = cluster_urls();
+    let urls = crate::cluster_common::cluster_urls_config_order();
     let namespace = generate_unique_namespace("rejoin_dml");
 
     let stopped_node = "kalamdb-node3";
@@ -439,7 +439,7 @@ fn cluster_test_node_rejoin_user_management() {
 
     println!("\n=== TEST: Node Rejoin - User Management ===\n");
 
-    let urls = cluster_urls();
+    let urls = crate::cluster_common::cluster_urls_config_order();
     let test_user = format!(
         "rejoin_user_{}",
         std::time::SystemTime::now()
@@ -531,7 +531,7 @@ fn cluster_test_multiple_rejoin_cycles() {
 
     println!("\n=== TEST: Multiple Rejoin Cycles ===\n");
 
-    let urls = cluster_urls();
+    let urls = crate::cluster_common::cluster_urls_config_order();
     let namespace = generate_unique_namespace("rejoin_multi");
 
     let stopped_node = "kalamdb-node3";
@@ -626,7 +626,7 @@ fn cluster_test_node_rejoin_schema_changes() {
 
     println!("\n=== TEST: Node Rejoin - Schema Changes ===\n");
 
-    let urls = cluster_urls();
+    let urls = crate::cluster_common::cluster_urls_config_order();
     let namespace = generate_unique_namespace("rejoin_schema");
 
     let stopped_node = "kalamdb-node3";

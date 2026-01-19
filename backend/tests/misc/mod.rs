@@ -13,10 +13,6 @@
 //!
 //! Tests are now organized in subdirectories. Use test_misc.rs driver to run all tests.
 
-#[path = "../common/testserver/mod.rs"]
-#[allow(dead_code)]
-mod test_support;
-
 // Test modules organized by category
 pub mod auth;
 pub mod schema;

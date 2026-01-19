@@ -297,27 +297,28 @@ fn test_link_subscription_multiple_live_inserts() {
     };
 
     // Wait for ACK
-    let _ = listener.wait_for_event("Ack", Duration::from_secs(3));
+    let _ = listener.wait_for_event("Ack", Duration::from_secs(5));
     // For empty tables, an initial batch may be emitted; ignore if not present.
-    let _ = listener.wait_for_event("InitialDataBatch", Duration::from_secs(3));
+    let _ = listener.wait_for_event("InitialDataBatch", Duration::from_secs(5));
 
     // Insert multiple rows in sequence
     let levels = ["INFO", "WARN", "ERROR", "DEBUG"];
     for (i, level) in levels.iter().enumerate() {
-        let _ = execute_sql_as_root_via_cli(&format!(
+        execute_sql_as_root_via_cli(&format!(
             "INSERT INTO {} (id, level, message) VALUES ({}, '{}', 'Test message {}')",
             table_full,
             i + 1,
             level,
             i + 1
-        ));
+        ))
+        .expect("insert should succeed");
         std::thread::sleep(Duration::from_millis(50));
     }
 
     // Collect insert events
     let mut insert_count = 0;
     let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_secs(20) && insert_count < levels.len() {
+    while start.elapsed() < Duration::from_secs(30) && insert_count < levels.len() {
         match listener.try_read_line(Duration::from_millis(300)) {
             Ok(Some(line)) => {
                 if line.contains("Insert") {

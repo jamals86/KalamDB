@@ -7,6 +7,7 @@
 
 use crate::common::*;
 use regex::Regex;
+use std::time::Duration;
 
 /// Parse timing from CLI output like "Took: 1.234 ms"
 /// Returns timing in milliseconds or None if not found
@@ -249,6 +250,17 @@ fn smoke_test_timing_join_query() {
         full1
     ))
     .expect("create users table");
+    let users_table_check = format!(
+        "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        namespace, table1
+    );
+    wait_for_query_contains_with(
+        &users_table_check,
+        &table1,
+        Duration::from_secs(10),
+        execute_sql_as_root_via_cli_json,
+    )
+    .expect("users table should be visible");
 
     // Create orders table
     execute_sql_as_root_via_cli(&format!(
@@ -256,6 +268,17 @@ fn smoke_test_timing_join_query() {
         full2
     ))
     .expect("create orders table");
+    let orders_table_check = format!(
+        "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        namespace, table2
+    );
+    wait_for_query_contains_with(
+        &orders_table_check,
+        &table2,
+        Duration::from_secs(10),
+        execute_sql_as_root_via_cli_json,
+    )
+    .expect("orders table should be visible");
 
     // Insert test data
     for i in 1..=5 {

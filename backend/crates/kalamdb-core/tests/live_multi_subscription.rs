@@ -1,15 +1,13 @@
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, UserId};
 use kalamdb_commons::websocket::{SubscriptionOptions, SubscriptionRequest};
-use kalamdb_core::app_context::AppContext;
 mod test_helpers;
-use test_helpers::init_test_app_context;
+use test_helpers::test_app_context;
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "Requires system schemas registered in live query session context"]
 async fn test_multi_subscription_lifecycle() {
     // 1. Setup
-    let _test_db = init_test_app_context();
-    let app_ctx = AppContext::get();
+    let app_ctx = test_app_context();
     let manager = app_ctx.live_query_manager();
     let registry = manager.registry();
 

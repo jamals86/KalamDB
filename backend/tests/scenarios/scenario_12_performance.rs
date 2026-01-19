@@ -22,7 +22,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// Performance baseline test for inserts
 #[tokio::test]
 async fn test_scenario_12_insert_performance() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("perf_insert");
 
     // Setup
@@ -107,7 +107,7 @@ async fn test_scenario_12_insert_performance() -> anyhow::Result<()> {
 /// Performance test for query time growth
 #[tokio::test]
 async fn test_scenario_12_query_time_growth() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("perf_query");
 
     // Setup
@@ -199,7 +199,7 @@ async fn test_scenario_12_query_time_growth() -> anyhow::Result<()> {
 /// Performance test for subscription initial data timing
 #[tokio::test]
 async fn test_scenario_12_subscription_snapshot_timing() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("perf_sub");
 
     // Setup
@@ -290,7 +290,7 @@ async fn test_scenario_12_subscription_snapshot_timing() -> anyhow::Result<()> {
 /// Memory baseline test using simple operations
 #[tokio::test]
 async fn test_scenario_12_memory_baseline() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("perf_memory");
 
     // Setup

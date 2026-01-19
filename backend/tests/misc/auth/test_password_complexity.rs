@@ -11,7 +11,7 @@ async fn setup_executor(
     enforce_complexity: bool,
 ) -> (SqlExecutor, Arc<AppContext>, Arc<datafusion::prelude::SessionContext>) {
     // Use shared TestServer harness to initialize AppContext and session
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let app_context = server.app_context.clone();
     let session_context = server.session_context.clone();
 

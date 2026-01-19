@@ -47,6 +47,17 @@ pub struct ClusterNodeInfo {
     pub millis_since_last_heartbeat: Option<u64>,
     /// Replication lag in log entries (only for leader viewing followers)
     pub replication_lag: Option<u64>,
+    // --- Node metadata (replicated via OpenRaft membership) ---
+    /// Machine hostname (e.g., "node-1.kalamdb.local")
+    pub hostname: Option<String>,
+    /// KalamDB version (e.g., "0.1.0")
+    pub version: Option<String>,
+    /// Total system memory in megabytes
+    pub memory_mb: Option<u64>,
+    /// Operating system (e.g., "linux", "macos", "windows")
+    pub os: Option<String>,
+    /// CPU architecture (e.g., "x86_64", "aarch64")
+    pub arch: Option<String>,
 }
 
 /// Cluster status information
@@ -188,12 +199,18 @@ mod tests {
             catchup_progress_pct: None,
             millis_since_last_heartbeat: None,
             replication_lag: None,
+            hostname: Some("node-1.local".to_string()),
+            version: Some("0.2.0".to_string()),
+            memory_mb: Some(16384),
+            os: Some("linux".to_string()),
+            arch: Some("x86_64".to_string()),
         };
 
         assert_eq!(node_info.node_id, NodeId::from(1));
         assert!(matches!(node_info.role, NodeRole::Leader));
         assert!(node_info.is_self);
         assert_eq!(node_info.groups_leading, 14);
+        assert_eq!(node_info.hostname, Some("node-1.local".to_string()));
     }
 
     #[test]
@@ -215,6 +232,11 @@ mod tests {
             catchup_progress_pct: None,
             millis_since_last_heartbeat: Some(50),
             replication_lag: Some(5),
+            hostname: Some("node-2.local".to_string()),
+            version: Some("0.2.0".to_string()),
+            memory_mb: Some(8192),
+            os: Some("linux".to_string()),
+            arch: Some("aarch64".to_string()),
         };
 
         assert_eq!(follower.node_id, NodeId::from(2));
@@ -306,6 +328,11 @@ mod tests {
             catchup_progress_pct: Some(50),
             millis_since_last_heartbeat: Some(100),
             replication_lag: Some(90),
+            hostname: None,
+            version: None,
+            memory_mb: None,
+            os: None,
+            arch: None,
         };
 
         let cloned = original.clone();
@@ -334,6 +361,11 @@ mod tests {
                 catchup_progress_pct: None,
                 millis_since_last_heartbeat: None,
                 replication_lag: None,
+                hostname: Some("leader.local".to_string()),
+                version: Some("0.2.0".to_string()),
+                memory_mb: Some(32768),
+                os: Some("linux".to_string()),
+                arch: Some("x86_64".to_string()),
             },
             ClusterNodeInfo {
                 node_id: NodeId::from(2),
@@ -352,6 +384,11 @@ mod tests {
                 catchup_progress_pct: None,
                 millis_since_last_heartbeat: Some(25),
                 replication_lag: Some(2),
+                hostname: Some("follower.local".to_string()),
+                version: Some("0.2.0".to_string()),
+                memory_mb: Some(16384),
+                os: Some("linux".to_string()),
+                arch: Some("x86_64".to_string()),
             },
         ];
 

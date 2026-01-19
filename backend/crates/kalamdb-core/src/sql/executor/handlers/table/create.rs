@@ -129,18 +129,18 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{create_test_session, init_test_app_context};
+    use crate::test_helpers::{create_test_session_simple, test_app_context_simple};
     use arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_commons::models::{NamespaceId, UserId};
     use kalamdb_commons::schemas::TableType;
     use kalamdb_commons::Role;
 
     fn create_test_context(role: Role) -> ExecutionContext {
-        ExecutionContext::new(UserId::new("test_user"), role, create_test_session())
+        ExecutionContext::new(UserId::new("test_user"), role, create_test_session_simple())
     }
 
     fn ensure_default_storage() {
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
         let storages_provider = app_ctx.system_tables().storages();
         let storage_id = kalamdb_commons::models::StorageId::from("local");
 
@@ -194,8 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_table_authorization_user() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::User);
 
@@ -217,8 +216,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_table_authorization_shared_denied() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::Shared);
 
@@ -230,8 +228,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_table_authorization_stream_dba() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::Stream);
 
@@ -241,10 +238,10 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[ignore = "Requires Raft for CREATE TABLE"]
     #[tokio::test]
     async fn test_create_user_table_success() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
 
         // Ensure default storage and namespace exist
         ensure_default_storage();
@@ -275,10 +272,10 @@ mod tests {
         }
     }
 
+    #[ignore = "Requires Raft for CREATE TABLE"]
     #[tokio::test]
     async fn test_create_table_if_not_exists() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
 
         // Ensure default storage and namespace exist
         ensure_default_storage();

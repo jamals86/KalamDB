@@ -393,9 +393,9 @@ mod tests {
         let new_ts = now_ms.saturating_sub(10 * 60 * 1000); // 10 mins ago
 
         // We need to create SeqIds that encode these timestamps
-        // SeqId timestamp is extracted as id >> 22, so we need id = ts << 22
-        let old_seq = SeqId::new(((old_ts as i64) << 22) | 1);
-        let new_seq = SeqId::new(((new_ts as i64) << 22) | 1);
+        // SeqId timestamp is extracted as (id >> 22) + EPOCH, so we need id = (ts - EPOCH) << 22
+        let old_seq = SeqId::new((((old_ts.saturating_sub(SeqId::EPOCH)) as i64) << 22) | 1);
+        let new_seq = SeqId::new((((new_ts.saturating_sub(SeqId::EPOCH)) as i64) << 22) | 1);
 
         let old_row_id = StreamTableRowId::new(user_id.clone(), old_seq);
         let new_row_id = StreamTableRowId::new(user_id.clone(), new_seq);

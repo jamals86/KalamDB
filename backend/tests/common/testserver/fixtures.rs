@@ -14,7 +14,7 @@
 //!
 //! #[actix_web::test]
 //! async fn test_example() {
-//!     let server = TestServer::new().await;
+//!     let server = TestServer::new_shared().await;
 //!     
 //!     // Create namespace
 //!     fixtures::create_namespace(&server, "app").await;
@@ -550,7 +550,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_create_namespace() {
-        let server = TestServer::new().await;
+        let server = TestServer::new_shared().await;
         let response = create_namespace(&server, "test_ns").await;
         assert_eq!(response.status, ResponseStatus::Success);
         assert!(server.namespace_exists("test_ns").await);
@@ -558,7 +558,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_create_messages_table() {
-        let server = TestServer::new().await;
+        let server = TestServer::new_shared().await;
         create_namespace(&server, "app").await;
 
         let response = create_messages_table(&server, "app", Some("user123")).await;
@@ -576,7 +576,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_insert_sample_messages() {
-        let server = TestServer::new().await;
+        let server = TestServer::new_shared().await;
         create_namespace(&server, "app").await;
         create_messages_table(&server, "app", Some("user123")).await;
 
@@ -608,7 +608,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_setup_complete_environment() {
-        let server = TestServer::new().await;
+        let server = TestServer::new_shared().await;
         // Use a unique namespace to avoid collision with parallel cleanup tests
         let ns = unique_namespace("unique_setup_env");
         let result = setup_complete_environment(&server, ns.as_str()).await;

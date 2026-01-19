@@ -14,7 +14,7 @@ use kalam_link::models::ResponseStatus;
 /// T022a: ALTER TABLE ADD COLUMN
 #[actix_web::test]
 async fn test_alter_table_add_column() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Use unique namespace per test to avoid parallel test interference
     let ns = format!("test_add_col_{}", std::process::id());
@@ -82,7 +82,7 @@ async fn test_alter_table_add_column() {
     );
 
     // Verify old data still accessible
-    let rows = query_response.results[0].rows_as_maps();
+    let rows = query_response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("name").unwrap().as_str().unwrap(), "Widget");
     assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 100);
@@ -95,7 +95,7 @@ async fn test_alter_table_add_column() {
 /// T022b: ALTER TABLE DROP COLUMN
 #[actix_web::test]
 async fn test_alter_table_drop_column() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Use unique namespace per test to avoid parallel test interference
     let ns = format!("test_drop_col_{}", std::process::id());
@@ -173,7 +173,7 @@ async fn test_alter_table_drop_column() {
 
     assert_eq!(query_response.status, ResponseStatus::Success);
 
-    let rows = query_response.results[0].rows_as_maps();
+    let rows = query_response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("item").unwrap().as_str().unwrap(), "Laptop");
     assert_eq!(rows[0].get("quantity").unwrap().as_i64().unwrap(), 10);
@@ -186,7 +186,7 @@ async fn test_alter_table_drop_column() {
 /// T022c: ALTER TABLE RENAME COLUMN (new functionality)
 #[actix_web::test]
 async fn test_alter_table_rename_column() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Use unique namespace per test to avoid parallel test interference
     let ns = format!("test_rename_col_{}", std::process::id());
@@ -253,7 +253,7 @@ async fn test_alter_table_rename_column() {
     );
 
     // Verify schema shows new column name
-    let rows = describe_response.results[0].rows_as_maps();
+    let rows = describe_response.rows_as_maps();
     let column_names: Vec<String> = rows
         .iter()
         .map(|row| row.get("column_name").unwrap().as_str().unwrap().to_string())
@@ -276,7 +276,7 @@ async fn test_alter_table_rename_column() {
 /// T022d: ALTER TABLE MODIFY COLUMN
 #[actix_web::test]
 async fn test_alter_table_modify_column() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Use unique namespace per test to avoid parallel test interference
     let ns = format!("test_modify_col_{}", std::process::id());
@@ -342,7 +342,7 @@ async fn test_alter_table_modify_column() {
 /// T022e: Verify schema versioning increments
 #[actix_web::test]
 async fn test_alter_table_schema_versioning() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Use unique namespace per test to avoid parallel test interference
     let ns = format!("test_version_{}", std::process::id());

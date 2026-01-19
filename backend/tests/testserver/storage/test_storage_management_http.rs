@@ -60,7 +60,7 @@ async fn test_storage_management_over_http() -> anyhow::Result<()> {
                 ))
                 .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     anyhow::ensure!(rows.len() == 1);
     anyhow::ensure!(rows[0].get("storage_type").and_then(|v| v.as_str()) == Some("filesystem"));
 

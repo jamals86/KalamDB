@@ -16,8 +16,12 @@
 //! - Query and verify ALL rows are returned correctly
 //! - Test various SQL operations (COUNT, SUM, AVG, WHERE, ORDER BY, etc.)
 
-use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
+use super::test_support::{
+    fixtures, flush_helpers, get_count_value, TestServer,
+};
 use kalam_link::models::ResponseStatus;
+use kalam_link::parse_i64;
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -29,7 +33,7 @@ use std::path::PathBuf;
 async fn test_01_combined_data_count_and_select() {
     println!("\n=== Test 01: Combined Data - Count and Simple Select ===");
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let namespace = "combined_test";
     let table_name = "orders";
     let user_id = "user_001";
@@ -82,11 +86,8 @@ async fn test_01_combined_data_count_and_select() {
             user_id,
         )
         .await;
-    let rows = pre_flush_count.results[0].rows_as_maps();
-    if !rows.is_empty() {
-        let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-        println!("  Pre-flush count: {} rows in RocksDB", count);
-    }
+    let count = get_count_value(&pre_flush_count, 0);
+    println!("  Pre-flush count: {} rows in RocksDB", count);
 
     // Execute flush synchronously
     println!("Flushing first batch to Parquet...");
@@ -145,8 +146,7 @@ async fn test_01_combined_data_count_and_select() {
         "SQL failed: {:?}",
         count_response.error
     );
-    let rows = count_response.results[0].rows_as_maps();
-    let total = rows[0].get("total").and_then(|v| v.as_i64()).unwrap_or(0);
+    let total = get_count_value(&count_response, 0);
     assert_eq!(total, 15, "Should have 15 total rows (10 flushed + 5 buffered), got {}", total);
     println!("  ✓ Count verified: {} total rows (10 Parquet + 5 RocksDB)", total);
 
@@ -168,7 +168,7 @@ async fn test_01_combined_data_count_and_select() {
         "SQL failed: {:?}",
         select_response.error
     );
-    let rows = select_response.results[0].rows_as_maps();
+    let rows = select_response.rows_as_maps();
     assert_eq!(rows.len(), 15, "Should return 15 rows");
 
     // Verify order_id sequence is correct (1..15)
@@ -176,7 +176,7 @@ async fn test_01_combined_data_count_and_select() {
         eprintln!("Row {}: {:?}", idx, row);
         let order_id = row
             .get("order_id")
-            .and_then(|v| v.as_i64())
+            .map(parse_i64)
             .unwrap_or_else(|| panic!("Row {} missing order_id", idx));
         assert_eq!(order_id, (idx + 1) as i64, "order_id should be sequential");
     }
@@ -197,7 +197,7 @@ async fn test_01_combined_data_count_and_select() {
 async fn test_02_combined_data_aggregations() {
     println!("\n=== Test 02: Combined Data - Aggregations ===");
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let namespace = "combined_agg";
     let table_name = "sales";
     let user_id = "user_002";
@@ -262,8 +262,8 @@ async fn test_02_combined_data_aggregations() {
             user_id,
         )
         .await;
-    let rows = count_response.results[0].rows_as_maps();
-    let total = rows[0].get("total").and_then(|v| v.as_i64()).unwrap_or(0);
+    let rows = count_response.rows_as_maps();
+    let total = rows[0].get("total").map(parse_i64).unwrap_or(0);
     assert_eq!(total, 30, "Should have 30 total rows");
     println!("  ✓ COUNT: {} rows", total);
 
@@ -277,8 +277,8 @@ async fn test_02_combined_data_aggregations() {
             user_id,
         )
         .await;
-    let rows = sum_response.results[0].rows_as_maps();
-    let total_qty = rows[0].get("total_qty").and_then(|v| v.as_i64()).unwrap_or(0);
+    let rows = sum_response.rows_as_maps();
+    let total_qty = rows[0].get("total_qty").map(parse_i64).unwrap_or(0);
     let expected_qty: i64 = (1..=30).map(|i| i * 2).sum();
     assert_eq!(total_qty, expected_qty, "SUM(quantity) should match");
     println!("  ✓ SUM(quantity): {}", total_qty);
@@ -290,7 +290,7 @@ async fn test_02_combined_data_aggregations() {
             user_id,
         )
         .await;
-    let rows = avg_response.results[0].rows_as_maps();
+    let rows = avg_response.rows_as_maps();
     let avg_price = rows[0].get("avg_price").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let expected_avg = (1..=30).map(|i| 10.0 + i as f64).sum::<f64>() / 30.0;
     assert!((avg_price - expected_avg).abs() < 0.1, "AVG(price) should be close to expected");
@@ -306,9 +306,9 @@ async fn test_02_combined_data_aggregations() {
             user_id,
         )
         .await;
-    let rows = minmax_response.results[0].rows_as_maps();
-    let min_id = rows[0].get("min_id").and_then(|v| v.as_i64()).unwrap_or(0);
-    let max_id = rows[0].get("max_id").and_then(|v| v.as_i64()).unwrap_or(0);
+    let rows = minmax_response.rows_as_maps();
+    let min_id = rows[0].get("min_id").map(parse_i64).unwrap_or(0);
+    let max_id = rows[0].get("max_id").map(parse_i64).unwrap_or(0);
     assert_eq!(min_id, 1, "MIN should be 1");
     assert_eq!(max_id, 30, "MAX should be 30");
     println!("  ✓ MIN: {}, MAX: {}", min_id, max_id);
@@ -324,7 +324,7 @@ async fn test_02_combined_data_aggregations() {
 async fn test_03_combined_data_filtering() {
     println!("\n=== Test 03: Combined Data - WHERE Clause Filtering ===");
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let namespace = "combined_filter";
     let table_name = "products";
     let user_id = "user_003";
@@ -412,8 +412,8 @@ async fn test_03_combined_data_filtering() {
             user_id,
         )
         .await;
-    let rows = electronics_response.results[0].rows_as_maps();
-    let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+    let rows = electronics_response.rows_as_maps();
+    let count = rows[0].get("count").map(parse_i64).unwrap_or(0);
     let expected_electronics = (1..=25).filter(|i| i % 3 == 0).count() as i64;
     assert_eq!(
         count, expected_electronics,
@@ -432,8 +432,8 @@ async fn test_03_combined_data_filtering() {
             user_id,
         )
         .await;
-    let rows = in_stock_response.results[0].rows_as_maps();
-    let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+    let rows = in_stock_response.rows_as_maps();
+    let count = rows[0].get("count").map(parse_i64).unwrap_or(0);
     let expected_in_stock = (1..=25).filter(|i| i % 2 == 0).count() as i64;
     assert_eq!(count, expected_in_stock, "Should find in-stock items");
     println!("  ✓ Found {} in-stock products", count);
@@ -449,8 +449,8 @@ async fn test_03_combined_data_filtering() {
             user_id,
         )
         .await;
-    let rows = price_response.results[0].rows_as_maps();
-    let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+    let rows = price_response.rows_as_maps();
+    let count = rows[0].get("count").map(parse_i64).unwrap_or(0);
     let expected_count = (1..=25).filter(|i| 20.0 + (*i as f64) > 30.0).count() as i64;
     assert_eq!(count, expected_count, "Should filter by price correctly");
     println!("  ✓ Found {} products with price > 30.0", count);
@@ -466,7 +466,7 @@ async fn test_03_combined_data_filtering() {
             user_id,
         )
         .await;
-    let rows = compound_response.results[0].rows_as_maps();
+    let rows = compound_response.rows_as_maps();
     // Verify all results match criteria
     for row in &rows {
         let price = row.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -485,7 +485,7 @@ async fn test_03_combined_data_filtering() {
 async fn test_04_combined_data_integrity_verification() {
     println!("\n=== Test 04: Combined Data - Integrity Verification ===");
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let namespace = "combined_integrity";
     let table_name = "records";
     let user_id = "user_004";
@@ -560,12 +560,12 @@ async fn test_04_combined_data_integrity_verification() {
         "SQL failed: {:?}",
         query_response.error
     );
-    let rows = query_response.results[0].rows_as_maps();
+    let rows = query_response.rows_as_maps();
     assert_eq!(rows.len(), 20, "Should have exactly 20 rows");
 
     let mut verified_count = 0;
     for row in &rows {
-        let record_id = row.get("record_id").and_then(|v| v.as_i64()).unwrap();
+        let record_id = row.get("record_id").map(parse_i64).unwrap();
         let data = row.get("data").and_then(|v| v.as_str()).unwrap();
         let value = row.get("value").and_then(|v| v.as_f64()).unwrap();
 
@@ -606,7 +606,7 @@ async fn test_05_multiple_flush_cycles() {
     println!("  Note: This test verifies flush execution, not Parquet+RocksDB querying");
     println!("  (Parquet querying not yet fully implemented)");
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let namespace = "multi_flush";
     let table_name = "events";
     let user_id = "user_005";
@@ -677,7 +677,7 @@ async fn test_05_multiple_flush_cycles() {
 async fn test_06_soft_delete_operations() {
     println!("\n=== Test 06: Soft Delete Operations ===");
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let namespace = "delete_test";
     let table_name = "tasks";
     let user_id = "user_006";
@@ -710,8 +710,8 @@ async fn test_06_soft_delete_operations() {
             user_id,
         )
         .await;
-    let rows = count_before.results[0].rows_as_maps();
-    let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap();
+    let rows = count_before.rows_as_maps();
+    let count = rows[0].get("count").map(parse_i64).unwrap();
     assert_eq!(count, 5, "Should have 5 tasks");
     println!("  ✓ Verified: {} tasks before delete", count);
 
@@ -743,8 +743,8 @@ async fn test_06_soft_delete_operations() {
         )
         .await;
 
-    let rows = count_after.results[0].rows_as_maps();
-    let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap();
+    let rows = count_after.rows_as_maps();
+    let count = rows[0].get("count").map(parse_i64).unwrap();
     assert_eq!(count, 3, "Should only show 3 non-deleted tasks");
     println!("  ✓ Soft delete working: {} visible tasks", count);
 
@@ -756,7 +756,7 @@ async fn test_06_soft_delete_operations() {
         )
         .await;
 
-    let rows = tasks_response.results[0].rows_as_maps();
+    let rows = tasks_response.rows_as_maps();
     assert_eq!(rows.len(), 3);
     let task_ids: Vec<String> = rows
         .iter()

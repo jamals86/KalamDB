@@ -35,7 +35,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 /// Main shopping cart parallel test
 #[tokio::test]
 async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("shop");
 
     // =========================================================
@@ -260,7 +260,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
 /// Test subscription with cart_id filter
 #[tokio::test]
 async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("shop_sub");
 
     // Create namespace and tables
@@ -360,7 +360,7 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
 /// Test partial flush for specific users
 #[tokio::test]
 async fn test_scenario_03_partial_flush() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("shop_flush");
 
     // Create namespace and table

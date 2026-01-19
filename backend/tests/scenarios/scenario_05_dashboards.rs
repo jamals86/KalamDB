@@ -26,7 +26,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Main dashboards scenario test
 #[tokio::test]
 async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("app");
 
     // =========================================================
@@ -234,7 +234,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
 /// Test RBAC restrictions
 #[tokio::test]
 async fn test_scenario_05_rbac_restrictions() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("app_rbac");
 
     // Create namespace
@@ -281,7 +281,7 @@ async fn test_scenario_05_rbac_restrictions() -> anyhow::Result<()> {
 /// Test schema evolution scenarios
 #[tokio::test]
 async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("app_schema");
 
     // Create namespace and table

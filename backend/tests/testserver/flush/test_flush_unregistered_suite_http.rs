@@ -35,7 +35,7 @@ async fn wait_for_flush_jobs_settled(
             continue;
         }
 
-        let rows = resp.results[0].rows_as_maps();
+        let rows = resp.rows_as_maps();
         let matching: Vec<_> = rows
             .iter()
             .filter(|r| {

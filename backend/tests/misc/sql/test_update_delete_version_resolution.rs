@@ -20,7 +20,7 @@ use tokio::task::JoinSet;
 #[actix_web::test]
 #[ntest::timeout(60000)]
 async fn test_update_in_fast_storage() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_uv_fast").await;
@@ -81,7 +81,7 @@ async fn test_update_in_fast_storage() {
 
     println!("Query response: status={:?}, error={:?}", response.status, response.error);
     assert_eq!(response.status, ResponseStatus::Success, "Query failed: {:?}", response.error);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
     assert_eq!(row.get("price").unwrap().as_i64().unwrap(), 120);
@@ -95,7 +95,7 @@ async fn test_update_in_fast_storage() {
 #[actix_web::test]
 #[ntest::timeout(60000)]
 async fn test_update_in_parquet() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_uv_parquet").await;
@@ -159,7 +159,7 @@ async fn test_update_in_parquet() {
         response.status, response.error
     );
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1, "Should return exactly 1 row (latest version)");
     let row = &rows[0];
     assert_eq!(
@@ -175,7 +175,7 @@ async fn test_update_in_parquet() {
 #[actix_web::test]
 #[ntest::timeout(60000)]
 async fn test_full_workflow_insert_flush_update() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_uv_workflow").await;
@@ -241,7 +241,7 @@ async fn test_full_workflow_insert_flush_update() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     let row = &rows[0];
     assert_eq!(row.get("status").unwrap().as_str().unwrap(), "shipped");
@@ -254,7 +254,7 @@ async fn test_full_workflow_insert_flush_update() {
 #[actix_web::test]
 #[ntest::timeout(60000)]
 async fn test_multi_version_query() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_uv_multivers").await;
@@ -319,7 +319,7 @@ async fn test_multi_version_query() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1, "Should return exactly 1 row (latest version)");
     let row = &rows[0];
     assert_eq!(
@@ -335,7 +335,7 @@ async fn test_multi_version_query() {
 #[actix_web::test]
 #[ntest::timeout(60000)]
 async fn test_delete_excludes_record() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_uv_delexc").await;
@@ -373,7 +373,7 @@ async fn test_delete_excludes_record() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1, "Should only return non-deleted record");
     assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "user2");
 
@@ -384,7 +384,7 @@ async fn test_delete_excludes_record() {
 #[actix_web::test]
 #[ntest::timeout(60000)]
 async fn test_delete_in_parquet() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_uv_delpq").await;
@@ -434,7 +434,7 @@ async fn test_delete_in_parquet() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 0, "Deleted record should be excluded from query");
 
     println!("✅ T065: DELETE in Parquet creates new deleted version correctly");
@@ -444,7 +444,7 @@ async fn test_delete_in_parquet() {
 #[actix_web::test]
 #[ntest::timeout(60000)]
 async fn test_concurrent_updates() {
-    let server = Arc::new(TestServer::new().await);
+    let server = Arc::new(TestServer::new_shared().await);
 
     // Setup
     fixtures::create_namespace(&server, "test_uv_concur").await;
@@ -508,7 +508,7 @@ async fn test_concurrent_updates() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     let final_count = rows[0].get("count").unwrap().as_i64().unwrap();
     assert!(
@@ -524,7 +524,7 @@ async fn test_concurrent_updates() {
 #[actix_web::test]
 #[ntest::timeout(60000)]
 async fn test_nanosecond_collision_handling() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_uv_nano").await;
@@ -571,7 +571,7 @@ async fn test_nanosecond_collision_handling() {
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     let final_iteration = rows[0].get("iteration").unwrap().as_i64().unwrap();
     assert_eq!(final_iteration, 20, "Should return latest iteration despite rapid updates");
@@ -583,7 +583,7 @@ async fn test_nanosecond_collision_handling() {
 #[actix_web::test]
 #[ntest::timeout(300000)]
 async fn test_query_performance_with_multiple_versions() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let run_id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("System time before UNIX_EPOCH")

@@ -27,7 +27,7 @@ const ROW_COUNT: usize = 5000;
 /// Main IoT telemetry test - 5k rows with wide columns
 #[tokio::test]
 async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("iot");
 
     // =========================================================
@@ -199,7 +199,7 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "SHARED table subscriptions not supported by design (FR-128, FR-129)"]
 async fn test_scenario_04_anomaly_subscription() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("iot_anomaly");
 
     // Create namespace and table
@@ -290,7 +290,7 @@ async fn test_scenario_04_anomaly_subscription() -> anyhow::Result<()> {
 /// Test wide column scanning performance
 #[tokio::test]
 async fn test_scenario_04_wide_column_scan() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("iot_scan");
 
     // Create namespace and table

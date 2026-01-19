@@ -25,7 +25,7 @@ use std::time::Instant;
 /// 5. Verify latency doesn't scale linearly with row count (O(1) not O(n))
 #[actix_web::test]
 async fn test_user_table_pk_index_update() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup namespace and user table
     fixtures::create_namespace(&server, "idx_test_ns").await;
@@ -104,7 +104,7 @@ async fn test_user_table_pk_index_update() {
         )
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
-    let rows = select_response.results[0].rows_as_maps();
+    let rows = select_response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 999);
 
@@ -153,7 +153,7 @@ async fn test_user_table_pk_index_update() {
         )
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
-    let rows = select_response.results[0].rows_as_maps();
+    let rows = select_response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 888);
 
@@ -187,7 +187,7 @@ async fn test_user_table_pk_index_update() {
 /// for efficient O(1) lookup instead of scanning all rows.
 #[actix_web::test]
 async fn test_shared_table_pk_index_update() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup namespace and shared table
     fixtures::create_namespace(&server, "idx_shared_ns").await;
@@ -246,7 +246,7 @@ async fn test_shared_table_pk_index_update() {
         .execute_sql("SELECT id, price FROM idx_shared_ns.products WHERE id = 50")
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
-    let rows = select_response.results[0].rows_as_maps();
+    let rows = select_response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 9999);
 
@@ -286,7 +286,7 @@ async fn test_shared_table_pk_index_update() {
         .execute_sql("SELECT id, price FROM idx_shared_ns.products WHERE id = 50")
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
-    let rows = select_response.results[0].rows_as_maps();
+    let rows = select_response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 8888);
 
@@ -318,7 +318,7 @@ async fn test_shared_table_pk_index_update() {
 /// for efficient O(1) lookup.
 #[actix_web::test]
 async fn test_user_table_pk_index_select() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "select_test_ns").await;
@@ -365,7 +365,7 @@ async fn test_user_table_pk_index_select() {
     let latency_500_rows = start_500.elapsed();
 
     assert_eq!(select_response.status, ResponseStatus::Success);
-    let rows = select_response.results[0].rows_as_maps();
+    let rows = select_response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("data").unwrap().as_str().unwrap(), "data_for_250");
 
@@ -393,7 +393,7 @@ async fn test_user_table_pk_index_select() {
     let latency_2500_rows = start_2500.elapsed();
 
     assert_eq!(select_response.status, ResponseStatus::Success);
-    let rows = select_response.results[0].rows_as_maps();
+    let rows = select_response.rows_as_maps();
     assert_eq!(rows.len(), 1);
 
     // Performance assertion: 5x more rows should not cause 5x slowdown with O(1) lookup
@@ -422,7 +422,7 @@ async fn test_user_table_pk_index_select() {
 /// for efficient O(1) lookup.
 #[actix_web::test]
 async fn test_user_table_pk_index_delete() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "delete_test_ns").await;
@@ -477,7 +477,7 @@ async fn test_user_table_pk_index_delete() {
         .execute_sql_as_user("SELECT id FROM delete_test_ns.items WHERE id = 150", "delete_user")
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
-    let rows = select_response.results[0].rows_as_maps();
+    let rows = select_response.rows_as_maps();
     assert_eq!(rows.len(), 0, "Deleted row should not be returned");
 
     // Insert 1200 more rows (total ~1500)
@@ -541,7 +541,7 @@ async fn test_user_table_pk_index_delete() {
 async fn test_user_table_pk_index_update_after_flush() {
     use super::test_support::flush_helpers::execute_flush_synchronously;
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup namespace and user table
     fixtures::create_namespace(&server, "flush_update_ns").await;
@@ -593,7 +593,7 @@ async fn test_user_table_pk_index_update_after_flush() {
         )
         .await;
     assert_eq!(select_before.status, ResponseStatus::Success);
-    let rows = select_before.results[0].rows_as_maps();
+    let rows = select_before.rows_as_maps();
     assert_eq!(rows.len(), 1, "Expected 1 row before flush");
     assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 250);
 
@@ -664,7 +664,7 @@ async fn test_user_table_pk_index_update_after_flush() {
         .await;
     assert_eq!(select_after.status, ResponseStatus::Success);
     println!("📊 SELECT after UPDATE results: {:?}", select_after.results);
-    let rows = select_after.results[0].rows_as_maps();
+    let rows = select_after.rows_as_maps();
     println!("📊 Row count: {}, rows: {:?}", rows.len(), rows);
     assert_eq!(rows.len(), 1, "Expected 1 row after update");
     let value = rows[0].get("value").unwrap().as_i64().unwrap();
@@ -680,7 +680,7 @@ async fn test_user_table_pk_index_update_after_flush() {
         )
         .await;
     assert_eq!(select_other.status, ResponseStatus::Success);
-    let rows = select_other.results[0].rows_as_maps();
+    let rows = select_other.rows_as_maps();
     assert_eq!(rows.len(), 1, "Expected row id=1 to still exist");
     assert_eq!(
         rows[0].get("value").unwrap().as_i64().unwrap(),
@@ -699,7 +699,7 @@ async fn test_user_table_pk_index_update_after_flush() {
 async fn test_shared_table_pk_index_update_after_flush() {
     use super::test_support::flush_helpers::execute_shared_flush_synchronously;
 
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup namespace and shared table
     fixtures::create_namespace(&server, "flush_shared_ns").await;
@@ -744,7 +744,7 @@ async fn test_shared_table_pk_index_update_after_flush() {
         .execute_sql("SELECT id, price FROM flush_shared_ns.products WHERE id = 25")
         .await;
     assert_eq!(select_before.status, ResponseStatus::Success);
-    let rows = select_before.results[0].rows_as_maps();
+    let rows = select_before.rows_as_maps();
     assert_eq!(rows.len(), 1, "Expected 1 row before flush");
     assert_eq!(rows[0].get("price").unwrap().as_i64().unwrap(), 2500);
 
@@ -772,7 +772,7 @@ async fn test_shared_table_pk_index_update_after_flush() {
         .execute_sql("SELECT id, price FROM flush_shared_ns.products WHERE id = 25")
         .await;
     assert_eq!(select_after.status, ResponseStatus::Success);
-    let rows = select_after.results[0].rows_as_maps();
+    let rows = select_after.rows_as_maps();
     assert_eq!(rows.len(), 1, "Expected 1 row after update");
     assert_eq!(
         rows[0].get("price").unwrap().as_i64().unwrap(),
@@ -785,7 +785,7 @@ async fn test_shared_table_pk_index_update_after_flush() {
         .execute_sql("SELECT id, price FROM flush_shared_ns.products WHERE id = 1")
         .await;
     assert_eq!(select_other.status, ResponseStatus::Success);
-    let rows = select_other.results[0].rows_as_maps();
+    let rows = select_other.rows_as_maps();
     assert_eq!(rows.len(), 1, "Expected row id=1 to still exist");
     assert_eq!(
         rows[0].get("price").unwrap().as_i64().unwrap(),
@@ -802,7 +802,7 @@ async fn test_shared_table_pk_index_update_after_flush() {
 /// preventing cross-user access and ensuring correct lookups.
 #[actix_web::test]
 async fn test_user_table_pk_index_isolation() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "isolation_ns").await;
@@ -870,7 +870,7 @@ async fn test_user_table_pk_index_isolation() {
         .execute_sql_as_user("SELECT id, secret FROM isolation_ns.user_data WHERE id = 5", "alice")
         .await;
     assert_eq!(alice_select.status, ResponseStatus::Success);
-    let rows = alice_select.results[0].rows_as_maps();
+    let rows = alice_select.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("secret").unwrap().as_str().unwrap(), "alice_updated");
 
@@ -879,7 +879,7 @@ async fn test_user_table_pk_index_isolation() {
         .execute_sql_as_user("SELECT id, secret FROM isolation_ns.user_data WHERE id = 5", "bob")
         .await;
     assert_eq!(bob_select.status, ResponseStatus::Success);
-    let rows = bob_select.results[0].rows_as_maps();
+    let rows = bob_select.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("secret").unwrap().as_str().unwrap(), "bob_secret_5");
 
@@ -902,14 +902,14 @@ async fn test_user_table_pk_index_isolation() {
         .execute_sql_as_user("SELECT id, secret FROM isolation_ns.user_data WHERE id = 5", "alice")
         .await;
     assert_eq!(alice_select.status, ResponseStatus::Success);
-    let rows = alice_select.results[0].rows_as_maps();
+    let rows = alice_select.rows_as_maps();
     assert_eq!(rows[0].get("secret").unwrap().as_str().unwrap(), "alice_updated");
 
     let bob_select = server
         .execute_sql_as_user("SELECT id, secret FROM isolation_ns.user_data WHERE id = 5", "bob")
         .await;
     assert_eq!(bob_select.status, ResponseStatus::Success);
-    let rows = bob_select.results[0].rows_as_maps();
+    let rows = bob_select.rows_as_maps();
     assert_eq!(rows[0].get("secret").unwrap().as_str().unwrap(), "bob_updated");
 
     println!("✅ User table PK index provides correct user isolation");

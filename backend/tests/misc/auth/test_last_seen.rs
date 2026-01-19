@@ -20,7 +20,7 @@ fn basic_auth_header(username: &str, password: &str) -> String {
 
 #[tokio::test]
 async fn test_authentication_returns_user() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let user_repo = server.users_repo();
 
     let username = "auth_user";
@@ -43,7 +43,7 @@ async fn test_authentication_returns_user() {
 
 #[tokio::test]
 async fn test_multiple_authentications_succeed() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let user_repo = server.users_repo();
 
     let username = "multi_auth_user";

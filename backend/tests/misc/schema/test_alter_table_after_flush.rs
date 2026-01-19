@@ -10,6 +10,8 @@
 
 use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
+use kalam_link::parse_i64;
+use serde_json::Value as JsonValue;
 
 /// Test ALTER TABLE ADD COLUMN after flushing data to cold storage
 ///
@@ -23,7 +25,7 @@ use kalam_link::models::ResponseStatus;
 /// 7. Query again and verify new column exists in results
 #[actix_web::test]
 async fn test_alter_table_add_column_after_flush() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Use unique namespace to avoid test conflicts
     let ns = format!("alter_flush_{}", std::process::id());
@@ -96,13 +98,13 @@ async fn test_alter_table_add_column_after_flush() {
     );
 
     // Verify we can read flushed data with new schema
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     assert_eq!(rows.len(), 3, "Should read all 3 flushed rows");
 
     // Check first row (old data from cold storage)
     assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "msg1");
     assert_eq!(rows[0].get("content").unwrap().as_str().unwrap(), "Hello World");
-    assert_eq!(rows[0].get("timestamp").unwrap().as_i64().unwrap(), 1000);
+    assert_eq!(rows[0].get("timestamp").map(parse_i64).unwrap(), 1000);
 
     // New column should be NULL for old data
     assert!(
@@ -134,7 +136,7 @@ async fn test_alter_table_add_column_after_flush() {
     let resp = server.execute_sql_as_user(&select_sql, "user1").await;
     assert_eq!(resp.status, ResponseStatus::Success, "Final SELECT failed: {:?}", resp.error);
 
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     assert_eq!(rows.len(), 5, "Should have 5 total rows (3 old + 2 new)");
 
     // Verify old rows still have NULL priority
@@ -149,14 +151,14 @@ async fn test_alter_table_add_column_after_flush() {
     // Verify new rows have priority values
     assert_eq!(rows[3].get("id").unwrap().as_str().unwrap(), "msg4", "Row 4 should be msg4");
     assert_eq!(
-        rows[3].get("priority").unwrap().as_i64().unwrap(),
+        rows[3].get("priority").map(parse_i64).unwrap(),
         1,
         "msg4 should have priority 1"
     );
 
     assert_eq!(rows[4].get("id").unwrap().as_str().unwrap(), "msg5", "Row 5 should be msg5");
     assert_eq!(
-        rows[4].get("priority").unwrap().as_i64().unwrap(),
+        rows[4].get("priority").map(parse_i64).unwrap(),
         3,
         "msg5 should have priority 3"
     );
@@ -172,7 +174,7 @@ async fn test_alter_table_add_column_after_flush() {
     let resp = server.execute_sql_as_user(&explicit_select, "user1").await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     assert_eq!(rows.len(), 2, "Should find 2 rows with non-NULL priority");
 
     println!("✅ Test passed: ALTER TABLE after flush with mixed schema data");
@@ -189,7 +191,7 @@ async fn test_alter_table_add_column_after_flush() {
 /// 6. Query and verify all schema versions are handled correctly
 #[actix_web::test]
 async fn test_multiple_alter_operations_with_flushes() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let ns = format!("multi_alter_{}", std::process::id());
 
@@ -274,7 +276,7 @@ async fn test_multiple_alter_operations_with_flushes() {
 
     assert_eq!(resp.status, ResponseStatus::Success);
 
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     assert_eq!(rows.len(), 3, "Should have 3 events across schema versions");
 
     // e1: Original schema (both new columns NULL)
@@ -287,7 +289,7 @@ async fn test_multiple_alter_operations_with_flushes() {
 
     // e3: Second ALTER (both columns present)
     assert_eq!(rows[2].get("user_id").unwrap().as_str().unwrap(), "user456");
-    assert_eq!(rows[2].get("timestamp").unwrap().as_i64().unwrap(), 9999);
+    assert_eq!(rows[2].get("timestamp").map(parse_i64).unwrap(), 9999);
 
     println!("✅ Successfully queried data across 3 schema versions");
 

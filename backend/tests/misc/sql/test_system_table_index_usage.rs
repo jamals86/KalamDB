@@ -16,12 +16,14 @@
 
 use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
+use kalam_link::parse_i64;
 use kalamdb_commons::models::{ConnectionId, UserName};
 use kalamdb_commons::system::{Job, LiveQuery, User};
 use kalamdb_commons::{
     AuthType, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, Role, StorageId,
     StorageMode, TableName, UserId,
 };
+use serde_json::Value as JsonValue;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Test: system.users uses username index for WHERE username = '...' queries
@@ -37,7 +39,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 #[actix_web::test]
 #[ntest::timeout(60000)]
 async fn test_system_users_username_index() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let run_id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("System time before UNIX_EPOCH")
@@ -87,9 +89,9 @@ async fn test_system_users_username_index() {
 
     assert_eq!(response.status, ResponseStatus::Success, "Query failed: {:?}", response.error);
 
-    let rows = response.results[0].rows_as_maps();
-    assert_eq!(rows.len(), 1, "Expected 1 row");
-    let count = rows[0].get("user_count").unwrap().as_i64().unwrap();
+    let rows = response.rows_as_maps();
+    assert_eq!(rows.len(), 1, "Expected 1 row, got {} - query result: {:?}", rows.len(), rows);
+    let count = parse_i64(rows[0].get("user_count").unwrap());
     assert_eq!(count, 1, "Expected to find exactly 1 user with username='username25'");
 
     println!("✓ Username index query latency: {:?}", latency_indexed);
@@ -102,7 +104,7 @@ async fn test_system_users_username_index() {
     let response2 = server.execute_sql(&query_specific).await;
 
     assert_eq!(response2.status, ResponseStatus::Success);
-    let rows2 = response2.results[0].rows_as_maps();
+    let rows2 = response2.rows_as_maps();
     assert_eq!(rows2.len(), 1);
     assert_eq!(rows2[0].get("user_id").unwrap().as_str().unwrap(), format!("{}_10", id_prefix));
     assert_eq!(
@@ -144,7 +146,7 @@ async fn test_system_users_username_index() {
 #[actix_web::test]
 #[ntest::timeout(60000)]
 async fn test_system_jobs_status_index() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let run_id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("System time before UNIX_EPOCH")
@@ -208,8 +210,8 @@ async fn test_system_jobs_status_index() {
         format!("SELECT COUNT(*) AS total FROM system.jobs WHERE job_id LIKE '{}%'", job_prefix);
     let verify_response = server.execute_sql(&verify_query).await;
     assert_eq!(verify_response.status, ResponseStatus::Success);
-    let verify_rows = verify_response.results[0].rows_as_maps();
-    let total_jobs = verify_rows[0].get("total").unwrap().as_i64().unwrap();
+    let verify_rows = verify_response.rows_as_maps();
+    let total_jobs = parse_i64(verify_rows[0].get("total").unwrap());
     println!("✓ Total jobs inserted: {}", total_jobs);
 
     // Check what statuses actually exist
@@ -220,9 +222,9 @@ async fn test_system_jobs_status_index() {
     let status_response = server.execute_sql(&status_query).await;
     if status_response.status == ResponseStatus::Success {
         println!("✓ Job statuses breakdown:");
-        for row in status_response.results[0].rows_as_maps() {
+        for row in status_response.rows_as_maps() {
             let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("NULL");
-            let count = row.get("count").unwrap().as_i64().unwrap();
+            let count = parse_i64(row.get("count").unwrap());
             println!("    {} = {}", status, count);
         }
     }
@@ -244,9 +246,9 @@ async fn test_system_jobs_status_index() {
 
     assert_eq!(response.status, ResponseStatus::Success, "Query failed: {:?}", response.error);
 
-    let rows = response.results[0].rows_as_maps();
+    let rows = response.rows_as_maps();
     assert_eq!(rows.len(), 1);
-    let count = rows[0].get("job_count").unwrap().as_i64().unwrap();
+    let count = parse_i64(rows[0].get("job_count").unwrap());
 
     println!("✓ Found {} running jobs out of {} total", count, total_jobs);
 
@@ -272,7 +274,7 @@ async fn test_system_jobs_status_index() {
     let response2 = server.execute_sql(&query_completed).await;
 
     assert_eq!(response2.status, ResponseStatus::Success);
-    let rows2 = response2.results[0].rows_as_maps();
+    let rows2 = response2.rows_as_maps();
     assert!(rows2.len() > 0, "Expected at least 1 completed job");
 
     // Verify all returned rows have status='completed'
@@ -288,8 +290,8 @@ async fn test_system_jobs_status_index() {
     let response3 = server.execute_sql(&query_failed).await;
 
     assert_eq!(response3.status, ResponseStatus::Success);
-    let rows3 = response3.results[0].rows_as_maps();
-    let failed_count = rows3[0].get("failed_count").unwrap().as_i64().unwrap();
+    let rows3 = response3.rows_as_maps();
+    let failed_count = parse_i64(rows3[0].get("failed_count").unwrap());
     assert!(
         failed_count >= 1 && failed_count <= total_jobs,
         "Expected at least 1 failed job within total_jobs, got {}",
@@ -308,7 +310,7 @@ async fn test_system_jobs_status_index() {
 #[actix_web::test]
 #[ntest::timeout(60000)]
 async fn test_system_live_queries_basic() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Insert a few live queries
     let now = chrono::Utc::now().timestamp_millis();
@@ -355,8 +357,8 @@ async fn test_system_live_queries_basic() {
         return;
     }
 
-    let rows = response.results[0].rows_as_maps();
-    let count = rows[0].get("lq_count").unwrap().as_i64().unwrap();
+    let rows = response.rows_as_maps();
+    let count = parse_i64(rows[0].get("lq_count").unwrap());
     println!("✓ Found {} live queries", count);
 
     if count == 0 {
@@ -372,8 +374,8 @@ async fn test_system_live_queries_basic() {
     let response2 = server.execute_sql(query_by_table).await;
 
     assert_eq!(response2.status, ResponseStatus::Success);
-    let rows2 = response2.results[0].rows_as_maps();
-    let table_count = rows2[0].get("table_lq_count").unwrap().as_i64().unwrap();
+    let rows2 = response2.rows_as_maps();
+    let table_count = parse_i64(rows2[0].get("table_lq_count").unwrap());
 
     // We inserted 10 queries cycling through 3 tables (0,1,2), so ~3-4 per table
     assert!(
@@ -394,7 +396,7 @@ async fn test_system_live_queries_basic() {
 #[actix_web::test]
 #[ntest::timeout(120000)]
 async fn test_index_performance_scaling() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let run_id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("System time before UNIX_EPOCH")
@@ -455,7 +457,7 @@ async fn test_index_performance_scaling() {
     let latency_50 = start_50.elapsed();
 
     assert_eq!(response_50.status, ResponseStatus::Success);
-    let rows_50 = response_50.results[0].rows_as_maps();
+    let rows_50 = response_50.rows_as_maps();
     assert_eq!(rows_50.len(), 1);
 
     // Phase 2: Insert 200 more users (total 250), measure again
@@ -499,7 +501,7 @@ async fn test_index_performance_scaling() {
     let latency_250 = start_250.elapsed();
 
     assert_eq!(response_250.status, ResponseStatus::Success);
-    let rows_250 = response_250.results[0].rows_as_maps();
+    let rows_250 = response_250.rows_as_maps();
     assert_eq!(rows_250.len(), 1);
 
     println!("✓ Index performance scaling test:");

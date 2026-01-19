@@ -24,8 +24,51 @@ pub struct TestServer {
 }
 
 impl TestServer {
-    /// Create a new TestServer wrapper backed by the global HTTP server.
+    /// Create a new TestServer with an isolated HTTP server instance.
+    /// Each test gets its own server, RocksDB instance, and temp directory.
+    /// This ensures complete test isolation but is slower than using the global server.
+    /// 
+    /// **DEPRECATED**: Use `new_shared()` instead. Isolated servers have issues with
+    /// table catalog and query routing. All tests should use the shared global server.
+    #[deprecated(note = "Use new_shared() instead - isolated servers have catalog issues")]
     pub async fn new() -> Self {
+        // Create an isolated server instance for this test
+        let http = Box::leak(Box::new(
+            http_server::start_http_test_server()
+                .await
+                .expect("Failed to start isolated HTTP test server"),
+        ));
+        
+        let app_context = http.app_context();
+        let session_context = app_context.base_session_context();
+        let sql_executor = app_context.sql_executor();
+
+        // Ensure root/system user has a password hash for auth tests
+        let system_user_id = UserId::new(AuthConstants::DEFAULT_ROOT_USER_ID);
+        if let Ok(Some(mut user)) =
+            app_context.system_tables().users().get_user_by_id(&system_user_id)
+        {
+            if user.password_hash.is_empty() {
+                user.password_hash =
+                    bcrypt::hash("admin", bcrypt::DEFAULT_COST).unwrap_or_default();
+                user.updated_at = chrono::Utc::now().timestamp_millis();
+                let _ = app_context.system_tables().users().update_user(user);
+            }
+        }
+
+        Self {
+            http,
+            app_context,
+            session_context,
+            sql_executor,
+        }
+    }
+
+    /// Create a TestServer using the shared global HTTP server.
+    /// Tests using this share the same server, RocksDB, and temp directory.
+    /// Much faster but requires tests to use unique namespaces/tables.
+    /// Only use this for simple read-only tests or tests that coordinate their resources.
+    pub async fn new_shared() -> Self {
         let http = http_server::get_global_server().await;
         let app_context = http.app_context();
         let session_context = app_context.base_session_context();
@@ -87,8 +130,34 @@ impl TestServer {
         // Ensure user exists with at least a USER role
         let users_provider = self.app_context.system_tables().users();
         let role = if let Ok(Some(user)) = users_provider.get_user_by_id(&user_id_obj) {
+            // Check if user is soft-deleted
+            if user.deleted_at.is_some() {
+                return QueryResponse {
+                    status: ResponseStatus::Error,
+                    results: vec![],
+                    took: None,
+                    error: Some(ErrorDetail {
+                        code: "INVALID_CREDENTIALS".to_string(),
+                        message: "Invalid username or password".to_string(),
+                        details: None,
+                    }),
+                };
+            }
             user.role
         } else if let Ok(Some(user)) = users_provider.get_user_by_username(user_id) {
+            // Check if user is soft-deleted
+            if user.deleted_at.is_some() {
+                return QueryResponse {
+                    status: ResponseStatus::Error,
+                    results: vec![],
+                    took: None,
+                    error: Some(ErrorDetail {
+                        code: "INVALID_CREDENTIALS".to_string(),
+                        message: "Invalid username or password".to_string(),
+                        details: None,
+                    }),
+                };
+            }
             user.role
         } else {
             let password_hash =

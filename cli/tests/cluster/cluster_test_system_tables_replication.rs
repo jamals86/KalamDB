@@ -269,8 +269,8 @@ fn cluster_test_system_cluster_consistency() {
 
     let urls = cluster_urls();
 
-    // Query cluster info from each node
-    let query = "SELECT node_id, api_addr, is_leader FROM system.cluster ORDER BY node_id";
+    // Query cluster info from each node (ignore leader flag to avoid duplicate rows)
+    let query = "SELECT node_id, api_addr FROM system.cluster ORDER BY node_id";
 
     let mut cluster_views: Vec<HashSet<String>> = Vec::new();
     for (i, url) in urls.iter().enumerate() {

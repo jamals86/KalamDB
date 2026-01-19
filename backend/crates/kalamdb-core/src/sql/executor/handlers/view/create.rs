@@ -124,14 +124,13 @@ impl TypedStatementHandler<CreateViewStatement> for CreateViewHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::init_test_app_context;
+    use crate::test_helpers::test_app_context_simple;
     use arrow::array::Int64Array;
     use kalamdb_commons::models::{NamespaceId, UserId};
 
     #[tokio::test]
     async fn create_view_registers_and_is_queryable() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
         let handler = CreateViewHandler::new(app_ctx.clone());
 
         let stmt = CreateViewStatement::parse(
@@ -157,8 +156,7 @@ mod tests {
 
     #[tokio::test]
     async fn non_admin_cannot_create_view() {
-        init_test_app_context();
-        let app_ctx = AppContext::get();
+        let app_ctx = test_app_context_simple();
         let handler = CreateViewHandler::new(app_ctx.clone());
         let stmt = CreateViewStatement::parse(
             "CREATE VIEW default.restricted_view AS SELECT 1",

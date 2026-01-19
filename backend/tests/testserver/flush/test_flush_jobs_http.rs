@@ -37,7 +37,7 @@ async fn test_flush_table_persists_job_over_http() -> anyhow::Result<()> {
             )
             .await?;
         assert_eq!(resp.status, ResponseStatus::Success);
-        let rows = resp.results[0].rows_as_maps();
+        let rows = resp.rows_as_maps();
         if !rows.is_empty() {
             break;
         }

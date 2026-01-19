@@ -21,7 +21,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Main multi-tenant scenario test
 #[tokio::test]
 async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     // =========================================================
     // Step 1: Create multiple tenant namespaces
     // =========================================================
@@ -233,7 +233,7 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
 /// Test subscription isolation across namespaces
 #[tokio::test]
 async fn test_scenario_10_subscription_namespace_isolation() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns_a = unique_ns("sub_ns_a");
     let ns_b = unique_ns("sub_ns_b");
 
@@ -324,7 +324,7 @@ async fn test_scenario_10_subscription_namespace_isolation() -> anyhow::Result<(
 /// Test same table name in different namespaces
 #[tokio::test]
 async fn test_scenario_10_same_table_name_different_namespaces() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns1 = unique_ns("same_name_1");
     let ns2 = unique_ns("same_name_2");
 

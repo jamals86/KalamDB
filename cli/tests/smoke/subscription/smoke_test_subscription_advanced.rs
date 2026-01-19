@@ -48,8 +48,9 @@ impl SubscriptionListenerAdvanced {
                 .expect("Failed to create tokio runtime for subscription");
 
             runtime.block_on(async move {
+                let base_url = leader_or_server_url();
                 let client = match KalamLinkClient::builder()
-                    .base_url(server_url())
+                    .base_url(&base_url)
                     .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
                     .timeouts(
                         KalamLinkTimeouts::builder()

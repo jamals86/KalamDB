@@ -13,6 +13,7 @@ use kalamdb_core::providers::arrow_json_conversion::{
 use kalamdb_core::sql::executor::models::ExecutionContext;
 use kalamdb_core::sql::executor::{ExecutorMetadataAlias, ScalarValue, SqlExecutor};
 use kalamdb_core::sql::ExecutionResult;
+use kalamdb_raft::GroupId;
 use reqwest::Client;
 use std::sync::Arc;
 use std::time::Instant;
@@ -278,12 +279,12 @@ async fn forward_sql_if_follower(
     req: &QueryRequest,
     app_context: &Arc<kalamdb_core::app_context::AppContext>,
 ) -> Option<HttpResponse> {
-    // Phase 20: Always check for leader (single-node setups are always leader)
-    let cluster_info = app_context.executor().get_cluster_info();
-    let leader = cluster_info.nodes.iter().find(|node| node.is_leader)?;
+    let executor = app_context.executor();
+    if !executor.is_cluster_mode() {
+        return None;
+    }
 
-    // We are the leader - execute locally
-    if leader.node_id == cluster_info.current_node_id {
+    if executor.is_leader(GroupId::Meta).await {
         return None;
     }
 
@@ -292,8 +293,26 @@ async fn forward_sql_if_follower(
     let statements = match kalamdb_sql::split_statements(&req.sql) {
         Ok(stmts) => stmts,
         Err(_) => {
-            // If we can't parse, forward to leader to let it handle the error
-            return forward_to_leader(http_req, req, &leader.api_addr).await;
+            let cluster_info = executor.get_cluster_info();
+            let leader_api_addr = executor
+                .get_leader(GroupId::Meta)
+                .await
+                .and_then(|leader_id| {
+                    cluster_info
+                        .nodes
+                        .iter()
+                        .find(|node| node.node_id == leader_id)
+                        .map(|node| node.api_addr.clone())
+                });
+
+            return match leader_api_addr {
+                Some(api_addr) => forward_to_leader(http_req, req, &api_addr).await,
+                None => Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
+                    "CLUSTER_LEADER_UNKNOWN",
+                    "No cluster leader available",
+                    0.0,
+                ))),
+            };
         },
     };
 
@@ -305,13 +324,32 @@ async fn forward_sql_if_follower(
     });
 
     if has_write {
-        // Write operations must go to the leader
-        log::debug!(
-            "Forwarding write operation to leader {}: {}...",
-            leader.api_addr,
-            req.sql.chars().take(50).collect::<String>()
-        );
-        return forward_to_leader(http_req, req, &leader.api_addr).await;
+        let cluster_info = executor.get_cluster_info();
+        let leader_api_addr = executor
+            .get_leader(GroupId::Meta)
+            .await
+            .and_then(|leader_id| {
+                cluster_info
+                    .nodes
+                    .iter()
+                    .find(|node| node.node_id == leader_id)
+                    .map(|node| node.api_addr.clone())
+            });
+
+        if let Some(api_addr) = leader_api_addr {
+            log::debug!(
+                "Forwarding write operation to leader {}: {}...",
+                api_addr,
+                req.sql.chars().take(50).collect::<String>()
+            );
+            return forward_to_leader(http_req, req, &api_addr).await;
+        }
+
+        return Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
+            "CLUSTER_LEADER_UNKNOWN",
+            "No cluster leader available",
+            0.0,
+        )));
     }
 
     // Read-only operations can be served locally on the follower

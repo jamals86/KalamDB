@@ -523,7 +523,7 @@ fn test_provider_cache_insert_and_get() {
 
 #[test]
 fn test_cached_table_data_includes_system_columns() {
-    use arrow::datatypes::DataType;
+    use kalamdb_commons::arrow_utils::{is_boolean, is_int64};
     use kalamdb_commons::models::datatypes::KalamDataType;
     use kalamdb_commons::models::schemas::{ColumnDefinition, TableOptions, TableType};
     use kalamdb_core::system_columns::SystemColumnsService;
@@ -575,11 +575,11 @@ fn test_cached_table_data_includes_system_columns() {
 
     // Verify column types
     assert!(
-        matches!(arrow_schema.field(1).data_type(), DataType::Int64),
+        is_int64(arrow_schema.field(1).data_type()),
         "_seq should be Int64 (BigInt)"
     );
     assert!(
-        matches!(arrow_schema.field(2).data_type(), DataType::Boolean),
+        is_boolean(arrow_schema.field(2).data_type()),
         "_deleted should be Boolean"
     );
 

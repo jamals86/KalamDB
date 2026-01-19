@@ -13,7 +13,7 @@ fn unique_namespace(prefix: &str) -> String {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_live_queries_metadata() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
     let manager = server.app_context.live_query_manager();
     let registry = manager.registry();
     let ns = unique_namespace("live_queries_meta");

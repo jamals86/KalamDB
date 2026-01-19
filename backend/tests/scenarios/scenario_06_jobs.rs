@@ -22,7 +22,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Main jobs scenario test
 #[tokio::test]
 async fn test_scenario_06_jobs_lifecycle() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("jobs");
 
     // =========================================================
@@ -134,7 +134,7 @@ async fn test_scenario_06_jobs_lifecycle() -> anyhow::Result<()> {
 /// Test job idempotency - same flush shouldn't duplicate data
 #[tokio::test]
 async fn test_scenario_06_job_idempotency() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("jobs_idem");
 
     // Create namespace and table
@@ -193,7 +193,7 @@ async fn test_scenario_06_job_idempotency() -> anyhow::Result<()> {
 /// Test querying system.jobs table
 #[tokio::test]
 async fn test_scenario_06_system_jobs_query() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     // Query system.jobs table
     let resp = server
         .execute_sql("SELECT job_id, job_type, status FROM system.jobs LIMIT 10")
@@ -224,7 +224,7 @@ async fn test_scenario_06_system_jobs_query() -> anyhow::Result<()> {
 /// Test job status transitions
 #[tokio::test]
 async fn test_scenario_06_job_status_transitions() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("jobs_trans");
 
     // Create namespace and table

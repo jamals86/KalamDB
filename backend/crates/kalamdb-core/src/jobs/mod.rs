@@ -20,7 +20,7 @@
 //! # fn example() {
 //! let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
 //! let jobs_provider = Arc::new(JobsTableProvider::new(backend));
-//! # let app_ctx = AppContext::get();
+//! # // app_ctx is injected by the caller
 //! let job_registry = Arc::new(JobRegistry::new());
 //! let job_nodes_provider = Arc::new(JobNodesTableProvider::new(backend));
 //! let job_manager = Arc::new(JobsManager::new(

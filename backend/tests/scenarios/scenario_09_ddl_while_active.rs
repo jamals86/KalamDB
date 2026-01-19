@@ -22,7 +22,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Main DDL while active scenario test
 #[tokio::test]
 async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("ddl_active");
 
     // =========================================================
@@ -186,7 +186,7 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
 /// Test DROP COLUMN behavior (if supported)
 #[tokio::test]
 async fn test_scenario_09_drop_column() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("ddl_drop");
 
     // Create namespace and table
@@ -267,7 +267,7 @@ async fn test_scenario_09_drop_column() -> anyhow::Result<()> {
 /// Test concurrent reads during DDL
 #[tokio::test]
 async fn test_scenario_09_concurrent_reads_during_ddl() -> anyhow::Result<()> {
-    let server = test_support::http_server::get_global_server().await;
+    let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("ddl_concurrent");
 
     // Create namespace and table

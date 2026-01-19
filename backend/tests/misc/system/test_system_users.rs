@@ -72,7 +72,7 @@ async fn create_system_user(
 /// T097: System user can authenticate from localhost without password
 #[actix_web::test]
 async fn test_system_user_localhost_no_password() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create system user WITHOUT password (empty password_hash)
     let username = "sysuser_local";
@@ -126,7 +126,7 @@ async fn test_system_user_localhost_no_password() {
 /// T098: System user remote access denied by default
 #[actix_web::test]
 async fn test_system_user_remote_denied_by_default() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create system user WITHOUT allow_remote flag
     let username = "sysuser_remote_denied";
@@ -180,7 +180,7 @@ async fn test_system_user_remote_denied_by_default() {
 /// T099: System user remote access WITH password when allow_remote=true
 #[actix_web::test]
 async fn test_system_user_remote_with_password() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create system user WITH allow_remote flag AND password
     let username = "sysuser_remote_allowed";
@@ -237,7 +237,7 @@ async fn test_system_user_remote_with_password() {
 /// T100: System user remote access WITHOUT password denied even if allow_remote=true
 #[actix_web::test]
 async fn test_system_user_remote_no_password_denied() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Create system user WITH allow_remote flag but WITHOUT password (security violation)
     let username = "sysuser_remote_nopass";
@@ -298,7 +298,7 @@ async fn test_global_remote_access_flag() {
     // 3. Verifying remote authentication succeeds due to global flag
 
     // For now, we verify the config exists and defaults to false
-    let _server = TestServer::new().await;
+    let _server = TestServer::new_shared().await;
 
     // The global flag is checked in AuthService::new()
     // Default should be false (localhost-only)

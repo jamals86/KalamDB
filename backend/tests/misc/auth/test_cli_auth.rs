@@ -15,7 +15,7 @@ use kalamdb_commons::{AuthType, Role, UserId};
 #[tokio::test]
 async fn test_init_creates_system_user() {
     // **T109**: Test that database initialization creates system user
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Verify system user exists
     let system_user_id = UserId::new(AuthConstants::DEFAULT_ROOT_USER_ID);
@@ -51,7 +51,7 @@ async fn test_init_creates_system_user() {
 #[tokio::test]
 async fn test_system_user_password_is_hashed() {
     // Verify that system user password is bcrypt hashed, not plaintext
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let system_user_id = UserId::new(AuthConstants::DEFAULT_ROOT_USER_ID);
     let user = server
@@ -82,7 +82,7 @@ async fn test_system_user_password_is_hashed() {
 #[tokio::test]
 async fn test_system_user_has_metadata() {
     // Verify system user has proper metadata (created_at, updated_at)
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     let system_user_id = UserId::new(AuthConstants::DEFAULT_ROOT_USER_ID);
     let user = server

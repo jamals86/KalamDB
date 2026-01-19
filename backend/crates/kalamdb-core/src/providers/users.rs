@@ -16,7 +16,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::providers::arrow_json_conversion::coerce_rows;
-use crate::providers::helpers::extract_user_context;
+use crate::providers::helpers::{extract_full_user_context, extract_user_context};
 use crate::providers::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
@@ -24,7 +24,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::Session;
 use datafusion::datasource::TableProvider;
-use datafusion::error::Result as DataFusionResult;
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use datafusion::scalar::ScalarValue;
@@ -984,6 +984,24 @@ impl TableProvider for UserTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        // Extract user context including read_context for leader check
+        let (user_id, _role, read_context) = extract_full_user_context(state)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to extract user context: {}", e)))?;
+
+        // Check if this is a client read that requires leader
+        // Skip check for internal reads (jobs, live query notifications, etc.)
+        if read_context.requires_leader() && self.core.app_context.is_cluster_mode() {
+            let is_leader = self.core.app_context.is_leader_for_user(user_id).await;
+            if !is_leader {
+                // Get leader hint for client redirection
+                let leader_addr = self.core.app_context.leader_addr_for_user(user_id).await;
+                return Err(DataFusionError::Execution(format!(
+                    "NOT_LEADER: This node is not the leader for user {}. Leader: {:?}",
+                    user_id, leader_addr
+                )));
+            }
+        }
+
         self.base_scan(state, projection, filters, limit).await
     }
 }

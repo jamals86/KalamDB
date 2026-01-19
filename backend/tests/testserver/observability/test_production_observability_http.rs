@@ -33,7 +33,7 @@ async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result
             ))
             .await?;
     assert_eq!(resp.status, ResponseStatus::Success);
-    let rows = resp.results[0].rows_as_maps();
+    let rows = resp.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("table_type").unwrap().as_str().unwrap(), "user");
 
@@ -87,7 +87,7 @@ async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result
             )
             .await?;
         assert_eq!(resp_after.status, ResponseStatus::Success);
-        let rows = resp_after.results[0].rows_as_maps();
+        let rows = resp_after.rows_as_maps();
 
         if let Some(job) = rows.iter().find(|r| {
             r.get("parameters")

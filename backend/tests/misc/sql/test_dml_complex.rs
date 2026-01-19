@@ -16,7 +16,7 @@ use kalam_link::models::ResponseStatus;
 /// the current scan_with_version_resolution_to_kvs approach.
 #[actix_web::test]
 async fn test_update_complex_predicate_and() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_dml_and").await;
@@ -77,7 +77,7 @@ async fn test_update_complex_predicate_and() {
         .execute_sql_as_user("SELECT id, stock FROM test_dml_and.products WHERE id = 'p2'", "user1")
         .await;
 
-    let rows = query_response.results[0].rows_as_maps();
+    let rows = query_response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("stock").unwrap().as_i64().unwrap(), 100);
 
@@ -89,7 +89,7 @@ async fn test_update_complex_predicate_and() {
 /// Note: Full OR/AND predicates require DataFusion SELECT-to-UPDATE conversion
 #[actix_web::test]
 async fn test_update_complex_predicate_or() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_dml_or").await;
@@ -143,7 +143,7 @@ async fn test_update_complex_predicate_or() {
         .execute_sql_as_user("SELECT id FROM test_dml_or.inventory WHERE id = 'i1'", "user1")
         .await;
 
-    let rows = query_response.results[0].rows_as_maps();
+    let rows = query_response.rows_as_maps();
     assert_eq!(rows.len(), 1);
 
     println!("✅ T017b: UPDATE with simple predicate passed");
@@ -154,7 +154,7 @@ async fn test_update_complex_predicate_or() {
 /// Note: DELETE already supports complex predicates via delete_with_datafusion
 #[actix_web::test]
 async fn test_delete_complex_predicate() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_dml_del").await;
@@ -207,7 +207,7 @@ async fn test_delete_complex_predicate() {
         .execute_sql_as_user("SELECT id FROM test_dml_del.users ORDER BY id", "user1")
         .await;
 
-    let rows = query_response.results[0].rows_as_maps();
+    let rows = query_response.rows_as_maps();
     assert_eq!(rows.len(), 3, "Should have 3 rows remaining");
     assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "u1");
     assert_eq!(rows[1].get("id").unwrap().as_str().unwrap(), "u3");
@@ -219,7 +219,7 @@ async fn test_delete_complex_predicate() {
 /// T017d: UPDATE by primary key (works with current implementation)
 #[actix_web::test]
 async fn test_update_across_flush_boundary() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_dml_upflush").await;
@@ -278,7 +278,7 @@ async fn test_update_across_flush_boundary() {
         )
         .await;
 
-    let rows = query_response.results[0].rows_as_maps();
+    let rows = query_response.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("status").unwrap().as_str().unwrap(), "completed");
 
@@ -288,7 +288,7 @@ async fn test_update_across_flush_boundary() {
 /// T017e: DELETE across flushed and unflushed data
 #[actix_web::test]
 async fn test_delete_across_flush_boundary() {
-    let server = TestServer::new().await;
+    let server = TestServer::new_shared().await;
 
     // Setup
     fixtures::create_namespace(&server, "test_dml_delflush").await;
@@ -353,7 +353,7 @@ async fn test_delete_across_flush_boundary() {
         .execute_sql_as_user("SELECT id FROM test_dml_delflush.logs ORDER BY id", "user1")
         .await;
 
-    let rows = query_response.results[0].rows_as_maps();
+    let rows = query_response.rows_as_maps();
     assert_eq!(rows.len(), 2, "Should have 2 INFO logs remaining");
     assert_eq!(rows[0].get("id").unwrap().as_str().unwrap(), "l1");
     assert_eq!(rows[1].get("id").unwrap().as_str().unwrap(), "l3");

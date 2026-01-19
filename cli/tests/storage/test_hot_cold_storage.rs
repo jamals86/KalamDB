@@ -74,7 +74,12 @@ fn test_hot_cold_storage_data_integrity() {
     let flush_output = execute_sql(&format!("STORAGE FLUSH TABLE {}", full_table_name))
         .expect("STORAGE FLUSH TABLE failed");
     if let Ok(job_id) = parse_job_id_from_flush_output(&flush_output) {
-        verify_job_completed(&job_id, std::time::Duration::from_secs(10))
+        let timeout = if is_cluster_mode() {
+            std::time::Duration::from_secs(30)
+        } else {
+            std::time::Duration::from_secs(10)
+        };
+        verify_job_completed(&job_id, timeout)
             .expect("flush job should complete");
     } else {
         std::thread::sleep(std::time::Duration::from_millis(200));

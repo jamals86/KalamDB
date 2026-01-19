@@ -43,7 +43,7 @@ impl JobsManager {
         let mut nodes: Vec<NodeId> = cluster_info
             .nodes
             .iter()
-            .filter(|n| matches!(n.status, NodeStatus::Active))
+            .filter(|n| !matches!(n.status, NodeStatus::Offline))
             .map(|n| n.node_id.clone())
             .collect();
 

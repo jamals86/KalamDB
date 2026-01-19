@@ -40,35 +40,17 @@ fn test_cli_explicit_flush() {
     ))
     .expect("INSERT INTO table failed");
 
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--username")
-        .arg("root")
-        .arg("--password")
-        .arg(root_password())
-        .arg("--command")
-        .arg(format!("STORAGE FLUSH TABLE {}", full_table_name));
-
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // Should successfully execute flush command (not unsupported)
-    assert!(
-        output.status.success(),
-        "STORAGE FLUSH TABLE should succeed. stdout: {}, stderr: {}",
-        stdout,
-        stderr
-    );
+    let flush_output =
+        execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}", full_table_name))
+            .expect("STORAGE FLUSH TABLE should succeed");
 
     // Should NOT contain errors
     assert!(
-        !stderr.contains("ERROR")
-            && !stderr.contains("not supported")
-            && !stderr.contains("Unsupported"),
-        "STORAGE FLUSH TABLE should not error. stderr: {}",
-        stderr
+        !flush_output.contains("ERROR")
+            && !flush_output.contains("not supported")
+            && !flush_output.contains("Unsupported"),
+        "STORAGE FLUSH TABLE should not error. output: {}",
+        flush_output
     );
 
     // Cleanup
