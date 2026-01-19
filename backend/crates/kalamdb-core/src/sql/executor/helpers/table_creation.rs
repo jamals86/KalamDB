@@ -192,11 +192,11 @@ pub fn build_table_definition(
         .get_table_if_exists(app_context.as_ref(), &table_id)
         .into_kalamdb_error("Failed to check table existence")?;
 
-    if existing_def.is_some() {
+    if let Some(existing_def) = existing_def {
         if stmt.if_not_exists {
             log::info!("ℹ️  TABLE {} already exists (IF NOT EXISTS)", table_id_str);
             // Return the existing definition
-            return Ok((*existing_def.unwrap()).clone());
+            return Ok((*existing_def).clone());
         } else {
             log::warn!("❌ CREATE TABLE failed: {} already exists", table_id_str);
             return Err(KalamDbError::AlreadyExists(format!(

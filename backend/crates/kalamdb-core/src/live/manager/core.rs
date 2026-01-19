@@ -55,12 +55,12 @@ impl LiveQueryManager {
         base_session_context: Arc<SessionContext>,
         app_context: Arc<AppContext>,
     ) -> Self {
-        let node_id = registry.node_id().clone();
+        let node_id = *registry.node_id();
         let initial_data_fetcher =
             Arc::new(InitialDataFetcher::new(base_session_context, schema_registry.clone()));
 
         let subscription_service =
-            Arc::new(SubscriptionService::new(registry.clone(), node_id.clone(), app_context));
+            Arc::new(SubscriptionService::new(registry.clone(), node_id, app_context));
 
         let notification_service =
             NotificationService::new(registry.clone(), live_queries_provider.clone());

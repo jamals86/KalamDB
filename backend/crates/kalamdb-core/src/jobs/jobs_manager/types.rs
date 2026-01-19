@@ -40,7 +40,7 @@ impl JobsManager {
         job_registry: Arc<JobRegistry>,
         app_ctx: Arc<AppContext>,
     ) -> Self {
-        let node_id = app_ctx.node_id().as_ref().clone();
+        let node_id = *app_ctx.node_id().as_ref();
         Self {
             jobs_provider,
             job_nodes_provider,

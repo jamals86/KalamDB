@@ -11,9 +11,6 @@
 
 use super::helpers::*;
 
-use anyhow::Result;
-use futures_util::StreamExt;
-use kalam_link::models::ChangeEvent;
 use kalamdb_commons::Role;
 use std::time::{Duration, Instant};
 

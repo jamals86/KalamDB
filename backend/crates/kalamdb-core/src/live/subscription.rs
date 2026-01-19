@@ -5,7 +5,8 @@
 //!
 //! All SQL parsing is done inside register_subscription - no intermediate ParsedSubscription.
 //!
-//! Live query records are replicated through Raft MetaCommand for cluster-wide visibility.
+//! Live query records are replicated through Raft UserDataCommand for cluster-wide visibility.
+//! They are sharded by user_id for efficient per-user subscription management.
 
 use super::connections_manager::{
     ConnectionsManager, SharedConnectionState, SubscriptionHandle, SubscriptionState,
@@ -17,12 +18,13 @@ use chrono::Utc;
 use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
+use kalamdb_commons::system::LiveQuery;
+use kalamdb_commons::types::LiveQueryStatus;
 use kalamdb_commons::websocket::SubscriptionRequest;
 use kalamdb_commons::NodeId;
-use kalamdb_raft::MetaCommand;
+use kalamdb_raft::UserDataCommand;
 use log::debug;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Service for managing subscriptions
 ///
@@ -49,11 +51,6 @@ impl SubscriptionService {
             node_id,
             app_context,
         }
-    }
-
-    /// Get current timestamp in milliseconds
-    fn current_timestamp_ms() -> i64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64
     }
 
     /// Register a live query subscription
@@ -151,20 +148,30 @@ impl SubscriptionService {
         // This ensures all nodes see the same live queries in system.live_queries
         // Note: We index the subscription first to ensure notifications aren't missed
         // If Raft fails, we clean up the subscription state below
-        let cmd = MetaCommand::CreateLiveQuery {
+        let now = Utc::now().timestamp_millis();
+        let live_query = LiveQuery {
             live_id: live_id.clone(),
-            connection_id: connection_id.clone(),
+            connection_id: connection_id.as_str().to_string(),
+            subscription_id: request.id.clone(),
             namespace_id: table_id.namespace_id().clone(),
             table_name: table_id.table_name().clone(),
             user_id: user_id.clone(),
             query: request.sql.clone(),
-            options_json: Some(options_json),
-            node_id: self.node_id.clone(),
-            subscription_id: request.id.clone(),
-            created_at: Utc::now(),
+            options: Some(options_json),
+            status: LiveQueryStatus::Active,
+            created_at: now,
+            last_update: now,
+            last_ping_at: now,
+            changes: 0,
+            node_id: self.node_id,
         };
 
-        if let Err(e) = self.app_context.executor().execute_meta(cmd).await {
+        let cmd = UserDataCommand::CreateLiveQuery {
+            required_meta_index: 0, // Schema was already validated during parse
+            live_query,
+        };
+
+        if let Err(e) = self.app_context.executor().execute_user_data(&user_id, cmd).await {
             // Raft failed - clean up the subscription we just indexed
             self.registry.unindex_subscription(&user_id, &live_id, &table_id);
             {
@@ -222,14 +229,16 @@ impl SubscriptionService {
         self.registry.unindex_subscription(&user_id, live_id, &table_id);
 
         // Delete from system.live_queries through Raft for cluster-wide replication
-        let cmd = MetaCommand::DeleteLiveQuery {
+        let cmd = UserDataCommand::DeleteLiveQuery {
+            user_id: user_id.clone(),
             live_id: live_id.clone(),
             deleted_at: Utc::now(),
+            required_meta_index: 0,
         };
 
         self.app_context
             .executor()
-            .execute_meta(cmd)
+            .execute_user_data(&user_id, cmd)
             .await
             .map_err(|e| KalamDbError::Other(format!("Failed to delete live query: {}", e)))?;
 
@@ -244,16 +253,18 @@ impl SubscriptionService {
     /// ConnectionsManager registry.
     pub async fn unregister_connection(
         &self,
-        _user_id: &UserId,
+        user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<Vec<LiveQueryId>, KalamDbError> {
         // Delete from system.live_queries through Raft for cluster-wide replication
-        let cmd = MetaCommand::DeleteLiveQueriesByConnection {
+        let cmd = UserDataCommand::DeleteLiveQueriesByConnection {
+            user_id: user_id.clone(),
             connection_id: connection_id.clone(),
             deleted_at: Utc::now(),
+            required_meta_index: 0,
         };
 
-        self.app_context.executor().execute_meta(cmd).await.map_err(|e| {
+        self.app_context.executor().execute_user_data(user_id, cmd).await.map_err(|e| {
             KalamDbError::Other(format!("Failed to delete live queries by connection: {}", e))
         })?;
 

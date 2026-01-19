@@ -70,7 +70,7 @@ impl StatementHandler for ClusterClearHandler {
                     if let Ok(group_entries) = std::fs::read_dir(&path) {
                         let mut snapshots: Vec<_> = group_entries
                             .flatten()
-                            .filter(|e| e.path().extension().map_or(false, |ext| ext == "bin"))
+                            .filter(|e| e.path().extension().is_some_and(|ext| ext == "bin"))
                             .collect();
 
                         // Sort by modification time (newest first)

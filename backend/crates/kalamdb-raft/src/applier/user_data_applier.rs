@@ -1,13 +1,14 @@
-//! Data Applier traits for persisting user and shared table data
+//! User Data Applier trait for persisting user table data and live queries
 //!
-//! These traits are called by UserDataStateMachine and SharedDataStateMachine
-//! after Raft consensus commits a command. All nodes (leader and followers)
-//! call this, ensuring that all replicas persist the same data.
+//! This trait is called by UserDataStateMachine after Raft consensus commits
+//! a command. All nodes (leader and followers) call this, ensuring that all
+//! replicas persist the same data.
 //!
 //! The implementation lives in kalamdb-core using provider infrastructure.
 
 use async_trait::async_trait;
-use kalamdb_commons::models::UserId;
+use kalamdb_commons::models::{ConnectionId, LiveQueryId, NodeId, UserId};
+use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::TableId;
 
 use crate::RaftError;
@@ -73,56 +74,42 @@ pub trait UserDataApplier: Send + Sync {
         user_id: &UserId,
         pk_values: Option<&[String]>,
     ) -> Result<usize, RaftError>;
-}
 
-/// Applier callback for shared table data operations
-///
-/// This trait is called by SharedDataStateMachine after Raft consensus commits
-/// a data command. All nodes (leader and followers) call this.
-#[async_trait]
-pub trait SharedDataApplier: Send + Sync {
-    /// Insert rows into a shared table
+    // =========================================================================
+    // Live Query Operations (persisted to system.live_queries)
+    // =========================================================================
+
+    /// Create a live query subscription
     ///
-    /// # Arguments
-    /// * `table_id` - The table identifier
-    /// * `rows` - Row data to insert
-    ///
-    /// # Returns
-    /// Number of rows inserted
-    async fn insert(
+    /// Persists the live query to `system.live_queries` for cluster-wide visibility.
+    async fn create_live_query(&self, live_query: &LiveQuery) -> Result<String, RaftError>;
+
+    /// Update live query statistics
+    async fn update_live_query_stats(
         &self,
-        table_id: &TableId,
-        rows: &[kalamdb_commons::models::rows::Row],
+        live_id: &LiveQueryId,
+        last_update: i64,
+        changes: i64,
+    ) -> Result<(), RaftError>;
+
+    /// Delete a single live query subscription
+    async fn delete_live_query(
+        &self,
+        live_id: &LiveQueryId,
+        deleted_at: i64,
+    ) -> Result<(), RaftError>;
+
+    /// Delete all live queries for a connection
+    async fn delete_live_queries_by_connection(
+        &self,
+        connection_id: &ConnectionId,
+        deleted_at: i64,
     ) -> Result<usize, RaftError>;
 
-    /// Update rows in a shared table
-    ///
-    /// # Arguments
-    /// * `table_id` - The table identifier
-    /// * `updates` - Update row data
-    /// * `filter` - Optional filter string (e.g., primary key value)
-    ///
-    /// # Returns
-    /// Number of rows updated
-    async fn update(
+    /// Clean up all subscriptions from a failed node
+    async fn cleanup_node_subscriptions(
         &self,
-        table_id: &TableId,
-        updates: &[kalamdb_commons::models::rows::Row],
-        filter: Option<&str>,
-    ) -> Result<usize, RaftError>;
-
-    /// Delete rows from a shared table
-    ///
-    /// # Arguments
-    /// * `table_id` - The table identifier
-    /// * `pk_values` - Optional list of primary key values to delete
-    ///
-    /// # Returns
-    /// Number of rows deleted
-    async fn delete(
-        &self,
-        table_id: &TableId,
-        pk_values: Option<&[String]>,
+        failed_node_id: NodeId,
     ) -> Result<usize, RaftError>;
 }
 
@@ -158,34 +145,39 @@ impl UserDataApplier for NoOpUserDataApplier {
     ) -> Result<usize, RaftError> {
         Ok(0)
     }
-}
 
-/// No-op applier for testing or standalone scenarios
-pub struct NoOpSharedDataApplier;
+    async fn create_live_query(&self, _live_query: &LiveQuery) -> Result<String, RaftError> {
+        Ok(String::new())
+    }
 
-#[async_trait]
-impl SharedDataApplier for NoOpSharedDataApplier {
-    async fn insert(
+    async fn update_live_query_stats(
         &self,
-        _table_id: &TableId,
-        _rows: &[kalamdb_commons::models::rows::Row],
+        _live_id: &LiveQueryId,
+        _last_update: i64,
+        _changes: i64,
+    ) -> Result<(), RaftError> {
+        Ok(())
+    }
+
+    async fn delete_live_query(
+        &self,
+        _live_id: &LiveQueryId,
+        _deleted_at: i64,
+    ) -> Result<(), RaftError> {
+        Ok(())
+    }
+
+    async fn delete_live_queries_by_connection(
+        &self,
+        _connection_id: &ConnectionId,
+        _deleted_at: i64,
     ) -> Result<usize, RaftError> {
         Ok(0)
     }
 
-    async fn update(
+    async fn cleanup_node_subscriptions(
         &self,
-        _table_id: &TableId,
-        _updates: &[kalamdb_commons::models::rows::Row],
-        _filter: Option<&str>,
-    ) -> Result<usize, RaftError> {
-        Ok(0)
-    }
-
-    async fn delete(
-        &self,
-        _table_id: &TableId,
-        _pk_values: Option<&[String]>,
+        _failed_node_id: NodeId,
     ) -> Result<usize, RaftError> {
         Ok(0)
     }
@@ -255,47 +247,42 @@ mod tests {
             self.delete_count.fetch_add(1, Ordering::SeqCst);
             Ok(1)
         }
-    }
 
-    /// Mock shared applier for testing
-    struct MockSharedDataApplier {
-        insert_count: Arc<AtomicUsize>,
-    }
-
-    impl MockSharedDataApplier {
-        fn new() -> Self {
-            Self {
-                insert_count: Arc::new(AtomicUsize::new(0)),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl SharedDataApplier for MockSharedDataApplier {
-        async fn insert(
-            &self,
-            _table_id: &TableId,
-            rows: &[kalamdb_commons::models::rows::Row],
-        ) -> Result<usize, RaftError> {
-            self.insert_count.fetch_add(1, Ordering::SeqCst);
-            Ok(rows.len())
+        // Live query operations (no-op for mock)
+        async fn create_live_query(&self, _: &LiveQuery) -> Result<String, RaftError> {
+            Ok(String::new())
         }
 
-        async fn update(
+        async fn update_live_query_stats(
             &self,
-            _table_id: &TableId,
-            _updates: &[kalamdb_commons::models::rows::Row],
-            _filter: Option<&str>,
-        ) -> Result<usize, RaftError> {
-            Ok(1)
+            _: &LiveQueryId,
+            _: i64,
+            _: i64,
+        ) -> Result<(), RaftError> {
+            Ok(())
         }
 
-        async fn delete(
+        async fn delete_live_query(
             &self,
-            _table_id: &TableId,
-            _pk_values: Option<&[String]>,
+            _: &LiveQueryId,
+            _: i64,
+        ) -> Result<(), RaftError> {
+            Ok(())
+        }
+
+        async fn delete_live_queries_by_connection(
+            &self,
+            _: &ConnectionId,
+            _: i64,
         ) -> Result<usize, RaftError> {
-            Ok(1)
+            Ok(0)
+        }
+
+        async fn cleanup_node_subscriptions(
+            &self,
+            _: NodeId,
+        ) -> Result<usize, RaftError> {
+            Ok(0)
         }
     }
 
@@ -342,27 +329,6 @@ mod tests {
         assert_eq!(applier.insert(&table_id, &user_id, &[]).await.unwrap(), 0);
         assert_eq!(applier.update(&table_id, &user_id, &[], None).await.unwrap(), 0);
         assert_eq!(applier.delete(&table_id, &user_id, None).await.unwrap(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_shared_data_applier_insert() {
-        let applier = MockSharedDataApplier::new();
-        let table_id =
-            TableId::new(NamespaceId::from("shared_ns"), TableName::from("shared_table"));
-
-        let result = applier.insert(&table_id, &[]).await;
-        assert!(result.is_ok());
-        assert_eq!(applier.insert_count.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn test_noop_shared_applier_returns_zero() {
-        let applier = NoOpSharedDataApplier;
-        let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
-
-        assert_eq!(applier.insert(&table_id, &[]).await.unwrap(), 0);
-        assert_eq!(applier.update(&table_id, &[], None).await.unwrap(), 0);
-        assert_eq!(applier.delete(&table_id, None).await.unwrap(), 0);
     }
 
     #[tokio::test]

@@ -7,7 +7,6 @@
 //! - Prevent dropping in-use storage
 
 use kalam_link::models::ResponseStatus;
-use tokio::time::Duration;
 
 #[tokio::test]
 async fn test_storage_management_over_http() -> anyhow::Result<()> {

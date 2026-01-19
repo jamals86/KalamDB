@@ -958,12 +958,6 @@ TODOS:
         Ok(())
     }
 
-54) fix:
-● KalamDB[cluster] root@0.0.0.0:8080 ❯ create namespace chat;
-✗ Server error (400): Statement 1 failed: Already exists: Namespace 'chat' already exists
-● KalamDB[cluster] root@0.0.0.0:8080 ❯ STORAGE FLUSH ALL IN chat;
-✗ Server error (400): Statement 1 failed: Not found: No tables found in namespace chat
-
 55) instead of streams tables being in memory use commitlog to persist them into a folder which we can select them fast and clean them fast as well
 /data/streams/<table>/<YYYYMMDD>/<shardid>/<userId>/<windowStartMs>.log this will use the same way we read rocksdb/snapshots and storage paths
 the implementation for this storage need to be done in a separate crate called kalamdb-stream-log
@@ -1124,8 +1118,6 @@ i guess we need to add a new column to the jobs table to track each node the sta
 
 68) node_id should always be read from Appcontext not passed from outside
 
-70) MetaCommand::ClaimJobNode and MetaCommand::UpdateJobNode is so similar can't we keep only Update?
-
 71) Is it better to use macros for MetaCommand and other commands to make the code runs faster and more clear?
 
 72) stuck stream_Evicted statuses:
@@ -1137,13 +1129,8 @@ i guess we need to add a new column to the jobs table to track each node the sta
 
 74) Add another columns which are computed ones from manifest table
 
-75) Confirm that the forwarding to leade ris done using grpc and its fast
-
 76) add ability to the kalam-link to automatically forward to the leader
 
+77) UpdateLiveQueryStats is never called or emit
 
-77) No need to auto-retry conneciton on cli, whenever i connect kalam --username --password wrongpassword i get:
-[2026-01-19 07:29:41.335] [INFO ] - actix-rt|system:0|arbiter:3 - kalamdb_auth::login_tracker:97 - Failed login attempt 1/5 for username=root
-[2026-01-19 07:29:41.603] [INFO ] - actix-rt|system:0|arbiter:4 - kalamdb_auth::login_tracker:97 - Failed login attempt 2/5 for username=root
-[2026-01-19 07:29:41.812] [INFO ] - actix-rt|system:0|arbiter:4 - kalamdb_auth::login_tracker:97 - Failed login attempt 3/5 for username=root
-
+78) no need for Running startup compaction for, we should add a command to do storage compact all

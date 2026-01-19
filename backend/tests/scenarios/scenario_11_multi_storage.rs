@@ -10,9 +10,7 @@
 
 use super::helpers::*;
 
-use anyhow::Result;
 use kalamdb_commons::Role;
-use std::path::PathBuf;
 use std::time::Duration;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);

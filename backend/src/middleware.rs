@@ -23,13 +23,12 @@ use actix_web::http::{header::HeaderName, Method, StatusCode};
 use actix_web::middleware;
 use actix_web::{Error, HttpResponse};
 use futures_util::future::LocalBoxFuture;
-use kalamdb_api::rate_limiter::{ConnectionGuard, ConnectionGuardConfig, ConnectionGuardResult};
-use kalamdb_configs::ServerConfig;
+use kalamdb_api::limiter::{ConnectionGuard, ConnectionGuardResult};
+use kalamdb_configs::{RateLimitSettings, ServerConfig};
 use log::{debug, warn};
 use std::future::{ready, Ready};
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// Build CORS middleware from server configuration using actix-cors.
 ///
@@ -122,7 +121,7 @@ impl ConnectionProtection {
     }
 
     /// Create connection protection with custom configuration
-    pub fn with_config(config: ConnectionGuardConfig) -> Self {
+    pub fn with_config(config: &RateLimitSettings) -> Self {
         Self {
             guard: Arc::new(ConnectionGuard::with_config(config)),
         }
@@ -130,14 +129,7 @@ impl ConnectionProtection {
 
     /// Create connection protection from server config
     pub fn from_server_config(config: &ServerConfig) -> Self {
-        let guard_config = ConnectionGuardConfig {
-            max_connections_per_ip: config.rate_limit.max_connections_per_ip,
-            max_requests_per_ip_per_sec: config.rate_limit.max_requests_per_ip_per_sec,
-            request_body_limit_bytes: config.rate_limit.request_body_limit_bytes,
-            ban_duration: Duration::from_secs(config.rate_limit.ban_duration_seconds),
-            enabled: config.rate_limit.enable_connection_protection,
-        };
-        Self::with_config(guard_config)
+        Self::with_config(&config.rate_limit)
     }
 
     /// Get the underlying connection guard (for monitoring/management)

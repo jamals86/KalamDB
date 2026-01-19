@@ -216,7 +216,7 @@ impl ExtensionStatement {
                 match parts[1] {
                     "SNAPSHOT" => return Ok(ExtensionStatement::ClusterSnapshot),
                     "PURGE" => {
-                        let original_parts: Vec<&str> = sql.trim().split_whitespace().collect();
+                        let original_parts: Vec<&str> = sql.split_whitespace().collect();
                         let upto = original_parts
                             .iter()
                             .skip(2)
@@ -266,7 +266,7 @@ impl ExtensionStatement {
                     "LIST" | "LS" | "STATUS" => return Ok(ExtensionStatement::ClusterList),
                     "JOIN" => {
                         // Get the address from the original SQL to preserve case
-                        let original_parts: Vec<&str> = sql.trim().split_whitespace().collect();
+                        let original_parts: Vec<&str> = sql.split_whitespace().collect();
                         if original_parts.len() >= 3 {
                             return Ok(ExtensionStatement::ClusterJoin(original_parts[2].to_string()));
                         } else {

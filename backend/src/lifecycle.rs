@@ -7,8 +7,7 @@
 use crate::{middleware, routes};
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
-use kalamdb_api::handlers::AuthConfig;
-use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
+use kalamdb_api::limiter::RateLimiter;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::live::ConnectionsManager;
@@ -258,14 +257,8 @@ pub async fn bootstrap(
     });
     debug!("JobsManager background task spawned");
 
-    // Rate limiter
-    let rate_limit_config = RateLimitConfig {
-        max_queries_per_user: config.rate_limit.max_queries_per_sec,
-        max_subscriptions_per_user: config.rate_limit.max_subscriptions_per_user,
-        max_messages_per_connection: config.rate_limit.max_messages_per_sec,
-        window: std::time::Duration::from_secs(1),
-    };
-    let rate_limiter = Arc::new(RateLimiter::with_config(rate_limit_config));
+    // Rate limiter - uses RateLimitSettings from config
+    let rate_limiter = Arc::new(RateLimiter::with_config(&config.rate_limit));
     debug!(
         "Rate limiter initialized ({} queries/sec, {} messages/sec, {} max subscriptions)",
         config.rate_limit.max_queries_per_sec,
@@ -443,14 +436,8 @@ pub async fn bootstrap_isolated(
         }
     });
 
-    // Rate limiter
-    let rate_limit_config = RateLimitConfig {
-        max_queries_per_user: config.rate_limit.max_queries_per_sec,
-        max_subscriptions_per_user: config.rate_limit.max_subscriptions_per_user,
-        max_messages_per_connection: config.rate_limit.max_messages_per_sec,
-        window: std::time::Duration::from_secs(1),
-    };
-    let rate_limiter = Arc::new(RateLimiter::with_config(rate_limit_config));
+    // Rate limiter - uses RateLimitSettings from config
+    let rate_limiter = Arc::new(RateLimiter::with_config(&config.rate_limit));
 
     let connection_registry = app_context.connection_registry();
 
@@ -532,8 +519,14 @@ pub async fn run(
     let app_context_for_handler = app_context.clone();
     let connection_registry_for_handler = connection_registry.clone();
 
-    // Create auth config from server config (reads jwt_secret from server.toml)
-    let auth_config = AuthConfig::from_server_config(config);
+    // Initialize shared JWT configuration for kalamdb-auth
+    kalamdb_auth::services::unified::init_jwt_config(
+        &config.auth.jwt_secret,
+        &config.auth.jwt_trusted_issuers,
+    );
+
+    // Share auth settings with HTTP handlers
+    let auth_settings = config.auth.clone();
     let ui_path = config.server.ui_path.clone();
 
     // Log UI serving status
@@ -559,7 +552,7 @@ pub async fn run(
             .app_data(web::Data::new(live_query_manager.clone()))
             .app_data(web::Data::new(user_repo.clone()))
             .app_data(web::Data::new(connection_registry_for_handler.clone()))
-            .app_data(web::Data::new(auth_config.clone()))
+            .app_data(web::Data::new(auth_settings.clone()))
             .configure(routes::configure);
         
         // Add UI routes - prefer embedded, fallback to filesystem path
@@ -752,7 +745,11 @@ pub async fn run_for_tests(
     let app_context_for_handler = app_context.clone();
     let connection_registry_for_handler = connection_registry.clone();
 
-    let auth_config = AuthConfig::from_server_config(config);
+    kalamdb_auth::services::unified::init_jwt_config(
+        &config.auth.jwt_secret,
+        &config.auth.jwt_trusted_issuers,
+    );
+    let auth_settings = config.auth.clone();
     let ui_path = config.server.ui_path.clone();
 
     let server = HttpServer::new(move || {
@@ -767,7 +764,7 @@ pub async fn run_for_tests(
             .app_data(web::Data::new(live_query_manager.clone()))
             .app_data(web::Data::new(user_repo.clone()))
             .app_data(web::Data::new(connection_registry_for_handler.clone()))
-            .app_data(web::Data::new(auth_config.clone()))
+            .app_data(web::Data::new(auth_settings.clone()))
             .configure(routes::configure);
 
         if kalamdb_api::routes::is_embedded_ui_available() {

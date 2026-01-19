@@ -368,7 +368,7 @@ impl TableFlush for SharedTableFlushJob {
             &std::path::PathBuf::from(&destination_path),
             &batch,
             size_bytes,
-            &indexed_columns,
+            indexed_columns,
             schema_version,
         )?;
 

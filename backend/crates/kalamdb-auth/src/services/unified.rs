@@ -64,13 +64,14 @@
 //!
 //! 7. **Update client SDKs** (TypeScript, WASM) to support the new method.
 
-use crate::basic_auth;
-use crate::context::AuthenticatedUser;
-use crate::error::{AuthError, AuthResult};
-use crate::jwt_auth;
-use crate::login_tracker::LoginTracker;
-use crate::password;
-use crate::user_repo::UserRepository;
+use crate::errors::error::{AuthError, AuthResult};
+use crate::helpers::basic_auth;
+use crate::models::context::AuthenticatedUser;
+use crate::providers::jwt_auth;
+use crate::providers::jwt_config;
+use crate::repository::user_repo::UserRepository;
+use crate::security::password;
+use crate::services::login_tracker::LoginTracker;
 use kalamdb_commons::models::ConnectionInfo;
 use kalamdb_commons::{AuthType, Role};
 use log::debug;
@@ -386,31 +387,17 @@ async fn authenticate_username_password(
     ))
 }
 
-/// Cached JWT configuration for performance
+/// Initialize JWT configuration from server settings.
 ///
-/// Reading environment variables on every request is expensive.
-/// This lazy static caches the configuration at first use.
-struct JwtConfig {
-    secret: String,
-    trusted_issuers: Vec<String>,
+/// This should be called once at startup after loading server.toml and applying
+/// environment overrides. If not called, defaults are used.
+pub fn init_jwt_config(secret: &str, trusted_issuers: &str) {
+    jwt_config::init_jwt_config(secret, trusted_issuers);
 }
 
-static JWT_CONFIG: Lazy<JwtConfig> = Lazy::new(|| {
-    // Use centralized default from kalamdb-commons to ensure consistency
-    // The server startup validates that insecure defaults are not used in production
-    let secret = std::env::var("KALAMDB_JWT_SECRET")
-        .unwrap_or_else(|_| kalamdb_configs::defaults::default_auth_jwt_secret());
-    // Default trusted issuer is "kalamdb" (matching KALAMDB_ISSUER in jwt_auth.rs)
-    // Additional issuers can be added via KALAMDB_JWT_TRUSTED_ISSUERS env var
-    let trusted =
-        std::env::var("KALAMDB_JWT_TRUSTED_ISSUERS").unwrap_or_else(|_| "kalamdb".to_string());
-    let trusted_issuers: Vec<String> = trusted.split(',').map(|s| s.trim().to_string()).collect();
-
-    JwtConfig {
-        secret,
-        trusted_issuers,
-    }
-});
+fn jwt_config() -> &'static jwt_config::JwtConfig {
+    jwt_config::get_jwt_config()
+}
 
 /// Authenticate using JWT Bearer token
 ///
@@ -421,7 +408,7 @@ async fn authenticate_bearer(
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticatedUser> {
     // Use cached JWT configuration
-    let config = &*JWT_CONFIG;
+    let config = jwt_config();
     let secret = &config.secret;
     let issuers = &config.trusted_issuers;
 
@@ -458,10 +445,10 @@ async fn authenticate_bearer(
                 "Token role does not match user role".to_string(),
             ));
         }
-        claimed_role.clone()
+        *claimed_role
     } else {
         // No role claim - use database role
-        user.role.clone()
+        user.role
     };
 
     Ok(AuthenticatedUser::new(

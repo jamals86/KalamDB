@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::models::{QueryRequest, QueryResult, SqlResponse};
-use crate::rate_limiter::RateLimiter;
+use crate::limiter::RateLimiter;
 
 /// POST /v1/api/sql - Execute SQL statement(s)
 ///

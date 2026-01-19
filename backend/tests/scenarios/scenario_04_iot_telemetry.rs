@@ -14,12 +14,9 @@
 
 use super::helpers::*;
 
-use anyhow::Result;
 use futures_util::StreamExt;
-use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;
 use std::time::Duration;
-use tokio::time::sleep;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(180);
 const ROW_COUNT: usize = 5000;

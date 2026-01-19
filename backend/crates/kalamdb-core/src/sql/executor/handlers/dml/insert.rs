@@ -182,13 +182,14 @@ impl StatementHandler for InsertHandler {
                 if SystemColumnNames::is_system_column(col_def.column_name.as_str()) {
                     continue;
                 }
-                if !col_def.is_nullable && !values.contains_key(&col_def.column_name) {
-                    if col_def.default_value.is_none() {
-                        return Err(KalamDbError::ConstraintViolation(format!(
-                            "Column '{}' cannot be null",
-                            col_def.column_name
-                        )));
-                    }
+                if !col_def.is_nullable
+                    && !values.contains_key(&col_def.column_name)
+                    && col_def.default_value.is_none()
+                {
+                    return Err(KalamDbError::ConstraintViolation(format!(
+                        "Column '{}' cannot be null",
+                        col_def.column_name
+                    )));
                 }
             }
 
@@ -387,7 +388,7 @@ impl InsertHandler {
                     rows,
                 };
 
-                let response = executor.execute_user_data(&user_id, cmd).await.map_err(|e| {
+                let response = executor.execute_user_data(user_id, cmd).await.map_err(|e| {
                     KalamDbError::InvalidOperation(format!("Raft insert failed: {}", e))
                 })?;
 
@@ -401,7 +402,7 @@ impl InsertHandler {
             },
             TableType::Shared => {
                 // Validate write permissions for shared tables
-                use kalamdb_auth::rbac::can_write_shared_table;
+                use kalamdb_auth::authorization::rbac::can_write_shared_table;
                 use kalamdb_commons::schemas::TableOptions;
                 use kalamdb_commons::TableAccess;
 
@@ -444,7 +445,7 @@ impl InsertHandler {
                     rows,
                 };
 
-                let response = executor.execute_user_data(&user_id, cmd).await.map_err(|e| {
+                let response = executor.execute_user_data(user_id, cmd).await.map_err(|e| {
                     KalamDbError::InvalidOperation(format!("Raft insert failed: {}", e))
                 })?;
 

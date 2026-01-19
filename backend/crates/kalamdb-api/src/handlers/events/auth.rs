@@ -16,7 +16,7 @@ use kalamdb_core::app_context::AppContext;
 use kalamdb_core::live::{ConnectionsManager, SharedConnectionState};
 use kalamdb_core::sql::executor::helpers::audit;
 use log::debug;
-use log::{error, info};
+use log::error;
 use std::sync::Arc;
 
 use super::{send_auth_error, send_json};

@@ -3,7 +3,6 @@
 //! This test executes the SQL script from test_stream_ttl.sql to validate
 //! that stream tables with TTL properly evict old events.
 
-use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
 use tokio::time::{sleep, Duration};
 

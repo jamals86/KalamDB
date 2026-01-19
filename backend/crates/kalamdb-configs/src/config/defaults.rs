@@ -235,6 +235,14 @@ pub fn default_enable_connection_protection() -> bool {
     true // Enable connection protection by default
 }
 
+pub fn default_rate_limit_cache_max_entries() -> u64 {
+    100_000 // Maximum 100k cached rate limit entries
+}
+
+pub fn default_rate_limit_cache_ttl_seconds() -> u64 {
+    600 // 10 minutes TTL for rate limit cache entries
+}
+
 // Authentication defaults (T105 - Phase 7, User Story 5)
 pub fn default_auth_allow_remote_access() -> bool {
     false // System users localhost-only by default for security
@@ -253,13 +261,22 @@ pub fn default_auth_allow_remote_access() -> bool {
 /// - "your-secret-key-at-least-32-chars-change-me-in-production"
 /// - Any secret shorter than 32 characters
 pub fn default_auth_jwt_secret() -> String {
-    // Use environment variable if set, otherwise use placeholder
-    std::env::var("KALAMDB_JWT_SECRET").unwrap_or_else(|_| "CHANGE_ME_IN_PRODUCTION".to_string())
+    "CHANGE_ME_IN_PRODUCTION".to_string()
 }
 
 /// Default trusted JWT issuers (empty = no issuer validation)
 pub fn default_auth_jwt_trusted_issuers() -> String {
-    std::env::var("KALAMDB_JWT_TRUSTED_ISSUERS").unwrap_or_default()
+    String::new()
+}
+
+/// Default JWT expiry in hours
+pub fn default_auth_jwt_expiry_hours() -> i64 {
+    24
+}
+
+/// Default cookie secure flag (HTTPS-only cookies)
+pub fn default_auth_cookie_secure() -> bool {
+    true
 }
 
 /// Default minimum password length

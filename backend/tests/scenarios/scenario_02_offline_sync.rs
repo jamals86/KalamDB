@@ -16,10 +16,8 @@
 
 use super::helpers::*;
 
-use anyhow::Result;
 use futures_util::StreamExt;
 use kalam_link::models::ChangeEvent;
-use kalam_link::models::ResponseStatus;
 use kalamdb_commons::{Role, UserName};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -32,7 +32,6 @@ use kalamdb_commons::models::UserId;
 use kalamdb_commons::TableId;
 use kalamdb_tables::{StreamTableRow, StreamTableStore};
 use std::any::Any;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -68,13 +67,9 @@ pub struct StreamTableProvider {
     /// Whether the Arrow schema includes a user_id column
     has_user_column: bool,
 
-    /// Last time (ms since epoch) we ran TTL cleanup for inserts
-    last_ttl_cleanup_ms: AtomicU64,
 }
 
 impl StreamTableProvider {
-    const TTL_CLEANUP_INTERVAL_MS: u64 = 1000;
-
     /// Create a new stream table provider
     ///
     /// # Arguments
@@ -105,7 +100,6 @@ impl StreamTableProvider {
             primary_key_field_name,
             schema,
             has_user_column,
-            last_ttl_cleanup_ms: AtomicU64::new(0),
         }
     }
 
@@ -127,17 +121,6 @@ impl StreamTableProvider {
             .duration_since(UNIX_EPOCH)
             .into_invalid_operation("System time error")
             .map(|d| d.as_millis() as u64)
-    }
-
-    fn should_run_ttl_cleanup(&self, now_ms: u64) -> bool {
-        let last = self.last_ttl_cleanup_ms.load(Ordering::Relaxed);
-        if now_ms.saturating_sub(last) < Self::TTL_CLEANUP_INTERVAL_MS {
-            return false;
-        }
-
-        self.last_ttl_cleanup_ms
-            .compare_exchange(last, now_ms, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
     }
 
     /// Expose the underlying store (used by maintenance jobs such as stream eviction)

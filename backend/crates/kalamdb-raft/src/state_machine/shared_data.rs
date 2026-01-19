@@ -370,7 +370,7 @@ impl KalamStateMachine for SharedDataStateMachine {
         }
 
         // Drain any pending commands that are now satisfied (only if buffer non-empty)
-        if self.pending_buffer.len() > 0 {
+        if !self.pending_buffer.is_empty() {
             self.drain_pending().await?;
         }
 

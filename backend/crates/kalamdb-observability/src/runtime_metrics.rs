@@ -131,7 +131,7 @@ pub const GIT_BRANCH: &str = match option_env!("GIT_BRANCH") {
     Some(v) => v,
     None => "unknown",
 };
-pub const GIT_COMMIT_HASH: &str = match option_env!("GIT_COMMIT") {
+pub const GIT_COMMIT_HASH: &str = match option_env!("GIT_COMMIT_HASH") {
     Some(v) => v,
     None => "unknown",
 };

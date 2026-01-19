@@ -160,7 +160,7 @@ pub struct RaftNetwork {
 
 impl RaftNetwork {
     /// Create a new network instance
-    pub fn new(
+    pub(crate) fn new(
         target: u64,
         _target_node: KalamNode,
         group_id: GroupId,
@@ -289,7 +289,7 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
         if !inner.error.is_empty() {
             self.connection_tracker.record_failure(self.target, &inner.error);
             return Err(RPCError::RemoteError(RemoteError::new(
-                self.target.into(),
+                self.target,
                 RaftError::Fatal(openraft::error::Fatal::Panicked),
             )));
         }

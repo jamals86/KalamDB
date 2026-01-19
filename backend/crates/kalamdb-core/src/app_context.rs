@@ -24,7 +24,7 @@ use kalamdb_commons::models::UserId;
 use kalamdb_commons::{constants::ColumnFamilyNames, NodeId};
 use kalamdb_configs::ServerConfig;
 use kalamdb_raft::CommandExecutor;
-use kalamdb_sharding::GroupId;
+use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_store::StorageBackend;
 use kalamdb_system::{SystemTable, SystemTablesRegistry};
 use kalamdb_tables::{SharedTableStore, UserTableStore};
@@ -293,7 +293,7 @@ impl AppContext {
             let heartbeat_interval =
                 Duration::from_secs(config.websocket.heartbeat_interval_secs.unwrap_or(5));
             let connection_registry = ConnectionsManager::new(
-                (*node_id).clone(),
+                *node_id,
                 client_timeout,
                 auth_timeout,
                 heartbeat_interval,
@@ -849,33 +849,17 @@ impl AppContext {
     ///
     /// In standalone mode (single-node), this always returns `true`.
     pub async fn is_leader_for_shared(&self) -> bool {
-        let group_id = GroupId::DataSharedShard(0);
+        let router = ShardRouter::from_optional_cluster_config(self.config.cluster.as_ref());
+        let group_id = router.shared_group_id();
         self.executor.is_leader(group_id).await
     }
 
-    //TODO: Move this to kalamdb-sharding crate?
     /// Compute the Raft group ID for a user's data shard
     ///
     /// Maps user_id → shard number → GroupId using consistent hashing.
     fn user_shard_group_id(&self, user_id: &UserId) -> GroupId {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        // Get number of user shards from config (default 32)
-        let num_shards = self
-            .config
-            .cluster
-            .as_ref()
-            .map(|c| c.user_shards)
-            .unwrap_or(32);
-
-        // Hash user_id to determine shard
-        let mut hasher = DefaultHasher::new();
-        user_id.as_str().hash(&mut hasher);
-        let hash = hasher.finish();
-        let shard = (hash % num_shards as u64) as u32;
-
-        GroupId::DataUserShard(shard)
+        let router = ShardRouter::from_optional_cluster_config(self.config.cluster.as_ref());
+        router.user_group_id(user_id)
     }
 
     /// Get the unified applier (Phase 19 - Unified Command Applier)

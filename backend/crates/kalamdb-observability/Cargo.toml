@@ -6,6 +6,7 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+build = "../../build.rs"
 
 [dependencies]
 # Internal crates (minimal dependencies)
@@ -27,3 +28,7 @@ log = { workspace = true }
 
 [lib]
 doctest = false
+
+[build-dependencies]
+chrono = { workspace = true }
+cc = { workspace = true }

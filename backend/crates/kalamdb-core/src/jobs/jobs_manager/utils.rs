@@ -37,14 +37,14 @@ impl JobsManager {
         let cluster_info = app_ctx.executor().get_cluster_info();
 
         if !cluster_info.is_cluster_mode || cluster_info.nodes.is_empty() {
-            return vec![self.node_id.clone()];
+            return vec![self.node_id];
         }
 
         let mut nodes: Vec<NodeId> = cluster_info
             .nodes
             .iter()
             .filter(|n| !matches!(n.status, NodeStatus::Offline))
-            .map(|n| n.node_id.clone())
+            .map(|n| n.node_id)
             .collect();
 
         if nodes.is_empty() {
@@ -103,7 +103,7 @@ impl JobsManager {
                 let job_id = node.job_id.clone();
                 let cmd = kalamdb_raft::commands::MetaCommand::UpdateJobNodeStatus {
                     job_id,
-                    node_id: self.node_id.clone(),
+                    node_id: self.node_id,
                     status: JobStatus::Queued,
                     error_message: Some("Node restarted".to_string()),
                     updated_at: chrono::Utc::now(),
@@ -190,7 +190,7 @@ impl JobsManager {
 
             let cmd = MetaCommand::UpdateJobNodeStatus {
                 job_id: job_id.clone(),
-                node_id: node.node_id.clone(),
+                node_id: node.node_id,
                 status,
                 error_message: error_message.clone(),
                 updated_at: now,

@@ -308,7 +308,7 @@ where
         self.indexes
             .iter()
             .enumerate()
-            .find(|(_idx, index)| index.indexed_columns().iter().any(|c| *c == column))
+            .find(|(_idx, index)| index.indexed_columns().contains(&column))
             .map(|(idx, _)| idx)
     }
 

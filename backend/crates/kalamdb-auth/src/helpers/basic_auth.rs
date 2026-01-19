@@ -1,6 +1,6 @@
 // HTTP Basic Authentication parser
 
-use crate::error::{AuthError, AuthResult};
+use crate::errors::error::{AuthError, AuthResult};
 use base64::prelude::*;
 
 /// Parse HTTP Basic Auth header and extract credentials.
@@ -20,7 +20,7 @@ use base64::prelude::*;
 ///
 /// # Example
 /// ```rust
-/// use kalamdb_auth::basic_auth::parse_basic_auth_header;
+/// use kalamdb_auth::helpers::basic_auth::parse_basic_auth_header;
 ///
 /// let header = "Basic dXNlcjpwYXNz"; // base64("user:pass")
 /// let (username, password) = parse_basic_auth_header(header).unwrap();

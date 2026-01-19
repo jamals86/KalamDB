@@ -10,14 +10,18 @@
 
 use serde::{Deserialize, Serialize};
 
-mod data;
+mod data_response;
 mod meta;
+mod shared_data;
+mod user_data;
 
 // Unified Meta commands
 pub use meta::{MetaCommand, MetaResponse};
 
-// Data commands
-pub use data::{DataResponse, SharedDataCommand, UserDataCommand};
+// Data commands (split into separate files for better organization)
+pub use data_response::DataResponse;
+pub use shared_data::SharedDataCommand;
+pub use user_data::UserDataCommand;
 
 /// Unified command type for all Raft operations
 ///

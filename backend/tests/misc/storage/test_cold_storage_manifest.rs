@@ -17,7 +17,6 @@
 use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
 use kalam_link::parse_i64;
-use serde_json::Value as JsonValue;
 
 /// Test: User table cold storage query uses manifest cache
 ///

@@ -20,3 +20,6 @@ pub mod storage;
 pub mod sql;
 pub mod system;
 pub mod production;
+
+#[path = "../../crates/kalamdb-core/tests/test_helpers.rs"]
+pub mod test_helpers;

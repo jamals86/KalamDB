@@ -62,7 +62,7 @@ where
     }
 
     fn partition(&self) -> &str {
-        &self.partition
+        self.partition
     }
 }
 

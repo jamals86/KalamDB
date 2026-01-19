@@ -3,18 +3,16 @@
 //! Combines all metadata operations into a single totally-ordered Raft group:
 //! - System operations: namespaces, tables, storages (was MetaSystem)
 //! - User operations: user CRUD, login, locking (was MetaUsers)
-//! - Job operations: jobs, schedules, claims (was MetaJobs)
+//! - Job operations: jobs, claims (was MetaJobs)
 //!
 //! This unified group ensures all metadata dependencies are captured in a single
 //! monotonically increasing log index, enabling simple watermark-based ordering
 //! for data groups.
 
 use chrono::{DateTime, Utc};
-use kalamdb_commons::models::schemas::TableType;
-use kalamdb_commons::models::{
-    ConnectionId, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, StorageId,
-    TableName, UserId,
-};
+use kalamdb_commons::models::schemas::{TableDefinition, TableType};
+use kalamdb_commons::models::{JobId, JobStatus, NamespaceId, NodeId, StorageId, UserId};
+use kalamdb_commons::system::{Job, Storage};
 use kalamdb_commons::types::User;
 use kalamdb_commons::TableId;
 use serde::{Deserialize, Serialize};
@@ -47,14 +45,15 @@ pub enum MetaCommand {
     CreateTable {
         table_id: TableId,
         table_type: TableType,
-        /// Serialized TableDefinition
-        schema_json: String,
+        /// Table schema definition
+        table_def: TableDefinition,
     },
 
     /// Alter an existing table
     AlterTable {
         table_id: TableId,
-        schema_json: String,
+        /// Updated table schema definition
+        table_def: TableDefinition,
     },
 
     /// Drop a table
@@ -66,7 +65,8 @@ pub enum MetaCommand {
     /// Register a storage backend
     RegisterStorage {
         storage_id: StorageId,
-        config_json: String,
+        /// Storage configuration
+        storage: Storage,
     },
 
     /// Unregister a storage backend
@@ -104,19 +104,9 @@ pub enum MetaCommand {
     // Job Operations (was in JobsCommand)
     // =========================================================================
     /// Create a new job
-    CreateJob {
-        job_id: JobId,
-        job_type: JobType,
-        status: JobStatus,
-        /// Parameters JSON (contains namespace_id, table_name, and other config)
-        parameters_json: Option<String>,
-        idempotency_key: Option<String>,
-        max_retries: u8,
-        queue: Option<String>,
-        priority: Option<i32>,
-        node_id: NodeId,
-        created_at: DateTime<Utc>,
-    },
+    ///
+    /// Uses the `Job` struct from kalamdb-commons for cleaner API.
+    CreateJob { job: Job },
 
     /// Create a per-node job entry
     CreateJobNode {
@@ -159,7 +149,8 @@ pub enum MetaCommand {
     /// Complete a job successfully
     CompleteJob {
         job_id: JobId,
-        result_json: Option<String>,
+        /// Job result as JSON string
+        result: Option<String>,
         completed_at: DateTime<Utc>,
     },
 
@@ -182,54 +173,6 @@ pub enum MetaCommand {
         job_id: JobId,
         reason: String,
         cancelled_at: DateTime<Utc>,
-    },
-
-    /// Create a scheduled job
-    CreateSchedule {
-        schedule_id: String,
-        job_type: JobType,
-        cron_expression: String,
-        config_json: Option<String>,
-        created_at: DateTime<Utc>,
-    },
-
-    /// Delete a scheduled job
-    DeleteSchedule { schedule_id: String },
-
-    // =========================================================================
-    // Live Query Operations (cluster-wide replication)
-    // =========================================================================
-    /// Register a live query subscription (replicated across cluster)
-    CreateLiveQuery {
-        live_id: LiveQueryId,
-        connection_id: ConnectionId,
-        namespace_id: NamespaceId,
-        table_name: TableName,
-        user_id: UserId,
-        query: String,
-        options_json: Option<String>,
-        node_id: NodeId,
-        subscription_id: String,
-        created_at: DateTime<Utc>,
-    },
-
-    /// Update a live query (e.g., last_ping, changes count)
-    UpdateLiveQuery {
-        live_id: LiveQueryId,
-        last_update: DateTime<Utc>,
-        changes: i64,
-    },
-
-    /// Delete a live query subscription
-    DeleteLiveQuery {
-        live_id: LiveQueryId,
-        deleted_at: DateTime<Utc>,
-    },
-
-    /// Delete all live queries for a connection (when connection closes)
-    DeleteLiveQueriesByConnection {
-        connection_id: ConnectionId,
-        deleted_at: DateTime<Utc>,
     },
 }
 
@@ -255,11 +198,6 @@ impl MetaCommand {
             | Self::FailJob { .. }
             | Self::ReleaseJob { .. }
             | Self::CancelJob { .. } => "job",
-            Self::CreateSchedule { .. } | Self::DeleteSchedule { .. } => "schedule",
-            Self::CreateLiveQuery { .. }
-            | Self::UpdateLiveQuery { .. }
-            | Self::DeleteLiveQuery { .. }
-            | Self::DeleteLiveQueriesByConnection { .. } => "live_query",
         }
     }
 }
@@ -304,12 +242,6 @@ pub enum MetaResponse {
         message: String,
     },
 
-    // === Live Query responses ===
-    LiveQueryCreated {
-        live_id: LiveQueryId,
-        message: String,
-    },
-
     // === Error ===
     Error {
         message: String,
@@ -347,7 +279,6 @@ impl MetaResponse {
             Self::UserCreated { message, .. } => message.clone(),
             Self::JobCreated { message, .. } => message.clone(),
             Self::JobClaimed { message, .. } => message.clone(),
-            Self::LiveQueryCreated { message, .. } => message.clone(),
             Self::Error { message } => message.clone(),
         }
     }

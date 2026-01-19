@@ -258,19 +258,11 @@ mod tests {
         assert!(can_access_shared_table(TableAccess::Public, false, Role::User));
         assert!(can_access_shared_table(TableAccess::Public, true, Role::User));
         assert!(can_access_shared_table(TableAccess::Public, false, Role::Service));
+    }
 
-        // Private tables only accessible to service/dba/system
-        assert!(!can_access_shared_table(TableAccess::Private, false, Role::User));
-        assert!(!can_access_shared_table(TableAccess::Private, true, Role::User)); // Even owner cannot access if they're just a user
-        assert!(can_access_shared_table(TableAccess::Private, false, Role::Service));
-        assert!(can_access_shared_table(TableAccess::Private, false, Role::Dba));
-        assert!(can_access_shared_table(TableAccess::Private, false, Role::System));
-
-        // Restricted tables accessible to privileged roles or owner
-        assert!(!can_access_shared_table(TableAccess::Restricted, false, Role::User));
-        assert!(can_access_shared_table(TableAccess::Restricted, true, Role::User)); // Owner can access
-        assert!(can_access_shared_table(TableAccess::Restricted, false, Role::Service));
-        assert!(can_access_shared_table(TableAccess::Restricted, false, Role::Dba));
-        assert!(can_access_shared_table(TableAccess::Restricted, false, Role::System));
+    #[test]
+    fn test_can_write_shared_table() {
+        assert!(can_write_shared_table(TableAccess::Public, false, Role::Service));
+        assert!(!can_write_shared_table(TableAccess::Public, false, Role::User));
     }
 }

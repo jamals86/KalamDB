@@ -83,13 +83,14 @@ pub struct ClusterConfig {
     /// - "Never" - Disable automatic snapshots (not recommended for production)
     ///
     /// Lower values (e.g., 100) create snapshots more frequently:
-    ///   + Faster follower catchup (smaller log to replay)
-    ///   + Smaller memory footprint
-    ///   - More disk I/O
+    /// - Faster follower catchup (smaller log to replay)
+    /// - Smaller memory footprint
+    /// - More disk I/O
+    ///
     /// Higher values (e.g., 10000) reduce snapshot frequency:
-    ///   + Less disk I/O
-    ///   - Slower follower catchup
-    ///   - Larger memory footprint
+    /// - Less disk I/O
+    /// - Slower follower catchup
+    /// - Larger memory footprint
     #[serde(default = "default_snapshot_policy")]
     pub snapshot_policy: String,
 

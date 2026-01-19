@@ -591,6 +591,14 @@ pub struct RateLimitSettings {
     /// Enable connection protection middleware (default: true)
     #[serde(default = "default_enable_connection_protection")]
     pub enable_connection_protection: bool,
+
+    /// Maximum cached entries for rate limiting state (default: 100,000)
+    #[serde(default = "default_rate_limit_cache_max_entries")]
+    pub cache_max_entries: u64,
+
+    /// Time-to-idle for cached entries in seconds (default: 600 = 10 minutes)
+    #[serde(default = "default_rate_limit_cache_ttl_seconds")]
+    pub cache_ttl_seconds: u64,
 }
 
 /// Authentication settings (T105 - Phase 7, User Story 5)
@@ -609,6 +617,14 @@ pub struct AuthSettings {
     /// Trusted JWT issuers (comma-separated list of domains)
     #[serde(default = "default_auth_jwt_trusted_issuers")]
     pub jwt_trusted_issuers: String,
+
+    /// JWT expiry in hours (default: 24)
+    #[serde(default = "default_auth_jwt_expiry_hours")]
+    pub jwt_expiry_hours: i64,
+
+    /// Whether auth cookies require HTTPS (default: true)
+    #[serde(default = "default_auth_cookie_secure")]
+    pub cookie_secure: bool,
 
     /// Minimum password length (default: 8)
     #[serde(default = "default_auth_min_password_length")]
@@ -716,6 +732,8 @@ impl Default for AuthSettings {
             allow_remote_access: default_auth_allow_remote_access(),
             jwt_secret: default_auth_jwt_secret(),
             jwt_trusted_issuers: default_auth_jwt_trusted_issuers(),
+            jwt_expiry_hours: default_auth_jwt_expiry_hours(),
+            cookie_secure: default_auth_cookie_secure(),
             min_password_length: default_auth_min_password_length(),
             max_password_length: default_auth_max_password_length(),
             bcrypt_cost: default_auth_bcrypt_cost(),
@@ -774,6 +792,8 @@ impl Default for RateLimitSettings {
             request_body_limit_bytes: default_request_body_limit_bytes(),
             ban_duration_seconds: default_ban_duration_seconds(),
             enable_connection_protection: default_enable_connection_protection(),
+            cache_max_entries: default_rate_limit_cache_max_entries(),
+            cache_ttl_seconds: default_rate_limit_cache_ttl_seconds(),
         }
     }
 }

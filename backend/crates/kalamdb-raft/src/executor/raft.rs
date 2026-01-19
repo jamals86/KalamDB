@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use openraft::ServerState;
 
 use kalamdb_commons::models::{NodeId, UserId};
+use kalamdb_sharding::ShardRouter;
 
 use crate::cluster_types::NodeStatus;
 use crate::{
@@ -46,13 +47,11 @@ impl RaftExecutor {
 
     /// Compute the shard for a user based on their ID
     fn user_shard(&self, user_id: &UserId) -> u32 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let num_shards = self.manager.config().user_shards;
-        let mut hasher = DefaultHasher::new();
-        user_id.as_str().hash(&mut hasher);
-        (hasher.finish() % num_shards as u64) as u32
+        let router = ShardRouter::new(
+            self.manager.config().user_shards,
+            self.manager.config().shared_shards,
+        );
+        router.user_shard_id(user_id)
     }
 }
 
@@ -97,8 +96,14 @@ impl CommandExecutor for RaftExecutor {
         // See spec 021 section 5.4.1 "Watermark Nuance" for detailed analysis.
         cmd.set_required_meta_index(0);
 
-        // All shared data goes to shard 0
-        let response = self.manager.propose_shared_data(0, cmd).await?;
+        let router = ShardRouter::new(
+            self.manager.config().user_shards,
+            self.manager.config().shared_shards,
+        );
+        let response = self
+            .manager
+            .propose_shared_data(router.shared_shard_id(), cmd)
+            .await?;
 
         // Check if the response is an error and convert to RaftError
         // Use Internal instead of Provider since the message already contains full context

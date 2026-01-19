@@ -5,7 +5,7 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use kalamdb_auth::password::{validate_password_with_policy, PasswordPolicy};
+use kalamdb_auth::security::password::{validate_password_with_policy, PasswordPolicy};
 use kalamdb_commons::AuthType;
 use kalamdb_sql::ddl::{AlterUserStatement, UserModification};
 use std::sync::Arc;

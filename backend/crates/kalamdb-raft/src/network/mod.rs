@@ -11,6 +11,7 @@
 //! - [`start_rpc_server`]: Starts the gRPC server for incoming Raft RPCs
 //! - [`ClientProposalRequest`], [`ClientProposalResponse`]: Types for leader forwarding
 
+#[allow(clippy::module_inception)]
 mod network;
 pub mod service;
 

@@ -37,12 +37,12 @@ fn normalize_seq_comparison(
 ) -> Option<(Operator, i64)> {
     if is_seq_column(&binary.left) {
         let value = extract_i64_literal(&binary.right)?;
-        return Some((binary.op.clone(), value));
+        return Some((binary.op, value));
     }
 
     if is_seq_column(&binary.right) {
         let value = extract_i64_literal(&binary.left)?;
-        let op = invert_comparison_operator(binary.op.clone())?;
+        let op = invert_comparison_operator(binary.op)?;
         return Some((op, value));
     }
 
@@ -123,9 +123,7 @@ pub fn resolve_user_scope(scope: Option<&UserId>) -> &UserId {
 }
 
 /// Extract (user_id, role) from DataFusion SessionState extensions.
-pub fn extract_user_context<'a>(
-    state: &'a dyn Session,
-) -> Result<(&'a UserId, Role), KalamDbError> {
+pub fn extract_user_context(state: &dyn Session) -> Result<(&UserId, Role), KalamDbError> {
     let session_state = state
         .as_any()
         .downcast_ref::<datafusion::execution::context::SessionState>()
@@ -146,9 +144,9 @@ pub fn extract_user_context<'a>(
 /// Extract full session context (user_id, role, read_context) from DataFusion SessionState extensions.
 ///
 /// Use this when you need to check read routing (leader-only reads in Raft cluster mode).
-pub fn extract_full_user_context<'a>(
-    state: &'a dyn Session,
-) -> Result<(&'a UserId, Role, ReadContext), KalamDbError> {
+pub fn extract_full_user_context(
+    state: &dyn Session,
+) -> Result<(&UserId, Role, ReadContext), KalamDbError> {
     let session_state = state
         .as_any()
         .downcast_ref::<datafusion::execution::context::SessionState>()

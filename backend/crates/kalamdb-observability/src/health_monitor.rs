@@ -37,6 +37,19 @@ pub struct HealthMetrics {
     pub jobs_total: usize,
 }
 
+/// Aggregated counts for health metrics.
+#[derive(Debug, Clone, Copy)]
+pub struct HealthCounts {
+    pub namespace_count: usize,
+    pub table_count: usize,
+    pub subscription_count: usize,
+    pub connection_count: usize,
+    pub jobs_running: usize,
+    pub jobs_queued: usize,
+    pub jobs_failed: usize,
+    pub jobs_total: usize,
+}
+
 /// Monitor for system health and job statistics
 pub struct HealthMonitor;
 
@@ -80,28 +93,21 @@ impl HealthMonitor {
         memory_mb: Option<u64>,
         cpu_usage: Option<f32>,
         open_files: usize,
-        namespace_count: usize,
-        table_count: usize,
-        subscription_count: usize,
-        connection_count: usize,
-        jobs_running: usize,
-        jobs_queued: usize,
-        jobs_failed: usize,
-        jobs_total: usize,
+        counts: HealthCounts,
     ) -> HealthMetrics {
         HealthMetrics {
             memory_mb,
             cpu_usage,
             open_files,
-            namespace_count,
-            table_count,
-            subscription_count,
-            connection_count,
+            namespace_count: counts.namespace_count,
+            table_count: counts.table_count,
+            subscription_count: counts.subscription_count,
+            connection_count: counts.connection_count,
             ws_session_count: get_websocket_session_count(),
-            jobs_running,
-            jobs_queued,
-            jobs_failed,
-            jobs_total,
+            jobs_running: counts.jobs_running,
+            jobs_queued: counts.jobs_queued,
+            jobs_failed: counts.jobs_failed,
+            jobs_total: counts.jobs_total,
         }
     }
 

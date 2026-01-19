@@ -3,8 +3,8 @@
 //! Provides functionality for tracking failed login attempts and
 //! implementing account lockout to prevent brute-force attacks.
 
-use crate::error::{AuthError, AuthResult};
-use crate::user_repo::UserRepository;
+use crate::errors::error::{AuthError, AuthResult};
+use crate::repository::user_repo::UserRepository;
 use kalamdb_commons::system::User;
 use kalamdb_commons::types::{DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS};
 use log::{info, warn};

@@ -273,7 +273,7 @@ impl Row {
     }
 
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_else(|_| serde_json::Value::Null)
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 
     pub fn len(&self) -> usize {
@@ -309,7 +309,7 @@ fn encode_embedding_from_list(array: Arc<FixedSizeListArray>) -> Option<StoredSc
 fn decode_embedding(size: i32, values: &Option<Vec<Option<f32>>>) -> ScalarValue {
     use arrow::datatypes::Float32Type;
 
-    let values = values.clone().unwrap_or_else(|| vec![None; size as usize]);
+    let values = values.clone().unwrap_or(vec![None; size as usize]);
     let mut floats = Vec::with_capacity(size as usize);
     for value in values {
         floats.push(value.unwrap_or(0.0));
@@ -317,7 +317,7 @@ fn decode_embedding(size: i32, values: &Option<Vec<Option<f32>>>) -> ScalarValue
 
     let array = Float32Array::from(floats);
     let list = FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
-        (0..1).map(|_| Some(array.iter().map(|v| v.map(|x| x as f32)))),
+        (0..1).map(|_| Some(array.iter())),
         size,
     );
 

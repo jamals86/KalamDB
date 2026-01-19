@@ -105,7 +105,7 @@ impl MemoryStreamLogStore {
 
         let users: HashSet<String> = data.keys().map(|(user_id, _, _)| user_id.clone()).collect();
 
-        Ok(users.into_iter().map(|s| UserId::new(s)).collect())
+        Ok(users.into_iter().map(UserId::new).collect())
     }
 
     /// Clear all data from the store.

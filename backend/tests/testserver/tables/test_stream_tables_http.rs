@@ -1,7 +1,6 @@
 //! Stream table DML checks over the real HTTP SQL API.
 
 use kalam_link::models::ResponseStatus;
-use tokio::time::Duration;
 
 async fn create_stream_table(
     server: &super::test_support::http_server::HttpTestServer,

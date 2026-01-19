@@ -208,7 +208,7 @@ impl HttpTestServer {
         username: &UserName,
         role: &Role,
     ) -> String {
-        let (token, _claims) = kalamdb_auth::jwt_auth::create_and_sign_token(
+        let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
             user_id,
             username,
             role,
@@ -237,7 +237,7 @@ impl HttpTestServer {
             UserId::new(username.as_str())
         };
 
-        let (token, _claims) = kalamdb_auth::jwt_auth::create_and_sign_token(
+        let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
             &user_id,
             username,
             &role,
@@ -733,10 +733,11 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
     let skip_raft_leader_check =
         config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
 
-    // Match production behavior: set env var early so auth uses the same secret.
-    if std::env::var("KALAMDB_JWT_SECRET").is_err() {
-        std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
-    }
+    // Match production behavior: initialize JWT config from server settings.
+    kalamdb_auth::services::unified::init_jwt_config(
+        &config.auth.jwt_secret,
+        &config.auth.jwt_trusted_issuers,
+    );
 
     // Ensure test servers always use localhost-only root auth.
     // This avoids leaking host env overrides into integration tests.
@@ -790,9 +791,10 @@ pub async fn start_http_test_server_with_config(
     let skip_raft_leader_check =
         config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
 
-    if std::env::var("KALAMDB_JWT_SECRET").is_err() {
-        std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
-    }
+    kalamdb_auth::services::unified::init_jwt_config(
+        &config.auth.jwt_secret,
+        &config.auth.jwt_trusted_issuers,
+    );
 
     // Ensure test servers always use localhost-only root auth.
     // This avoids leaking host env overrides into integration tests.

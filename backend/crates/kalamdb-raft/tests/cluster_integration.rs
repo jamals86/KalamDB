@@ -23,6 +23,8 @@ use tokio::time::sleep;
 use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
+use kalamdb_commons::system::{Job, LiveQuery};
+use kalamdb_commons::types::LiveQueryStatus;
 use kalamdb_commons::JobStatus;
 use kalamdb_commons::TableId;
 use kalamdb_raft::{
@@ -31,6 +33,7 @@ use kalamdb_raft::{
     manager::{PeerNode, RaftManager, RaftManagerConfig},
     GroupId,
 };
+use kalamdb_sharding::ShardRouter;
 use kalamdb_raft::{
     ApplyResult, KalamRaftStorage, KalamStateMachine, RaftError, StateMachineSnapshot,
 };
@@ -619,18 +622,29 @@ async fn test_all_groups_accept_proposals() {
             "namespace_id": "ns1",
             "table_name": "t1"
         });
-        let cmd = MetaCommand::CreateJob {
+        let job = Job {
             job_id: JobId::from("job1"),
             job_type: JobType::Flush,
             status: JobStatus::New,
-            parameters_json: Some(params.to_string()),
+            leader_status: None,
+            parameters: Some(params.to_string()),
             idempotency_key: None,
             max_retries: 3,
+            retry_count: 0,
             queue: None,
             priority: None,
             node_id: NodeId::from(1),
-            created_at: Utc::now(),
+            leader_node_id: None,
+            message: None,
+            exception_trace: None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: Utc::now().timestamp_millis(),
+            updated_at: Utc::now().timestamp_millis(),
+            started_at: None,
+            finished_at: None,
         };
+        let cmd = MetaCommand::CreateJob { job };
         let result = leader.manager.propose_meta(cmd).await;
         assert!(result.is_ok(), "Meta should accept job proposals");
     }
@@ -765,36 +779,69 @@ async fn test_meta_group_operations() {
     assert!(result.is_ok(), "CreateNamespace should succeed");
 
     // Test CreateTable
+    let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
+    let table_def = kalamdb_commons::models::schemas::TableDefinition::new_with_defaults(
+        NamespaceId::from("test_ns"),
+        TableName::from("test_table"),
+        TableType::User,
+        vec![],
+        None,
+    ).expect("Failed to create table definition");
     let cmd = MetaCommand::CreateTable {
-        table_id: TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table")),
+        table_id,
         table_type: TableType::User,
-        schema_json: "{}".to_string(),
+        table_def,
     };
     let result = leader.manager.propose_meta(cmd).await;
     assert!(result.is_ok(), "CreateTable should succeed");
 
     // Test RegisterStorage
+    let storage_id = StorageId::new("storage1".to_string());
+    let storage = kalamdb_commons::system::Storage {
+        storage_id: storage_id.clone(),
+        storage_name: "test_storage".to_string(),
+        description: None,
+        storage_type: kalamdb_commons::models::storage::StorageType::Filesystem,
+        base_directory: "/tmp/test".to_string(),
+        credentials: None,
+        config_json: None,
+        shared_tables_template: "shared".to_string(),
+        user_tables_template: "user".to_string(),
+        created_at: 0,
+        updated_at: 0,
+    };
     let cmd = MetaCommand::RegisterStorage {
-        storage_id: StorageId::new("storage1".to_string()),
-        config_json: "{}".to_string(),
+        storage_id,
+        storage,
     };
     let result = leader.manager.propose_meta(cmd).await;
     assert!(result.is_ok(), "RegisterStorage should succeed");
 
     // Test CreateJob
     let params = serde_json::json!({"namespace_id": "ns1", "table_name": "t1"});
-    let cmd = MetaCommand::CreateJob {
+    let job = Job {
         job_id: JobId::from("j1"),
         job_type: JobType::Flush,
         status: JobStatus::New,
-        parameters_json: Some(params.to_string()),
+        leader_status: None,
+        parameters: Some(params.to_string()),
         idempotency_key: None,
         max_retries: 3,
+        retry_count: 0,
         queue: None,
         priority: None,
         node_id: NodeId::from(1),
-        created_at: Utc::now(),
+        leader_node_id: None,
+        message: None,
+        exception_trace: None,
+        memory_used: None,
+        cpu_used: None,
+        created_at: Utc::now().timestamp_millis(),
+        updated_at: Utc::now().timestamp_millis(),
+        started_at: None,
+        finished_at: None,
     };
+    let cmd = MetaCommand::CreateJob { job };
     let result = leader.manager.propose_meta(cmd).await;
     assert!(result.is_ok(), "CreateJob should succeed");
 
@@ -869,19 +916,36 @@ async fn test_user_data_shard_operations() {
         let result = leader.manager.propose_user_data(shard, cmd).await;
         assert!(result.is_ok(), "Delete shard {} should succeed", shard);
 
-        // Test RegisterLiveQuery
-        let cmd = UserDataCommand::RegisterLiveQuery {
-            required_meta_index: 0,
-            subscription_id: format!("lq_{}", shard),
+        // Test CreateLiveQuery
+        let connection_id = kalamdb_commons::models::ConnectionId::new("conn_test");
+        let live_id = kalamdb_commons::models::LiveQueryId::new(
+            user_id.clone(),
+            connection_id.clone(),
+            &format!("sub_{}", shard),
+        );
+        let now = Utc::now().timestamp_millis();
+        let live_query = LiveQuery {
+            live_id: live_id.clone(),
+            connection_id: connection_id.as_str().to_string(),
+            subscription_id: format!("sub_{}", shard),
+            namespace_id: table_id.namespace_id().clone(),
+            table_name: table_id.table_name().clone(),
             user_id: user_id.clone(),
-            query_hash: "abc123".to_string(),
-            table_id: table_id.clone(),
-            filter_json: None,
+            query: "SELECT * FROM test.users".to_string(),
+            options: None,
+            status: LiveQueryStatus::Active,
+            created_at: now,
+            last_update: now,
+            last_ping_at: now,
+            changes: 0,
             node_id: NodeId::from(1u64),
-            created_at: Utc::now(),
+        };
+        let cmd = UserDataCommand::CreateLiveQuery {
+            required_meta_index: 0,
+            live_query,
         };
         let result = leader.manager.propose_user_data(shard, cmd).await;
-        assert!(result.is_ok(), "RegisterLiveQuery shard {} should succeed", shard);
+        assert!(result.is_ok(), "CreateLiveQuery shard {} should succeed", shard);
 
         println!("  ✓ UserDataShard({}) operations verified", shard);
     }
@@ -1049,6 +1113,7 @@ async fn test_shard_routing_consistency() {
 
     // Get manager from any node
     let manager = &cluster.nodes[0].manager;
+    let shard_router = ShardRouter::new(manager.user_shards(), manager.shared_shards());
 
     // Test that same table always maps to same shard
     let test_tables = vec![
@@ -1062,9 +1127,9 @@ async fn test_shard_routing_consistency() {
         let table_id = TableId::new(NamespaceId::from(ns), TableName::from(table));
 
         // Compute shard multiple times
-        let shard1 = manager.compute_shard(&table_id);
-        let shard2 = manager.compute_shard(&table_id);
-        let shard3 = manager.compute_shard(&table_id);
+        let shard1 = shard_router.table_shard_id(&table_id);
+        let shard2 = shard_router.table_shard_id(&table_id);
+        let shard3 = shard_router.table_shard_id(&table_id);
 
         assert_eq!(shard1, shard2, "Same table should always map to same shard");
         assert_eq!(shard2, shard3, "Same table should always map to same shard");

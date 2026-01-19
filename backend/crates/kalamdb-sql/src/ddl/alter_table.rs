@@ -79,13 +79,9 @@ impl AlterTableStatement {
         }
 
         let statement = statements.remove(0);
-        let Statement::AlterTable(alter_table) = statement else {
+        let Statement::AlterTable { name, operations, .. } = statement else {
             return Err("Expected ALTER TABLE statement".to_string());
         };
-
-        let sqlparser::ast::AlterTable {
-            name, operations, ..
-        } = alter_table;
 
         if operations.len() != 1 {
             return Err("Only one ALTER TABLE operation is supported per statement".to_string());

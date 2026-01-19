@@ -6,7 +6,7 @@
 pub mod compression;
 pub mod embedded_ui;
 pub mod handlers;
+pub mod limiter;
 pub mod models;
-pub mod rate_limiter;
 pub mod repositories;
 pub mod routes;
