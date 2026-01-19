@@ -47,11 +47,16 @@ main() {
     fi
     
     log_info "Starting container..."
+    JWT_ENV=()
+    if [ -n "${KALAMDB_JWT_SECRET:-}" ]; then
+        JWT_ENV=(-e "KALAMDB_JWT_SECRET=${KALAMDB_JWT_SECRET}")
+    fi
     docker run -d \
         --name "$CONTAINER_NAME" \
         -p "$TEST_PORT:8080" \
         -e KALAMDB_SERVER_HOST=0.0.0.0 \
         -e KALAMDB_LOG_LEVEL=info \
+        "${JWT_ENV[@]}" \
         "$IMAGE_NAME"
     
     log_info "Waiting for server to start (timeout: ${TIMEOUT}s)..."
