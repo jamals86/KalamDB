@@ -15,6 +15,7 @@ kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-filestore = { path = "../kalamdb-filestore" }
 kalamdb-observability = { path = "../kalamdb-observability" }
 kalamdb-raft = { path = "../kalamdb-raft" }
+kalamdb-session = { path = "../kalamdb-session" }
 kalamdb-sharding = { path = "../kalamdb-sharding" }
 kalamdb-sql = { path = "../kalamdb-sql" }
 kalamdb-store = { path = "../kalamdb-store" }

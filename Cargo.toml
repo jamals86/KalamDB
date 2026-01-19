@@ -6,6 +6,7 @@ members = [
     "backend/crates/kalamdb-filestore",
     "backend/crates/kalamdb-streams",
     "backend/crates/kalamdb-sharding",
+    "backend/crates/kalamdb-session",
     "backend/crates/kalamdb-system",
     "backend/crates/kalamdb-tables",
     "backend/crates/kalamdb-observability",

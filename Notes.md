@@ -1143,3 +1143,8 @@ i guess we need to add a new column to the jobs table to track each node the sta
 81) why we have pub struct PlanCache and also: pub struct QueryCache we can use only the plancahe for both
 
 
+82) instead of adding security and permission check for each system.table we can add permission for system namespace instead
+
+83) maybe we should go with catalog for system and catalog for public/user namespaces instead of having system tables in the same catalog as user tables
+
+

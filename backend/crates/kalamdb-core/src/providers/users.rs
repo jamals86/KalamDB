@@ -32,6 +32,7 @@ use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::UserTableRowId;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::{Role, StorageKey, TableId};
+use kalamdb_session::check_user_table_access;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{UserTableIndexedStore, UserTablePkIndex, UserTableRow};
 use std::any::Any;
@@ -984,6 +985,9 @@ impl TableProvider for UserTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        // SECURITY: Enforce user table access rules (namespace isolation)
+        check_user_table_access(state, self.core.table_id()).map_err(DataFusionError::from)?;
+
         // Extract user context including read_context for leader check
         let (user_id, _role, read_context) = extract_full_user_context(state)
             .map_err(|e| DataFusionError::Execution(format!("Failed to extract user context: {}", e)))?;

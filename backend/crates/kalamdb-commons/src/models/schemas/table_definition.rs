@@ -20,7 +20,6 @@ use std::sync::Arc;
 /// Now unified to eliminate duplication and simplify architecture.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableDefinition {
-    /// Namespace ID (e.g., "default", "user_123")
     pub namespace_id: NamespaceId,
 
     /// Table name (case-sensitive)

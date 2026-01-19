@@ -339,7 +339,8 @@ impl SqlExecutor {
         };
 
         // Check permissions on the logical plan
-        self.check_select_permissions(df.logical_plan(), exec_ctx)?;
+        //FIXME: Check do we still need this?? now we have a permission check in each tableprovider
+        //self.check_select_permissions(df.logical_plan(), exec_ctx)?;
 
         // Capture schema before collecting (needed for 0 row results)
         // DFSchema -> Arrow Schema via inner() method
@@ -619,107 +620,9 @@ impl SqlExecutor {
     }
 
     /// Expose the shared `AppContext` for upcoming migrations.
+    /// TODO: Remove this since everyone has appcontext access now from the executor
     pub fn app_context(&self) -> &Arc<crate::app_context::AppContext> {
         &self.app_context
     }
 
-    fn check_select_permissions(
-        &self,
-        plan: &datafusion::logical_expr::LogicalPlan,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<(), KalamDbError> {
-        self.check_plan_permissions(plan, exec_ctx)
-    }
-
-    fn check_plan_permissions(
-        &self,
-        plan: &datafusion::logical_expr::LogicalPlan,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<(), KalamDbError> {
-        use datafusion::logical_expr::LogicalPlan;
-        use kalamdb_auth::authorization::rbac::can_access_shared_table;
-        use kalamdb_commons::models::{NamespaceId, TableId, TableName};
-        use kalamdb_commons::schemas::TableOptions;
-        use kalamdb_commons::schemas::TableType;
-        use kalamdb_commons::TableAccess;
-
-        match plan {
-            LogicalPlan::TableScan(scan) => {
-                // Resolve table reference to TableId
-                let (ns, tbl) = match &scan.table_name {
-                    datafusion::common::TableReference::Bare { table } => {
-                        (NamespaceId::new("default"), TableName::new(table.to_string()))
-                    },
-                    datafusion::common::TableReference::Partial { schema, table } => {
-                        (NamespaceId::new(schema.to_string()), TableName::new(table.to_string()))
-                    },
-                    datafusion::common::TableReference::Full { schema, table, .. } => {
-                        (NamespaceId::new(schema.to_string()), TableName::new(table.to_string()))
-                    },
-                };
-
-                let table_id = TableId::new(ns.clone(), tbl.clone());
-
-                // Get table definition
-                let schema_registry = self.app_context.schema_registry();
-                if let Ok(Some(def)) =
-                    schema_registry.get_table_if_exists(self.app_context.as_ref(), &table_id)
-                {
-                    if matches!(def.table_type, TableType::Shared) {
-                        let access_level = if let TableOptions::Shared(opts) = &def.table_options {
-                            opts.access_level.unwrap_or(TableAccess::Private)
-                        } else {
-                            TableAccess::Private
-                        };
-
-                        if !can_access_shared_table(access_level, false, exec_ctx.user_role) {
-                            return Err(KalamDbError::Unauthorized(format!(
-                                "Insufficient privileges to read shared table '{}.{}' (Access Level: {:?})",
-                                ns.as_str(),
-                                tbl.as_str(),
-                                access_level
-                            )));
-                        }
-                    } else if matches!(def.table_type, TableType::User) {
-                        // Enforce namespace isolation: User tables can only be accessed by their owner
-                        // (unless user is admin/system)
-                        // TODO: Re-enable this check once we have proper namespace permissions or clarify USER table semantics
-                        /*
-                        let is_admin = matches!(
-                            exec_ctx.user_role,
-                            kalamdb_commons::Role::System | kalamdb_commons::Role::Dba
-                        );
-                        if !is_admin && ns.as_str() != exec_ctx.user_id.as_str() {
-                            return Err(KalamDbError::Unauthorized(format!(
-                                "Insufficient privileges to access user table '{}.{}'",
-                                ns.as_str(),
-                                tbl.as_str()
-                            )));
-                        }
-                        */
-                    } else if matches!(def.table_type, TableType::System) {
-                        // Enforce system table restrictions
-                        // Only admins can access system tables directly
-                        let is_admin = matches!(
-                            exec_ctx.user_role,
-                            kalamdb_commons::Role::System | kalamdb_commons::Role::Dba
-                        );
-                        if !is_admin {
-                            return Err(KalamDbError::Unauthorized(format!(
-                                "Insufficient privileges to access system table '{}.{}'",
-                                ns.as_str(),
-                                tbl.as_str()
-                            )));
-                        }
-                    }
-                }
-            },
-            _ => {
-                for input in plan.inputs() {
-                    self.check_plan_permissions(input, exec_ctx)?;
-                }
-            },
-        }
-        Ok(())
-    }
 }

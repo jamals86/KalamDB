@@ -381,6 +381,16 @@ impl InsertHandler {
 
         match table_type {
             TableType::User => {
+                // Validate write permissions for user tables
+                use kalamdb_session::check_user_table_write_access_level;
+
+                check_user_table_write_access_level(
+                    role,
+                    table_id.namespace_id(),
+                    table_id.table_name(),
+                )
+                .map_err(|e| KalamDbError::Unauthorized(e.to_string()))?;
+
                 let cmd = UserDataCommand::Insert {
                     required_meta_index: 0, // Stamped by executor
                     table_id: table_id.clone(),
@@ -402,9 +412,9 @@ impl InsertHandler {
             },
             TableType::Shared => {
                 // Validate write permissions for shared tables
-                use kalamdb_auth::authorization::rbac::can_write_shared_table;
                 use kalamdb_commons::schemas::TableOptions;
                 use kalamdb_commons::TableAccess;
+                use kalamdb_session::check_shared_table_write_access_level;
 
                 let access_level = if let TableOptions::Shared(opts) = table_options {
                     opts.access_level.unwrap_or(TableAccess::Private)
@@ -412,13 +422,13 @@ impl InsertHandler {
                     TableAccess::Private
                 };
 
-                if !can_write_shared_table(access_level, false, role) {
-                    return Err(KalamDbError::Unauthorized(format!(
-                        "Insufficient privileges to write to shared table '{}' (Access Level: {:?})",
-                        table_id,
-                        access_level
-                    )));
-                }
+                check_shared_table_write_access_level(
+                    role,
+                    access_level,
+                    table_id.namespace_id(),
+                    table_id.table_name(),
+                )
+                .map_err(|e| KalamDbError::Unauthorized(e.to_string()))?;
 
                 let cmd = SharedDataCommand::Insert {
                     required_meta_index: 0, // Stamped by executor
@@ -438,6 +448,16 @@ impl InsertHandler {
                 }
             },
             TableType::Stream => {
+                // STREAM tables share the same write permissions as USER tables
+                use kalamdb_session::check_stream_table_write_access_level;
+
+                check_stream_table_write_access_level(
+                    role,
+                    table_id.namespace_id(),
+                    table_id.table_name(),
+                )
+                .map_err(|e| KalamDbError::Unauthorized(e.to_string()))?;
+
                 let cmd = UserDataCommand::Insert {
                     required_meta_index: 0, // Stamped by executor
                     table_id: table_id.clone(),

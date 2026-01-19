@@ -14,14 +14,9 @@
 //!
 //! ## Architecture
 //!
-//! System tables are read-only views over KalamDB's internal metadata stored
-//! in RocksDB via EntityStore. They provide SQL-queryable access to:
-//! - User management and permissions
-//! - Job execution status and history
-//! - Schema evolution and versioning
-//! - Storage configuration
-//! - Active subscriptions
-//! - Audit trails
+//! System tables use `SecuredSystemTableProvider` from `kalamdb-session` to
+//! enforce permission checks at scan time. This provides defense-in-depth
+//! security even for nested queries or subqueries.
 //!
 //! ## Example Usage
 //!
@@ -53,6 +48,11 @@ pub use registry::SystemTablesRegistry;
 pub use system_table_trait::SystemTableProviderExt;
 // Re-export SystemTable and StoragePartition from kalamdb_commons for consistent usage
 pub use kalamdb_commons::{StoragePartition, SystemTable};
+
+// Re-export session types for convenience
+pub use kalamdb_session::{
+    check_system_table_access, secure_provider, SecuredSystemTableProvider, SessionUserContext,
+};
 
 // Re-export all providers
 pub use providers::{

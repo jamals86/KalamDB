@@ -2,71 +2,11 @@ use crate::sql::CurrentUserFunction;
 use datafusion::logical_expr::ScalarUDF;
 use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
-use datafusion_common::config::{ConfigExtension, ExtensionOptions};
 use kalamdb_commons::models::ReadContext;
 use kalamdb_commons::{NamespaceId, Role, UserId};
+use kalamdb_session::SessionUserContext;
 use std::sync::Arc;
 use std::time::SystemTime;
-
-/// Session-level user context passed via DataFusion's extension system
-///
-/// **Purpose**: Pass (user_id, role, read_context) from HTTP handler → ExecutionContext → TableProvider.scan()
-/// via SessionState.config.options.extensions (ConfigExtension trait)
-///
-/// **Architecture**: Stateless TableProviders read this from SessionState during scan(),
-/// eliminating the need for per-request provider instances or SessionState clones.
-///
-/// **Performance**: Storing metadata in extensions allows zero-copy table registration
-/// (tables registered once in base_session_context, no clone overhead per request).
-///
-/// **Read Context** (Spec 021): Determines whether reads must go to the Raft leader.
-/// - `Client` (default): External SQL queries - must read from leader for consistency
-/// - `Internal`: Background jobs, notifications - can read from any node
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SessionUserContext {
-    pub user_id: UserId,
-    pub role: Role,
-    /// Read routing context (default: Client = requires leader)
-    pub read_context: ReadContext,
-}
-
-impl Default for SessionUserContext {
-    fn default() -> Self {
-        SessionUserContext {
-            user_id: UserId::from("anonymous"),
-            role: Role::User,
-            read_context: ReadContext::Client, // Default to client reads (require leader)
-        }
-    }
-}
-
-impl ExtensionOptions for SessionUserContext {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
-    fn cloned(&self) -> Box<dyn ExtensionOptions> {
-        Box::new(self.clone())
-    }
-
-    fn set(&mut self, _key: &str, _value: &str) -> datafusion_common::Result<()> {
-        // SessionUserContext is immutable - ignore set operations
-        Ok(())
-    }
-
-    fn entries(&self) -> Vec<datafusion_common::config::ConfigEntry> {
-        // No configuration entries
-        vec![]
-    }
-}
-
-impl ConfigExtension for SessionUserContext {
-    const PREFIX: &'static str = "kalamdb";
-}
 
 /// Unified execution context for SQL queries
 #[derive(Clone)]
@@ -295,33 +235,33 @@ impl ExecutionContext {
         ctx
     }
 
-    /// Create a SessionContext for internal operations (bypasses leader check)
-    ///
-    /// Use this for background jobs, live query notifications, and other internal
-    /// operations that should read local data even when this node is not the leader.
-    ///
-    /// **Important**: Only use this for non-client operations. Client SQL queries
-    /// should use `create_session_with_user()` which enforces leader-only reads.
-    pub fn create_internal_session(&self) -> SessionContext {
-        let mut session_state = self.base_session_context.state();
+    // /// Create a SessionContext for internal operations (bypasses leader check)
+    // ///
+    // /// Use this for background jobs, live query notifications, and other internal
+    // /// operations that should read local data even when this node is not the leader.
+    // ///
+    // /// **Important**: Only use this for non-client operations. Client SQL queries
+    // /// should use `create_session_with_user()` which enforces leader-only reads.
+    // pub fn create_internal_session(&self) -> SessionContext {
+    //     let mut session_state = self.base_session_context.state();
 
-        // Inject user context with ReadContext::Internal (bypasses leader check)
-        session_state.config_mut().options_mut().extensions.insert(SessionUserContext {
-            user_id: self.user_id.clone(),
-            role: self.user_role,
-            read_context: ReadContext::Internal, // Allow reads on any node
-        });
+    //     // Inject user context with ReadContext::Internal (bypasses leader check)
+    //     session_state.config_mut().options_mut().extensions.insert(SessionUserContext {
+    //         user_id: self.user_id.clone(),
+    //         role: self.user_role,
+    //         read_context: ReadContext::Internal, // Allow reads on any node
+    //     });
 
-        if let Some(ref ns) = self.namespace_id {
-            session_state.config_mut().options_mut().catalog.default_schema =
-                ns.as_str().to_string();
-        }
+    //     if let Some(ref ns) = self.namespace_id {
+    //         session_state.config_mut().options_mut().catalog.default_schema =
+    //             ns.as_str().to_string();
+    //     }
 
-        let ctx = SessionContext::new_with_state(session_state);
-        let current_user_fn = CurrentUserFunction::with_user_id(self.user_id());
-        ctx.register_udf(ScalarUDF::from(current_user_fn));
-        ctx
-    }
+    //     let ctx = SessionContext::new_with_state(session_state);
+    //     let current_user_fn = CurrentUserFunction::with_user_id(self.user_id());
+    //     ctx.register_udf(ScalarUDF::from(current_user_fn));
+    //     ctx
+    // }
 
     /// Get the current default namespace (schema) from DataFusion session config
     ///

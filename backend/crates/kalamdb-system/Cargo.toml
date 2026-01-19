@@ -12,7 +12,8 @@ categories = ["database"]
 
 [dependencies]
 # Internal crates
-kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
+kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-session = { path = "../kalamdb-session" }
 kalamdb-store = { path = "../kalamdb-store", features = ["datafusion"] }
 
 # Apache Arrow ecosystem
