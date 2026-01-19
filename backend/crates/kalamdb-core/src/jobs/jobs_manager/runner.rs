@@ -29,7 +29,7 @@ impl JobsManager {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::ClaimJob {
             job_id: job_id.clone(),
-            node_id: self.node_id.clone(),
+            node_id: self.node_id,
             claimed_at: chrono::Utc::now(),
         };
         app_ctx
@@ -45,7 +45,7 @@ impl JobsManager {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::ClaimJobNode {
             job_id: job_id.clone(),
-            node_id: self.node_id.clone(),
+            node_id: self.node_id,
             claimed_at: chrono::Utc::now(),
         };
 
@@ -67,7 +67,7 @@ impl JobsManager {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::UpdateJobNodeStatus {
             job_id: job_id.clone(),
-            node_id: self.node_id.clone(),
+            node_id: self.node_id,
             status,
             error_message,
             updated_at: chrono::Utc::now(),
@@ -91,9 +91,7 @@ impl JobsManager {
         let success_message = message.unwrap_or_else(|| "Job completed successfully".to_string());
         let cmd = MetaCommand::CompleteJob {
             job_id: job_id.clone(),
-            result_json: Some(
-                serde_json::json!({ "message": success_message }).to_string(),
-            ),
+            result: Some(serde_json::json!({ "message": success_message }).to_string()),
             completed_at: chrono::Utc::now(),
         };
         app_ctx
@@ -253,10 +251,8 @@ impl JobsManager {
             }
 
             if semaphore.available_permits() == 0 {
-                if let Some(result) = join_set.join_next().await {
-                    if let Err(err) = result {
-                        log::error!("Job task panicked: {}", err);
-                    }
+                if let Some(Err(err)) = join_set.join_next().await {
+                    log::error!("Job task panicked: {}", err);
                 }
                 continue;
             }
@@ -631,7 +627,7 @@ impl JobsManager {
                     match node.status {
                         JobStatus::Completed => completed += 1,
                         JobStatus::Failed | JobStatus::Cancelled => {
-                            failed_nodes.push(node_id.clone());
+                            failed_nodes.push(*node_id);
                         },
                         _ => {},
                     }

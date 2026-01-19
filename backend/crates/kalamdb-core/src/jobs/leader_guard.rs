@@ -74,7 +74,7 @@ impl LeaderOnlyJobGuard {
 
     /// Get the current node's ID
     pub fn node_id(&self) -> NodeId {
-        self.node_id.clone()
+        self.node_id
     }
 
     /// Get the leader's node ID, if known
@@ -91,7 +91,7 @@ impl LeaderOnlyJobGuard {
 
         let cmd = MetaCommand::ClaimJob {
             job_id: job_id.clone(),
-            node_id: self.node_id.clone(),
+            node_id: self.node_id,
             claimed_at: now,
         };
 
@@ -138,7 +138,7 @@ impl LeaderOnlyJobGuard {
 
         let cmd = MetaCommand::CompleteJob {
             job_id: job_id.clone(),
-            result_json,
+            result: result_json,
             completed_at: now,
         };
 

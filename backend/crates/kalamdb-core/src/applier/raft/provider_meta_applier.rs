@@ -11,13 +11,10 @@ use crate::applier::executor::CommandExecutorImpl;
 use crate::applier::ApplierError;
 use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableDefinition;
-use kalamdb_commons::models::{
-    ConnectionId, JobId, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableId, TableName,
-    UserId,
-};
+use kalamdb_commons::models::{JobId, NamespaceId, NodeId, StorageId, TableId, UserId};
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::system::{Job, JobNode, LiveQuery, Storage};
-use kalamdb_commons::types::{LiveQueryStatus, User};
+use kalamdb_commons::system::{Job, JobNode, Storage};
+use kalamdb_commons::types::User;
 use kalamdb_commons::JobStatus;
 use kalamdb_raft::applier::MetaApplier;
 use kalamdb_raft::RaftError;
@@ -95,7 +92,7 @@ impl MetaApplier for ProviderMetaApplier {
         &self,
         table_id: &TableId,
         table_type: TableType,
-        schema_json: &str,
+        table_def: &TableDefinition,
     ) -> Result<String, RaftError> {
         log::debug!(
             "ProviderMetaApplier: Creating table {} (type: {})",
@@ -103,14 +100,10 @@ impl MetaApplier for ProviderMetaApplier {
             table_type
         );
 
-        let table_def: TableDefinition = serde_json::from_str(schema_json).map_err(|e| {
-            RaftError::Internal(format!("Failed to deserialize table schema: {}", e))
-        })?;
-
         let message = self
             .executor
             .ddl()
-            .create_table(table_id, table_type, &table_def)
+            .create_table(table_id, table_type, table_def)
             .await
             .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))?;
 
@@ -120,13 +113,9 @@ impl MetaApplier for ProviderMetaApplier {
     async fn alter_table(
         &self,
         table_id: &TableId,
-        schema_json: &str,
+        table_def: &TableDefinition,
     ) -> Result<String, RaftError> {
         log::debug!("ProviderMetaApplier: Altering table {}", table_id.full_name());
-
-        let table_def: TableDefinition = serde_json::from_str(schema_json).map_err(|e| {
-            RaftError::Internal(format!("Failed to deserialize table schema: {}", e))
-        })?;
 
         // For Raft replication, we don't have the old version, so pass 0
         self.executor
@@ -153,17 +142,13 @@ impl MetaApplier for ProviderMetaApplier {
     async fn register_storage(
         &self,
         storage_id: &StorageId,
-        config_json: &str,
+        storage: &Storage,
     ) -> Result<String, RaftError> {
         log::info!("ProviderMetaApplier: Registering storage {}", storage_id);
 
-        let storage: Storage = serde_json::from_str(config_json).map_err(|e| {
-            RaftError::Internal(format!("Failed to deserialize storage config: {}", e))
-        })?;
-
         self.executor
             .storage()
-            .create_storage(&storage)
+            .create_storage(storage)
             .await
             .map_err(|e: ApplierError| RaftError::Internal(e.to_string()))
     }
@@ -245,48 +230,17 @@ impl MetaApplier for ProviderMetaApplier {
     // Job Operations - Stay local (no SQL handlers for jobs)
     // =========================================================================
 
-    async fn create_job(
-        &self,
-        job_id: &JobId,
-        job_type: JobType,
-        status: JobStatus,
-        parameters_json: Option<&str>,
-        idempotency_key: Option<&str>,
-        max_retries: u8,
-        queue: Option<&str>,
-        priority: Option<i32>,
-        node_id: NodeId,
-        created_at: i64,
-    ) -> Result<String, RaftError> {
-        log::debug!("ProviderMetaApplier: Creating job {} (type: {:?})", job_id, job_type);
-
-        let job = Job {
-            job_id: job_id.clone(),
-            job_type: job_type.clone(),
-            status,
-            leader_status: None,
-            node_id,
-            leader_node_id: None,
-            parameters: parameters_json.map(String::from),
-            idempotency_key: idempotency_key.map(String::from),
-            retry_count: 0,
-            max_retries,
-            message: None,
-            exception_trace: None,
-            queue: queue.map(String::from),
-            priority,
-            created_at,
-            updated_at: created_at,
-            started_at: None,
-            finished_at: None,
-            memory_used: None,
-            cpu_used: None,
-        };
+    async fn create_job(&self, job: &Job) -> Result<String, RaftError> {
+        log::debug!(
+            "ProviderMetaApplier: Creating job {} (type: {:?})",
+            job.job_id,
+            job.job_type
+        );
 
         self.app_context
             .system_tables()
             .jobs()
-            .create_job(job)
+            .create_job(job.clone())
             .map_err(|e| RaftError::Internal(format!("Failed to create job: {}", e)))
     }
 
@@ -299,7 +253,7 @@ impl MetaApplier for ProviderMetaApplier {
     ) -> Result<String, RaftError> {
         let job_node = JobNode {
             job_id: job_id.clone(),
-            node_id: node_id.clone(),
+            node_id,
             status,
             error_message: None,
             created_at,
@@ -395,7 +349,15 @@ impl MetaApplier for ProviderMetaApplier {
             .get_job(job_id)
             .map_err(|e| RaftError::Internal(format!("Failed to get job: {}", e)))?
         {
-            job.node_id = node_id.clone();
+            // Check if job is already running (claimed by another node)
+            if job.status == JobStatus::Running {
+                return Err(RaftError::Internal(format!(
+                    "Job {} already claimed by node {}",
+                    job_id, job.node_id
+                )));
+            }
+
+            job.node_id = node_id;
             job.started_at = Some(claimed_at);
             job.status = JobStatus::Running;
             job.updated_at = claimed_at;
@@ -409,7 +371,7 @@ impl MetaApplier for ProviderMetaApplier {
             return Ok(format!("Job {} claimed by node {}", job_id, node_id));
         }
 
-        Ok(format!("Job {} not found for claiming", job_id))
+        Err(RaftError::Internal(format!("Job {} not found for claiming", job_id)))
     }
 
     async fn update_job_status(
@@ -427,8 +389,8 @@ impl MetaApplier for ProviderMetaApplier {
             .get_job(job_id)
             .map_err(|e| RaftError::Internal(format!("Failed to get job: {}", e)))?
         {
-            let old_status = job.status.clone();
-            job.status = status.clone();
+            let old_status = job.status;
+            job.status = status;
             job.updated_at = updated_at;
 
             if matches!(status, JobStatus::Running | JobStatus::Retrying) && job.started_at.is_none() {
@@ -459,7 +421,7 @@ impl MetaApplier for ProviderMetaApplier {
     async fn complete_job(
         &self,
         job_id: &JobId,
-        result_json: Option<&str>,
+        result: Option<&str>,
         completed_at: i64,
     ) -> Result<String, RaftError> {
         log::info!("ProviderMetaApplier: Completing job {}", job_id);
@@ -471,11 +433,11 @@ impl MetaApplier for ProviderMetaApplier {
             .get_job(job_id)
             .map_err(|e| RaftError::Internal(format!("Failed to get job: {}", e)))?
         {
-            let job_type = job.job_type.clone();
+            let job_type = job.job_type;
             job.status = JobStatus::Completed;
             job.message = Some(
-                result_json
-                    .map(|s| s.to_string())
+                result
+                    .map(String::from)
                     .unwrap_or_else(|| {
                         serde_json::json!({ "message": "Job completed successfully" }).to_string()
                     }),
@@ -513,7 +475,7 @@ impl MetaApplier for ProviderMetaApplier {
             .get_job(job_id)
             .map_err(|e| RaftError::Internal(format!("Failed to get job: {}", e)))?
         {
-            let job_type = job.job_type.clone();
+            let job_type = job.job_type;
             job.status = JobStatus::Failed;
             job.message = Some(error_message.to_string());
             job.finished_at = Some(failed_at);
@@ -549,7 +511,7 @@ impl MetaApplier for ProviderMetaApplier {
             .get_job(job_id)
             .map_err(|e| RaftError::Internal(format!("Failed to get job: {}", e)))?
         {
-            let job_type = job.job_type.clone();
+            let job_type = job.job_type;
             job.status = JobStatus::New;
             job.node_id = NodeId::default();
             job.started_at = None;
@@ -582,7 +544,7 @@ impl MetaApplier for ProviderMetaApplier {
             .get_job(job_id)
             .map_err(|e| RaftError::Internal(format!("Failed to get job: {}", e)))?
         {
-            let job_type = job.job_type.clone();
+            let job_type = job.job_type;
             job.status = JobStatus::Cancelled;
             job.finished_at = Some(cancelled_at);
             job.message = Some(reason.to_string());
@@ -598,157 +560,5 @@ impl MetaApplier for ProviderMetaApplier {
         }
 
         Ok(format!("Job {} not found for cancellation", job_id))
-    }
-
-    async fn create_schedule(
-        &self,
-        schedule_id: &str,
-        job_type: JobType,
-        cron_expression: &str,
-        _config_json: Option<&str>,
-        _created_at: i64,
-    ) -> Result<String, RaftError> {
-        log::info!("ProviderMetaApplier: Creating schedule {} (type: {:?})", schedule_id, job_type);
-        Ok(format!(
-            "Schedule {} ({:?}) created with cron '{}'",
-            schedule_id, job_type, cron_expression
-        ))
-    }
-
-    async fn delete_schedule(&self, schedule_id: &str) -> Result<String, RaftError> {
-        log::info!("ProviderMetaApplier: Deleting schedule {}", schedule_id);
-        Ok(format!("Schedule {} deleted successfully", schedule_id))
-    }
-
-    // =========================================================================
-    // Live Query Operations - Persist to system.live_queries
-    // =========================================================================
-
-    async fn create_live_query(
-        &self,
-        live_id: &LiveQueryId,
-        connection_id: &ConnectionId,
-        namespace_id: &NamespaceId,
-        table_name: &TableName,
-        user_id: &UserId,
-        query: &str,
-        options_json: Option<&str>,
-        node_id: NodeId,
-        subscription_id: &str,
-        created_at: i64,
-    ) -> Result<String, RaftError> {
-        log::info!("ProviderMetaApplier: Creating live query {} on node {}", live_id, node_id);
-
-        let live_query = LiveQuery {
-            live_id: live_id.clone(),
-            connection_id: connection_id.to_string(),
-            namespace_id: namespace_id.clone(),
-            table_name: table_name.clone(),
-            user_id: user_id.clone(),
-            query: query.to_string(),
-            options: options_json.map(|s| s.to_string()),
-            created_at,
-            last_update: created_at,
-            changes: 0,
-            node_id,
-            subscription_id: subscription_id.to_string(),
-            status: LiveQueryStatus::Active,
-            last_ping_at: created_at,
-        };
-
-        self.app_context
-            .system_tables()
-            .live_queries()
-            .create_live_query(live_query)
-            .map_err(|e| RaftError::Internal(format!("Failed to create live query: {}", e)))?;
-
-        Ok(format!(
-            "Live query {} created for table {}.{}",
-            live_id, namespace_id, table_name
-        ))
-    }
-
-    async fn update_live_query(
-        &self,
-        live_id: &LiveQueryId,
-        last_update: i64,
-        changes: i64,
-    ) -> Result<String, RaftError> {
-        log::trace!("ProviderMetaApplier: Updating live query {} (changes={})", live_id, changes);
-
-        if let Some(mut lq) = self
-            .app_context
-            .system_tables()
-            .live_queries()
-            .get_live_query_by_id(live_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to get live query: {}", e)))?
-        {
-            lq.last_update = last_update;
-            lq.changes = changes;
-
-            self.app_context
-                .system_tables()
-                .live_queries()
-                .update_live_query(lq)
-                .map_err(|e| RaftError::Internal(format!("Failed to update live query: {}", e)))?;
-
-            return Ok(format!("Live query {} updated (changes={})", live_id, changes));
-        }
-
-        Ok(format!("Live query {} not found for update", live_id))
-    }
-
-    async fn delete_live_query(
-        &self,
-        live_id: &LiveQueryId,
-        _deleted_at: i64,
-    ) -> Result<String, RaftError> {
-        log::info!("ProviderMetaApplier: Deleting live query {}", live_id);
-
-        self.app_context
-            .system_tables()
-            .live_queries()
-            .delete_live_query(live_id)
-            .map_err(|e| RaftError::Internal(format!("Failed to delete live query: {}", e)))?;
-
-        Ok(format!("Live query {} deleted successfully", live_id))
-    }
-
-    async fn delete_live_queries_by_connection(
-        &self,
-        connection_id: &ConnectionId,
-        _deleted_at: i64,
-    ) -> Result<String, RaftError> {
-        log::debug!("ProviderMetaApplier: Deleting live queries for connection {}", connection_id);
-
-        // Get all live queries for this connection and delete them
-        let live_queries = self
-            .app_context
-            .system_tables()
-            .live_queries()
-            .list_live_queries()
-            .map_err(|e| RaftError::Internal(format!("Failed to list live queries: {}", e)))?;
-
-        let mut deleted_count = 0;
-        for lq in live_queries {
-            if lq.connection_id == connection_id.as_str() {
-                self.app_context
-                    .system_tables()
-                    .live_queries()
-                    .delete_live_query(&lq.live_id)
-                    .map_err(|e| {
-                        RaftError::Internal(format!(
-                            "Failed to delete live query {}: {}",
-                            lq.live_id, e
-                        ))
-                    })?;
-                deleted_count += 1;
-            }
-        }
-
-        Ok(format!(
-            "Deleted {} live queries for connection {}",
-            deleted_count, connection_id
-        ))
     }
 }

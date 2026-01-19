@@ -6,16 +6,12 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{Duration, Utc};
 use kalamdb_auth::{
-    authenticate,
-    cookie::{extract_auth_token, CookieConfig},
-    create_auth_cookie, create_logout_cookie, extract_client_ip_secure,
-    jwt_auth::{
-        create_and_sign_token, validate_jwt_token, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER,
-    },
-    AuthError, AuthRequest, UserRepository,
+    authenticate, create_and_sign_token, create_auth_cookie, create_logout_cookie,
+    extract_client_ip_secure, AuthError, AuthRequest, CookieConfig, UserRepository,
 };
+use kalamdb_auth::helpers::cookie::extract_auth_token;
 use kalamdb_commons::Role;
-use kalamdb_configs::ServerConfig;
+use kalamdb_configs::AuthSettings;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -99,51 +95,6 @@ impl AuthErrorResponse {
     }
 }
 
-/// Auth configuration from environment/config
-#[derive(Debug, Clone)]
-pub struct AuthConfig {
-    pub jwt_secret: String,
-    pub jwt_expiry_hours: i64,
-    pub cookie_secure: bool,
-}
-
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            // IMPORTANT: This must match the default in kalamdb-auth/src/unified.rs JWT_CONFIG
-            // Use centralized default from kalamdb-commons to ensure consistency
-            jwt_secret: std::env::var("KALAMDB_JWT_SECRET")
-                .unwrap_or_else(|_| kalamdb_configs::defaults::default_auth_jwt_secret()),
-            jwt_expiry_hours: std::env::var("KALAMDB_JWT_EXPIRY_HOURS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(DEFAULT_JWT_EXPIRY_HOURS),
-            // SECURITY: Default to true for HTTPS-only cookies.
-            // Set KALAMDB_COOKIE_SECURE=false only in development without TLS.
-            cookie_secure: std::env::var("KALAMDB_COOKIE_SECURE")
-                .map(|s| s != "false" && s != "0")
-                .unwrap_or(true),
-        }
-    }
-}
-
-impl AuthConfig {
-    /// Create AuthConfig from ServerConfig (reads jwt_secret from config file)
-    pub fn from_server_config(config: &ServerConfig) -> Self {
-        Self {
-            // Use jwt_secret from config file (which falls back to env var or default)
-            jwt_secret: config.auth.jwt_secret.clone(),
-            jwt_expiry_hours: std::env::var("KALAMDB_JWT_EXPIRY_HOURS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(DEFAULT_JWT_EXPIRY_HOURS),
-            cookie_secure: std::env::var("KALAMDB_COOKIE_SECURE")
-                .map(|s| s != "false" && s != "0")
-                .unwrap_or(true),
-        }
-    }
-}
-
 /// POST /v1/api/auth/login
 ///
 /// Authenticates a user and returns an HttpOnly cookie with JWT token.
@@ -151,7 +102,7 @@ impl AuthConfig {
 pub async fn login_handler(
     req: HttpRequest,
     user_repo: web::Data<Arc<dyn UserRepository>>,
-    config: web::Data<AuthConfig>,
+    config: web::Data<AuthSettings>,
     body: web::Json<LoginRequest>,
 ) -> HttpResponse {
     // Extract client IP with anti-spoofing checks for localhost validation
@@ -274,7 +225,7 @@ fn map_auth_error_to_response(err: AuthError) -> HttpResponse {
 pub async fn refresh_handler(
     req: HttpRequest,
     user_repo: web::Data<Arc<dyn UserRepository>>,
-    config: web::Data<AuthConfig>,
+    config: web::Data<AuthSettings>,
 ) -> HttpResponse {
     // Extract token from cookie
     let token = match extract_auth_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned()))
@@ -286,20 +237,18 @@ pub async fn refresh_handler(
         },
     };
 
-    // Validate existing token
-    let trusted_issuers = vec![KALAMDB_ISSUER.to_string()];
-    let claims = match validate_jwt_token(&token, &config.jwt_secret, &trusted_issuers) {
-        Ok(c) => c,
-        Err(e) => {
-            log::debug!("Token validation failed: {}", e);
-            return HttpResponse::Unauthorized()
-                .json(AuthErrorResponse::new("unauthorized", "Invalid or expired token"));
-        },
+    // Validate existing token via unified auth (uses configured trusted issuers)
+    let connection_info = extract_client_ip_secure(&req);
+    let auth_request = AuthRequest::Jwt { token: token.clone() };
+    let auth_result = match authenticate(auth_request, &connection_info, user_repo.get_ref()).await
+    {
+        Ok(result) => result,
+        Err(err) => return map_auth_error_to_response(err),
     };
 
     // Verify user still exists and is active by username (we don't have find_by_id)
-    let username = claims.username.as_ref().map(|u| u.as_str()).unwrap_or("");
-    let username_typed = kalamdb_commons::models::UserName::from(username);
+    let username_typed =
+        kalamdb_commons::models::UserName::from(auth_result.user.username.as_str());
     let user = match user_repo.get_user_by_username(&username_typed).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {
@@ -360,7 +309,7 @@ pub async fn refresh_handler(
 /// POST /v1/api/auth/logout
 ///
 /// Clears the authentication cookie.
-pub async fn logout_handler(config: web::Data<AuthConfig>) -> HttpResponse {
+pub async fn logout_handler(config: web::Data<AuthSettings>) -> HttpResponse {
     let cookie_config = CookieConfig {
         secure: config.cookie_secure,
         ..Default::default()
@@ -378,7 +327,6 @@ pub async fn logout_handler(config: web::Data<AuthConfig>) -> HttpResponse {
 pub async fn me_handler(
     req: HttpRequest,
     user_repo: web::Data<Arc<dyn UserRepository>>,
-    config: web::Data<AuthConfig>,
 ) -> HttpResponse {
     // Extract token from cookie
     let token = match extract_auth_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned()))
@@ -390,20 +338,18 @@ pub async fn me_handler(
         },
     };
 
-    // Validate token
-    let trusted_issuers = vec![KALAMDB_ISSUER.to_string()];
-    let claims = match validate_jwt_token(&token, &config.jwt_secret, &trusted_issuers) {
-        Ok(c) => c,
-        Err(e) => {
-            log::debug!("Token validation failed: {}", e);
-            return HttpResponse::Unauthorized()
-                .json(AuthErrorResponse::new("unauthorized", "Invalid or expired token"));
-        },
+    // Validate token via unified auth (uses configured trusted issuers)
+    let connection_info = extract_client_ip_secure(&req);
+    let auth_request = AuthRequest::Jwt { token };
+    let auth_result = match authenticate(auth_request, &connection_info, user_repo.get_ref()).await
+    {
+        Ok(result) => result,
+        Err(err) => return map_auth_error_to_response(err),
     };
 
     // Get current user info
-    let username = claims.username.as_ref().map(|u| u.as_str()).unwrap_or("");
-    let username_typed = kalamdb_commons::models::UserName::from(username);
+    let username_typed =
+        kalamdb_commons::models::UserName::from(auth_result.user.username.as_str());
     let user = match user_repo.get_user_by_username(&username_typed).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {

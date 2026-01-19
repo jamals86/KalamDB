@@ -63,10 +63,8 @@ impl FileStreamLogStore {
                         if let Some(window_start) = parse_log_window(&log_file) {
                             let window_end =
                                 window_start.saturating_add(self.config.bucket.duration_ms());
-                            if window_end < before_time {
-                                if fs::remove_file(&log_file).is_ok() {
-                                    deleted += 1;
-                                }
+                            if window_end < before_time && fs::remove_file(&log_file).is_ok() {
+                                deleted += 1;
                             }
                         }
                     }

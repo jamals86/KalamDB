@@ -18,19 +18,7 @@ impl JobsManager {
         let executor = app_ctx.executor();
 
         // Use Raft command for cluster replication
-        let now = Utc::now();
-        let cmd = MetaCommand::CreateJob {
-            job_id: job.job_id.clone(),
-            job_type: job.job_type.clone(),
-            status: job.status.clone(),
-            parameters_json: job.parameters.clone(),
-            idempotency_key: job.idempotency_key.clone(),
-            max_retries: job.max_retries,
-            queue: job.queue.clone(),
-            priority: job.priority,
-            node_id: job.node_id.clone(),
-            created_at: now,
-        };
+        let cmd = MetaCommand::CreateJob { job };
 
         executor
             .execute_meta(cmd)
@@ -94,7 +82,7 @@ impl JobsManager {
             updated_at: now_ms,
             started_at: None,
             finished_at: None,
-            node_id: self.node_id.clone(),
+            node_id: self.node_id,
             leader_node_id: None,
             queue: None,
             priority: None,
@@ -260,7 +248,7 @@ impl JobsManager {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::CompleteJob {
             job_id: job_id.clone(),
-            result_json: Some(
+            result: Some(
                 serde_json::json!({ "message": success_message.clone() }).to_string(),
             ),
             completed_at: Utc::now(),

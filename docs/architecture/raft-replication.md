@@ -4,7 +4,7 @@
 
 KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, user data, and shared data across nodes. The Raft layer lives in [backend/crates/kalamdb-raft](backend/crates/kalamdb-raft/src/lib.rs) and is accessed through the `CommandExecutor` abstraction so handlers do not branch on cluster vs standalone mode.
 
-- **Multi-group layout**: 3 metadata groups (system, users, jobs), 32 user-data shards, 1 shared-data shard by default. Group identity and hashing live in [backend/crates/kalamdb-raft/src/group_id.rs](backend/crates/kalamdb-raft/src/group_id.rs).
+- **Multi-group layout**: 1 unified metadata group, 32 user-data shards, 1 shared-data shard by default. Group identity and sharding helpers live in [backend/crates/kalamdb-sharding/src](backend/crates/kalamdb-sharding/src/lib.rs).
 - **Command path**: Handler → `CommandExecutor` (`DirectExecutor` in standalone or `RaftExecutor` in cluster) → `RaftManager` → `RaftGroup` → OpenRaft log → State machine → Applier → storage/provider.
 - **Replication modes**: `Quorum` (fast, default) or `All` (wait for every member to apply) configured via `ReplicationMode` in [backend/crates/kalamdb-raft/src/manager/config.rs](backend/crates/kalamdb-raft/src/manager/config.rs).
 - **Transport**: gRPC service in [backend/crates/kalamdb-raft/src/network/service.rs](backend/crates/kalamdb-raft/src/network/service.rs) handles Raft RPCs and follower→leader proposal forwarding.
@@ -12,9 +12,9 @@ KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, u
 
 ## Topology & Sharding
 
-- Group IDs encode role and shard: `MetaSystem`, `MetaUsers`, `MetaJobs`, `DataUserShard(n)`, `DataSharedShard(n)`. Numeric IDs are stable for OpenRaft membership and RPC routing.
-- User data routing: `hash(user_id) % user_shards` (default 32). Shared tables currently always use shard 0. Helpers live in `ShardRouter` in [backend/crates/kalamdb-raft/src/group_id.rs](backend/crates/kalamdb-raft/src/group_id.rs).
-- Table-level helpers: `RaftManager::compute_shard` hashes `TableId` when table-scoped routing is needed.
+- Group IDs encode role and shard: `Meta`, `DataUserShard(n)`, `DataSharedShard(n)`. Numeric IDs are stable for OpenRaft membership and RPC routing.
+- User data routing: `hash(user_id) % user_shards` (default 32). Shared tables currently always use shard 0. Helpers live in `ShardRouter` in [backend/crates/kalamdb-sharding/src/lib.rs](backend/crates/kalamdb-sharding/src/lib.rs).
+- Table-level helpers: `ShardRouter::route_table` / `table_shard_id` hash `TableId` when table-scoped routing is needed.
 
 ## Command Flow (Cluster Mode)
 

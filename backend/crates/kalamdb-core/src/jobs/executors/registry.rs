@@ -16,8 +16,9 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::SerdeJsonResultExt;
 use async_trait::async_trait;
-use dashmap::DashMap;
 use kalamdb_commons::models::{system::Job, JobType};
+use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Type-erased job executor trait for heterogeneous storage
@@ -195,7 +196,7 @@ where
 /// Registry of job executors
 ///
 /// Thread-safe registry that maps job types to their executor implementations.
-/// Uses DashMap for lock-free concurrent access.
+/// Uses an RwLock<HashMap> since registration happens at startup.
 ///
 /// Stores type-erased `Arc<dyn DynJobExecutor>` internally but provides
 /// type-safe registration through `register<E: JobExecutor>()`.
@@ -214,14 +215,14 @@ where
 /// // Execution is type-safe through DynJobExecutor bridge
 /// ```
 pub struct JobRegistry {
-    executors: DashMap<JobType, Arc<dyn DynJobExecutor>>,
+    executors: RwLock<HashMap<JobType, Arc<dyn DynJobExecutor>>>,
 }
 
 impl JobRegistry {
     /// Create a new empty job registry
     pub fn new() -> Self {
         Self {
-            executors: DashMap::new(),
+            executors: RwLock::new(HashMap::new()),
         }
     }
 
@@ -237,11 +238,12 @@ impl JobRegistry {
         E: JobExecutor + 'static,
     {
         let job_type = executor.job_type();
-        if self.executors.contains_key(&job_type) {
+        let mut executors = self.executors.write();
+        if executors.contains_key(&job_type) {
             panic!("Executor for job type {:?} is already registered", job_type);
         }
         // Coerce to Arc<dyn DynJobExecutor> through the blanket impl
-        self.executors.insert(job_type, executor);
+        executors.insert(job_type, executor);
     }
 
     /// Register a job executor, replacing any existing one
@@ -256,7 +258,8 @@ impl JobRegistry {
         E: JobExecutor + 'static,
     {
         let job_type = executor.job_type();
-        self.executors.insert(job_type, executor)
+        let mut executors = self.executors.write();
+        executors.insert(job_type, executor)
     }
 
     /// Pre-validate job parameters before job creation
@@ -280,7 +283,11 @@ impl JobRegistry {
         job_type: &JobType,
         params_json: &str,
     ) -> Result<bool, KalamDbError> {
-        let executor = self.executors.get(job_type).ok_or_else(|| {
+        let executor = {
+            let executors = self.executors.read();
+            executors.get(job_type).cloned()
+        }
+        .ok_or_else(|| {
             KalamDbError::NotFound(format!("No executor registered for job type: {:?}", job_type))
         })?;
 
@@ -307,7 +314,11 @@ impl JobRegistry {
         app_ctx: Arc<AppContext>,
         job: &Job,
     ) -> Result<JobDecision, KalamDbError> {
-        let executor = self.executors.get(&job.job_type).ok_or_else(|| {
+        let executor = {
+            let executors = self.executors.read();
+            executors.get(&job.job_type).cloned()
+        }
+        .ok_or_else(|| {
             KalamDbError::NotFound(format!(
                 "No executor registered for job type: {:?}",
                 job.job_type
@@ -336,7 +347,11 @@ impl JobRegistry {
         app_ctx: Arc<AppContext>,
         job: &Job,
     ) -> Result<JobDecision, KalamDbError> {
-        let executor = self.executors.get(&job.job_type).ok_or_else(|| {
+        let executor = {
+            let executors = self.executors.read();
+            executors.get(&job.job_type).cloned()
+        }
+        .ok_or_else(|| {
             KalamDbError::NotFound(format!(
                 "No executor registered for job type: {:?}",
                 job.job_type
@@ -366,7 +381,11 @@ impl JobRegistry {
         app_ctx: Arc<AppContext>,
         job: &Job,
     ) -> Result<JobDecision, KalamDbError> {
-        let executor = self.executors.get(&job.job_type).ok_or_else(|| {
+        let executor = {
+            let executors = self.executors.read();
+            executors.get(&job.job_type).cloned()
+        }
+        .ok_or_else(|| {
             KalamDbError::NotFound(format!(
                 "No executor registered for job type: {:?}",
                 job.job_type
@@ -387,7 +406,11 @@ impl JobRegistry {
     /// - No executor registered for job type
     /// - Cancellation fails
     pub async fn cancel(&self, app_ctx: Arc<AppContext>, job: &Job) -> Result<(), KalamDbError> {
-        let executor = self.executors.get(&job.job_type).ok_or_else(|| {
+        let executor = {
+            let executors = self.executors.read();
+            executors.get(&job.job_type).cloned()
+        }
+        .ok_or_else(|| {
             KalamDbError::NotFound(format!(
                 "No executor registered for job type: {:?}",
                 job.job_type
@@ -399,32 +422,38 @@ impl JobRegistry {
 
     /// Check if an executor is registered for a job type
     pub fn contains(&self, job_type: &JobType) -> bool {
-        self.executors.contains_key(job_type)
+        let executors = self.executors.read();
+        executors.contains_key(job_type)
     }
 
     /// Get the number of registered executors
     pub fn len(&self) -> usize {
-        self.executors.len()
+        let executors = self.executors.read();
+        executors.len()
     }
 
     /// Check if the registry is empty
     pub fn is_empty(&self) -> bool {
-        self.executors.is_empty()
+        let executors = self.executors.read();
+        executors.is_empty()
     }
 
     /// List all registered job types
     pub fn job_types(&self) -> Vec<JobType> {
-        self.executors.iter().map(|entry| *entry.key()).collect()
+        let executors = self.executors.read();
+        executors.keys().cloned().collect()
     }
 
     /// Get executor name for a job type
     pub fn executor_name(&self, job_type: &JobType) -> Option<&'static str> {
-        self.executors.get(job_type).map(|e| e.name())
+        let executors = self.executors.read();
+        executors.get(job_type).map(|e| e.name())
     }
 
     /// Clear all registered executors
     pub fn clear(&self) {
-        self.executors.clear();
+        let mut executors = self.executors.write();
+        executors.clear();
     }
 }
 

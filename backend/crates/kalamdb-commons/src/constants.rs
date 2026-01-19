@@ -11,9 +11,8 @@ pub struct ColumnFamilyNames;
 
 #[allow(non_upper_case_globals)]
 impl ColumnFamilyNames {
-    /// Default column family (RocksDB built-in)
+    // Default column family (RocksDB built-in)
     // pub const DEFAULT: &'static str = "default";
-
     /// Unified information_schema tables (replaces system_table_schemas + system_columns)
     pub const INFORMATION_SCHEMA_TABLES: &'static str = "information_schema_tables";
 

@@ -23,6 +23,10 @@ impl ServerConfig {
     /// - KALAMDB_CLUSTER_RPC_ADDR: Override cluster.rpc_addr
     /// - KALAMDB_CLUSTER_API_ADDR: Override cluster.api_addr
     /// - KALAMDB_CLUSTER_PEERS: Override cluster.peers
+    /// - KALAMDB_JWT_SECRET: Override auth.jwt_secret
+    /// - KALAMDB_JWT_TRUSTED_ISSUERS: Override auth.jwt_trusted_issuers
+    /// - KALAMDB_JWT_EXPIRY_HOURS: Override auth.jwt_expiry_hours
+    /// - KALAMDB_COOKIE_SECURE: Override auth.cookie_secure
     ///
     /// Environment variables take precedence over server.toml values (T031)
     pub fn apply_env_overrides(&mut self) -> anyhow::Result<()> {
@@ -70,6 +74,29 @@ impl ServerConfig {
         if let Ok(val) = env::var("KALAMDB_LOG_TO_CONSOLE") {
             self.logging.log_to_console =
                 val.to_lowercase() == "true" || val == "1" || val.to_lowercase() == "yes";
+        }
+
+        // JWT secret
+        if let Ok(secret) = env::var("KALAMDB_JWT_SECRET") {
+            self.auth.jwt_secret = secret;
+        }
+
+        // JWT trusted issuers
+        if let Ok(issuers) = env::var("KALAMDB_JWT_TRUSTED_ISSUERS") {
+            self.auth.jwt_trusted_issuers = issuers;
+        }
+
+        // JWT expiry hours
+        if let Ok(hours) = env::var("KALAMDB_JWT_EXPIRY_HOURS") {
+            self.auth.jwt_expiry_hours = hours
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid KALAMDB_JWT_EXPIRY_HOURS value: {}", hours))?;
+        }
+
+        // Cookie secure flag
+        if let Ok(val) = env::var("KALAMDB_COOKIE_SECURE") {
+            self.auth.cookie_secure =
+                val.to_lowercase() != "false" && val != "0" && val.to_lowercase() != "no";
         }
 
         // Data directory (new naming convention)

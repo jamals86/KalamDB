@@ -2,9 +2,15 @@
 //!
 //! This state machine manages:
 //! - User table INSERT/UPDATE/DELETE
-//! - Live query registrations for users in this shard
+//! - Live query subscriptions (persisted via applier to system.live_queries)
 //!
 //! Runs in DataUserShard(N) Raft groups where N = user_id % 32.
+//!
+//! ## Live Query Sharding
+//!
+//! Live queries are sharded by user_id, ensuring efficient per-user subscription
+//! management. The applier persists live queries to `system.live_queries` table
+//! in RocksDB for cluster-wide visibility.
 //!
 //! ## Watermark Synchronization
 //!
@@ -13,10 +19,8 @@
 //! their dependent metadata (tables, users) is applied locally.
 
 use async_trait::async_trait;
-use kalamdb_commons::models::NodeId;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -26,36 +30,11 @@ use crate::{DataResponse, GroupId, RaftError, UserDataCommand};
 use super::{decode, encode, ApplyResult, KalamStateMachine, StateMachineSnapshot};
 use super::{get_coordinator, PendingBuffer, PendingCommand};
 
-/// Live query state for this shard
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LiveQueryState {
-    subscription_id: String,
-    user_id: String,
-    table_namespace: String,
-    table_name: String,
-    query_hash: String,
-    node_id: NodeId,
-}
-
-/// Row operation tracking (for replay/snapshot)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RowOperation {
-    table_namespace: String,
-    table_name: String,
-    operation: String, // "insert", "update", "delete"
-    row_count: u64,
-}
-
 /// Snapshot data for UserDataStateMachine
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UserDataSnapshot {
     /// Shard number
     shard: u32,
-    /// Active live queries in this shard
-    live_queries: HashMap<String, LiveQueryState>,
-    /// Recent row operations (for metrics, not for replay)
-    /// Actual data is in RocksDB/Parquet, not replicated via Raft
-    recent_operations: Vec<RowOperation>,
     /// Total operations count
     total_operations: u64,
     /// Pending commands waiting for Meta to catch up (for crash recovery)
@@ -67,11 +46,12 @@ struct UserDataSnapshot {
 ///
 /// Handles commands in DataUserShard(N) Raft groups:
 /// - Insert, Update, Delete (user table data)
-/// - RegisterLiveQuery, UnregisterLiveQuery
-/// - CleanupNodeSubscriptions, PingLiveQuery
+/// - CreateLiveQuery, UpdateLiveQuery, DeleteLiveQuery, DeleteLiveQueriesByConnection
+/// - CleanupNodeSubscriptions
 ///
-/// Note: Row data is persisted via the UserDataApplier after Raft consensus.
+/// Note: All data is persisted via the UserDataApplier after Raft consensus.
 /// All nodes (leader and followers) call the applier, ensuring consistent data.
+/// Live queries are persisted to `system.live_queries` via the applier, not in-memory.
 ///
 /// ## Watermark Synchronization
 ///
@@ -89,8 +69,6 @@ pub struct UserDataStateMachine {
     approximate_size: AtomicU64,
     /// Total operations processed
     total_operations: AtomicU64,
-    /// Active live queries
-    live_queries: RwLock<HashMap<String, LiveQueryState>>,
     /// Optional applier for persisting data to providers
     applier: RwLock<Option<Arc<dyn UserDataApplier>>>,
     /// Buffer for commands waiting for Meta to catch up
@@ -118,7 +96,6 @@ impl UserDataStateMachine {
             last_applied_term: AtomicU64::new(0),
             approximate_size: AtomicU64::new(0),
             total_operations: AtomicU64::new(0),
-            live_queries: RwLock::new(HashMap::new()),
             applier: RwLock::new(None),
             pending_buffer: PendingBuffer::new(),
         }
@@ -133,7 +110,6 @@ impl UserDataStateMachine {
             last_applied_term: AtomicU64::new(0),
             approximate_size: AtomicU64::new(0),
             total_operations: AtomicU64::new(0),
-            live_queries: RwLock::new(HashMap::new()),
             applier: RwLock::new(Some(applier)),
             pending_buffer: PendingBuffer::new(),
         }
@@ -303,94 +279,157 @@ impl UserDataStateMachine {
                 Ok(DataResponse::RowsAffected(rows_affected))
             },
 
-            UserDataCommand::RegisterLiveQuery {
-                subscription_id,
-                user_id,
-                query_hash,
-                table_id,
-                node_id,
-                ..
-            } => {
+            UserDataCommand::CreateLiveQuery { live_query, .. } => {
                 log::debug!(
-                    "UserDataStateMachine[{}]: RegisterLiveQuery {} for user {:?}",
+                    "UserDataStateMachine[{}]: CreateLiveQuery {} for user {:?}",
                     self.shard,
-                    subscription_id,
-                    user_id
+                    live_query.live_id,
+                    live_query.user_id
                 );
 
-                let lq = LiveQueryState {
-                    subscription_id: subscription_id.clone(),
-                    user_id: user_id.as_str().to_string(),
-                    table_namespace: table_id.namespace_id().as_str().to_string(),
-                    table_name: table_id.table_name().as_str().to_string(),
-                    query_hash,
-                    node_id: node_id.clone(),
+                let message = if let Some(ref a) = applier {
+                    match a.create_live_query(&live_query).await {
+                        Ok(msg) => msg,
+                        Err(e) => {
+                            log::warn!(
+                                "UserDataStateMachine[{}]: CreateLiveQuery failed: {}",
+                                self.shard,
+                                e
+                            );
+                            return Ok(DataResponse::error(e.to_string()));
+                        },
+                    }
+                } else {
+                    log::warn!(
+                        "UserDataStateMachine[{}]: No applier set, live query not persisted!",
+                        self.shard
+                    );
+                    String::new()
                 };
 
-                {
-                    let mut live_queries = self.live_queries.write();
-                    live_queries.insert(subscription_id.clone(), lq);
-                }
-
                 self.approximate_size.fetch_add(200, Ordering::Relaxed);
-                Ok(DataResponse::Subscribed { subscription_id })
+                Ok(DataResponse::LiveQueryCreated {
+                    live_id: live_query.live_id.clone(),
+                    message: if message.is_empty() { None } else { Some(message) },
+                })
             },
 
-            UserDataCommand::UnregisterLiveQuery {
-                subscription_id,
-                user_id,
+            UserDataCommand::UpdateLiveQueryStats {
+                live_id,
+                last_update,
+                changes,
                 ..
             } => {
-                log::debug!(
-                    "UserDataStateMachine[{}]: UnregisterLiveQuery {} for user {:?}",
+                log::trace!(
+                    "UserDataStateMachine[{}]: UpdateLiveQueryStats {} (changes={})",
                     self.shard,
-                    subscription_id,
-                    user_id
+                    live_id,
+                    changes
                 );
 
-                {
-                    let mut live_queries = self.live_queries.write();
-                    live_queries.remove(&subscription_id);
+                if let Some(ref a) = applier {
+                    if let Err(e) = a
+                        .update_live_query_stats(&live_id, last_update.timestamp_millis(), changes)
+                        .await
+                    {
+                        log::warn!(
+                            "UserDataStateMachine[{}]: UpdateLiveQueryStats failed: {}",
+                            self.shard,
+                            e
+                        );
+                        return Ok(DataResponse::error(e.to_string()));
+                    }
                 }
 
                 Ok(DataResponse::Ok)
             },
 
-            UserDataCommand::CleanupNodeSubscriptions {
-                user_id,
-                failed_node_id,
+            UserDataCommand::DeleteLiveQuery {
+                live_id,
+                deleted_at,
                 ..
             } => {
-                log::info!(
-                    "UserDataStateMachine[{}]: Cleanup subscriptions from node {} for user {:?}",
+                log::debug!(
+                    "UserDataStateMachine[{}]: DeleteLiveQuery {}",
                     self.shard,
-                    failed_node_id,
-                    user_id
+                    live_id
                 );
 
-                let removed = {
-                    let mut live_queries = self.live_queries.write();
-                    let before = live_queries.len();
-                    live_queries.retain(|_, lq| lq.node_id != failed_node_id);
-                    before - live_queries.len()
+                if let Some(ref a) = applier {
+                    if let Err(e) = a.delete_live_query(&live_id, deleted_at.timestamp_millis()).await
+                    {
+                        log::warn!(
+                            "UserDataStateMachine[{}]: DeleteLiveQuery failed: {}",
+                            self.shard,
+                            e
+                        );
+                        return Ok(DataResponse::error(e.to_string()));
+                    }
+                }
+
+                Ok(DataResponse::Ok)
+            },
+
+            UserDataCommand::DeleteLiveQueriesByConnection {
+                connection_id,
+                deleted_at,
+                ..
+            } => {
+                log::debug!(
+                    "UserDataStateMachine[{}]: DeleteLiveQueriesByConnection {}",
+                    self.shard,
+                    connection_id
+                );
+
+                let removed = if let Some(ref a) = applier {
+                    match a
+                        .delete_live_queries_by_connection(&connection_id, deleted_at.timestamp_millis())
+                        .await
+                    {
+                        Ok(count) => count,
+                        Err(e) => {
+                            log::warn!(
+                                "UserDataStateMachine[{}]: DeleteLiveQueriesByConnection failed: {}",
+                                self.shard,
+                                e
+                            );
+                            return Ok(DataResponse::error(e.to_string()));
+                        },
+                    }
+                } else {
+                    0
                 };
 
                 Ok(DataResponse::RowsAffected(removed))
             },
 
-            UserDataCommand::PingLiveQuery {
-                subscription_id,
-                user_id,
+            UserDataCommand::CleanupNodeSubscriptions {
+                failed_node_id,
                 ..
             } => {
-                log::trace!(
-                    "UserDataStateMachine[{}]: PingLiveQuery {} for user {:?}",
+                log::info!(
+                    "UserDataStateMachine[{}]: CleanupNodeSubscriptions from node {}",
                     self.shard,
-                    subscription_id,
-                    user_id
+                    failed_node_id
                 );
-                // Ping just updates last_seen timestamp - no state change needed here
-                Ok(DataResponse::Ok)
+
+                let removed = if let Some(ref a) = applier {
+                    match a.cleanup_node_subscriptions(failed_node_id).await {
+                        Ok(count) => count,
+                        Err(e) => {
+                            log::warn!(
+                                "UserDataStateMachine[{}]: CleanupNodeSubscriptions failed: {}",
+                                self.shard,
+                                e
+                            );
+                            return Ok(DataResponse::error(e.to_string()));
+                        },
+                    }
+                } else {
+                    0
+                };
+
+                Ok(DataResponse::RowsAffected(removed))
             },
         }
     }
@@ -463,13 +502,10 @@ impl KalamStateMachine for UserDataStateMachine {
     }
 
     async fn snapshot(&self) -> Result<StateMachineSnapshot, RaftError> {
-        let live_queries = self.live_queries.read().clone();
         let pending_commands = self.pending_buffer.get_all();
 
         let snapshot = UserDataSnapshot {
             shard: self.shard,
-            live_queries,
-            recent_operations: Vec::new(), // Not tracking for now
             total_operations: self.total_operations.load(Ordering::Relaxed),
             pending_commands,
         };
@@ -492,11 +528,6 @@ impl KalamStateMachine for UserDataStateMachine {
                 "Snapshot shard {} doesn't match state machine shard {}",
                 data.shard, self.shard
             )));
-        }
-
-        {
-            let mut live_queries = self.live_queries.write();
-            *live_queries = data.live_queries;
         }
 
         // Restore pending buffer from snapshot
@@ -523,7 +554,9 @@ impl KalamStateMachine for UserDataStateMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::models::NamespaceId;
+    use kalamdb_commons::models::{ConnectionId, LiveQueryId, NamespaceId, NodeId, TableName};
+    use kalamdb_commons::system::LiveQuery;
+    use kalamdb_commons::types::LiveQueryStatus;
     use kalamdb_commons::{TableId, UserId};
 
     #[tokio::test]
@@ -549,41 +582,45 @@ mod tests {
         let sm = UserDataStateMachine::new(5);
 
         let node_id = NodeId::new(1);
+        let user_id = UserId::new("user456");
+        let connection_id = ConnectionId::new("conn-001");
+        let live_id = LiveQueryId::new(user_id.clone(), connection_id.clone(), "sub-001");
 
-        let cmd = UserDataCommand::RegisterLiveQuery {
+        // CreateLiveQuery - without applier, this just logs and returns success
+        let live_query = LiveQuery {
+            live_id: live_id.clone(),
+            connection_id: connection_id.as_str().to_string(),
             subscription_id: "sub-001".to_string(),
-            user_id: UserId::new("user456"),
-            query_hash: "hash123".to_string(),
-            table_id: TableId::new(NamespaceId::new("app"), "messages".into()),
-            filter_json: None,
+            namespace_id: NamespaceId::new("app"),
+            table_name: TableName::from("messages"),
+            user_id: user_id.clone(),
+            query: "SELECT * FROM app.messages".to_string(),
+            options: None,
+            status: LiveQueryStatus::Active,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            last_update: chrono::Utc::now().timestamp_millis(),
+            last_ping_at: chrono::Utc::now().timestamp_millis(),
+            changes: 0,
             node_id: node_id.clone(),
-            created_at: chrono::Utc::now(),
+        };
+
+        let cmd = UserDataCommand::CreateLiveQuery {
             required_meta_index: 0,
+            live_query,
         };
 
         let payload = encode(&cmd).unwrap();
-        sm.apply(1, 1, &payload).await.unwrap();
+        let result = sm.apply(1, 1, &payload).await.unwrap();
+        assert!(result.is_ok());
 
-        // Check live query registered
-        {
-            let lqs = sm.live_queries.read();
-            assert!(lqs.contains_key("sub-001"));
-            assert_eq!(lqs.get("sub-001").unwrap().node_id, node_id);
-        }
-
-        // Cleanup node subscriptions
+        // CleanupNodeSubscriptions - without applier, this just logs and returns 0
         let cleanup_cmd = UserDataCommand::CleanupNodeSubscriptions {
-            user_id: UserId::new("user456"),
+            user_id: user_id.clone(),
             failed_node_id: node_id.clone(),
             required_meta_index: 0,
         };
         let payload2 = encode(&cleanup_cmd).unwrap();
-        sm.apply(2, 1, &payload2).await.unwrap();
-
-        // Check live query removed
-        {
-            let lqs = sm.live_queries.read();
-            assert!(!lqs.contains_key("sub-001"));
-        }
+        let result = sm.apply(2, 1, &payload2).await.unwrap();
+        assert!(result.is_ok());
     }
 }

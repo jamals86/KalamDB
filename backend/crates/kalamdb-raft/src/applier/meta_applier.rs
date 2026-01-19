@@ -10,11 +10,11 @@
 //! providers (namespaces, tables, storages, users, jobs).
 
 use async_trait::async_trait;
-use kalamdb_commons::models::schemas::TableType;
+use kalamdb_commons::models::schemas::{TableDefinition, TableType};
 use kalamdb_commons::models::{
-    ConnectionId, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableId,
-    TableName, UserId,
+    JobId, JobStatus, NamespaceId, NodeId, StorageId, TableId, UserId,
 };
+use kalamdb_commons::system::{Job, Storage};
 use kalamdb_commons::types::User;
 
 use crate::RaftError;
@@ -32,6 +32,7 @@ use crate::RaftError;
 /// - Consistent error handling across all metadata types
 /// - Simpler dependency injection during RaftManager setup
 #[async_trait]
+#[allow(clippy::too_many_arguments)]
 pub trait MetaApplier: Send + Sync {
     // =========================================================================
     // Namespace Operations
@@ -56,7 +57,7 @@ pub trait MetaApplier: Send + Sync {
     /// # Arguments
     /// * `table_id` - TableId containing namespace and table name
     /// * `table_type` - Type of table (User, Shared, Stream)
-    /// * `schema_json` - JSON-serialized TableDefinition
+    /// * `table_def` - Table schema definition
     ///
     /// # Returns
     /// Success message to be returned to the client
@@ -64,11 +65,11 @@ pub trait MetaApplier: Send + Sync {
         &self,
         table_id: &TableId,
         table_type: TableType,
-        schema_json: &str,
+        table_def: &TableDefinition,
     ) -> Result<String, RaftError>;
 
     /// Alter a table in persistent storage
-    async fn alter_table(&self, table_id: &TableId, schema_json: &str)
+    async fn alter_table(&self, table_id: &TableId, table_def: &TableDefinition)
         -> Result<String, RaftError>;
 
     /// Drop a table from persistent storage
@@ -82,7 +83,7 @@ pub trait MetaApplier: Send + Sync {
     async fn register_storage(
         &self,
         storage_id: &StorageId,
-        config_json: &str,
+        storage: &Storage,
     ) -> Result<String, RaftError>;
 
     /// Unregister storage configuration
@@ -117,19 +118,9 @@ pub trait MetaApplier: Send + Sync {
     // =========================================================================
 
     /// Create a new job in persistent storage
-    async fn create_job(
-        &self,
-        job_id: &JobId,
-        job_type: JobType,
-        status: JobStatus,
-        parameters_json: Option<&str>,
-        idempotency_key: Option<&str>,
-        max_retries: u8,
-        queue: Option<&str>,
-        priority: Option<i32>,
-        node_id: NodeId,
-        created_at: i64,
-    ) -> Result<String, RaftError>;
+    ///
+    /// Uses the `Job` struct from kalamdb-commons for cleaner API.
+    async fn create_job(&self, job: &Job) -> Result<String, RaftError>;
 
     /// Create a per-node job entry
     async fn create_job_node(
@@ -178,7 +169,7 @@ pub trait MetaApplier: Send + Sync {
     async fn complete_job(
         &self,
         job_id: &JobId,
-        result_json: Option<&str>,
+        result: Option<&str>,
         completed_at: i64,
     ) -> Result<String, RaftError>;
 
@@ -205,60 +196,6 @@ pub trait MetaApplier: Send + Sync {
         reason: &str,
         cancelled_at: i64,
     ) -> Result<String, RaftError>;
-
-    /// Create a schedule
-    async fn create_schedule(
-        &self,
-        schedule_id: &str,
-        job_type: JobType,
-        cron_expression: &str,
-        config_json: Option<&str>,
-        created_at: i64,
-    ) -> Result<String, RaftError>;
-
-    /// Delete a schedule
-    async fn delete_schedule(&self, schedule_id: &str) -> Result<String, RaftError>;
-
-    // =========================================================================
-    // Live Query Operations
-    // =========================================================================
-
-    /// Create a live query subscription (replicated across cluster)
-    async fn create_live_query(
-        &self,
-        live_id: &LiveQueryId,
-        connection_id: &ConnectionId,
-        namespace_id: &NamespaceId,
-        table_name: &TableName,
-        user_id: &UserId,
-        query: &str,
-        options_json: Option<&str>,
-        node_id: NodeId,
-        subscription_id: &str,
-        created_at: i64,
-    ) -> Result<String, RaftError>;
-
-    /// Update a live query (last_update, changes count)
-    async fn update_live_query(
-        &self,
-        live_id: &LiveQueryId,
-        last_update: i64,
-        changes: i64,
-    ) -> Result<String, RaftError>;
-
-    /// Delete a live query subscription
-    async fn delete_live_query(
-        &self,
-        live_id: &LiveQueryId,
-        deleted_at: i64,
-    ) -> Result<String, RaftError>;
-
-    /// Delete all live queries for a connection
-    async fn delete_live_queries_by_connection(
-        &self,
-        connection_id: &ConnectionId,
-        deleted_at: i64,
-    ) -> Result<String, RaftError>;
 }
 
 /// No-op applier for testing or standalone scenarios
@@ -281,10 +218,10 @@ impl MetaApplier for NoOpMetaApplier {
     }
 
     // Table operations
-    async fn create_table(&self, _: &TableId, _: TableType, _: &str) -> Result<String, RaftError> {
+    async fn create_table(&self, _: &TableId, _: TableType, _: &TableDefinition) -> Result<String, RaftError> {
         Ok(String::new())
     }
-    async fn alter_table(&self, _: &TableId, _: &str) -> Result<String, RaftError> {
+    async fn alter_table(&self, _: &TableId, _: &TableDefinition) -> Result<String, RaftError> {
         Ok(String::new())
     }
     async fn drop_table(&self, _: &TableId) -> Result<String, RaftError> {
@@ -292,7 +229,7 @@ impl MetaApplier for NoOpMetaApplier {
     }
 
     // Storage operations
-    async fn register_storage(&self, _: &StorageId, _: &str) -> Result<String, RaftError> {
+    async fn register_storage(&self, _: &StorageId, _: &Storage) -> Result<String, RaftError> {
         Ok(String::new())
     }
     async fn unregister_storage(&self, _: &StorageId) -> Result<String, RaftError> {
@@ -322,19 +259,7 @@ impl MetaApplier for NoOpMetaApplier {
     }
 
     // Job operations
-    async fn create_job(
-        &self,
-        _: &JobId,
-        _: JobType,
-        _: JobStatus,
-        _: Option<&str>,
-        _: Option<&str>,
-        _: u8,
-        _: Option<&str>,
-        _: Option<i32>,
-        _: NodeId,
-        _: i64,
-    ) -> Result<String, RaftError> {
+    async fn create_job(&self, _: &Job) -> Result<String, RaftError> {
         Ok(String::new())
     }
     async fn create_job_node(
@@ -382,61 +307,13 @@ impl MetaApplier for NoOpMetaApplier {
     async fn cancel_job(&self, _: &JobId, _: &str, _: i64) -> Result<String, RaftError> {
         Ok(String::new())
     }
-    async fn create_schedule(
-        &self,
-        _: &str,
-        _: JobType,
-        _: &str,
-        _: Option<&str>,
-        _: i64,
-    ) -> Result<String, RaftError> {
-        Ok(String::new())
-    }
-    async fn delete_schedule(&self, _: &str) -> Result<String, RaftError> {
-        Ok(String::new())
-    }
-
-    // Live query operations
-    async fn create_live_query(
-        &self,
-        _: &LiveQueryId,
-        _: &ConnectionId,
-        _: &NamespaceId,
-        _: &TableName,
-        _: &UserId,
-        _: &str,
-        _: Option<&str>,
-        _: NodeId,
-        _: &str,
-        _: i64,
-    ) -> Result<String, RaftError> {
-        Ok(String::new())
-    }
-    async fn update_live_query(
-        &self,
-        _: &LiveQueryId,
-        _: i64,
-        _: i64,
-    ) -> Result<String, RaftError> {
-        Ok(String::new())
-    }
-    async fn delete_live_query(&self, _: &LiveQueryId, _: i64) -> Result<String, RaftError> {
-        Ok(String::new())
-    }
-    async fn delete_live_queries_by_connection(
-        &self,
-        _: &ConnectionId,
-        _: i64,
-    ) -> Result<String, RaftError> {
-        Ok(String::new())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use kalamdb_commons::models::{AuthType, NamespaceId, StorageMode, TableName, UserName};
-    use kalamdb_commons::Role;
+    use kalamdb_commons::{JobType, Role};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -489,12 +366,12 @@ mod tests {
             &self,
             _: &TableId,
             _: TableType,
-            _: &str,
+            _: &TableDefinition,
         ) -> Result<String, RaftError> {
             self.table_ops.fetch_add(1, Ordering::SeqCst);
             Ok(String::new())
         }
-        async fn alter_table(&self, _: &TableId, _: &str) -> Result<String, RaftError> {
+        async fn alter_table(&self, _: &TableId, _: &TableDefinition) -> Result<String, RaftError> {
             self.table_ops.fetch_add(1, Ordering::SeqCst);
             Ok(String::new())
         }
@@ -502,7 +379,7 @@ mod tests {
             self.table_ops.fetch_add(1, Ordering::SeqCst);
             Ok(String::new())
         }
-        async fn register_storage(&self, _: &StorageId, _: &str) -> Result<String, RaftError> {
+        async fn register_storage(&self, _: &StorageId, _: &Storage) -> Result<String, RaftError> {
             self.storage_ops.fetch_add(1, Ordering::SeqCst);
             Ok(String::new())
         }
@@ -535,19 +412,7 @@ mod tests {
             self.user_ops.fetch_add(1, Ordering::SeqCst);
             Ok(String::new())
         }
-        async fn create_job(
-            &self,
-            _: &JobId,
-            _: JobType,
-            _: JobStatus,
-            _: Option<&str>,
-            _: Option<&str>,
-            _: u8,
-            _: Option<&str>,
-            _: Option<i32>,
-            _: NodeId,
-            _: i64,
-        ) -> Result<String, RaftError> {
+        async fn create_job(&self, _: &Job) -> Result<String, RaftError> {
             self.job_ops.fetch_add(1, Ordering::SeqCst);
             Ok(String::new())
         }
@@ -610,55 +475,6 @@ mod tests {
             self.job_ops.fetch_add(1, Ordering::SeqCst);
             Ok(String::new())
         }
-        async fn create_schedule(
-            &self,
-            _: &str,
-            _: JobType,
-            _: &str,
-            _: Option<&str>,
-            _: i64,
-        ) -> Result<String, RaftError> {
-            self.job_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(String::new())
-        }
-        async fn delete_schedule(&self, _: &str) -> Result<String, RaftError> {
-            self.job_ops.fetch_add(1, Ordering::SeqCst);
-            Ok(String::new())
-        }
-        // Live query operations
-        async fn create_live_query(
-            &self,
-            _: &LiveQueryId,
-            _: &ConnectionId,
-            _: &NamespaceId,
-            _: &TableName,
-            _: &UserId,
-            _: &str,
-            _: Option<&str>,
-            _: NodeId,
-            _: &str,
-            _: i64,
-        ) -> Result<String, RaftError> {
-            Ok(String::new())
-        }
-        async fn update_live_query(
-            &self,
-            _: &LiveQueryId,
-            _: i64,
-            _: i64,
-        ) -> Result<String, RaftError> {
-            Ok(String::new())
-        }
-        async fn delete_live_query(&self, _: &LiveQueryId, _: i64) -> Result<String, RaftError> {
-            Ok(String::new())
-        }
-        async fn delete_live_queries_by_connection(
-            &self,
-            _: &ConnectionId,
-            _: i64,
-        ) -> Result<String, RaftError> {
-            Ok(String::new())
-        }
     }
 
     #[tokio::test]
@@ -675,12 +491,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_table_operations() {
+        use kalamdb_commons::models::schemas::TableDefinition;
         let applier = MockMetaApplier::new();
         let table_id = TableId::new(NamespaceId::from("ns"), TableName::from("table"));
-        let schema_json = r#"{"columns":[]}"#;
+        let table_def = TableDefinition::new_with_defaults(
+            NamespaceId::from("ns"),
+            TableName::from("table"),
+            TableType::User,
+            vec![],
+            None,
+        ).expect("Failed to create table definition");
 
-        applier.create_table(&table_id, TableType::User, schema_json).await.unwrap();
-        applier.alter_table(&table_id, schema_json).await.unwrap();
+        applier.create_table(&table_id, TableType::User, &table_def).await.unwrap();
+        applier.alter_table(&table_id, &table_def).await.unwrap();
         applier.drop_table(&table_id).await.unwrap();
 
         assert_eq!(applier.get_counts(), (0, 3, 0, 0, 0));
@@ -721,22 +544,30 @@ mod tests {
     async fn test_job_operations() {
         let applier = MockMetaApplier::new();
         let job_id = JobId::from("FL-12345");
+        let job = Job {
+            job_id: job_id.clone(),
+            job_type: JobType::Flush,
+            status: JobStatus::Queued,
+            leader_status: None,
+            parameters: None,
+            idempotency_key: None,
+            max_retries: 3,
+            retry_count: 0,
+            queue: None,
+            priority: None,
+            node_id: NodeId::from(1),
+            leader_node_id: None,
+            message: None,
+            exception_trace: None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: 1000,
+            updated_at: 1000,
+            started_at: None,
+            finished_at: None,
+        };
 
-        applier
-            .create_job(
-                &job_id,
-                JobType::Flush,
-                JobStatus::Queued,
-                None,
-                None,
-                3,
-                None,
-                None,
-                NodeId::from(1),
-                1000,
-            )
-            .await
-            .unwrap();
+        applier.create_job(&job).await.unwrap();
         applier.claim_job(&job_id, NodeId::from(1), 1100).await.unwrap();
         applier.update_job_status(&job_id, JobStatus::Running, 1200).await.unwrap();
         applier.complete_job(&job_id, Some("{}"), 1300).await.unwrap();
@@ -748,9 +579,21 @@ mod tests {
     async fn test_storage_operations() {
         let applier = MockMetaApplier::new();
         let storage_id = StorageId::from("local");
-        let config = r#"{"type":"local"}"#;
+        let storage = Storage {
+            storage_id: storage_id.clone(),
+            storage_name: "local_storage".to_string(),
+            description: None,
+            storage_type: kalamdb_commons::models::storage::StorageType::Filesystem,
+            base_directory: "/tmp/local".to_string(),
+            credentials: None,
+            config_json: Some(r#"{"type":"local"}"#.to_string()),
+            shared_tables_template: "shared".to_string(),
+            user_tables_template: "user".to_string(),
+            created_at: 0,
+            updated_at: 0,
+        };
 
-        applier.register_storage(&storage_id, config).await.unwrap();
+        applier.register_storage(&storage_id, &storage).await.unwrap();
         applier.unregister_storage(&storage_id).await.unwrap();
 
         assert_eq!(applier.get_counts(), (0, 0, 0, 0, 2));
@@ -758,9 +601,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_noop_applier_all_operations() {
+        use kalamdb_commons::models::schemas::TableDefinition;
         let applier = NoOpMetaApplier;
         let ns_id = NamespaceId::from("test");
         let table_id = TableId::new(ns_id.clone(), TableName::from("table"));
+        let table_def = TableDefinition::new_with_defaults(
+            ns_id.clone(),
+            TableName::from("table"),
+            TableType::User,
+            vec![],
+            None,
+        ).expect("Failed to create table definition");
         let user_id = UserId::from("user");
         let user = User {
             id: user_id.clone(),
@@ -780,50 +631,79 @@ mod tests {
             last_seen: None,
             deleted_at: None,
         };
+        let storage = Storage {
+            storage_id: StorageId::from("s1"),
+            storage_name: "test_storage".to_string(),
+            description: None,
+            storage_type: kalamdb_commons::models::storage::StorageType::Filesystem,
+            base_directory: "/tmp/test".to_string(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template: "shared".to_string(),
+            user_tables_template: "user".to_string(),
+            created_at: 0,
+            updated_at: 0,
+        };
 
         // All operations should succeed and do nothing
         assert!(applier.create_namespace(&ns_id, Some(&user_id)).await.is_ok());
-        assert!(applier.create_table(&table_id, TableType::User, "{}").await.is_ok());
+        assert!(applier.create_table(&table_id, TableType::User, &table_def).await.is_ok());
         assert!(applier.create_user(&user).await.is_ok());
-        assert!(applier
-            .create_job(
-                &JobId::from("J-1"),
-                JobType::Flush,
-                JobStatus::Queued,
-                None,
-                None,
-                3,
-                None,
-                None,
-                NodeId::from(1),
-                1000
-            )
-            .await
-            .is_ok());
-        assert!(applier.register_storage(&StorageId::from("s1"), "{}").await.is_ok());
+        let job = Job {
+            job_id: JobId::from("J-1"),
+            job_type: JobType::Flush,
+            status: JobStatus::Queued,
+            leader_status: None,
+            parameters: None,
+            idempotency_key: None,
+            max_retries: 3,
+            retry_count: 0,
+            queue: None,
+            priority: None,
+            node_id: NodeId::from(1),
+            leader_node_id: None,
+            message: None,
+            exception_trace: None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: 1000,
+            updated_at: 1000,
+            started_at: None,
+            finished_at: None,
+        };
+        assert!(applier.create_job(&job).await.is_ok());
+        assert!(applier.register_storage(&StorageId::from("s1"), &storage).await.is_ok());
     }
 
     #[tokio::test]
     async fn test_job_lifecycle() {
         let applier = MockMetaApplier::new();
         let job_id = JobId::from("FL-lifecycle");
+        let job = Job {
+            job_id: job_id.clone(),
+            job_type: JobType::Flush,
+            status: JobStatus::Queued,
+            leader_status: None,
+            parameters: None,
+            idempotency_key: None,
+            max_retries: 3,
+            retry_count: 0,
+            queue: None,
+            priority: None,
+            node_id: NodeId::from(1),
+            leader_node_id: None,
+            message: None,
+            exception_trace: None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: 1000,
+            updated_at: 1000,
+            started_at: None,
+            finished_at: None,
+        };
 
         // Create -> Claim -> Update -> Complete
-        applier
-            .create_job(
-                &job_id,
-                JobType::Flush,
-                JobStatus::Queued,
-                None,
-                None,
-                3,
-                None,
-                None,
-                NodeId::from(1),
-                1000,
-            )
-            .await
-            .unwrap();
+        applier.create_job(&job).await.unwrap();
         applier.claim_job(&job_id, NodeId::from(1), 1100).await.unwrap();
         applier.update_job_status(&job_id, JobStatus::Running, 1200).await.unwrap();
         applier.complete_job(&job_id, None, 1300).await.unwrap();
@@ -835,22 +715,30 @@ mod tests {
     async fn test_job_failure_path() {
         let applier = MockMetaApplier::new();
         let job_id = JobId::from("FL-fail");
+        let job = Job {
+            job_id: job_id.clone(),
+            job_type: JobType::Flush,
+            status: JobStatus::Queued,
+            leader_status: None,
+            parameters: None,
+            idempotency_key: None,
+            max_retries: 3,
+            retry_count: 0,
+            queue: None,
+            priority: None,
+            node_id: NodeId::from(1),
+            leader_node_id: None,
+            message: None,
+            exception_trace: None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: 1000,
+            updated_at: 1000,
+            started_at: None,
+            finished_at: None,
+        };
 
-        applier
-            .create_job(
-                &job_id,
-                JobType::Flush,
-                JobStatus::Queued,
-                None,
-                None,
-                3,
-                None,
-                None,
-                NodeId::from(1),
-                1000,
-            )
-            .await
-            .unwrap();
+        applier.create_job(&job).await.unwrap();
         applier.claim_job(&job_id, NodeId::from(1), 1100).await.unwrap();
         applier.fail_job(&job_id, "Timeout", 1200).await.unwrap();
 
@@ -859,9 +747,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_mixed_operations() {
+        use kalamdb_commons::models::schemas::TableDefinition;
         let applier = MockMetaApplier::new();
         let ns_id = NamespaceId::from("mixed");
         let table_id = TableId::new(ns_id.clone(), TableName::from("t1"));
+        let table_def = TableDefinition::new_with_defaults(
+            ns_id.clone(),
+            TableName::from("t1"),
+            TableType::User,
+            vec![],
+            None,
+        ).expect("Failed to create table definition");
         let user_id = UserId::from("u1");
         let user = User {
             id: user_id.clone(),
@@ -884,23 +780,31 @@ mod tests {
 
         // Mix of different operation types
         applier.create_namespace(&ns_id, Some(&user_id)).await.unwrap();
-        applier.create_table(&table_id, TableType::User, "{}").await.unwrap();
+        applier.create_table(&table_id, TableType::User, &table_def).await.unwrap();
         applier.create_user(&user).await.unwrap();
-        applier
-            .create_job(
-                &JobId::from("J1"),
-                JobType::Cleanup,
-                JobStatus::Queued,
-                None,
-                None,
-                3,
-                None,
-                None,
-                NodeId::from(1),
-                1000,
-            )
-            .await
-            .unwrap();
+        let job = Job {
+            job_id: JobId::from("J1"),
+            job_type: JobType::Cleanup,
+            status: JobStatus::Queued,
+            leader_status: None,
+            parameters: None,
+            idempotency_key: None,
+            max_retries: 3,
+            retry_count: 0,
+            queue: None,
+            priority: None,
+            node_id: NodeId::from(1),
+            leader_node_id: None,
+            message: None,
+            exception_trace: None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: 1000,
+            updated_at: 1000,
+            started_at: None,
+            finished_at: None,
+        };
+        applier.create_job(&job).await.unwrap();
 
         assert_eq!(applier.get_counts(), (1, 1, 1, 1, 0));
     }

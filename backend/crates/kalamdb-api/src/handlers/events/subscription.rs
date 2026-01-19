@@ -10,7 +10,7 @@ use kalamdb_core::providers::arrow_json_conversion::row_to_json_map;
 use log::{error, info};
 use std::sync::Arc;
 
-use crate::rate_limiter::RateLimiter;
+use crate::limiter::RateLimiter;
 
 use super::{send_error, send_json};
 

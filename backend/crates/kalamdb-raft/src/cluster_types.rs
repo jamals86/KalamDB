@@ -5,6 +5,7 @@
 use openraft::ServerState;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 // Re-export OpenRaft's ServerState as NodeRole for consistency
 // ServerState has: Leader, Follower, Learner, Candidate, Shutdown
@@ -31,7 +32,7 @@ impl ServerStateExt for ServerState {
 /// Node status in the cluster
 ///
 /// Indicates the health and connectivity state of a node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeStatus {
     /// Node is active and responsive
@@ -43,22 +44,11 @@ pub enum NodeStatus {
     /// Node is catching up with replication (dehydration in progress)
     CatchingUp,
     /// Node status is unknown (no metrics available)
+    #[default]
     Unknown,
 }
 
 impl NodeStatus {
-    /// Create from string
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "active" => NodeStatus::Active,
-            "offline" => NodeStatus::Offline,
-            "joining" => NodeStatus::Joining,
-            "catching_up" | "catchingup" => NodeStatus::CatchingUp,
-            "unknown" => NodeStatus::Unknown,
-            _ => NodeStatus::Unknown,
-        }
-    }
-
     /// Convert to string for display
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -71,15 +61,24 @@ impl NodeStatus {
     }
 }
 
-impl fmt::Display for NodeStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
+impl FromStr for NodeStatus {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
+            "active" => NodeStatus::Active,
+            "offline" => NodeStatus::Offline,
+            "joining" => NodeStatus::Joining,
+            "catching_up" | "catchingup" => NodeStatus::CatchingUp,
+            "unknown" => NodeStatus::Unknown,
+            _ => NodeStatus::Unknown,
+        })
     }
 }
 
-impl Default for NodeStatus {
-    fn default() -> Self {
-        NodeStatus::Unknown
+impl fmt::Display for NodeStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -98,14 +97,14 @@ mod tests {
 
     #[test]
     fn test_node_status_from_str() {
-        assert_eq!(NodeStatus::from_str("active"), NodeStatus::Active);
-        assert_eq!(NodeStatus::from_str("ACTIVE"), NodeStatus::Active);
-        assert_eq!(NodeStatus::from_str("offline"), NodeStatus::Offline);
-        assert_eq!(NodeStatus::from_str("joining"), NodeStatus::Joining);
-        assert_eq!(NodeStatus::from_str("catching_up"), NodeStatus::CatchingUp);
-        assert_eq!(NodeStatus::from_str("catchingup"), NodeStatus::CatchingUp);
-        assert_eq!(NodeStatus::from_str("unknown"), NodeStatus::Unknown);
-        assert_eq!(NodeStatus::from_str("random"), NodeStatus::Unknown);
+        assert_eq!(NodeStatus::from_str("active").unwrap(), NodeStatus::Active);
+        assert_eq!(NodeStatus::from_str("ACTIVE").unwrap(), NodeStatus::Active);
+        assert_eq!(NodeStatus::from_str("offline").unwrap(), NodeStatus::Offline);
+        assert_eq!(NodeStatus::from_str("joining").unwrap(), NodeStatus::Joining);
+        assert_eq!(NodeStatus::from_str("catching_up").unwrap(), NodeStatus::CatchingUp);
+        assert_eq!(NodeStatus::from_str("catchingup").unwrap(), NodeStatus::CatchingUp);
+        assert_eq!(NodeStatus::from_str("unknown").unwrap(), NodeStatus::Unknown);
+        assert_eq!(NodeStatus::from_str("random").unwrap(), NodeStatus::Unknown);
     }
 
     #[test]

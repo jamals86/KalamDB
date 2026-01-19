@@ -279,13 +279,10 @@ impl UnifiedApplier for RaftApplier {
         table_type: TableType,
         table_def: TableDefinition,
     ) -> Result<String, ApplierError> {
-        let schema_json = serde_json::to_string(&table_def)
-            .map_err(|e| ApplierError::Serialization(e.to_string()))?;
-
         let cmd = MetaCommand::CreateTable {
             table_id,
             table_type,
-            schema_json,
+            table_def,
         };
         self.propose_meta(cmd, "CREATE TABLE").await
     }
@@ -295,12 +292,9 @@ impl UnifiedApplier for RaftApplier {
         table_id: TableId,
         table_def: TableDefinition,
     ) -> Result<String, ApplierError> {
-        let schema_json = serde_json::to_string(&table_def)
-            .map_err(|e| ApplierError::Serialization(e.to_string()))?;
-
         let cmd = MetaCommand::AlterTable {
             table_id,
-            schema_json,
+            table_def,
         };
         self.propose_meta(cmd, "ALTER TABLE").await
     }
@@ -336,12 +330,9 @@ impl UnifiedApplier for RaftApplier {
     // =========================================================================
 
     async fn create_storage(&self, storage: Storage) -> Result<String, ApplierError> {
-        let config_json = serde_json::to_string(&storage)
-            .map_err(|e| ApplierError::Serialization(e.to_string()))?;
-
         let cmd = MetaCommand::RegisterStorage {
             storage_id: storage.storage_id.clone(),
-            config_json,
+            storage,
         };
         self.propose_meta(cmd, "CREATE STORAGE").await
     }

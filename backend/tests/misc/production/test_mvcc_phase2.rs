@@ -15,7 +15,6 @@
 use super::test_support::{fixtures, TestServer};
 use kalam_link::models::ResponseStatus;
 use kalam_link::parse_i64;
-use serde_json::Value as JsonValue;
 
 /// T051: CREATE TABLE without PK should be rejected
 #[actix_web::test]

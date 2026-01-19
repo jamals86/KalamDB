@@ -637,7 +637,7 @@ impl SqlExecutor {
         exec_ctx: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         use datafusion::logical_expr::LogicalPlan;
-        use kalamdb_auth::rbac::can_access_shared_table;
+        use kalamdb_auth::authorization::rbac::can_access_shared_table;
         use kalamdb_commons::models::{NamespaceId, TableId, TableName};
         use kalamdb_commons::schemas::TableOptions;
         use kalamdb_commons::schemas::TableType;

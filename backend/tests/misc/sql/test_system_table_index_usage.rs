@@ -23,7 +23,6 @@ use kalamdb_commons::{
     AuthType, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, Role, StorageId,
     StorageMode, TableName, UserId,
 };
-use serde_json::Value as JsonValue;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Test: system.users uses username index for WHERE username = '...' queries

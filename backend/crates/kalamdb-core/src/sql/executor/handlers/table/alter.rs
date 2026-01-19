@@ -352,7 +352,7 @@ fn apply_alter_operation(
             // Track if anything actually changes
             let new_type = map_string_type(new_data_type)?;
             let type_changed = col.data_type != new_type;
-            let nullable_changed = nullable.map_or(false, |n| col.is_nullable != n);
+            let nullable_changed = nullable.is_some_and(|n| col.is_nullable != n);
             let changed = type_changed || nullable_changed;
 
             if type_changed {

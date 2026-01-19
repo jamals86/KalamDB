@@ -235,8 +235,7 @@ impl CreateTableStatement {
                 // Check table constraints for PRIMARY KEY
                 for constraint in constraints {
                     match constraint {
-                        TableConstraint::PrimaryKey(constraint) => {
-                            let columns = constraint.columns;
+                        TableConstraint::PrimaryKey { columns, .. } => {
                             if columns.len() != 1 {
                                 return Err(
                                     "Composite PRIMARY KEYs are not supported yet".to_string()
@@ -255,7 +254,7 @@ impl CreateTableStatement {
                                 );
                             }
                         },
-                        TableConstraint::Unique(_) => {},
+                        TableConstraint::Unique { .. } => {},
                         _ => {},
                     }
                 }
@@ -276,7 +275,7 @@ impl CreateTableStatement {
 
                     for option in col.options {
                         match &option.option {
-                            ColumnOption::PrimaryKey(_) => {
+                            ColumnOption::Unique { is_primary, .. } if *is_primary => {
                                 if primary_key_column.is_some() {
                                     return Err(
                                         "Multiple PRIMARY KEY definitions found".to_string()
@@ -285,13 +284,13 @@ impl CreateTableStatement {
                                 primary_key_column = Some(col_name.clone());
                                 col_is_nullable = false; // PKs cannot be null
                             },
-                            ColumnOption::Unique(_) => {},
+                            ColumnOption::Unique { .. } => {},
                             ColumnOption::NotNull => {
                                 col_is_nullable = false;
                             },
                             ColumnOption::Null => {},
                             ColumnOption::Default(expr) => {
-                                let default_spec = expr_to_column_default(&expr);
+                                let default_spec = expr_to_column_default(expr);
                                 column_defaults.insert(col_name.clone(), default_spec);
                             },
                             ColumnOption::DialectSpecific(tokens) => {

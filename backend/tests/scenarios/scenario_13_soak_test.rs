@@ -13,9 +13,6 @@
 
 use super::helpers::*;
 
-use anyhow::Result;
-use futures_util::StreamExt;
-use kalam_link::models::ChangeEvent;
 use kalamdb_commons::Role;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

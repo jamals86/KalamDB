@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kalamdb_commons::models::{NodeId, TableId};
+use kalamdb_sharding::ShardRouter;
 use kalamdb_store::raft_storage::RAFT_PARTITION_NAME;
 use kalamdb_store::{Partition, StorageBackend};
 use openraft::RaftMetrics;
@@ -891,13 +892,8 @@ impl RaftManager {
     ///
     /// Uses consistent hashing on the table ID to determine shard placement.
     pub fn compute_shard(&self, table_id: &TableId) -> u32 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        table_id.namespace_id().as_str().hash(&mut hasher);
-        table_id.table_name().as_str().hash(&mut hasher);
-        (hasher.finish() % self.user_shards_count as u64) as u32
+        let router = ShardRouter::new(self.user_shards_count, self.shared_shards_count);
+        router.table_shard_id(table_id)
     }
 
     /// Register a peer node with all groups
@@ -981,7 +977,7 @@ impl RaftManager {
         &self,
         applier: std::sync::Arc<dyn crate::applier::UserDataApplier>,
     ) {
-        for (_shard_id, shard) in self.user_data_shards.iter().enumerate() {
+        for shard in self.user_data_shards.iter() {
             let sm = shard.storage().state_machine();
             sm.set_applier(applier.clone());
             // log::trace!("RaftManager: User data applier set for shard {}", shard_id);
@@ -1000,7 +996,7 @@ impl RaftManager {
         &self,
         applier: std::sync::Arc<dyn crate::applier::SharedDataApplier>,
     ) {
-        for (_shard_id, shard) in self.shared_data_shards.iter().enumerate() {
+        for shard in self.shared_data_shards.iter() {
             let sm = shard.storage().state_machine();
             sm.set_applier(applier.clone());
             // log::trace!("RaftManager: Shared data applier set for shard {}", shard_id);
@@ -1517,12 +1513,7 @@ impl RaftManager {
         SnapshotsSummary {
             total_groups,
             groups_with_snapshots,
-            snapshots_dir: self
-                .config
-                .peers
-                .is_empty()
-                .then(|| "data/snapshots".to_string())
-                .unwrap_or_else(|| "data/snapshots".to_string()),
+            snapshots_dir: "data/snapshots".to_string(),
             group_details,
         }
     }

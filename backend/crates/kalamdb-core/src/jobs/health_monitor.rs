@@ -48,18 +48,22 @@ impl HealthMonitor {
         let connection_count = live_stats.total_connections;
 
         // Build complete metrics snapshot
-        let metrics = kalamdb_observability::HealthMonitor::build_metrics(
-            memory_mb,
-            cpu_usage,
-            open_files,
+        let counts = kalamdb_observability::HealthCounts {
             namespace_count,
             table_count,
             subscription_count,
             connection_count,
-            running_count,
-            queued_count,
-            failed_count,
-            all_jobs.len(),
+            jobs_running: running_count,
+            jobs_queued: queued_count,
+            jobs_failed: failed_count,
+            jobs_total: all_jobs.len(),
+        };
+
+        let metrics = kalamdb_observability::HealthMonitor::build_metrics(
+            memory_mb,
+            cpu_usage,
+            open_files,
+            counts,
         );
 
         // Log the metrics

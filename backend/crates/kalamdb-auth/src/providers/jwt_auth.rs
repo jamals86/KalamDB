@@ -1,6 +1,6 @@
 // JWT authentication and validation module
 
-use crate::error::{AuthError, AuthResult};
+use crate::errors::error::{AuthError, AuthResult};
 use jsonwebtoken::errors::ErrorKind;
 use jsonwebtoken::{
     decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation,
@@ -62,7 +62,7 @@ impl JwtClaims {
             iat: now.timestamp() as usize,
             username: Some(username.clone()),
             email: email.map(|e| e.to_string()),
-            role: Some(role.clone()),
+            role: Some(*role),
         }
     }
 }

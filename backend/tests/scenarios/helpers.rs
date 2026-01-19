@@ -8,10 +8,8 @@
 //! - Parallel test utilities
 
 use anyhow::Result;
-use futures_util::StreamExt;
 use kalam_link::models::{ChangeEvent, QueryResponse, ResponseStatus};
 use kalam_link::SubscriptionManager;
-use kalamdb_commons::models::UserRowId;
 use kalamdb_commons::Role;
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};

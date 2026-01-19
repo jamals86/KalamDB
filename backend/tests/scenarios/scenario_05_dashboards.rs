@@ -16,7 +16,6 @@
 
 use super::helpers::*;
 
-use anyhow::Result;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::Role;
 use std::time::Duration;

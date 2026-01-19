@@ -7,15 +7,16 @@
 //! ## Structure
 //!
 //! - **MetaApplier**: Unified applier for all metadata (namespaces, tables, storages, users, jobs)
-//! - **UserDataApplier / SharedDataApplier**: Data shard appliers
+//! - **UserDataApplier**: User table data + live queries
+//! - **SharedDataApplier**: Shared table data
 
-mod data_applier;
 mod meta_applier;
+mod shared_data_applier;
+mod user_data_applier;
 
 // Unified Meta applier
 pub use meta_applier::{MetaApplier, NoOpMetaApplier};
 
-// Data appliers
-pub use data_applier::{
-    NoOpSharedDataApplier, NoOpUserDataApplier, SharedDataApplier, UserDataApplier,
-};
+// Data appliers (split into separate files for better organization)
+pub use shared_data_applier::{NoOpSharedDataApplier, SharedDataApplier};
+pub use user_data_applier::{NoOpUserDataApplier, UserDataApplier};

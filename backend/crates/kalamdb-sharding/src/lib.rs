@@ -62,6 +62,16 @@ impl ShardRouter {
         }
     }
 
+    pub fn from_cluster_config(config: &ClusterConfig) -> Self {
+        Self::new(config.user_shards, config.shared_shards)
+    }
+
+    pub fn from_optional_cluster_config(config: Option<&ClusterConfig>) -> Self {
+        config
+            .map(Self::from_cluster_config)
+            .unwrap_or_else(Self::default_config)
+    }
+
     pub fn default_config() -> Self {
         Self::new(32, 1)
     }
@@ -71,14 +81,42 @@ impl ShardRouter {
         Shard::new(ShardKind::User, shard)
     }
 
+    pub fn user_shard_id(&self, user_id: &UserId) -> u32 {
+        self.route_user(user_id).id()
+    }
+
+    pub fn user_group_id(&self, user_id: &UserId) -> GroupId {
+        GroupId::DataUserShard(self.user_shard_id(user_id))
+    }
+
     pub fn route_stream_user(&self, user_id: &UserId) -> Shard {
         let shard = self.hash_to_shard(user_id.as_str(), self.num_user_shards.max(1));
         Shard::new(ShardKind::Stream, shard)
     }
 
+    pub fn route_table(&self, table_id: &TableId) -> Shard {
+        let shard = self.hash_table_to_shard(table_id, self.num_user_shards.max(1));
+        Shard::new(ShardKind::User, shard)
+    }
+
+    pub fn table_shard_id(&self, table_id: &TableId) -> u32 {
+        self.route_table(table_id).id()
+    }
+
+    pub fn table_group_id(&self, table_id: &TableId) -> GroupId {
+        GroupId::DataUserShard(self.table_shard_id(table_id))
+    }
+
     pub fn route_shared(&self, _table_id: &TableId) -> Shard {
-        let shard = if self.num_shared_shards == 0 { 0 } else { 0 };
-        Shard::new(ShardKind::Shared, shard)
+        Shard::new(ShardKind::Shared, 0)
+    }
+
+    pub fn shared_shard_id(&self) -> u32 {
+        0
+    }
+
+    pub fn shared_group_id(&self) -> GroupId {
+        GroupId::DataSharedShard(self.shared_shard_id())
     }
 
     pub fn num_user_shards(&self) -> u32 {
@@ -92,6 +130,14 @@ impl ShardRouter {
     fn hash_to_shard(&self, key: &str, num_shards: u32) -> u32 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         key.hash(&mut hasher);
+        let hash = hasher.finish();
+        (hash % num_shards as u64) as u32
+    }
+
+    fn hash_table_to_shard(&self, table_id: &TableId, num_shards: u32) -> u32 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        table_id.namespace_id().as_str().hash(&mut hasher);
+        table_id.table_name().as_str().hash(&mut hasher);
         let hash = hasher.finish();
         (hash % num_shards as u64) as u32
     }

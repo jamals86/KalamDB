@@ -13,7 +13,7 @@ pub struct JobNodeId(String);
 
 impl JobNodeId {
     pub fn new(job_id: &JobId, node_id: &NodeId) -> Self {
-        Self(format!("{}|{}", node_id.to_string(), job_id.as_str()))
+        Self(format!("{}|{}", node_id, job_id.as_str()))
     }
 
     pub fn as_str(&self) -> &str {
@@ -25,7 +25,7 @@ impl JobNodeId {
     }
 
     pub fn prefix_for_node(node_id: &NodeId) -> String {
-        format!("{}|", node_id.to_string())
+        format!("{}|", node_id)
     }
 }
 

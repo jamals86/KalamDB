@@ -32,7 +32,7 @@ use super::events::{
     auth::handle_authenticate, batch::handle_next_batch, cleanup::cleanup_connection, send_error,
     subscription::handle_subscribe, unsubscribe::handle_unsubscribe,
 };
-use crate::rate_limiter::RateLimiter;
+use crate::limiter::RateLimiter;
 
 /// GET /v1/ws - Establish WebSocket connection
 ///

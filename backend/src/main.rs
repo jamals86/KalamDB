@@ -71,14 +71,13 @@ async fn main() -> Result<()> {
     }
 
     // ========================================================================
-    // JWT SECRET ENVIRONMENT VARIABLE SETUP
+    // JWT CONFIG INITIALIZATION
     // ========================================================================
-    // IMPORTANT: Set KALAMDB_JWT_SECRET env var from config BEFORE any auth code runs
-    // The JWT validation code (unified.rs) uses a lazy static that reads this env var
-    // We must set it early so both login and validation use the SAME secret
-    if std::env::var("KALAMDB_JWT_SECRET").is_err() {
-        std::env::set_var("KALAMDB_JWT_SECRET", &config.auth.jwt_secret);
-    }
+    // Initialize auth JWT config from server.toml (after env overrides are applied).
+    kalamdb_auth::services::unified::init_jwt_config(
+        &config.auth.jwt_secret,
+        &config.auth.jwt_trusted_issuers,
+    );
 
     // ========================================================================
     // Security: Validate critical configuration at startup

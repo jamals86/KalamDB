@@ -17,27 +17,25 @@ use super::test_support::{auth_helper, TestServer};
 use actix_web::{test, web, App};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use kalamdb_api::repositories::user_repo::CoreUsersRepo;
-use kalamdb_auth::jwt_auth::{JwtClaims as AuthJwtClaims, KALAMDB_ISSUER};
+use kalamdb_auth::providers::jwt_auth::{JwtClaims as AuthJwtClaims, KALAMDB_ISSUER};
 use kalamdb_auth::UserRepository;
 use kalamdb_commons::{Role, UserId, UserName};
 use serde::Serialize;
 use std::sync::Arc;
 
 fn jwt_secret_for_tests() -> String {
-    std::env::var("KALAMDB_JWT_SECRET")
-        .unwrap_or_else(|_| kalamdb_configs::defaults::default_auth_jwt_secret())
+    kalamdb_configs::ServerConfig::default().auth.jwt_secret
 }
 
 fn trusted_issuer_for_tests() -> String {
-    std::env::var("KALAMDB_JWT_TRUSTED_ISSUERS")
-        .ok()
-        .and_then(|issuers| {
-            issuers
-                .split(',')
-                .map(|s| s.trim())
-                .find(|s| !s.is_empty())
-                .map(|s| s.to_string())
-        })
+    let issuers = kalamdb_configs::ServerConfig::default()
+        .auth
+        .jwt_trusted_issuers;
+    let first = issuers
+        .split(',')
+        .map(|s| s.trim())
+        .find(|s| !s.is_empty());
+    first.map(|s| s.to_string())
         .unwrap_or_else(|| KALAMDB_ISSUER.to_string())
 }
 

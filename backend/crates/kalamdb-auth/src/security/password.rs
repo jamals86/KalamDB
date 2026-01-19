@@ -1,6 +1,6 @@
 // Password hashing and validation module
 
-use crate::error::{AuthError, AuthResult};
+use crate::errors::error::{AuthError, AuthResult};
 use bcrypt::{hash, verify, DEFAULT_COST};
 use moka::sync::Cache;
 use std::collections::HashSet;

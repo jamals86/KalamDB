@@ -9,7 +9,6 @@
 
 use super::helpers::*;
 
-use anyhow::Result;
 use futures_util::StreamExt;
 use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;

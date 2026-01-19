@@ -35,6 +35,7 @@
 //! 3. **No Mode Branching**: Same code for single-node and cluster
 //! 4. **OpenRaft Quorum**: We trust OpenRaft for consensus
 
+#[allow(clippy::module_inception)]
 mod applier;
 mod command;
 mod error;

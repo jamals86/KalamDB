@@ -51,11 +51,11 @@ use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::context::AuthenticatedUser;
-use crate::error::AuthError;
-use crate::ip_extractor::extract_client_ip_secure;
-use crate::unified::{authenticate, AuthMethod, AuthRequest};
-use crate::user_repo::UserRepository;
+use crate::errors::error::AuthError;
+use crate::helpers::ip_extractor::extract_client_ip_secure;
+use crate::models::context::AuthenticatedUser;
+use crate::repository::user_repo::UserRepository;
+use crate::services::unified::{authenticate, AuthMethod, AuthRequest};
 
 /// Error type for authentication extraction.
 ///

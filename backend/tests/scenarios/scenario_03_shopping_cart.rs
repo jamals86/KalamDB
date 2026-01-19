@@ -18,17 +18,14 @@
 
 use super::helpers::*;
 
-use anyhow::Result;
 use futures_util::StreamExt;
-use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{Role, UserName};
+use kalamdb_commons::Role;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::sleep;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 

@@ -257,8 +257,7 @@ pub struct ConnectionsManager {
     // === Secondary Indices (for efficient lookups) ===
     /// (UserId, TableId) → DashMap<LiveQueryId, SubscriptionHandle> for O(1) notification delivery
     /// Uses lightweight handles (~48 bytes) instead of full state (~800+ bytes)
-    user_table_subscriptions:
-        DashMap<(UserId, TableId), Arc<DashMap<LiveQueryId, SubscriptionHandle>>>,
+    user_table_subscriptions: DashMap<(UserId, TableId), Arc<DashMap<LiveQueryId, SubscriptionHandle>>>,
     /// Shared empty map to avoid allocations on lookup misses
     empty_subscriptions: Arc<DashMap<LiveQueryId, SubscriptionHandle>>,
     /// LiveQueryId → ConnectionId reverse index

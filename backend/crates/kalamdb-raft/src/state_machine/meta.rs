@@ -6,19 +6,11 @@
 //! - Storage registration/unregistration
 //! - User CRUD (create, update, delete, login, lock)
 //! - Job lifecycle (create, claim, update, complete, fail, release, cancel)
-//! - Schedules (create, delete)
 //!
 //! Runs in the unified Meta Raft group (replaces MetaSystem + MetaUsers + MetaJobs).
 
 use async_trait::async_trait;
-use kalamdb_commons::models::schemas::TableType;
-use kalamdb_commons::models::{
-    ConnectionId, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, StorageId, TableId,
-};
-use kalamdb_commons::types::User;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -28,54 +20,18 @@ use crate::commands::{MetaCommand, MetaResponse};
 use crate::{GroupId, RaftError};
 
 // =============================================================================
-// Snapshot Structures
+// Snapshot Structure
 // =============================================================================
 
-/// Job state for snapshot
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct JobState {
-    job_id: JobId,
-    job_type: JobType,
-    status: JobStatus,
-    claimed_by: Option<NodeId>,
-    error_message: Option<String>,
-}
-
-/// Schedule state for snapshot
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ScheduleState {
-    schedule_id: String,
-    job_type: JobType,
-    cron_expr: String,
-    enabled: bool,
-}
-
-/// Snapshot data for MetaStateMachine
+/// Minimal snapshot data for MetaStateMachine
+///
+/// The actual metadata (namespaces, tables, storages, users, jobs, live queries)
+/// is persisted by the MetaApplier to RocksDB. This snapshot only tracks the
+/// last applied Raft index/term for idempotency on restore.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct MetaSnapshot {
-    // System metadata
-    namespaces: Vec<NamespaceId>,
-    tables: Vec<(TableId, TableType, String)>,
-    storages: Vec<(StorageId, String)>,
-
-    // User metadata
-    users: HashMap<String, User>,
-
-    // Job metadata
-    jobs: HashMap<JobId, JobState>,
-    schedules: HashMap<String, ScheduleState>,
-
-    // Live query metadata (replicated across cluster)
-    live_queries: HashMap<LiveQueryId, LiveQueryState>,
-}
-
-/// Live query state for snapshot
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LiveQueryState {
-    live_id: LiveQueryId,
-    connection_id: ConnectionId,
-    node_id: NodeId,
-    created_at: i64,
+    // Version for future compatibility
+    version: u8,
 }
 
 // =============================================================================
@@ -100,11 +56,8 @@ pub struct MetaStateMachine {
     /// Approximate data size in bytes
     approximate_size: AtomicU64,
 
-    /// Cached snapshot data
-    snapshot_cache: RwLock<MetaSnapshot>,
-
     /// Optional applier for persisting to providers
-    applier: RwLock<Option<Arc<dyn MetaApplier>>>,
+    applier: parking_lot::RwLock<Option<Arc<dyn MetaApplier>>>,
 }
 
 impl std::fmt::Debug for MetaStateMachine {
@@ -113,7 +66,6 @@ impl std::fmt::Debug for MetaStateMachine {
             .field("last_applied_index", &self.last_applied_index.load(Ordering::Relaxed))
             .field("last_applied_term", &self.last_applied_term.load(Ordering::Relaxed))
             .field("approximate_size", &self.approximate_size.load(Ordering::Relaxed))
-            .field("has_applier", &self.applier.read().is_some())
             .finish()
     }
 }
@@ -127,8 +79,7 @@ impl MetaStateMachine {
             last_applied_index: AtomicU64::new(0),
             last_applied_term: AtomicU64::new(0),
             approximate_size: AtomicU64::new(0),
-            snapshot_cache: RwLock::new(MetaSnapshot::default()),
-            applier: RwLock::new(None),
+            applier: parking_lot::RwLock::new(None),
         }
     }
 
@@ -138,8 +89,7 @@ impl MetaStateMachine {
             last_applied_index: AtomicU64::new(0),
             last_applied_term: AtomicU64::new(0),
             approximate_size: AtomicU64::new(0),
-            snapshot_cache: RwLock::new(MetaSnapshot::default()),
-            applier: RwLock::new(Some(applier)),
+            applier: parking_lot::RwLock::new(Some(applier)),
         }
     }
 
@@ -172,9 +122,9 @@ impl MetaStateMachine {
         };
 
         if applier.is_none() {
-            // Without an applier, Raft metadata operations will update only the in-memory snapshot
-            // cache and will NOT be persisted into providers (system tables, schema registry, etc.).
-            // This can make DDL appear to succeed while subsequent queries cannot see the change.
+            // Without an applier, Raft metadata operations will NOT be persisted into providers
+            // (system tables, schema registry, etc.). This can make DDL appear to succeed while
+            // subsequent queries cannot see the change.
             log::warn!(
                 "MetaStateMachine: No applier registered; applying MetaCommand without persistence"
             );
@@ -200,10 +150,6 @@ impl MetaStateMachine {
                     String::new()
                 };
 
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.namespaces.push(namespace_id.clone());
-                }
                 self.approximate_size.fetch_add(100, Ordering::Relaxed);
                 Ok(MetaResponse::NamespaceCreated {
                     namespace_id,
@@ -218,10 +164,6 @@ impl MetaStateMachine {
                     a.delete_namespace(&namespace_id).await?;
                 }
 
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.namespaces.retain(|ns| ns != &namespace_id);
-                }
                 Ok(MetaResponse::Ok)
             },
 
@@ -231,44 +173,31 @@ impl MetaStateMachine {
             MetaCommand::CreateTable {
                 table_id,
                 table_type,
-                schema_json,
+                table_def,
             } => {
                 log::debug!("MetaStateMachine: CreateTable {:?} (type: {})", table_id, table_type);
 
                 let message = if let Some(ref a) = applier {
-                    a.create_table(&table_id, table_type, &schema_json).await?
+                    a.create_table(&table_id, table_type, &table_def).await?
                 } else {
                     String::new()
                 };
 
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.tables.push((table_id.clone(), table_type, schema_json.clone()));
-                }
                 self.approximate_size
-                    .fetch_add(schema_json.len() as u64 + 200, Ordering::Relaxed);
+                    .fetch_add(500, Ordering::Relaxed);
                 Ok(MetaResponse::TableCreated { table_id, message })
             },
 
             MetaCommand::AlterTable {
                 table_id,
-                schema_json,
+                table_def,
             } => {
                 log::debug!("MetaStateMachine: AlterTable {:?}", table_id);
 
                 if let Some(ref a) = applier {
-                    a.alter_table(&table_id, &schema_json).await?;
+                    a.alter_table(&table_id, &table_def).await?;
                 }
 
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    for (tid, _, schema) in &mut cache.tables {
-                        if tid == &table_id {
-                            *schema = schema_json.clone();
-                            break;
-                        }
-                    }
-                }
                 Ok(MetaResponse::Ok)
             },
 
@@ -279,10 +208,6 @@ impl MetaStateMachine {
                     a.drop_table(&table_id).await?;
                 }
 
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.tables.retain(|(tid, _, _)| tid != &table_id);
-                }
                 Ok(MetaResponse::Ok)
             },
 
@@ -291,20 +216,16 @@ impl MetaStateMachine {
             // =================================================================
             MetaCommand::RegisterStorage {
                 storage_id,
-                config_json,
+                storage,
             } => {
                 log::debug!("MetaStateMachine: RegisterStorage {:?}", storage_id);
 
                 if let Some(ref a) = applier {
-                    a.register_storage(&storage_id, &config_json).await?;
+                    a.register_storage(&storage_id, &storage).await?;
                 }
 
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.storages.push((storage_id, config_json.clone()));
-                }
                 self.approximate_size
-                    .fetch_add(config_json.len() as u64 + 100, Ordering::Relaxed);
+                    .fetch_add(300, Ordering::Relaxed);
                 Ok(MetaResponse::Ok)
             },
 
@@ -315,10 +236,6 @@ impl MetaStateMachine {
                     a.unregister_storage(&storage_id).await?;
                 }
 
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.storages.retain(|(sid, _)| sid != &storage_id);
-                }
                 Ok(MetaResponse::Ok)
             },
 
@@ -335,11 +252,6 @@ impl MetaStateMachine {
                 };
 
                 let user_id = user.id.clone();
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.users.insert(user.id.as_str().to_string(), user);
-                }
-                self.approximate_size.fetch_add(200, Ordering::Relaxed);
                 Ok(MetaResponse::UserCreated { user_id, message })
             },
 
@@ -348,11 +260,6 @@ impl MetaStateMachine {
 
                 if let Some(ref a) = applier {
                     a.update_user(&user).await?;
-                }
-
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.users.insert(user.id.as_str().to_string(), user);
                 }
                 Ok(MetaResponse::Ok)
             },
@@ -366,13 +273,6 @@ impl MetaStateMachine {
                 if let Some(ref a) = applier {
                     a.delete_user(&user_id, deleted_at.timestamp_millis()).await?;
                 }
-
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    if let Some(user) = cache.users.get_mut(user_id.as_str()) {
-                        user.deleted_at = Some(deleted_at.timestamp_millis());
-                    }
-                }
                 Ok(MetaResponse::Ok)
             },
 
@@ -384,14 +284,6 @@ impl MetaStateMachine {
 
                 if let Some(ref a) = applier {
                     a.record_login(&user_id, logged_in_at.timestamp_millis()).await?;
-                }
-
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    if let Some(user) = cache.users.get_mut(user_id.as_str()) {
-                        user.last_login_at = Some(logged_in_at.timestamp_millis());
-                        user.updated_at = logged_in_at.timestamp_millis();
-                    }
                 }
                 Ok(MetaResponse::Ok)
             },
@@ -407,66 +299,30 @@ impl MetaStateMachine {
                     a.set_user_locked(&user_id, locked_until, updated_at.timestamp_millis())
                         .await?;
                 }
-
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    if let Some(user) = cache.users.get_mut(user_id.as_str()) {
-                        user.locked_until = locked_until;
-                        user.updated_at = updated_at.timestamp_millis();
-                    }
-                }
                 Ok(MetaResponse::Ok)
             },
 
             // =================================================================
             // Job Operations
             // =================================================================
-            MetaCommand::CreateJob {
-                job_id,
-                job_type,
-                status,
-                parameters_json,
-                idempotency_key,
-                max_retries,
-                queue,
-                priority,
-                node_id,
-                created_at,
-            } => {
-                log::debug!("MetaStateMachine: CreateJob {} (type: {})", job_id, job_type);
+            MetaCommand::CreateJob { job } => {
+                log::debug!(
+                    "MetaStateMachine: CreateJob {} (type: {})",
+                    job.job_id,
+                    job.job_type
+                );
 
                 let message = if let Some(ref a) = applier {
-                    a.create_job(
-                        &job_id,
-                        job_type.clone(),
-                        status.clone(),
-                        parameters_json.as_deref(),
-                        idempotency_key.as_deref(),
-                        max_retries,
-                        queue.as_deref(),
-                        priority,
-                        node_id.clone(),
-                        created_at.timestamp_millis(),
-                    )
-                    .await?
+                    a.create_job(&job).await?
                 } else {
                     String::new()
                 };
 
-                let job_state = JobState {
-                    job_id: job_id.clone(),
-                    job_type,
-                    status: status.clone(),
-                    claimed_by: None,
-                    error_message: None,
-                };
-
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.jobs.insert(job_id.clone(), job_state);
-                }
                 self.approximate_size.fetch_add(200, Ordering::Relaxed);
-                Ok(MetaResponse::JobCreated { job_id, message })
+                Ok(MetaResponse::JobCreated {
+                    job_id: job.job_id,
+                    message,
+                })
             },
 
             MetaCommand::CreateJobNode {
@@ -544,33 +400,13 @@ impl MetaStateMachine {
             } => {
                 log::debug!("MetaStateMachine: ClaimJob {} by node {}", job_id, node_id);
 
-                // Check if already claimed
-                {
-                    let cache = self.snapshot_cache.read();
-                    if let Some(job) = cache.jobs.get(&job_id) {
-                        if let Some(ref claimed_node) = job.claimed_by {
-                            return Ok(MetaResponse::Error {
-                                message: format!(
-                                    "Job {} already claimed by node {}",
-                                    job_id, claimed_node
-                                ),
-                            });
-                        }
-                    }
-                }
-
+                // Already-claimed check moved to MetaApplier::claim_job() which reads from RocksDB
                 let message = if let Some(ref a) = applier {
-                    a.claim_job(&job_id, node_id.clone(), claimed_at.timestamp_millis()).await?
+                    a.claim_job(&job_id, node_id, claimed_at.timestamp_millis()).await?
                 } else {
                     String::new()
                 };
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    if let Some(job) = cache.jobs.get_mut(&job_id) {
-                        job.claimed_by = Some(node_id.clone());
-                        job.status = JobStatus::Running;
-                    }
-                }
+
                 Ok(MetaResponse::JobClaimed {
                     job_id,
                     node_id,
@@ -589,18 +425,12 @@ impl MetaStateMachine {
                     a.update_job_status(&job_id, status, updated_at.timestamp_millis()).await?;
                 }
 
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    if let Some(job) = cache.jobs.get_mut(&job_id) {
-                        job.status = status;
-                    }
-                }
                 Ok(MetaResponse::Ok)
             },
 
             MetaCommand::CompleteJob {
                 job_id,
-                result_json,
+                result,
                 completed_at,
             } => {
                 log::debug!("MetaStateMachine: CompleteJob {}", job_id);
@@ -608,22 +438,14 @@ impl MetaStateMachine {
                 if let Some(ref a) = applier {
                     a.complete_job(
                         &job_id,
-                        result_json.as_deref(),
+                        result.as_deref(),
                         completed_at.timestamp_millis(),
                     )
                     .await?;
                 }
 
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    if let Some(job) = cache.jobs.get_mut(&job_id) {
-                        job.status = JobStatus::Completed;
-                        job.claimed_by = None;
-                    }
-                }
                 Ok(MetaResponse::Ok)
             },
-
             MetaCommand::FailJob {
                 job_id,
                 error_message,
@@ -635,14 +457,6 @@ impl MetaStateMachine {
                     a.fail_job(&job_id, &error_message, failed_at.timestamp_millis()).await?;
                 }
 
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    if let Some(job) = cache.jobs.get_mut(&job_id) {
-                        job.status = JobStatus::Failed;
-                        job.error_message = Some(error_message);
-                        job.claimed_by = None;
-                    }
-                }
                 Ok(MetaResponse::Ok)
             },
 
@@ -657,13 +471,6 @@ impl MetaStateMachine {
                     a.release_job(&job_id, &reason, released_at.timestamp_millis()).await?;
                 }
 
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    if let Some(job) = cache.jobs.get_mut(&job_id) {
-                        job.status = JobStatus::Queued;
-                        job.claimed_by = None;
-                    }
-                }
                 Ok(MetaResponse::Ok)
             },
 
@@ -678,164 +485,6 @@ impl MetaStateMachine {
                     a.cancel_job(&job_id, &reason, cancelled_at.timestamp_millis()).await?;
                 }
 
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    if let Some(job) = cache.jobs.get_mut(&job_id) {
-                        job.status = JobStatus::Cancelled;
-                        job.claimed_by = None;
-                    }
-                }
-                Ok(MetaResponse::Ok)
-            },
-
-            MetaCommand::CreateSchedule {
-                schedule_id,
-                job_type,
-                cron_expression,
-                config_json: _,
-                created_at: _,
-            } => {
-                log::debug!(
-                    "MetaStateMachine: CreateSchedule {} (type: {})",
-                    schedule_id,
-                    job_type
-                );
-
-                if let Some(ref a) = applier {
-                    // Note: Passing placeholder timestamps - the applier handles actual persistence
-                    a.create_schedule(&schedule_id, job_type.clone(), &cron_expression, None, 0)
-                        .await?;
-                }
-
-                let schedule = ScheduleState {
-                    schedule_id: schedule_id.clone(),
-                    job_type,
-                    cron_expr: cron_expression,
-                    enabled: true,
-                };
-
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.schedules.insert(schedule_id, schedule);
-                }
-                self.approximate_size.fetch_add(150, Ordering::Relaxed);
-                Ok(MetaResponse::Ok)
-            },
-
-            MetaCommand::DeleteSchedule { schedule_id } => {
-                log::debug!("MetaStateMachine: DeleteSchedule {}", schedule_id);
-
-                if let Some(ref a) = applier {
-                    a.delete_schedule(&schedule_id).await?;
-                }
-
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.schedules.remove(&schedule_id);
-                }
-                Ok(MetaResponse::Ok)
-            },
-
-            // =================================================================
-            // Live Query Operations
-            // =================================================================
-            MetaCommand::CreateLiveQuery {
-                live_id,
-                connection_id,
-                namespace_id,
-                table_name,
-                user_id,
-                query,
-                options_json,
-                node_id,
-                subscription_id,
-                created_at,
-            } => {
-                log::debug!("MetaStateMachine: CreateLiveQuery {} on node {}", live_id, node_id);
-
-                let message = if let Some(ref a) = applier {
-                    a.create_live_query(
-                        &live_id,
-                        &connection_id,
-                        &namespace_id,
-                        &table_name,
-                        &user_id,
-                        &query,
-                        options_json.as_deref(),
-                        node_id.clone(),
-                        &subscription_id,
-                        created_at.timestamp_millis(),
-                    )
-                    .await?
-                } else {
-                    String::new()
-                };
-
-                let lq_state = LiveQueryState {
-                    live_id: live_id.clone(),
-                    connection_id,
-                    node_id,
-                    created_at: created_at.timestamp_millis(),
-                };
-
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.live_queries.insert(live_id.clone(), lq_state);
-                }
-                self.approximate_size.fetch_add(200, Ordering::Relaxed);
-                Ok(MetaResponse::LiveQueryCreated { live_id, message })
-            },
-
-            MetaCommand::UpdateLiveQuery {
-                live_id,
-                last_update,
-                changes,
-            } => {
-                log::trace!("MetaStateMachine: UpdateLiveQuery {} (changes={})", live_id, changes);
-
-                if let Some(ref a) = applier {
-                    a.update_live_query(&live_id, last_update.timestamp_millis(), changes).await?;
-                }
-
-                // Live query state in cache is minimal - full state is in provider
-                Ok(MetaResponse::Ok)
-            },
-
-            MetaCommand::DeleteLiveQuery {
-                live_id,
-                deleted_at,
-            } => {
-                log::debug!("MetaStateMachine: DeleteLiveQuery {}", live_id);
-
-                if let Some(ref a) = applier {
-                    a.delete_live_query(&live_id, deleted_at.timestamp_millis()).await?;
-                }
-
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.live_queries.remove(&live_id);
-                }
-                Ok(MetaResponse::Ok)
-            },
-
-            MetaCommand::DeleteLiveQueriesByConnection {
-                connection_id,
-                deleted_at,
-            } => {
-                log::debug!("MetaStateMachine: DeleteLiveQueriesByConnection {}", connection_id);
-
-                if let Some(ref a) = applier {
-                    a.delete_live_queries_by_connection(
-                        &connection_id,
-                        deleted_at.timestamp_millis(),
-                    )
-                    .await?;
-                }
-
-                {
-                    let mut cache = self.snapshot_cache.write();
-                    cache.live_queries.retain(|_, lq| lq.connection_id != connection_id);
-                }
                 Ok(MetaResponse::Ok)
             },
         }
@@ -900,8 +549,9 @@ impl KalamStateMachine for MetaStateMachine {
     }
 
     async fn snapshot(&self) -> Result<StateMachineSnapshot, RaftError> {
-        let cache = self.snapshot_cache.read().clone();
-        let snapshot_bytes = encode(&cache)?;
+        // Minimal snapshot - actual metadata is in RocksDB via MetaApplier
+        let snapshot = MetaSnapshot { version: 1 };
+        let snapshot_bytes = encode(&snapshot)?;
 
         Ok(StateMachineSnapshot::new(
             GroupId::Meta,
@@ -912,12 +562,8 @@ impl KalamStateMachine for MetaStateMachine {
     }
 
     async fn restore(&self, snapshot: StateMachineSnapshot) -> Result<(), RaftError> {
-        let cache: MetaSnapshot = decode(&snapshot.data)?;
-
-        {
-            let mut guard = self.snapshot_cache.write();
-            *guard = cache;
-        }
+        // Validate snapshot format (version check for future compatibility)
+        let _snapshot: MetaSnapshot = decode(&snapshot.data)?;
 
         self.last_applied_index.store(snapshot.last_applied_index, Ordering::Release);
         self.last_applied_term.store(snapshot.last_applied_term, Ordering::Release);

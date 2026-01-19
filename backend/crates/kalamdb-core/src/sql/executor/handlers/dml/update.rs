@@ -183,7 +183,7 @@ impl StatementHandler for UpdateHandler {
             },
             kalamdb_commons::schemas::TableType::Shared => {
                 // Check write permissions for Shared tables
-                use kalamdb_auth::rbac::can_write_shared_table;
+                use kalamdb_auth::authorization::rbac::can_write_shared_table;
                 use kalamdb_commons::schemas::TableOptions;
                 use kalamdb_commons::TableAccess;
 
@@ -329,13 +329,12 @@ impl UpdateHandler {
             .ok_or_else(|| KalamDbError::InvalidOperation("Empty UPDATE statement".into()))?;
 
         let (ns, tbl, assigns, where_pair) = match stmt {
-            SqlStatementAst::Update(update) => {
-                let sqlparser::ast::Update {
-                    table,
-                    assignments,
-                    selection,
-                    ..
-                } = update;
+            SqlStatementAst::Update {
+                table,
+                assignments,
+                selection,
+                ..
+            } => {
 
                 let (ns, tbl) = match table.relation {
                     TableFactor::Table { name, .. } => {

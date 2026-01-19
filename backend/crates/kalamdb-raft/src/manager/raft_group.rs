@@ -216,7 +216,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
 
         // Create initial membership with just this node
         let mut members = std::collections::BTreeMap::new();
-        members.insert(node_id.into(), node);
+        members.insert(node_id, node);
 
         match raft.initialize(members).await {
             Ok(_) => {
@@ -245,7 +245,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
 
-        raft.add_learner(node_id.into(), node, true)
+        raft.add_learner(node_id, node, true)
             .await
             .map_err(|e| RaftError::Internal(format!("Failed to add learner: {:?}", e)))?;
 

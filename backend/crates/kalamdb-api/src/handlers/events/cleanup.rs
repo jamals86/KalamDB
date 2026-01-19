@@ -6,7 +6,7 @@ use kalamdb_core::live::{ConnectionsManager, LiveQueryManager, SharedConnectionS
 use log::debug;
 use std::sync::Arc;
 
-use crate::rate_limiter::RateLimiter;
+use crate::limiter::RateLimiter;
 
 /// Cleanup connection on close
 ///

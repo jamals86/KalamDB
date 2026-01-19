@@ -1,6 +1,6 @@
 //! Authorization and role validation
 
-use crate::error::AuthError;
+use crate::errors::error::AuthError;
 
 /// Valid user roles in KalamDB
 pub const VALID_ROLES: &[&str] = &["admin", "user", "readonly"];
@@ -25,7 +25,7 @@ pub const ROLE_READONLY: &str = "readonly";
 ///
 /// # Example
 /// ```
-/// use kalamdb_auth::roles::validate_role;
+/// use kalamdb_auth::authorization::roles::validate_role;
 ///
 /// assert!(validate_role("admin").is_ok());
 /// assert!(validate_role("user").is_ok());

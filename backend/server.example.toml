@@ -156,6 +156,20 @@ format = "compact"
 # Set to a high value (e.g., 999999) to disable slow query logging
 slow_query_threshold_ms = 1000
 
+[auth]
+# JWT secret for token validation (required for JWT auth)
+# NOTE: Use a strong, unique value (minimum 32 chars)
+jwt_secret = "CHANGE_ME_IN_PRODUCTION"
+
+# Trusted JWT issuers (comma-separated list). Leave empty to use default issuer.
+jwt_trusted_issuers = ""
+
+# JWT expiry in hours (default: 24)
+jwt_expiry_hours = 24
+
+# Whether auth cookies require HTTPS (default: true)
+cookie_secure = true
+
 [performance]
 # Request timeout in seconds (default: 30s)
 # Requests exceeding this duration will be terminated

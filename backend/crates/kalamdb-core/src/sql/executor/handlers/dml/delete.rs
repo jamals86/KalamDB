@@ -126,7 +126,7 @@ impl StatementHandler for DeleteHandler {
             },
             TableType::Shared => {
                 // Check write permissions for Shared tables
-                use kalamdb_auth::rbac::can_write_shared_table;
+                use kalamdb_auth::authorization::rbac::can_write_shared_table;
                 use kalamdb_commons::schemas::TableOptions;
                 use kalamdb_commons::TableAccess;
 

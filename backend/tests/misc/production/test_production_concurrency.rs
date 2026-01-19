@@ -7,7 +7,6 @@ use super::test_support::{QueryResultTestExt, TestServer};
 use kalam_link::models::ResponseStatus;
 use kalam_link::parse_i64;
 use kalamdb_commons::Role;
-use serde_json::Value as JsonValue;
 
 /// Verify concurrent inserts to same user table work correctly
 #[tokio::test]

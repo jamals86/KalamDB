@@ -7,7 +7,7 @@
 //! - Password strength validation
 //! - Edge cases and security requirements
 
-use kalamdb_auth::password::{
+use kalamdb_auth::security::password::{
     hash_password, validate_password, verify_password, BCRYPT_COST, MAX_PASSWORD_LENGTH,
     MIN_PASSWORD_LENGTH,
 };

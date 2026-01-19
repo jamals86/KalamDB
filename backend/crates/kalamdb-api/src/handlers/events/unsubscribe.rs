@@ -7,7 +7,7 @@ use kalamdb_core::live::{LiveQueryManager, SharedConnectionState};
 use log::{error, info};
 use std::sync::Arc;
 
-use crate::rate_limiter::RateLimiter;
+use crate::limiter::RateLimiter;
 
 /// Handle unsubscribe request
 ///
