@@ -3514,6 +3514,7 @@ dependencies = [
  "kalamdb-filestore",
  "kalamdb-observability",
  "kalamdb-raft",
+ "kalamdb-session",
  "kalamdb-sharding",
  "kalamdb-sql",
  "kalamdb-store",
@@ -3659,6 +3660,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalamdb-session"
+version = "0.2.0"
+dependencies = [
+ "arrow",
+ "arrow-schema",
+ "async-trait",
+ "datafusion",
+ "datafusion-common",
+ "kalamdb-commons",
+ "log",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "kalamdb-sharding"
 version = "0.2.0"
 dependencies = [
@@ -3740,6 +3756,7 @@ dependencies = [
  "datafusion",
  "datafusion-common",
  "kalamdb-commons",
+ "kalamdb-session",
  "kalamdb-store",
  "log",
  "once_cell",

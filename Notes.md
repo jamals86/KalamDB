@@ -1134,3 +1134,12 @@ i guess we need to add a new column to the jobs table to track each node the sta
 77) UpdateLiveQueryStats is never called or emit
 
 78) no need for Running startup compaction for, we should add a command to do storage compact all
+
+79) backend/crates/kalamdb-core/src/sql/executor/mod.rs move the permission/security check into a folder backend/crates/kalamdb-core/src/sql/permissions/mod.rs to organize the code better, scan all the places where we check permissions and move them into here so we can keep an eye on them all the time
+
+80) Check that the permissions for system tables is also checked inside the provider as well, so that in case anybody tried to add query inside another query he can't bypass the security as well, make sure we always call the same quard for all permissions check make it centralized so that we can use the same code everywhere maybe adding a parent class between our code and impl TableProvider so that we can always check permissions there before going to the actual provider
+
+
+81) why we have pub struct PlanCache and also: pub struct QueryCache we can use only the plancahe for both
+
+

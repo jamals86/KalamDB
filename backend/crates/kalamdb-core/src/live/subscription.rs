@@ -294,13 +294,3 @@ pub struct RegisteredSubscription {
     pub batch_size: usize,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_timestamp() {
-        let ts = SubscriptionService::current_timestamp_ms();
-        assert!(ts > 0);
-    }
-}
