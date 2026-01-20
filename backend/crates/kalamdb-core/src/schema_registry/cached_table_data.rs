@@ -79,7 +79,7 @@ impl CachedTableData {
     /// Create new cached table data with required storage_id
     pub fn new(schema: Arc<TableDefinition>) -> Self {
         let schema_version = schema.schema_version;
-        let storage_id = Self::extract_storage_id(&schema).unwrap_or_else(|| StorageId::system());
+        let storage_id = Self::extract_storage_id(&schema).unwrap_or_else(|| StorageId::local());
         let (bloom_filter_columns, indexed_columns) = Self::compute_indexed_columns(&schema);
         Self {
             table: schema,
@@ -91,6 +91,18 @@ impl CachedTableData {
             indexed_columns,
             provider: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Create cached table data from a table definition with full initialization
+    ///
+    /// This method resolves storage_id and computes all cached fields.
+    /// Used when loading table definitions from persistence or creating new tables.
+    pub fn from_table_definition(
+        _app_ctx: &AppContext,
+        _table_id: &TableId,
+        table_def: Arc<TableDefinition>,
+    ) -> Result<Self, KalamDbError> {
+        Ok(Self::new(table_def))
     }
 
     fn now_millis() -> u64 {

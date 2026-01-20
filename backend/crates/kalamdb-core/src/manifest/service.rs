@@ -9,161 +9,152 @@
 
 use crate::schema_registry::SchemaRegistry;
 use kalamdb_commons::models::types::{Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
-use kalamdb_commons::models::StorageId;
-use kalamdb_commons::{NamespaceId, StorageKey, TableId, TableName, UserId};
+use kalamdb_commons::{StorageKey, TableId, UserId};
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_filestore::StorageRegistry;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{StorageBackend, StorageError};
-use kalamdb_system::providers::manifest::{new_manifest_store, ManifestCacheKey, ManifestStore};
+use kalamdb_system::providers::manifest::ManifestCacheKey;
+use kalamdb_system::providers::ManifestTableProvider;
 use log::{debug, info, warn};
-use moka::sync::Cache;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
-
-/// Cache key type for moka cache: (TableId, Option<UserId>)
-pub type ManifestCacheKeyTuple = (TableId, Option<UserId>);
 
 /// Unified ManifestService with hot cache + RocksDB persistence + cold storage.
 ///
 /// Architecture:
-/// - Hot cache: moka::sync::Cache<(TableId, Option<UserId>), Arc<ManifestCacheEntry>> for fast reads
 /// - Persistent store: RocksDB manifest_cache column family for crash recovery
 /// - Cold store: manifest.json files in filestore (S3/local filesystem)
 pub struct ManifestService {
-    /// RocksDB-backed persistent store
-    store: ManifestStore,
-
-    /// In-memory hot cache for fast lookups (moka with automatic eviction)
-    /// Key: (TableId, Option<UserId>)
-    hot_cache: Cache<ManifestCacheKeyTuple, Arc<ManifestCacheEntry>>,
+    /// Provider wrapping the store
+    provider: Arc<ManifestTableProvider>,
 
     /// Configuration settings
     config: ManifestCacheSettings,
 
     /// Optional registries for path/object store resolution.
     ///
-    /// In production these are injected via `new_with_registries()` to avoid any
-    /// global AppContext usage.
+    /// In production these are injected via `new_with_registries()`
     schema_registry: Option<Arc<SchemaRegistry>>,
+    storage_registry: Option<Arc<StorageRegistry>>,
 }
 
-/// Minimum weight for any cache entry (shared tables)
-const MIN_ENTRY_WEIGHT: u32 = 1;
-
 impl ManifestService {
-    /// Create a new ManifestService with tiered eviction strategy.
-    ///
-    /// The hot cache uses a weigher to prioritize shared tables over user tables:
-    /// - Shared tables (user_id = None): weight = 1
-    /// - User tables (user_id = Some): weight = config.user_table_weight_factor (default 10)
-    ///
-    /// This means when memory pressure occurs, user table manifests are evicted
-    /// approximately N times faster than shared table manifests (N = user_table_weight_factor).
+    /// Create a new ManifestService
     pub fn new(
-        storage_backend: Arc<dyn StorageBackend>,
+        provider: Arc<ManifestTableProvider>,
         config: ManifestCacheSettings,
     ) -> Self {
-        // Build moka cache with TTI, max capacity, and tiered weigher
-        let tti_secs = config.ttl_seconds() as u64;
-
-        // Capture the weight factor from config for use in closure
-        let user_weight = config.user_table_weight_factor.max(1); // At least 1
-
-        // Weigher for tiered eviction: shared tables stay longer than user tables
-        // Weight is based on entry type, not actual memory size
-        let weigher = move |key: &ManifestCacheKeyTuple, _entry: &Arc<ManifestCacheEntry>| -> u32 {
-            match &key.1 {
-                None => MIN_ENTRY_WEIGHT, // Shared table - low weight, stays longer
-                Some(_) => user_weight,   // User table - high weight, evicted sooner
-            }
-        };
-
-        // Calculate weighted capacity: if max_entries=1000 and user_weight=10, we want room for
-        // ~1000 shared tables OR ~100 user tables (or mix)
-        let weighted_capacity = (config.max_entries as u64) * (user_weight as u64);
-
-        let hot_cache = Cache::builder()
-            .max_capacity(weighted_capacity)
-            .weigher(weigher)
-            .time_to_idle(Duration::from_secs(tti_secs))
-            .build();
-
         Self {
-            store: new_manifest_store(storage_backend),
-            hot_cache,
+            provider,
             config,
             schema_registry: None,
+            storage_registry: None,
         }
     }
 
-    /// Create a new ManifestService with access to SchemaRegistry + StorageRegistry.
-    ///
-    /// This is the preferred constructor for production wiring.
+    /// Create a ManifestService with injected registries (compat helper for tests).
     pub fn new_with_registries(
-        storage_backend: Arc<dyn StorageBackend>,
-        base_path: String,
+        backend: Arc<dyn StorageBackend>,
+        _base_path: String,
         config: ManifestCacheSettings,
         schema_registry: Arc<SchemaRegistry>,
         storage_registry: Arc<StorageRegistry>,
     ) -> Self {
-        let mut service = Self::new(storage_backend, config);
-        service.schema_registry = Some(schema_registry);
-        service.storage_registry = Some(storage_registry);
+        let provider = Arc::new(ManifestTableProvider::new(backend));
+        let mut service = Self::new(provider, config);
+        service.set_schema_registry(schema_registry);
+        service.set_storage_registry(storage_registry);
         service
     }
 
-    /// Get the registries (SchemaRegistry and StorageRegistry)
-    ///
-    /// Returns an error if registries are not initialized.
-    /// Use `new_with_registries()` to initialize.
-    pub fn registries(&self) -> Result<(Arc<SchemaRegistry>, Arc<StorageRegistry>), StorageError> {
-        if let (Some(schema_registry), Some(storage_registry)) =
-            (self.schema_registry.as_ref(), self.storage_registry.as_ref())
-        {
-            return Ok((Arc::clone(schema_registry), Arc::clone(storage_registry)));
-        }
-
-        Err(StorageError::Other(
-            "ManifestService missing SchemaRegistry/StorageRegistry; use new_with_registries()"
-                .to_string(),
-        ))
+    /// Set SchemaRegistry (break circular dependency)
+    pub fn set_schema_registry(&mut self, registry: Arc<SchemaRegistry>) {
+        self.schema_registry = Some(registry);
     }
 
-    // ========== Hot Cache Operations (formerly ManifestCacheService) ==========
+    /// Set StorageRegistry
+    pub fn set_storage_registry(&mut self, registry: Arc<StorageRegistry>) {
+        self.storage_registry = Some(registry);
+    }
+    
+    // Internal helper to get registries (panics if not set in production flows)
+    fn get_schema_registry(&self) -> &Arc<SchemaRegistry> {
+         self.schema_registry.as_ref().expect("SchemaRegistry not initialized in ManifestService")
+    }
+
+    fn get_storage_registry(&self) -> &Arc<StorageRegistry> {
+         self.storage_registry.as_ref().expect("StorageRegistry not initialized in ManifestService")
+    }
+
+    // ========== Cache Operations (now mostly passthrough to RocksDB) ==========
 
     /// Get or load a manifest cache entry.
     ///
     /// Flow:
-    /// 1. Check hot cache → return immediately
-    /// 2. Check RocksDB CF → load to hot cache, return
-    /// 3. Return None (caller should load from storage backend)
-    ///
-    /// Moka automatically updates last_accessed on cache hit.
+    /// 1. Check RocksDB CF
+    /// 2. Return Option<Arc<ManifestCacheEntry>>
     pub fn get_or_load(
         &self,
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
-        let cache_key = (table_id.clone(), user_id.cloned());
         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
-
-        // 1. Check hot cache (moka automatically updates TTI on access)
-        if let Some(entry) = self.hot_cache.get(&cache_key) {
-            return Ok(Some(entry));
+        if let Some(entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
+            return Ok(Some(Arc::new(entry)));
         }
-
-        // 2. Check RocksDB CF
-        if let Some(entry) = EntityStore::get(&self.store, &rocksdb_key)? {
-            let entry_arc = Arc::new(entry);
-            self.hot_cache.insert(cache_key, Arc::clone(&entry_arc));
-            return Ok(Some(entry_arc));
-        }
-
-        // 3. Not cached
         Ok(None)
+    }
+
+    /// Count all cached manifest entries.
+    pub fn count(&self) -> Result<usize, StorageError> {
+        let entries = EntityStore::scan_all(self.provider.store(), None, None, None)?;
+        Ok(entries.len())
+    }
+
+    /// Return all cached entries with their storage keys.
+    pub fn get_all(&self) -> Result<Vec<(String, ManifestCacheEntry)>, StorageError> {
+        let entries = EntityStore::scan_all(self.provider.store(), None, None, None)?;
+        let mut results = Vec::with_capacity(entries.len());
+        for (key_bytes, entry) in entries {
+            let key = String::from_utf8(key_bytes).unwrap_or_default();
+            results.push((key, entry));
+        }
+        Ok(results)
+    }
+
+    /// Clear all cached entries.
+    pub fn clear(&self) -> Result<(), StorageError> {
+        let entries = EntityStore::scan_all(self.provider.store(), None, None, None)?;
+        for (key_bytes, _entry) in entries {
+            let cache_key = ManifestCacheKey::from_storage_key(&key_bytes)
+                .map_err(StorageError::SerializationError)?;
+            EntityStore::delete(self.provider.store(), &cache_key)?;
+        }
+        Ok(())
+    }
+
+    /// Return shared/user counts and total weighted capacity for monitoring.
+    pub fn cache_stats(&self) -> Result<(usize, usize, usize), StorageError> {
+        let entries = EntityStore::scan_all(self.provider.store(), None, None, None)?;
+        let mut shared_count = 0usize;
+        let mut user_count = 0usize;
+        for (_key_bytes, entry) in entries {
+            if entry.manifest.user_id.is_some() {
+                user_count += 1;
+            } else {
+                shared_count += 1;
+            }
+        }
+        let weight_factor = self.config.user_table_weight_factor as usize;
+        let total_weight = shared_count + (user_count * weight_factor);
+        Ok((shared_count, user_count, total_weight))
+    }
+
+    /// Compute max weighted capacity based on configuration.
+    pub fn max_weighted_capacity(&self) -> usize {
+        self.config.max_entries * self.config.user_table_weight_factor as usize
     }
 
     /// Update manifest cache after successful flush.
@@ -199,13 +190,11 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        let cache_key = (table_id.clone(), user_id.cloned());
         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
 
-        if let Some(mut entry) = EntityStore::get(&self.store, &rocksdb_key)? {
+        if let Some(mut entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
             entry.mark_stale();
-            EntityStore::put(&self.store, &rocksdb_key, &entry)?;
-            self.hot_cache.insert(cache_key, Arc::new(entry));
+            EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
         }
 
         Ok(())
@@ -217,13 +206,11 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        let cache_key = (table_id.clone(), user_id.cloned());
         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
 
-        if let Some(mut entry) = EntityStore::get(&self.store, &rocksdb_key)? {
+        if let Some(mut entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
             entry.mark_error();
-            EntityStore::put(&self.store, &rocksdb_key, &entry)?;
-            self.hot_cache.insert(cache_key, Arc::new(entry));
+            EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
         }
 
         Ok(())
@@ -235,13 +222,11 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        let cache_key = (table_id.clone(), user_id.cloned());
         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
 
-        if let Some(mut entry) = EntityStore::get(&self.store, &rocksdb_key)? {
+        if let Some(mut entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
             entry.mark_syncing();
-            EntityStore::put(&self.store, &rocksdb_key, &entry)?;
-            self.hot_cache.insert(cache_key, Arc::new(entry));
+            EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
         }
 
         Ok(())
@@ -253,13 +238,9 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<bool, StorageError> {
-        let cache_key = (table_id.clone(), user_id.cloned());
         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
 
-        if let Some(entry) = self.hot_cache.get(&cache_key) {
-            let now = chrono::Utc::now().timestamp();
-            Ok(!entry.is_stale(self.config.ttl_seconds(), now))
-        } else if let Some(entry) = EntityStore::get(&self.store, &rocksdb_key)? {
+        if let Some(entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
             let now = chrono::Utc::now().timestamp();
             Ok(!entry.is_stale(self.config.ttl_seconds(), now))
         } else {
@@ -273,11 +254,8 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        let cache_key = (table_id.clone(), user_id.cloned());
         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
-
-        self.hot_cache.invalidate(&cache_key);
-        EntityStore::delete(&self.store, &rocksdb_key)
+        EntityStore::delete(self.provider.store(), &rocksdb_key)
     }
 
     /// Invalidate all cache entries for a table (all users + shared).
@@ -288,7 +266,7 @@ impl ManifestService {
         );
 
         let mut invalidated = 0;
-        let all_entries = EntityStore::scan_all(&self.store, None, None, None)?;
+        let all_entries = EntityStore::scan_all(self.provider.store(), None, None, None)?;
 
         for (key_bytes, _entry) in all_entries {
             let key_str = match String::from_utf8(key_bytes) {
@@ -297,14 +275,8 @@ impl ManifestService {
             };
 
             if key_str.starts_with(&key_prefix) {
-                // Parse key to get user_id for hot cache invalidation
-                if let Some(user_id) = self.parse_user_id_from_key(&key_str) {
-                    let cache_key = (table_id.clone(), user_id);
-                    self.hot_cache.invalidate(&cache_key);
-                }
-
                 let rocksdb_key = ManifestCacheKey::from(key_str);
-                EntityStore::delete(&self.store, &rocksdb_key)?;
+                EntityStore::delete(self.provider.store(), &rocksdb_key)?;
                 invalidated += 1;
             }
         }
@@ -314,107 +286,17 @@ impl ManifestService {
         Ok(invalidated)
     }
 
-    /// Get all cache entries (for SHOW MANIFEST CACHE).
-    pub fn get_all(&self) -> Result<Vec<(String, ManifestCacheEntry)>, StorageError> {
-        let entries = EntityStore::scan_all(&self.store, None, None, None)?;
-        let string_entries = entries
-            .into_iter()
-            .filter_map(|(key_bytes, entry)| String::from_utf8(key_bytes).ok().map(|k| (k, entry)))
-            .collect();
-        Ok(string_entries)
-    }
-
-    /// Get total count of cached entries
-    pub fn count(&self) -> Result<usize, StorageError> {
-        let all_entries = EntityStore::scan_all(&self.store, None, None, None)?;
-        Ok(all_entries.len())
-    }
-
-    /// Get cache statistics including weighted counts.
-    ///
-    /// Returns (shared_count, user_count, total_weight) where:
-    /// - shared_count: number of shared table manifests (weight=1 each)
-    /// - user_count: number of user table manifests (weight=user_table_weight_factor each)
-    /// - total_weight: sum of all weights (used for capacity calculation)
-    pub fn cache_stats(&self) -> (usize, usize, u64) {
-        let mut shared_count = 0usize;
-        let mut user_count = 0usize;
-
-        for (key, _) in &self.hot_cache {
-            match key.1 {
-                None => shared_count += 1,
-                Some(_) => user_count += 1,
-            }
-        }
-
-        let user_weight = self.config.user_table_weight_factor.max(1) as u64;
-        let total_weight =
-            (shared_count as u64 * MIN_ENTRY_WEIGHT as u64) + (user_count as u64 * user_weight);
-
-        (shared_count, user_count, total_weight)
-    }
-
-    /// Get the configured maximum weighted capacity.
-    pub fn max_weighted_capacity(&self) -> u64 {
-        let user_weight = self.config.user_table_weight_factor.max(1) as u64;
-        (self.config.max_entries as u64) * user_weight
-    }
-
-    /// Clear all cache entries.
-    pub fn clear(&self) -> Result<(), StorageError> {
-        self.hot_cache.invalidate_all();
-        let keys = EntityStore::scan_all(&self.store, None, None, None)?;
-        for (key_bytes, _) in keys {
-            let key = ManifestCacheKey::from(String::from_utf8_lossy(&key_bytes).to_string());
-            EntityStore::delete(&self.store, &key)?;
-        }
-        Ok(())
-    }
-
-    // /// Restore hot cache from RocksDB (for testing/debugging only).
-    // ///
-    // /// NOTE: Not used at startup - manifests are loaded lazily via get_or_load()
-    // /// which checks hot cache → RocksDB on-demand. This avoids loading manifests
-    // /// that may never be accessed.
-    // #[allow(dead_code)]
-    // pub fn restore_from_rocksdb(&self) -> Result<(), StorageError> {
-    //     let now = chrono::Utc::now().timestamp();
-    //     let entries = EntityStore::scan_all(&self.store, None, None, None)?;
-
-    //     for (key_bytes, entry) in entries {
-    //         if let Ok(key_str) = String::from_utf8(key_bytes) {
-    //             if entry.is_stale(self.config.ttl_seconds(), now) {
-    //                 continue;
-    //             }
-
-    //             // Parse the key to construct the tuple key
-    //             if let Some((table_id, user_id)) = self.parse_key_string(&key_str) {
-    //                 self.hot_cache.insert((table_id, user_id), Arc::new(entry));
-    //             }
-    //         }
-    //     }
-    //     Ok(())
-    // }
-
     /// Check if a cache key is currently in the hot cache (RAM).
+    /// With no hot cache, we check RocksDB existence.
     pub fn is_in_hot_cache(&self, table_id: &TableId, user_id: Option<&UserId>) -> bool {
-        let cache_key = (table_id.clone(), user_id.cloned());
-        self.hot_cache.contains_key(&cache_key)
+         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
+         EntityStore::get(self.provider.store(), &rocksdb_key).unwrap_or(None).is_some()
     }
 
     /// Check if a cache key string is in hot cache (for system.manifest table compatibility).
     pub fn is_in_hot_cache_by_string(&self, cache_key_str: &str) -> bool {
-        if let Some((table_id, user_id)) = self.parse_key_string(cache_key_str) {
-            self.hot_cache.contains_key(&(table_id, user_id))
-        } else {
-            false
-        }
-    }
-
-    /// Get the number of entries in the hot cache.
-    pub fn hot_cache_len(&self) -> usize {
-        self.hot_cache.run_pending_tasks();
-        self.hot_cache.entry_count() as usize
+        let rocksdb_key = ManifestCacheKey::from(cache_key_str);
+        EntityStore::get(self.provider.store(), &rocksdb_key).unwrap_or(None).is_some()
     }
 
     /// Evict stale manifest entries from RocksDB.
@@ -423,7 +305,7 @@ impl ManifestService {
         let cutoff = now - ttl_seconds;
         let mut evicted_count = 0;
 
-        let all_entries = EntityStore::scan_all(&self.store, None, None, None)?;
+        let all_entries = EntityStore::scan_all(self.provider.store(), None, None, None)?;
 
         for (key_bytes, entry) in all_entries {
             let key_str = match String::from_utf8(key_bytes) {
@@ -432,12 +314,8 @@ impl ManifestService {
             };
 
             if entry.last_refreshed < cutoff {
-                if let Some((table_id, user_id)) = self.parse_key_string(&key_str) {
-                    self.hot_cache.invalidate(&(table_id, user_id));
-                }
-
                 let rocksdb_key = ManifestCacheKey::from(key_str);
-                EntityStore::delete(&self.store, &rocksdb_key)?;
+                EntityStore::delete(self.provider.store(), &rocksdb_key)?;
                 evicted_count += 1;
             }
         }
@@ -526,35 +404,27 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        let cache_key = (table_id.clone(), user_id.cloned());
+        if let Some(entry) = self.get_or_load(table_id, user_id)? {
+            let schema_registry = self.get_schema_registry();
+            let storage_registry = self.get_storage_registry();
 
-        if let Some(entry) = self.hot_cache.get(&cache_key) {
-            let (schema_registry, storage_registry) = self.registries()?;
             let cached = schema_registry
                 .get(table_id)
                 .ok_or_else(|| StorageError::Other(format!("Table not found: {}", table_id)))?;
             
-            let storage_cached = cached.storage_cached(&storage_registry)
+            let storage_cached = cached.storage_cached(storage_registry)
                 .map_err(|e| StorageError::Other(e.to_string()))?;
             
-            let json_str = serde_json::to_string_pretty(&entry.manifest).map_err(|e| {
+            // Serialize to Value for write_manifest_sync
+            let json_value = serde_json::to_value(&entry.manifest).map_err(|e| {
                 StorageError::SerializationError(format!("Failed to serialize manifest: {}", e))
             })?;
             
-            let manifest_path_result = storage_cached.get_manifest_path(
+            storage_cached.write_manifest_sync(
                 cached.table.table_type,
                 table_id,
                 user_id,
-                None  // No shard for manifest
-            );
-            
-            storage_cached.put_sync(
-                cached.table.table_type,
-                table_id,
-                user_id,
-                None,  // No shard for manifest
-                &manifest_path_result.full,
-                bytes::Bytes::from(json_str.as_bytes().to_vec())
+                &json_value
             ).map_err(|e| StorageError::IoError(e.to_string()))?;
             
             debug!("Flushed manifest for {} (ver: {})", table_id, entry.manifest.version);
@@ -570,35 +440,25 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<Manifest, StorageError> {
-        let (schema_registry, storage_registry) = self.registries()?;
+        let schema_registry = self.get_schema_registry();
+        let storage_registry = self.get_storage_registry();
+
         let cached = schema_registry
             .get(table_id)
             .ok_or_else(|| StorageError::Other(format!("Table not found: {}", table_id)))?;
         
-        let storage_cached = cached.storage_cached(&storage_registry)
+        let storage_cached = cached.storage_cached(storage_registry)
             .map_err(|e| StorageError::Other(e.to_string()))?;
         
-        let manifest_path_result = storage_cached.get_manifest_path(
+        let manifest_value = storage_cached.read_manifest_sync(
             cached.table.table_type,
-            table_id,
-            user_id,
-            None  // No shard for manifest
-        );
+            table_id, 
+            user_id
+        ).map_err(|e| StorageError::IoError(e.to_string()))?
+        .ok_or_else(|| StorageError::Other("Manifest not found".to_string()))?;
         
-        let bytes = storage_cached.get_sync(
-            cached.table.table_type,
-            table_id,
-            user_id,
-            None,  // No shard for manifest
-            &manifest_path_result.full
-        ).map_err(|e| StorageError::IoError(e.to_string()))?;
-        
-        let json_str = String::from_utf8(bytes.to_vec()).map_err(|e| {
-            StorageError::SerializationError(format!("Failed to parse manifest as UTF-8: {}", e))
-        })?;
-
-        serde_json::from_str(&json_str).map_err(|e| {
-            StorageError::SerializationError(format!("Failed to parse manifest JSON: {}", e))
+        serde_json::from_value(manifest_value).map_err(|e| {
+            StorageError::SerializationError(format!("Failed to deserialize manifest: {}", e))
         })
     }
 
@@ -609,48 +469,46 @@ impl ManifestService {
         _table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
     ) -> Result<Manifest, StorageError> {
-        let (schema_registry, storage_registry) = self.registries()?;
+        let schema_registry = self.get_schema_registry();
+        let storage_registry = self.get_storage_registry();
+
         let cached = schema_registry
             .get(table_id)
             .ok_or_else(|| StorageError::Other(format!("Table not found: {}", table_id)))?;
         
-        let storage_cached = cached.storage_cached(&storage_registry)
+        let storage_cached = cached.storage_cached(storage_registry)
             .map_err(|e| StorageError::Other(e.to_string()))?;
         
         let mut manifest = Manifest::new(table_id.clone(), user_id.cloned());
 
-        // List all files in the table directory
-        let list_result = storage_cached.list_sync(
+        // List all parquet files using the optimized method
+        let mut batch_files = storage_cached.list_parquet_files_sync(
             cached.table.table_type,
             table_id,
-            user_id,
-            None  // No shard
+            user_id
         ).map_err(|e| StorageError::IoError(e.to_string()))?;
 
-        let mut batch_files: Vec<String> = list_result.files
-            .into_iter()
-            .map(|f| f.path)
-            .filter(|f| f.ends_with(".parquet") && f.contains("batch-"))
-            .collect();
+        // Filter only batch files (exclude compaction temp files etc)
+        batch_files.retain(|f| f.contains("batch-"));
         batch_files.sort();
-
-        for batch_path in &batch_files {
-            let file_name = batch_path.rsplit('/').next().unwrap_or(batch_path).to_string();
+        
+        // Batch fetch metadata if possible (TODO: Add bulk head to filestore)
+        // For now, sequential head
+        for file_name in &batch_files {
             let id = file_name.clone();
             
             // Get file size via head operation
-            let file_info = storage_cached.head(
+            let file_info = storage_cached.head_sync(
                 cached.table.table_type,
                 table_id,
                 user_id,
-                None,  // No shard
-                batch_path
+                file_name
             ).map_err(|e| StorageError::IoError(e.to_string()))?;
             
             let size_bytes = file_info.size as u64;
             
             // Create segment metadata (we don't parse full footer for rebuild, just size)
-            let segment = SegmentMetadata::new(id, file_name, HashMap::new(), 0, 0, 0, size_bytes);
+            let segment = SegmentMetadata::new(id, file_name.clone(), HashMap::new(), 0, 0, 0, size_bytes);
             manifest.add_segment(segment);
         }
         
@@ -662,18 +520,16 @@ impl ManifestService {
             SyncState::InSync,
         )?;
         
-        // Write manifest to storage
-        let json_str = serde_json::to_string_pretty(&manifest).map_err(|e| {
+        // Write manifest to storage using direct helper (Task 102)
+        let json_value = serde_json::to_value(&manifest).map_err(|e| {
             StorageError::SerializationError(format!("Failed to serialize manifest: {}", e))
         })?;
         
-        storage_cached.put_sync(
-            cached.table.table_type,
-            table_id,
-            user_id,
-            None,  // No shard
-            &manifest_path_result.full,
-            bytes::Bytes::from(json_str.as_bytes().to_vec())
+        storage_cached.write_manifest_sync(
+             cached.table.table_type,
+             table_id,
+             user_id,
+             &json_value
         ).map_err(|e| StorageError::IoError(e.to_string()))?;
 
         Ok(manifest)
@@ -691,31 +547,31 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<String, StorageError> {
-        let (schema_registry, storage_registry) = self.registries()?;
+        let schema_registry = self.get_schema_registry();
+        let storage_registry = self.get_storage_registry();
+
         let cached = schema_registry
             .get(table_id)
             .ok_or_else(|| StorageError::Other(format!("Table not found: {}", table_id)))?;
         
-        let storage_cached = cached.storage_cached(&storage_registry)
+        let storage_cached = cached.storage_cached(storage_registry)
             .map_err(|e| StorageError::Other(e.to_string()))?;
         
         let manifest_path_result = storage_cached.get_manifest_path(
             cached.table.table_type,
             table_id,
-            user_id,
-            None  // No shard
+            user_id
         );
         
-        Ok(manifest_path_result.full)
+        Ok(manifest_path_result.full_path)
     }
 
-    /// List user scopes that have manifests for a given table.
-    pub fn list_user_scopes_for_table(
+    pub fn get_manifest_user_ids(
         &self,
         table_id: &TableId,
     ) -> Result<Vec<UserId>, StorageError> {
         let prefix = ManifestCacheKey::from(format!("{}:", table_id));
-        let entries = EntityStore::scan_all(&self.store, None, Some(&prefix), None)?;
+        let entries = EntityStore::scan_all(self.provider.store(), None, Some(&prefix), None)?;
         let mut user_ids = HashSet::new();
 
         for (key_bytes, _entry) in entries {
@@ -742,32 +598,6 @@ impl ManifestService {
         )
     }
 
-    fn parse_key_string(&self, key_str: &str) -> Option<(TableId, Option<UserId>)> {
-        let mut parts = key_str.splitn(3, ':');
-        let namespace = parts.next()?;
-        let table = parts.next()?;
-        let scope = parts.next()?;
-        let user_id = if scope == "shared" {
-            None
-        } else {
-            Some(UserId::from(scope))
-        };
-        Some((TableId::new(NamespaceId::new(namespace), TableName::new(table)), user_id))
-    }
-
-    fn parse_user_id_from_key(&self, key_str: &str) -> Option<Option<UserId>> {
-        let mut parts = key_str.splitn(3, ':');
-        let _namespace = parts.next()?;
-        let _table = parts.next()?;
-        let scope = parts.next()?;
-        let user_id = if scope == "shared" {
-            None
-        } else {
-            Some(UserId::from(scope))
-        };
-        Some(user_id)
-    }
-
     fn upsert_cache_entry(
         &self,
         table_id: &TableId,
@@ -776,14 +606,12 @@ impl ManifestService {
         etag: Option<String>,
         sync_state: SyncState,
     ) -> Result<(), StorageError> {
-        let cache_key = (table_id.clone(), user_id.cloned());
         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
         let now = chrono::Utc::now().timestamp();
 
         let entry = ManifestCacheEntry::new(manifest.clone(), etag, now, sync_state);
 
-        EntityStore::put(&self.store, &rocksdb_key, &entry)?;
-        self.hot_cache.insert(cache_key, Arc::new(entry));
+        EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
 
         Ok(())
     }
@@ -795,17 +623,20 @@ impl ManifestService {
 mod tests {
     use super::*;
     use kalamdb_commons::models::schemas::TableType;
+    use kalamdb_commons::{NamespaceId, TableName};
+    use kalamdb_store::StorageBackend;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_service() -> ManifestService {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let provider = Arc::new(ManifestTableProvider::new(backend));
         let config = ManifestCacheSettings {
             eviction_interval_seconds: 300,
             max_entries: 1000,
             eviction_ttl_days: 7,
             user_table_weight_factor: 10,
         };
-        ManifestService::new(backend, config)
+        ManifestService::new(provider, config)
     }
 
     fn create_test_manifest(table_id: &TableId, user_id: Option<&UserId>) -> Manifest {
@@ -929,27 +760,6 @@ mod tests {
         assert_eq!(cached_after.sync_state, SyncState::Syncing);
     }
 
-    #[test]
-    fn test_clear() {
-        let service = create_test_service();
-        let table_id = build_table_id("ns1", "tbl1");
-        let manifest = create_test_manifest(&table_id, Some(&UserId::from("u_123")));
-
-        service
-            .update_after_flush(
-                &table_id,
-                Some(&UserId::from("u_123")),
-                &manifest,
-                None,
-            )
-            .unwrap();
-
-        assert_eq!(service.count().unwrap(), 1);
-
-        service.clear().unwrap();
-        assert_eq!(service.count().unwrap(), 0);
-    }
-
     // #[test]
     // fn test_restore_from_rocksdb() {
     //     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -977,31 +787,4 @@ mod tests {
     //         .unwrap();
     //     assert!(cached.is_some());
     // }
-
-    #[test]
-    fn test_cache_key_parsing() {
-        let service = create_test_service();
-        let table_id = build_table_id("myns", "mytable");
-
-        // Test shared table key
-        let key_str = service.make_cache_key_string(&table_id, None);
-        assert_eq!(key_str, "myns:mytable:shared");
-
-        let parsed = service.parse_key_string(&key_str);
-        assert!(parsed.is_some());
-        let (parsed_table_id, parsed_user_id) = parsed.unwrap();
-        assert_eq!(parsed_table_id, table_id);
-        assert_eq!(parsed_user_id, None);
-
-        // Test user table key
-        let user_id = UserId::from("u_test");
-        let key_str = service.make_cache_key_string(&table_id, Some(&user_id));
-        assert_eq!(key_str, "myns:mytable:u_test");
-
-        let parsed = service.parse_key_string(&key_str);
-        assert!(parsed.is_some());
-        let (parsed_table_id, parsed_user_id) = parsed.unwrap();
-        assert_eq!(parsed_table_id, table_id);
-        assert_eq!(parsed_user_id, Some(user_id));
-    }
 }

@@ -34,14 +34,14 @@ impl FlushManifestHelper {
     /// Delegates to kalamdb_filestore::PathResolver for consistency.
     #[inline]
     pub fn generate_temp_filename(batch_number: u64) -> String {
-        kalamdb_filestore::PathResolver::temp_batch_filename(batch_number)
+        kalamdb_filestore::StorageCached::temp_batch_filename(batch_number)
     }
 
     /// Generate batch filename from batch number
     /// Delegates to kalamdb_filestore::PathResolver for consistency.
     #[inline]
     pub fn generate_batch_filename(batch_number: u64) -> String {
-        kalamdb_filestore::PathResolver::batch_filename(batch_number)
+        kalamdb_filestore::StorageCached::batch_filename(batch_number)
     }
 
     /// Mark manifest cache entry as syncing (flush in progress)
@@ -162,7 +162,7 @@ impl FlushManifestHelper {
         table_id: &TableId,
         table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
-        cached: Option<&Arc<CachedTableData>>,
+        _cached: Option<&Arc<CachedTableData>>,
         _batch_number: u64,
         batch_filename: String,
         file_path: &Path,

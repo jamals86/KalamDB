@@ -60,6 +60,11 @@ impl ManifestTableProvider {
         }
     }
 
+    /// Access the underlying ManifestStore
+    pub fn store(&self) -> &ManifestStore {
+        &self.store
+    }
+
     /// Check if a cache key is in hot memory
     fn is_in_memory(&self, cache_key: &str) -> bool {
         if let Ok(guard) = self.in_memory_checker.read() {

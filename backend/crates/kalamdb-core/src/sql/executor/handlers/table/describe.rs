@@ -39,7 +39,7 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
         let def = self
             .app_context
             .schema_registry()
-            .get_table_if_exists(self.app_context.as_ref(), &table_id)?
+            .get_table_if_exists(&table_id)?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table '{}' not found in namespace '{}'",

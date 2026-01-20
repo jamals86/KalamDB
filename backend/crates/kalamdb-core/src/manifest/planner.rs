@@ -9,8 +9,7 @@ use crate::error_extensions::KalamDbResultExt;
 use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use kalamdb_commons::models::{StorageId, UserId};
+use kalamdb_commons::models::UserId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::types::Manifest;
 use kalamdb_commons::TableId;
@@ -113,14 +112,10 @@ impl ManifestAccessPlanner {
 
         // Fallback: only when no manifest (or degraded mode)
         if parquet_files.is_empty() && (manifest_opt.is_none() || use_degraded_mode) {
-            let files = storage_cached.list_sync(table_type, table_id, user_id)
-                .into_kalamdb_error("Failed to list files")?
-                .files;
-            for file_info in files {
-                if file_info.name.ends_with(".parquet") {
-                    parquet_files.push(file_info.name);
-                }
-            }
+             let files = storage_cached.list_parquet_files_sync(table_type, table_id, user_id)
+                .into_kalamdb_error("Failed to list files")?;
+             
+             parquet_files.extend(files);
 
             total_batches = parquet_files.len();
             scanned = total_batches;
@@ -132,32 +127,22 @@ impl ManifestAccessPlanner {
             return Ok((RecordBatch::new_empty(schema), (total_batches, skipped, scanned)));
         }
 
-        // Read all Parquet files and merge batches
         let mut all_batches = Vec::new();
-
         for parquet_file in &parquet_files {
-            let bytes = storage_cached.get_sync(table_type, table_id, user_id, parquet_file)
-                .into_kalamdb_error("Failed to read Parquet file")?
-                .data;
-
-            let builder = ParquetRecordBatchReaderBuilder::try_new(bytes)
-                .into_arrow_error_ctx("Failed to create Parquet reader")?;
-
-            let reader = builder.build().into_arrow_error_ctx("Failed to build Parquet reader")?;
+            let batches = storage_cached
+                .read_parquet_files_sync(table_type, table_id, user_id, &[parquet_file.clone()])
+                .into_kalamdb_error("Failed to read Parquet file")?;
 
             // Get the schema version for this file (default to 1 if not found)
             let file_schema_version = file_schema_versions.get(parquet_file).copied().unwrap_or(1);
-
-            // Check if schema version matches current version
-            let current_version = app_context
-                .schema_registry()
-                .get(table_id)
-                .map(|cached| cached.table.schema_version)
-                .unwrap_or(1);
-
-            // Read all batches from this file
-            for batch_result in reader {
-                let batch = batch_result.into_arrow_error_ctx("Failed to read Parquet batch")?;
+            
+            for batch in batches {
+                // Check if schema version matches current version
+                let current_version = app_context
+                    .schema_registry()
+                    .get(table_id)
+                    .map(|cached| cached.table.schema_version)
+                    .unwrap_or(1);
 
                 // If schema versions differ, project the batch to current schema
                 let projected_batch = if file_schema_version != current_version {
@@ -239,7 +224,6 @@ impl ManifestAccessPlanner {
     ) -> Result<RecordBatch, KalamDbError> {
         // Get cached arrow schema for the historical version (uses version cache)
         let old_schema = app_context.schema_registry().get_arrow_schema_for_version(
-            app_context.as_ref(),
             table_id,
             old_schema_version,
         )?;

@@ -44,6 +44,7 @@ tokio-util = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+bytes = { workspace = true }
 
 # System
 hostname = { workspace = true }

@@ -313,14 +313,13 @@ impl AppContext {
                 Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
 
             // Create unified manifest service (hot cache + RocksDB + cold storage)
-            let base_storage_path = config.storage.storage_dir().to_string_lossy().into_owned();
-            let manifest_service = Arc::new(crate::manifest::ManifestService::new_with_registries(
-                storage_backend.clone(),
-                base_storage_path,
+            let mut manifest_service_obj = crate::manifest::ManifestService::new(
+                system_tables.manifest(),
                 config.manifest_cache.clone(),
-                schema_registry.clone(),
-                storage_registry.clone(),
-            ));
+            );
+            manifest_service_obj.set_schema_registry(schema_registry.clone());
+            manifest_service_obj.set_storage_registry(storage_registry.clone());
+            let manifest_service = Arc::new(manifest_service_obj);
 
             // Create command executor (Phase 20 - Unified Raft Executor)
             // ALWAYS use RaftExecutor - same code path for standalone and cluster
@@ -379,7 +378,7 @@ impl AppContext {
             let app_ctx = Arc::new(AppContext {
                 node_id,
                 config,
-                schema_registry,
+                schema_registry: schema_registry.clone(),
                 user_table_store,
                 shared_table_store,
                 storage_backend,
@@ -398,6 +397,9 @@ impl AppContext {
                 sql_executor: OnceCell::new(),
                 server_start_time: Instant::now(),
             });
+
+            // Set AppContext in SchemaRegistry to break circular dependency
+            schema_registry.set_app_context(app_ctx.clone());
 
             let job_manager = Arc::new(crate::jobs::JobsManager::new(
                 jobs_provider,

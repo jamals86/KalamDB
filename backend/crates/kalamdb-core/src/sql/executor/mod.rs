@@ -213,7 +213,7 @@ impl SqlExecutor {
                                         "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
                                         sql
                                     );
-                                    let _ = self.load_existing_tables().await;
+                                    //let _ = self.load_existing_tables().await;
                                     let retry_session = exec_ctx.create_session_with_user();
                                     match retry_session.sql(sql).await {
                                         Ok(df) => {
@@ -263,7 +263,7 @@ impl SqlExecutor {
                                 "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
                                 sql
                             );
-                            let _ = self.load_existing_tables().await;
+                            //let _ = self.load_existing_tables().await;
                             let retry_session = exec_ctx.create_session_with_user();
                             match retry_session.sql(sql).await {
                                 Ok(df) => {
@@ -300,7 +300,7 @@ impl SqlExecutor {
                             "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
                             sql
                         );
-                        let _ = self.load_existing_tables().await;
+                        //let _ = self.load_existing_tables().await;
                         let retry_session = exec_ctx.create_session_with_user();
                         match retry_session.sql(sql).await {
                             Ok(df) => df,
@@ -482,140 +482,9 @@ impl SqlExecutor {
     /// # Returns
     /// Ok on success, error if table loading fails
     pub async fn load_existing_tables(&self) -> Result<(), KalamDbError> {
-        use crate::sql::executor::helpers::table_registration::{
-            register_shared_table_provider, register_stream_table_provider,
-            register_user_table_provider,
-        };
-        use kalamdb_commons::schemas::TableType;
-
-        let is_already_registered = |e: &KalamDbError| -> bool {
-            matches!(e, KalamDbError::InvalidOperation(msg) if msg.to_lowercase().contains("already exists"))
-        };
-
         let app_context = &self.app_context;
-        let schema_registry = app_context.schema_registry();
-
-        // Load all table definitions from the store (much cleaner than scanning Arrow batches!)
-        let all_table_defs = schema_registry.scan_all_table_definitions(app_context.as_ref())?;
-
-        if all_table_defs.is_empty() {
-            log::debug!("No existing tables to load");
-            return Ok(());
-        }
-
-        let mut user_count = 0;
-        let mut shared_count = 0;
-        let mut stream_count = 0;
-        let mut system_count = 0;
-
-        // Iterate through all table definitions and register providers
-        for table_def in all_table_defs {
-            let table_id = kalamdb_commons::models::TableId::new(
-                table_def.namespace_id.clone(),
-                table_def.table_name.clone(),
-            );
-
-            // Skip system tables (already registered in AppContext)
-            if matches!(table_def.table_type, TableType::System) {
-                system_count += 1;
-                continue;
-            }
-
-            // Get Arrow schema from cache (memoized in CachedTableData)
-            // This populates cache with table definition + computes arrow schema once
-            let arrow_schema =
-                match schema_registry.get_arrow_schema(app_context.as_ref(), &table_id) {
-                    Ok(schema) => schema,
-                    Err(e) => {
-                        log::error!(
-                            "Failed to get Arrow schema for {}.{}: {}",
-                            table_def.namespace_id.as_str(),
-                            table_def.table_name.as_str(),
-                            e
-                        );
-                        continue;
-                    },
-                };
-
-            // Register provider based on type
-            match table_def.table_type {
-                TableType::User => {
-                    if let Err(e) =
-                        register_user_table_provider(app_context, &table_id, arrow_schema)
-                    {
-                        if is_already_registered(&e) {
-                            log::debug!(
-                                "Skipping already-registered USER table provider for {}: {}",
-                                table_id,
-                                e
-                            );
-                            continue;
-                        }
-                        return Err(e);
-                    }
-                    user_count += 1;
-                },
-                TableType::Shared => {
-                    if let Err(e) =
-                        register_shared_table_provider(app_context, &table_id, arrow_schema)
-                    {
-                        if is_already_registered(&e) {
-                            log::debug!(
-                                "Skipping already-registered SHARED table provider for {}: {}",
-                                table_id,
-                                e
-                            );
-                            continue;
-                        }
-                        return Err(e);
-                    }
-                    shared_count += 1;
-                },
-                TableType::Stream => {
-                    // Extract TTL from table_options
-                    let ttl_seconds =
-                        if let kalamdb_commons::schemas::TableOptions::Stream(stream_opts) =
-                            &table_def.table_options
-                        {
-                            Some(stream_opts.ttl_seconds)
-                        } else {
-                            None
-                        };
-                    if let Err(e) = register_stream_table_provider(
-                        app_context,
-                        &table_id,
-                        arrow_schema,
-                        ttl_seconds,
-                    ) {
-                        if is_already_registered(&e) {
-                            log::debug!(
-                                "Skipping already-registered STREAM table provider for {}: {}",
-                                table_id,
-                                e
-                            );
-                            continue;
-                        }
-                        return Err(e);
-                    }
-                    stream_count += 1;
-                },
-                TableType::System => {
-                    // Already handled above
-                    unreachable!()
-                },
-            }
-        }
-
-        log::info!(
-            "Loaded {} tables: {} user, {} shared, {} stream ({} system already registered)",
-            user_count + shared_count + stream_count,
-            user_count,
-            shared_count,
-            stream_count,
-            system_count
-        );
-
-        Ok(())
+        // Delegate to unified SchemaRegistry initialization
+        app_context.schema_registry().initialize_tables()
     }
 
     /// Expose the shared `AppContext` for upcoming migrations.

@@ -97,7 +97,7 @@ impl FlushExecutor {
 
         // Get current Arrow schema from the registry (already includes system columns)
         let schema = schema_registry
-            .get_arrow_schema(app_ctx.as_ref(), &table_id)
+            .get_arrow_schema(&table_id)
             .into_kalamdb_error(&format!("Arrow schema not found for {}", table_id))?;
 
         // Get current schema version for manifest recording

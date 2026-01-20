@@ -20,7 +20,6 @@ use kalamdb_core::app_context::AppContext;
 use kalamdb_core::providers::arrow_json_conversion::json_to_row;
 use kalamdb_core::providers::base::{BaseTableProvider, TableProviderCore};
 use kalamdb_core::providers::StreamTableProvider;
-use kalamdb_core::schema_registry::CachedTableData;
 use kalamdb_core::sql::executor::models::ExecutionContext;
 use kalamdb_sharding::ShardRouter;
 use kalamdb_store::test_utils::TestDb;
@@ -110,7 +109,8 @@ async fn test_stream_table_ttl_eviction_with_select() {
     .expect("Failed to build TableDefinition");
     app_ctx
         .schema_registry()
-        .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
+        .put_table_definition(&table_id, &table_def)
+        .expect("Failed to cache table definition");
 
     let provider = Arc::new(StreamTableProvider::new(
         core.clone(),
@@ -258,7 +258,8 @@ async fn test_stream_table_select_with_projection() {
     .expect("Failed to build TableDefinition");
     app_ctx
         .schema_registry()
-        .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
+        .put_table_definition(&table_id, &table_def)
+        .expect("Failed to cache table definition");
 
     let provider = Arc::new(StreamTableProvider::new(
         core.clone(),
@@ -368,7 +369,8 @@ async fn test_stream_table_select_with_limit() {
     .expect("Failed to build TableDefinition");
     app_ctx
         .schema_registry()
-        .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
+        .put_table_definition(&table_id, &table_def)
+        .expect("Failed to cache table definition");
 
     let provider = Arc::new(StreamTableProvider::new(
         core.clone(),

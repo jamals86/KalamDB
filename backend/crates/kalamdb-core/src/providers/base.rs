@@ -614,7 +614,7 @@ pub fn pk_exists_in_cold(
             .paths
             .into_iter()
             .filter_map(|path| {
-                let stripped = strip_list_prefix(&path, prefix).unwrap_or(path.as_str());
+                let stripped = strip_list_prefix(&path, prefix).unwrap_or(&path);
                 if stripped.ends_with(".parquet") {
                     Some(stripped.to_string())
                 } else {
@@ -795,7 +795,7 @@ pub fn pk_exists_batch_in_cold(
             .paths
             .into_iter()
             .filter_map(|path| {
-                let stripped = strip_list_prefix(&path, prefix).unwrap_or(path.as_str());
+                let stripped = strip_list_prefix(&path, prefix).unwrap_or(&path);
                 if stripped.ends_with(".parquet") {
                     Some(stripped.to_string())
                 } else {
@@ -1070,7 +1070,7 @@ where
     if let Some(table_def) = provider
         .app_context()
         .schema_registry()
-        .get_table_if_exists(provider.app_context().as_ref(), table_id)?
+        .get_table_if_exists(table_id)?
     {
         // Fast path: Skip uniqueness check if PK is auto-increment
         if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
@@ -1173,7 +1173,7 @@ where
     if let Some(table_def) = provider
         .app_context()
         .schema_registry()
-        .get_table_if_exists(provider.app_context().as_ref(), table_id)?
+        .get_table_if_exists(table_id)?
     {
         if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
             return Err(KalamDbError::InvalidOperation(format!(

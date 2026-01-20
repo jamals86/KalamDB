@@ -122,7 +122,7 @@ fn create_test_service() -> (ManifestService, TempDir) {
             // Persist to system.tables
             let _ = tables_provider.create_table(&table_id, &table_def);
             // Put into schema registry cache
-            let _ = schema_registry.put_table_definition(&app_ctx, &table_id, &table_def);
+            let _ = schema_registry.put_table_definition(&table_id, &table_def);
             // Build cached table data and set storage path template to a temp directory for tests
             let mut cached = CachedTableData::new(StdArc::new(table_def.clone()));
             let storage_template = PathResolver::resolve_storage_path_template(

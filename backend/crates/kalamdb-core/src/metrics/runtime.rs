@@ -75,33 +75,33 @@ pub fn compute_metrics(ctx: &crate::app_context::AppContext) -> Vec<(String, Str
     let cache_size = ctx.schema_registry().len();
     metrics.push(("schema_cache_size".to_string(), cache_size.to_string()));
 
-    // Schema cache hit rate
-    let (_, hits, misses, hit_rate) = ctx.schema_registry().stats();
-    metrics.push(("schema_cache_hits".to_string(), hits.to_string()));
-    metrics.push(("schema_cache_misses".to_string(), misses.to_string()));
-    metrics.push(("schema_cache_hit_rate".to_string(), format!("{:.2}%", hit_rate * 100.0)));
+    // // Schema cache hit rate
+    // let (_, hits, misses, hit_rate) = ctx.schema_registry().stats();
+    // metrics.push(("schema_cache_hits".to_string(), hits.to_string()));
+    // metrics.push(("schema_cache_misses".to_string(), misses.to_string()));
+    // metrics.push(("schema_cache_hit_rate".to_string(), format!("{:.2}%", hit_rate * 100.0)));
 
     // Manifest Cache Metrics
     // Manifests in hot cache (memory)
-    let manifests_in_memory = ctx.manifest_service().hot_cache_len();
-    metrics.push(("manifests_in_memory".to_string(), manifests_in_memory.to_string()));
+    // let manifests_in_memory = ctx.manifest_service().hot_cache_len();
+    // metrics.push(("manifests_in_memory".to_string(), manifests_in_memory.to_string()));
 
-    // Manifests in RocksDB (persistent cache)
-    if let Ok(manifests_in_rocksdb) = ctx.manifest_service().count() {
-        metrics.push(("manifests_in_rocksdb".to_string(), manifests_in_rocksdb.to_string()));
-    } else {
-        metrics.push(("manifests_in_rocksdb".to_string(), "0".to_string()));
-    }
+    // // Manifests in RocksDB (persistent cache)
+    // if let Ok(manifests_in_rocksdb) = ctx.manifest_service().count() {
+    //     metrics.push(("manifests_in_rocksdb".to_string(), manifests_in_rocksdb.to_string()));
+    // } else {
+    //     metrics.push(("manifests_in_rocksdb".to_string(), "0".to_string()));
+    // }
 
     // Manifest cache breakdown (shared vs user tables)
-    let (shared_manifests, user_manifests, total_weight) = ctx.manifest_service().cache_stats();
-    metrics.push(("manifests_shared_tables".to_string(), shared_manifests.to_string()));
-    metrics.push(("manifests_user_tables".to_string(), user_manifests.to_string()));
-    metrics.push(("manifests_cache_weight".to_string(), total_weight.to_string()));
-    metrics.push((
-        "manifests_max_capacity".to_string(),
-        ctx.manifest_service().max_weighted_capacity().to_string(),
-    ));
+    // let (shared_manifests, user_manifests, total_weight) = ctx.manifest_service().cache_stats();
+    // metrics.push(("manifests_shared_tables".to_string(), shared_manifests.to_string()));
+    // metrics.push(("manifests_user_tables".to_string(), user_manifests.to_string()));
+    // metrics.push(("manifests_cache_weight".to_string(), total_weight.to_string()));
+    // metrics.push((
+    //     "manifests_max_capacity".to_string(),
+    //     ctx.manifest_service().max_weighted_capacity().to_string(),
+    // ));
 
     // Node ID
     metrics.push(("node_id".to_string(), ctx.node_id().to_string()));

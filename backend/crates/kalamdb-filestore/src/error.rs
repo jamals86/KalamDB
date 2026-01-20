@@ -39,6 +39,12 @@ pub enum FilestoreError {
     #[error("Invalid template: {0}")]
     InvalidTemplate(String),
 
+    #[error("Format error: {0}")]
+    Format(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
+
     #[error("Other error: {0}")]
     Other(String),
 }

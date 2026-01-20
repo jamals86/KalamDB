@@ -85,7 +85,7 @@ impl TableProviderCore {
     /// Returns 0 if the schema is missing or no primary key is defined.
     pub fn primary_key_column_id(&self) -> u64 {
         self.schema_registry
-            .get_table_if_exists(self.app_context.as_ref(), self.table_id())
+            .get_table_if_exists(self.table_id())
             .ok()
             .flatten()
             .and_then(|def| def.columns.iter().find(|c| c.is_primary_key).map(|c| c.column_id))

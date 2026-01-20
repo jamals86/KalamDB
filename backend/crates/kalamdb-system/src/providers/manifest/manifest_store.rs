@@ -13,7 +13,7 @@ use std::sync::Arc;
 ///
 /// Uses the same key format as ManifestService for consistency.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ManifestCacheKey(String);
+pub struct ManifestCacheKey(String); //TODO: Should be consist of TableId and UserId?
 
 impl ManifestCacheKey {
     /// Get the key as a string slice

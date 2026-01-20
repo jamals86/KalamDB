@@ -96,7 +96,7 @@ impl UserTableProvider {
         let schema = core
             .app_context
             .schema_registry()
-            .get_arrow_schema(core.app_context.as_ref(), core.table_id())?;
+            .get_arrow_schema(core.table_id())?;
 
         if log::log_enabled!(log::Level::Debug) {
             let field_names: Vec<_> = schema.fields().iter().map(|f| f.name()).collect();
@@ -242,7 +242,7 @@ impl UserTableProvider {
         }
 
         if let Ok(scopes) =
-            self.core.app_context.manifest_service().list_user_scopes_for_table(table_id)
+            self.core.app_context.manifest_service().get_manifest_user_ids(table_id)
         {
             user_ids.extend(scopes);
         }
