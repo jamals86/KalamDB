@@ -7,7 +7,8 @@
 use crate::error::KalamDbError;
 use kalamdb_commons::system::Storage;
 use object_store::ObjectStore;
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 /// Cached storage entry containing both Storage config and lazily-initialized ObjectStore
 ///
@@ -68,8 +69,7 @@ impl StorageCached {
         {
             let read_guard = self
                 .object_store
-                .read()
-                .expect("RwLock poisoned: object_store read lock failed");
+                .read();
             if let Some(store) = read_guard.as_ref() {
                 return Ok(Arc::clone(store)); // ~1μs cached access
             }
@@ -79,8 +79,7 @@ impl StorageCached {
         {
             let mut write_guard = self
                 .object_store
-                .write()
-                .expect("RwLock poisoned: object_store write lock failed");
+                .write();
 
             // Double-check: Another thread may have computed while we waited for write lock
             if let Some(store) = write_guard.as_ref() {
@@ -112,8 +111,7 @@ impl StorageCached {
     pub fn invalidate_object_store(&self) {
         let mut write_guard = self
             .object_store
-            .write()
-            .expect("RwLock poisoned: object_store write lock failed");
+            .write();
         *write_guard = None;
     }
 
@@ -124,8 +122,7 @@ impl StorageCached {
     pub fn is_object_store_initialized(&self) -> bool {
         let read_guard = self
             .object_store
-            .read()
-            .expect("RwLock poisoned: object_store read lock failed");
+            .read();
         read_guard.is_some()
     }
 }

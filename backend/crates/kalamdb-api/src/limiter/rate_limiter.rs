@@ -8,7 +8,7 @@ use kalamdb_commons::models::UserId;
 use kalamdb_configs::RateLimitSettings;
 use kalamdb_core::live::ConnectionId;
 use moka::sync::Cache;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -89,7 +89,7 @@ impl RateLimiter {
             )))
         });
 
-        let mut guard = bucket.lock().expect("Rate limiter mutex poisoned");
+        let mut guard = bucket.lock();
         guard.try_consume(1)
     }
 
@@ -149,7 +149,7 @@ impl RateLimiter {
                 )))
             });
 
-        let mut guard = bucket.lock().expect("Rate limiter mutex poisoned");
+        let mut guard = bucket.lock();
         guard.try_consume(1)
     }
 
@@ -168,7 +168,7 @@ impl RateLimiter {
         let user_key: Arc<str> = Arc::from(user_id.as_str());
 
         let available_queries = if let Some(bucket) = self.user_query_buckets.get(&user_key) {
-            let mut guard = bucket.lock().expect("Rate limiter mutex poisoned");
+            let mut guard = bucket.lock();
             guard.available_tokens()
         } else {
             self.max_queries_per_sec

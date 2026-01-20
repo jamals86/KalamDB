@@ -20,8 +20,9 @@ use kalamdb_commons::schemas::{
 };
 use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_system::{SystemError, SystemTableProviderExt};
+use parking_lot::RwLock;
 use std::any::Any;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 
 /// Metrics provider callback type
 /// Returns a vector of (metric_name, metric_value) tuples
@@ -100,7 +101,7 @@ pub struct StatsTableProvider {
 impl std::fmt::Debug for StatsTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StatsTableProvider")
-            .field("has_callback", &self.metrics_callback.read().unwrap().is_some())
+            .field("has_callback", &self.metrics_callback.read().is_some())
             .finish()
     }
 }
@@ -121,14 +122,14 @@ impl StatsTableProvider {
     }
 
     pub fn set_metrics_callback(&self, callback: MetricsCallback) {
-        *self.metrics_callback.write().unwrap() = Some(callback);
+        *self.metrics_callback.write() = Some(callback);
     }
 
     fn build_metrics_batch(&self) -> Result<RecordBatch, KalamDbError> {
         let mut names = StringBuilder::new();
         let mut values = StringBuilder::new();
 
-        let callback_guard = self.metrics_callback.read().unwrap();
+        let callback_guard = self.metrics_callback.read();
         if let Some(ref callback) = *callback_guard {
             let metrics = callback();
             for (name, value) in metrics {

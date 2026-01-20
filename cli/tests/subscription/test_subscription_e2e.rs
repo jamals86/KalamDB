@@ -32,6 +32,13 @@ fn test_cli_subscription_initial_and_changes() {
     ));
     std::thread::sleep(Duration::from_millis(150));
 
+    // Ensure the row is visible before subscribing (reduces flakiness in initial snapshot)
+    let _ = wait_for_sql_output_contains(
+        &format!("SELECT * FROM {} WHERE id = 1", table_full),
+        "Item One",
+        Duration::from_secs(5),
+    );
+
     // Start subscription via CLI
     let query = format!("SELECT * FROM {}", table_full);
     let mut listener = match SubscriptionListener::start(&query) {

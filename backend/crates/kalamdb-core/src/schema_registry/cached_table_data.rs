@@ -6,8 +6,9 @@ use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{StorageId, TableId};
 use object_store::ObjectStore;
+use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// Cached table data containing all metadata and schema information
 ///
@@ -278,8 +279,7 @@ impl CachedTableData {
         {
             let read_guard = self
                 .arrow_schema
-                .read()
-                .expect("RwLock poisoned: arrow_schema read lock failed");
+                .read();
             if let Some(schema) = read_guard.as_ref() {
                 return Ok(Arc::clone(schema)); // 1.5μs cached access
             }
@@ -289,8 +289,7 @@ impl CachedTableData {
         {
             let mut write_guard = self
                 .arrow_schema
-                .write()
-                .expect("RwLock poisoned: arrow_schema write lock failed");
+                .write();
 
             // Double-check: Another thread may have computed while we waited for write lock
             if let Some(schema) = write_guard.as_ref() {
@@ -366,7 +365,7 @@ impl CachedTableData {
     ///
     /// **Performance**: O(1) access with read lock
     pub fn get_provider(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        let guard = self.provider.read().expect("RwLock poisoned: provider read lock failed");
+        let guard = self.provider.read();
         guard.as_ref().map(Arc::clone)
     }
 
@@ -377,13 +376,13 @@ impl CachedTableData {
     ///
     /// **Performance**: O(1) with write lock
     pub fn set_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
-        let mut guard = self.provider.write().expect("RwLock poisoned: provider write lock failed");
+        let mut guard = self.provider.write();
         *guard = Some(provider);
     }
 
     /// Clear the cached provider (used during table invalidation)
     pub fn clear_provider(&self) {
-        let mut guard = self.provider.write().expect("RwLock poisoned: provider write lock failed");
+        let mut guard = self.provider.write();
         *guard = None;
     }
 }

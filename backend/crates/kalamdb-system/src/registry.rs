@@ -20,8 +20,9 @@ use kalamdb_commons::{models::TableId, schemas::TableDefinition, SystemTable};
 use kalamdb_session::secure_provider;
 use kalamdb_store::StorageBackend;
 use once_cell::sync::OnceCell;
+use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// Registry of all system table providers
 ///
@@ -199,35 +200,35 @@ impl SystemTablesRegistry {
 
     /// Get the system.stats provider (virtual table)
     pub fn stats(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.stats.read().unwrap().clone()
+        self.stats.read().clone()
     }
 
     /// Set the system.stats provider (called from kalamdb-core)
     pub fn set_stats_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         log::debug!("SystemTablesRegistry: Setting stats provider");
-        *self.stats.write().unwrap() = Some(provider);
+        *self.stats.write() = Some(provider);
     }
 
     /// Get the system.settings provider (virtual table)
     pub fn settings(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.settings.read().unwrap().clone()
+        self.settings.read().clone()
     }
 
     /// Set the system.settings provider (called from kalamdb-core)
     pub fn set_settings_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         log::debug!("SystemTablesRegistry: Setting settings provider");
-        *self.settings.write().unwrap() = Some(provider);
+        *self.settings.write() = Some(provider);
     }
 
     /// Get the system.server_logs provider (virtual table reading JSON logs)
     pub fn server_logs(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.server_logs.read().unwrap().clone()
+        self.server_logs.read().clone()
     }
 
     /// Set the system.server_logs provider (called from kalamdb-core with logs path)
     pub fn set_server_logs_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         log::debug!("SystemTablesRegistry: Setting server_logs provider");
-        *self.server_logs.write().unwrap() = Some(provider);
+        *self.server_logs.write() = Some(provider);
     }
 
     /// Get the system.manifest provider
@@ -237,24 +238,24 @@ impl SystemTablesRegistry {
 
     /// Get the system.cluster provider (virtual table showing cluster status)
     pub fn cluster(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.cluster.read().unwrap().clone()
+        self.cluster.read().clone()
     }
 
     /// Set the system.cluster provider (called from kalamdb-core with executor)
     pub fn set_cluster_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         log::debug!("SystemTablesRegistry: Setting cluster provider");
-        *self.cluster.write().unwrap() = Some(provider);
+        *self.cluster.write() = Some(provider);
     }
 
     /// Get the system.cluster_groups provider (virtual table showing per-group status)
     pub fn cluster_groups(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.cluster_groups.read().unwrap().clone()
+        self.cluster_groups.read().clone()
     }
 
     /// Set the system.cluster_groups provider (called from kalamdb-core with executor)
     pub fn set_cluster_groups_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         log::debug!("SystemTablesRegistry: Setting cluster_groups provider");
-        *self.cluster_groups.write().unwrap() = Some(provider);
+        *self.cluster_groups.write() = Some(provider);
     }
 
     // ===== Convenience Methods =====
@@ -314,7 +315,7 @@ impl SystemTablesRegistry {
         ];
 
         // Add stats if initialized (virtual view from kalamdb-core)
-        if let Some(stats) = self.stats.read().unwrap().clone() {
+        if let Some(stats) = self.stats.read().clone() {
             providers.push((
                 SystemTable::Stats,
                 wrap(SystemTable::Stats, stats as Arc<dyn TableProvider>),
@@ -322,7 +323,7 @@ impl SystemTablesRegistry {
         }
 
         // Add settings if initialized (virtual view from kalamdb-core)
-        if let Some(settings) = self.settings.read().unwrap().clone() {
+        if let Some(settings) = self.settings.read().clone() {
             providers.push((
                 SystemTable::Settings,
                 wrap(SystemTable::Settings, settings as Arc<dyn TableProvider>),
@@ -330,7 +331,7 @@ impl SystemTablesRegistry {
         }
 
         // Add server_logs if initialized
-        if let Some(server_logs) = self.server_logs.read().unwrap().clone() {
+        if let Some(server_logs) = self.server_logs.read().clone() {
             providers.push((
                 SystemTable::ServerLogs,
                 wrap(SystemTable::ServerLogs, server_logs as Arc<dyn TableProvider>),
@@ -338,7 +339,7 @@ impl SystemTablesRegistry {
         }
 
         // Add cluster if initialized (virtual table showing OpenRaft metrics)
-        if let Some(cluster) = self.cluster.read().unwrap().clone() {
+        if let Some(cluster) = self.cluster.read().clone() {
             providers.push((
                 SystemTable::Cluster,
                 wrap(SystemTable::Cluster, cluster as Arc<dyn TableProvider>),
@@ -346,7 +347,7 @@ impl SystemTablesRegistry {
         }
 
         // Add cluster_groups if initialized (virtual table showing per-group OpenRaft metrics)
-        if let Some(cluster_groups) = self.cluster_groups.read().unwrap().clone() {
+        if let Some(cluster_groups) = self.cluster_groups.read().clone() {
             providers.push((
                 SystemTable::ClusterGroups,
                 wrap(SystemTable::ClusterGroups, cluster_groups as Arc<dyn TableProvider>),

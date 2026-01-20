@@ -1319,6 +1319,42 @@ pub fn execute_sql_as_root_via_cli_json(sql: &str) -> Result<String, Box<dyn std
     execute_sql_via_cli_as_with_args("root", root_password(), sql, &["--json"])
 }
 
+/// Wait for a SQL query to return output containing an expected substring.
+///
+/// Useful for eventual consistency scenarios where data may not be immediately visible.
+pub fn wait_for_sql_output_contains(
+    sql: &str,
+    expected: &str,
+    timeout: Duration,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    let mut last_output = String::new();
+    let mut last_error: Option<String> = None;
+
+    while start.elapsed() < timeout {
+        match execute_sql_as_root_via_cli(sql) {
+            Ok(output) => {
+                last_output = output.clone();
+                if output.contains(expected) {
+                    return Ok(output);
+                }
+            }
+            Err(e) => {
+                last_error = Some(e.to_string());
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(120));
+    }
+
+    let error_hint = last_error.unwrap_or_else(|| "<none>".to_string());
+    Err(format!(
+        "Timed out waiting for SQL output to contain '{}'. Last error: {}. Last output: {}",
+        expected, error_hint, last_output
+    )
+    .into())
+}
+
 // ============================================================================
 // CLIENT-BASED QUERY EXECUTION (uses kalam-link directly, avoids CLI process spawning)
 // ============================================================================
