@@ -360,27 +360,18 @@ fn persist_table_and_prime_cache(
         .put_versioned_schema(table_id, &table_def)
         .into_kalamdb_error("Failed to store initial schema version")?;
 
-    // Prime cache entry with storage path template + storage id
-    use crate::schema_registry::PathResolver;
-    let template = PathResolver::resolve_storage_path_template(
-        app_context.as_ref(),
-        table_id,
-        table_type,
-        storage_id,
-    )?;
-
+    // Prime cache entry with storage id
     let data = CachedTableData::with_storage_config(
         std::sync::Arc::clone(&table_def),
         Some(storage_id.clone()),
-        template.clone(),
     );
     schema_registry.insert(table_id.clone(), std::sync::Arc::new(data));
 
     log::debug!(
-        "Primed cache for {:?} table {} with template: {}",
+        "Primed cache for {:?} table {} with storage_id: {}",
         table_type,
         table_id,
-        template
+        storage_id.as_str()
     );
 
     Ok(table_def)

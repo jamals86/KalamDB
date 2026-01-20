@@ -5,7 +5,7 @@
 //! - STORAGE COMPACT ALL IN <namespace> creates jobs for user/shared tables only
 //! - Unsupported table types return validation errors
 
-use super::test_support::{fixtures, QueryResultTestExt, TestServer};
+use super::test_support::{fixtures, TestServer};
 use anyhow::Result;
 use kalam_link::models::ResponseStatus;
 use std::path::{Path, PathBuf};

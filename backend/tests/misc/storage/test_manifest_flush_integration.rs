@@ -9,7 +9,7 @@
 //! - T133: corrupt manifest → rebuild from Parquet footers → queries resume (TODO: recovery)
 //! - T134: manifest pruning reduces file scans by 80%+ (TODO: performance test)
 
-use crate::test_helpers;
+use super::test_helpers;
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::types::{Manifest, SegmentMetadata};
 use kalamdb_commons::UserId;

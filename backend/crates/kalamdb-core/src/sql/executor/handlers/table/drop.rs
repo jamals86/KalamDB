@@ -200,29 +200,27 @@ pub async fn cleanup_parquet_files_internal(
         storage.storage_id.as_str()
     );
 
-    // Get the Storage object from the registry (cached lookup)
-    let storage_obj =
-        app_context
-            .storage_registry()
-            .get_storage(&storage.storage_id)?
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Storage '{}' not found during cleanup",
-                    storage.storage_id.as_str()
-                ))
-            })?;
+    // Get StorageCached from registry
+    let storage_cached = app_context
+        .storage_registry()
+        .get_cached(&storage.storage_id)?
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Storage '{}' not found during cleanup",
+                storage.storage_id.as_str()
+            ))
+        })?;
 
-    // Build ObjectStore for this storage
-    let object_store = kalamdb_filestore::build_object_store(&storage_obj)
-        .into_kalamdb_error("Failed to build object store")?;
-
-    let bytes_freed = kalamdb_filestore::delete_parquet_tree_for_table(
-        object_store,
-        &storage_obj,
-        &storage.relative_path_template,
-        table_type,
-    )
-    .into_kalamdb_error("Filestore delete failed")?;
+    // Delete Parquet files using StorageCached
+    // Note: For user tables, we'd need user_id, but cleanup is table-wide
+    let bytes_freed = storage_cached
+        .delete_prefix_sync(
+            table_type,
+            table_id,
+            None,  // user_id - cleanup is table-wide
+        )
+        .into_kalamdb_error("Failed to delete Parquet tree")?
+        .bytes_deleted;
 
     log::debug!("[CleanupHelper] Freed {} bytes from Parquet files", bytes_freed);
     Ok(bytes_freed)
@@ -280,29 +278,38 @@ impl DropTableHandler {
 
         let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
 
-        let relative_template = if cached.storage_path_template.is_empty() {
-            use crate::schema_registry::PathResolver;
-            PathResolver::resolve_storage_path_template(
-                self.app_context.as_ref(),
-                table_id,
-                table_type,
-                &storage_id,
-            )?
-        } else {
-            cached.storage_path_template.clone()
+        // Get storage from registry (cached lookup)
+        let storage = self
+            .app_context
+            .storage_registry()
+            .get_storage(&storage_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' not found",
+                    storage_id.as_str()
+                ))
+            })?;
+
+        // Get the appropriate template for this table type
+        let relative_template = match table_type {
+            TableType::User => storage.user_tables_template.clone(),
+            TableType::Shared | TableType::Stream => storage.shared_tables_template.clone(),
+            TableType::System => {
+                return Err(KalamDbError::InvalidOperation(
+                    "System tables do not use storage templates".to_string(),
+                ))
+            },
         };
 
-        // Get storage from registry (cached lookup)
-        let base_dir = match self.app_context.storage_registry().get_storage(&storage_id) {
-            Ok(Some(storage)) => {
-                let trimmed = storage.base_directory.trim();
-                if trimmed.is_empty() {
-                    self.app_context.storage_registry().default_storage_path().to_string()
-                } else {
-                    storage.base_directory.clone()
-                }
-            },
-            _ => self.app_context.storage_registry().default_storage_path().to_string(),
+        // Get base directory
+        let base_dir = {
+            let trimmed = storage.base_directory.trim();
+            if trimmed.is_empty() {
+                self.app_context.storage_registry().default_storage_path().to_string()
+            } else {
+                storage.base_directory.clone()
+            }
         };
 
         Ok(StorageCleanupDetails {

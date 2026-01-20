@@ -3,17 +3,16 @@
 //! Provides manifest.json management with two-tier caching:
 //! 1. Hot cache (moka) for sub-millisecond lookups with automatic TTI-based eviction
 //! 2. Persistent cache (RocksDB) for crash recovery
-//! 3. Cold storage (object_store) for manifest.json files
+//! 3. Cold storage (filestore) for manifest.json files
 //!
 //! Key type: (TableId, Option<UserId>) for type-safe cache access.
 
-use crate::schema_registry::PathResolver;
 use crate::schema_registry::SchemaRegistry;
-use crate::storage::storage_registry::StorageRegistry;
 use kalamdb_commons::models::types::{Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::{NamespaceId, StorageKey, TableId, TableName, UserId};
 use kalamdb_configs::ManifestCacheSettings;
+use kalamdb_filestore::StorageRegistry;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{StorageBackend, StorageError};
 use kalamdb_system::providers::manifest::{new_manifest_store, ManifestCacheKey, ManifestStore};
@@ -32,11 +31,8 @@ pub type ManifestCacheKeyTuple = (TableId, Option<UserId>);
 /// Architecture:
 /// - Hot cache: moka::sync::Cache<(TableId, Option<UserId>), Arc<ManifestCacheEntry>> for fast reads
 /// - Persistent store: RocksDB manifest_cache column family for crash recovery
-/// - Cold store: manifest.json files in object_store (S3/local filesystem)
+/// - Cold store: manifest.json files in filestore (S3/local filesystem)
 pub struct ManifestService {
-    /// Base storage path (fallback for building paths)
-    _base_path: String,
-
     /// RocksDB-backed persistent store
     store: ManifestStore,
 
@@ -52,7 +48,6 @@ pub struct ManifestService {
     /// In production these are injected via `new_with_registries()` to avoid any
     /// global AppContext usage.
     schema_registry: Option<Arc<SchemaRegistry>>,
-    storage_registry: Option<Arc<StorageRegistry>>,
 }
 
 /// Minimum weight for any cache entry (shared tables)
@@ -69,7 +64,6 @@ impl ManifestService {
     /// approximately N times faster than shared table manifests (N = user_table_weight_factor).
     pub fn new(
         storage_backend: Arc<dyn StorageBackend>,
-        base_path: String,
         config: ManifestCacheSettings,
     ) -> Self {
         // Build moka cache with TTI, max capacity, and tiered weigher
@@ -98,12 +92,10 @@ impl ManifestService {
             .build();
 
         Self {
-            _base_path: base_path,
             store: new_manifest_store(storage_backend),
             hot_cache,
             config,
             schema_registry: None,
-            storage_registry: None,
         }
     }
 
@@ -117,13 +109,17 @@ impl ManifestService {
         schema_registry: Arc<SchemaRegistry>,
         storage_registry: Arc<StorageRegistry>,
     ) -> Self {
-        let mut service = Self::new(storage_backend, base_path, config);
+        let mut service = Self::new(storage_backend, config);
         service.schema_registry = Some(schema_registry);
         service.storage_registry = Some(storage_registry);
         service
     }
 
-    fn registries(&self) -> Result<(Arc<SchemaRegistry>, Arc<StorageRegistry>), StorageError> {
+    /// Get the registries (SchemaRegistry and StorageRegistry)
+    ///
+    /// Returns an error if registries are not initialized.
+    /// Use `new_with_registries()` to initialize.
+    pub fn registries(&self) -> Result<(Arc<SchemaRegistry>, Arc<StorageRegistry>), StorageError> {
         if let (Some(schema_registry), Some(storage_registry)) =
             (self.schema_registry.as_ref(), self.storage_registry.as_ref())
         {
@@ -177,9 +173,8 @@ impl ManifestService {
         user_id: Option<&UserId>,
         manifest: &Manifest,
         etag: Option<String>,
-        source_path: String,
     ) -> Result<(), StorageError> {
-        self.upsert_cache_entry(table_id, user_id, manifest, etag, source_path, SyncState::InSync)
+        self.upsert_cache_entry(table_id, user_id, manifest, etag, SyncState::InSync)
     }
 
     /// Stage manifest metadata in the cache before the first flush writes manifest.json to disk.
@@ -188,14 +183,12 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
         manifest: &Manifest,
-        source_path: String,
     ) -> Result<(), StorageError> {
         self.upsert_cache_entry(
             table_id,
             user_id,
             manifest,
             None,
-            source_path,
             SyncState::PendingWrite,
         )
     }
@@ -486,13 +479,10 @@ impl ManifestService {
             return Ok(entry.manifest.clone());
         }
 
-        // 2. Check Cold Store (via object_store)
+        // 2. Check Cold Store (via filestore)
         match self.read_manifest(table_id, user_id) {
             Ok(manifest) => {
-                // Stage it in cache
-                let storage_path = self.get_storage_path(table_id, user_id)?;
-                let manifest_path = format!("{}/manifest.json", storage_path);
-                self.stage_before_flush(table_id, user_id, &manifest, manifest_path)?;
+                self.stage_before_flush(table_id, user_id, &manifest)?;
                 return Ok(manifest);
             },
             Err(_) => {
@@ -519,22 +509,18 @@ impl ManifestService {
         // Add segment
         manifest.add_segment(segment);
 
-        // Update cache entry
-        let storage_path = self.get_storage_path(table_id, user_id)?;
-        let manifest_path = format!("{}/manifest.json", storage_path);
         self.upsert_cache_entry(
             table_id,
             user_id,
             &manifest,
             None,
-            manifest_path,
             SyncState::PendingWrite,
         )?;
 
         Ok(manifest)
     }
 
-    /// Flush manifest: Write to Cold Store (storage via object_store).
+    /// Flush manifest: Write to Cold Store (storage via StorageCached).
     pub fn flush_manifest(
         &self,
         table_id: &TableId,
@@ -543,8 +529,34 @@ impl ManifestService {
         let cache_key = (table_id.clone(), user_id.cloned());
 
         if let Some(entry) = self.hot_cache.get(&cache_key) {
-            let (store, storage, _) = self.get_storage_context(table_id, user_id)?;
-            self.write_manifest_via_store(store, &storage, table_id, user_id, &entry.manifest)?;
+            let (schema_registry, storage_registry) = self.registries()?;
+            let cached = schema_registry
+                .get(table_id)
+                .ok_or_else(|| StorageError::Other(format!("Table not found: {}", table_id)))?;
+            
+            let storage_cached = cached.storage_cached(&storage_registry)
+                .map_err(|e| StorageError::Other(e.to_string()))?;
+            
+            let json_str = serde_json::to_string_pretty(&entry.manifest).map_err(|e| {
+                StorageError::SerializationError(format!("Failed to serialize manifest: {}", e))
+            })?;
+            
+            let manifest_path_result = storage_cached.get_manifest_path(
+                cached.table.table_type,
+                table_id,
+                user_id,
+                None  // No shard for manifest
+            );
+            
+            storage_cached.put_sync(
+                cached.table.table_type,
+                table_id,
+                user_id,
+                None,  // No shard for manifest
+                &manifest_path_result.full,
+                bytes::Bytes::from(json_str.as_bytes().to_vec())
+            ).map_err(|e| StorageError::IoError(e.to_string()))?;
+            
             debug!("Flushed manifest for {} (ver: {})", table_id, entry.manifest.version);
         } else {
             warn!("Attempted to flush manifest for {} but it was not in cache", table_id);
@@ -558,10 +570,32 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<Manifest, StorageError> {
-        let (store, storage, manifest_path) = self.get_storage_context(table_id, user_id)?;
-
-        let json_str = kalamdb_filestore::read_manifest_json(store, &storage, &manifest_path)
-            .map_err(|e| StorageError::IoError(format!("Failed to read manifest: {}", e)))?;
+        let (schema_registry, storage_registry) = self.registries()?;
+        let cached = schema_registry
+            .get(table_id)
+            .ok_or_else(|| StorageError::Other(format!("Table not found: {}", table_id)))?;
+        
+        let storage_cached = cached.storage_cached(&storage_registry)
+            .map_err(|e| StorageError::Other(e.to_string()))?;
+        
+        let manifest_path_result = storage_cached.get_manifest_path(
+            cached.table.table_type,
+            table_id,
+            user_id,
+            None  // No shard for manifest
+        );
+        
+        let bytes = storage_cached.get_sync(
+            cached.table.table_type,
+            table_id,
+            user_id,
+            None,  // No shard for manifest
+            &manifest_path_result.full
+        ).map_err(|e| StorageError::IoError(e.to_string()))?;
+        
+        let json_str = String::from_utf8(bytes.to_vec()).map_err(|e| {
+            StorageError::SerializationError(format!("Failed to parse manifest as UTF-8: {}", e))
+        })?;
 
         serde_json::from_str(&json_str).map_err(|e| {
             StorageError::SerializationError(format!("Failed to parse manifest JSON: {}", e))
@@ -575,39 +609,72 @@ impl ManifestService {
         _table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
     ) -> Result<Manifest, StorageError> {
-        let (store, storage, _) = self.get_storage_context(table_id, user_id)?;
-        let table_dir = self.get_storage_path(table_id, user_id)?;
+        let (schema_registry, storage_registry) = self.registries()?;
+        let cached = schema_registry
+            .get(table_id)
+            .ok_or_else(|| StorageError::Other(format!("Table not found: {}", table_id)))?;
+        
+        let storage_cached = cached.storage_cached(&storage_registry)
+            .map_err(|e| StorageError::Other(e.to_string()))?;
+        
         let mut manifest = Manifest::new(table_id.clone(), user_id.cloned());
 
-        let files = kalamdb_filestore::list_files_sync(Arc::clone(&store), &storage, &table_dir)
-            .map_err(|e| StorageError::IoError(format!("Failed to list files: {}", e)))?;
+        // List all files in the table directory
+        let list_result = storage_cached.list_sync(
+            cached.table.table_type,
+            table_id,
+            user_id,
+            None  // No shard
+        ).map_err(|e| StorageError::IoError(e.to_string()))?;
 
-        let mut batch_files: Vec<String> = files
+        let mut batch_files: Vec<String> = list_result.files
             .into_iter()
+            .map(|f| f.path)
             .filter(|f| f.ends_with(".parquet") && f.contains("batch-"))
             .collect();
         batch_files.sort();
 
-        for batch_path in batch_files {
-            if let Some(segment) =
-                self.extract_segment_metadata_via_store(Arc::clone(&store), &storage, &batch_path)?
-            {
-                manifest.add_segment(segment);
-            }
+        for batch_path in &batch_files {
+            let file_name = batch_path.rsplit('/').next().unwrap_or(batch_path).to_string();
+            let id = file_name.clone();
+            
+            // Get file size via head operation
+            let file_info = storage_cached.head(
+                cached.table.table_type,
+                table_id,
+                user_id,
+                None,  // No shard
+                batch_path
+            ).map_err(|e| StorageError::IoError(e.to_string()))?;
+            
+            let size_bytes = file_info.size as u64;
+            
+            // Create segment metadata (we don't parse full footer for rebuild, just size)
+            let segment = SegmentMetadata::new(id, file_name, HashMap::new(), 0, 0, 0, size_bytes);
+            manifest.add_segment(segment);
         }
-
-        // Update cache and write to storage
-        let storage_path = self.get_storage_path(table_id, user_id)?;
-        let manifest_path = format!("{}/manifest.json", storage_path);
+        
         self.upsert_cache_entry(
             table_id,
             user_id,
             &manifest,
             None,
-            manifest_path,
             SyncState::InSync,
         )?;
-        self.write_manifest_via_store(Arc::clone(&store), &storage, table_id, user_id, &manifest)?;
+        
+        // Write manifest to storage
+        let json_str = serde_json::to_string_pretty(&manifest).map_err(|e| {
+            StorageError::SerializationError(format!("Failed to serialize manifest: {}", e))
+        })?;
+        
+        storage_cached.put_sync(
+            cached.table.table_type,
+            table_id,
+            user_id,
+            None,  // No shard
+            &manifest_path_result.full,
+            bytes::Bytes::from(json_str.as_bytes().to_vec())
+        ).map_err(|e| StorageError::IoError(e.to_string()))?;
 
         Ok(manifest)
     }
@@ -624,8 +691,22 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<String, StorageError> {
-        let storage_path = self.get_storage_path(table_id, user_id)?;
-        Ok(format!("{}/manifest.json", storage_path))
+        let (schema_registry, storage_registry) = self.registries()?;
+        let cached = schema_registry
+            .get(table_id)
+            .ok_or_else(|| StorageError::Other(format!("Table not found: {}", table_id)))?;
+        
+        let storage_cached = cached.storage_cached(&storage_registry)
+            .map_err(|e| StorageError::Other(e.to_string()))?;
+        
+        let manifest_path_result = storage_cached.get_manifest_path(
+            cached.table.table_type,
+            table_id,
+            user_id,
+            None  // No shard
+        );
+        
+        Ok(manifest_path_result.full)
     }
 
     /// List user scopes that have manifests for a given table.
@@ -693,14 +774,13 @@ impl ManifestService {
         user_id: Option<&UserId>,
         manifest: &Manifest,
         etag: Option<String>,
-        source_path: String,
         sync_state: SyncState,
     ) -> Result<(), StorageError> {
         let cache_key = (table_id.clone(), user_id.cloned());
         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
         let now = chrono::Utc::now().timestamp();
 
-        let entry = ManifestCacheEntry::new(manifest.clone(), etag, now, source_path, sync_state);
+        let entry = ManifestCacheEntry::new(manifest.clone(), etag, now, sync_state);
 
         EntityStore::put(&self.store, &rocksdb_key, &entry)?;
         self.hot_cache.insert(cache_key, Arc::new(entry));
@@ -708,128 +788,7 @@ impl ManifestService {
         Ok(())
     }
 
-    fn get_storage_context(
-        &self,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<
-        (Arc<dyn object_store::ObjectStore>, kalamdb_commons::system::Storage, String),
-        StorageError,
-    > {
-        let (schema_registry, storage_registry) = self.registries()?;
-
-        let cached = schema_registry
-            .get(table_id)
-            .ok_or_else(|| StorageError::Other(format!("Table not found: {}", table_id)))?;
-
-        let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
-        let storage_arc = storage_registry
-            .get_storage(&storage_id)
-            .map_err(|e| StorageError::IoError(e.to_string()))?
-            .ok_or_else(|| {
-                StorageError::Other(format!("Storage {} not found", storage_id.as_str()))
-            })?;
-        let storage = (*storage_arc).clone();
-
-        let store = storage_registry
-            .get_object_store(&storage_id)
-            .map_err(|e| StorageError::IoError(e.to_string()))?;
-
-        let relative = PathResolver::get_relative_storage_path(&cached, user_id, None)
-            .map_err(|e| StorageError::IoError(e.to_string()))?;
-
-        let base_dir = {
-            let trimmed = storage.base_directory.trim();
-            if trimmed.is_empty() {
-                storage_registry.default_storage_path().to_string()
-            } else {
-                trimmed.to_string()
-            }
-        };
-
-        let storage_path = if base_dir.ends_with('/') {
-            format!("{}{}", base_dir, relative.trim_start_matches('/'))
-        } else {
-            format!("{}/{}", base_dir, relative.trim_start_matches('/'))
-        };
-        let manifest_path = format!("{}/manifest.json", storage_path);
-
-        Ok((store, storage, manifest_path))
-    }
-
-    fn get_storage_path(
-        &self,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<String, StorageError> {
-        let (schema_registry, storage_registry) = self.registries()?;
-        let cached = schema_registry
-            .get(table_id)
-            .ok_or_else(|| StorageError::Other(format!("Table not found: {}", table_id)))?;
-
-        let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
-        let storage_arc = storage_registry
-            .get_storage(&storage_id)
-            .map_err(|e| StorageError::IoError(e.to_string()))?
-            .ok_or_else(|| {
-                StorageError::Other(format!("Storage {} not found", storage_id.as_str()))
-            })?;
-        let storage = (*storage_arc).clone();
-
-        let relative = PathResolver::get_relative_storage_path(&cached, user_id, None)
-            .map_err(|e| StorageError::IoError(e.to_string()))?;
-
-        let base_dir = {
-            let trimmed = storage.base_directory.trim();
-            if trimmed.is_empty() {
-                storage_registry.default_storage_path().to_string()
-            } else {
-                trimmed.to_string()
-            }
-        };
-
-        Ok(if base_dir.ends_with('/') {
-            format!("{}{}", base_dir, relative.trim_start_matches('/'))
-        } else {
-            format!("{}/{}", base_dir, relative.trim_start_matches('/'))
-        })
-    }
-
-    fn write_manifest_via_store(
-        &self,
-        store: Arc<dyn object_store::ObjectStore>,
-        storage: &kalamdb_commons::system::Storage,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-        manifest: &Manifest,
-    ) -> Result<(), StorageError> {
-        let storage_path = self.get_storage_path(table_id, user_id)?;
-        let manifest_path = format!("{}/manifest.json", storage_path);
-
-        let json_str = serde_json::to_string_pretty(manifest).map_err(|e| {
-            StorageError::SerializationError(format!("Failed to serialize manifest: {}", e))
-        })?;
-
-        kalamdb_filestore::write_manifest_json(store, storage, &manifest_path, &json_str)
-            .map_err(|e| StorageError::IoError(format!("Failed to write manifest: {}", e)))
-    }
-
-    fn extract_segment_metadata_via_store(
-        &self,
-        store: Arc<dyn object_store::ObjectStore>,
-        storage: &kalamdb_commons::system::Storage,
-        parquet_path: &str,
-    ) -> Result<Option<SegmentMetadata>, StorageError> {
-        let file_name = parquet_path.rsplit('/').next().unwrap_or(parquet_path).to_string();
-
-        let id = file_name.clone();
-
-        let size_bytes = kalamdb_filestore::head_file_sync(store, storage, parquet_path)
-            .map(|m| m.size_bytes as u64)
-            .unwrap_or(0);
-
-        Ok(Some(SegmentMetadata::new(id, file_name, HashMap::new(), 0, 0, 0, size_bytes)))
-    }
+    // Private helper methods removed - now using StorageCached operations directly
 }
 
 #[cfg(test)]
@@ -846,7 +805,7 @@ mod tests {
             eviction_ttl_days: 7,
             user_table_weight_factor: 10,
         };
-        ManifestService::new(backend, "/tmp/test".to_string(), config)
+        ManifestService::new(backend, config)
     }
 
     fn create_test_manifest(table_id: &TableId, user_id: Option<&UserId>) -> Manifest {
@@ -890,7 +849,6 @@ mod tests {
                 Some(&UserId::from("u_123")),
                 &manifest,
                 Some("etag123".to_string()),
-                "s3://bucket/path/manifest.json".to_string(),
             )
             .unwrap();
 
@@ -913,7 +871,6 @@ mod tests {
                 Some(&UserId::from("u_123")),
                 &manifest,
                 None,
-                "path".to_string(),
             )
             .unwrap();
 
@@ -937,7 +894,6 @@ mod tests {
                 Some(&UserId::from("u_123")),
                 &manifest,
                 None,
-                "path".to_string(),
             )
             .unwrap();
 
@@ -960,7 +916,6 @@ mod tests {
                 Some(&UserId::from("u_123")),
                 &manifest,
                 None,
-                "path".to_string(),
             )
             .unwrap();
 
@@ -986,7 +941,6 @@ mod tests {
                 Some(&UserId::from("u_123")),
                 &manifest,
                 None,
-                "path".to_string(),
             )
             .unwrap();
 
@@ -1001,7 +955,7 @@ mod tests {
     //     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     //     let config = ManifestCacheSettings::default();
 
-    //     let service1 = ManifestService::new(Arc::clone(&backend), "/tmp".to_string(), config.clone());
+    //     let service1 = ManifestService::new(Arc::clone(&backend), config.clone());
     //     let table_id = build_table_id("ns1", "tbl1");
     //     let manifest = create_test_manifest(&table_id, Some(&UserId::from("u_123")));
 
@@ -1011,12 +965,11 @@ mod tests {
     //             Some(&UserId::from("u_123")),
     //             &manifest,
     //             None,
-    //             "path".to_string(),
     //         )
     //         .unwrap();
 
     //     // Create new service (simulating restart)
-    //     let service2 = ManifestService::new(backend, "/tmp".to_string(), config);
+    //     let service2 = ManifestService::new(backend, config);
     //     service2.restore_from_rocksdb().unwrap();
 
     //     let cached = service2

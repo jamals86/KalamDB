@@ -11,7 +11,7 @@
 //! - T067: Nanosecond collision test → verify +1ns increment
 //! - T068: Performance regression test → query latency with multiple versions
 
-use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
+use super::test_support::{fixtures, flush_helpers, TestServer};
 use kalam_link::models::ResponseStatus;
 use std::sync::Arc;
 use tokio::task::JoinSet;

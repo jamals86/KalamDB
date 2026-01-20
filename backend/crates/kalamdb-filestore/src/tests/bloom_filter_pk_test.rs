@@ -4,15 +4,16 @@
 //! This enables efficient point query filtering (WHERE id = X) by skipping batch files
 //! where the Bloom filter indicates "definitely not present".
 
-use crate::build_object_store;
-use crate::parquet_storage_writer::write_parquet_with_store_sync;
+use crate::registry::StorageCached;
 use arrow::array::{Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use kalamdb_commons::models::ids::StorageId;
+use kalamdb_commons::models::TableId;
 use kalamdb_commons::models::storage::StorageType;
 use kalamdb_commons::models::types::Storage;
+use kalamdb_commons::schemas::TableType;
 use std::env;
 use std::fs;
 use std::sync::Arc;
@@ -27,8 +28,8 @@ fn create_test_storage(temp_dir: &std::path::Path) -> Storage {
         base_directory: temp_dir.to_string_lossy().to_string(),
         credentials: None,
         config_json: None,
-        shared_tables_template: "{namespace}/{table}".to_string(),
-        user_tables_template: "{namespace}/{user}/{table}".to_string(),
+        shared_tables_template: "{namespace}/{tableName}".to_string(),
+        user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
         created_at: now,
         updated_at: now,
     }
@@ -59,7 +60,8 @@ fn test_bloom_filter_for_primary_key_column() {
     fs::create_dir_all(&temp_dir).unwrap();
 
     let storage = create_test_storage(&temp_dir);
-    let store = build_object_store(&storage).expect("Failed to create object store");
+    let storage_cached = StorageCached::new(storage);
+    let table_id = TableId::from_strings("test", "bloom_pk");
 
     // Schema with PRIMARY KEY column "id" + _seq system column
     let schema = Arc::new(Schema::new(vec![
@@ -74,9 +76,10 @@ fn test_bloom_filter_for_primary_key_column() {
     // Write Parquet file with Bloom filters on PRIMARY KEY ("id") and _seq
     let file_path = "with_pk_bloom.parquet";
     let bloom_filter_columns = vec!["id".to_string(), "_seq".to_string()];
-    let result = write_parquet_with_store_sync(
-        store,
-        &storage,
+    let result = storage_cached.write_parquet_sync(
+        TableType::Shared,
+        &table_id,
+        None,
         file_path,
         schema,
         vec![batch],
@@ -85,7 +88,9 @@ fn test_bloom_filter_for_primary_key_column() {
     assert!(result.is_ok());
 
     // Verify Bloom filters exist in Parquet metadata
-    let full_path = temp_dir.join(file_path);
+    let full_path = storage_cached
+        .get_file_path(TableType::Shared, &table_id, None, file_path)
+        .full_path;
     let file = fs::File::open(&full_path).unwrap();
     let reader = SerializedFileReader::new(file).unwrap();
     let metadata = reader.metadata();
@@ -147,7 +152,8 @@ fn test_bloom_filter_for_composite_primary_key() {
     fs::create_dir_all(&temp_dir).unwrap();
 
     let storage = create_test_storage(&temp_dir);
-    let store = build_object_store(&storage).expect("Failed to create object store");
+    let storage_cached = StorageCached::new(storage);
+    let table_id = TableId::from_strings("test", "bloom_composite");
 
     // Schema with composite PRIMARY KEY (user_id, order_id) + _seq
     let schema = Arc::new(Schema::new(vec![
@@ -182,9 +188,10 @@ fn test_bloom_filter_for_composite_primary_key() {
         "order_id".to_string(),
         "_seq".to_string(),
     ];
-    let result = write_parquet_with_store_sync(
-        store,
-        &storage,
+    let result = storage_cached.write_parquet_sync(
+        TableType::Shared,
+        &table_id,
+        None,
         file_path,
         schema,
         vec![batch],
@@ -193,7 +200,9 @@ fn test_bloom_filter_for_composite_primary_key() {
     assert!(result.is_ok());
 
     // Verify Bloom filters exist for both PRIMARY KEY columns
-    let full_path = temp_dir.join(file_path);
+    let full_path = storage_cached
+        .get_file_path(TableType::Shared, &table_id, None, file_path)
+        .full_path;
     let file = fs::File::open(&full_path).unwrap();
     let reader = SerializedFileReader::new(file).unwrap();
     let metadata = reader.metadata();
@@ -254,7 +263,8 @@ fn test_bloom_filter_default_behavior() {
     fs::create_dir_all(&temp_dir).unwrap();
 
     let storage = create_test_storage(&temp_dir);
-    let store = build_object_store(&storage).expect("Failed to create object store");
+    let storage_cached = StorageCached::new(storage);
+    let table_id = TableId::from_strings("test", "bloom_default");
 
     // Schema with PRIMARY KEY + _seq
     let schema = Arc::new(Schema::new(vec![
@@ -278,9 +288,10 @@ fn test_bloom_filter_default_behavior() {
 
     // Write with None (no bloom filters requested)
     let file_path = "default_bloom.parquet";
-    let result = write_parquet_with_store_sync(
-        store,
-        &storage,
+    let result = storage_cached.write_parquet_sync(
+        TableType::Shared,
+        &table_id,
+        None,
         file_path,
         schema,
         vec![batch],
@@ -289,7 +300,9 @@ fn test_bloom_filter_default_behavior() {
     assert!(result.is_ok());
 
     // Verify no column has Bloom filter when None is passed
-    let full_path = temp_dir.join(file_path);
+    let full_path = storage_cached
+        .get_file_path(TableType::Shared, &table_id, None, file_path)
+        .full_path;
     let file = fs::File::open(&full_path).unwrap();
     let reader = SerializedFileReader::new(file).unwrap();
     let metadata = reader.metadata();

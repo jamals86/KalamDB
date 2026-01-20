@@ -9,6 +9,7 @@
 //! - **extensions.rs**: Custom parsers for KalamDB-specific commands (CREATE STORAGE, STORAGE FLUSH, STORAGE COMPACT, etc.)
 //! - **system.rs**: Parsers for system table queries
 //! - **utils.rs**: Common parsing utilities (keyword extraction, normalization, etc.)
+//! - **query_parser.rs**: Safe SQL query parsing for live queries and subscriptions
 //!
 //! ## Design Principles
 //!
@@ -18,8 +19,10 @@
 //! 4. **Type-safe AST**: Strongly typed statement representations
 
 pub mod extensions;
+pub mod query_parser;
 pub mod system;
 pub mod utils;
 
 pub use extensions::*;
+pub use query_parser::*;
 pub use system::*;

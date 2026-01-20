@@ -2,29 +2,30 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
 use crate::schema_registry::cached_table_data::CachedTableData;
 use crate::schema_registry::path_resolver::PathResolver;
-use crate::schema_registry::persistence::SchemaPersistence;
-use crate::schema_registry::table_cache::TableCache;
 use datafusion::datasource::TableProvider;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{TableId, TableVersionId, UserId};
+use moka::sync::Cache;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 /// Unified schema cache for table metadata, schemas, and providers
 ///
-/// Single DashMap architecture for all table data including:
+/// Uses Moka cache for all table data including:
 /// - Table definitions and metadata
 /// - Memoized Arrow schemas
 /// - DataFusion TableProvider instances
 ///
-/// **Performance Optimization**: Cache access updates `last_accessed_ms` via an
-/// atomic field stored inside `CachedTableData`. This avoids a separate
-/// timestamps map while keeping per-access work O(1) and avoiding any deep clones.
+/// **Performance Optimization**: Moka provides automatic LRU eviction with TTL support
 pub struct SchemaRegistry {
-    //TODO: Pass appcontext instead of keeping passing it in each method?
-    /// Cache for table data (includes provider storage)
-    table_cache: TableCache,
+    /// Cache for table data (latest versions) - Moka provides automatic LRU eviction
+    table_cache: Cache<TableId, Arc<CachedTableData>>,
+
+    /// Cache for specific table versions (for reading old Parquet files)
+    version_cache: Cache<TableVersionId, Arc<CachedTableData>>,
 
     /// DataFusion base session context for table registration (set once during init)
     base_session_context: OnceLock<Arc<datafusion::prelude::SessionContext>>,
@@ -33,7 +34,8 @@ pub struct SchemaRegistry {
 impl std::fmt::Debug for SchemaRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SchemaRegistry")
-            .field("table_cache", &self.table_cache)
+            .field("table_cache_size", &self.table_cache.entry_count())
+            .field("version_cache_size", &self.version_cache.entry_count())
             .field("base_session_context_set", &self.base_session_context.get().is_some())
             .finish()
     }
@@ -43,7 +45,14 @@ impl SchemaRegistry {
     /// Create a new schema cache with specified maximum size
     pub fn new(max_size: usize) -> Self {
         Self {
-            table_cache: TableCache::new(max_size),
+            table_cache: Cache::builder()
+                .max_capacity(max_size as u64)
+                .time_to_idle(Duration::from_secs(3600)) // 1 hour idle eviction
+                .build(),
+            version_cache: Cache::builder()
+                .max_capacity(max_size as u64)
+                .time_to_idle(Duration::from_secs(3600))
+                .build(),
             base_session_context: OnceLock::new(),
         }
     }
@@ -52,18 +61,7 @@ impl SchemaRegistry {
     pub fn set_base_session_context(&self, session: Arc<datafusion::prelude::SessionContext>) {
         let _ = self.base_session_context.set(session);
     }
-
-    /// Get cached table data by TableId
-    pub fn get(&self, table_id: &TableId) -> Option<Arc<CachedTableData>> {
-        self.table_cache.get(table_id)
-    }
-
-    /// Insert or update cached table data
-    pub fn insert(&self, table_id: TableId, data: Arc<CachedTableData>) {
-        if let Some(evicted) = self.table_cache.insert(table_id, data) {
-            // Deregister evicted table from DataFusion catalog
-            let _ = self.deregister_from_datafusion(&evicted);
-        }
+self.table_cache.insert(table_id, data);
     }
 
     /// Invalidate (remove) cached table data
@@ -74,9 +72,33 @@ impl SchemaRegistry {
 
     /// Invalidate all versions of a table (for DROP TABLE)
     pub fn invalidate_all_versions(&self, table_id: &TableId) {
-        self.table_cache.invalidate_all_versions(table_id);
+        // Remove from latest cache
+        self.table_cache.invalidate(table_id);
+
+        // Remove all versioned entries for this table
+        // Moka doesn't support prefix deletion, so we collect keys and remove
+        self.version_cache.run_pending_tasks();
+        let keys_to_remove: Vec<TableVersionId> = self
+            .version_cache
+            .iter()
+            .filter(|entry| entry.key().table_id() == table_id)
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        for key in keys_to_remove {
+            self.version_cache.invalidate(&key);
+        }
+
+    pub fn invalidate(&self, table_id: &TableId) {
+        self.table_cache.invalidate(table_id);
         let _ = self.deregister_from_datafusion(table_id);
     }
+version_cache.get(version_id)
+    }
+
+    /// Insert a specific version into the cache
+    pub fn insert_version(&self, version_id: TableVersionId, data: Arc<CachedTableData>) {
+        self.version_cache.insert
 
     // ===== Versioned Cache Methods (Phase 16) =====
 
@@ -107,29 +129,32 @@ impl SchemaRegistry {
         PathResolver::get_storage_path(app_ctx, &data, user_id, shard)
     }
 
-    /// Get cache hit rate (for metrics)
-    pub fn hit_rate(&self) -> f64 {
-        self.table_cache.hit_rate()
-    }
-
     /// Get cache statistics
-    pub fn stats(&self) -> (usize, u64, u64, f64) {
-        self.table_cache.stats()
+    pub fn stats(&self) -> (usize, usize) {
+        let size = self.table_cache.entry_count() as usize;
+        let version_size = self.version_cache.entry_count() as usize;
+        (size, version_size)
     }
 
     /// Clear all cached data
     pub fn clear(&self) {
-        self.table_cache.clear();
+        self.table_cache.invalidate_all();
+        self.version_cache.invalidate_all();
     }
 
-    /// Get number of cached entries
+    /// Get number of cached entries (latest versions only)
     pub fn len(&self) -> usize {
-        self.table_cache.len()
+        self.table_cache.entry_count() as usize
+    }
+
+    /// Get total number of cached entries (latest + versioned)
+    pub fn total_len(&self) -> usize {
+        (self.table_cache.entry_count() + self.version_cache.entry_count()) as usize
     }
 
     /// Check if cache is empty
     pub fn is_empty(&self) -> bool {
-        self.table_cache.is_empty()
+        self.table_cache.entry_count() == 0 && self.version_cache.entry_count() == 0
     }
 
     // ===== Provider Methods (consolidated from ProviderRegistry) =====
@@ -150,14 +175,18 @@ impl SchemaRegistry {
             cached.set_provider(provider.clone());
         } else {
             // Table not in cache - try to load from persistence first
-            if let Some(cached) =
-                SchemaPersistence::get_table_if_exists(app_ctx, &self.table_cache, &table_id)?
-                    .and_then(|_| self.get(&table_id))
-            {
-                cached.set_provider(provider.clone());
+            if let Some(_table_def) = self.get_table_if_exists(app_ctx, &table_id)? {
+                if let Some(cached) = self.get(&table_id) {
+                    cached.set_provider(provider.clone());
+                } else {
+                    return Err(KalamDbError::TableNotFound(format!(
+                        "Cannot insert provider: table {} not in cache",
+                        table_id
+                    )));
+                }
             } else {
                 return Err(KalamDbError::TableNotFound(format!(
-                    "Cannot insert provider: table {} not in cache",
+                    "Cannot insert provider: table {} not found",
                     table_id
                 )));
             }
@@ -296,7 +325,7 @@ impl SchemaRegistry {
         Ok(())
     }
 
-    // ===== Persistence Methods (Phase 5: SchemaRegistry Consolidation) =====
+    // ===== Persistence Methods (consolidated from SchemaPersistence) =====
 
     /// Store table definition to persistence layer (write-through pattern)
     pub fn put_table_definition(
@@ -305,7 +334,17 @@ impl SchemaRegistry {
         table_id: &TableId,
         table_def: &TableDefinition,
     ) -> Result<(), KalamDbError> {
-        SchemaPersistence::put_table_definition(app_ctx, &self.table_cache, table_id, table_def)
+        let tables_provider = app_ctx.system_tables().tables();
+
+        // Persist to storage
+        tables_provider.create_table(table_id, table_def)?;
+
+        // Populate cache immediately with fully initialized storage config
+        let table_arc = Arc::new(table_def.clone());
+        let data = CachedTableData::from_table_definition(app_ctx, table_id, table_arc)?;
+        self.insert(table_id.clone(), Arc::new(data));
+
+        Ok(())
     }
 
     /// Delete table definition from persistence layer (delete-through pattern)
@@ -314,7 +353,15 @@ impl SchemaRegistry {
         app_ctx: &AppContext,
         table_id: &TableId,
     ) -> Result<(), KalamDbError> {
-        SchemaPersistence::delete_table_definition(app_ctx, &self.table_cache, table_id)
+        let tables_provider = app_ctx.system_tables().tables();
+
+        // Delete from storage
+        tables_provider.delete_table(table_id)?;
+
+        // Invalidate cache
+        self.invalidate(table_id);
+
+        Ok(())
     }
 
     /// Scan all table definitions from persistence layer
@@ -322,7 +369,10 @@ impl SchemaRegistry {
         &self,
         app_ctx: &AppContext,
     ) -> Result<Vec<TableDefinition>, KalamDbError> {
-        SchemaPersistence::scan_all_table_definitions(app_ctx)
+        let tables_provider = app_ctx.system_tables().tables();
+
+        // Scan all tables from storage
+        tables_provider.scan_all().into_kalamdb_error("Failed to scan tables")
     }
 
     /// Check if table exists in persistence layer
@@ -331,13 +381,36 @@ impl SchemaRegistry {
         app_ctx: &AppContext,
         table_id: &TableId,
     ) -> Result<bool, KalamDbError> {
-        SchemaPersistence::table_exists(app_ctx, &self.table_cache, table_id)
+        // Fast path: check cache
+        if self.get(table_id).is_some() {
+            return Ok(true);
+        }
+
+        // System tables are pre-defined in registry
+        if table_id.namespace_id().is_system_namespace()
+            && app_ctx.system_tables().get_system_definition(table_id).is_some()
+        {
+            return Ok(true);
+        }
+
+        let tables_provider = app_ctx.system_tables().tables();
+
+        match tables_provider.get_table_by_id(table_id)? {
+            Some(table_def) => {
+                // Cache with fully initialized storage config
+                let table_arc = Arc::new(table_def);
+                let data = CachedTableData::from_table_definition(app_ctx, table_id, table_arc)?;
+                self.insert(table_id.clone(), Arc::new(data));
+                Ok(true)
+            },
+            None => Ok(false),
+        }
     }
 
     /// Get table definition if it exists (optimized single-call pattern)
     ///
     /// Combines table existence check + definition fetch in one operation.
-    /// Use this instead of calling `table_exists()` followed by `get_table_if_exists()`.
+    /// Useself.get_table_if_exists(app_ctxif_exists()`.
     ///
     /// # Performance
     /// - Cache hit: Returns immediately (no duplicate lookups)
@@ -361,7 +434,62 @@ impl SchemaRegistry {
         app_ctx: &AppContext,
         table_id: &TableId,
     ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
-        SchemaPersistence::get_table_if_exists(app_ctx, &self.table_cache, table_id)
+        // Fast path: check cache
+        if let Some(cached) = self.get(table_id) {
+            return Ok(Some(Arc::clone(&cached.table)));
+        }
+
+        // Check if it's a system table
+        if table_id.namespace_id().is_system_namespace() {
+            if let Some(def) = app_ctx.system_tables().get_system_definition(table_id) {
+                return Ok(Some(def));
+            }
+        }
+
+        let tables_provider = app_ctx.system_tables().tables();
+
+        match tables_provider.get_table_by_id(table_id)? {
+            Some(table_def) => {
+                // Cache the result with fully initialized storage config
+                let table_arc = Arc::new(table_def);
+                let data =
+                    CachedTableData::from_table_definition(app_ctx, table_id, table_arc.clone())?;
+                self.insert(table_id.clone(), Arc::new(data));
+                Ok(Some(table_arc))
+            },
+            None => Ok(None),
+        }
+    /// ```
+    pub fn get_table_if_exists(
+        &self,
+        app_ctx: &AppContext,
+        table_id: &TableId,
+    ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
+        // Fast path: check cache
+        if let Some(cached) = self.get(table_id) {
+            return Ok(Some(Arc::clone(&cached.table)));
+        }
+
+        // Check if it's a system table
+        if table_id.namespace_id().is_system_namespace() {
+            if let Some(def) = app_ctx.system_tables().get_system_definition(table_id) {
+                return Ok(Some(def));
+            }
+        }
+
+        let tables_provider = app_ctx.system_tables().tables();
+
+        match tables_provider.get_table_by_id(table_id)? {
+            Some(table_def) => {
+                // Cache the result with fully initialized storage config
+                let table_arc = Arc::new(table_def);
+                let data =
+                    CachedTableData::from_table_definition(app_ctx, table_id, table_arc.clone())?;
+                self.insert(table_id.clone(), Arc::new(data));
+                Ok(Some(table_arc))
+            },
+            None => Ok(None),
+        }
     }
 
     /// Get Arrow schema for a table
@@ -381,7 +509,7 @@ impl SchemaRegistry {
         }
 
         // Slow path: try to load from persistence (lazy loading)
-        if SchemaPersistence::get_table_if_exists(app_ctx, &self.table_cache, table_id)?.is_some() {
+        if self.get_table_if_exists(app_ctx, table_id)?.is_some() {
             // Cache is now populated - retrieve it
             if let Some(cached) = self.get(table_id) {
                 return cached.arrow_schema();

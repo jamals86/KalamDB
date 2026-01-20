@@ -87,7 +87,6 @@ impl ManifestTableProvider {
         let mut last_refreshed_vals = Vec::with_capacity(entries.len());
         let mut last_accessed_vals = Vec::with_capacity(entries.len());
         let mut in_memory_vals = Vec::with_capacity(entries.len());
-        let mut source_paths = Vec::with_capacity(entries.len());
         let mut sync_states = Vec::with_capacity(entries.len());
         let mut manifest_jsons = Vec::with_capacity(entries.len());
 
@@ -120,7 +119,6 @@ impl ManifestTableProvider {
                                                                          // last_accessed = last_refreshed (moka manages TTI internally, we can't get actual access time)
             last_accessed_vals.push(Some(entry.last_refreshed * 1000));
             in_memory_vals.push(Some(is_hot));
-            source_paths.push(Some(entry.source_path));
             sync_states.push(Some(entry.sync_state.to_string()));
             manifest_jsons.push(Some(manifest_json_str));
         }
@@ -136,7 +134,6 @@ impl ManifestTableProvider {
             .add_timestamp_micros_column(last_refreshed_vals)
             .add_timestamp_micros_column(last_accessed_vals)
             .add_boolean_column(in_memory_vals)
-            .add_string_column_owned(source_paths)
             .add_string_column_owned(sync_states)
             .add_string_column_owned(manifest_jsons);
 
@@ -205,7 +202,7 @@ mod tests {
 
         let batch = provider.scan_to_record_batch().unwrap();
         assert_eq!(batch.num_rows(), 0);
-        assert_eq!(batch.num_columns(), 11); // Updated column count
+        assert_eq!(batch.num_columns(), 10); // Updated column count
     }
 
     #[tokio::test]
@@ -220,7 +217,6 @@ mod tests {
             manifest,
             Some("etag123".to_string()),
             1000,
-            "s3://bucket/ns1/tbl1/manifest.json".to_string(),
             SyncState::InSync,
         );
 

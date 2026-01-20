@@ -1,25 +1,26 @@
-//! Manifest file operations using object_store.
+//! Manifest file operations using StorageCached.
 //!
 //! Provides read/write operations for manifest.json files with atomic writes.
 //! Supports both local and remote storage backends.
 
 use crate::error::{FilestoreError, Result};
-use crate::object_store_ops::{read_file_sync, write_file_sync};
+use crate::registry::StorageCached;
 use bytes::Bytes;
-use kalamdb_commons::system::Storage;
-use object_store::ObjectStore;
-use std::sync::Arc;
+use kalamdb_commons::models::{TableId, UserId};
+use kalamdb_commons::schemas::TableType;
 
 /// Read manifest.json from storage.
 ///
 /// Returns the raw JSON string.
+/// TODO: Return JsonValue instead of raw string?
 pub fn read_manifest_json(
-    store: Arc<dyn ObjectStore>,
-    storage: &Storage,
-    manifest_path: &str,
+    storage_cached: &StorageCached,
+    table_type: TableType,
+    table_id: &TableId,
+    user_id: Option<&UserId>,
 ) -> Result<String> {
-    let bytes = read_file_sync(store, storage, manifest_path)?;
-    String::from_utf8(bytes.to_vec())
+    let bytes = storage_cached.get_sync(table_type, table_id, user_id, "manifest.json")?;
+    String::from_utf8(bytes.data.to_vec())
         .map_err(|e| FilestoreError::Other(format!("Invalid UTF-8 in manifest: {}", e)))
 }
 
@@ -28,25 +29,27 @@ pub fn read_manifest_json(
 /// For local storage, this uses temp file + rename for atomicity.
 /// For object_store backends, PUT operations are atomic by design.
 pub fn write_manifest_json(
-    store: Arc<dyn ObjectStore>,
-    storage: &Storage,
-    manifest_path: &str,
+    storage_cached: &StorageCached,
+    table_type: TableType,
+    table_id: &TableId,
+    user_id: Option<&UserId>,
     json_content: &str,
 ) -> Result<()> {
     let bytes = Bytes::from(json_content.to_string());
-    write_file_sync(store, storage, manifest_path, bytes)
+    storage_cached
+        .put_sync(table_type, table_id, user_id, "manifest.json", bytes)
+        .map(|_| ())
 }
 
 /// Check if manifest.json exists.
 pub fn manifest_exists(
-    store: Arc<dyn ObjectStore>,
-    storage: &Storage,
-    manifest_path: &str,
+    storage_cached: &StorageCached,
+    table_type: TableType,
+    table_id: &TableId,
+    user_id: Option<&UserId>,
 ) -> Result<bool> {
-    use crate::object_store_ops::head_file_sync;
-
-    match head_file_sync(store, storage, manifest_path) {
-        Ok(_) => Ok(true),
+    match storage_cached.exists_sync(table_type, table_id, user_id, "manifest.json") {
+        Ok(result) => Ok(result.exists),
         Err(FilestoreError::ObjectStore(ref e)) if e.contains("not found") || e.contains("404") => {
             Ok(false)
         },
@@ -57,12 +60,14 @@ pub fn manifest_exists(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::build_object_store;
     use kalamdb_commons::models::ids::StorageId;
+    use kalamdb_commons::models::TableId;
     use kalamdb_commons::models::storage::StorageType;
     use kalamdb_commons::models::types::Storage;
+    use kalamdb_commons::schemas::TableType;
     use std::env;
     use std::fs;
+    use crate::registry::StorageCached;
 
     fn create_test_storage(temp_dir: &std::path::Path) -> Storage {
         let now = chrono::Utc::now().timestamp_millis();
@@ -74,11 +79,15 @@ mod tests {
             base_directory: temp_dir.to_string_lossy().to_string(),
             credentials: None,
             config_json: None,
-            shared_tables_template: "{namespace}/{table}".to_string(),
-            user_tables_template: "{namespace}/{user}/{table}".to_string(),
+            shared_tables_template: "{namespace}/{tableName}".to_string(),
+            user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
             created_at: now,
             updated_at: now,
         }
+    }
+
+    fn make_table_id() -> TableId {
+        TableId::from_strings("test_namespace", "test_table")
     }
 
     #[test]
@@ -88,18 +97,17 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let store = build_object_store(&storage).expect("Failed to build store");
-
-        let manifest_path = "test_namespace/test_table/manifest.json";
-        let test_json = r#"{"version":1,"segments":[]}"#;
+        let storage_cached = StorageCached::new(storage);
+        let table_id = make_table_id();
+        let test_json = r#"{\"version\":1,\"segments\":[]}"#;
 
         // Write manifest
         let write_result =
-            write_manifest_json(Arc::clone(&store), &storage, manifest_path, test_json);
+            write_manifest_json(&storage_cached, TableType::Shared, &table_id, None, test_json);
         assert!(write_result.is_ok(), "Failed to write manifest");
 
         // Read manifest back
-        let read_result = read_manifest_json(Arc::clone(&store), &storage, manifest_path);
+        let read_result = read_manifest_json(&storage_cached, TableType::Shared, &table_id, None);
         assert!(read_result.is_ok(), "Failed to read manifest");
         assert_eq!(read_result.unwrap(), test_json);
 
@@ -113,21 +121,23 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let store = build_object_store(&storage).expect("Failed to build store");
-
-        let manifest_path = "test_namespace/test_table/manifest.json";
+        let storage_cached = StorageCached::new(storage);
+        let table_id = make_table_id();
 
         // Check doesn't exist initially
-        let exists_before = manifest_exists(Arc::clone(&store), &storage, manifest_path);
+        let exists_before =
+            manifest_exists(&storage_cached, TableType::Shared, &table_id, None);
         assert!(exists_before.is_ok());
         assert!(!exists_before.unwrap(), "Manifest should not exist yet");
 
         // Write manifest
-        let test_json = r#"{"version":1}"#;
-        write_manifest_json(Arc::clone(&store), &storage, manifest_path, test_json).unwrap();
+        let test_json = r#"{\"version\":1}"#;
+        write_manifest_json(&storage_cached, TableType::Shared, &table_id, None, test_json)
+            .unwrap();
 
         // Check exists after write
-        let exists_after = manifest_exists(Arc::clone(&store), &storage, manifest_path);
+        let exists_after =
+            manifest_exists(&storage_cached, TableType::Shared, &table_id, None);
         assert!(exists_after.is_ok());
         assert!(exists_after.unwrap(), "Manifest should exist after write");
 
@@ -141,18 +151,24 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let store = build_object_store(&storage).expect("Failed to build store");
+        let storage_cached = StorageCached::new(storage);
+        let table_id = TableId::from_strings("ns1", "ns2");
 
         // Deep nested path
-        let manifest_path = "ns1/ns2/ns3/table/manifest.json";
-        let test_json = r#"{"version":1,"segments":[]}"#;
+        let test_json = r#"{\"version\":1,\"segments\":[]}"#;
 
         // Should create all intermediate directories
-        let result = write_manifest_json(Arc::clone(&store), &storage, manifest_path, test_json);
+        let result = write_manifest_json(
+            &storage_cached,
+            TableType::Shared,
+            &table_id,
+            None,
+            test_json,
+        );
         assert!(result.is_ok(), "Should create nested directories");
 
         // Verify can read it back
-        let read_result = read_manifest_json(store, &storage, manifest_path);
+        let read_result = read_manifest_json(&storage_cached, TableType::Shared, &table_id, None);
         assert!(read_result.is_ok());
         assert_eq!(read_result.unwrap(), test_json);
 
@@ -166,10 +182,10 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let store = build_object_store(&storage).expect("Failed to build store");
+        let storage_cached = StorageCached::new(storage);
+        let table_id = TableId::from_strings("nonexistent", "table");
 
-        let manifest_path = "nonexistent/manifest.json";
-        let result = read_manifest_json(store, &storage, manifest_path);
+        let result = read_manifest_json(&storage_cached, TableType::Shared, &table_id, None);
 
         assert!(result.is_err(), "Should fail for nonexistent file");
 
@@ -183,15 +199,16 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let store = build_object_store(&storage).expect("Failed to build store");
-
-        let manifest_path = "test/manifest.json";
+        let storage_cached = StorageCached::new(storage);
+        let table_id = make_table_id();
 
         // JSON with unicode, escapes, etc.
-        let test_json = r#"{"version":1,"name":"Test 🚀","segments":["seg-1","seg-2"],"metadata":{"key":"value with \"quotes\""}}"#;
+        let test_json = r#"{\"version\":1,\"name\":\"Test 🚀\",\"segments\":[\"seg-1\",\"seg-2\"],\"metadata\":{\"key\":\"value with \\\"quotes\\\"\"}}"#;
 
-        write_manifest_json(Arc::clone(&store), &storage, manifest_path, test_json).unwrap();
-        let read_back = read_manifest_json(store, &storage, manifest_path).unwrap();
+        write_manifest_json(&storage_cached, TableType::Shared, &table_id, None, test_json)
+            .unwrap();
+        let read_back =
+            read_manifest_json(&storage_cached, TableType::Shared, &table_id, None).unwrap();
 
         assert_eq!(read_back, test_json);
 
@@ -205,22 +222,23 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let store = build_object_store(&storage).expect("Failed to build store");
-
-        let manifest_path = "test/manifest.json";
+        let storage_cached = StorageCached::new(storage);
+        let table_id = make_table_id();
 
         // Write first version
-        let v1_json = r#"{"version":1}"#;
-        write_manifest_json(Arc::clone(&store), &storage, manifest_path, v1_json).unwrap();
+        let v1_json = r#"{\"version\":1}"#;
+        write_manifest_json(&storage_cached, TableType::Shared, &table_id, None, v1_json).unwrap();
 
-        let read_v1 = read_manifest_json(Arc::clone(&store), &storage, manifest_path).unwrap();
+        let read_v1 =
+            read_manifest_json(&storage_cached, TableType::Shared, &table_id, None).unwrap();
         assert_eq!(read_v1, v1_json);
 
         // Overwrite with second version
-        let v2_json = r#"{"version":2}"#;
-        write_manifest_json(Arc::clone(&store), &storage, manifest_path, v2_json).unwrap();
+        let v2_json = r#"{\"version\":2}"#;
+        write_manifest_json(&storage_cached, TableType::Shared, &table_id, None, v2_json).unwrap();
 
-        let read_v2 = read_manifest_json(store, &storage, manifest_path).unwrap();
+        let read_v2 =
+            read_manifest_json(&storage_cached, TableType::Shared, &table_id, None).unwrap();
         assert_eq!(read_v2, v2_json, "Should read updated version");
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -233,13 +251,14 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let store = build_object_store(&storage).expect("Failed to build store");
-
-        let manifest_path = "test/empty_manifest.json";
+        let storage_cached = StorageCached::new(storage);
+        let table_id = make_table_id();
         let empty_json = "{}";
 
-        write_manifest_json(Arc::clone(&store), &storage, manifest_path, empty_json).unwrap();
-        let read_back = read_manifest_json(store, &storage, manifest_path).unwrap();
+        write_manifest_json(&storage_cached, TableType::Shared, &table_id, None, empty_json)
+            .unwrap();
+        let read_back =
+            read_manifest_json(&storage_cached, TableType::Shared, &table_id, None).unwrap();
 
         assert_eq!(read_back, empty_json);
 
@@ -253,19 +272,20 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let store = build_object_store(&storage).expect("Failed to build store");
-
-        let manifest_path = "test/large_manifest.json";
+        let storage_cached = StorageCached::new(storage);
+        let table_id = make_table_id();
 
         // Generate large JSON with many segments
         let mut segments = Vec::new();
         for i in 0..1000 {
-            segments.push(format!(r#"{{"id":"seg-{}","size":{}}}"#, i, i * 1024));
+            segments.push(format!(r#"{{\"id\":\"seg-{}\",\"size\":{}}}"#, i, i * 1024));
         }
-        let large_json = format!(r#"{{"version":1,"segments":[{}]}}"#, segments.join(","));
+        let large_json = format!(r#"{{\"version\":1,\"segments\":[{}]}}"#, segments.join(","));
 
-        write_manifest_json(Arc::clone(&store), &storage, manifest_path, &large_json).unwrap();
-        let read_back = read_manifest_json(store, &storage, manifest_path).unwrap();
+        write_manifest_json(&storage_cached, TableType::Shared, &table_id, None, &large_json)
+            .unwrap();
+        let read_back =
+            read_manifest_json(&storage_cached, TableType::Shared, &table_id, None).unwrap();
 
         assert_eq!(read_back, large_json);
         assert!(read_back.len() > 10000, "Should be a large manifest");

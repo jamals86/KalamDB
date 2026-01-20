@@ -45,7 +45,6 @@ impl std::fmt::Display for SyncState {
 /// - `manifest`: The parsed Manifest object (stored directly, serialized on-the-fly for display)
 /// - `etag`: Storage ETag or version identifier for freshness validation
 /// - `last_refreshed`: Unix timestamp (seconds) of last successful refresh
-/// - `source_path`: Full path to manifest.json in storage backend
 /// - `sync_state`: Current synchronization state (InSync | Stale | Error)
 ///
 /// Note: Uses custom serialization because bincode doesn't support serde_json::Value in ColumnStats.
@@ -61,9 +60,6 @@ pub struct ManifestCacheEntry {
     /// Last refresh timestamp (Unix seconds)
     pub last_refreshed: i64,
 
-    /// Source path in storage (e.g., "s3://bucket/namespace/table/manifest.json")
-    pub source_path: String,
-
     /// Synchronization state
     pub sync_state: SyncState,
 }
@@ -74,7 +70,6 @@ struct ManifestCacheEntryRaw {
     manifest_json: String,
     etag: Option<String>,
     last_refreshed: i64,
-    source_path: String,
     sync_state: SyncState,
 }
 
@@ -88,7 +83,6 @@ impl Serialize for ManifestCacheEntry {
                 .unwrap_or_else(|_| "{}".to_string()),
             etag: self.etag.clone(),
             last_refreshed: self.last_refreshed,
-            source_path: self.source_path.clone(),
             sync_state: self.sync_state,
         };
         raw.serialize(serializer)
@@ -108,7 +102,6 @@ impl<'de> Deserialize<'de> for ManifestCacheEntry {
             manifest,
             etag: raw.etag,
             last_refreshed: raw.last_refreshed,
-            source_path: raw.source_path,
             sync_state: raw.sync_state,
         })
     }
@@ -120,14 +113,12 @@ impl ManifestCacheEntry {
         manifest: Manifest,
         etag: Option<String>,
         last_refreshed: i64,
-        source_path: String,
         sync_state: SyncState,
     ) -> Self {
         Self {
             manifest,
             etag,
             last_refreshed,
-            source_path,
             sync_state,
         }
     }
@@ -374,7 +365,6 @@ mod tests {
             manifest,
             Some("etag123".to_string()),
             1000,
-            "path/to/manifest.json".to_string(),
             SyncState::InSync,
         );
 
@@ -390,7 +380,7 @@ mod tests {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
         let mut entry =
-            ManifestCacheEntry::new(manifest, None, 1000, "path".to_string(), SyncState::InSync);
+            ManifestCacheEntry::new(manifest, None, 1000, SyncState::InSync);
 
         entry.mark_stale();
         assert_eq!(entry.sync_state, SyncState::Stale);
@@ -412,7 +402,6 @@ mod tests {
             manifest,
             None,
             1000,
-            "path".to_string(),
             SyncState::PendingWrite,
         );
 
@@ -431,7 +420,7 @@ mod tests {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
         let mut entry =
-            ManifestCacheEntry::new(manifest, None, 1000, "path".to_string(), SyncState::InSync);
+            ManifestCacheEntry::new(manifest, None, 1000, SyncState::InSync);
 
         // Transition: InSync -> Syncing (new flush started)
         entry.mark_syncing();
@@ -484,7 +473,6 @@ mod tests {
             manifest,
             None,
             1000,
-            "myns/mytable/manifest.json".to_string(),
             SyncState::InSync,
         );
 

@@ -10,7 +10,7 @@ use kalamdb_commons::schemas::TableType;
 
 use crate::app_context::AppContext;
 use crate::applier::ApplierError;
-use crate::schema_registry::{CachedTableData, PathResolver};
+use crate::schema_registry::CachedTableData;
 use crate::sql::executor::helpers::table_registration;
 
 /// Executor for DDL (Data Definition Language) operations
@@ -162,7 +162,7 @@ impl DdlExecutor {
     fn prime_schema_cache(
         &self,
         table_id: &TableId,
-        table_type: TableType,
+        _table_type: TableType,
         table_def: &TableDefinition,
     ) -> Result<(), ApplierError> {
         use kalamdb_commons::models::schemas::TableOptions;
@@ -170,34 +170,14 @@ impl DdlExecutor {
         let table_def_arc = Arc::new(table_def.clone());
         let schema_registry = self.app_context.schema_registry();
 
-        let (storage_id_opt, template) = match &table_def.table_options {
-            TableOptions::User(opts) => {
-                let storage_id = opts.storage_id.clone();
-                let template = PathResolver::resolve_storage_path_template(
-                    self.app_context.as_ref(),
-                    table_id,
-                    table_type,
-                    &storage_id,
-                )
-                .map_err(|e| ApplierError::Execution(format!("Failed to resolve path: {}", e)))?;
-                (Some(storage_id), template)
-            },
-            TableOptions::Shared(opts) => {
-                let storage_id = opts.storage_id.clone();
-                let template = PathResolver::resolve_storage_path_template(
-                    self.app_context.as_ref(),
-                    table_id,
-                    table_type,
-                    &storage_id,
-                )
-                .map_err(|e| ApplierError::Execution(format!("Failed to resolve path: {}", e)))?;
-                (Some(storage_id), template)
-            },
-            TableOptions::Stream(_) => (None, String::new()),
+        let storage_id_opt = match &table_def_arc.table_options {
+            TableOptions::User(opts) => Some(opts.storage_id.clone()),
+            TableOptions::Shared(opts) => Some(opts.storage_id.clone()),
+            TableOptions::Stream(_) => None,
             TableOptions::System(_) => return Ok(()),
         };
 
-        let data = CachedTableData::with_storage_config(table_def_arc, storage_id_opt, template);
+        let data = CachedTableData::with_storage_config(table_def_arc, storage_id_opt);
         schema_registry.insert(table_id.clone(), Arc::new(data));
 
         Ok(())

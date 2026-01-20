@@ -11,13 +11,13 @@ use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestService};
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use crate::schema_registry::SchemaRegistry;
-use crate::storage::write_parquet_with_store_sync;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::rows::Row;
-use kalamdb_commons::models::{StorageId, TableId, UserId};
+use kalamdb_commons::models::{TableId, UserId};
+use kalamdb_commons::schemas::TableType;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::UserTableIndexedStore;
 use std::sync::Arc;
@@ -97,16 +97,6 @@ impl UserTableFlushJob {
             .unwrap_or(1)
     }
 
-    /// Resolve storage path for a specific user
-    fn resolve_storage_path_for_user(&self, user_id: &UserId) -> Result<String, KalamDbError> {
-        self.unified_cache.get_storage_path(
-            self.app_context.as_ref(),
-            &self.table_id,
-            Some(user_id),
-            None,
-        )
-    }
-
     /// Convert JSON rows to Arrow RecordBatch
     fn rows_to_record_batch(&self, rows: &[(Vec<u8>, Row)]) -> Result<RecordBatch, KalamDbError> {
         let arrow_rows: Vec<Row> = rows.iter().map(|(_, row)| row.clone()).collect();
@@ -140,7 +130,15 @@ impl UserTableFlushJob {
 
         // Resolve storage path for this user
         let user_id_typed = UserId::new(user_id.to_string());
-        let storage_path = self.resolve_storage_path_for_user(&user_id_typed)?;
+        let cached = self.unified_cache.get(&self.table_id).ok_or_else(|| {
+            KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id))
+        })?;
+        let storage_cached = cached
+            .storage_cached(&self.app_context.storage_registry())
+            .into_kalamdb_error("Failed to get storage cache")?;
+        let storage_path = storage_cached
+            .get_relative_path(TableType::User, &self.table_id, Some(&user_id_typed))
+            .full_path;
 
         // RLS ASSERTION: Verify storage path contains user_id
         if !storage_path.contains(user_id) {
@@ -163,32 +161,17 @@ impl UserTableFlushJob {
         let batch_filename = FlushManifestHelper::generate_batch_filename(batch_number);
         let temp_filename = FlushManifestHelper::generate_temp_filename(batch_number);
 
-        // Use PathBuf for proper cross-platform path handling (avoids mixed slashes)
-        let temp_path = std::path::Path::new(&storage_path)
-            .join(&temp_filename)
-            .to_string_lossy()
-            .to_string();
-        let destination_path = std::path::Path::new(&storage_path)
-            .join(&batch_filename)
-            .to_string_lossy()
-            .to_string();
-
-        let cached = self.unified_cache.get(&self.table_id).ok_or_else(|| {
-            KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id))
-        })?;
-
-        // Get storage from registry (cached lookup)
-        let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
-        let storage =
-            self.app_context.storage_registry().get_storage(&storage_id)?.ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Storage '{}' not found",
-                    storage_id.as_str()
-                ))
-            })?;
-
-        // Get cached ObjectStore instance (avoids rebuild overhead on each flush)
-        let object_store = cached.object_store(self.app_context.as_ref())?;
+        let temp_path = storage_cached
+            .get_file_path(TableType::User, &self.table_id, Some(&user_id_typed), &temp_filename)
+            .full_path;
+        let destination_path = storage_cached
+            .get_file_path(
+                TableType::User,
+                &self.table_id,
+                Some(&user_id_typed),
+                &batch_filename,
+            )
+            .full_path;
 
         // ===== ATOMIC FLUSH PATTERN =====
         // Step 1: Mark manifest as syncing (flush in progress)
@@ -202,19 +185,28 @@ impl UserTableFlushJob {
 
         // Step 2: Write Parquet to TEMP location first
         log::debug!("📝 [ATOMIC] Writing Parquet to temp path: {}, rows={}", temp_path, rows_count);
-        let result = write_parquet_with_store_sync(
-            object_store.clone(),
-            &storage,
-            &temp_path,
-            self.schema.clone(),
-            vec![batch.clone()],
-            Some(bloom_filter_columns.to_vec()),
-        )
-        .into_kalamdb_error("Filestore error")?;
+        let result = storage_cached
+            .write_parquet_sync(
+                TableType::User,
+                &self.table_id,
+                Some(&user_id_typed),
+                &temp_filename,
+                self.schema.clone(),
+                vec![batch.clone()],
+                Some(bloom_filter_columns.to_vec()),
+            )
+            .into_kalamdb_error("Filestore error")?;
 
         // Step 3: Rename temp file to final location (atomic operation)
         log::debug!("📝 [ATOMIC] Renaming {} -> {}", temp_path, destination_path);
-        kalamdb_filestore::rename_file_sync(object_store, &storage, &temp_path, &destination_path)
+        storage_cached
+            .rename_sync(
+                TableType::User,
+                &self.table_id,
+                Some(&user_id_typed),
+                &temp_filename,
+                &batch_filename,
+            )
             .into_kalamdb_error("Failed to rename Parquet file to final location")?;
 
         let size_bytes = result.size_bytes;

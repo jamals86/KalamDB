@@ -29,23 +29,19 @@ pub(crate) fn scan_parquet_files_as_batch(
         .get(table_id)
         .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
 
-    // 2. Get Storage from registry (cached lookup)
+    // 2. Get StorageCached from registry (cached lookup)
     let storage_id = cached
         .storage_id
         .clone()
         .unwrap_or_else(kalamdb_commons::models::StorageId::local);
 
-    let storage =
-        core.app_context.storage_registry().get_storage(&storage_id)?.ok_or_else(|| {
+    let storage_cached = core
+        .app_context
+        .storage_registry()
+        .get_cached(&storage_id)?
+        .ok_or_else(|| {
             KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
         })?;
-
-    // 3. Get ObjectStore (cached)
-    let object_store = cached.object_store(core.app_context.as_ref())?;
-
-    // 4. Resolve storage path
-    let storage_path =
-        PathResolver::get_storage_path(core.app_context.as_ref(), &cached, user_id, None)?;
 
     let manifest_service = core.app_context.manifest_service();
     let cache_result = manifest_service.get_or_load(table_id, user_id);
@@ -144,13 +140,13 @@ pub(crate) fn scan_parquet_files_as_batch(
 
     let (combined, (total_batches, skipped, scanned)) = planner.scan_parquet_files(
         manifest_opt.as_ref(),
-        object_store,
-        &storage,
-        &storage_path,
+        storage_cached,
+        table_type,
+        table_id,
+        user_id,
         seq_range,
         use_degraded_mode,
         schema.clone(),
-        table_id,
         &core.app_context,
     )?;
 

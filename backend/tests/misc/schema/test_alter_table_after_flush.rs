@@ -8,7 +8,7 @@
 //! This is a critical scenario because it tests schema compatibility
 //! between hot storage (RocksDB) and cold storage (Parquet files).
 
-use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
+use super::test_support::{fixtures, flush_helpers, TestServer};
 use kalam_link::models::ResponseStatus;
 use kalam_link::parse_i64;
 

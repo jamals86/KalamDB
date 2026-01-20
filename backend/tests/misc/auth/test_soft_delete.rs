@@ -6,7 +6,7 @@
 //! - Deleted data can be recovered
 //! - _deleted field is accessible when explicitly selected
 
-use super::test_support::{fixtures, QueryResultTestExt, TestServer};
+use super::test_support::{fixtures, TestServer};
 use kalam_link::models::ResponseStatus;
 
 #[actix_web::test]

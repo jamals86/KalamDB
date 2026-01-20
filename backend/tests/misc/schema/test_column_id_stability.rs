@@ -6,7 +6,7 @@
 //! 3. RENAME COLUMN - column_id stays the same
 //! 4. Flushed data - column statistics use column_id keys
 
-use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
+use super::test_support::{fixtures, flush_helpers, TestServer};
 use kalam_link::models::ResponseStatus;
 use serde_json::Value;
 use std::collections::HashMap;

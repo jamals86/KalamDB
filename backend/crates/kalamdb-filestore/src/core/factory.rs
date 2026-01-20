@@ -3,6 +3,7 @@
 //! Uses `object_store` crate uniformly for local filesystem and cloud storage.
 //! No if/else branching - all backends implement the same `ObjectStore` trait.
 
+use crate::core::paths::parse_remote_url;
 use crate::error::{FilestoreError, Result};
 use kalamdb_commons::models::{StorageLocationConfig, StorageLocationConfigError};
 use kalamdb_commons::system::Storage;
@@ -15,6 +16,7 @@ use object_store::prefix::PrefixStore;
 use object_store::ObjectStore;
 use std::path::PathBuf;
 use std::sync::Arc;
+
 
 /// Build an `ObjectStore` instance from a Storage entity.
 ///
@@ -161,26 +163,6 @@ fn build_azure(
     wrap_with_prefix(store, &prefix)
 }
 
-/// Parse a remote URL like `s3://bucket/prefix` into (bucket, prefix).
-fn parse_remote_url(url: &str, schemes: &[&str]) -> Result<(String, String)> {
-    let trimmed = url.trim();
-
-    for scheme in schemes {
-        if let Some(rest) = trimmed.strip_prefix(scheme) {
-            let (bucket, prefix) = match rest.split_once('/') {
-                Some((b, p)) => (b.to_string(), p.to_string()),
-                None => (rest.to_string(), String::new()),
-            };
-            return Ok((bucket, prefix));
-        }
-    }
-
-    Err(FilestoreError::Config(format!(
-        "Expected URL with schemes {:?}, got: {}",
-        schemes, url
-    )))
-}
-
 /// Wrap a store with a PrefixStore if prefix is non-empty.
 fn wrap_with_prefix<T: ObjectStore + 'static>(
     store: T,
@@ -196,86 +178,9 @@ fn wrap_with_prefix<T: ObjectStore + 'static>(
     }
 }
 
-/// Compute the object key (path within the store) for a given full destination path.
-///
-/// For local storage: strips base_directory prefix.
-/// For remote storage: extracts key portion from URL.
-pub fn object_key_for_path(storage: &Storage, full_path: &str) -> Result<ObjectStorePath> {
-    let trimmed = full_path.trim();
-
-    // Check if it's a remote URL
-    for scheme in ["s3://", "gs://", "gcs://", "az://", "azure://"] {
-        if let Some(rest) = trimmed.strip_prefix(scheme) {
-            // Skip bucket/container, extract key
-            let key = match rest.split_once('/') {
-                Some((_, k)) => k.trim_matches('/'),
-                None => "",
-            };
-            return ObjectStorePath::parse(key).map_err(|e| FilestoreError::Path(e.to_string()));
-        }
-    }
-
-    // Local path: strip base_directory if present
-    let base = storage.base_directory.trim().trim_end_matches('/');
-    let path = trimmed.trim_start_matches('/');
-
-    let key = if !base.is_empty() && path.starts_with(base.trim_start_matches('/')) {
-        path.strip_prefix(base.trim_start_matches('/'))
-            .unwrap_or(path)
-            .trim_start_matches('/')
-    } else {
-        path
-    };
-
-    ObjectStorePath::parse(key).map_err(|e| FilestoreError::Path(e.to_string()))
-}
-
-/// Check if a path is a remote URL.
-pub fn is_remote_url(path: &str) -> bool {
-    let trimmed = path.trim();
-    ["s3://", "gs://", "gcs://", "az://", "azure://"]
-        .iter()
-        .any(|s| trimmed.starts_with(s))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_remote_url_s3() {
-        let (bucket, prefix) = parse_remote_url("s3://my-bucket/some/prefix", &["s3://"]).unwrap();
-        assert_eq!(bucket, "my-bucket");
-        assert_eq!(prefix, "some/prefix");
-    }
-
-    #[test]
-    fn test_parse_remote_url_no_prefix() {
-        let (bucket, prefix) = parse_remote_url("s3://my-bucket", &["s3://"]).unwrap();
-        assert_eq!(bucket, "my-bucket");
-        assert_eq!(prefix, "");
-    }
-
-    #[test]
-    fn test_is_remote_url() {
-        assert!(is_remote_url("s3://bucket/key"));
-        assert!(is_remote_url("gs://bucket/key"));
-        assert!(is_remote_url("az://container/key"));
-        assert!(!is_remote_url("/var/data/storage"));
-        assert!(!is_remote_url("./relative/path"));
-    }
-
-    #[test]
-    fn test_is_remote_url_gcs_variants() {
-        assert!(is_remote_url("gcs://bucket/key"));
-        assert!(is_remote_url("gs://bucket/key"));
-    }
-
-    #[test]
-    fn test_is_remote_url_azure_variants() {
-        assert!(is_remote_url("azure://container/key"));
-        assert!(is_remote_url("az://container/key"));
-    }
 
     #[test]
     fn test_build_object_store_filesystem() {
@@ -307,117 +212,5 @@ mod tests {
         assert!(result.is_ok(), "Should build filesystem store");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
-    fn test_object_key_for_path_filesystem() {
-        use kalamdb_commons::models::ids::StorageId;
-        use kalamdb_commons::models::storage::StorageType;
-        use kalamdb_commons::models::types::Storage;
-
-        let now = chrono::Utc::now().timestamp_millis();
-        let storage = Storage {
-            storage_id: StorageId::from("test_key"),
-            storage_name: "test_key".to_string(),
-            description: None,
-            storage_type: StorageType::Filesystem,
-            base_directory: "/tmp/kalamdb".to_string(),
-            credentials: None,
-            config_json: None,
-            shared_tables_template: "{namespace}/{table}".to_string(),
-            user_tables_template: "{namespace}/{user}/{table}".to_string(),
-            created_at: now,
-            updated_at: now,
-        };
-
-        let result = object_key_for_path(&storage, "namespace1/table1/file.parquet");
-        assert!(result.is_ok());
-
-        let key = result.unwrap();
-        assert_eq!(key.as_ref(), "namespace1/table1/file.parquet");
-    }
-
-    #[test]
-    fn test_object_key_for_path_strips_leading_slash() {
-        use kalamdb_commons::models::ids::StorageId;
-        use kalamdb_commons::models::storage::StorageType;
-        use kalamdb_commons::models::types::Storage;
-
-        let now = chrono::Utc::now().timestamp_millis();
-        let storage = Storage {
-            storage_id: StorageId::from("test_slash"),
-            storage_name: "test_slash".to_string(),
-            description: None,
-            storage_type: StorageType::Filesystem,
-            base_directory: "/tmp/kalamdb".to_string(),
-            credentials: None,
-            config_json: None,
-            shared_tables_template: "{namespace}/{table}".to_string(),
-            user_tables_template: "{namespace}/{user}/{table}".to_string(),
-            created_at: now,
-            updated_at: now,
-        };
-
-        let result = object_key_for_path(&storage, "/namespace1/table1/file.parquet");
-        assert!(result.is_ok());
-
-        let key = result.unwrap();
-        // Should strip leading slash
-        assert_eq!(key.as_ref(), "namespace1/table1/file.parquet");
-    }
-
-    #[test]
-    fn test_object_key_for_path_empty() {
-        use kalamdb_commons::models::ids::StorageId;
-        use kalamdb_commons::models::storage::StorageType;
-        use kalamdb_commons::models::types::Storage;
-
-        let now = chrono::Utc::now().timestamp_millis();
-        let storage = Storage {
-            storage_id: StorageId::from("test_empty"),
-            storage_name: "test_empty".to_string(),
-            description: None,
-            storage_type: StorageType::Filesystem,
-            base_directory: "/tmp/kalamdb".to_string(),
-            credentials: None,
-            config_json: None,
-            shared_tables_template: "{namespace}/{table}".to_string(),
-            user_tables_template: "{namespace}/{user}/{table}".to_string(),
-            created_at: now,
-            updated_at: now,
-        };
-
-        let result = object_key_for_path(&storage, "");
-        assert!(result.is_ok());
-
-        let key = result.unwrap();
-        assert_eq!(key.as_ref(), "");
-    }
-
-    #[test]
-    fn test_parse_remote_url_with_trailing_slash() {
-        let (bucket, prefix) = parse_remote_url("s3://my-bucket/prefix/", &["s3://"]).unwrap();
-        assert_eq!(bucket, "my-bucket");
-        assert_eq!(prefix, "prefix/");
-    }
-
-    #[test]
-    fn test_parse_remote_url_deep_prefix() {
-        let (bucket, prefix) = parse_remote_url("s3://my-bucket/a/b/c/d/e", &["s3://"]).unwrap();
-        assert_eq!(bucket, "my-bucket");
-        assert_eq!(prefix, "a/b/c/d/e");
-    }
-
-    #[test]
-    fn test_parse_remote_url_invalid_scheme() {
-        let result = parse_remote_url("http://bucket/key", &["s3://", "gs://"]);
-        assert!(result.is_err(), "Should error on invalid scheme");
-    }
-
-    #[test]
-    fn test_is_remote_url_with_spaces() {
-        // is_remote_url trims internally
-        assert!(is_remote_url("  s3://bucket "), "Should handle spaces");
-        assert!(is_remote_url(" s3://bucket/key "));
     }
 }

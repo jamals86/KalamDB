@@ -4,14 +4,12 @@
 //! Includes an in-memory cache to avoid repeated RocksDB lookups when multiple tables
 //! share the same storage.
 
-use crate::error::KalamDbError;
-use crate::error_extensions::KalamDbResultExt;
-use crate::storage::storage_cache::StorageCached;
+use crate::error::{FilestoreError, Result};
+use crate::registry::storage_cached::StorageCached;
 use dashmap::DashMap;
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::system::Storage;
 use kalamdb_system::StoragesTableProvider;
-use object_store::ObjectStore;
 use std::sync::Arc;
 
 /// Registry for managing storage backends
@@ -69,10 +67,7 @@ impl StorageRegistry {
     /// * `Ok(Some(Arc<StorageCached>))` - Storage found (cached or freshly loaded)
     /// * `Ok(None)` - Storage not found
     /// * `Err` - Database error
-    pub fn get_cached(
-        &self,
-        storage_id: &StorageId,
-    ) -> Result<Option<Arc<StorageCached>>, KalamDbError> {
+    pub fn get_cached(&self, storage_id: &StorageId) -> Result<Option<Arc<StorageCached>>> {
         // Fast path: check cache
         if let Some(cached) = self.cache.get(storage_id) {
             return Ok(Some(Arc::clone(&cached)));
@@ -82,7 +77,7 @@ impl StorageRegistry {
         let storage = self
             .storages_provider
             .get_storage(storage_id)
-            .into_kalamdb_error("Failed to get storage")?;
+            .map_err(|e| FilestoreError::StorageError(e.to_string()))?;
 
         if let Some(s) = storage {
             let cached = Arc::new(StorageCached::new(s));
@@ -105,72 +100,8 @@ impl StorageRegistry {
     /// * `Ok(Some(Arc<Storage>))` - Storage found
     /// * `Ok(None)` - Storage not found
     /// * `Err` - Database error
-    pub fn get_storage(
-        &self,
-        storage_id: &StorageId,
-    ) -> Result<Option<Arc<Storage>>, KalamDbError> {
+    pub fn get_storage(&self, storage_id: &StorageId) -> Result<Option<Arc<Storage>>> {
         Ok(self.get_cached(storage_id)?.map(|c| Arc::clone(&c.storage)))
-    }
-
-    /// Get ObjectStore for a storage by ID (cached)
-    ///
-    /// This is the primary method for getting an ObjectStore. The ObjectStore is
-    /// lazily initialized on first access and shared across all tables using this storage.
-    ///
-    /// # Arguments
-    /// * `storage_id` - The unique storage identifier
-    ///
-    /// # Returns
-    /// * `Ok(Arc<dyn ObjectStore>)` - ObjectStore instance
-    /// * `Err` - Storage not found or ObjectStore build failed
-    pub fn get_object_store(
-        &self,
-        storage_id: &StorageId,
-    ) -> Result<Arc<dyn ObjectStore>, KalamDbError> {
-        let cached = self.get_cached(storage_id)?.ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!(
-                "Storage '{}' not found in registry",
-                storage_id.as_str()
-            ))
-        })?;
-        cached.object_store()
-    }
-
-    /// Get a storage configuration by ID (bypasses cache - for backward compat)
-    ///
-    /// # Arguments
-    /// * `storage_id` - The unique storage identifier
-    ///
-    /// # Returns
-    /// * `Ok(Some(Storage))` - Storage found
-    /// * `Ok(None)` - Storage not found
-    /// * `Err` - Database error
-    #[deprecated(note = "Use get_storage() for cached access")]
-    pub fn get_storage_by_id(
-        &self,
-        storage_id: &StorageId,
-    ) -> Result<Option<Storage>, KalamDbError> {
-        self.storages_provider
-            .get_storage(storage_id)
-            .into_kalamdb_error("Failed to get storage")
-    }
-
-    /// Backward compatible helper that accepts a raw storage ID string.
-    pub fn get_storage_config(
-        &self,
-        storage_id: &str,
-    ) -> Result<Option<Arc<Storage>>, KalamDbError> {
-        let storage_id = StorageId::from(storage_id);
-        self.get_storage(&storage_id)
-    }
-
-    /// Get ObjectStore by raw storage ID string (convenience method)
-    pub fn get_object_store_by_id(
-        &self,
-        storage_id: &str,
-    ) -> Result<Arc<dyn ObjectStore>, KalamDbError> {
-        let storage_id = StorageId::from(storage_id);
-        self.get_object_store(&storage_id)
     }
 
     /// Invalidate a storage entry from the cache
@@ -220,8 +151,8 @@ impl StorageRegistry {
     ///
     /// # Example
     /// ```no_run
-    /// # use kalamdb_core::storage::StorageRegistry;
-    /// # fn example(registry: &StorageRegistry) -> Result<(), kalamdb_core::error::KalamDbError> {
+    /// # use kalamdb_filestore::registry::StorageRegistry;
+    /// # fn example(registry: &StorageRegistry) -> Result<(), kalamdb_filestore::error::FilestoreError> {
     /// let storages = registry.list_storages()?;
     /// for storage in storages {
     ///     println!("Storage: {} ({})", storage.storage_name, storage.storage_id);
@@ -229,11 +160,11 @@ impl StorageRegistry {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn list_storages(&self) -> Result<Vec<Storage>, KalamDbError> {
+    pub fn list_storages(&self) -> Result<Vec<Storage>> {
         let mut storages = self
             .storages_provider
             .list_storages()
-            .into_kalamdb_error("Failed to list storages")?;
+            .map_err(|e| FilestoreError::StorageError(e.to_string()))?;
 
         // Sort: 'local' first, then alphabetically
         storages.sort_by(|a, b| {
@@ -272,8 +203,8 @@ impl StorageRegistry {
     ///
     /// # Examples
     /// ```no_run
-    /// # use kalamdb_core::storage::StorageRegistry;
-    /// # fn example(registry: &StorageRegistry) -> Result<(), kalamdb_core::error::KalamDbError> {
+    /// # use kalamdb_filestore::registry::StorageRegistry;
+    /// # fn example(registry: &StorageRegistry) -> Result<(), kalamdb_filestore::error::FilestoreError> {
     /// // Valid shared table template
     /// registry.validate_template("{namespace}/{tableName}", false)?;
     ///
@@ -285,11 +216,7 @@ impl StorageRegistry {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn validate_template(
-        &self,
-        template: &str,
-        is_user_table: bool,
-    ) -> Result<(), KalamDbError> {
+    pub fn validate_template(&self, template: &str, is_user_table: bool) -> Result<()> {
         if is_user_table {
             // User table template validation
             self.validate_user_table_template(template)
@@ -302,7 +229,7 @@ impl StorageRegistry {
     /// Validate shared table template
     ///
     /// Rule: {namespace} must appear before {tableName}
-    fn validate_shared_table_template(&self, template: &str) -> Result<(), KalamDbError> {
+    fn validate_shared_table_template(&self, template: &str) -> Result<()> {
         let namespace_pos = template.find("{namespace}");
         let table_name_pos = template.find("{tableName}");
 
@@ -311,20 +238,21 @@ impl StorageRegistry {
                 if ns_pos < tn_pos {
                     Ok(())
                 } else {
-                    Err(KalamDbError::InvalidOperation(
+                    Err(FilestoreError::InvalidTemplate(
                         "Shared table template: {namespace} must appear before {tableName}"
                             .to_string(),
                     ))
                 }
-            },
-            (None, Some(_)) => Err(KalamDbError::InvalidOperation(
+            }
+            (None, Some(_)) => Err(FilestoreError::InvalidTemplate(
                 "Shared table template: {namespace} is required".to_string(),
             )),
-            (Some(_), None) => Err(KalamDbError::InvalidOperation(
+            (Some(_), None) => Err(FilestoreError::InvalidTemplate(
                 "Shared table template: {tableName} is required".to_string(),
             )),
-            (None, None) => Err(KalamDbError::InvalidOperation(
-                "Shared table template: Both {namespace} and {tableName} are required".to_string(),
+            (None, None) => Err(FilestoreError::InvalidTemplate(
+                "Shared table template: Both {namespace} and {tableName} are required"
+                    .to_string(),
             )),
         }
     }
@@ -334,7 +262,7 @@ impl StorageRegistry {
     /// Rules:
     /// 1. {userId} is required
     /// 2. Enforce ordering: {namespace} → {tableName} → {shard} → {userId}
-    fn validate_user_table_template(&self, template: &str) -> Result<(), KalamDbError> {
+    fn validate_user_table_template(&self, template: &str) -> Result<()> {
         let namespace_pos = template.find("{namespace}");
         let table_name_pos = template.find("{tableName}");
         let shard_pos = template.find("{shard}");
@@ -344,17 +272,17 @@ impl StorageRegistry {
         let user_id_pos = match user_id_pos {
             Some(pos) => pos,
             None => {
-                return Err(KalamDbError::InvalidOperation(
+                return Err(FilestoreError::InvalidTemplate(
                     "User table template: {userId} is required".to_string(),
                 ))
-            },
+            }
         };
 
         // Rule 2: Enforce ordering
         if let Some(ns_pos) = namespace_pos {
             if let Some(tn_pos) = table_name_pos {
                 if ns_pos >= tn_pos {
-                    return Err(KalamDbError::InvalidOperation(
+                    return Err(FilestoreError::InvalidTemplate(
                         "User table template: {namespace} must appear before {tableName}"
                             .to_string(),
                     ));
@@ -364,7 +292,7 @@ impl StorageRegistry {
 
         if let (Some(tn_pos), Some(shard_pos)) = (table_name_pos, shard_pos) {
             if tn_pos >= shard_pos {
-                return Err(KalamDbError::InvalidOperation(
+                return Err(FilestoreError::InvalidTemplate(
                     "User table template: {tableName} must appear before {shard}".to_string(),
                 ));
             }
@@ -372,7 +300,7 @@ impl StorageRegistry {
 
         if let (Some(shard_pos), user_id_pos) = (shard_pos, user_id_pos) {
             if shard_pos >= user_id_pos {
-                return Err(KalamDbError::InvalidOperation(
+                return Err(FilestoreError::InvalidTemplate(
                     "User table template: {shard} must appear before {userId}".to_string(),
                 ));
             }
@@ -381,7 +309,7 @@ impl StorageRegistry {
         if let (Some(tn_pos), None) = (table_name_pos, shard_pos) {
             // No {shard}, check {tableName} → {userId} ordering
             if tn_pos >= user_id_pos {
-                return Err(KalamDbError::InvalidOperation(
+                return Err(FilestoreError::InvalidTemplate(
                     "User table template: {tableName} must appear before {userId}".to_string(),
                 ));
             }

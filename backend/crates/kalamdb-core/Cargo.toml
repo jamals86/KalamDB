@@ -59,9 +59,6 @@ chrono = { workspace = true }
 # Logging
 log = { workspace = true }
 
-# Object store (for cached ObjectStore instances)
-object_store = { workspace = true }
-
 # UUID generation
 uuid = { workspace = true }
 
@@ -74,25 +71,12 @@ bcrypt = { workspace = true }
 # Single-assignment statics
 once_cell = { workspace = true }
 
-# CPU detection for parallelism
-num_cpus = { workspace = true }
-
 # Regular expressions
 regex = { workspace = true }
-
-# HTTP client for cluster notifications
-reqwest = { workspace = true }
-
-# gRPC client for Raft forwarding
-tonic = { workspace = true }
 
 # Binary encoding helpers
 base64 = { workspace = true }
 hex = { workspace = true }
-
-# NOTE: RocksDB is NOT a production dependency for kalamdb-core!
-# All RocksDB access goes through kalamdb-store abstractions (StorageBackend trait).
-# RocksDB is only needed in [dev-dependencies] for test utilities (TestDb).
 
 [dev-dependencies]
 # Testing utilities

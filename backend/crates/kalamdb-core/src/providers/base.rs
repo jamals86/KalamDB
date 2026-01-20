@@ -528,46 +528,13 @@ pub fn pk_exists_in_cold(
         },
     };
 
-    // 2. Get Storage from registry (cached lookup) and ObjectStore
-    let storage_id = cached
-        .storage_id
-        .clone()
-        .unwrap_or_else(kalamdb_commons::models::StorageId::local);
-    let storage = match core.app_context.storage_registry().get_storage(&storage_id) {
-        Ok(Some(s)) => s,
-        Ok(None) | Err(_) => {
-            log::trace!(
-                "[pk_exists_in_cold] Storage {} not found for {}.{} {} - PK not in cold",
-                storage_id.as_str(),
-                namespace.as_str(),
-                table.as_str(),
-                scope_label
-            );
-            return Ok(false);
-        },
-    };
+    // 2. Get StorageCached from registry
+    let storage_cached = cached
+        .storage_cached(&core.app_context.storage_registry())
+        .into_kalamdb_error("Failed to get storage cache")?;
 
-    let object_store = cached
-        .object_store(core.app_context.as_ref())
-        .into_kalamdb_error("Failed to get object store")?;
-
-    // 3. Get storage path (relative to storage base)
-    let storage_path = crate::schema_registry::PathResolver::get_storage_path(
-        core.app_context.as_ref(),
-        &cached,
-        user_id,
-        None,
-    )?;
-
-    // Check if any files exist at this path using object_store
-    let files = kalamdb_filestore::list_files_sync(
-        std::sync::Arc::clone(&object_store),
-        &storage,
-        &storage_path,
-    );
-
-    let all_files = match files {
-        Ok(f) => f,
+    let list_result = match storage_cached.list_sync(table_type, table_id, user_id) {
+        Ok(result) => result,
         Err(_) => {
             log::trace!(
                 "[pk_exists_in_cold] No storage dir for {}.{} {} - PK not in cold",
@@ -579,7 +546,7 @@ pub fn pk_exists_in_cold(
         },
     };
 
-    if all_files.is_empty() {
+    if list_result.is_empty() {
         log::trace!(
             "[pk_exists_in_cold] No files in storage for {}.{} {} - PK not in cold",
             namespace.as_str(),
@@ -642,28 +609,41 @@ pub fn pk_exists_in_cold(
         pruned_paths
     } else {
         // No manifest - use all Parquet files from listing
-        all_files.into_iter().filter(|p| p.ends_with(".parquet")).collect()
+        let prefix = list_result.prefix.trim_end_matches('/');
+        list_result
+            .paths
+            .into_iter()
+            .filter_map(|path| {
+                let stripped = strip_list_prefix(&path, prefix).unwrap_or(path.as_str());
+                if stripped.ends_with(".parquet") {
+                    Some(stripped.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect()
     };
 
     if files_to_scan.is_empty() {
         return Ok(false);
     }
 
-    // 6. Scan pruned Parquet files and check for PK using object_store
+    // 6. Scan pruned Parquet files and check for PK using StorageCached
     // Manifest paths are just filenames (e.g., "batch-0.parquet"), so prepend storage_path
     for file_name in files_to_scan {
-        let parquet_path = format!("{}/{}", storage_path.trim_end_matches('/'), file_name);
-        if pk_exists_in_parquet_via_store(
-            std::sync::Arc::clone(&object_store),
-            &storage,
-            &parquet_path,
+        if pk_exists_in_parquet_via_storage_cache(
+            &storage_cached,
+            table_type,
+            table_id,
+            user_id,
+            &file_name,
             pk_column,
             pk_value,
         )? {
             log::trace!(
                 "[pk_exists_in_cold] Found PK {} in {} for {}.{} {}",
                 pk_value,
-                parquet_path,
+                file_name,
                 namespace.as_str(),
                 table.as_str(),
                 scope_label
@@ -725,46 +705,13 @@ pub fn pk_exists_batch_in_cold(
         },
     };
 
-    // 2. Get Storage from registry (cached lookup) and ObjectStore
-    let storage_id = cached
-        .storage_id
-        .clone()
-        .unwrap_or_else(kalamdb_commons::models::StorageId::local);
-    let storage = match core.app_context.storage_registry().get_storage(&storage_id) {
-        Ok(Some(s)) => s,
-        Ok(None) | Err(_) => {
-            log::trace!(
-                "[pk_exists_batch_in_cold] Storage {} not found for {}.{} {} - PK not in cold",
-                storage_id.as_str(),
-                namespace.as_str(),
-                table.as_str(),
-                scope_label
-            );
-            return Ok(None);
-        },
-    };
+    // 2. Get StorageCached from registry
+    let storage_cached = cached
+        .storage_cached(&core.app_context.storage_registry())
+        .into_kalamdb_error("Failed to get storage cache")?;
 
-    let object_store = cached
-        .object_store(core.app_context.as_ref())
-        .into_kalamdb_error("Failed to get object store")?;
-
-    // 3. Get storage path (relative to storage base)
-    let storage_path = crate::schema_registry::PathResolver::get_storage_path(
-        core.app_context.as_ref(),
-        &cached,
-        user_id,
-        None,
-    )?;
-
-    // Check if any files exist at this path using object_store
-    let files = kalamdb_filestore::list_files_sync(
-        std::sync::Arc::clone(&object_store),
-        &storage,
-        &storage_path,
-    );
-
-    let all_files = match files {
-        Ok(f) => f,
+    let list_result = match storage_cached.list_sync(table_type, table_id, user_id) {
+        Ok(result) => result,
         Err(_) => {
             log::trace!(
                 "[pk_exists_batch_in_cold] No storage dir for {}.{} {} - PK not in cold",
@@ -776,7 +723,7 @@ pub fn pk_exists_batch_in_cold(
         },
     };
 
-    if all_files.is_empty() {
+    if list_result.is_empty() {
         log::trace!(
             "[pk_exists_batch_in_cold] No files in storage for {}.{} {} - PK not in cold",
             namespace.as_str(),
@@ -843,7 +790,19 @@ pub fn pk_exists_batch_in_cold(
         relevant_files.into_iter().collect()
     } else {
         // No manifest - use all Parquet files from listing
-        all_files.into_iter().filter(|p| p.ends_with(".parquet")).collect()
+        let prefix = list_result.prefix.trim_end_matches('/');
+        list_result
+            .paths
+            .into_iter()
+            .filter_map(|path| {
+                let stripped = strip_list_prefix(&path, prefix).unwrap_or(path.as_str());
+                if stripped.ends_with(".parquet") {
+                    Some(stripped.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect()
     };
 
     if files_to_scan.is_empty() {
@@ -855,18 +814,19 @@ pub fn pk_exists_batch_in_cold(
 
     // 7. Scan Parquet files and check for PKs (batch version)
     for file_name in files_to_scan {
-        let parquet_path = format!("{}/{}", storage_path.trim_end_matches('/'), file_name);
-        if let Some(found_pk) = pk_exists_batch_in_parquet_via_store(
-            std::sync::Arc::clone(&object_store),
-            &storage,
-            &parquet_path,
+        if let Some(found_pk) = pk_exists_batch_in_parquet_via_storage_cache(
+            &storage_cached,
+            table_type,
+            table_id,
+            user_id,
+            &file_name,
             pk_column,
             &pk_set,
         )? {
             log::trace!(
                 "[pk_exists_batch_in_cold] Found PK {} in {} for {}.{} {}",
                 found_pk,
-                parquet_path,
+                file_name,
                 namespace.as_str(),
                 table.as_str(),
                 scope_label
@@ -878,19 +838,23 @@ pub fn pk_exists_batch_in_cold(
     Ok(None)
 }
 
-/// Batch check if any PK values exist in a single Parquet file via object_store.
+/// Batch check if any PK values exist in a single Parquet file via StorageCached.
 ///
 /// Returns the first matching PK found (with non-deleted latest version).
-fn pk_exists_batch_in_parquet_via_store(
-    store: std::sync::Arc<dyn object_store::ObjectStore>,
-    storage: &kalamdb_commons::system::Storage,
-    parquet_path: &str,
+fn pk_exists_batch_in_parquet_via_storage_cache(
+    storage_cached: &kalamdb_filestore::StorageCached,
+    table_type: TableType,
+    table_id: &TableId,
+    user_id: Option<&UserId>,
+    parquet_filename: &str,
     pk_column: &str,
     pk_values: &std::collections::HashSet<&str>,
 ) -> Result<Option<String>, KalamDbError> {
-    // Read Parquet file via object_store
-    let batches = kalamdb_filestore::read_parquet_batches_sync(store, storage, parquet_path)
+    let result = storage_cached
+        .get_sync(table_type, table_id, user_id, parquet_filename)
         .into_kalamdb_error("Failed to read Parquet file")?;
+    let batches = kalamdb_filestore::parse_parquet_from_bytes(result.data)
+        .into_kalamdb_error("Failed to parse Parquet file")?;
 
     // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
     let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
@@ -960,19 +924,23 @@ fn pk_exists_batch_in_parquet_via_store(
     Ok(None)
 }
 
-/// Check if a PK value exists in a single Parquet file via object_store (with MVCC version resolution).
+/// Check if a PK value exists in a single Parquet file via StorageCached (with MVCC version resolution).
 ///
-/// Reads the file using object_store and checks if any non-deleted row has the matching PK value.
-fn pk_exists_in_parquet_via_store(
-    store: std::sync::Arc<dyn object_store::ObjectStore>,
-    storage: &kalamdb_commons::system::Storage,
-    parquet_path: &str,
+/// Reads the file via StorageCached and checks if any non-deleted row has the matching PK value.
+fn pk_exists_in_parquet_via_storage_cache(
+    storage_cached: &kalamdb_filestore::StorageCached,
+    table_type: TableType,
+    table_id: &TableId,
+    user_id: Option<&UserId>,
+    parquet_filename: &str,
     pk_column: &str,
     pk_value: &str,
 ) -> Result<bool, KalamDbError> {
-    // Read Parquet file via object_store
-    let batches = kalamdb_filestore::read_parquet_batches_sync(store, storage, parquet_path)
+    let result = storage_cached
+        .get_sync(table_type, table_id, user_id, parquet_filename)
         .into_kalamdb_error("Failed to read Parquet file")?;
+    let batches = kalamdb_filestore::parse_parquet_from_bytes(result.data)
+        .into_kalamdb_error("Failed to parse Parquet file")?;
 
     // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
     let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
@@ -1066,6 +1034,18 @@ fn extract_pk_as_string(col: &dyn Array, idx: usize) -> Option<String> {
     }
 
     None
+}
+
+fn strip_list_prefix<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
+    let trimmed_prefix = prefix.trim_end_matches('/');
+    if trimmed_prefix.is_empty() {
+        return Some(path.trim_start_matches('/'));
+    }
+    if path == trimmed_prefix {
+        return None;
+    }
+    path.strip_prefix(trimmed_prefix)
+        .map(|stripped| stripped.trim_start_matches('/'))
 }
 
 /// Ensure an INSERT payload either auto-generates or provides a unique primary-key value

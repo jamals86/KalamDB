@@ -13,6 +13,7 @@ categories = ["database"]
 [dependencies]
 # Workspace dependencies
 kalamdb-commons = { path = "../kalamdb-commons" }
+kalamdb-system = { path = "../kalamdb-system" }
 
 # Apache Arrow ecosystem
 arrow = { workspace = true }
@@ -51,6 +52,19 @@ parquet = { workspace = true }
 
 # Bytes type for in-memory buffers
 bytes = { workspace = true }
+
+# Concurrent hash map for storage registry cache
+dashmap = { workspace = true }
+
+# Locks for lazy initialization
+parking_lot = { workspace = true }
+
+# Store abstraction (for tests)
+kalamdb-store = { path = "../kalamdb-store" }
+
+[dev-dependencies]
+once_cell = { workspace = true }
+tempfile = { workspace = true }
 
 [lib]
 name = "kalamdb_filestore"

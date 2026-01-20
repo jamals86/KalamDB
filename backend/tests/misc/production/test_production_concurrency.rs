@@ -3,7 +3,7 @@
 //! Tests concurrent access patterns, contention handling, and race conditions.
 //! These tests ensure KalamDB handles multiple simultaneous operations safely.
 
-use super::test_support::{QueryResultTestExt, TestServer};
+use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
 use kalam_link::parse_i64;
 use kalamdb_commons::Role;

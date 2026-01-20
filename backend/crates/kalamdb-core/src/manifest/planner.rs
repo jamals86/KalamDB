@@ -10,11 +10,11 @@ use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use kalamdb_commons::system::Storage;
+use kalamdb_commons::models::{StorageId, UserId};
+use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::types::Manifest;
 use kalamdb_commons::TableId;
-use kalamdb_filestore::object_store_factory::object_key_for_path;
-use kalamdb_filestore::object_store_ops::{list_files_sync, read_file_sync};
+use kalamdb_filestore::StorageCached;
 use std::sync::Arc;
 
 /// Planned selection for a single Parquet file
@@ -34,8 +34,6 @@ impl RowGroupSelection {
         }
     }
 }
-
-use object_store::ObjectStore;
 
 /// Planner that produces pruning-aware selections from the manifest
 #[derive(Debug, Default)]
@@ -59,13 +57,13 @@ impl ManifestAccessPlanner {
     ///
     /// # Arguments
     /// * `manifest_opt` - Optional manifest for metadata-driven selection
-    /// * `store` - ObjectStore instance for file operations
-    /// * `storage` - Storage configuration
-    /// * `storage_path` - Relative path to the table directory
+    /// * `storage_cached` - StorageCached instance for file operations
+    /// * `table_type` - Table type (User, Shared, Stream, System)
+    /// * `table_id` - Table identifier
+    /// * `user_id` - Optional user ID for user tables
     /// * `seq_range` - Optional (min, max) seq range for pruning
     /// * `use_degraded_mode` - If true, skip manifest and list directory
     /// * `schema` - Current Arrow schema (target schema for projection)
-    /// * `table_id` - Table identifier for retrieving historical schemas
     /// * `app_context` - AppContext for accessing system tables
     ///
     /// # Returns
@@ -74,13 +72,13 @@ impl ManifestAccessPlanner {
     pub fn scan_parquet_files(
         &self,
         manifest_opt: Option<&Manifest>,
-        store: Arc<dyn ObjectStore>,
-        storage: &Storage,
-        storage_path: &str,
+        storage_cached: Arc<StorageCached>,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
         seq_range: Option<(i64, i64)>,
         use_degraded_mode: bool,
         schema: SchemaRef,
-        table_id: &TableId,
         app_context: &Arc<AppContext>,
     ) -> Result<(RecordBatch, (usize, usize, usize)), KalamDbError> {
         let mut parquet_files: Vec<String> = Vec::new();
@@ -105,26 +103,22 @@ impl ManifestAccessPlanner {
                 skipped = total_batches.saturating_sub(scanned);
 
                 for file_path in selected_files {
-                    let full_path = format!("{}/{}", storage_path.trim_end_matches('/'), file_path);
-                    let key = object_key_for_path(storage, &full_path)
-                        .into_kalamdb_error("Failed to compute object key")?;
-                    let key_str = key.to_string();
-
                     if let Some(segment) = manifest.segments.iter().find(|s| s.path == file_path) {
-                        file_schema_versions.insert(key_str.clone(), segment.schema_version);
+                        file_schema_versions.insert(file_path.clone(), segment.schema_version);
                     }
-                    parquet_files.push(key_str);
+                    parquet_files.push(file_path);
                 }
             }
         }
 
         // Fallback: only when no manifest (or degraded mode)
         if parquet_files.is_empty() && (manifest_opt.is_none() || use_degraded_mode) {
-            let files = list_files_sync(Arc::clone(&store), storage, storage_path)
-                .into_kalamdb_error("Failed to list files")?;
-            for path in files {
-                if path.ends_with(".parquet") {
-                    parquet_files.push(path);
+            let files = storage_cached.list_sync(table_type, table_id, user_id)
+                .into_kalamdb_error("Failed to list files")?
+                .files;
+            for file_info in files {
+                if file_info.name.ends_with(".parquet") {
+                    parquet_files.push(file_info.name);
                 }
             }
 
@@ -142,8 +136,9 @@ impl ManifestAccessPlanner {
         let mut all_batches = Vec::new();
 
         for parquet_file in &parquet_files {
-            let bytes = read_file_sync(Arc::clone(&store), storage, parquet_file)
-                .into_kalamdb_error("Failed to read Parquet file")?;
+            let bytes = storage_cached.get_sync(table_type, table_id, user_id, parquet_file)
+                .into_kalamdb_error("Failed to read Parquet file")?
+                .data;
 
             let builder = ParquetRecordBatchReaderBuilder::try_new(bytes)
                 .into_arrow_error_ctx("Failed to create Parquet reader")?;
@@ -407,13 +402,15 @@ impl ManifestAccessPlanner {
 mod tests {
     use super::*;
     use crate::app_context::AppContext;
-    use crate::storage::build_object_store;
     use datafusion::arrow::array::{Int32Array, Int64Array};
     use datafusion::arrow::datatypes::Schema;
     use datafusion::arrow::record_batch::RecordBatch as ArrowRecordBatch;
     use kalamdb_commons::constants::SystemColumnNames;
+    use kalamdb_commons::schemas::TableType;
+    use kalamdb_commons::system::Storage;
     use kalamdb_commons::types::{Manifest, SegmentMetadata};
     use kalamdb_commons::{NamespaceId, TableId, TableName};
+    use kalamdb_filestore::StorageCached;
     use parquet::arrow::arrow_writer::ArrowWriter;
     use std::fs as stdfs;
     use std::sync::Arc;
@@ -524,18 +521,18 @@ mod tests {
         let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
 
         let storage = create_test_storage(&dir);
-        let store = build_object_store(&storage).unwrap();
+        let storage_cached = Arc::new(StorageCached::new(storage));
         let planner = ManifestAccessPlanner::new();
         let (batch, (_total, _skipped, _scanned)) = planner
             .scan_parquet_files(
                 None,
-                store,
-                &storage,
-                "",
+                storage_cached,
+                TableType::Shared,
+                &table_id,
+                None,
                 None,
                 false,
                 schema.clone(),
-                &table_id,
                 &app_context,
             )
             .expect("planner should handle empty directory");
@@ -614,20 +611,20 @@ mod tests {
 
         let app_context = make_test_app_context_simple();
         let storage = create_test_storage(&dir);
-        let store = build_object_store(&storage).unwrap();
+        let storage_cached = Arc::new(StorageCached::new(storage));
         let planner = ManifestAccessPlanner::new();
 
         // Range overlaps only first file
         let (batch, (total, skipped, scanned)) = planner
             .scan_parquet_files(
                 Some(&mf),
-                Arc::clone(&store),
-                &storage,
-                "",
+                Arc::clone(&storage_cached),
+                TableType::Shared,
+                &table_id,
+                None,
                 Some((0, 90)),
                 false,
                 schema.clone(),
-                &table_id,
                 &app_context,
             )
             .expect("planner should read files");
@@ -641,13 +638,13 @@ mod tests {
         let (batch2, (total2, skipped2, scanned2)) = planner
             .scan_parquet_files(
                 Some(&mf),
-                Arc::clone(&store),
-                &storage,
-                "",
+                Arc::clone(&storage_cached),
+                TableType::Shared,
+                &table_id,
+                None,
                 Some((150, 160)),
                 false,
                 schema.clone(),
-                &table_id,
                 &app_context,
             )
             .expect("planner should read files");
@@ -660,13 +657,13 @@ mod tests {
         let (batch3, (total3, skipped3, scanned3)) = planner
             .scan_parquet_files(
                 Some(&mf),
-                Arc::clone(&store),
-                &storage,
-                "",
+                Arc::clone(&storage_cached),
+                TableType::Shared,
+                &table_id,
+                None,
                 Some((300, 400)),
                 false,
                 schema.clone(),
-                &table_id,
                 &app_context,
             )
             .expect("planner should handle no-overlap");

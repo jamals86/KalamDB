@@ -1,8 +1,8 @@
 use crate::app_context::AppContext;
 use crate::live::LiveQueryManager;
 use crate::schema_registry::TableType;
-use crate::storage::storage_registry::StorageRegistry;
 use kalamdb_commons::TableId;
+use kalamdb_filestore::StorageRegistry;
 use std::sync::Arc;
 
 /// Shared core state for all table providers

@@ -89,7 +89,6 @@ mod tests {
             manifest,
             Some("etag123".to_string()),
             1000,
-            "s3://bucket/ns1/tbl1/manifest.json".to_string(),
             SyncState::InSync,
         )
     }

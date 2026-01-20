@@ -2,14 +2,13 @@
 //!
 //! Provides optimized PK uniqueness validation using manifest-based segment pruning.
 
-use std::sync::Arc;
-
 use kalamdb_commons::models::schemas::ColumnDefault;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::types::Manifest;
 use kalamdb_commons::UserId;
+use std::sync::Arc;
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
@@ -200,43 +199,13 @@ impl PkExistenceChecker {
             },
         };
 
-        // 2. Get Storage from registry
-        let storage_id = cached
-            .storage_id
-            .clone()
-            .unwrap_or_else(kalamdb_commons::models::StorageId::local);
-        let storage = match self.app_context.storage_registry().get_storage(&storage_id) {
-            Ok(Some(s)) => s,
-            Ok(None) | Err(_) => {
-                log::trace!(
-                    "[PkExistenceChecker] Storage {} not found for {}.{} {}",
-                    storage_id.as_str(),
-                    namespace.as_str(),
-                    table.as_str(),
-                    scope_label
-                );
-                return Ok(None);
-            },
-        };
+        // 2. Get StorageCached from registry
+        let storage_cached = cached
+            .storage_cached(&self.app_context.storage_registry())
+            .into_kalamdb_error("Failed to get storage cache")?;
 
-        let object_store = cached
-            .object_store(self.app_context.as_ref())
-            .into_kalamdb_error("Failed to get object store")?;
-
-        // 3. Get storage path
-        let storage_path = crate::schema_registry::PathResolver::get_storage_path(
-            self.app_context.as_ref(),
-            &cached,
-            user_id,
-            None,
-        )?;
-
-        // Check if any files exist
-        let all_files =
-            kalamdb_filestore::list_files_sync(Arc::clone(&object_store), &storage, &storage_path);
-
-        let all_files = match all_files {
-            Ok(f) => f,
+        let list_result = match storage_cached.list_sync(table_type, table_id, user_id) {
+            Ok(result) => result,
             Err(_) => {
                 log::trace!(
                     "[PkExistenceChecker] No storage dir for {}.{} {}",
@@ -248,7 +217,7 @@ impl PkExistenceChecker {
             },
         };
 
-        if all_files.is_empty() {
+        if list_result.is_empty() {
             log::trace!(
                 "[PkExistenceChecker] No files in storage for {}.{} {}",
                 namespace.as_str(),
@@ -278,7 +247,7 @@ impl PkExistenceChecker {
                     scope_label
                 );
                 // Try to load from storage (manifest.json file)
-                self.load_manifest_from_storage(Arc::clone(&object_store), &storage, &storage_path)?
+                self.load_manifest_from_storage(&storage_cached, table_type, table_id, user_id)?
             },
             Err(e) => {
                 log::warn!(
@@ -318,7 +287,20 @@ impl PkExistenceChecker {
             pruned_paths
         } else {
             // No manifest - check all Parquet files
-            all_files.into_iter().filter(|p| p.ends_with(".parquet")).collect()
+            let prefix = list_result.prefix.trim_end_matches('/');
+            list_result
+                .paths
+                .into_iter()
+                .filter_map(|path| {
+                    let stripped =
+                        Self::strip_list_prefix(&path, prefix).unwrap_or(path.as_str());
+                    if stripped.ends_with(".parquet") {
+                        Some(stripped.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         };
 
         if files_to_scan.is_empty() {
@@ -327,11 +309,12 @@ impl PkExistenceChecker {
 
         // 6. Scan pruned Parquet files for the PK
         for file_name in files_to_scan {
-            let parquet_path = format!("{}/{}", storage_path.trim_end_matches('/'), file_name);
             if self.pk_exists_in_parquet(
-                Arc::clone(&object_store),
-                &storage,
-                &parquet_path,
+                &storage_cached,
+                table_type,
+                table_id,
+                user_id,
+                &file_name,
                 pk_column,
                 pk_value,
             )? {
@@ -353,15 +336,14 @@ impl PkExistenceChecker {
     /// Load manifest.json from storage if not in cache
     fn load_manifest_from_storage(
         &self,
-        store: Arc<dyn object_store::ObjectStore>,
-        storage: &kalamdb_commons::system::Storage,
-        storage_path: &str,
+        storage_cached: &kalamdb_filestore::StorageCached,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
     ) -> Result<Option<Manifest>, KalamDbError> {
-        let manifest_path = format!("{}/manifest.json", storage_path.trim_end_matches('/'));
-
-        match kalamdb_filestore::read_file_sync(Arc::clone(&store), storage, &manifest_path) {
-            Ok(bytes) => {
-                let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| {
+        match storage_cached.get_sync(table_type, table_id, user_id, "manifest.json") {
+            Ok(result) => {
+                let manifest: Manifest = serde_json::from_slice(&result.data).map_err(|e| {
                     KalamDbError::InvalidOperation(format!("Failed to parse manifest.json: {}", e))
                 })?;
                 log::trace!(
@@ -371,7 +353,7 @@ impl PkExistenceChecker {
                 Ok(Some(manifest))
             },
             Err(_) => {
-                log::trace!("[PkExistenceChecker] No manifest.json found at {}", manifest_path);
+                log::trace!("[PkExistenceChecker] No manifest.json found in storage");
                 Ok(None)
             },
         }
@@ -380,9 +362,11 @@ impl PkExistenceChecker {
     /// Check if a PK exists in a specific Parquet file (with MVCC version resolution)
     fn pk_exists_in_parquet(
         &self,
-        store: Arc<dyn object_store::ObjectStore>,
-        storage: &kalamdb_commons::system::Storage,
-        parquet_path: &str,
+        storage_cached: &kalamdb_filestore::StorageCached,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        parquet_filename: &str,
         pk_column: &str,
         pk_value: &str,
     ) -> Result<bool, KalamDbError> {
@@ -390,9 +374,11 @@ impl PkExistenceChecker {
         use kalamdb_commons::constants::SystemColumnNames;
         use std::collections::HashMap;
 
-        // Read Parquet file
-        let batches = kalamdb_filestore::read_parquet_batches_sync(store, storage, parquet_path)
+        let result = storage_cached
+            .get_sync(table_type, table_id, user_id, parquet_filename)
             .into_kalamdb_error("Failed to read Parquet file")?;
+        let batches = kalamdb_filestore::parse_parquet_from_bytes(result.data)
+            .into_kalamdb_error("Failed to parse Parquet file")?;
 
         // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
         let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
@@ -462,6 +448,18 @@ impl PkExistenceChecker {
         } else {
             Ok(false)
         }
+    }
+
+    fn strip_list_prefix<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
+        let trimmed_prefix = prefix.trim_end_matches('/');
+        if trimmed_prefix.is_empty() {
+            return Some(path.trim_start_matches('/'));
+        }
+        if path == trimmed_prefix {
+            return None;
+        }
+        path.strip_prefix(trimmed_prefix)
+            .map(|stripped| stripped.trim_start_matches('/'))
     }
 
     /// Extract PK value as string from an Arrow array

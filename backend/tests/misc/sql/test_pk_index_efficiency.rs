@@ -8,7 +8,7 @@
 //! - Shared table PK index: INSERT 100 rows → UPDATE by PK → verify O(1) lookup
 //! - Performance comparison: Update with many rows vs few rows should have similar latency
 
-use super::test_support::{fixtures, QueryResultTestExt, TestServer};
+use super::test_support::{fixtures, TestServer};
 use kalam_link::models::ResponseStatus;
 use std::time::Instant;
 

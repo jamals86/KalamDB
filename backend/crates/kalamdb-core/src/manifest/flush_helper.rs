@@ -6,7 +6,6 @@
 use super::ManifestService;
 use crate::error::KalamDbError;
 use crate::schema_registry::cached_table_data::CachedTableData;
-use crate::schema_registry::PathResolver;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -32,8 +31,17 @@ impl FlushManifestHelper {
     /// Generate temp filename for atomic writes
     ///
     /// Returns the temp filename (e.g., "batch-5.parquet.tmp")
+    /// Delegates to kalamdb_filestore::PathResolver for consistency.
+    #[inline]
     pub fn generate_temp_filename(batch_number: u64) -> String {
-        format!("batch-{}.parquet.tmp", batch_number)
+        kalamdb_filestore::PathResolver::temp_batch_filename(batch_number)
+    }
+
+    /// Generate batch filename from batch number
+    /// Delegates to kalamdb_filestore::PathResolver for consistency.
+    #[inline]
+    pub fn generate_batch_filename(batch_number: u64) -> String {
+        kalamdb_filestore::PathResolver::batch_filename(batch_number)
     }
 
     /// Mark manifest cache entry as syncing (flush in progress)
@@ -77,11 +85,6 @@ impl FlushManifestHelper {
             },
             Err(_) => Ok(0), // No manifest exists yet, start with batch 0
         }
-    }
-
-    /// Generate batch filename from batch number
-    pub fn generate_batch_filename(batch_number: u64) -> String {
-        format!("batch-{}.parquet", batch_number)
     }
 
     /// Extract min/max _seq values from RecordBatch
@@ -219,20 +222,9 @@ impl FlushManifestHelper {
             ))
         })?;
 
-        // Update cache with manifest path using PathResolver
-        let manifest_path = match cached {
-            Some(cached) => PathResolver::get_manifest_relative_path(cached, user_id, None)?,
-            None => {
-                // Fallback to legacy format if table not in registry (shouldn't happen in normal flow)
-                let scope_str =
-                    user_id.map(|u| u.as_str().to_string()).unwrap_or_else(|| "shared".to_string());
-                format!("{}/{}/manifest.json", table_id, scope_str)
-            },
-        };
-
         // ManifestService now handles all caching internally
         self.manifest_service
-            .update_after_flush(table_id, user_id, &updated_manifest, None, manifest_path)
+            .update_after_flush(table_id, user_id, &updated_manifest, None)
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to update manifest cache for {} (user_id={:?}): {}",

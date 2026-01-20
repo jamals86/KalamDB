@@ -7,7 +7,7 @@
 //! - T088: Access level modification authorization (only service/dba/system can modify)
 //! - T089: Read-only enforcement for regular users on public tables
 
-use super::test_support::{QueryResultTestExt, TestServer};
+use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::Role;
 

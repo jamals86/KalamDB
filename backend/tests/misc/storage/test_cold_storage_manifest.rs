@@ -14,7 +14,7 @@
 //! - Manifest-based file pruning by seq range
 //! - Fallback to directory scan when manifest missing
 
-use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
+use super::test_support::{fixtures, flush_helpers, TestServer};
 use kalam_link::models::ResponseStatus;
 use kalam_link::parse_i64;
 

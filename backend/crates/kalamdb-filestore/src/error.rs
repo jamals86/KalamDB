@@ -33,6 +33,12 @@ pub enum FilestoreError {
     #[error("ObjectStore error: {0}")]
     ObjectStore(String),
 
+    #[error("Storage error: {0}")]
+    StorageError(String),
+
+    #[error("Invalid template: {0}")]
+    InvalidTemplate(String),
+
     #[error("Other error: {0}")]
     Other(String),
 }

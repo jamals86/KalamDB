@@ -11,13 +11,13 @@ use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestService};
 use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use crate::schema_registry::SchemaRegistry;
-use crate::storage::write_parquet_with_store_sync;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::rows::Row;
-use kalamdb_commons::models::{StorageId, TableId, UserId};
+use kalamdb_commons::models::{TableId, UserId};
+use kalamdb_commons::schemas::TableType;
 use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
 use std::sync::Arc;
 
@@ -280,39 +280,20 @@ impl TableFlush for SharedTableFlushJob {
         // T114-T115: Generate batch filename using manifest (sequential numbering)
         let (batch_number, batch_filename) = self.generate_batch_filename()?;
         let temp_filename = FlushManifestHelper::generate_temp_filename(batch_number);
-        let full_dir = self.unified_cache.get_storage_path(
-            self.app_context.as_ref(),
-            &self.table_id,
-            None,
-            None,
-        )?;
-
-        // Use PathBuf for proper cross-platform path handling (avoids mixed slashes)
-        let temp_path = std::path::Path::new(&full_dir)
-            .join(&temp_filename)
-            .to_string_lossy()
-            .to_string();
-        let destination_path = std::path::Path::new(&full_dir)
-            .join(&batch_filename)
-            .to_string_lossy()
-            .to_string();
-
         let cached = self.unified_cache.get(&self.table_id).ok_or_else(|| {
             KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id))
         })?;
 
-        // Get storage from registry (cached lookup)
-        let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
-        let storage =
-            self.app_context.storage_registry().get_storage(&storage_id)?.ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Storage '{}' not found",
-                    storage_id.as_str()
-                ))
-            })?;
+        let storage_cached = cached
+            .storage_cached(&self.app_context.storage_registry())
+            .into_kalamdb_error("Failed to get storage cache")?;
 
-        // Get cached ObjectStore instance (avoids rebuild overhead on each flush)
-        let object_store = cached.object_store(self.app_context.as_ref())?;
+        let temp_path = storage_cached
+            .get_file_path(TableType::Shared, &self.table_id, None, &temp_filename)
+            .full_path;
+        let destination_path = storage_cached
+            .get_file_path(TableType::Shared, &self.table_id, None, &batch_filename)
+            .full_path;
 
         // Use cached bloom_filter_columns and indexed_columns (fetched once at job construction)
         // This avoids per-flush lookups and matches UserTableFlushJob optimization pattern
@@ -330,19 +311,28 @@ impl TableFlush for SharedTableFlushJob {
 
         // Step 2: Write Parquet to TEMP location first
         log::debug!("📝 [ATOMIC] Writing Parquet to temp path: {}, rows={}", temp_path, rows_count);
-        let result = write_parquet_with_store_sync(
-            object_store.clone(),
-            &storage,
-            &temp_path,
-            self.schema.clone(),
-            vec![batch.clone()],
-            Some(bloom_filter_columns.clone()),
-        )
-        .into_kalamdb_error("Filestore error")?;
+        let result = storage_cached
+            .write_parquet_sync(
+                TableType::Shared,
+                &self.table_id,
+                None,
+                &temp_filename,
+                self.schema.clone(),
+                vec![batch.clone()],
+                Some(bloom_filter_columns.clone()),
+            )
+            .into_kalamdb_error("Filestore error")?;
 
         // Step 3: Rename temp file to final location (atomic operation)
         log::debug!("📝 [ATOMIC] Renaming {} -> {}", temp_path, destination_path);
-        kalamdb_filestore::rename_file_sync(object_store, &storage, &temp_path, &destination_path)
+        storage_cached
+            .rename_sync(
+                TableType::Shared,
+                &self.table_id,
+                None,
+                &temp_filename,
+                &batch_filename,
+            )
             .into_kalamdb_error("Failed to rename Parquet file to final location")?;
 
         log::info!(

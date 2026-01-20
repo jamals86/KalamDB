@@ -1148,8 +1148,6 @@ i guess we need to add a new column to the jobs table to track each node the sta
 83) maybe we should go with catalog for system and catalog for public/user namespaces instead of having system tables in the same catalog as user tables
 
 
-84) backend/crates/kalamdb-sql/src/classifier/engine/core.rs i think the parsing cna be done better and use the already sqlparser or datafusion things
-
 85) pub struct ErrorDetail.code: String,
 should be an enum so we can compare it when not leader
 err_msg.contains("NOT_LEADER")
@@ -1165,3 +1163,23 @@ err_msg.contains("NOT_LEADER")
                     "message": "WebSocket subscription created. Connect to ws_url to receive updates."
                 });
                 Ok(QueryResult::subscription(sub_data))
+
+88) remove object_store from kalamdb-code it should onloy be included in kalamdb-filestore if it needs any function we will be adding it in kalamdb-filestore then
+also sqlparser should be inside kalamdb-sql only since there we parse sql's
+tonic should be only in kalamdb-raft since there only we use the networking
+num_cpus should be inside kalamdb-observability only
+also check why we need reqwest?
+
+89) in backend\crates\kalamdb-sql\src\classifier\engine\core.rs we have a switch case which we use strings why not using enum's from: backend\crates\kalamdb-sql\src\classifier\types.rs its type-safe more than using case, also check if its the best way to parse them, i think the parsing cna be done better and use the already sqlparser or datafusion things
+
+90) move ShardingRegistry into kalamdb-sharding also split: backend\crates\kalamdb-sharding\src\lib.rs into multiple files for each struct, replace backend\crates\kalamdb-commons\src\models\ids\shard_id.rs with the Shard we already have and name it ShardId instead
+
+93) no need to have shard id in: impl StorageCached we can compute this in the template whenever we have a userid
+
+94) whene deleting a table/user we remove the folder not looping over the files all of them
+
+95) check that looping over a folder with parquet files do it depending on the manifest.json not all the list of parquet files
+
+96) add of object.store.put or any operations should be used from inside the storecache and not from everywhere like in: write_parquet_with_store and write_parquet_to_storage, read_parquet_batches
+
+97) since we now have StorageCache object, add unit tests which check each method in there 

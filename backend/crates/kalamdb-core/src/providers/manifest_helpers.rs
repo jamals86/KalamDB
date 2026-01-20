@@ -50,8 +50,9 @@ pub fn ensure_manifest_ready(
         ))
     })?;
 
-    // Use PathResolver to get relative manifest path from storage template
-    let manifest_path = PathResolver::get_manifest_relative_path(&cached, user_id, None)?;
+    // Get manifest path by computing template on-demand
+    let manifest_path =
+        PathResolver::get_manifest_relative_path(&core.app_context, &cached, user_id, None)?;
 
     manifest_service.stage_before_flush(table_id, user_id, &manifest, manifest_path)?;
 

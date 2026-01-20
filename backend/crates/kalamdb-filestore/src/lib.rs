@@ -2,68 +2,52 @@
 //!
 //! Object store operations for KalamDB cold storage.
 //!
-//! This crate handles all storage operations through `object_store`:
+//! This crate handles all storage operations through StorageCached:
 //! - Parquet file reading/writing (local filesystem, S3, GCS, Azure)
 //! - Manifest file management
-//! - Batch file management
-//! - File cleanup operations
 //!
 //! ## Architecture
 //!
-//! - **object_store_ops**: Core file operations (read/write/list/delete)
+//! - **storage_cached**: Unified file operations (read/write/list/delete)
 //! - **parquet_storage_writer**: Write RecordBatches to Parquet with bloom filters
 //! - **parquet_reader_ops**: Read Parquet files into RecordBatches
 //! - **manifest_ops**: Manifest JSON read/write
-//! - **ObjectStoreBatchManager**: Track and manage batch files
 //!
 //! ## Example Usage
 //!
 //! ```rust,ignore
-//! use kalamdb_filestore::{write_parquet_with_store_sync, read_parquet_batches_sync};
+//! use kalamdb_filestore::StorageCached;
 //!
-//! // Write batch to Parquet using ObjectStore
-//! write_parquet_with_store_sync(store, &storage, path, schema, batches, None)?;
-//!
-//! // Read batch from Parquet
-//! let batches = read_parquet_batches_sync(store, &storage, path)?;
+//! // Write/read files using StorageCached
+//! let cached = StorageCached::new(storage);
+//! let _ = cached.put_sync(table_type, &table_id, user_id, "file.parquet", data)?;
 //! ```
 
-pub mod batch_manager;
-pub mod cleanup;
+mod core;
 pub mod error;
-pub mod file_handle_diagnostics;
-pub mod manifest_ops;
-pub mod object_store_factory;
-pub mod object_store_ops;
-pub mod parquet_reader_ops;
-pub mod parquet_storage_writer;
-pub mod remote_materializer;
+pub mod manifest;
+pub mod parquet;
+pub mod paths;
+pub mod registry;
+
+// Backwards-compatible module aliases
+pub use manifest::json as manifest_ops;
+pub use parquet::reader as parquet_reader_ops;
+pub use parquet::writer as parquet_storage_writer;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export commonly used types
-pub use batch_manager::ObjectStoreBatchManager;
-pub use cleanup::delete_parquet_tree_for_table;
 pub use error::{FilestoreError, Result};
-pub use file_handle_diagnostics::{
-    check_for_leaks, log_stats_summary, record_close, record_open, FileHandleStats,
-    FileHandleTracker,
-};
 pub use manifest_ops::{manifest_exists, read_manifest_json, write_manifest_json};
-pub use object_store_factory::{build_object_store, is_remote_url, object_key_for_path};
-pub use object_store_ops::{
-    delete_file, delete_file_sync, delete_prefix, delete_prefix_sync, head_file, head_file_sync,
-    list_files, list_files_sync, prefix_exists, prefix_exists_sync, read_file, read_file_sync,
-    rename_file, rename_file_sync, write_file, write_file_sync, FileMetadata,
-};
 pub use parquet_reader_ops::{
+    parse_parquet_from_bytes, parse_parquet_schema_from_bytes,
     read_parquet_batches, read_parquet_batches_sync, read_parquet_schema, read_parquet_schema_sync,
 };
 pub use parquet_storage_writer::{
-    write_parquet_to_storage, write_parquet_to_storage_sync, write_parquet_with_store,
-    write_parquet_with_store_sync, ParquetWriteResult,
+    ParquetWriteResult,
 };
-pub use remote_materializer::{
-    materialize_remote_parquet_dir, materialize_remote_parquet_dir_sync,
-};
+
+// Storage registry re-exports
+pub use registry::{StorageCached, StorageRegistry};
