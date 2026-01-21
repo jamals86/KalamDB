@@ -249,7 +249,7 @@ impl UserTableFlushJob {
 
         let mut parsed_keys = Vec::new();
         for key_bytes in keys {
-            let key = kalamdb_commons::ids::UserTableRowId::from_bytes(key_bytes)
+            let key = kalamdb_commons::ids::UserTableRowId::from_storage_key(key_bytes)
                 .into_invalid_operation("Invalid key bytes")?;
             parsed_keys.push(key);
         }
@@ -323,7 +323,7 @@ impl TableFlush for UserTableFlushJob {
                 all_keys_to_delete.push(key_bytes.clone());
 
                 // Parse user_id from key
-                let row_id = match kalamdb_commons::ids::UserTableRowId::from_bytes(&key_bytes) {
+                let row_id = match kalamdb_commons::ids::UserTableRowId::from_storage_key(&key_bytes) {
                     Ok(id) => id,
                     Err(e) => {
                         log::warn!("Skipping row due to invalid key format: {}", e);

@@ -9,6 +9,7 @@ use crate::{
     UserTableStore,
 };
 use kalamdb_commons::ids::{SharedTableRowId, StreamTableRowId, UserTableRowId};
+use kalamdb_commons::StorageKey;
 use kalamdb_store::entity_store::EntityStore;
 
 /// Extension trait for user table stores
@@ -32,7 +33,7 @@ impl UserTableStoreExt for UserTableStore {
         raw_results
             .into_iter()
             .map(|(key_bytes, value)| {
-                let key = UserTableRowId::from_bytes(&key_bytes).map_err(|e| {
+                let key = UserTableRowId::from_storage_key(&key_bytes).map_err(|e| {
                     TableError::Serialization(format!("Failed to deserialize key: {}", e))
                 })?;
                 Ok((key, value))

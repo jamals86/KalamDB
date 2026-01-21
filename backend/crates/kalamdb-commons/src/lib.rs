@@ -84,7 +84,7 @@ pub use models::{
     UserName,
 };
 pub use schemas::TableType;
-pub use storage_key::StorageKey;
+pub use storage_key::{decode_key, encode_key, StorageKey};
 pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM_COLUMNS};
 pub use system_tables::{StoragePartition, SystemTable};
 pub use websocket::{ChangeType as WsChangeType, Notification, WebSocketMessage};
