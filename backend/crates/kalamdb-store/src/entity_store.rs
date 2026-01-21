@@ -34,8 +34,8 @@
 //!         &self.backend
 //!     }
 //!
-//!     fn partition(&self) -> &str {
-//!         "system_users"
+//!     fn partition(&self) -> Partition {
+//!         Partition::new("system_users")
 //!     }
 //! }
 //!
@@ -146,56 +146,11 @@ impl KSerializable for SystemStorage {}
 
 impl KSerializable for TableDefinition {}
 
-impl KSerializable for ManifestCacheEntry {
-    fn encode(&self) -> Result<Vec<u8>> {
-        serde_json::to_vec(self).map_err(|e| {
-            StorageError::SerializationError(format!("json encode failed: {}", e))
-        })
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self> {
-        match serde_json::from_slice(bytes) {
-            Ok(entity) => Ok(entity),
-            Err(json_err) => {
-                let config = standard();
-                decode_from_slice(bytes, config)
-                    .map(|(entity, _)| entity)
-                    .map_err(|bincode_err| {
-                        StorageError::SerializationError(format!(
-                            "json decode failed: {}; bincode decode failed: {}",
-                            json_err, bincode_err
-                        ))
-                    })
-            }
-        }
-    }
-}
+impl KSerializable for ManifestCacheEntry {}
 
 impl KSerializable for AuditLogEntry {}
 
-impl KSerializable for Job {
-    fn encode(&self) -> Result<Vec<u8>> {
-        let config = standard();
-        encode_to_vec(self, config)
-            .map_err(|e| StorageError::SerializationError(format!("bincode encode failed: {}", e)))
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self> {
-        let config = standard();
-        match decode_from_slice(bytes, config) {
-            Ok((entity, _)) => Ok(entity),
-            Err(err) => {
-                // Backward-compat: allow JSON-encoded job rows from older formats.
-                serde_json::from_slice(bytes).map_err(|json_err| {
-                    StorageError::SerializationError(format!(
-                        "bincode decode failed: {} (json decode also failed: {})",
-                        err, json_err
-                    ))
-                })
-            }
-        }
-    }
-}
+impl KSerializable for Job {}
 
 impl KSerializable for JobNode {}
 
@@ -211,10 +166,10 @@ where
     /// Returns a reference to the storage backend.
     fn backend(&self) -> &Arc<dyn StorageBackend>;
 
-    /// Returns the partition name for this entity type.
+    /// Returns the partition for this entity type.
     ///
     /// Examples: "system_users", "system_jobs", "user_table:default:users"
-    fn partition(&self) -> &str;
+    fn partition(&self) -> Partition;
 
     /// Scan rows relative to a starting key in a specified direction, returning an iterator.
     fn scan_directional(
@@ -227,7 +182,7 @@ where
             return Ok(Box::new(Vec::<Result<(K, V)>>::new().into_iter()));
         }
 
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         match direction {
             ScanDirection::Newer => {
                 let start_bytes = start_key.map(|k| next_storage_key_bytes(&k.storage_key()));
@@ -285,7 +240,7 @@ where
         prefix: Option<&K>,
         start_key: Option<&K>,
     ) -> Result<EntityIterator<K, V>> {
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         let prefix_bytes = prefix.map(|k| k.storage_key());
         let start_key_bytes = start_key.map(|k| k.storage_key());
 
@@ -333,7 +288,7 @@ where
     /// store.put(&user_id, &user)?;
     /// ```
     fn put(&self, key: &K, entity: &V) -> Result<()> {
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         let value = self.serialize(entity)?;
         self.backend().put(&partition, &key.storage_key(), &value)
     }
@@ -361,7 +316,7 @@ where
     fn batch_put(&self, entries: &[(K, V)]) -> Result<()> {
         use crate::storage_trait::Operation;
 
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         let operations: Result<Vec<Operation>> = entries
             .iter()
             .map(|(key, entity)| {
@@ -391,7 +346,7 @@ where
     /// ```
     #[must_use = "the retrieved entity should be used"]
     fn get(&self, key: &K) -> Result<Option<V>> {
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         match self.backend().get(&partition, &key.storage_key())? {
             Some(bytes) => Ok(Some(self.deserialize(&bytes)?)),
             None => Ok(None),
@@ -409,7 +364,7 @@ where
     /// store.delete(&user_id)?;
     /// ```
     fn delete(&self, key: &K) -> Result<()> {
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         self.backend().delete(&partition, &key.storage_key())
     }
 
@@ -430,7 +385,7 @@ where
     /// }
     /// ```
     fn scan_prefix(&self, prefix: &K) -> Result<Vec<(Vec<u8>, V)>> {
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         let iter = self.backend().scan(&partition, Some(&prefix.storage_key()), None, None)?;
 
         let mut results = Vec::new();
@@ -463,7 +418,7 @@ where
         const MAX_SCAN_LIMIT: usize = 100000;
         let effective_limit = limit.unwrap_or(MAX_SCAN_LIMIT);
 
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
 
         let prefix_bytes = prefix.map(|k| k.storage_key());
         let start_key_bytes = start_key.map(|k| k.storage_key());
@@ -494,7 +449,7 @@ where
         start_key: Option<&[u8]>,
         limit: usize,
     ) -> Result<Vec<(Vec<u8>, V)>> {
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         let iter = self.backend().scan(&partition, prefix, start_key, Some(limit))?;
 
         let mut results = Vec::with_capacity(limit);
@@ -521,7 +476,7 @@ where
             return Ok(Vec::new());
         }
 
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         let iter = self.backend().scan(&partition, prefix, start_key, Some(limit))?;
 
         let mut keys = Vec::with_capacity(limit);
@@ -547,7 +502,7 @@ where
             return Ok(Vec::new());
         }
 
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
 
         match direction {
             ScanDirection::Newer => {
@@ -819,8 +774,8 @@ mod tests {
             &self.backend
         }
 
-        fn partition(&self) -> &str {
-            "test_partition"
+        fn partition(&self) -> Partition {
+            Partition::new("test_partition")
         }
     }
 
@@ -840,8 +795,8 @@ mod tests {
             &self.backend
         }
 
-        fn partition(&self) -> &str {
-            &self.partition
+        fn partition(&self) -> Partition {
+            Partition::new(&self.partition)
         }
     }
 
@@ -906,7 +861,7 @@ mod tests {
             partition: "any_partition".to_string(),
         };
 
-        let partition = Partition::new(store.partition().to_string());
+        let partition = store.partition();
         store.backend().create_partition(&partition).unwrap();
 
         let key = UserId::new("user1");

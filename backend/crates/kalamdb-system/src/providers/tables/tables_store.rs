@@ -15,7 +15,6 @@ use crate::SystemTable;
 use kalamdb_commons::models::{NamespaceId, TableId, TableVersionId};
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_store::entity_store::EntityStore;
-use kalamdb_store::storage_trait::Partition;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
@@ -97,7 +96,7 @@ impl TablesStore {
     #[allow(dead_code)]
     pub fn debug_dump_keys_for_table(&self, table_id: &TableId) {
         let prefix = table_id.as_storage_key();
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         log::debug!("[TablesStore::debug_dump] Backend ptr: {:p}, Partition: {}, prefix_bytes: {:?}", 
             Arc::as_ptr(self.backend()), self.partition(), &prefix);
         match self.backend().scan(&partition, Some(&prefix), None, None) {
@@ -132,7 +131,7 @@ impl TablesStore {
 
         // Scan and delete all versioned entries
         let prefix = TableVersionId::version_scan_prefix(table_id);
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         let iter = self.backend().scan(&partition, Some(&prefix), None, None)?;
 
         for (key_bytes, _) in iter {
@@ -153,7 +152,7 @@ impl TablesStore {
         table_id: &TableId,
     ) -> Result<Vec<(u32, TableDefinition)>, kalamdb_store::StorageError> {
         let prefix = TableVersionId::version_scan_prefix(table_id);
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         let iter = self.backend().scan(&partition, Some(&prefix), None, None)?;
 
         let mut versions = Vec::new();
@@ -190,7 +189,7 @@ impl TablesStore {
         let prefix = format!("{}:", namespace_id.as_str());
         let prefix_bytes = prefix.as_bytes();
 
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         let iter = self.backend().scan(&partition, Some(prefix_bytes), None, None)?;
 
         let mut result = Vec::new();
@@ -214,7 +213,7 @@ impl TablesStore {
     pub fn scan_all_with_versions(
         &self,
     ) -> Result<Vec<(TableVersionId, TableDefinition, bool)>, kalamdb_store::StorageError> {
-        let partition = Partition::new(self.partition());
+        let partition = self.partition();
         let iter = self.backend().scan(&partition, None, None, None)?;
 
         let mut result = Vec::new();

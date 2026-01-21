@@ -10,13 +10,13 @@
 //! - T134: manifest pruning reduces file scans by 80%+ (TODO: performance test)
 
 use super::test_helpers;
+use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::types::{Manifest, SegmentMetadata};
 use kalamdb_commons::UserId;
 use kalamdb_commons::{NamespaceId, StorageId, TableId, TableName};
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_core::manifest::ManifestService;
-use kalamdb_core::schema_registry::PathResolver;
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -199,8 +199,8 @@ async fn test_update_manifest_increments_version() {
         "0".to_string(),
         "batch-0.parquet".to_string(),
         HashMap::new(),
-        1000,
-        2000,
+        SeqId::from(1000i64),
+        SeqId::from(2000i64),
         100,
         1024,
     );
@@ -218,8 +218,8 @@ async fn test_update_manifest_increments_version() {
         "1".to_string(),
         "batch-1.parquet".to_string(),
         HashMap::new(),
-        2001,
-        3000,
+        SeqId::from(2001i64),
+        SeqId::from(3000i64),
         150,
         2048,
     );
@@ -237,8 +237,8 @@ async fn test_update_manifest_increments_version() {
         "2".to_string(),
         "batch-2.parquet".to_string(),
         HashMap::new(),
-        3001,
-        4000,
+        SeqId::from(3001i64),
+        SeqId::from(4000i64),
         200,
         3072,
     );
@@ -275,11 +275,11 @@ async fn test_flush_five_batches_manifest_tracking() {
 
     // Simulate flushing 5 batches with different metadata
     let batch_configs = vec![
-        (0, "batch-0.parquet", 1000, 1999, 100, 1024),
-        (1, "batch-1.parquet", 2000, 2999, 150, 2048),
-        (2, "batch-2.parquet", 3000, 3999, 200, 3072),
-        (3, "batch-3.parquet", 4000, 4999, 250, 4096),
-        (4, "batch-4.parquet", 5000, 5999, 300, 5120),
+        (0, "batch-0.parquet", 1000i64, 1999i64, 100u64, 1024u64),
+        (1, "batch-1.parquet", 2000i64, 2999i64, 150u64, 2048u64),
+        (2, "batch-2.parquet", 3000i64, 3999i64, 200u64, 3072u64),
+        (3, "batch-3.parquet", 4000i64, 4999i64, 250u64, 4096u64),
+        (4, "batch-4.parquet", 5000i64, 5999i64, 300u64, 5120u64),
     ];
 
     for (batch_num, file_name, min_seq, max_seq, row_count, size_bytes) in batch_configs {
@@ -287,8 +287,8 @@ async fn test_flush_five_batches_manifest_tracking() {
             batch_num.to_string(),
             file_name.to_string(),
             HashMap::new(),
-            min_seq,
-            max_seq,
+            SeqId::from(min_seq),
+            SeqId::from(max_seq),
             row_count,
             size_bytes,
         );
@@ -313,8 +313,8 @@ async fn test_flush_five_batches_manifest_tracking() {
         assert_eq!(batch.path, format!("batch-{}.parquet", idx));
 
         // Verify sequence ranges
-        let expected_min = 1000 + (idx as i64 * 1000);
-        let expected_max = 1999 + (idx as i64 * 1000);
+        let expected_min = SeqId::from(1000 + (idx as i64 * 1000));
+        let expected_max = SeqId::from(1999 + (idx as i64 * 1000));
         assert_eq!(batch.min_seq, expected_min);
         assert_eq!(batch.max_seq, expected_max);
 
@@ -349,8 +349,8 @@ async fn test_manifest_persistence_across_reads() {
         "0".to_string(),
         "batch-0.parquet".to_string(),
         HashMap::new(),
-        1000,
-        2000,
+        SeqId::from(1000i64),
+        SeqId::from(2000i64),
         100,
         1024,
     );
@@ -387,8 +387,8 @@ async fn test_batch_entry_metadata_preservation() {
         "0".to_string(),
         "batch-0.parquet".to_string(),
         HashMap::new(),
-        1000,
-        2000,
+        SeqId::from(1000i64),
+        SeqId::from(2000i64),
         1234,
         567890,
     );
@@ -406,8 +406,8 @@ async fn test_batch_entry_metadata_preservation() {
 
     assert_eq!(saved_batch.id, "0");
     assert_eq!(saved_batch.path, "batch-0.parquet");
-    assert_eq!(saved_batch.min_seq, 1000);
-    assert_eq!(saved_batch.max_seq, 2000);
+    assert_eq!(saved_batch.min_seq, SeqId::from(1000i64));
+    assert_eq!(saved_batch.max_seq, SeqId::from(2000i64));
     assert_eq!(saved_batch.row_count, 1234);
     assert_eq!(saved_batch.size_bytes, 567890);
 }
@@ -434,8 +434,8 @@ async fn test_manifest_validation_detects_corruption() {
         "1".to_string(),
         "batch-1.parquet".to_string(),
         HashMap::new(),
-        1000,
-        2000,
+        SeqId::from(1000i64),
+        SeqId::from(2000i64),
         100,
         1024,
     );
@@ -452,16 +452,16 @@ fn test_segment_metadata_creation() {
         "5".to_string(),
         "batch-5.parquet".to_string(),
         HashMap::new(),
-        1000,
-        2000,
+        SeqId::from(1000i64),
+        SeqId::from(2000i64),
         500,
         10240,
     );
 
     assert_eq!(entry.id, "5");
     assert_eq!(entry.path, "batch-5.parquet");
-    assert_eq!(entry.min_seq, 1000);
-    assert_eq!(entry.max_seq, 2000);
+    assert_eq!(entry.min_seq, SeqId::from(1000i64));
+    assert_eq!(entry.max_seq, SeqId::from(2000i64));
     assert_eq!(entry.row_count, 500);
     assert_eq!(entry.size_bytes, 10240);
 }

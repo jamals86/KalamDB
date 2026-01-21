@@ -17,7 +17,7 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::providers::arrow_json_conversion::coerce_rows;
 use crate::providers::helpers::{extract_full_user_context, extract_user_context};
-use crate::providers::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
+use crate::manifest::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::schema_registry::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -306,7 +306,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         id_value: &str,
     ) -> Result<Option<UserTableRowId>, KalamDbError> {
         // Use shared helper to parse PK value
-        let pk_value = crate::providers::pk_helpers::parse_pk_value(id_value);
+        let pk_value = crate::providers::pk::parse_pk_value(id_value);
 
         // Fast path: check hot storage for a non-deleted version
         if let Some((row_id, _row)) = self.find_by_pk(user_id, &pk_value)? {

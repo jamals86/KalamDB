@@ -2,15 +2,27 @@
 //!
 //! This module defines ManifestFile and ManifestCacheEntry structures for
 //! tracking Parquet batch file metadata and caching manifests in RocksDB.
+//!
+//! ## Serialization Strategy
+//!
+//! - **RocksDB**: All structs use bincode serialization via `StoredScalarValue`
+//! - **manifest.json files**: Use JSON serialization via `serde_json::to_string_pretty()`
+//!
+//! `ColumnStats.min/max` use `StoredScalarValue` - the same bincode-compatible enum
+//! used for row storage. This ensures zero-copy serialization with bincode and
+//! proper JSON output for manifest.json files.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::ids::SeqId;
+use crate::models::rows::StoredScalarValue;
 use crate::models::TableId;
 use crate::UserId;
 
 /// Synchronization state of a cached manifest entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SyncState {
     /// Cache is in sync with storage (manifest.json on disk matches cache)
     #[default]
@@ -24,94 +36,6 @@ pub enum SyncState {
     Stale,
     /// Error occurred during last sync attempt
     Error,
-}
-
-impl Serialize for SyncState {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        if serializer.is_human_readable() {
-            serializer.serialize_str(&self.to_string())
-        } else {
-            let value = match self {
-                SyncState::InSync => 0u8,
-                SyncState::PendingWrite => 1u8,
-                SyncState::Syncing => 2u8,
-                SyncState::Stale => 3u8,
-                SyncState::Error => 4u8,
-            };
-            serializer.serialize_u8(value)
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for SyncState {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct SyncStateVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for SyncStateVisitor {
-            type Value = SyncState;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a sync state string or integer")
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                match value {
-                    "in_sync" => Ok(SyncState::InSync),
-                    "pending_write" => Ok(SyncState::PendingWrite),
-                    "syncing" => Ok(SyncState::Syncing),
-                    "stale" => Ok(SyncState::Stale),
-                    "error" => Ok(SyncState::Error),
-                    _ => Ok(SyncState::Error),
-                }
-            }
-
-            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(match value {
-                    0 => SyncState::InSync,
-                    1 => SyncState::PendingWrite,
-                    2 => SyncState::Syncing,
-                    3 => SyncState::Stale,
-                    4 => SyncState::Error,
-                    _ => SyncState::Error,
-                })
-            }
-
-            fn visit_u8<E>(self, value: u8) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                self.visit_u64(value as u64)
-            }
-
-            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                if value < 0 {
-                    return Ok(SyncState::Error);
-                }
-                self.visit_u64(value as u64)
-            }
-        }
-
-        if deserializer.is_human_readable() {
-            deserializer.deserialize_any(SyncStateVisitor)
-        } else {
-            deserializer.deserialize_u8(SyncStateVisitor)
-        }
-    }
 }
 
 impl std::fmt::Display for SyncState {
@@ -129,16 +53,13 @@ impl std::fmt::Display for SyncState {
 /// Manifest cache entry stored in RocksDB (Phase 4 - US6).
 ///
 /// Fields:
-/// - `manifest`: The parsed Manifest object (stored directly, serialized on-the-fly for display)
+/// - `manifest`: The Manifest object (stored directly via bincode)
 /// - `etag`: Storage ETag or version identifier for freshness validation
 /// - `last_refreshed`: Unix timestamp (seconds) of last successful refresh
 /// - `sync_state`: Current synchronization state (InSync | Stale | Error)
-///
-/// Note: Uses custom serialization because bincode doesn't support serde_json::Value in ColumnStats.
-/// The Manifest is serialized as JSON string for storage, but kept as typed object in memory.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestCacheEntry {
-    /// The Manifest object (typed for in-memory access)
+    /// The Manifest object (stored directly)
     pub manifest: Manifest,
 
     /// ETag or version identifier from storage backend
@@ -149,49 +70,6 @@ pub struct ManifestCacheEntry {
 
     /// Synchronization state
     pub sync_state: SyncState,
-}
-
-/// Intermediate struct for bincode-compatible serialization
-#[derive(Serialize, Deserialize)]
-struct ManifestCacheEntryRaw {
-    manifest_json: String,
-    etag: Option<String>,
-    last_refreshed: i64,
-    sync_state: SyncState,
-}
-
-impl Serialize for ManifestCacheEntry {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let raw = ManifestCacheEntryRaw {
-            manifest_json: serde_json::to_string(&self.manifest)
-                .unwrap_or_else(|_| "{}".to_string()),
-            etag: self.etag.clone(),
-            last_refreshed: self.last_refreshed,
-            sync_state: self.sync_state,
-        };
-        raw.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for ManifestCacheEntry {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let raw = ManifestCacheEntryRaw::deserialize(deserializer)?;
-        let manifest: Manifest = serde_json::from_str(&raw.manifest_json).map_err(|e| {
-            serde::de::Error::custom(format!("Failed to parse manifest JSON: {}", e))
-        })?;
-        Ok(ManifestCacheEntry {
-            manifest,
-            etag: raw.etag,
-            last_refreshed: raw.last_refreshed,
-            sync_state: raw.sync_state,
-        })
-    }
 }
 
 impl ManifestCacheEntry {
@@ -254,83 +132,76 @@ impl ManifestCacheEntry {
 }
 
 /// Statistics for a single column in a segment.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Min/max values use `StoredScalarValue` - the same bincode-compatible enum
+/// used for row storage. This enables:
+/// - Zero-copy bincode serialization for RocksDB
+/// - Proper JSON output for manifest.json files
+/// - Type-safe comparisons without string parsing
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnStats {
-    /// Minimum value in the column (serialized as JSON value)
-    pub min: Option<serde_json::Value>,
+    /// Minimum value in the column
+    pub min: Option<StoredScalarValue>,
 
-    /// Maximum value in the column (serialized as JSON value)
-    pub max: Option<serde_json::Value>,
+    /// Maximum value in the column
+    pub max: Option<StoredScalarValue>,
 
     /// Number of null values
     pub null_count: Option<i64>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct ColumnStatsHuman {
-    min: Option<serde_json::Value>,
-    max: Option<serde_json::Value>,
-    null_count: Option<i64>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ColumnStatsBinary {
-    min: Option<String>,
-    max: Option<String>,
-    null_count: Option<i64>,
-}
-
-impl Serialize for ColumnStats {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        if serializer.is_human_readable() {
-            ColumnStatsHuman {
-                min: self.min.clone(),
-                max: self.max.clone(),
-                null_count: self.null_count,
-            }
-            .serialize(serializer)
-        } else {
-            ColumnStatsBinary {
-                min: self.min.as_ref().map(|v| v.to_string()),
-                max: self.max.as_ref().map(|v| v.to_string()),
-                null_count: self.null_count,
-            }
-            .serialize(serializer)
-        }
+impl ColumnStats {
+    /// Create new column stats
+    pub fn new(min: Option<StoredScalarValue>, max: Option<StoredScalarValue>, null_count: Option<i64>) -> Self {
+        Self { min, max, null_count }
     }
-}
 
-impl<'de> Deserialize<'de> for ColumnStats {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        if deserializer.is_human_readable() {
-            let human = ColumnStatsHuman::deserialize(deserializer)?;
-            Ok(Self {
-                min: human.min,
-                max: human.max,
-                null_count: human.null_count,
-            })
-        } else {
-            let binary = ColumnStatsBinary::deserialize(deserializer)?;
-            let min = match binary.min {
-                Some(value) => Some(serde_json::from_str(&value).map_err(serde::de::Error::custom)?),
-                None => None,
-            };
-            let max = match binary.max {
-                Some(value) => Some(serde_json::from_str(&value).map_err(serde::de::Error::custom)?),
-                None => None,
-            };
-            Ok(Self {
-                min,
-                max,
-                null_count: binary.null_count,
-            })
-        }
+    /// Parse min as i64 (for numeric columns)
+    pub fn min_as_i64(&self) -> Option<i64> {
+        self.min.as_ref().and_then(|v| match v {
+            StoredScalarValue::Int64(Some(s)) => s.parse().ok(),
+            StoredScalarValue::Int32(Some(i)) => Some(*i as i64),
+            StoredScalarValue::Int16(Some(i)) => Some(*i as i64),
+            StoredScalarValue::Int8(Some(i)) => Some(*i as i64),
+            StoredScalarValue::UInt64(Some(s)) => s.parse().ok(),
+            StoredScalarValue::UInt32(Some(i)) => Some(*i as i64),
+            StoredScalarValue::UInt16(Some(i)) => Some(*i as i64),
+            StoredScalarValue::UInt8(Some(i)) => Some(*i as i64),
+            _ => None,
+        })
+    }
+
+    /// Parse max as i64 (for numeric columns)
+    pub fn max_as_i64(&self) -> Option<i64> {
+        self.max.as_ref().and_then(|v| match v {
+            StoredScalarValue::Int64(Some(s)) => s.parse().ok(),
+            StoredScalarValue::Int32(Some(i)) => Some(*i as i64),
+            StoredScalarValue::Int16(Some(i)) => Some(*i as i64),
+            StoredScalarValue::Int8(Some(i)) => Some(*i as i64),
+            StoredScalarValue::UInt64(Some(s)) => s.parse().ok(),
+            StoredScalarValue::UInt32(Some(i)) => Some(*i as i64),
+            StoredScalarValue::UInt16(Some(i)) => Some(*i as i64),
+            StoredScalarValue::UInt8(Some(i)) => Some(*i as i64),
+            _ => None,
+        })
+    }
+
+    /// Get min as string value (for string columns)
+    pub fn min_as_str(&self) -> Option<String> {
+        self.min.as_ref().and_then(|v| match v {
+            StoredScalarValue::Utf8(Some(s)) => Some(s.clone()),
+            StoredScalarValue::LargeUtf8(Some(s)) => Some(s.clone()),
+            _ => None,
+        })
+    }
+
+    /// Get max as string value (for string columns)
+    pub fn max_as_str(&self) -> Option<String> {
+        self.max.as_ref().and_then(|v| match v {
+            StoredScalarValue::Utf8(Some(s)) => Some(s.clone()),
+            StoredScalarValue::LargeUtf8(Some(s)) => Some(s.clone()),
+            _ => None,
+        })
     }
 }
 
@@ -340,10 +211,10 @@ impl<'de> Deserialize<'de> for ColumnStats {
 pub struct SegmentMetadata {
     // 8-byte aligned fields first
     /// Minimum sequence number in this segment (for MVCC pruning)
-    pub min_seq: i64,
+    pub min_seq: SeqId,
 
     /// Maximum sequence number in this segment (for MVCC pruning)
-    pub max_seq: i64,
+    pub max_seq: SeqId,
 
     /// Number of rows in this segment
     pub row_count: u64,
@@ -387,8 +258,8 @@ impl SegmentMetadata {
         id: String,
         path: String,
         column_stats: HashMap<u64, ColumnStats>,
-        min_seq: i64,
-        max_seq: i64,
+        min_seq: SeqId,
+        max_seq: SeqId,
         row_count: u64,
         size_bytes: u64,
     ) -> Self {
@@ -411,8 +282,8 @@ impl SegmentMetadata {
         id: String,
         path: String,
         column_stats: HashMap<u64, ColumnStats>,
-        min_seq: i64,
-        max_seq: i64,
+        min_seq: SeqId,
+        max_seq: SeqId,
         row_count: u64,
         size_bytes: u64,
         schema_version: u32,
@@ -514,6 +385,93 @@ impl Manifest {
 mod tests {
     use super::*;
     use crate::{NamespaceId, TableName};
+
+    #[test]
+    fn test_manifest_cache_entry_bincode_roundtrip() {
+        // This test ensures ManifestCacheEntry can be serialized/deserialized with bincode
+        // which is used for RocksDB storage
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let mut manifest = Manifest::new(table_id, None);
+
+        // Add segment with column stats using StoredScalarValue
+        let mut column_stats = HashMap::new();
+        column_stats.insert(
+            1u64,
+            ColumnStats {
+                min: Some(StoredScalarValue::Int64(Some("42".to_string()))),
+                max: Some(StoredScalarValue::Int64(Some("100".to_string()))),
+                null_count: Some(0),
+            },
+        );
+        column_stats.insert(
+            2u64,
+            ColumnStats {
+                min: Some(StoredScalarValue::Utf8(Some("alice".to_string()))),
+                max: Some(StoredScalarValue::Utf8(Some("zoe".to_string()))),
+                null_count: Some(5),
+            },
+        );
+
+        let segment = SegmentMetadata::new(
+            "seg-1".to_string(),
+            "batch-0.parquet".to_string(),
+            column_stats,
+            SeqId::from(0i64),
+            SeqId::from(99i64),
+            100,
+            2048,
+        );
+        manifest.add_segment(segment);
+
+        let entry =
+            ManifestCacheEntry::new(manifest, Some("etag123".to_string()), 1000, SyncState::InSync);
+
+        // Serialize with bincode
+        let config = bincode::config::standard();
+        let encoded = bincode::serde::encode_to_vec(&entry, config).expect("bincode encode failed");
+
+        // Deserialize with bincode
+        let (decoded, _): (ManifestCacheEntry, _) =
+            bincode::serde::decode_from_slice(&encoded, config).expect("bincode decode failed");
+
+        // Verify
+        assert_eq!(decoded.etag, Some("etag123".to_string()));
+        assert_eq!(decoded.sync_state, SyncState::InSync);
+        assert_eq!(decoded.manifest.segments.len(), 1);
+
+        let seg = &decoded.manifest.segments[0];
+        let id_stats = seg.column_stats.get(&1u64).unwrap();
+        assert_eq!(id_stats.min_as_i64(), Some(42));
+        assert_eq!(id_stats.max_as_i64(), Some(100));
+
+        let name_stats = seg.column_stats.get(&2u64).unwrap();
+        assert_eq!(name_stats.min_as_str(), Some("alice".to_string()));
+        assert_eq!(name_stats.max_as_str(), Some("zoe".to_string()));
+    }
+
+    #[test]
+    fn test_column_stats_helper_methods() {
+        let stats = ColumnStats {
+            min: Some(StoredScalarValue::Int64(Some("42".to_string()))),
+            max: Some(StoredScalarValue::Int64(Some("100".to_string()))),
+            null_count: Some(0),
+        };
+
+        // Test i64 parsing
+        assert_eq!(stats.min_as_i64(), Some(42));
+        assert_eq!(stats.max_as_i64(), Some(100));
+
+        // Test string values
+        let string_stats = ColumnStats {
+            min: Some(StoredScalarValue::Utf8(Some("alice".to_string()))),
+            max: Some(StoredScalarValue::Utf8(Some("zoe".to_string()))),
+            null_count: Some(5),
+        };
+
+        // min_as_str should return the string value
+        assert_eq!(string_stats.min_as_str(), Some("alice".to_string()));
+        assert_eq!(string_stats.max_as_str(), Some("zoe".to_string()));
+    }
 
     #[test]
     fn test_manifest_cache_entry_is_stale() {
@@ -647,8 +605,8 @@ mod tests {
             "uuid-1".to_string(),
             "segment-1.parquet".to_string(),
             HashMap::new(),
-            1000,
-            2000,
+            SeqId::from(1000i64),
+            SeqId::from(2000i64),
             50,
             512,
         );
@@ -685,8 +643,8 @@ mod tests {
             "batch-0".to_string(),
             "batch-0.parquet".to_string(),
             HashMap::new(),
-            1000,
-            2000,
+            SeqId::from(1000i64),
+            SeqId::from(2000i64),
             50,
             512,
         );
@@ -699,8 +657,8 @@ mod tests {
             "batch-1".to_string(),
             "batch-1.parquet".to_string(),
             HashMap::new(),
-            2001,
-            3000,
+            SeqId::from(2001i64),
+            SeqId::from(3000i64),
             50,
             512,
         );
@@ -713,8 +671,8 @@ mod tests {
             "batch-5".to_string(),
             "batch-5.parquet".to_string(),
             HashMap::new(),
-            5001,
-            6000,
+            SeqId::from(5001i64),
+            SeqId::from(6000i64),
             50,
             512,
         );
@@ -746,22 +704,22 @@ mod tests {
             "segment-1".to_string(),
             "segment-1.parquet".to_string(),
             HashMap::new(),
-            1000,
-            2000,
+            SeqId::from(1000i64),
+            SeqId::from(2000i64),
             50,
             512,
         );
         manifest.add_segment(segment1);
         assert_eq!(manifest.segments.len(), 1);
-        assert_eq!(manifest.segments[0].min_seq, 1000);
+        assert_eq!(manifest.segments[0].min_seq, SeqId::from(1000i64));
 
         // Add updated version of same segment (same ID)
         let segment1_v2 = SegmentMetadata::new(
             "segment-1".to_string(),
             "segment-1.parquet".to_string(),
             HashMap::new(),
-            1500, // Changed min_seq
-            2500,
+            SeqId::from(1500i64), // Changed min_seq
+            SeqId::from(2500i64),
             60,
             600,
         );
@@ -769,7 +727,7 @@ mod tests {
 
         // Should still have 1 segment, but updated
         assert_eq!(manifest.segments.len(), 1);
-        assert_eq!(manifest.segments[0].min_seq, 1500);
+        assert_eq!(manifest.segments[0].min_seq, SeqId::from(1500i64));
         assert_eq!(manifest.segments[0].id, "segment-1");
     }
 }

@@ -7,11 +7,9 @@
 //! Version resolution uses MAX(_seq) per primary key with _deleted filtering.
 
 mod append;
-mod key_gen;
 mod resolve;
 mod validate;
 
 pub use append::{append_version, append_version_sync};
-pub use key_gen::generate_storage_key;
 pub use resolve::resolve_latest_version;
 pub use validate::{extract_user_pk_value, validate_primary_key};

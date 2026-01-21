@@ -8,13 +8,13 @@
 //! Key type: (TableId, Option<UserId>) for type-safe cache access.
 
 use crate::schema_registry::SchemaRegistry;
+use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::types::{Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
-use kalamdb_commons::{TableId, UserId};
+use kalamdb_commons::{ManifestId, TableId, UserId};
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_filestore::StorageRegistry;
 use kalamdb_store::entity_store::{EntityStore, KSerializable};
-use kalamdb_store::{Partition, StorageBackend, StorageError};
-use kalamdb_system::providers::manifest::ManifestCacheKey;
+use kalamdb_store::{StorageBackend, StorageError};
 use kalamdb_system::providers::ManifestTableProvider;
 use log::{debug, info, warn};
 use std::collections::HashMap;
@@ -102,7 +102,7 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
-        let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
+        let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
         match EntityStore::get(self.provider.store(), &rocksdb_key) {
             Ok(Some(entry)) => Ok(Some(Arc::new(entry))),
             Ok(None) => Ok(None),
@@ -121,7 +121,7 @@ impl ManifestService {
 
     /// Count all cached manifest entries.
     pub fn count(&self) -> Result<usize, StorageError> {
-        let partition = Partition::new(self.provider.store().partition());
+        let partition = self.provider.store().partition();
         let iter = self
             .provider
             .store()
@@ -136,7 +136,7 @@ impl ManifestService {
 
     /// Return all cached entries with their storage keys.
     pub fn get_all(&self) -> Result<Vec<(String, ManifestCacheEntry)>, StorageError> {
-        let partition = Partition::new(self.provider.store().partition());
+        let partition = self.provider.store().partition();
         let iter = self
             .provider
             .store()
@@ -169,7 +169,7 @@ impl ManifestService {
 
     /// Clear all cached entries.
     pub fn clear(&self) -> Result<(), StorageError> {
-        let partition = Partition::new(self.provider.store().partition());
+        let partition = self.provider.store().partition();
         let iter = self
             .provider
             .store()
@@ -190,7 +190,7 @@ impl ManifestService {
     pub fn cache_stats(&self) -> Result<(usize, usize, usize), StorageError> {
         let mut shared_count = 0usize;
         let mut user_count = 0usize;
-        let partition = Partition::new(self.provider.store().partition());
+        let partition = self.provider.store().partition();
         let iter = self
             .provider
             .store()
@@ -263,7 +263,7 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
+        let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
         if let Some(mut entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
             entry.mark_stale();
@@ -279,7 +279,7 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
+        let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
         match EntityStore::get(self.provider.store(), &rocksdb_key) {
             Ok(Some(mut entry)) => {
@@ -307,7 +307,7 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
+        let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
         match EntityStore::get(self.provider.store(), &rocksdb_key) {
             Ok(Some(mut entry)) => {
@@ -339,7 +339,7 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
+        let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
         match EntityStore::get(self.provider.store(), &rocksdb_key) {
             Ok(Some(mut entry)) => {
@@ -380,7 +380,7 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<bool, StorageError> {
-        let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
+        let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
         if let Some(entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
             let now = chrono::Utc::now().timestamp();
@@ -396,7 +396,7 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
+        let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
         EntityStore::delete(self.provider.store(), &rocksdb_key)
     }
 
@@ -408,7 +408,7 @@ impl ManifestService {
         );
 
         let mut invalidated = 0;
-        let partition = Partition::new(self.provider.store().partition());
+        let partition = self.provider.store().partition();
         let iter = self
             .provider
             .store()
@@ -437,22 +437,27 @@ impl ManifestService {
     /// Check if a cache key is currently in the hot cache (RAM).
     /// With no hot cache, we check RocksDB existence.
     pub fn is_in_hot_cache(&self, table_id: &TableId, user_id: Option<&UserId>) -> bool {
-         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
+         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
          EntityStore::get(self.provider.store(), &rocksdb_key).unwrap_or(None).is_some()
     }
 
     /// Check if a cache key string is in hot cache (for system.manifest table compatibility).
     pub fn is_in_hot_cache_by_string(&self, cache_key_str: &str) -> bool {
-        let rocksdb_key = ManifestCacheKey::from(cache_key_str);
+        let rocksdb_key = ManifestId::from(cache_key_str);
         EntityStore::get(self.provider.store(), &rocksdb_key).unwrap_or(None).is_some()
     }
 
     /// Evict stale manifest entries from RocksDB.
+    ///
+    /// TODO: Optimize with secondary index on `last_refreshed` timestamp.
+    /// Currently scans all manifests - at scale, maintain a BTree/skip-list
+    /// or RocksDB secondary index to find stale entries efficiently O(log N)
+    /// instead of O(N) full scan.
     pub fn evict_stale_entries(&self, ttl_seconds: i64) -> Result<usize, StorageError> {
         let now = chrono::Utc::now().timestamp();
         let cutoff = now - ttl_seconds;
         let mut evicted_count = 0;
-        let partition = Partition::new(self.provider.store().partition());
+        let partition = self.provider.store().partition();
         let iter = self
             .provider
             .store()
@@ -675,7 +680,7 @@ impl ManifestService {
             let size_bytes = file_info.size as u64;
             
             // Create segment metadata (we don't parse full footer for rebuild, just size)
-            let segment = SegmentMetadata::new(id, file_name.clone(), HashMap::new(), 0, 0, 0, size_bytes);
+            let segment = SegmentMetadata::new(id, file_name.clone(), HashMap::new(), SeqId::from(0i64), SeqId::from(0i64), 0, size_bytes);
             manifest.add_segment(segment);
         }
         
@@ -738,7 +743,7 @@ impl ManifestService {
         table_id: &TableId,
     ) -> Result<Vec<UserId>, StorageError> {
         let prefix = format!("{}:", table_id);
-        let partition = Partition::new(self.provider.store().partition());
+        let partition = self.provider.store().partition();
         let iter = self
             .provider
             .store()
@@ -772,15 +777,6 @@ impl ManifestService {
 
     // ========== Private Helper Methods ==========
 
-    fn make_cache_key_string(&self, table_id: &TableId, user_id: Option<&UserId>) -> String {
-        let scope = user_id.map(|u| u.as_str()).unwrap_or("shared");
-        format!(
-            "{}:{}",
-            table_id, // TableId Display: "namespace:table"
-            scope
-        )
-    }
-
     fn upsert_cache_entry(
         &self,
         table_id: &TableId,
@@ -789,7 +785,7 @@ impl ManifestService {
         etag: Option<String>,
         sync_state: SyncState,
     ) -> Result<(), StorageError> {
-        let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
+        let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
         let now = chrono::Utc::now().timestamp();
 
         let entry = ManifestCacheEntry::new(manifest.clone(), etag, now, sync_state);

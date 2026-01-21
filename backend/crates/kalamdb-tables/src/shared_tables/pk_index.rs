@@ -25,6 +25,7 @@
 
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::ids::SharedTableRowId;
+use kalamdb_commons::storage::Partition;
 use kalamdb_store::IndexDefinition;
 
 use super::SharedTableRow;
@@ -98,8 +99,8 @@ impl SharedTablePkIndex {
 }
 
 impl IndexDefinition<SharedTableRowId, SharedTableRow> for SharedTablePkIndex {
-    fn partition(&self) -> &str {
-        &self.partition
+    fn partition(&self) -> Partition {
+        Partition::new(&self.partition)
     }
 
     fn indexed_columns(&self) -> Vec<&str> {

@@ -28,6 +28,7 @@
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::ids::UserTableRowId;
 use kalamdb_commons::models::rows::UserTableRow;
+use kalamdb_commons::storage::Partition;
 use kalamdb_store::IndexDefinition;
 
 /// Index for querying user table rows by primary key value.
@@ -100,8 +101,8 @@ impl UserTablePkIndex {
 }
 
 impl IndexDefinition<UserTableRowId, UserTableRow> for UserTablePkIndex {
-    fn partition(&self) -> &str {
-        &self.partition
+    fn partition(&self) -> Partition {
+        Partition::new(&self.partition)
     }
 
     fn indexed_columns(&self) -> Vec<&str> {

@@ -10,6 +10,7 @@
 use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
 use crate::SystemTable;
+use kalamdb_commons::storage::Partition;
 use kalamdb_store::{
     entity_store::{CrossUserTableStore, EntityStore, KSerializable},
     StorageBackend, StorageKey,
@@ -61,8 +62,8 @@ where
         &self.backend
     }
 
-    fn partition(&self) -> &str {
-        self.partition
+    fn partition(&self) -> Partition {
+        Partition::new(self.partition)
     }
 }
 

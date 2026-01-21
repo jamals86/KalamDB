@@ -3,6 +3,7 @@
 //! This module defines secondary indexes for the system.jobs table.
 
 use crate::StoragePartition;
+use kalamdb_commons::storage::Partition;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::{JobId, JobStatus};
 use kalamdb_store::IndexDefinition;
@@ -23,8 +24,8 @@ use std::sync::Arc;
 pub struct JobStatusCreatedAtIndex;
 
 impl IndexDefinition<JobId, Job> for JobStatusCreatedAtIndex {
-    fn partition(&self) -> &str {
-        StoragePartition::SystemJobsStatusIdx.name()
+    fn partition(&self) -> Partition {
+        Partition::new(StoragePartition::SystemJobsStatusIdx.name())
     }
 
     fn indexed_columns(&self) -> Vec<&str> {
@@ -63,8 +64,8 @@ impl IndexDefinition<JobId, Job> for JobStatusCreatedAtIndex {
 pub struct JobIdempotencyKeyIndex;
 
 impl IndexDefinition<JobId, Job> for JobIdempotencyKeyIndex {
-    fn partition(&self) -> &str {
-        StoragePartition::SystemJobsIdempotencyIdx.name()
+    fn partition(&self) -> Partition {
+        Partition::new(StoragePartition::SystemJobsIdempotencyIdx.name())
     }
 
     fn indexed_columns(&self) -> Vec<&str> {

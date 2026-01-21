@@ -1073,7 +1073,7 @@ where
         .get_table_if_exists(table_id)?
     {
         // Fast path: Skip uniqueness check if PK is auto-increment
-        if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
+        if crate::providers::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
             log::trace!(
                 "[ensure_unique_pk_value] Skipping PK check for {} - PK is auto-increment",
                 table_id
@@ -1175,7 +1175,7 @@ where
         .schema_registry()
         .get_table_if_exists(table_id)?
     {
-        if crate::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
+        if crate::providers::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Cannot modify auto-increment primary key column '{}' in table {}",
                 pk_name, table_id

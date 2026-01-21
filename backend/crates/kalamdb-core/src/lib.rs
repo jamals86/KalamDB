@@ -43,12 +43,10 @@ pub mod jobs;
 pub mod live;
 pub mod manifest;
 pub mod metrics;
-pub mod pk;
 pub mod providers;
 pub mod schema_registry;
 pub mod slow_query_logger;
 pub mod sql;
-pub mod storage;
 pub mod views;
 
 // Re-export commonly used items

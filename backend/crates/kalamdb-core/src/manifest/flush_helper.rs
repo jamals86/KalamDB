@@ -9,8 +9,9 @@ use crate::schema_registry::cached_table_data::CachedTableData;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
-use kalamdb_commons::arrow_utils::compute_min_max_json;
+use kalamdb_commons::arrow_utils::compute_min_max;
 use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::types::{ColumnStats, Manifest, SegmentMetadata};
 use kalamdb_commons::{TableId, UserId};
 use std::collections::HashMap;
@@ -93,7 +94,7 @@ impl FlushManifestHelper {
     /// Extract min/max _seq values from RecordBatch
     ///
     /// Returns (min_seq, max_seq) tuple
-    pub fn extract_seq_range(batch: &RecordBatch) -> (i64, i64) {
+    pub fn extract_seq_range(batch: &RecordBatch) -> (SeqId, SeqId) {
         let seq_column = batch
             .column_by_name(SystemColumnNames::SEQ)
             .and_then(|col| col.as_any().downcast_ref::<Int64Array>());
@@ -101,9 +102,9 @@ impl FlushManifestHelper {
         if let Some(seq_arr) = seq_column {
             let min = compute::min(seq_arr).unwrap_or(0);
             let max = compute::max(seq_arr).unwrap_or(0);
-            (min, max)
+            (SeqId::from(min), SeqId::from(max))
         } else {
-            (0, 0)
+            (SeqId::from(0i64), SeqId::from(0i64))
         }
     }
 
@@ -123,7 +124,7 @@ impl FlushManifestHelper {
 
             if let Some(col) = batch.column_by_name(column_name) {
                 let null_count = col.null_count() as i64;
-                let (min, max) = compute_min_max_json(col);
+                let (min, max) = compute_min_max(col);
 
                 stats.insert(
                     *column_id,
@@ -279,8 +280,8 @@ mod tests {
                 .unwrap();
 
         let (min, max) = FlushManifestHelper::extract_seq_range(&batch);
-        assert_eq!(min, 100);
-        assert_eq!(max, 200);
+        assert_eq!(min, SeqId::from(100i64));
+        assert_eq!(max, SeqId::from(200i64));
     }
 
     #[test]
@@ -294,8 +295,8 @@ mod tests {
         let batch = RecordBatch::try_new(schema, vec![StdArc::new(seq_array)]).unwrap();
 
         let (min_seq, max_seq) = FlushManifestHelper::extract_seq_range(&batch);
-        assert_eq!(min_seq, 0);
-        assert_eq!(max_seq, 0);
+        assert_eq!(min_seq, SeqId::from(0i64));
+        assert_eq!(max_seq, SeqId::from(0i64));
     }
 
     #[test]
@@ -306,13 +307,14 @@ mod tests {
         let batch = RecordBatch::try_new(schema, vec![StdArc::new(col_array)]).unwrap();
 
         let (min_seq, max_seq) = FlushManifestHelper::extract_seq_range(&batch);
-        assert_eq!(min_seq, 0);
-        assert_eq!(max_seq, 0);
+        assert_eq!(min_seq, SeqId::from(0i64));
+        assert_eq!(max_seq, SeqId::from(0i64));
     }
 
     #[test]
     fn test_extract_column_stats_int_types() {
         use datafusion::arrow::array::{Int32Array, Int64Array};
+        use kalamdb_commons::models::rows::StoredScalarValue;
 
         let schema = StdArc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, true),
@@ -337,18 +339,20 @@ mod tests {
 
         assert_eq!(stats.len(), 2);
         let id_stats = stats.get(&1u64).unwrap();
-        assert_eq!(id_stats.min, Some(serde_json::json!(1)));
-        assert_eq!(id_stats.max, Some(serde_json::json!(10)));
+        assert_eq!(id_stats.min, Some(StoredScalarValue::Int32(Some(1))));
+        assert_eq!(id_stats.max, Some(StoredScalarValue::Int32(Some(10))));
         assert_eq!(id_stats.null_count, Some(1));
 
         let ts_stats = stats.get(&2u64).unwrap();
-        assert_eq!(ts_stats.min, Some(serde_json::json!(1000000)));
-        assert_eq!(ts_stats.max, Some(serde_json::json!(2000000)));
+        assert_eq!(ts_stats.min, Some(StoredScalarValue::Int64(Some("1000000".to_string()))));
+        assert_eq!(ts_stats.max, Some(StoredScalarValue::Int64(Some("2000000".to_string()))));
         assert_eq!(ts_stats.null_count, Some(0));
     }
 
     #[test]
     fn test_extract_column_stats_string() {
+        use kalamdb_commons::models::rows::StoredScalarValue;
+
         let schema = StdArc::new(Schema::new(vec![Field::new("name", DataType::Utf8, true)]));
         let array = StringArray::from(vec![Some("alice"), Some("bob"), None, Some("charlie")]);
         let batch = RecordBatch::try_new(schema, vec![StdArc::new(array)]).unwrap();
@@ -357,8 +361,8 @@ mod tests {
         let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
 
         let name_stats = stats.get(&1u64).unwrap();
-        assert_eq!(name_stats.min, Some(serde_json::json!("alice")));
-        assert_eq!(name_stats.max, Some(serde_json::json!("charlie")));
+        assert_eq!(name_stats.min, Some(StoredScalarValue::Utf8(Some("alice".to_string()))));
+        assert_eq!(name_stats.max, Some(StoredScalarValue::Utf8(Some("charlie".to_string()))));
         assert_eq!(name_stats.null_count, Some(1));
     }
 

@@ -30,7 +30,7 @@
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
-use crate::providers::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob};
+use crate::manifest::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob};
 use async_trait::async_trait;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::{JobType, TableId};

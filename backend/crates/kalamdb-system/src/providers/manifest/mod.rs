@@ -8,5 +8,5 @@ pub mod manifest_store;
 pub mod manifest_table;
 
 pub use manifest_provider::{InMemoryChecker, ManifestTableProvider};
-pub use manifest_store::{new_manifest_store, ManifestCacheKey, ManifestStore};
+pub use manifest_store::{new_manifest_store, ManifestStore};
 pub use manifest_table::ManifestTableSchema;

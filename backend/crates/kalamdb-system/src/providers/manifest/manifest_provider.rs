@@ -3,11 +3,12 @@
 //! This module provides a DataFusion TableProvider implementation for the system.manifest table.
 //! Exposes manifest cache entries as a queryable system table.
 
-use super::{new_manifest_store, ManifestCacheKey, ManifestStore, ManifestTableSchema};
+use super::{new_manifest_store, ManifestStore, ManifestTableSchema};
 use crate::error::{SystemError, SystemResultExt};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
+use kalamdb_commons::ManifestId;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
@@ -18,7 +19,6 @@ use kalamdb_commons::storage::StorageError;
 use kalamdb_commons::types::ManifestCacheEntry;
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_store::entity_store::{EntityStore, KSerializable};
-use kalamdb_store::storage_trait::Partition;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::{Arc, RwLock};
@@ -85,7 +85,7 @@ impl ManifestTableProvider {
     ///
     /// Uses schema-driven array building for optimal performance and correctness.
     pub fn scan_to_record_batch(&self) -> Result<RecordBatch, SystemError> {
-        let partition = Partition::new(self.store.partition());
+        let partition = self.store.partition();
         let iter = self
             .store
             .backend()
@@ -100,7 +100,7 @@ impl ManifestTableProvider {
                         "Corrupted manifest cache entry skipped: {}",
                         err
                     );
-                    if let Ok(cache_key) = ManifestCacheKey::from_storage_key(&key_bytes) {
+                    if let Ok(cache_key) = ManifestId::from_storage_key(&key_bytes) {
                         let _ = EntityStore::delete(self.store(), &cache_key);
                     }
                 }
@@ -250,8 +250,7 @@ mod tests {
             SyncState::InSync,
         );
 
-        use super::super::manifest_store::ManifestCacheKey;
-        let key = ManifestCacheKey::from("ns1:tbl1:shared");
+        let key = ManifestId::from("ns1:tbl1:shared");
         provider.store.put(&key, &entry).unwrap();
 
         let batch = provider.scan_to_record_batch().unwrap();

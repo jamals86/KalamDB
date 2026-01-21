@@ -9,6 +9,7 @@ use crate::error_extensions::KalamDbResultExt;
 use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
+use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::types::Manifest;
@@ -75,7 +76,7 @@ impl ManifestAccessPlanner {
         table_type: TableType,
         table_id: &TableId,
         user_id: Option<&UserId>,
-        seq_range: Option<(i64, i64)>,
+        seq_range: Option<(SeqId, SeqId)>,
         use_degraded_mode: bool,
         schema: SchemaRef,
         app_context: &Arc<AppContext>,
@@ -179,8 +180,8 @@ impl ManifestAccessPlanner {
     pub fn plan_by_seq_range(
         &self,
         manifest: &Manifest,
-        min_seq: i64,
-        max_seq: i64,
+        min_seq: SeqId,
+        max_seq: SeqId,
     ) -> Vec<RowGroupSelection> {
         if manifest.segments.is_empty() {
             return Vec::new();
@@ -337,48 +338,25 @@ impl ManifestAccessPlanner {
     /// Supports string and numeric comparisons.
     fn pk_value_in_range(pk_value: &str, stats: &kalamdb_commons::types::ColumnStats) -> bool {
         // If no min/max stats, conservatively assume it could be in range
-        let (Some(min), Some(max)) = (&stats.min, &stats.max) else {
+        if stats.min.is_none() || stats.max.is_none() {
             return true;
-        };
+        }
 
         // Try numeric comparison first (most common for PKs)
         if let Ok(pk_num) = pk_value.parse::<i64>() {
-            let min_num = Self::json_value_as_i64(min);
-            let max_num = Self::json_value_as_i64(max);
-
-            if let (Some(min_n), Some(max_n)) = (min_num, max_num) {
+            // ColumnStats.min/max are JSON-encoded strings, so parse them
+            if let (Some(min_n), Some(max_n)) = (stats.min_as_i64(), stats.max_as_i64()) {
                 return pk_num >= min_n && pk_num <= max_n;
             }
         }
 
         // Fall back to string comparison
-        let min_str = Self::json_value_as_str(min);
-        let max_str = Self::json_value_as_str(max);
-
-        if let (Some(min_s), Some(max_s)) = (min_str, max_str) {
+        if let (Some(min_s), Some(max_s)) = (stats.min_as_str(), stats.max_as_str()) {
             return pk_value >= min_s.as_str() && pk_value <= max_s.as_str();
         }
 
         // Can't compare, conservatively include
         true
-    }
-
-    /// Extract i64 from serde_json::Value
-    fn json_value_as_i64(value: &serde_json::Value) -> Option<i64> {
-        match value {
-            serde_json::Value::Number(n) => n.as_i64(),
-            serde_json::Value::String(s) => s.parse::<i64>().ok(),
-            _ => None,
-        }
-    }
-
-    /// Extract String from serde_json::Value
-    fn json_value_as_str(value: &serde_json::Value) -> Option<String> {
-        match value {
-            serde_json::Value::String(s) => Some(s.clone()),
-            serde_json::Value::Number(n) => Some(n.to_string()),
-            _ => None,
-        }
     }
 }
 
@@ -410,8 +388,8 @@ mod tests {
             "uuid-0".to_string(),
             "batch-0.parquet".to_string(),
             HashMap::new(),
-            0,
-            99,
+            SeqId::from(0i64),
+            SeqId::from(99i64),
             100,
             1024,
         );
@@ -421,8 +399,8 @@ mod tests {
             "uuid-1".to_string(),
             "batch-1.parquet".to_string(),
             HashMap::new(),
-            100,
-            199,
+            SeqId::from(100i64),
+            SeqId::from(199i64),
             100,
             2048,
         );
@@ -448,7 +426,7 @@ mod tests {
         let mf = make_manifest_with_segments();
         let planner = ManifestAccessPlanner::new();
 
-        let plan = planner.plan_by_seq_range(&mf, 25, 150);
+        let plan = planner.plan_by_seq_range(&mf, SeqId::from(25i64), SeqId::from(150i64));
         assert_eq!(plan.len(), 2);
 
         let p0 = plan.iter().find(|p| p.file_path == "batch-0.parquet").unwrap();
@@ -463,7 +441,7 @@ mod tests {
         let mf = make_manifest_with_segments();
         let planner = ManifestAccessPlanner::new();
 
-        let plan = planner.plan_by_seq_range(&mf, 300, 400);
+        let plan = planner.plan_by_seq_range(&mf, SeqId::from(300i64), SeqId::from(400i64));
         assert!(plan.is_empty());
     }
 
@@ -580,8 +558,8 @@ mod tests {
             "uuid-0".to_string(),
             "batch-0.parquet".to_string(),
             HashMap::new(),
-            0,
-            99,
+            SeqId::from(0i64),
+            SeqId::from(99i64),
             10,
             123,
         );
@@ -590,8 +568,8 @@ mod tests {
             "uuid-1".to_string(),
             "batch-1.parquet".to_string(),
             HashMap::new(),
-            100,
-            199,
+            SeqId::from(100i64),
+            SeqId::from(199i64),
             10,
             123,
         );
@@ -610,7 +588,7 @@ mod tests {
                 TableType::Shared,
                 &table_id,
                 None,
-                Some((0, 90)),
+                Some((SeqId::from(0i64), SeqId::from(90i64))),
                 false,
                 schema.clone(),
                 &app_context,
@@ -630,7 +608,7 @@ mod tests {
                 TableType::Shared,
                 &table_id,
                 None,
-                Some((150, 160)),
+                Some((SeqId::from(150i64), SeqId::from(160i64))),
                 false,
                 schema.clone(),
                 &app_context,
@@ -649,7 +627,7 @@ mod tests {
                 TableType::Shared,
                 &table_id,
                 None,
-                Some((300, 400)),
+                Some((SeqId::from(300i64), SeqId::from(400i64))),
                 false,
                 schema.clone(),
                 &app_context,

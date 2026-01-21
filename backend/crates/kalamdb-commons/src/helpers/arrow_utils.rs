@@ -16,7 +16,6 @@ use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 pub use arrow_schema::DataType as ArrowDataType;
 use arrow_schema::{Field, Schema, TimeUnit};
-use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
 /// Arrow UTF-8 string type.
@@ -312,91 +311,100 @@ pub fn empty_batch(schema: SchemaRef) -> Result<RecordBatch, ArrowError> {
     RecordBatch::try_new(schema, columns)
 }
 
-/// Compute min/max stats for a column, returning JSON values when supported.
-pub fn compute_min_max_json(array: &ArrayRef) -> (Option<JsonValue>, Option<JsonValue>) {
+use crate::models::rows::StoredScalarValue;
+
+/// Compute min/max stats for a column, returning StoredScalarValue.
+///
+/// Returns values as StoredScalarValue, enabling:
+/// - Zero-copy bincode serialization for RocksDB manifest cache
+/// - Proper JSON output for manifest.json files
+/// - Type-safe comparisons in query planning
+///
+/// Returns `None` for empty arrays or when all values are null.
+pub fn compute_min_max(array: &ArrayRef) -> (Option<StoredScalarValue>, Option<StoredScalarValue>) {
     match array.data_type() {
         ArrowDataType::Int8 => {
             let arr = array.as_any().downcast_ref::<Int8Array>().unwrap();
             (
-                compute::min(arr).map(|v| serde_json::json!(v)),
-                compute::max(arr).map(|v| serde_json::json!(v)),
+                compute::min(arr).map(|v| StoredScalarValue::Int8(Some(v))),
+                compute::max(arr).map(|v| StoredScalarValue::Int8(Some(v))),
             )
         },
         ArrowDataType::Int16 => {
             let arr = array.as_any().downcast_ref::<Int16Array>().unwrap();
             (
-                compute::min(arr).map(|v| serde_json::json!(v)),
-                compute::max(arr).map(|v| serde_json::json!(v)),
+                compute::min(arr).map(|v| StoredScalarValue::Int16(Some(v))),
+                compute::max(arr).map(|v| StoredScalarValue::Int16(Some(v))),
             )
         },
         ArrowDataType::Int32 => {
             let arr = array.as_any().downcast_ref::<Int32Array>().unwrap();
             (
-                compute::min(arr).map(|v| serde_json::json!(v)),
-                compute::max(arr).map(|v| serde_json::json!(v)),
+                compute::min(arr).map(|v| StoredScalarValue::Int32(Some(v))),
+                compute::max(arr).map(|v| StoredScalarValue::Int32(Some(v))),
             )
         },
         ArrowDataType::Int64 => {
             let arr = array.as_any().downcast_ref::<Int64Array>().unwrap();
             (
-                compute::min(arr).map(|v| serde_json::json!(v)),
-                compute::max(arr).map(|v| serde_json::json!(v)),
+                compute::min(arr).map(|v| StoredScalarValue::Int64(Some(v.to_string()))),
+                compute::max(arr).map(|v| StoredScalarValue::Int64(Some(v.to_string()))),
             )
         },
         ArrowDataType::UInt8 => {
             let arr = array.as_any().downcast_ref::<UInt8Array>().unwrap();
             (
-                compute::min(arr).map(|v| serde_json::json!(v)),
-                compute::max(arr).map(|v| serde_json::json!(v)),
+                compute::min(arr).map(|v| StoredScalarValue::UInt8(Some(v))),
+                compute::max(arr).map(|v| StoredScalarValue::UInt8(Some(v))),
             )
         },
         ArrowDataType::UInt16 => {
             let arr = array.as_any().downcast_ref::<UInt16Array>().unwrap();
             (
-                compute::min(arr).map(|v| serde_json::json!(v)),
-                compute::max(arr).map(|v| serde_json::json!(v)),
+                compute::min(arr).map(|v| StoredScalarValue::UInt16(Some(v))),
+                compute::max(arr).map(|v| StoredScalarValue::UInt16(Some(v))),
             )
         },
         ArrowDataType::UInt32 => {
             let arr = array.as_any().downcast_ref::<UInt32Array>().unwrap();
             (
-                compute::min(arr).map(|v| serde_json::json!(v)),
-                compute::max(arr).map(|v| serde_json::json!(v)),
+                compute::min(arr).map(|v| StoredScalarValue::UInt32(Some(v))),
+                compute::max(arr).map(|v| StoredScalarValue::UInt32(Some(v))),
             )
         },
         ArrowDataType::UInt64 => {
             let arr = array.as_any().downcast_ref::<UInt64Array>().unwrap();
             (
-                compute::min(arr).map(|v| serde_json::json!(v)),
-                compute::max(arr).map(|v| serde_json::json!(v)),
+                compute::min(arr).map(|v| StoredScalarValue::UInt64(Some(v.to_string()))),
+                compute::max(arr).map(|v| StoredScalarValue::UInt64(Some(v.to_string()))),
             )
         },
         ArrowDataType::Float32 => {
             let arr = array.as_any().downcast_ref::<Float32Array>().unwrap();
             (
-                compute::min(arr).map(|v| serde_json::json!(v)),
-                compute::max(arr).map(|v| serde_json::json!(v)),
+                compute::min(arr).map(|v| StoredScalarValue::Float32(Some(v))),
+                compute::max(arr).map(|v| StoredScalarValue::Float32(Some(v))),
             )
         },
         ArrowDataType::Float64 => {
             let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
             (
-                compute::min(arr).map(|v| serde_json::json!(v)),
-                compute::max(arr).map(|v| serde_json::json!(v)),
+                compute::min(arr).map(|v| StoredScalarValue::Float64(Some(v))),
+                compute::max(arr).map(|v| StoredScalarValue::Float64(Some(v))),
             )
         },
         ArrowDataType::Utf8 => {
             let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
             (
-                min_string(arr).map(|v| serde_json::json!(v)),
-                max_string(arr).map(|v| serde_json::json!(v)),
+                min_string(arr).map(|s| StoredScalarValue::Utf8(Some(s.to_string()))),
+                max_string(arr).map(|s| StoredScalarValue::Utf8(Some(s.to_string()))),
             )
         },
         ArrowDataType::LargeUtf8 => {
             let arr = array.as_any().downcast_ref::<LargeStringArray>().unwrap();
             (
-                min_string(arr).map(|v| serde_json::json!(v)),
-                max_string(arr).map(|v| serde_json::json!(v)),
+                min_string(arr).map(|s| StoredScalarValue::LargeUtf8(Some(s.to_string()))),
+                max_string(arr).map(|s| StoredScalarValue::LargeUtf8(Some(s.to_string()))),
             )
         },
         ArrowDataType::Boolean => (None, None),

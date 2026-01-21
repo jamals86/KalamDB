@@ -18,5 +18,7 @@
 //! - Segment scan: O(m) where m = rows in matching segments
 
 mod existence_checker;
+pub mod helpers;
 
 pub use existence_checker::{PkCheckResult, PkExistenceChecker};
+pub use helpers::parse_pk_value;

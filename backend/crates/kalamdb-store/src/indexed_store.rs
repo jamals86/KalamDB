@@ -57,8 +57,8 @@
 //! struct JobStatusIndex;
 //!
 //! impl IndexDefinition<JobId, Job> for JobStatusIndex {
-//!     fn partition(&self) -> &str {
-//!         "system_jobs_status_idx"
+//!     fn partition(&self) -> Partition {
+//!         Partition::new("system_jobs_status_idx")
 //!     }
 //!
 //!     fn indexed_columns(&self) -> Vec<&str> {
@@ -134,11 +134,11 @@ where
     K: StorageKey,
     V: KSerializable,
 {
-    /// Returns the partition name for this index.
+    /// Returns the partition for this index.
     ///
     /// This should be unique across all indexes in the system.
     /// Convention: `{main_partition}_idx_{columns}` e.g., `system_jobs_idx_status`
-    fn partition(&self) -> &str;
+    fn partition(&self) -> Partition;
 
     /// Returns the column names this index covers.
     ///
@@ -255,7 +255,7 @@ where
         // Ensure all index partitions exist
         let mut index_partitions = Vec::with_capacity(indexes.len());
         for index in &indexes {
-            let index_partition = Partition::new(index.partition());
+            let index_partition = index.partition();
             let _ = backend.create_partition(&index_partition); // Ignore error if already exists
             index_partitions.push(index_partition);
         }
@@ -302,7 +302,7 @@ where
         self.indexes
             .iter()
             .enumerate()
-            .find(|(_idx, index)| index.partition() == partition)
+            .find(|(_idx, index)| index.partition().name() == partition)
             .map(|(idx, _)| idx)
     }
 
@@ -761,8 +761,8 @@ where
         &self.backend
     }
 
-    fn partition(&self) -> &str {
-        &self.partition
+    fn partition(&self) -> Partition {
+        self.main_partition.clone()
     }
 }
 
@@ -940,8 +940,8 @@ mod tests {
     struct TestStatusIndex;
 
     impl IndexDefinition<JobId, Job> for TestStatusIndex {
-        fn partition(&self) -> &str {
-            "test_jobs_status_idx"
+        fn partition(&self) -> Partition {
+            Partition::new("test_jobs_status_idx")
         }
 
         fn indexed_columns(&self) -> Vec<&str> {

@@ -25,11 +25,9 @@
 pub mod arrow_json_conversion; // Shared Arrow<->JSON utilities used by providers and flush
 pub mod base;
 pub mod core;
-pub mod flush; // Phase 13.7: Consolidated flush logic from tables/
 pub mod helpers;
-pub mod manifest_helpers;
 pub mod parquet;
-pub mod pk_helpers; // PK index helpers - parse_pk_value and other common utilities
+pub mod pk; // Primary key utilities and existence checking
 pub mod scan_row;
 pub mod shared;
 pub mod streams;
@@ -39,17 +37,13 @@ pub mod version_resolution; // Phase 13.6: Moved from tables/
 
 // Re-export key types for convenience
 pub use base::{BaseTableProvider, TableProviderCore};
-pub use flush::{
-    FlushJobResult, FlushMetadata, SharedTableFlushJob, SharedTableFlushMetadata, TableFlush,
-    UserTableFlushJob, UserTableFlushMetadata,
-};
 pub use shared::SharedTableProvider;
 pub use streams::StreamTableProvider;
 pub use users::UserTableProvider;
 
 // Re-export unified DML functions
 pub use unified_dml::{
-    append_version, append_version_sync, extract_user_pk_value, generate_storage_key,
+    append_version, append_version_sync, extract_user_pk_value,
     resolve_latest_version, validate_primary_key,
 };
 

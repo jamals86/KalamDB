@@ -17,6 +17,7 @@ use super::pk_index::create_user_table_pk_index;
 use crate::common::{ensure_partition, new_indexed_store_with_pk, partition_name};
 use kalamdb_commons::ids::UserTableRowId;
 use kalamdb_commons::models::rows::UserTableRow;
+use kalamdb_commons::storage::Partition;
 use kalamdb_commons::TableId;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
@@ -56,8 +57,8 @@ impl EntityStore<UserTableRowId, UserTableRow> for UserTableStore {
         &self.backend
     }
 
-    fn partition(&self) -> &str {
-        &self.partition
+    fn partition(&self) -> Partition {
+        Partition::new(&self.partition)
     }
 }
 

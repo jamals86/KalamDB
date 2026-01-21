@@ -72,6 +72,7 @@ pub use models::{
     JobStatus,
     JobType,
     LiveQueryId,
+    ManifestId,
     NamespaceId,
     NodeId,
     Role,

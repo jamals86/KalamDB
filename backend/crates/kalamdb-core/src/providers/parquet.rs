@@ -131,7 +131,7 @@ pub(crate) fn scan_parquet_files_as_batch(
         .map(crate::providers::helpers::extract_seq_bounds_from_filter)
         .unwrap_or((None, None));
     let seq_range = match (min_seq, max_seq) {
-        (Some(min), Some(max)) => Some((min.as_i64(), max.as_i64())),
+        (Some(min), Some(max)) => Some((min, max)),
         _ => None,
     };
 

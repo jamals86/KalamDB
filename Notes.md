@@ -1222,10 +1222,26 @@ cange to to be put(TableDefinition) instead of CachedTableData and it creates th
 112) i think its better to store this as hashmap:    /// List of data segments
     pub segments: Vec<SegmentMetadata>,
 
-113) i see errors like this maybe we dont increment changes at all since it damages performance, but before removing it check why this happening? if the user unsubscribe why this still running?? check the logic in the unsubscribe and if all related stuff is also closed properly when doing that
-[2026-01-21 10:17:39.137] [ERROR] - main - kalamdb_core::live::notification:382 - Failed to increment changes for live_id=root-163d1e31d91149b4984c46d850d40358-sub_1768983459090957000: Not found: Live query not found: root-163d1e31d91149b4984c46d850d40358-sub_1768983459090957000
 
-114) remove cache hits from SchemaRegistry its not needed since we have a dashmap and also remove it from all tests and metricses
-
+116) change pub struct ManifestCacheKey to pub struct ManifestId and move it to: backend/crates/kalamdb-commons/src/models/ids/manifest_id.rs and make it similar to the other id's as well
+check if we can use macro for all the id's because they are so similar in code
 
 
+117) no need for flush notifications at all in the flushing or recieve flushing notifications, we cna rmeove this feature!
+        // Send flush notification if LiveQueryManager configured
+        if let Some(manager) = &self.live_query_manager {
+            let parquet_files = vec![parquet_path.clone()];
+            let table_id = self.table_id.as_ref().clone();
+            let notification =
+                ChangeNotification::flush(table_id.clone(), rows_count, parquet_files.clone());
+            let system_user = UserId::root();
+            manager.notify_table_change_async(system_user, table_id, notification);
+        }
+
+also this is not needed:     /// Optional: Get LiveQueryManager for notifications
+    ///
+    /// Override if flush job supports live query notifications.
+    /// Default returns None (no notifications).
+    fn live_query_manager(&self) -> Option<&Arc<LiveQueryManager>> {
+        None
+    }

@@ -12,7 +12,7 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use crate::providers::flush::{UserTableFlushJob, FlushJobResult};
+//! use crate::manifest::flush::{UserTableFlushJob, FlushJobResult};
 //!
 //! let flush_job = UserTableFlushJob::new(/* ... */);
 //! let result = flush_job.execute()?;
