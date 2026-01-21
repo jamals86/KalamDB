@@ -1,0 +1,45 @@
+    Checking kalamdb-tables v0.2.0 (C:\Jamal\git\KalamDB\backend\crates\kalamdb-tables)
+   Compiling kalam-cli v0.2.0 (C:\Jamal\git\KalamDB\cli)
+warning: variants `Milliseconds` and `Nanoseconds` are never constructed
+   --> cli\src\formatter.rs:490:5
+    |
+489 | enum TimestampUnit {
+    |      ------------- variants in this enum
+490 |     Milliseconds,
+    |     ^^^^^^^^^^^^
+491 |     Microseconds,
+492 |     Nanoseconds,
+    |     ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+    Checking kalamdb-core v0.2.0 (C:\Jamal\git\KalamDB\backend\crates\kalamdb-core)
+warning: `kalam-cli` (lib) generated 1 warning
+    Checking kalamdb-benchmark v0.2.0 (C:\Jamal\git\KalamDB\benchmark)
+error[E0583]: file not found for module `path_resolver`
+ --> backend\crates\kalamdb-core\src\schema_registry\mod.rs:9:1
+  |
+9 | pub mod path_resolver;
+  | ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: to create the module `path_resolver`, create file "backend\crates\kalamdb-core\src\schema_registry\path_resolver.rs" or "backend\crates\kalamdb-core\src\schema_registry\path_resolver\mod.rs"
+  = note: if there is a `mod path_resolver` elsewhere in the crate already, import it with `use crate::...` instead
+
+error: this file contains an unclosed delimiter
+   --> backend\crates\kalamdb-core\src\schema_registry\registry\core.rs:572:3
+    |
+100 |     pub fn insert_version(&self, version_id: TableVersionId, data: Arc<CachedTableData>) {
+    |                                                                                          - unclosed delimiter
+...
+436 |     ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
+    |                                                             - this delimiter might not be properly closed...
+...
+566 | }
+    | - ...as it matches this but it has different indentation
+...
+572 | }
+    |  ^
+
+For more information about this error, try `rustc --explain E0583`.
+error: could not compile `kalamdb-core` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...

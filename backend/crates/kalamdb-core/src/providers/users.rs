@@ -226,7 +226,7 @@ impl UserTableProvider {
         let hot_rows: Vec<(UserTableRowId, UserTableRow)> = raw_all
             .into_iter()
             .filter_map(|(key_bytes, row)| {
-                match kalamdb_commons::ids::UserTableRowId::from_bytes(&key_bytes) {
+                match kalamdb_commons::ids::UserTableRowId::from_storage_key(&key_bytes) {
                     Ok(k) => Some((k, row)),
                     Err(err) => {
                         log::warn!("Skipping invalid UserTableRowId key bytes: {}", err);
@@ -874,7 +874,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let hot_rows: Vec<(UserTableRowId, UserTableRow)> = raw_all
             .into_iter()
             .filter_map(|(key_bytes, row)| {
-                match kalamdb_commons::ids::UserTableRowId::from_bytes(&key_bytes) {
+                match kalamdb_commons::ids::UserTableRowId::from_storage_key(&key_bytes) {
                     Ok(k) => Some((k, row)),
                     Err(err) => {
                         log::warn!("Skipping invalid UserTableRowId key bytes: {}", err);

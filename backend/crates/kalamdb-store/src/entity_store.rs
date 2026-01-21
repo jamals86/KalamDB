@@ -211,7 +211,7 @@ where
                 let iter =
                     self.backend().scan(&partition, None, start_bytes.as_deref(), Some(limit))?;
 
-                let mut rows = Vec::new();
+                let mut rows = Vec::with_capacity(limit);
                 for (key_bytes, value_bytes) in iter {
                     let key = K::from_storage_key(&key_bytes)
                         .map_err(StorageError::SerializationError)?;
