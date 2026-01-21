@@ -1,5 +1,4 @@
 use crate::app_context::AppContext;
-use crate::live::LiveQueryManager;
 use crate::schema_registry::TableType;
 use kalamdb_commons::TableId;
 use kalamdb_filestore::StorageRegistry;
@@ -34,9 +33,6 @@ pub struct TableProviderCore {
     /// System columns service for _seq and _deleted management
     pub system_columns: Arc<crate::system_columns::SystemColumnsService>,
 
-    /// LiveQueryManager for WebSocket notifications (optional)
-    pub live_query_manager: Option<Arc<LiveQueryManager>>,
-
     /// Storage registry for resolving full storage paths (optional)
     pub storage_registry: Option<Arc<StorageRegistry>>,
 }
@@ -49,7 +45,6 @@ impl TableProviderCore {
             table_type,
             schema_registry: app_context.schema_registry(),
             system_columns: app_context.system_columns_service(),
-            live_query_manager: None,
             storage_registry: None,
             app_context,
         }
@@ -62,12 +57,6 @@ impl TableProviderCore {
         table_type: TableType,
     ) -> Self {
         Self::new(Arc::clone(app_context), table_id, table_type)
-    }
-
-    /// Add LiveQueryManager to core
-    pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
-        self.live_query_manager = Some(manager);
-        self
     }
 
     /// Add StorageRegistry to core

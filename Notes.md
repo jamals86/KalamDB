@@ -1198,18 +1198,6 @@ make only one place where it reads parquet extract the common logic and check wh
 
 102) We dont need to have flushing of manifest and reading it using get path and them put or read we can directly call a function to do so
 
-103) SchemaRegistry should have hashmap instead of cache which clears
-
-104) Manifest service should use the manifest_provider it already have store initialized we can use it also as an in-memory cache from there directly instead of having another cache in manifest service
-
-
-105) we have many places where we have:
-        let data = CachedTableData::new(table_def_arc);
-        schema_registry.insert(table_id.clone(), Arc::new(data));
-
-cange to to be put(TableDefinition) instead of CachedTableData and it creates the CachedTableData inside it
-
-106) pub struct ManifestCacheKey(String); //TODO: Should be consist of TableId and UserId?
 107) add a cache to: backend/crates/kalamdb-system/src/providers/manifest/manifest_store.rs to in-memory and cache through fetching for shared tables only manifests and make sure ManifestService uses the manifestprovider with the caching as well
 
 108) evict_stale_entries(&self, ttl_seconds: i64) -> Result<usize, StorageError> {
@@ -1223,25 +1211,45 @@ cange to to be put(TableDefinition) instead of CachedTableData and it creates th
     pub segments: Vec<SegmentMetadata>,
 
 
-116) change pub struct ManifestCacheKey to pub struct ManifestId and move it to: backend/crates/kalamdb-commons/src/models/ids/manifest_id.rs and make it similar to the other id's as well
-check if we can use macro for all the id's because they are so similar in code
 
 
-117) no need for flush notifications at all in the flushing or recieve flushing notifications, we cna rmeove this feature!
-        // Send flush notification if LiveQueryManager configured
-        if let Some(manager) = &self.live_query_manager {
-            let parquet_files = vec![parquet_path.clone()];
-            let table_id = self.table_id.as_ref().clone();
-            let notification =
-                ChangeNotification::flush(table_id.clone(), rows_count, parquet_files.clone());
-            let system_user = UserId::root();
-            manager.notify_table_change_async(system_user, table_id, notification);
+
+117) we have many places where we duplicate this similar logic:
+    /// Encode a PK value to bytes for index key
+    fn encode_pk_value(value: &ScalarValue) -> Vec<u8> {
+        match value {
+            ScalarValue::Int64(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::Int32(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::Int16(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::UInt64(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::UInt32(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s.as_bytes().to_vec(),
+            // For other types, convert to string
+            _ => value.to_string().into_bytes(),
         }
-
-also this is not needed:     /// Optional: Get LiveQueryManager for notifications
-    ///
-    /// Override if flush job supports live query notifications.
-    /// Default returns None (no notifications).
-    fn live_query_manager(&self) -> Option<&Arc<LiveQueryManager>> {
-        None
     }
+
+  I want to have one place inside commons backend/crates/kalamdb-commons/src/conversions
+  where we have all the mapping between datatypes/values/arrowtypes and other conversions we need across the codebase
+  like this file: backend/crates/kalamdb-commons/src/models/datatypes/arrow_conversion.rs
+
+
+
+
+118) every place where we have parition: String use instead Partition type, for example in this UserTablePkIndex and other places
+pub struct SharedTablePkIndex {
+    /// Partition name for the index
+    partition: String,
+
+119) change backend/crates/kalamdb-core/src/jobs/jobs_manager to backend/crates/kalamdb-core/src/jobs/manager
+
+120) should we move: backend/crates/kalamdb-core/src/error_extensions.rs to commons crate src/errors, and use the same error extension across the codebase? everywhere? because currently we have many scattered errors and error enums we can organize them better, also take a look at this one: backend/crates/kalamdb-core/src/error.rs
+maybe we can have a big list of all error codes with categories and then we can use them everywhere across the codebase, check if this is better for kalamdb or not, since each crate must be responsible for its error codes as well
+
+
+121) backend/crates/kalamdb-core/src/providers/streams.rs
+backend/crates/kalamdb-core/src/providers/users.rs
+backend/crates/kalamdb-core/src/providers/shared.rs
+check if we can move these to kalamdb-tables crate since they are table providers only for specific table types
+for the shared logic we can create in kalamdb-system a LiveQueryManager interface and also the interface for ManifestService 
+

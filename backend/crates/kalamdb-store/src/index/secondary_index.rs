@@ -25,8 +25,8 @@ where
 {
     /// Storage backend
     backend: Arc<dyn StorageBackend>,
-    /// Partition name for this index (e.g., "idx_users_username")
-    partition: String,
+    /// Partition for this index (e.g., "idx_users_username")
+    partition: Partition,
     /// Whether this is a unique index (one-to-one) or non-unique (one-to-many)
     unique: bool,
     /// Function to extract index key from entity
@@ -70,7 +70,7 @@ where
 
         Self {
             backend,
-            partition: partition_name.to_string(),
+            partition,
             unique: true,
             key_extractor: Arc::new(FunctionExtractor::new(key_extractor)),
         }
@@ -108,7 +108,7 @@ where
 
         Self {
             backend,
-            partition: partition_name.to_string(),
+            partition,
             unique: false,
             key_extractor: Arc::new(FunctionExtractor::new(key_extractor)),
         }
@@ -130,7 +130,6 @@ where
     /// # Errors
     /// - `StorageError::UniqueConstraintViolation` if unique index key already exists
     pub fn put(&self, primary_key: &str, new_entity: &T, old_entity: Option<&T>) -> Result<()> {
-        let partition = Partition::new(&self.partition);
         let new_key = self.key_extractor.extract(new_entity);
 
         // If updating, remove old index entry first
@@ -145,7 +144,7 @@ where
         // Add new index entry
         if self.unique {
             // Unique index: check for duplicates
-            if let Some(existing_pk) = self.backend.get(&partition, new_key.as_ref())? {
+            if let Some(existing_pk) = self.backend.get(&self.partition, new_key.as_ref())? {
                 let existing_pk_str = String::from_utf8_lossy(&existing_pk);
                 // Allow update of same primary key (not a duplicate)
                 if existing_pk_str != primary_key {
@@ -157,10 +156,10 @@ where
             }
 
             // Store: index_key → primary_key
-            self.backend.put(&partition, new_key.as_ref(), primary_key.as_bytes())?;
+            self.backend.put(&self.partition, new_key.as_ref(), primary_key.as_bytes())?;
         } else {
             // Non-unique index: append to list
-            let mut primary_keys = match self.backend.get(&partition, new_key.as_ref())? {
+            let mut primary_keys = match self.backend.get(&self.partition, new_key.as_ref())? {
                 Some(bytes) => {
                     let existing: Vec<String> = serde_json::from_slice(&bytes)
                         .map_err(|e| StorageError::SerializationError(e.to_string()))?;
@@ -176,7 +175,7 @@ where
 
             let bytes = serde_json::to_vec(&primary_keys)
                 .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-            self.backend.put(&partition, new_key.as_ref(), &bytes)?;
+            self.backend.put(&self.partition, new_key.as_ref(), &bytes)?;
         }
 
         Ok(())
@@ -197,14 +196,12 @@ where
 
     /// Internal helper to delete an index entry.
     fn delete_index_entry(&self, primary_key: &str, index_key: &K) -> Result<()> {
-        let partition = Partition::new(&self.partition);
-
         if self.unique {
             // Unique index: delete the mapping
-            self.backend.delete(&partition, index_key.as_ref())?;
+            self.backend.delete(&self.partition, index_key.as_ref())?;
         } else {
             // Non-unique index: remove from list
-            if let Some(bytes) = self.backend.get(&partition, index_key.as_ref())? {
+            if let Some(bytes) = self.backend.get(&self.partition, index_key.as_ref())? {
                 let mut primary_keys: Vec<String> = serde_json::from_slice(&bytes)
                     .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
@@ -212,12 +209,12 @@ where
 
                 if primary_keys.is_empty() {
                     // No more entities with this index key, delete the entry
-                    self.backend.delete(&partition, index_key.as_ref())?;
+                    self.backend.delete(&self.partition, index_key.as_ref())?;
                 } else {
                     // Update the list
                     let bytes = serde_json::to_vec(&primary_keys)
                         .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-                    self.backend.put(&partition, index_key.as_ref(), &bytes)?;
+                    self.backend.put(&self.partition, index_key.as_ref(), &bytes)?;
                 }
             }
         }
@@ -246,8 +243,7 @@ where
             "get_primary_key() only works for unique indexes. Use get_primary_keys() for non-unique indexes."
         );
 
-        let partition = Partition::new(&self.partition);
-        match self.backend.get(&partition, index_key.as_ref())? {
+        match self.backend.get(&self.partition, index_key.as_ref())? {
             Some(bytes) => {
                 let pk = String::from_utf8(bytes).map_err(|e| {
                     StorageError::SerializationError(format!("Invalid UTF-8 in primary key: {}", e))
@@ -271,8 +267,7 @@ where
     where
         Q: AsRef<[u8]> + ?Sized,
     {
-        let partition = Partition::new(&self.partition);
-        match self.backend.get(&partition, index_key.as_ref())? {
+        match self.backend.get(&self.partition, index_key.as_ref())? {
             Some(bytes) => {
                 if self.unique {
                     // Unique index: single primary key
@@ -305,8 +300,7 @@ where
     where
         Q: AsRef<[u8]> + ?Sized,
     {
-        let partition = Partition::new(&self.partition);
-        Ok(self.backend.get(&partition, index_key.as_ref())?.is_some())
+        Ok(self.backend.get(&self.partition, index_key.as_ref())?.is_some())
     }
 }
 

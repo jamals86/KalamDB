@@ -391,15 +391,14 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         log::debug!("Inserted user table row for user {} with _seq {}", user_id.as_str(), seq_id);
 
         // Fire live query notification (INSERT)
-        if let Some(manager) = &self.core.live_query_manager {
-            let table_id = self.core.table_id().clone();
+        let manager = self.core.app_context.live_query_manager();
+        let table_id = self.core.table_id().clone();
 
-            // Build complete row including system columns (_seq, _deleted)
-            let row = Self::build_notification_row(&entity);
+        // Build complete row including system columns (_seq, _deleted)
+        let row = Self::build_notification_row(&entity);
 
-            let notification = ChangeNotification::insert(table_id.clone(), row);
-            manager.notify_table_change_async(user_id.clone(), table_id, notification);
-        }
+        let notification = ChangeNotification::insert(table_id.clone(), row);
+        manager.notify_table_change_async(user_id.clone(), table_id, notification);
 
         Ok(row_key)
     }
@@ -538,26 +537,20 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         );
 
         // Fire live query notifications (one per row - async fire-and-forget)
-        if let Some(manager) = &self.core.live_query_manager {
-            let table_id = self.core.table_id().clone();
-            log::debug!(
-                "UserTableProvider::insert_batch: Sending {} notifications for user={}, table={}",
-                entries.len(),
-                user_id.as_str(),
-                table_id
-            );
+        let manager = self.core.app_context.live_query_manager();
+        let table_id = self.core.table_id().clone();
+        log::debug!(
+            "UserTableProvider::insert_batch: Sending {} notifications for user={}, table={}",
+            entries.len(),
+            user_id.as_str(),
+            table_id
+        );
 
-            for (_row_key, entity) in entries.iter() {
-                // Build complete row including system columns (_seq, _deleted)
-                let row = Self::build_notification_row(entity);
-                let notification = ChangeNotification::insert(table_id.clone(), row);
-                manager.notify_table_change_async(user_id.clone(), table_id.clone(), notification);
-            }
-        } else {
-            log::debug!(
-                "UserTableProvider::insert_batch: No live_query_manager for table={}",
-                self.core.table_id()
-            );
+        for (_row_key, entity) in entries.iter() {
+            // Build complete row including system columns (_seq, _deleted)
+            let row = Self::build_notification_row(entity);
+            let notification = ChangeNotification::insert(table_id.clone(), row);
+            manager.notify_table_change_async(user_id.clone(), table_id.clone(), notification);
         }
 
         Ok(row_keys)
@@ -655,18 +648,17 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // Fire live query notification (UPDATE)
-        if let Some(manager) = &self.core.live_query_manager {
-            let table_id = self.core.table_id().clone();
+        let manager = self.core.app_context.live_query_manager();
+        let table_id = self.core.table_id().clone();
 
-            // Old data: latest prior resolved row (with system columns)
-            let old_row = Self::build_notification_row(&latest_row);
+        // Old data: latest prior resolved row (with system columns)
+        let old_row = Self::build_notification_row(&latest_row);
 
-            // New data: merged entity (with system columns)
-            let new_row = Self::build_notification_row(&entity);
+        // New data: merged entity (with system columns)
+        let new_row = Self::build_notification_row(&entity);
 
-            let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
-            manager.notify_table_change_async(user_id.clone(), table_id, notification);
-        }
+        let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
+        manager.notify_table_change_async(user_id.clone(), table_id, notification);
         Ok(row_key)
     }
 
@@ -729,18 +721,17 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // Fire live query notification (UPDATE)
-        if let Some(manager) = &self.core.live_query_manager {
-            let table_id = self.core.table_id().clone();
+        let manager = self.core.app_context.live_query_manager();
+        let table_id = self.core.table_id().clone();
 
-            // Old data: latest prior resolved row (with system columns)
-            let old_row = Self::build_notification_row(&latest_row);
+        // Old data: latest prior resolved row (with system columns)
+        let old_row = Self::build_notification_row(&latest_row);
 
-            // New data: merged entity (with system columns)
-            let new_row = Self::build_notification_row(&entity);
+        // New data: merged entity (with system columns)
+        let new_row = Self::build_notification_row(&entity);
 
-            let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
-            manager.notify_table_change_async(user_id.clone(), table_id, notification);
-        }
+        let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
+        manager.notify_table_change_async(user_id.clone(), table_id, notification);
         Ok(row_key)
     }
 
@@ -804,15 +795,14 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // Fire live query notification (DELETE soft)
-        if let Some(manager) = &self.core.live_query_manager {
-            let table_id = self.core.table_id().clone();
+        let manager = self.core.app_context.live_query_manager();
+        let table_id = self.core.table_id().clone();
 
-            // Provide tombstone entity with system columns for filter matching
-            let row = Self::build_notification_row(&entity);
+        // Provide tombstone entity with system columns for filter matching
+        let row = Self::build_notification_row(&entity);
 
-            let notification = ChangeNotification::delete_soft(table_id.clone(), row);
-            manager.notify_table_change_async(user_id.clone(), table_id, notification);
-        }
+        let notification = ChangeNotification::delete_soft(table_id.clone(), row);
+        manager.notify_table_change_async(user_id.clone(), table_id, notification);
         Ok(())
     }
 

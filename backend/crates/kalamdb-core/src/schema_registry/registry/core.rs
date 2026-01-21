@@ -218,7 +218,6 @@ impl SchemaRegistry {
                 
                 let core = Arc::new(
                     TableProviderCore::from_app_context(app_ctx, table_id.clone(), TableType::User)
-                        .with_live_query_manager(app_ctx.live_query_manager()),
                 );
 
                 let provider = UserTableProvider::try_new(core, user_table_store, pk_field)?;
@@ -233,7 +232,6 @@ impl SchemaRegistry {
 
                 let core = Arc::new(
                     TableProviderCore::from_app_context(app_ctx, table_id.clone(), TableType::Shared)
-                        .with_live_query_manager(app_ctx.live_query_manager()),
                 );
 
                 let provider = SharedTableProvider::new(core, shared_store, pk_field);
@@ -262,7 +260,6 @@ impl SchemaRegistry {
 
                 let core = Arc::new(
                     TableProviderCore::from_app_context(app_ctx, table_id.clone(), TableType::Stream)
-                        .with_live_query_manager(app_ctx.live_query_manager()),
                 );
                 
                 let provider = StreamTableProvider::new(core, stream_store, Some(ttl_seconds), pk_field);

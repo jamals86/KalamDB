@@ -11,6 +11,7 @@
 use crate::common::partition_name;
 use kalamdb_commons::ids::{SeqId, StreamTableRowId};
 use kalamdb_commons::models::{StreamTableRow, UserId};
+use kalamdb_commons::storage::Partition;
 use kalamdb_commons::TableId;
 use kalamdb_sharding::ShardRouter;
 use kalamdb_store::entity_store::ScanDirection;
@@ -34,7 +35,7 @@ pub struct StreamTableStoreConfig {
 #[derive(Clone)]
 pub struct StreamTableStore {
     table_id: TableId,
-    partition: String,
+    partition: Partition,
     log_store: Arc<MemoryStreamLogStore>,
 }
 
@@ -42,7 +43,7 @@ impl StreamTableStore {
     /// Create a new stream table store (in-memory backed)
     pub fn new(
         table_id: TableId,
-        partition: impl Into<String>,
+        partition: impl Into<Partition>,
         _config: StreamTableStoreConfig,
     ) -> Self {
         let log_store = Arc::new(MemoryStreamLogStore::with_table_id(table_id.clone()));
@@ -55,7 +56,7 @@ impl StreamTableStore {
     }
 
     /// Returns the partition name.
-    pub fn partition(&self) -> &str {
+    pub fn partition(&self) -> &Partition {
         &self.partition
     }
 

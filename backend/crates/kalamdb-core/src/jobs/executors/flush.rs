@@ -88,7 +88,6 @@ impl FlushExecutor {
         // Get dependencies from AppContext
         let app_ctx = &ctx.app_ctx;
         let schema_registry = app_ctx.schema_registry();
-        let live_query_manager = app_ctx.live_query_manager();
 
         // // Get table definition (optional)
         // let table_def = schema_registry
@@ -143,8 +142,7 @@ impl FlushExecutor {
                     schema.clone(),
                     schema_registry.clone(),
                     app_ctx.manifest_service(),
-                )
-                .with_live_query_manager(live_query_manager);
+                );
 
                 // Execute in blocking thread pool to avoid starving async runtime
                 tokio::task::spawn_blocking(move || flush_job.execute())
@@ -184,8 +182,7 @@ impl FlushExecutor {
                     schema.clone(),
                     schema_registry.clone(),
                     app_ctx.manifest_service(),
-                )
-                .with_live_query_manager(live_query_manager);
+                );
 
                 // Execute in blocking thread pool to avoid starving async runtime
                 tokio::task::spawn_blocking(move || flush_job.execute())

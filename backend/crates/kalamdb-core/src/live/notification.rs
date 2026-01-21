@@ -170,9 +170,7 @@ impl NotificationService {
         for entry in all_handles.iter() {
             let live_id = entry.key();
             let handle = entry.value();
-            let should_notify = if matches!(change_notification.change_type, ChangeType::Flush) {
-                true
-            } else if let Some(ref filter_expr) = handle.filter_expr {
+            let should_notify = if let Some(ref filter_expr) = handle.filter_expr {
                 match filter_matches(filter_expr, filtering_row) {
                     Ok(true) => true,
                     Ok(false) => {
@@ -282,10 +280,7 @@ impl NotificationService {
                 ),
                 ChangeType::Delete => {
                     kalamdb_commons::Notification::delete(live_id_str, vec![row_json])
-                },
-                ChangeType::Flush => {
-                    kalamdb_commons::Notification::insert(live_id_str, vec![row_json])
-                },
+                }
             };
 
             // Send notification through channel (non-blocking, bounded)

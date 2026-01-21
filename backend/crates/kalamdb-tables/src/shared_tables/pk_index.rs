@@ -37,8 +37,8 @@ use super::SharedTableRow;
 /// This index allows efficient lookups by PK value,
 /// returning all MVCC versions of rows with matching PK.
 pub struct SharedTablePkIndex {
-    /// Partition name for the index
-    partition: String,
+    /// Partition for the index
+    partition: Partition,
     /// Name of the primary key field (e.g., "id", "product_id", etc.)
     pk_field_name: String,
 }
@@ -52,7 +52,7 @@ impl SharedTablePkIndex {
     pub fn new(table_id: &kalamdb_commons::TableId, pk_field_name: &str) -> Self {
         let partition = format!("shared_{}_pk_idx", table_id); // TableId Display: "namespace:table"
         Self {
-            partition,
+            partition: Partition::new(partition),
             pk_field_name: pk_field_name.to_string(),
         }
     }
@@ -100,7 +100,7 @@ impl SharedTablePkIndex {
 
 impl IndexDefinition<SharedTableRowId, SharedTableRow> for SharedTablePkIndex {
     fn partition(&self) -> Partition {
-        Partition::new(&self.partition)
+        self.partition.clone()
     }
 
     fn indexed_columns(&self) -> Vec<&str> {

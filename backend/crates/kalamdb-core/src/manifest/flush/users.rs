@@ -7,13 +7,10 @@ use super::base::{FlushJobResult, FlushMetadata, TableFlush};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestService};
-use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use crate::schema_registry::SchemaRegistry;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{TableId, UserId};
@@ -34,7 +31,6 @@ pub struct UserTableFlushJob {
     schema: SchemaRef,
     unified_cache: Arc<SchemaRegistry>,
     app_context: Arc<AppContext>,
-    live_query_manager: Option<Arc<LiveQueryManager>>,
     manifest_helper: FlushManifestHelper,
     /// Bloom filter columns (PRIMARY KEY + _seq) - fetched once per job for efficiency
     bloom_filter_columns: Vec<String>,
@@ -77,32 +73,20 @@ impl UserTableFlushJob {
             schema,
             unified_cache,
             app_context,
-            live_query_manager: None,
             manifest_helper,
             bloom_filter_columns,
             indexed_columns,
         }
     }
 
-    /// Set the LiveQueryManager for flush notifications (builder pattern)
-    pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
-        self.live_query_manager = Some(manager);
-        self
-    }
-
     /// Get current schema version for the table
     fn get_schema_version(&self) -> u32 {
-        self.unified_cache
-            .get(&self.table_id)
-            .map(|cached| cached.table.schema_version)
-            .unwrap_or(1)
+        super::base::helpers::get_schema_version(&self.unified_cache, &self.table_id)
     }
 
     /// Convert JSON rows to Arrow RecordBatch
     fn rows_to_record_batch(&self, rows: &[(Vec<u8>, Row)]) -> Result<RecordBatch, KalamDbError> {
-        let arrow_rows: Vec<Row> = rows.iter().map(|(_, row)| row.clone()).collect();
-        json_rows_to_arrow_batch(&self.schema, arrow_rows)
-            .into_kalamdb_error("Failed to build RecordBatch")
+        super::base::helpers::rows_to_arrow_batch(&self.schema, rows)
     }
 
     /// Flush accumulated rows for a single user to Parquet
@@ -334,16 +318,10 @@ impl TableFlush for UserTableFlushJob {
                 let user_id = row_id.user_id().as_str().to_string();
 
                 // Extract PK value from fields
-                let pk_value = match row.fields.get(&pk_field) {
-                    Some(v) if !v.is_null() => v.to_string(),
-                    _ => {
-                        // No PK or null PK - use unique _seq as fallback to avoid collapsing
-                        format!("_seq:{}", row._seq.as_i64())
-                    },
-                };
+                let seq_val = row._seq.as_i64();
+                let pk_value = helpers::extract_pk_value(&row.fields, &pk_field, seq_val);
 
                 let group_key = (user_id.clone(), pk_value.clone());
-                let seq_val = row._seq.as_i64();
 
                 // Track deleted rows
                 if row._deleted {
@@ -384,14 +362,7 @@ impl TableFlush for UserTableFlushJob {
             }
 
             // Convert to JSON and inject system columns
-            let mut row_data = row.fields.clone();
-            row_data.values.insert(
-                SystemColumnNames::SEQ.to_string(),
-                ScalarValue::Int64(Some(row._seq.as_i64())),
-            );
-            row_data
-                .values
-                .insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(false)));
+            let row_data = helpers::add_system_columns(row.fields.clone(), row._seq.as_i64(), false);
 
             rows_by_user.entry(user_id).or_default().push((key_bytes, row_data));
         }
@@ -473,18 +444,6 @@ impl TableFlush for UserTableFlushJob {
                   self.table_id,
                   total_rows_flushed, rows_by_user.len(), parquet_files.len());
 
-        // Send flush notification if LiveQueryManager configured
-        if let Some(manager) = &self.live_query_manager {
-            let table_id = self.table_id.as_ref().clone();
-            let notification = ChangeNotification::flush(
-                table_id.clone(),
-                total_rows_flushed,
-                parquet_files.clone(),
-            );
-            let root_user = UserId::root();
-            manager.notify_table_change_async(root_user, table_id, notification);
-        }
-
         Ok(FlushJobResult {
             rows_flushed: total_rows_flushed,
             parquet_files,
@@ -494,9 +453,5 @@ impl TableFlush for UserTableFlushJob {
 
     fn table_identifier(&self) -> String {
         self.table_id.full_name()
-    }
-
-    fn live_query_manager(&self) -> Option<&Arc<LiveQueryManager>> {
-        self.live_query_manager.as_ref()
     }
 }

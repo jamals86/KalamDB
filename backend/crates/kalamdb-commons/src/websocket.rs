@@ -439,9 +439,6 @@ pub enum ChangeType {
 
     /// Row(s) deleted
     Delete,
-
-    /// Parquet flush completion
-    Flush,
 }
 
 impl WebSocketMessage {

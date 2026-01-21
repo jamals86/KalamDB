@@ -56,12 +56,12 @@ mod tests {
     #[test]
     fn test_create_store() {
         let store = create_test_store();
-        assert_eq!(
-            store.partition(),
+        let expected_partition = kalamdb_store::Partition::new(
             SystemTable::AuditLog
                 .column_family_name()
                 .expect("AuditLog is a table, not a view")
         );
+        assert_eq!(store.partition(), &expected_partition);
     }
 
     #[test]

@@ -19,9 +19,7 @@
 //! ```
 
 use crate::error::KalamDbError;
-use crate::live_query::manager::LiveQueryManager;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 /// Metadata for user table flush operations
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -177,14 +175,6 @@ pub trait TableFlush: Send + Sync {
     ///
     /// Should return `namespace.table_name` format
     fn table_identifier(&self) -> String;
-
-    /// Optional: Get LiveQueryManager for notifications
-    ///
-    /// Override if flush job supports live query notifications.
-    /// Default returns None (no notifications).
-    fn live_query_manager(&self) -> Option<&Arc<LiveQueryManager>> {
-        None
-    }
 }
 
 /// Common configuration for flush jobs
@@ -197,7 +187,14 @@ pub mod config {
 
 /// Common helper functions for flush operations
 pub mod helpers {
+    use crate::error::KalamDbError;
+    use crate::error_extensions::KalamDbResultExt;
+    use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
     use datafusion::arrow::datatypes::SchemaRef;
+    use datafusion::arrow::record_batch::RecordBatch;
+    use datafusion::scalar::ScalarValue;
+    use kalamdb_commons::constants::SystemColumnNames;
+    use kalamdb_commons::models::rows::Row;
 
     /// Extract primary key field name from Arrow schema
     ///
@@ -225,6 +222,52 @@ pub mod helpers {
         } else {
             0.0
         }
+    }
+
+    /// Convert rows with _seq and _deleted system columns to Arrow RecordBatch
+    ///
+    /// This is the common pattern used by both user and shared table flush.
+    /// Adds _seq and _deleted columns to each row before conversion.
+    pub fn rows_to_arrow_batch(
+        schema: &SchemaRef,
+        rows: &[(Vec<u8>, Row)],
+    ) -> Result<RecordBatch, KalamDbError> {
+        let arrow_rows: Vec<Row> = rows.iter().map(|(_, row)| row.clone()).collect();
+        json_rows_to_arrow_batch(schema, arrow_rows).into_kalamdb_error("Failed to build RecordBatch")
+    }
+
+    /// Get schema version from cached table data
+    pub fn get_schema_version(
+        unified_cache: &crate::schema_registry::SchemaRegistry,
+        table_id: &kalamdb_commons::models::TableId,
+    ) -> u32 {
+        unified_cache
+            .get(table_id)
+            .map(|cached| cached.table.schema_version)
+            .unwrap_or(1)
+    }
+
+    /// Extract PK value from row fields with _seq fallback
+    ///
+    /// Returns the primary key value as string, or "_seq:<value>" if PK is null/missing.
+    pub fn extract_pk_value(fields: &Row, pk_field: &str, seq: i64) -> String {
+        match fields.get(pk_field) {
+            Some(v) if !v.is_null() => v.to_string(),
+            _ => format!("_seq:{}", seq),
+        }
+    }
+
+    /// Add system columns (_seq, _deleted) to a Row
+    pub fn add_system_columns(mut row: Row, seq: i64, deleted: bool) -> Row {
+        row.values.insert(
+            SystemColumnNames::SEQ.to_string(),
+            ScalarValue::Int64(Some(seq)),
+        );
+        row.values.insert(
+            SystemColumnNames::DELETED.to_string(),
+            ScalarValue::Boolean(Some(deleted)),
+        );
+        row
     }
 }
 

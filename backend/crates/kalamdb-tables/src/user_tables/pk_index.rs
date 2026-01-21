@@ -39,8 +39,8 @@ use kalamdb_store::IndexDefinition;
 /// returning all MVCC versions of rows with matching PK.
 /// The user_id prefix ensures the same PK value can exist for different users.
 pub struct UserTablePkIndex {
-    /// Partition name for the index
-    partition: String,
+    /// Partition for the index
+    partition: Partition,
     /// Name of the primary key field (e.g., "id", "user_id", etc.)
     pk_field_name: String,
 }
@@ -52,9 +52,9 @@ impl UserTablePkIndex {
     /// * `table_id` - Table identifier (namespace + table name)
     /// * `pk_field_name` - Name of the primary key column
     pub fn new(table_id: &kalamdb_commons::TableId, pk_field_name: &str) -> Self {
-        let partition = format!("user_{}_pk_idx", table_id); // TableId Display: "namespace:table"
+        let partition_name = format!("user_{}_pk_idx", table_id); // TableId Display: "namespace:table"
         Self {
-            partition,
+            partition: Partition::new(partition_name),
             pk_field_name: pk_field_name.to_string(),
         }
     }
@@ -102,7 +102,7 @@ impl UserTablePkIndex {
 
 impl IndexDefinition<UserTableRowId, UserTableRow> for UserTablePkIndex {
     fn partition(&self) -> Partition {
-        Partition::new(&self.partition)
+        self.partition.clone()
     }
 
     fn indexed_columns(&self) -> Vec<&str> {

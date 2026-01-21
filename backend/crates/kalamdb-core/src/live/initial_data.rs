@@ -11,7 +11,7 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
 use datafusion::arrow::array::{Array, Int64Array};
-use kalamdb_commons::constants::{AuthConstants, SystemColumnNames};
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{ReadContext, TableId, UserId};
@@ -350,10 +350,10 @@ impl InitialDataFetcher {
         where_clause: Option<&str>,
     ) -> Result<Option<SeqId>, KalamDbError> {
         // Extract user_id from LiveId for RLS
-        let user_id = UserId::new(live_id.user_id().to_string());
+        let user_id = live_id.user_id().clone();
 
         // Determine role based on user_id
-        let role = if user_id.as_str() == AuthConstants::DEFAULT_ROOT_USER_ID {
+        let role = if user_id.is_admin() {
             Role::System
         } else {
             Role::User

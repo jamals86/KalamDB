@@ -7,16 +7,13 @@ use super::base::{FlushJobResult, FlushMetadata, TableFlush};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::live_query::{ChangeNotification, LiveQueryManager};
 use crate::manifest::{FlushManifestHelper, ManifestService};
-use crate::providers::arrow_json_conversion::json_rows_to_arrow_batch;
 use crate::schema_registry::SchemaRegistry;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::rows::Row;
-use kalamdb_commons::models::{TableId, UserId};
+use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
 use std::sync::Arc;
@@ -31,7 +28,6 @@ pub struct SharedTableFlushJob {
     schema: SchemaRef,
     unified_cache: Arc<SchemaRegistry>,
     app_context: Arc<AppContext>,
-    live_query_manager: Option<Arc<LiveQueryManager>>,
     manifest_helper: FlushManifestHelper,
     /// Bloom filter columns (PRIMARY KEY + _seq) - fetched once per job for efficiency
     bloom_filter_columns: Vec<String>,
@@ -78,25 +74,15 @@ impl SharedTableFlushJob {
             schema,
             unified_cache,
             app_context,
-            live_query_manager: None,
             manifest_helper,
             bloom_filter_columns,
             indexed_columns,
         }
     }
 
-    /// Set the live query manager for this flush job (builder pattern)
-    pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
-        self.live_query_manager = Some(manager);
-        self
-    }
-
     /// Get current schema version for the table
     fn get_schema_version(&self) -> u32 {
-        self.unified_cache
-            .get(&self.table_id)
-            .map(|cached| cached.table.schema_version)
-            .unwrap_or(1)
+        super::base::helpers::get_schema_version(&self.unified_cache, &self.table_id)
     }
 
     /// Generate batch filename using manifest max_batch (T115)
@@ -114,9 +100,7 @@ impl SharedTableFlushJob {
 
     /// Convert stored rows to Arrow RecordBatch without JSON round-trips
     fn rows_to_record_batch(&self, rows: &[(Vec<u8>, Row)]) -> Result<RecordBatch, KalamDbError> {
-        let arrow_rows: Vec<Row> = rows.iter().map(|(_, row)| row.clone()).collect();
-        json_rows_to_arrow_batch(&self.schema, arrow_rows)
-            .into_kalamdb_error("Failed to build RecordBatch")
+        super::base::helpers::rows_to_arrow_batch(&self.schema, rows)
     }
 
     /// Delete flushed rows from RocksDB after successful Parquet write
@@ -193,15 +177,8 @@ impl TableFlush for SharedTableFlushJob {
                 all_keys_to_delete.push(key_bytes.clone());
 
                 // Extract PK value from fields
-                let pk_value = match row.fields.get(&pk_field) {
-                    Some(v) if !v.is_null() => v.to_string(),
-                    _ => {
-                        // No PK or null PK - use unique _seq as fallback
-                        format!("_seq:{}", row._seq.as_i64())
-                    },
-                };
-
                 let seq_val = row._seq.as_i64();
+                let pk_value = helpers::extract_pk_value(&row.fields, &pk_field, seq_val);
 
                 // Track deleted rows
                 if row._deleted {
@@ -239,15 +216,7 @@ impl TableFlush for SharedTableFlushJob {
                 continue;
             }
 
-            let mut row_data = row.fields.clone();
-            row_data.values.insert(
-                SystemColumnNames::SEQ.to_string(),
-                ScalarValue::Int64(Some(row._seq.as_i64())),
-            );
-            row_data
-                .values
-                .insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(false)));
-
+            let row_data = helpers::add_system_columns(row.fields.clone(), row._seq.as_i64(), false);
             rows.push((key_bytes, row_data));
         }
 
@@ -381,16 +350,6 @@ impl TableFlush for SharedTableFlushJob {
 
         let parquet_path = destination_path;
 
-        // Send flush notification if LiveQueryManager configured
-        if let Some(manager) = &self.live_query_manager {
-            let parquet_files = vec![parquet_path.clone()];
-            let table_id = self.table_id.as_ref().clone();
-            let notification =
-                ChangeNotification::flush(table_id.clone(), rows_count, parquet_files.clone());
-            let system_user = UserId::root();
-            manager.notify_table_change_async(system_user, table_id, notification);
-        }
-
         Ok(FlushJobResult {
             rows_flushed: rows_count,
             parquet_files: vec![parquet_path],
@@ -400,9 +359,5 @@ impl TableFlush for SharedTableFlushJob {
 
     fn table_identifier(&self) -> String {
         self.table_id.full_name()
-    }
-
-    fn live_query_manager(&self) -> Option<&Arc<LiveQueryManager>> {
-        self.live_query_manager.as_ref()
     }
 }

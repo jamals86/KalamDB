@@ -70,30 +70,6 @@ impl ChangeNotification {
             row_id: Some(row_id),
         }
     }
-
-    /// Create a FLUSH notification (Parquet flush completion)
-    pub fn flush(
-        table_id: kalamdb_commons::models::TableId,
-        row_count: usize,
-        parquet_files: Vec<String>,
-    ) -> Self {
-        let mut values = BTreeMap::new();
-        values.insert("row_count".to_string(), ScalarValue::Int64(Some(row_count as i64)));
-        let files_json = serde_json::to_string(&parquet_files).unwrap_or_default();
-        values.insert("parquet_files".to_string(), ScalarValue::Utf8(Some(files_json)));
-        values.insert(
-            "flushed_at".to_string(),
-            ScalarValue::Int64(Some(chrono::Utc::now().timestamp_millis())),
-        );
-
-        Self {
-            change_type: ChangeType::Flush,
-            table_id,
-            row_data: Row::new(values),
-            old_data: None,
-            row_id: None,
-        }
-    }
 }
 
 /// Result of registering a live query subscription with initial data
