@@ -10,8 +10,7 @@ use crate::models::TableId;
 use crate::UserId;
 
 /// Synchronization state of a cached manifest entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SyncState {
     /// Cache is in sync with storage (manifest.json on disk matches cache)
     #[default]
@@ -25,6 +24,94 @@ pub enum SyncState {
     Stale,
     /// Error occurred during last sync attempt
     Error,
+}
+
+impl Serialize for SyncState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&self.to_string())
+        } else {
+            let value = match self {
+                SyncState::InSync => 0u8,
+                SyncState::PendingWrite => 1u8,
+                SyncState::Syncing => 2u8,
+                SyncState::Stale => 3u8,
+                SyncState::Error => 4u8,
+            };
+            serializer.serialize_u8(value)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SyncState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct SyncStateVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for SyncStateVisitor {
+            type Value = SyncState;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a sync state string or integer")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match value {
+                    "in_sync" => Ok(SyncState::InSync),
+                    "pending_write" => Ok(SyncState::PendingWrite),
+                    "syncing" => Ok(SyncState::Syncing),
+                    "stale" => Ok(SyncState::Stale),
+                    "error" => Ok(SyncState::Error),
+                    _ => Ok(SyncState::Error),
+                }
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(match value {
+                    0 => SyncState::InSync,
+                    1 => SyncState::PendingWrite,
+                    2 => SyncState::Syncing,
+                    3 => SyncState::Stale,
+                    4 => SyncState::Error,
+                    _ => SyncState::Error,
+                })
+            }
+
+            fn visit_u8<E>(self, value: u8) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                self.visit_u64(value as u64)
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if value < 0 {
+                    return Ok(SyncState::Error);
+                }
+                self.visit_u64(value as u64)
+            }
+        }
+
+        if deserializer.is_human_readable() {
+            deserializer.deserialize_any(SyncStateVisitor)
+        } else {
+            deserializer.deserialize_u8(SyncStateVisitor)
+        }
+    }
 }
 
 impl std::fmt::Display for SyncState {
@@ -167,7 +254,7 @@ impl ManifestCacheEntry {
 }
 
 /// Statistics for a single column in a segment.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ColumnStats {
     /// Minimum value in the column (serialized as JSON value)
     pub min: Option<serde_json::Value>,
@@ -177,6 +264,74 @@ pub struct ColumnStats {
 
     /// Number of null values
     pub null_count: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ColumnStatsHuman {
+    min: Option<serde_json::Value>,
+    max: Option<serde_json::Value>,
+    null_count: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ColumnStatsBinary {
+    min: Option<String>,
+    max: Option<String>,
+    null_count: Option<i64>,
+}
+
+impl Serialize for ColumnStats {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            ColumnStatsHuman {
+                min: self.min.clone(),
+                max: self.max.clone(),
+                null_count: self.null_count,
+            }
+            .serialize(serializer)
+        } else {
+            ColumnStatsBinary {
+                min: self.min.as_ref().map(|v| v.to_string()),
+                max: self.max.as_ref().map(|v| v.to_string()),
+                null_count: self.null_count,
+            }
+            .serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ColumnStats {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let human = ColumnStatsHuman::deserialize(deserializer)?;
+            Ok(Self {
+                min: human.min,
+                max: human.max,
+                null_count: human.null_count,
+            })
+        } else {
+            let binary = ColumnStatsBinary::deserialize(deserializer)?;
+            let min = match binary.min {
+                Some(value) => Some(serde_json::from_str(&value).map_err(serde::de::Error::custom)?),
+                None => None,
+            };
+            let max = match binary.max {
+                Some(value) => Some(serde_json::from_str(&value).map_err(serde::de::Error::custom)?),
+                None => None,
+            };
+            Ok(Self {
+                min,
+                max,
+                null_count: binary.null_count,
+            })
+        }
+    }
 }
 
 /// Segment metadata tracking a data file (Parquet) or hot storage segment.

@@ -39,6 +39,15 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
             .into_kalamdb_error("Failed to get storage")?;
 
         if storage.is_none() {
+            if statement.if_exists {
+                return Ok(ExecutionResult::Success {
+                    message: format!(
+                        "Storage '{}' does not exist (skipped)",
+                        statement.storage_id.as_str()
+                    ),
+                });
+            }
+
             return Err(KalamDbError::InvalidOperation(format!(
                 "Storage '{}' not found",
                 statement.storage_id.as_str()
@@ -119,6 +128,7 @@ mod tests {
         let handler = DropStorageHandler::new(app_ctx);
         let stmt = DropStorageStatement {
             storage_id: StorageId::new("test_storage"),
+            if_exists: false,
         };
 
         // User role should be denied
@@ -159,6 +169,7 @@ mod tests {
         let handler = DropStorageHandler::new(app_ctx);
         let stmt = DropStorageStatement {
             storage_id: StorageId::from(storage_id.as_str()),
+            if_exists: false,
         };
         let ctx = create_test_context(Role::System);
         let result = handler.execute(stmt, vec![], &ctx).await;
@@ -181,6 +192,7 @@ mod tests {
         let handler = DropStorageHandler::new(app_ctx);
         let stmt = DropStorageStatement {
             storage_id: StorageId::from("nonexistent_storage"),
+            if_exists: false,
         };
         let ctx = create_test_context(Role::System);
 

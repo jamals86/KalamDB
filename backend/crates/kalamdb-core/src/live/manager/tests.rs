@@ -1,8 +1,7 @@
 use super::*;
 use crate::live::connections_manager::ConnectionsManager;
-use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::SqlExecutor;
-use crate::test_helpers::{create_test_session_simple, test_app_context_simple};
+use crate::test_helpers::test_app_context_simple;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, TableId};
 use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
@@ -44,10 +43,8 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
 
     let live_queries_provider = app_ctx.system_tables().live_queries();
-    let schema_registry = Arc::new(SchemaRegistry::new(128));
-    schema_registry.set_app_context(Arc::clone(&app_ctx));
-    let base_session_context = create_test_session_simple();
-    schema_registry.set_base_session_context(Arc::clone(&base_session_context));
+    let schema_registry = app_ctx.schema_registry();
+    let base_session_context = app_ctx.base_session_context();
 
     // Create table stores for testing (using default namespace and table)
     let test_namespace = NamespaceId::new("user1");
@@ -103,7 +100,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         None,
     )
     .unwrap();
-    let messages_table_id =
+    let _messages_table_id =
         TableId::new(messages_table.namespace_id.clone(), messages_table.table_name.clone());
     schema_registry.put(messages_table).unwrap();
 

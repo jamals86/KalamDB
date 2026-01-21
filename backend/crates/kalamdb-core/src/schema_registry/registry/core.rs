@@ -8,6 +8,7 @@ use dashmap::DashMap;
 use datafusion::datasource::TableProvider;
 use kalamdb_commons::models::schemas::{TableDefinition, TableType};
 use kalamdb_commons::models::{TableId, TableVersionId};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 /// Unified schema cache for table metadata, schemas, and providers
@@ -26,6 +27,12 @@ pub struct SchemaRegistry {
 
     /// Cache for specific table versions (for reading old Parquet files)
     version_cache: DashMap<TableVersionId, Arc<CachedTableData>>,
+
+    /// Cache hit counter (latest versions)
+    cache_hits: AtomicU64,
+
+    /// Cache miss counter (latest versions)
+    cache_misses: AtomicU64,
 
     /// DataFusion base session context for table registration (set once during init)
     base_session_context: OnceLock<Arc<datafusion::prelude::SessionContext>>,
@@ -49,6 +56,8 @@ impl SchemaRegistry {
             app_context: OnceLock::new(),
             table_cache: DashMap::new(),
             version_cache: DashMap::new(),
+            cache_hits: AtomicU64::new(0),
+            cache_misses: AtomicU64::new(0),
             base_session_context: OnceLock::new(),
         }
     }
@@ -108,7 +117,16 @@ impl SchemaRegistry {
 
     /// Get cached table data for a table (latest version)
     pub fn get(&self, table_id: &TableId) -> Option<Arc<CachedTableData>> {
-        self.table_cache.get(table_id).map(|entry| entry.value().clone())
+        match self.table_cache.get(table_id) {
+            Some(entry) => {
+                self.cache_hits.fetch_add(1, Ordering::Relaxed);
+                Some(entry.value().clone())
+            }
+            None => {
+                self.cache_misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        }
     }
 
     /// Register a new or updated table definition (CREATE/ALTER)
@@ -325,16 +343,25 @@ impl SchemaRegistry {
 
 
     /// Get cache statistics
-    pub fn stats(&self) -> (usize, usize) {
+    pub fn stats(&self) -> (usize, usize, usize, f64) {
         let size = self.table_cache.len();
-        let version_size = self.version_cache.len();
-        (size, version_size)
+        let hits = self.cache_hits.load(Ordering::Relaxed) as usize;
+        let misses = self.cache_misses.load(Ordering::Relaxed) as usize;
+        let total = hits + misses;
+        let hit_rate = if total == 0 {
+            0.0
+        } else {
+            hits as f64 / total as f64
+        };
+        (size, hits, misses, hit_rate)
     }
 
     /// Clear all cached data
     pub fn clear(&self) {
         self.table_cache.clear();
         self.version_cache.clear();
+        self.cache_hits.store(0, Ordering::Relaxed);
+        self.cache_misses.store(0, Ordering::Relaxed);
     }
 
     /// Get number of cached entries (latest versions only)

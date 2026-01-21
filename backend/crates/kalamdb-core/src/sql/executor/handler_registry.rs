@@ -225,6 +225,7 @@ impl HandlerRegistry {
         registry.register_typed(
             SqlStatementKind::DropStorage(kalamdb_sql::ddl::DropStorageStatement {
                 storage_id: kalamdb_commons::StorageId::from(""),
+                if_exists: false,
             }),
             DropStorageHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {

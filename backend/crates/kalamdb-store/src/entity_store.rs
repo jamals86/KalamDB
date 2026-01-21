@@ -146,7 +146,30 @@ impl KSerializable for SystemStorage {}
 
 impl KSerializable for TableDefinition {}
 
-impl KSerializable for ManifestCacheEntry {}
+impl KSerializable for ManifestCacheEntry {
+    fn encode(&self) -> Result<Vec<u8>> {
+        serde_json::to_vec(self).map_err(|e| {
+            StorageError::SerializationError(format!("json encode failed: {}", e))
+        })
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self> {
+        match serde_json::from_slice(bytes) {
+            Ok(entity) => Ok(entity),
+            Err(json_err) => {
+                let config = standard();
+                decode_from_slice(bytes, config)
+                    .map(|(entity, _)| entity)
+                    .map_err(|bincode_err| {
+                        StorageError::SerializationError(format!(
+                            "json decode failed: {}; bincode decode failed: {}",
+                            json_err, bincode_err
+                        ))
+                    })
+            }
+        }
+    }
+}
 
 impl KSerializable for AuditLogEntry {}
 

@@ -18,6 +18,7 @@ use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::StorageKey;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::UserTableIndexedStore;
 use std::sync::Arc;

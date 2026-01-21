@@ -1225,3 +1225,7 @@ cange to to be put(TableDefinition) instead of CachedTableData and it creates th
 113) i see errors like this maybe we dont increment changes at all since it damages performance, but before removing it check why this happening? if the user unsubscribe why this still running?? check the logic in the unsubscribe and if all related stuff is also closed properly when doing that
 [2026-01-21 10:17:39.137] [ERROR] - main - kalamdb_core::live::notification:382 - Failed to increment changes for live_id=root-163d1e31d91149b4984c46d850d40358-sub_1768983459090957000: Not found: Live query not found: root-163d1e31d91149b4984c46d850d40358-sub_1768983459090957000
 
+114) remove cache hits from SchemaRegistry its not needed since we have a dashmap and also remove it from all tests and metricses
+
+
+

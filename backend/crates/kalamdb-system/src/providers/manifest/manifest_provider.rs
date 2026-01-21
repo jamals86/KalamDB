@@ -3,7 +3,7 @@
 //! This module provides a DataFusion TableProvider implementation for the system.manifest table.
 //! Exposes manifest cache entries as a queryable system table.
 
-use super::{new_manifest_store, ManifestStore, ManifestTableSchema};
+use super::{new_manifest_store, ManifestCacheKey, ManifestStore, ManifestTableSchema};
 use crate::error::{SystemError, SystemResultExt};
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
@@ -13,8 +13,12 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::StorageKey;
+use kalamdb_commons::storage::StorageError;
+use kalamdb_commons::types::ManifestCacheEntry;
 use kalamdb_commons::RecordBatchBuilder;
-use kalamdb_store::entity_store::EntityStore;
+use kalamdb_store::entity_store::{EntityStore, KSerializable};
+use kalamdb_store::storage_trait::Partition;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::{Arc, RwLock};
@@ -81,7 +85,28 @@ impl ManifestTableProvider {
     ///
     /// Uses schema-driven array building for optimal performance and correctness.
     pub fn scan_to_record_batch(&self) -> Result<RecordBatch, SystemError> {
-        let entries = self.store.scan_all(None, None, None)?;
+        let partition = Partition::new(self.store.partition());
+        let iter = self
+            .store
+            .backend()
+            .scan(&partition, None, None, Some(100000))?;
+
+        let mut entries: Vec<(Vec<u8>, ManifestCacheEntry)> = Vec::new();
+        for (key_bytes, value_bytes) in iter {
+            match ManifestCacheEntry::decode(&value_bytes) {
+                Ok(entry) => entries.push((key_bytes, entry)),
+                Err(StorageError::SerializationError(err)) => {
+                    log::warn!(
+                        "Corrupted manifest cache entry skipped: {}",
+                        err
+                    );
+                    if let Ok(cache_key) = ManifestCacheKey::from_storage_key(&key_bytes) {
+                        let _ = EntityStore::delete(self.store(), &cache_key);
+                    }
+                }
+                Err(err) => return Err(SystemError::Storage(err.to_string())),
+            }
+        }
 
         // Extract data into vectors
         let mut cache_keys = Vec::with_capacity(entries.len());

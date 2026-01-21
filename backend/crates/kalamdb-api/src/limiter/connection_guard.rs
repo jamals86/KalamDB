@@ -333,7 +333,7 @@ impl ConnectionGuard {
 
     /// Get statistics for monitoring
     pub fn get_stats(&self) -> ConnectionGuardStats {
-        let total_ips = self.ip_states.entry_count() as usize;
+        let total_ips = self.ip_states.iter().count();
         let mut banned_ips = 0usize;
         let mut total_connections = 0u32;
         let mut total_violations = 0u32;

@@ -740,49 +740,66 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
     }
 
     let url = url.to_string();
-    let request = async move {
-        Client::new()
-            .post(format!("{}/v1/api/sql", url))
-            .json(&json!({ "sql": "SELECT 1" }))
-            .timeout(Duration::from_millis(800))
-            .send()
-            .await
-    };
+    let mut last_error = None;
 
-    let result = match tokio::runtime::Handle::try_current() {
-        Ok(_) => {
-            let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                let rt = match tokio::runtime::Runtime::new() {
-                    Ok(rt) => rt,
-                    Err(_) => return,
-                };
-                let _ = tx.send(rt.block_on(request));
-            });
-            match rx.recv_timeout(Duration::from_secs(2)) {
-                Ok(result) => result,
-                Err(_) => return None,
+    for _attempt in 0..3 {
+        let request_url = url.clone();
+        let request = async move {
+            Client::new()
+                .post(format!("{}/v1/api/sql", request_url))
+                .json(&json!({ "sql": "SELECT 1" }))
+                .timeout(Duration::from_millis(2000))
+                .send()
+                .await
+        };
+
+        let result = match tokio::runtime::Handle::try_current() {
+            Ok(_) => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let rt = match tokio::runtime::Runtime::new() {
+                        Ok(rt) => rt,
+                        Err(_) => return,
+                    };
+                    let _ = tx.send(rt.block_on(request));
+                });
+                match rx.recv_timeout(Duration::from_secs(5)) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        last_error = Some(err.to_string());
+                        continue;
+                    }
+                }
             }
-        },
-        Err(_) => {
-            let rt = tokio::runtime::Runtime::new().ok()?;
-            rt.block_on(request)
-        },
-    };
+            Err(_) => {
+                let rt = tokio::runtime::Runtime::new().ok()?;
+                rt.block_on(request)
+            }
+        };
 
-    let response = match result {
-        Ok(resp) => resp,
-        Err(_) => return None,
-    };
+        let response = match result {
+            Ok(resp) => resp,
+            Err(err) => {
+                last_error = Some(err.to_string());
+                continue;
+            }
+        };
 
-    if response.status().is_success() {
-        return Some(false);
+        if response.status().is_success() {
+            return Some(false);
+        }
+
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            || response.status() == reqwest::StatusCode::FORBIDDEN
+        {
+            return Some(true);
+        }
+
+        return Some(true);
     }
 
-    if response.status() == reqwest::StatusCode::UNAUTHORIZED
-        || response.status() == reqwest::StatusCode::FORBIDDEN
-    {
-        return Some(true);
+    if let Some(err) = last_error {
+        eprintln!("[DEBUG] Auth probe failed after retries: {}", err);
     }
 
     Some(true)
@@ -2297,37 +2314,35 @@ pub fn verify_job_completed(
                     format!("Failed to parse JSON output: {}. Output: {}", e, output)
                 })?;
 
-                // Navigate to results[0].rows[0]
-                let row = json
-                    .get("results")
-                    .and_then(|v| v.as_array())
-                    .and_then(|arr| arr.first())
-                    .and_then(|res| res.get("rows"))
-                    .and_then(|v| v.as_array())
-                    .and_then(|arr| arr.first());
+                if let Some(rows) = get_rows_as_hashmaps(&json) {
+                    if let Some(row) = rows.first() {
+                        let status_value = row
+                            .get("status")
+                            .and_then(extract_arrow_value)
+                            .or_else(|| row.get("status").cloned())
+                            .unwrap_or(serde_json::Value::Null);
+                        let status_owned = status_value
+                            .as_str()
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| status_value.to_string());
+                        let status = status_owned.as_str();
 
-                if let Some(row) = row {
-                    // Rows are arrays: [job_id, status, error_message] (indices 0, 1, 2)
-                    let row_arr = row.as_array();
+                        let error_value = row
+                            .get("error_message")
+                            .and_then(extract_arrow_value)
+                            .or_else(|| row.get("error_message").cloned())
+                            .unwrap_or(serde_json::Value::Null);
+                        let error_message = error_value.as_str().unwrap_or("");
 
-                    let status = row_arr
-                        .and_then(|arr| arr.get(1))
-                        .map(|v| v.as_str().unwrap_or(""))
-                        .unwrap_or("");
+                        if status.eq_ignore_ascii_case("completed") {
+                            return Ok(());
+                        }
 
-                    let error_message = row_arr
-                        .and_then(|arr| arr.get(2))
-                        .map(|v| v.as_str().unwrap_or(""))
-                        .unwrap_or("");
-
-                    if status.eq_ignore_ascii_case("completed") {
-                        return Ok(());
-                    }
-
-                    if status.eq_ignore_ascii_case("failed") {
-                        return Err(
-                            format!("Job {} failed. Error: {}", job_id, error_message).into()
-                        );
+                        if status.eq_ignore_ascii_case("failed") {
+                            return Err(
+                                format!("Job {} failed. Error: {}", job_id, error_message).into()
+                            );
+                        }
                     }
                 } else {
                     // No row found - print debug info
@@ -2384,16 +2399,35 @@ pub fn wait_for_job_finished(
             job_id
         );
 
-        match execute_sql_as_root_via_client(&query) {
+        match execute_sql_as_root_via_client_json(&query) {
             Ok(output) => {
-                let lower = output.to_lowercase();
-                if lower.contains("completed") {
-                    return Ok("completed".to_string());
+                let json: serde_json::Value = serde_json::from_str(&output).map_err(|e| {
+                    format!("Failed to parse JSON output: {}. Output: {}", e, output)
+                })?;
+
+                if let Some(rows) = get_rows_as_hashmaps(&json) {
+                    if let Some(row) = rows.first() {
+                        let status_value = row
+                            .get("status")
+                            .and_then(extract_arrow_value)
+                            .or_else(|| row.get("status").cloned())
+                            .unwrap_or(serde_json::Value::Null);
+                        let status_owned = status_value
+                            .as_str()
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| status_value.to_string());
+                        let status = status_owned.as_str();
+                        let status_lower = status.to_lowercase();
+
+                        if status_lower.contains("completed") {
+                            return Ok("completed".to_string());
+                        }
+                        if status_lower.contains("failed") {
+                            return Ok("failed".to_string());
+                        }
+                    }
                 }
-                if lower.contains("failed") {
-                    return Ok("failed".to_string());
-                }
-            },
+            }
             Err(e) => return Err(e),
         }
 

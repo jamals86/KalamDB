@@ -9,17 +9,19 @@
 
 use crate::schema_registry::SchemaRegistry;
 use kalamdb_commons::models::types::{Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
-use kalamdb_commons::{StorageKey, TableId, UserId};
+use kalamdb_commons::{TableId, UserId};
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_filestore::StorageRegistry;
-use kalamdb_store::entity_store::EntityStore;
-use kalamdb_store::{StorageBackend, StorageError};
+use kalamdb_store::entity_store::{EntityStore, KSerializable};
+use kalamdb_store::{Partition, StorageBackend, StorageError};
 use kalamdb_system::providers::manifest::ManifestCacheKey;
 use kalamdb_system::providers::ManifestTableProvider;
 use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
+
+const MAX_MANIFEST_SCAN_LIMIT: usize = 100000;
 
 /// Unified ManifestService with hot cache + RocksDB persistence + cold storage.
 ///
@@ -101,50 +103,121 @@ impl ManifestService {
         user_id: Option<&UserId>,
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
-        if let Some(entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
-            return Ok(Some(Arc::new(entry)));
+        match EntityStore::get(self.provider.store(), &rocksdb_key) {
+            Ok(Some(entry)) => Ok(Some(Arc::new(entry))),
+            Ok(None) => Ok(None),
+            Err(StorageError::SerializationError(err)) => {
+                warn!(
+                    "Manifest cache entry corrupted for key {}: {} (dropping)",
+                    rocksdb_key.as_str(),
+                    err
+                );
+                let _ = EntityStore::delete(self.provider.store(), &rocksdb_key);
+                Ok(None)
+            }
+            Err(err) => Err(err),
         }
-        Ok(None)
     }
 
     /// Count all cached manifest entries.
     pub fn count(&self) -> Result<usize, StorageError> {
-        let entries = EntityStore::scan_all(self.provider.store(), None, None, None)?;
-        Ok(entries.len())
+        let partition = Partition::new(self.provider.store().partition());
+        let iter = self
+            .provider
+            .store()
+            .backend()
+            .scan(&partition, None, None, Some(MAX_MANIFEST_SCAN_LIMIT))?;
+        let mut count = 0usize;
+        for _ in iter {
+            count += 1;
+        }
+        Ok(count)
     }
 
     /// Return all cached entries with their storage keys.
     pub fn get_all(&self) -> Result<Vec<(String, ManifestCacheEntry)>, StorageError> {
-        let entries = EntityStore::scan_all(self.provider.store(), None, None, None)?;
-        let mut results = Vec::with_capacity(entries.len());
-        for (key_bytes, entry) in entries {
-            let key = String::from_utf8(key_bytes).unwrap_or_default();
-            results.push((key, entry));
+        let partition = Partition::new(self.provider.store().partition());
+        let iter = self
+            .provider
+            .store()
+            .backend()
+            .scan(&partition, None, None, Some(MAX_MANIFEST_SCAN_LIMIT))?;
+        let mut results = Vec::new();
+        for (key_bytes, value_bytes) in iter {
+            match ManifestCacheEntry::decode(&value_bytes) {
+                Ok(entry) => {
+                    let key = String::from_utf8(key_bytes).unwrap_or_default();
+                    results.push((key, entry));
+                }
+                Err(StorageError::SerializationError(err)) => {
+                    warn!(
+                        "Manifest cache entry corrupted for key {}: {} (dropping)",
+                        String::from_utf8_lossy(&key_bytes),
+                        err
+                    );
+                    let _ = self
+                        .provider
+                        .store()
+                        .backend()
+                        .delete(&partition, &key_bytes);
+                }
+                Err(err) => return Err(err),
+            }
         }
         Ok(results)
     }
 
     /// Clear all cached entries.
     pub fn clear(&self) -> Result<(), StorageError> {
-        let entries = EntityStore::scan_all(self.provider.store(), None, None, None)?;
-        for (key_bytes, _entry) in entries {
-            let cache_key = ManifestCacheKey::from_storage_key(&key_bytes)
-                .map_err(StorageError::SerializationError)?;
-            EntityStore::delete(self.provider.store(), &cache_key)?;
+        let partition = Partition::new(self.provider.store().partition());
+        let iter = self
+            .provider
+            .store()
+            .backend()
+            .scan(&partition, None, None, Some(MAX_MANIFEST_SCAN_LIMIT))?;
+        let keys: Vec<Vec<u8>> = iter.map(|(key_bytes, _)| key_bytes).collect();
+
+        for key_bytes in keys {
+            self.provider
+                .store()
+                .backend()
+                .delete(&partition, &key_bytes)?;
         }
         Ok(())
     }
 
     /// Return shared/user counts and total weighted capacity for monitoring.
     pub fn cache_stats(&self) -> Result<(usize, usize, usize), StorageError> {
-        let entries = EntityStore::scan_all(self.provider.store(), None, None, None)?;
         let mut shared_count = 0usize;
         let mut user_count = 0usize;
-        for (_key_bytes, entry) in entries {
-            if entry.manifest.user_id.is_some() {
-                user_count += 1;
-            } else {
-                shared_count += 1;
+        let partition = Partition::new(self.provider.store().partition());
+        let iter = self
+            .provider
+            .store()
+            .backend()
+            .scan(&partition, None, None, Some(MAX_MANIFEST_SCAN_LIMIT))?;
+        for (key_bytes, value_bytes) in iter {
+            match ManifestCacheEntry::decode(&value_bytes) {
+                Ok(entry) => {
+                    if entry.manifest.user_id.is_some() {
+                        user_count += 1;
+                    } else {
+                        shared_count += 1;
+                    }
+                }
+                Err(StorageError::SerializationError(err)) => {
+                    warn!(
+                        "Manifest cache entry corrupted for key {}: {} (dropping)",
+                        String::from_utf8_lossy(&key_bytes),
+                        err
+                    );
+                    let _ = self
+                        .provider
+                        .store()
+                        .backend()
+                        .delete(&partition, &key_bytes);
+                }
+                Err(err) => return Err(err),
             }
         }
         let weight_factor = self.config.user_table_weight_factor as usize;
@@ -208,9 +281,21 @@ impl ManifestService {
     ) -> Result<(), StorageError> {
         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
 
-        if let Some(mut entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
-            entry.mark_error();
-            EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
+        match EntityStore::get(self.provider.store(), &rocksdb_key) {
+            Ok(Some(mut entry)) => {
+                entry.mark_error();
+                EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
+            }
+            Ok(None) => {}
+            Err(StorageError::SerializationError(err)) => {
+                warn!(
+                    "Manifest cache entry corrupted for key {}: {} (dropping)",
+                    rocksdb_key.as_str(),
+                    err
+                );
+                let _ = EntityStore::delete(self.provider.store(), &rocksdb_key);
+            }
+            Err(err) => return Err(err),
         }
 
         Ok(())
@@ -224,9 +309,21 @@ impl ManifestService {
     ) -> Result<(), StorageError> {
         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
 
-        if let Some(mut entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
-            entry.mark_syncing();
-            EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
+        match EntityStore::get(self.provider.store(), &rocksdb_key) {
+            Ok(Some(mut entry)) => {
+                entry.mark_syncing();
+                EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
+            }
+            Ok(None) => {}
+            Err(StorageError::SerializationError(err)) => {
+                warn!(
+                    "Manifest cache entry corrupted for key {}: {} (dropping)",
+                    rocksdb_key.as_str(),
+                    err
+                );
+                let _ = EntityStore::delete(self.provider.store(), &rocksdb_key);
+            }
+            Err(err) => return Err(err),
         }
 
         Ok(())
@@ -244,22 +341,34 @@ impl ManifestService {
     ) -> Result<(), StorageError> {
         let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
 
-        if let Some(mut entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
-            entry.mark_pending_write();
-            EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
-            debug!(
-                "Marked manifest entry as pending_write: table={}, user={:?}",
-                table_id,
-                user_id.map(|u| u.as_str())
-            );
-        } else {
-            // If no cache entry exists yet, create one with PendingWrite state
-            // This shouldn't happen in normal flow since ensure_manifest_ready is called first
-            warn!(
-                "mark_pending_write called but no cache entry exists: table={}, user={:?}",
-                table_id,
-                user_id.map(|u| u.as_str())
-            );
+        match EntityStore::get(self.provider.store(), &rocksdb_key) {
+            Ok(Some(mut entry)) => {
+                entry.mark_pending_write();
+                EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
+                debug!(
+                    "Marked manifest entry as pending_write: table={}, user={:?}",
+                    table_id,
+                    user_id.map(|u| u.as_str())
+                );
+            }
+            Ok(None) => {
+                // If no cache entry exists yet, create one with PendingWrite state
+                // This shouldn't happen in normal flow since ensure_manifest_ready is called first
+                warn!(
+                    "mark_pending_write called but no cache entry exists: table={}, user={:?}",
+                    table_id,
+                    user_id.map(|u| u.as_str())
+                );
+            }
+            Err(StorageError::SerializationError(err)) => {
+                warn!(
+                    "Manifest cache entry corrupted for key {}: {} (dropping)",
+                    rocksdb_key.as_str(),
+                    err
+                );
+                let _ = EntityStore::delete(self.provider.store(), &rocksdb_key);
+            }
+            Err(err) => return Err(err),
         }
 
         Ok(())
@@ -299,19 +408,25 @@ impl ManifestService {
         );
 
         let mut invalidated = 0;
-        let all_entries = EntityStore::scan_all(self.provider.store(), None, None, None)?;
+        let partition = Partition::new(self.provider.store().partition());
+        let iter = self
+            .provider
+            .store()
+            .backend()
+            .scan(
+                &partition,
+                Some(key_prefix.as_bytes()),
+                None,
+                Some(MAX_MANIFEST_SCAN_LIMIT),
+            )?;
+        let keys: Vec<Vec<u8>> = iter.map(|(key_bytes, _)| key_bytes).collect();
 
-        for (key_bytes, _entry) in all_entries {
-            let key_str = match String::from_utf8(key_bytes) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            if key_str.starts_with(&key_prefix) {
-                let rocksdb_key = ManifestCacheKey::from(key_str);
-                EntityStore::delete(self.provider.store(), &rocksdb_key)?;
-                invalidated += 1;
-            }
+        for key_bytes in keys {
+            self.provider
+                .store()
+                .backend()
+                .delete(&partition, &key_bytes)?;
+            invalidated += 1;
         }
 
         debug!("Invalidated {} manifest cache entries for table {}", invalidated, table_id);
@@ -337,20 +452,39 @@ impl ManifestService {
         let now = chrono::Utc::now().timestamp();
         let cutoff = now - ttl_seconds;
         let mut evicted_count = 0;
+        let partition = Partition::new(self.provider.store().partition());
+        let iter = self
+            .provider
+            .store()
+            .backend()
+            .scan(&partition, None, None, Some(MAX_MANIFEST_SCAN_LIMIT))?;
+        let mut delete_keys = Vec::new();
 
-        let all_entries = EntityStore::scan_all(self.provider.store(), None, None, None)?;
-
-        for (key_bytes, entry) in all_entries {
-            let key_str = match String::from_utf8(key_bytes) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            if entry.last_refreshed < cutoff {
-                let rocksdb_key = ManifestCacheKey::from(key_str);
-                EntityStore::delete(self.provider.store(), &rocksdb_key)?;
-                evicted_count += 1;
+        for (key_bytes, value_bytes) in iter {
+            match ManifestCacheEntry::decode(&value_bytes) {
+                Ok(entry) => {
+                    if entry.last_refreshed < cutoff {
+                        delete_keys.push(key_bytes);
+                    }
+                }
+                Err(StorageError::SerializationError(err)) => {
+                    warn!(
+                        "Manifest cache entry corrupted for key {}: {} (dropping)",
+                        String::from_utf8_lossy(&key_bytes),
+                        err
+                    );
+                    delete_keys.push(key_bytes);
+                }
+                Err(err) => return Err(err),
             }
+        }
+
+        for key_bytes in delete_keys {
+            self.provider
+                .store()
+                .backend()
+                .delete(&partition, &key_bytes)?;
+            evicted_count += 1;
         }
 
         info!(
@@ -603,14 +737,30 @@ impl ManifestService {
         &self,
         table_id: &TableId,
     ) -> Result<Vec<UserId>, StorageError> {
-        let prefix = ManifestCacheKey::from(format!("{}:", table_id));
-        let entries = EntityStore::scan_all(self.provider.store(), None, Some(&prefix), None)?;
+        let prefix = format!("{}:", table_id);
+        let partition = Partition::new(self.provider.store().partition());
+        let iter = self
+            .provider
+            .store()
+            .backend()
+            .scan(
+                &partition,
+                Some(prefix.as_bytes()),
+                None,
+                Some(MAX_MANIFEST_SCAN_LIMIT),
+            )?;
         let mut user_ids = HashSet::new();
 
-        for (key_bytes, _entry) in entries {
-            let key = ManifestCacheKey::from_storage_key(&key_bytes)
-                .map_err(StorageError::SerializationError)?;
-            if let Some((_namespace, _table, scope)) = key.parse() {
+        for (key_bytes, _value_bytes) in iter {
+            let key_str = match std::str::from_utf8(&key_bytes) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let mut parts = key_str.splitn(3, ':');
+            let _namespace = parts.next();
+            let _table = parts.next();
+            let scope = parts.next();
+            if let Some(scope) = scope {
                 if scope != "shared" {
                     user_ids.insert(UserId::from(scope));
                 }

@@ -198,7 +198,7 @@ fn smoke_test_system_live_queries() {
 
     // Start subscription (this will establish WebSocket connection)
     let query = format!("SELECT * FROM {}", full_table);
-    let listener = SubscriptionListener::start(&query).expect("Failed to start subscription");
+    let mut listener = SubscriptionListener::start(&query).expect("Failed to start subscription");
 
     // Give subscription time to register
     std::thread::sleep(Duration::from_millis(500));
