@@ -730,8 +730,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
     // Increase rate limits for tests (default is 100/sec which is too low for insert loops)
     config.rate_limit.max_queries_per_sec = 100000;
     config.rate_limit.max_messages_per_sec = 10000;
-    let skip_raft_leader_check =
-        config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
+    let skip_raft_leader_check = false;
 
     // Match production behavior: initialize JWT config from server settings.
     kalamdb_auth::services::unified::init_jwt_config(
@@ -788,8 +787,7 @@ pub async fn start_http_test_server_with_config(
     config.rate_limit.max_queries_per_sec = 100000;
     config.rate_limit.max_messages_per_sec = 10000;
     override_config(&mut config);
-    let skip_raft_leader_check =
-        config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
+    let skip_raft_leader_check = false;
 
     kalamdb_auth::services::unified::init_jwt_config(
         &config.auth.jwt_secret,

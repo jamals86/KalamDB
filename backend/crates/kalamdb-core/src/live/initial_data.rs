@@ -244,7 +244,6 @@ impl InitialDataFetcher {
         if !options.include_deleted
             && matches!(table_type, TableType::User | TableType::Shared)
             && self.table_has_column(
-                sql_executor.app_context().as_ref(),
                 table_id,
                 SystemColumnNames::DELETED,
             )?
@@ -363,11 +362,10 @@ impl InitialDataFetcher {
 
     fn table_has_column(
         &self,
-        app_ctx: &crate::app_context::AppContext,
         table_id: &TableId,
         column_name: &str,
     ) -> Result<bool, KalamDbError> {
-        let schema = self.schema_registry.get_arrow_schema(app_ctx, table_id)?;
+        let schema = self.schema_registry.get_arrow_schema(table_id)?;
         Ok(schema.field_with_name(column_name).is_ok())
     }
 }
@@ -513,8 +511,7 @@ mod tests {
         .expect("create table def");
 
         // Insert into cache directly (bypassing persistence which might not be mocked)
-        schema_registry
-            .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
+        schema_registry.put(table_def);
 
         // Create a mock provider with the store
         let core = Arc::new(TableProviderCore::from_app_context(
@@ -529,7 +526,7 @@ mod tests {
 
         // Register the provider in schema_registry
         schema_registry
-            .insert_provider(app_context.as_ref(), table_id.clone(), provider)
+            .insert_provider(table_id.clone(), provider)
             .expect("register provider");
 
         let fetcher =
@@ -658,7 +655,7 @@ mod tests {
         );
 
         schema_registry
-            .insert_provider(app_context.as_ref(), table_id.clone(), provider)
+            .insert_provider(table_id.clone(), provider)
             .expect("register provider");
 
         let fetcher =
@@ -819,7 +816,7 @@ mod tests {
         );
 
         schema_registry
-            .insert_provider(app_context.as_ref(), table_id.clone(), provider)
+            .insert_provider(table_id.clone(), provider)
             .expect("register provider");
 
         let fetcher =

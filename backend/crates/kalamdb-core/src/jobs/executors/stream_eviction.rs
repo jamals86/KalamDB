@@ -328,7 +328,8 @@ mod tests {
 
         app_ctx
             .schema_registry()
-            .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
+            .put(table_def)
+            .expect("Failed to put table def");
 
         let stream_temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
@@ -353,7 +354,7 @@ mod tests {
         let provider_trait: Arc<dyn TableProvider> = provider.clone();
         app_ctx
             .schema_registry()
-            .insert_provider(app_ctx, table_id.clone(), provider_trait)
+            .insert_provider(table_id.clone(), provider_trait)
             .expect("register provider");
 
         StreamTestHarness {

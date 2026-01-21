@@ -218,6 +218,10 @@ impl From<kalamdb_filestore::FilestoreError> for KalamDbError {
             kalamdb_filestore::FilestoreError::InvalidTemplate(msg) => {
                 KalamDbError::InvalidOperation(format!("Invalid storage template: {}", msg))
             },
+            kalamdb_filestore::FilestoreError::Format(msg) => {
+                KalamDbError::Other(format!("Format error: {}", msg))
+            },
+            kalamdb_filestore::FilestoreError::NotFound(msg) => KalamDbError::NotFound(msg),
             kalamdb_filestore::FilestoreError::Other(msg) => KalamDbError::Other(msg),
         }
     }

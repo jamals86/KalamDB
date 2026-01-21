@@ -88,13 +88,13 @@ impl SharedTableProvider {
         let schema = core
             .app_context
             .schema_registry()
-            .get_arrow_schema(core.app_context.as_ref(), core.table_id())
+            .get_arrow_schema(core.table_id())
             .expect("Failed to get Arrow schema from registry during provider creation");
 
         let table_def = core
             .app_context
             .schema_registry()
-            .get_table_if_exists(core.app_context.as_ref(), core.table_id())
+            .get_table_if_exists(core.table_id())
             .expect("Failed to load table definition from registry during provider creation")
             .unwrap_or_else(|| {
                 panic!("Table definition not found for {}", core.table_id())

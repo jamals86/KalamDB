@@ -145,8 +145,7 @@ pub fn save_table_definition(
     // The TableDefinition starts with schema_version = 1 (set in new()).
     // No need to push to schema_history anymore - TablesStore handles this.
 
-    // Persist to system.tables AND cache in SchemaRegistry
-    let schema_registry = app_ctx.schema_registry();
+    // Persist to system.tables AND cache in SchemaRegistr
     let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
 
     // Write to system.tables for persistence
@@ -155,21 +154,12 @@ pub fn save_table_definition(
         .create_table(&table_id, &table_def)
         .into_kalamdb_error("Failed to save table definition to system.tables")?;
 
-    // Call stub method for API consistency (actual persistence handled above)
-    schema_registry
-        .put_table_definition(app_ctx, &table_id, &table_def)
-        .into_kalamdb_error("Failed to update schema registry")?;
-
-    // Prime unified schema cache with freshly saved definition (includes system columns)
-    {
-        use crate::schema_registry::CachedTableData;
-        let cached = Arc::new(CachedTableData::from_table_definition(
-            app_ctx,
-            &table_id,
-            Arc::new(table_def.clone()),
-        )?);
-        schema_registry.insert(table_id.clone(), cached);
-    }
+    // Cache the definition and create provider (replaces put_table_definition)
+    // Note: save_table_definition requires Arc<AppContext>, but we only have &AppContext
+    // This function is only called from table_creation.rs which now uses register_table instead
+    // For now, this is a legacy path that should be migrated
+    log::warn!("save_table_definition is deprecated - use SchemaRegistry::register_table instead");
+    // schema_registry.put(app_ctx, table_def)?;
 
     log::info!(
         "Table definition for {}.{} saved to information_schema.tables (version 1)",

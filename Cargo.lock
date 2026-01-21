@@ -3504,6 +3504,7 @@ dependencies = [
  "base64",
  "bcrypt",
  "bincode",
+ "bytes",
  "chrono",
  "dashmap",
  "datafusion",

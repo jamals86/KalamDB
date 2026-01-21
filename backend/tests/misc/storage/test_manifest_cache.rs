@@ -16,17 +16,22 @@ use kalamdb_commons::{
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_core::manifest::ManifestService;
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
+use kalamdb_system::providers::ManifestTableProvider;
 use std::sync::Arc;
 
-fn create_test_service() -> ManifestService {
+fn create_test_service_with_config(config: ManifestCacheSettings) -> ManifestService {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let config = ManifestCacheSettings {
+    let provider = Arc::new(ManifestTableProvider::new(backend));
+    ManifestService::new(provider, config)
+}
+
+fn create_test_service() -> ManifestService {
+    create_test_service_with_config(ManifestCacheSettings {
         eviction_interval_seconds: 300,
         max_entries: 1000,
         eviction_ttl_days: 7,
         user_table_weight_factor: 10,
-    };
-    ManifestService::new(backend, "/tmp/test_manifest".to_string(), config)
+    })
 }
 
 fn create_test_manifest(namespace: &str, table_name: &str, user_id: Option<&str>) -> Manifest {
@@ -63,7 +68,6 @@ fn test_get_or_load_cache_hit() {
             Some(&UserId::from("u_123")),
             &manifest,
             Some("etag-v1".to_string()),
-            "s3://bucket/ns1/products/u_123/manifest.json".to_string(),
         )
         .unwrap();
 
@@ -88,7 +92,6 @@ fn test_get_or_load_cache_hit() {
 // T097: validate_freshness() with stale entry (simulate TTL expiration)
 #[test]
 fn test_validate_freshness_stale() {
-    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     // Use 0 days TTL so entries are immediately stale
     let config = ManifestCacheSettings {
         eviction_interval_seconds: 300,
@@ -96,7 +99,7 @@ fn test_validate_freshness_stale() {
         eviction_ttl_days: 0, // 0 days = entries are immediately stale
         user_table_weight_factor: 10,
     };
-    let service = ManifestService::new(backend, "/tmp/test".to_string(), config);
+    let service = create_test_service_with_config(config);
 
     let namespace = NamespaceId::new("ns1");
     let table = TableName::new("products");
@@ -110,7 +113,6 @@ fn test_validate_freshness_stale() {
             None,
             &manifest,
             Some("etag-v1".to_string()),
-            "s3://bucket/ns1/products/shared/manifest.json".to_string(),
         )
         .unwrap();
 
@@ -139,7 +141,6 @@ fn test_update_after_flush_atomic_write() {
             Some(&UserId::from("u_456")),
             &manifest,
             Some("etag-abc123".to_string()),
-            "s3://bucket/ns1/orders/u_456/manifest.json".to_string(),
         )
         .unwrap();
 
@@ -150,7 +151,6 @@ fn test_update_after_flush_atomic_write() {
     let entry = result.unwrap();
     assert_eq!(entry.etag, Some("etag-abc123".to_string()));
     assert_eq!(entry.sync_state, SyncState::InSync);
-    assert_eq!(entry.source_path, "s3://bucket/ns1/orders/u_456/manifest.json");
 
     // Verify manifest is valid
     let manifest = &entry.manifest;
@@ -244,12 +244,6 @@ fn test_show_manifest_returns_all_entries() {
                 scope_user_ref,
                 &manifest,
                 None,
-                format!(
-                    "path/{}/{}/{}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    user_id_opt.unwrap_or("shared")
-                ),
             )
             .unwrap();
     }
@@ -290,7 +284,6 @@ fn test_cache_eviction_and_repopulation() {
             Some(&UserId::from("u_789")),
             &manifest,
             Some("etag-v1".to_string()),
-            "s3://bucket/ns1/products/u_789/manifest.json".to_string(),
         )
         .unwrap();
 
@@ -313,7 +306,6 @@ fn test_cache_eviction_and_repopulation() {
             Some(&UserId::from("u_789")),
             &manifest_v2,
             Some("etag-v2".to_string()),
-            "s3://bucket/ns1/products/u_789/manifest.json".to_string(),
         )
         .unwrap();
 
@@ -336,7 +328,7 @@ fn test_clear_all_entries() {
         let manifest = create_test_manifest(&format!("ns{}", i), "test_table", None);
         let table_id = TableId::new(namespace.clone(), table.clone());
         service
-            .update_after_flush(&table_id, None, &manifest, None, format!("path{}", i))
+            .update_after_flush(&table_id, None, &manifest, None)
             .unwrap();
     }
 
@@ -364,7 +356,6 @@ fn test_multiple_updates_same_key() {
             Some(&UserId::from("u_123")),
             &manifest1,
             Some("etag-v1".to_string()),
-            "path1".to_string(),
         )
         .unwrap();
 
@@ -379,13 +370,11 @@ fn test_multiple_updates_same_key() {
             Some(&UserId::from("u_123")),
             &manifest2,
             Some("etag-v2".to_string()),
-            "path2".to_string(),
         )
         .unwrap();
 
     let entry2 = service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap().unwrap();
     assert_eq!(entry2.etag, Some("etag-v2".to_string()));
-    assert_eq!(entry2.source_path, "path2");
 
     // Should still have only 1 entry
     assert_eq!(service.count().unwrap(), 1, "Should have 1 entry (updated, not duplicated)");
@@ -410,7 +399,6 @@ fn test_invalidate_table_removes_all_user_entries() {
             Some(&UserId::from("user1")),
             &manifest1,
             Some("etag-u1".to_string()),
-            "path/user1/manifest.json".to_string(),
         )
         .unwrap();
 
@@ -420,7 +408,6 @@ fn test_invalidate_table_removes_all_user_entries() {
             Some(&UserId::from("user2")),
             &manifest2,
             Some("etag-u2".to_string()),
-            "path/user2/manifest.json".to_string(),
         )
         .unwrap();
 
@@ -430,7 +417,6 @@ fn test_invalidate_table_removes_all_user_entries() {
             Some(&UserId::from("user3")),
             &manifest3,
             Some("etag-u3".to_string()),
-            "path/user3/manifest.json".to_string(),
         )
         .unwrap();
 
@@ -490,7 +476,6 @@ fn test_invalidate_table_preserves_other_tables() {
             Some(&UserId::from("user1")),
             &manifest1,
             Some("etag-products".to_string()),
-            "path/products/manifest.json".to_string(),
         )
         .unwrap();
 
@@ -500,7 +485,6 @@ fn test_invalidate_table_preserves_other_tables() {
             Some(&UserId::from("user1")),
             &manifest2,
             Some("etag-orders".to_string()),
-            "path/orders/manifest.json".to_string(),
         )
         .unwrap();
 
@@ -539,7 +523,6 @@ fn test_invalidate_table_shared() {
             None, // shared table
             &manifest,
             Some("etag-shared".to_string()),
-            "path/shared/manifest.json".to_string(),
         )
         .unwrap();
 
@@ -563,14 +546,13 @@ fn test_tiered_eviction_shared_tables_stay_longer() {
     // Create a cache with small capacity: weight_factor=10, max_entries=2
     // This gives weighted_capacity = 20
     // Shared tables cost weight=1, user tables cost weight=10
-    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     let config = ManifestCacheSettings {
         eviction_interval_seconds: 300,
         max_entries: 2, // Small cache to trigger eviction
         eviction_ttl_days: 7,
         user_table_weight_factor: 10, // User tables are 10x heavier
     };
-    let service = ManifestService::new(backend, "/tmp/test_tiered".to_string(), config);
+    let service = create_test_service_with_config(config);
 
     let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("products"));
 
@@ -582,7 +564,6 @@ fn test_tiered_eviction_shared_tables_stay_longer() {
             None, // shared
             &shared_manifest,
             None,
-            "shared/manifest.json".to_string(),
         )
         .unwrap();
 
@@ -599,7 +580,6 @@ fn test_tiered_eviction_shared_tables_stay_longer() {
                 Some(&user_id),
                 &user_manifest,
                 None,
-                format!("user_{}/manifest.json", i),
             )
             .unwrap();
     }
@@ -629,21 +609,20 @@ fn test_tiered_eviction_shared_tables_stay_longer() {
 // Test that user_table_weight_factor=1 treats all tables equally
 #[test]
 fn test_equal_weight_factor() {
-    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     let config = ManifestCacheSettings {
         eviction_interval_seconds: 300,
         max_entries: 10,
         eviction_ttl_days: 7,
         user_table_weight_factor: 1, // All tables have equal weight
     };
-    let service = ManifestService::new(backend, "/tmp/test_equal".to_string(), config);
+    let service = create_test_service_with_config(config);
 
     let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("data"));
 
     // Add shared table
     let shared_manifest = Manifest::new(table_id.clone(), None);
     service
-        .update_after_flush(&table_id, None, &shared_manifest, None, "shared/m.json".to_string())
+        .update_after_flush(&table_id, None, &shared_manifest, None)
         .unwrap();
 
     // Add user table
@@ -655,7 +634,6 @@ fn test_equal_weight_factor() {
             Some(&user_id),
             &user_manifest,
             None,
-            "user/m.json".to_string(),
         )
         .unwrap();
 
@@ -668,17 +646,16 @@ fn test_equal_weight_factor() {
 // Test cache_stats() method for monitoring
 #[test]
 fn test_cache_stats() {
-    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     let config = ManifestCacheSettings {
         eviction_interval_seconds: 300,
         max_entries: 100,
         eviction_ttl_days: 7,
         user_table_weight_factor: 5, // User tables weight 5x
     };
-    let service = ManifestService::new(backend, "/tmp/test_stats".to_string(), config);
+    let service = create_test_service_with_config(config);
 
     // Initially empty
-    let (shared_count, user_count, total_weight) = service.cache_stats();
+    let (shared_count, user_count, total_weight) = service.cache_stats().unwrap();
     assert_eq!(shared_count, 0);
     assert_eq!(user_count, 0);
     assert_eq!(total_weight, 0);
@@ -690,7 +667,7 @@ fn test_cache_stats() {
         let tbl = TableId::new(NamespaceId::new("ns1"), TableName::new(format!("shared_{}", i)));
         let manifest = Manifest::new(tbl.clone(), None);
         service
-            .update_after_flush(&tbl, None, &manifest, None, format!("shared_{}/m.json", i))
+            .update_after_flush(&tbl, None, &manifest, None)
             .unwrap();
     }
 
@@ -704,12 +681,11 @@ fn test_cache_stats() {
                 Some(&user_id),
                 &manifest,
                 None,
-                format!("user_{}/m.json", i),
             )
             .unwrap();
     }
 
-    let (shared_count, user_count, total_weight) = service.cache_stats();
+    let (shared_count, user_count, total_weight) = service.cache_stats().unwrap();
     assert_eq!(shared_count, 2, "Should have 2 shared tables");
     assert_eq!(user_count, 3, "Should have 3 user tables");
     // Total weight = 2*1 + 3*5 = 2 + 15 = 17

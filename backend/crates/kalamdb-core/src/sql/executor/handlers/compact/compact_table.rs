@@ -33,7 +33,7 @@ impl TypedStatementHandler<CompactTableStatement> for CompactTableHandler {
         let registry = self.app_context.schema_registry();
         let table_id = TableId::new(statement.namespace.clone(), statement.table_name.clone());
         let table_def = registry
-            .get_table_if_exists(self.app_context.as_ref(), &table_id)?
+            .get_table_if_exists(&table_id)?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table {}.{} not found",

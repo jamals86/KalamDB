@@ -286,6 +286,70 @@ impl StorageCached {
         Ok(ListResult::new(paths, relative))
     }
 
+
+    /// Read one or multiple Parquet files and return RecordBatch(es)
+    pub fn read_parquet_files_sync(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        files: &[String],
+    ) -> Result<Vec<arrow::record_batch::RecordBatch>> {
+         let table_id = table_id.clone();
+         let user_id = user_id.cloned();
+         let files = files.to_vec();
+
+        run_blocking(|| async {
+            let mut batches = Vec::new();
+            for file in files {
+                 let data = self.get(table_type, &table_id, user_id.as_ref(), &file).await?.data;
+                 let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(data)
+                    .map_err(|e| FilestoreError::Format(e.to_string()))?;
+                 let reader = builder.build()
+                    .map_err(|e| FilestoreError::Format(e.to_string()))?;
+                 for batch in reader {
+                     batches.push(batch.map_err(|e| FilestoreError::Format(e.to_string()))?);
+                 }
+            }
+            Ok(batches)
+        })
+    }
+
+    /// Read manifest.json directly (Task 102)
+    pub fn read_manifest_sync(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<Option<serde_json::Value>> {
+        let file_content = match self.get_sync(table_type, table_id, user_id, "manifest.json") {
+            Ok(res) => res.data,
+            Err(FilestoreError::NotFound(_)) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        
+        let manifest: serde_json::Value = serde_json::from_slice(&file_content)
+            .map_err(|e| FilestoreError::Format(format!("Invalid manifest json: {}", e)))?;
+            
+        Ok(Some(manifest))
+    }
+
+    /// Write manifest.json directly (Task 102)
+    pub fn write_manifest_sync(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        manifest: &serde_json::Value,
+    ) -> Result<()> {
+         let path_result = self.get_manifest_path(table_type, table_id, user_id);
+         let data = serde_json::to_vec_pretty(manifest)
+            .map_err(|e| FilestoreError::Format(format!("Failed to serialize manifest: {}", e)))?;
+            
+         self.put_sync(table_type, table_id, user_id, &path_result.full_path, bytes::Bytes::from(data))?;
+         Ok(())
+    }
+
     /// List all files under a table's storage path (sync).
     pub fn list_sync(
         &self,
@@ -301,6 +365,43 @@ impl StorageCached {
         run_blocking(|| async {
             self.list(table_type, &table_id, user_id.as_ref()).await
         })
+    }
+
+    /// List all Parquet files under a table's storage path (sync).
+    /// Returns duplicate-free list of filenames ending in .parquet.
+    /// TODO: This is problematic for large datasets - consider async version with streaming.
+    pub fn list_parquet_files_sync(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<Vec<String>> {
+        let list_result = self.list_sync(table_type, table_id, user_id)?;
+        let prefix = list_result.prefix.trim_end_matches('/');
+
+        let mut files: Vec<String> = list_result.paths
+            .into_iter()
+            .filter_map(|path| {
+                // Extract filename relative to the listed prefix
+                // Note: ObjectStore paths are usually consistent but handling prefix stripping is safer
+                let suffix = if path.starts_with(prefix) {
+                    path[prefix.len()..].trim_start_matches('/')
+                } else {
+                    // Fallback for paths that might be full absolute paths or differently formatted
+                    path.rsplit('/').next().unwrap_or(path.as_str())
+                };
+                
+                if suffix.ends_with(".parquet") {
+                    Some(suffix.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+            
+        files.sort();
+        files.dedup();
+        Ok(files)
     }
 
     /// Read a file from storage.
@@ -327,7 +428,10 @@ impl StorageCached {
         let result = store
             .get(&object_path)
             .await
-            .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
+            .map_err(|e| match e {
+                object_store::Error::NotFound { .. } => FilestoreError::NotFound(path_result.full_path.clone()),
+                _ => FilestoreError::ObjectStore(e.to_string()),
+            })?;
 
         let bytes = result
             .bytes()

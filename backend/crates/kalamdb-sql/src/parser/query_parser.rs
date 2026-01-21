@@ -164,10 +164,13 @@ impl QueryParser {
         }
     }
 
-    /// Extract projections from a parsed Query AST
-    fn extract_projections_from_query(
-        query: &Query,
-    ) -> Result<Option<Vec<String>>, QueryParseError> {
+    /// Resolve placeholders like CURRENT_USER() in WHERE clause
+    pub fn resolve_where_clause_placeholders(where_clause: &str, user_id: &kalamdb_commons::models::UserId) -> String {
+        where_clause.replace("CURRENT_USER()", &format!("'{}'", user_id))
+    }
+
+    /// Extract projection columns from a parsed Query AST
+    fn extract_projections_from_query(query: &Query) -> Result<Option<Vec<String>>, QueryParseError> {
         match query.body.as_ref() {
             SetExpr::Select(select) => Self::extract_projections_from_select(select),
             _ => Ok(None),

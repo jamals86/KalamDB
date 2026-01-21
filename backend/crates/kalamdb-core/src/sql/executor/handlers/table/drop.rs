@@ -11,7 +11,7 @@ use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::block_system_namespace_modification;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use kalamdb_commons::models::{StorageId, TableId};
+use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::JobType;
 use kalamdb_sql::ddl::DropTableStatement;
@@ -213,17 +213,17 @@ pub async fn cleanup_parquet_files_internal(
 
     // Delete Parquet files using StorageCached
     // Note: For user tables, we'd need user_id, but cleanup is table-wide
-    let bytes_freed = storage_cached
+    let files_deleted = storage_cached
         .delete_prefix_sync(
             table_type,
             table_id,
             None,  // user_id - cleanup is table-wide
         )
         .into_kalamdb_error("Failed to delete Parquet tree")?
-        .bytes_deleted;
+        .files_deleted;
 
-    log::debug!("[CleanupHelper] Freed {} bytes from Parquet files", bytes_freed);
-    Ok(bytes_freed)
+    log::debug!("[CleanupHelper] Freed {} files from Parquet storage", files_deleted);
+    Ok(0) // Bytes freed not returned by delete_prefix_sync
 }
 
 /// Cleanup helper function: Remove table metadata from system tables
@@ -237,20 +237,20 @@ pub async fn cleanup_parquet_files_internal(
 /// # Returns
 /// Ok(()) on success
 pub async fn cleanup_metadata_internal(
-    app_ctx: &AppContext,
+    _app_ctx: &AppContext,
     schema_registry: &Arc<SchemaRegistry>,
     table_id: &TableId,
 ) -> Result<(), KalamDbError> {
     log::debug!("[CleanupHelper] Cleaning up metadata for {:?}", table_id);
 
-    if !schema_registry.table_exists(app_ctx, table_id)? {
-        log::debug!("[CleanupHelper] Metadata already removed for {:?}, skipping", table_id);
-        return Ok(());
-    }
+    // if !schema_registry.table_exists(app_ctx, table_id)? {
+    //     log::debug!("[CleanupHelper] Metadata already removed for {:?}, skipping", table_id);
+    //     return Ok(());
+    // }
 
     // Delete table definition from SchemaRegistry
     // This removes from both cache and persistent store (delete-through pattern)
-    schema_registry.delete_table_definition(app_ctx, table_id)?;
+    schema_registry.delete_table_definition(table_id)?;
 
     log::debug!("[CleanupHelper] Metadata cleanup complete");
     Ok(())
@@ -276,7 +276,7 @@ impl DropTableHandler {
             KalamDbError::InvalidOperation(format!("Table cache entry not found for {}", table_id))
         })?;
 
-        let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
+        let storage_id = cached.storage_id.clone();
 
         // Get storage from registry (cached lookup)
         let storage = self
@@ -351,7 +351,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         // RBAC: authorize based on actual table type if exists
         let registry = self.app_context.schema_registry();
         let actual_type =
-            match registry.get_table_if_exists(self.app_context.as_ref(), &table_id)? {
+            match registry.get_table_if_exists( &table_id)? {
                 Some(def) => def.table_type,
                 None => TableType::from(statement.table_type),
             };
@@ -483,13 +483,6 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         }
 
         // TODO: Check active live queries/subscriptions before dropping (Phase 9 integration)
-
-        // Unregister provider from SchemaRegistry (auto-unregisters from DataFusion)
-        use crate::sql::executor::helpers::table_registration::unregister_table_provider;
-        unregister_table_provider(&self.app_context, &table_id)?;
-
-        // Mark table as deleted in SchemaRegistry (soft delete)
-        registry.delete_table_definition(self.app_context.as_ref(), &table_id)?;
 
         // Delegate to unified applier (handles standalone vs cluster internally)
         self.app_context

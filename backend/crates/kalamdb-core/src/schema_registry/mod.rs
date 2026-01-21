@@ -6,18 +6,16 @@
 pub mod arrow_schema;
 pub mod cached_table_data;
 pub mod error;
-pub mod path_resolver;
 pub mod projection;
 pub mod registry;
 pub mod stats;
 pub mod system_columns_service;
-pub mod traits;
 
 pub use arrow_schema::ArrowSchemaWithOptions;
 pub use cached_table_data::CachedTableData;
 pub use error::RegistryError;
 pub use kalamdb_commons::helpers::string_interner::SystemColumns;
-pub use path_resolver::PathResolver;
+
 pub use projection::{project_batch, schemas_compatible};
 pub use registry::SchemaRegistry;
 pub use stats::StatsTableProvider;

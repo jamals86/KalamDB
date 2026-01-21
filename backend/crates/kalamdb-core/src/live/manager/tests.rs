@@ -105,7 +105,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
     let messages_table_id =
         TableId::new(messages_table.namespace_id.clone(), messages_table.table_name.clone());
     schema_registry
-        .put_table_definition(app_ctx.as_ref(), &messages_table_id, &messages_table)
+        .put(&messages_table)
         .unwrap();
 
     let notifications_table = TableDefinition::new(
@@ -145,7 +145,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         notifications_table.table_name.clone(),
     );
     schema_registry
-        .put_table_definition(app_ctx.as_ref(), &notifications_table_id, &notifications_table)
+        .put(&notifications_table)
         .unwrap();
 
     // Create connections manager first

@@ -10,8 +10,6 @@ use kalamdb_commons::schemas::TableType;
 
 use crate::app_context::AppContext;
 use crate::applier::ApplierError;
-use crate::schema_registry::CachedTableData;
-use crate::sql::executor::helpers::table_registration;
 
 /// Executor for DDL (Data Definition Language) operations
 pub struct DdlExecutor {
@@ -35,10 +33,9 @@ impl DdlExecutor {
     /// Execute CREATE TABLE
     ///
     /// This performs ALL the steps for table creation:
-    /// 1. Persist to system.tables
-    /// 2. Prime schema cache
-    /// 3. Register DataFusion provider
-    /// 4. Emit TableCreated event
+    /// 1. Persist to system.tables (via SchemaRegistry)
+    /// 2. Prime schema cache (via SchemaRegistry)
+    /// 3. Invalidate plan cache
     pub async fn create_table(
         &self,
         table_id: &TableId,
@@ -47,20 +44,13 @@ impl DdlExecutor {
     ) -> Result<String, ApplierError> {
         log::debug!("CommandExecutorImpl: Creating {} table {}", table_type, table_id.full_name());
 
-        // 1. Persist to system.tables
+        // Refactored: Use SchemaRegistry to handle registration/persistence central logic
         self.app_context
-            .system_tables()
-            .tables()
-            .create_table(table_id, table_def)
-            .map_err(|e| ApplierError::Execution(format!("Failed to create table: {}", e)))?;
+            .schema_registry()
+            .register_table(table_def.clone())
+            .map_err(|e| ApplierError::Execution(format!("Failed to register table: {}", e)))?;
 
-        // 2. Prime the schema cache
-        self.prime_schema_cache(table_id, table_type, table_def)?;
-
-        // 3. Register the DataFusion provider
-        self.register_table_provider(table_id, table_type, table_def)?;
-
-        // 4. Invalidate cached plans across this node
+        // 3. Invalidate cached plans across this node
         self.clear_plan_cache_if_available();
 
         Ok(format!(
@@ -88,24 +78,15 @@ impl DdlExecutor {
             );
         }
 
-        // 1. Update in system.tables
+        // Use SchemaRegistry to handle registration/persistence central logic
         self.app_context
-            .system_tables()
-            .tables()
-            .update_table(table_id, table_def)
-            .map_err(|e| ApplierError::Execution(format!("Failed to alter table: {}", e)))?;
-        log::debug!("CommandExecutorImpl: Updated system.tables for {}", table_id.full_name());
+            .schema_registry()
+            .register_table(table_def.clone())
+            .map_err(|e| ApplierError::Execution(format!("Failed to register altered table: {}", e)))?;
 
-        // 2. Update schema cache
-        let table_type = table_def.table_type;
-        self.prime_schema_cache(table_id, table_type, table_def)?;
-        log::debug!("CommandExecutorImpl: Primed schema cache for {}", table_id.full_name());
+        log::debug!("CommandExecutorImpl: Updated schema cache and provider for {}", table_id.full_name());
 
-        // 3. Re-register provider with new schema
-        self.register_table_provider(table_id, table_type, table_def)?;
-        log::debug!("CommandExecutorImpl: Re-registered provider for {}", table_id.full_name());
-
-        // 4. Invalidate cached plans across this node
+        // 3. Invalidate cached plans across this node
         self.clear_plan_cache_if_available();
 
         // 4. Verify the schema was updated correctly
@@ -133,22 +114,13 @@ impl DdlExecutor {
     pub async fn drop_table(&self, table_id: &TableId) -> Result<String, ApplierError> {
         log::debug!("CommandExecutorImpl: Dropping table {}", table_id.full_name());
 
-        // 1. Remove from system.tables
+        // Delegate to SchemaRegistry (delete-through)
         self.app_context
-            .system_tables()
-            .tables()
-            .delete_table(table_id)
+            .schema_registry()
+            .delete_table_definition(table_id)
             .map_err(|e| ApplierError::Execution(format!("Failed to drop table: {}", e)))?;
 
-        // 2. Remove from schema cache
-        self.app_context.schema_registry().invalidate_all_versions(table_id);
-
-        // 3. Deregister DataFusion provider
-        self.app_context.schema_registry().remove_provider(table_id).map_err(|e| {
-            ApplierError::Execution(format!("Failed to deregister provider: {}", e))
-        })?;
-
-        // 4. Invalidate cached plans across this node
+        // 3. Invalidate cached plans across this node
         self.clear_plan_cache_if_available();
 
         Ok(format!(
@@ -156,89 +128,6 @@ impl DdlExecutor {
             table_id.namespace_id().as_str(),
             table_id.table_name().as_str()
         ))
-    }
-
-    /// Prime the schema cache with table definition
-    fn prime_schema_cache(
-        &self,
-        table_id: &TableId,
-        _table_type: TableType,
-        table_def: &TableDefinition,
-    ) -> Result<(), ApplierError> {
-        use kalamdb_commons::models::schemas::TableOptions;
-
-        let table_def_arc = Arc::new(table_def.clone());
-        let schema_registry = self.app_context.schema_registry();
-
-        let storage_id_opt = match &table_def_arc.table_options {
-            TableOptions::User(opts) => Some(opts.storage_id.clone()),
-            TableOptions::Shared(opts) => Some(opts.storage_id.clone()),
-            TableOptions::Stream(_) => None,
-            TableOptions::System(_) => return Ok(()),
-        };
-
-        let data = CachedTableData::with_storage_config(table_def_arc, storage_id_opt);
-        schema_registry.insert(table_id.clone(), Arc::new(data));
-
-        Ok(())
-    }
-
-    /// Register table provider with DataFusion
-    fn register_table_provider(
-        &self,
-        table_id: &TableId,
-        table_type: TableType,
-        table_def: &TableDefinition,
-    ) -> Result<(), ApplierError> {
-        let arrow_schema = self
-            .app_context
-            .schema_registry()
-            .get_arrow_schema(self.app_context.as_ref(), table_id)
-            .map_err(|e| ApplierError::Execution(format!("Failed to get Arrow schema: {}", e)))?;
-
-        match table_type {
-            TableType::User => {
-                table_registration::register_user_table_provider(
-                    &self.app_context,
-                    table_id,
-                    arrow_schema,
-                )
-                .map_err(|e| {
-                    ApplierError::Execution(format!("Failed to register user table: {}", e))
-                })?;
-            },
-            TableType::Shared => {
-                table_registration::register_shared_table_provider(
-                    &self.app_context,
-                    table_id,
-                    arrow_schema,
-                )
-                .map_err(|e| {
-                    ApplierError::Execution(format!("Failed to register shared table: {}", e))
-                })?;
-            },
-            TableType::Stream => {
-                use kalamdb_commons::models::schemas::TableOptions;
-                let ttl = match &table_def.table_options {
-                    TableOptions::Stream(opts) => Some(opts.ttl_seconds),
-                    _ => Some(10),
-                };
-                table_registration::register_stream_table_provider(
-                    &self.app_context,
-                    table_id,
-                    arrow_schema,
-                    ttl,
-                )
-                .map_err(|e| {
-                    ApplierError::Execution(format!("Failed to register stream table: {}", e))
-                })?;
-            },
-            TableType::System => {
-                // System tables are registered differently
-            },
-        }
-
-        Ok(())
     }
 }
 

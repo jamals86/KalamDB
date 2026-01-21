@@ -676,14 +676,46 @@ fn cli_output_error(stdout: &str) -> Option<String> {
 }
 
 /// Check if the KalamDB server is running
+/// Panics if server is not reachable to ensure tests fail loudly
 pub fn is_server_running() -> bool {
+    eprintln!("[DEBUG] Checking if server is running at {}", server_url());
     if !is_server_reachable() {
-        return false;
+        eprintln!("[DEBUG] Server is NOT reachable - will panic!");
+        panic!(
+            "\n\n\
+            ╔══════════════════════════════════════════════════════════════════╗\n\
+            ║                    SERVER NOT REACHABLE                          ║\n\
+            ╠══════════════════════════════════════════════════════════════════╣\n\
+            ║  Tests require a running KalamDB server at {}    ║\n\
+            ║                                                                  ║\n\
+            ║  Start the server:                                               ║\n\
+            ║    cd backend && cargo run                                       ║\n\
+            ╚══════════════════════════════════════════════════════════════════╝\n\n",
+            server_url()
+        );
     }
-
+    
+    eprintln!("[DEBUG] Server is reachable, checking auth...");
     match server_requires_auth() {
-        Some(_) => true,
-        None => false,
+        Some(auth_required) => {
+            eprintln!("[DEBUG] Auth check passed, auth_required={}", auth_required);
+            true
+        },
+        None => {
+            eprintln!("[DEBUG] Auth check failed - will panic!");
+            panic!(
+                "\n\n\
+                ╔══════════════════════════════════════════════════════════════════╗\n\
+                ║               SERVER AUTH CHECK FAILED                           ║\n\
+                ╠══════════════════════════════════════════════════════════════════╣\n\
+                ║  Could not determine server auth requirements at {}   ║\n\
+                ║                                                                  ║\n\
+                ║  Server may be starting up or not fully initialized.             ║\n\
+                ║  Please ensure the server is fully running.                      ║\n\
+                ╚══════════════════════════════════════════════════════════════════╝\n\n",
+                server_url()
+            );
+        }
     }
 }
 
@@ -1027,28 +1059,24 @@ pub fn require_server_running() -> bool {
     let available_urls = get_available_server_urls();
 
     if available_urls.is_empty() {
-        if std::env::var("KALAMDB_REQUIRE_SERVER").ok().as_deref() == Some("1") {
-            panic!(
-                "\n\n\
-                ╔══════════════════════════════════════════════════════════════════╗\n\
-                ║                    SERVER NOT RUNNING                            ║\n\
-                ╠══════════════════════════════════════════════════════════════════╣\n\
-                ║  Smoke tests require a running KalamDB server!                   ║\n\
-                ║                                                                  ║\n\
-                ║  Single-node mode:                                               ║\n\
-                ║    cd backend && cargo run                                       ║\n\
-                ║                                                                  ║\n\
-                ║  Cluster mode (3 nodes):                                         ║\n\
-                ║    ./scripts/cluster.sh start                                    ║\n\
-                ║                                                                  ║\n\
-                ║  Then run the smoke tests:                                       ║\n\
-                ║    cd cli && cargo test --test smoke                             ║\n\
-                ╚══════════════════════════════════════════════════════════════════╝\n\n"
-            );
-        }
-
-        eprintln!("Skipping CLI smoke tests: no running KalamDB server detected.");
-        return false;
+        // ALWAYS fail tests when server is not running - don't silently skip!
+        panic!(
+            "\n\n\
+            ╔══════════════════════════════════════════════════════════════════╗\n\
+            ║                    SERVER NOT RUNNING                            ║\n\
+            ╠══════════════════════════════════════════════════════════════════╣\n\
+            ║  All tests require a running KalamDB server!                     ║\n\
+            ║                                                                  ║\n\
+            ║  Single-node mode:                                               ║\n\
+            ║    cd backend && cargo run                                       ║\n\
+            ║                                                                  ║\n\
+            ║  Cluster mode (3 nodes):                                         ║\n\
+            ║    ./scripts/cluster.sh start                                    ║\n\
+            ║                                                                  ║\n\
+            ║  Then run the tests:                                             ║\n\
+            ║    cd cli && cargo nextest run --no-fail-fast                    ║\n\
+            ╚══════════════════════════════════════════════════════════════════╝\n\n"
+        );
     }
 
     // Print mode information

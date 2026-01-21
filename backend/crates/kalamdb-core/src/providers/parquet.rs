@@ -1,7 +1,7 @@
 use crate::error::KalamDbError;
 use crate::manifest::ManifestAccessPlanner;
 use crate::providers::core::TableProviderCore;
-use crate::schema_registry::{PathResolver, TableType};
+use kalamdb_commons::models::schemas::TableType;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::logical_expr::Expr;
@@ -30,10 +30,7 @@ pub(crate) fn scan_parquet_files_as_batch(
         .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
 
     // 2. Get StorageCached from registry (cached lookup)
-    let storage_id = cached
-        .storage_id
-        .clone()
-        .unwrap_or_else(kalamdb_commons::models::StorageId::local);
+    let storage_id = cached.storage_id.clone();
 
     let storage_cached = core
         .app_context

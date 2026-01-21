@@ -82,7 +82,7 @@ impl StatementHandler for InsertHandler {
         // Single lookup: get_table_if_exists returns None if table doesn't exist
         // This is more efficient than calling table_exists + get_table_if_exists
         let table_def = schema_registry
-            .get_table_if_exists(self.app_context.as_ref(), &table_id)?
+            .get_table_if_exists(&table_id)?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!("Table '{}' does not exist", table_id))
             })?;

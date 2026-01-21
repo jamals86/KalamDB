@@ -204,8 +204,9 @@ impl PkExistenceChecker {
             .storage_cached(&self.app_context.storage_registry())
             .into_kalamdb_error("Failed to get storage cache")?;
 
-        let list_result = match storage_cached.list_sync(table_type, table_id, user_id) {
-            Ok(result) => result,
+        // 3. List parquet files using optimized method
+        let all_parquet_files = match storage_cached.list_parquet_files_sync(table_type, table_id, user_id) {
+            Ok(files) => files,
             Err(_) => {
                 log::trace!(
                     "[PkExistenceChecker] No storage dir for {}.{} {}",
@@ -217,7 +218,7 @@ impl PkExistenceChecker {
             },
         };
 
-        if list_result.is_empty() {
+        if all_parquet_files.is_empty() {
             log::trace!(
                 "[PkExistenceChecker] No files in storage for {}.{} {}",
                 namespace.as_str(),
@@ -287,20 +288,7 @@ impl PkExistenceChecker {
             pruned_paths
         } else {
             // No manifest - check all Parquet files
-            let prefix = list_result.prefix.trim_end_matches('/');
-            list_result
-                .paths
-                .into_iter()
-                .filter_map(|path| {
-                    let stripped =
-                        Self::strip_list_prefix(&path, prefix).unwrap_or(path.as_str());
-                    if stripped.ends_with(".parquet") {
-                        Some(stripped.to_string())
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+            all_parquet_files
         };
 
         if files_to_scan.is_empty() {
@@ -321,7 +309,7 @@ impl PkExistenceChecker {
                 log::trace!(
                     "[PkExistenceChecker] Found PK {} in {} for {}.{} {}",
                     pk_value,
-                    parquet_path,
+                    file_name,
                     namespace.as_str(),
                     table.as_str(),
                     scope_label
@@ -374,11 +362,10 @@ impl PkExistenceChecker {
         use kalamdb_commons::constants::SystemColumnNames;
         use std::collections::HashMap;
 
-        let result = storage_cached
-            .get_sync(table_type, table_id, user_id, parquet_filename)
+        // Use the centralized helper (Tasks 99/100)
+        let batches = storage_cached
+            .read_parquet_files_sync(table_type, table_id, user_id, &[parquet_filename.to_string()])
             .into_kalamdb_error("Failed to read Parquet file")?;
-        let batches = kalamdb_filestore::parse_parquet_from_bytes(result.data)
-            .into_kalamdb_error("Failed to parse Parquet file")?;
 
         // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
         let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
@@ -448,18 +435,6 @@ impl PkExistenceChecker {
         } else {
             Ok(false)
         }
-    }
-
-    fn strip_list_prefix<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
-        let trimmed_prefix = prefix.trim_end_matches('/');
-        if trimmed_prefix.is_empty() {
-            return Some(path.trim_start_matches('/'));
-        }
-        if path == trimmed_prefix {
-            return None;
-        }
-        path.strip_prefix(trimmed_prefix)
-            .map(|stripped| stripped.trim_start_matches('/'))
     }
 
     /// Extract PK value as string from an Arrow array

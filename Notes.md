@@ -1180,6 +1180,41 @@ also check why we need reqwest?
 
 95) check that looping over a folder with parquet files do it depending on the manifest.json not all the list of parquet files
 
-96) add of object.store.put or any operations should be used from inside the storecache and not from everywhere like in: write_parquet_with_store and write_parquet_to_storage, read_parquet_batches
-
 97) since we now have StorageCache object, add unit tests which check each method in there 
+
+98) pass Appcontext to backend/crates/kalamdb-core/src/schema_registry/registry/core.rs and instead of passing it to each function
+
+99)         //TODO: Since we need only parquet lets only fetch parquet files here
+        let list_result = match storage_cached.list_sync(table_type, table_id, user_id) {
+            Ok(result) => result,
+100) check if we need to make this with other parquet file reading: backend/crates/kalamdb-core/src/pk/existence_checker.rs
+check all other functions which read parquet like: backend/crates/kalamdb-core/src/providers/flush
+and see if there is any pattern or duplication or things we can move to filestore
+and also this one reads them: backend/crates/kalamdb-core/src/manifest/planner.rs
+make only one place where it reads parquet extract the common logic and check whats the pattern in all the readers and combine them into one or few functions in filestore crate
+
+
+101) backend/crates/kalamdb-core/src/manifest/service.rs should contain storageregistry and schemaregistry as members not passing them to each function or computing them
+
+102) We dont need to have flushing of manifest and reading it using get path and them put or read we can directly call a function to do so
+
+103) SchemaRegistry should have hashmap instead of cache which clears
+
+104) Manifest service should use the manifest_provider it already have store initialized we can use it also as an in-memory cache from there directly instead of having another cache in manifest service
+
+
+105) we have many places where we have:
+        let data = CachedTableData::new(table_def_arc);
+        schema_registry.insert(table_id.clone(), Arc::new(data));
+
+cange to to be put(TableDefinition) instead of CachedTableData and it creates the CachedTableData inside it
+
+106) pub struct ManifestCacheKey(String); //TODO: Should be consist of TableId and UserId?
+107) add a cache to: backend/crates/kalamdb-system/src/providers/manifest/manifest_store.rs to in-memory and cache through fetching for shared tables only manifests and make sure ManifestService uses the manifestprovider with the caching as well
+
+108) evict_stale_entries(&self, ttl_seconds: i64) -> Result<usize, StorageError> {
+  is problematic since it scan all manifest's from rocksdb we should make a better way to do so maybe holding another column family with last_accessed timestamps only for faster eviction we now can have a secondary index easily for that
+
+109) is this needed: backend/crates/kalamdb-core/src/sql/executor/helpers/table_creation.rs
+
+110) Check how to make datafusion session or loader look for tables inside the schemaregistry we have directly? this way no need for registring into datafusion
