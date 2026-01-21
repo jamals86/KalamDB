@@ -72,17 +72,20 @@ impl FlushManifestHelper {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<u64, KalamDbError> {
+        if let Ok(Some(entry)) = self.manifest_service.get_or_load(table_id, user_id) {
+            return Ok(if entry.manifest.segments.is_empty() {
+                0
+            } else {
+                entry.manifest.last_sequence_number + 1
+            });
+        }
+
         match self.manifest_service.read_manifest(table_id, user_id) {
-            Ok(manifest) => {
-                // Use last_sequence_number which tracks the last batch index
-                // Next batch should be last_sequence_number + 1
-                let next_batch = if manifest.segments.is_empty() {
-                    0 // First batch
-                } else {
-                    manifest.last_sequence_number + 1
-                };
-                Ok(next_batch)
-            },
+            Ok(manifest) => Ok(if manifest.segments.is_empty() {
+                0
+            } else {
+                manifest.last_sequence_number + 1
+            }),
             Err(_) => Ok(0), // No manifest exists yet, start with batch 0
         }
     }

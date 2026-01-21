@@ -1218,3 +1218,10 @@ cange to to be put(TableDefinition) instead of CachedTableData and it creates th
 109) is this needed: backend/crates/kalamdb-core/src/sql/executor/helpers/table_creation.rs
 
 110) Check how to make datafusion session or loader look for tables inside the schemaregistry we have directly? this way no need for registring into datafusion
+
+112) i think its better to store this as hashmap:    /// List of data segments
+    pub segments: Vec<SegmentMetadata>,
+
+113) i see errors like this maybe we dont increment changes at all since it damages performance, but before removing it check why this happening? if the user unsubscribe why this still running?? check the logic in the unsubscribe and if all related stuff is also closed properly when doing that
+[2026-01-21 10:17:39.137] [ERROR] - main - kalamdb_core::live::notification:382 - Failed to increment changes for live_id=root-163d1e31d91149b4984c46d850d40358-sub_1768983459090957000: Not found: Live query not found: root-163d1e31d91149b4984c46d850d40358-sub_1768983459090957000
+

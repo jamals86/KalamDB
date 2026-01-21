@@ -153,6 +153,7 @@ impl SchemaRegistry {
         
         // 1. Create CachedTableData
         let cached_data = Arc::new(CachedTableData::new(Arc::new(table_def.clone())));
+        let previous_entry = self.table_cache.insert(table_id.clone(), Arc::clone(&cached_data));
         
         // 2. Create TableProvider if not a system table
         if table_def.table_type != TableType::System {
@@ -171,14 +172,16 @@ impl SchemaRegistry {
                     // We still insert the definition, but provider creation failed.
                     // This creates a "definition-only" cache entry which might be problematic for queries.
                     // But for system stability, maybe we should return error?
+                    if let Some(previous) = previous_entry {
+                        self.table_cache.insert(table_id, previous);
+                    } else {
+                        self.table_cache.remove(&table_id);
+                    }
                     return Err(e);
                 }
             }
         }
-        
-        // 4. Insert into cache
-        self.table_cache.insert(table_id, cached_data);
-        
+
         Ok(())
     }
 

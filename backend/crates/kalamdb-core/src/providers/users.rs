@@ -519,6 +519,16 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             KalamDbError::InvalidOperation(format!("Failed to batch insert user table rows: {}", e))
         })?;
 
+        // Mark manifest as having pending writes (hot data needs to be flushed)
+        let manifest_service = self.core.app_context.manifest_service();
+        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), Some(user_id)) {
+            log::warn!(
+                "Failed to mark manifest as pending_write for {}: {}",
+                self.core.table_id(),
+                e
+            );
+        }
+
         log::debug!(
             "Batch inserted {} user table rows for user {} with _seq range [{}, {}]",
             row_count,
@@ -634,6 +644,16 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             KalamDbError::InvalidOperation(format!("Failed to update user table row: {}", e))
         })?;
 
+        // Mark manifest as having pending writes (hot data needs to be flushed)
+        let manifest_service = self.core.app_context.manifest_service();
+        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), Some(user_id)) {
+            log::warn!(
+                "Failed to mark manifest as pending_write for {}: {}",
+                self.core.table_id(),
+                e
+            );
+        }
+
         // Fire live query notification (UPDATE)
         if let Some(manager) = &self.core.live_query_manager {
             let table_id = self.core.table_id().clone();
@@ -697,6 +717,16 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         self.store.insert(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to update user table row: {}", e))
         })?;
+
+        // Mark manifest as having pending writes (hot data needs to be flushed)
+        let manifest_service = self.core.app_context.manifest_service();
+        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), Some(user_id)) {
+            log::warn!(
+                "Failed to mark manifest as pending_write for {}: {}",
+                self.core.table_id(),
+                e
+            );
+        }
 
         // Fire live query notification (UPDATE)
         if let Some(manager) = &self.core.live_query_manager {
@@ -762,6 +792,16 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         self.store.insert(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to delete user table row: {}", e))
         })?;
+
+        // Mark manifest as having pending writes (hot data needs to be flushed)
+        let manifest_service = self.core.app_context.manifest_service();
+        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), Some(user_id)) {
+            log::warn!(
+                "Failed to mark manifest as pending_write for {}: {}",
+                self.core.table_id(),
+                e
+            );
+        }
 
         // Fire live query notification (DELETE soft)
         if let Some(manager) = &self.core.live_query_manager {

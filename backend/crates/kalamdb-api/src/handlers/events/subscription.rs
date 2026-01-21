@@ -158,10 +158,27 @@ pub async fn handle_subscribe(
                 }
 
                 let batch_msg =
-                    WebSocketMessage::initial_data_batch(subscription_id, rows_json, batch_control);
+                    WebSocketMessage::initial_data_batch(subscription_id.clone(), rows_json, batch_control);
                 let _ = send_json(session, &batch_msg).await;
+
+                if !initial.has_more {
+                    let flushed = connection_state.read().complete_initial_load(&subscription_id);
+                    if flushed > 0 {
+                        info!(
+                            "Flushed {} buffered notifications after initial load for {}",
+                            flushed, subscription_id
+                        );
+                    }
+                }
             } else {
                 info!("No initial data to send for {}", subscription_id);
+                let flushed = connection_state.read().complete_initial_load(&subscription_id.clone());
+                if flushed > 0 {
+                    info!(
+                        "Flushed {} buffered notifications after initial load for {}",
+                        flushed, subscription_id
+                    );
+                }
             }
 
             Ok(())

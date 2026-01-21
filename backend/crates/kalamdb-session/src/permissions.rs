@@ -151,7 +151,7 @@ pub fn can_execute_dml(role: Role) -> bool {
 /// Check if a role can execute maintenance operations (flush/compact).
 #[inline]
 pub fn can_execute_maintenance(role: Role) -> bool {
-    matches!(role, Role::System | Role::Dba)
+    matches!(role, Role::System | Role::Dba | Role::Service)
 }
 
 /// Check if a role can write (INSERT/UPDATE/DELETE) a user/stream table.

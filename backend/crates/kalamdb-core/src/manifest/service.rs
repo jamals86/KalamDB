@@ -232,6 +232,39 @@ impl ManifestService {
         Ok(())
     }
 
+    /// Mark a cache entry as having pending writes (hot data not yet flushed to cold storage).
+    /// 
+    /// This should be called after any write operation (INSERT, UPDATE, DELETE) to indicate
+    /// that the RocksDB hot store has data that needs to be flushed to Parquet cold storage.
+    /// The sync_state will transition from InSync to PendingWrite.
+    pub fn mark_pending_write(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), StorageError> {
+        let rocksdb_key = ManifestCacheKey::from(self.make_cache_key_string(table_id, user_id));
+
+        if let Some(mut entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
+            entry.mark_pending_write();
+            EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
+            debug!(
+                "Marked manifest entry as pending_write: table={}, user={:?}",
+                table_id,
+                user_id.map(|u| u.as_str())
+            );
+        } else {
+            // If no cache entry exists yet, create one with PendingWrite state
+            // This shouldn't happen in normal flow since ensure_manifest_ready is called first
+            warn!(
+                "mark_pending_write called but no cache entry exists: table={}, user={:?}",
+                table_id,
+                user_id.map(|u| u.as_str())
+            );
+        }
+
+        Ok(())
+    }
+
     /// Validate freshness of cached entry based on TTL.
     pub fn validate_freshness(
         &self,

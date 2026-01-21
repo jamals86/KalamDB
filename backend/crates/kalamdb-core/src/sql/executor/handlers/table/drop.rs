@@ -243,10 +243,13 @@ pub async fn cleanup_metadata_internal(
 ) -> Result<(), KalamDbError> {
     log::debug!("[CleanupHelper] Cleaning up metadata for {:?}", table_id);
 
-    // if !schema_registry.table_exists(app_ctx, table_id)? {
-    //     log::debug!("[CleanupHelper] Metadata already removed for {:?}, skipping", table_id);
-    //     return Ok(());
-    // }
+    if schema_registry.get_table_if_exists(table_id)?.is_some() {
+        log::debug!(
+            "[CleanupHelper] Metadata present for {:?} (table re-created) - skipping cleanup",
+            table_id
+        );
+        return Ok(());
+    }
 
     // Delete table definition from SchemaRegistry
     // This removes from both cache and persistent store (delete-through pattern)
@@ -350,11 +353,11 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
 
         // RBAC: authorize based on actual table type if exists
         let registry = self.app_context.schema_registry();
-        let actual_type =
-            match registry.get_table_if_exists( &table_id)? {
-                Some(def) => def.table_type,
-                None => TableType::from(statement.table_type),
-            };
+        let registry_def = registry.get_table_if_exists(&table_id)?;
+        let actual_type = match registry_def.as_deref() {
+            Some(def) => def.table_type,
+            None => TableType::from(statement.table_type),
+        };
         let is_owner = false;
         if !crate::auth::rbac::can_delete_table(context.user_role(), actual_type, is_owner) {
             log::error!(
@@ -373,7 +376,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         // Check existence via system.tables provider (for IF EXISTS behavior)
         let tables = self.app_context.system_tables().tables();
         let table_metadata = tables.get_table_by_id(&table_id)?;
-        let exists = table_metadata.is_some();
+        let exists = table_metadata.is_some() || registry_def.is_some();
 
         if !exists {
             if statement.if_exists {

@@ -308,62 +308,6 @@ impl LiveQueriesTableProvider {
         Ok(count)
     }
 
-    /// Increment the changes counter for a live query
-    pub fn increment_changes(&self, live_id: &str, timestamp: i64) -> Result<(), SystemError> {
-        let mut live_query = self
-            .get_live_query(live_id)?
-            .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
-
-        live_query.changes += 1;
-        live_query.last_update = timestamp;
-
-        self.update_live_query(live_query)?;
-        Ok(())
-    }
-
-    /// Async version of `increment_changes()` - offloads to blocking thread pool.
-    ///
-    /// Use this in async contexts to avoid blocking the Tokio runtime.
-    pub async fn increment_changes_async(
-        &self,
-        live_id: &str,
-        timestamp: i64,
-    ) -> Result<(), SystemError> {
-        let mut live_query = self
-            .get_live_query_async(live_id)
-            .await?
-            .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
-
-        live_query.changes += 1;
-        live_query.last_update = timestamp;
-
-        self.update_live_query_async(live_query).await?;
-        Ok(())
-    }
-
-    /// Increment the changes counter by a delta (batched variant).
-    pub async fn increment_changes_by_async(
-        &self,
-        live_id: &str,
-        delta: u64,
-        timestamp: i64,
-    ) -> Result<(), SystemError> {
-        if delta == 0 {
-            return Ok(());
-        }
-
-        let mut live_query = self
-            .get_live_query_async(live_id)
-            .await?
-            .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
-
-        live_query.changes = live_query.changes.saturating_add(delta as i64);
-        live_query.last_update = timestamp;
-
-        self.update_live_query_async(live_query).await?;
-        Ok(())
-    }
-
     /// Scan all live queries and return as RecordBatch
     pub fn scan_all_live_queries(&self) -> Result<RecordBatch, SystemError> {
         let live_queries = self.store.scan_all(None, None, None)?;

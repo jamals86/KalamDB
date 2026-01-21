@@ -2430,9 +2430,12 @@ pub struct SubscriptionListener {
 
 impl Drop for SubscriptionListener {
     fn drop(&mut self) {
-        // Signal the subscription task to stop
+        // Signal the subscription task to stop and join the thread to avoid leaks
         if let Some(sender) = self.stop_sender.take() {
             let _ = sender.send(());
+        }
+        if let Some(handle) = self._handle.take() {
+            let _ = handle.join();
         }
     }
 }
@@ -2617,10 +2620,15 @@ impl SubscriptionListener {
     }
 
     /// Stop the subscription listener gracefully
-    pub fn stop(mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Signal the subscription task to stop
+    pub fn stop(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // Signal the subscription task to stop and join the thread
         if let Some(sender) = self.stop_sender.take() {
             let _ = sender.send(());
+        }
+        if let Some(handle) = self._handle.take() {
+            handle
+                .join()
+                .map_err(|_| Box::<dyn std::error::Error>::from("Subscription listener thread panicked"))?;
         }
         Ok(())
     }

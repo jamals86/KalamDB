@@ -129,9 +129,9 @@ impl ManifestTableSchema {
                 Some("True if manifest is currently in hot cache (RAM)".to_string()),
             ),
             ColumnDefinition::new(
-                10,
+                9,
                 "sync_state",
-                10,
+                9,
                 KalamDataType::Text,
                 false,
                 false,
@@ -140,9 +140,9 @@ impl ManifestTableSchema {
                 Some("Synchronization state: in_sync, stale, error".to_string()),
             ),
             ColumnDefinition::new(
-                11,
+                10,
                 "manifest_json",
-                11,
+                10,
                 KalamDataType::Json,
                 false,
                 false,

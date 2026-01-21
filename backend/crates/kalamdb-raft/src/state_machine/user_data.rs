@@ -466,12 +466,23 @@ impl KalamStateMachine for UserDataStateMachine {
             let current_meta = get_coordinator().current_index();
             if required_meta > current_meta {
                 log::debug!(
-                    "UserDataStateMachine[{}]: Waiting for meta (required_meta={} > current_meta={})",
+                    "UserDataStateMachine[{}]: Buffering command (required_meta={} > current_meta={})",
                     self.shard,
                     required_meta,
                     current_meta
                 );
-                get_coordinator().wait_for(required_meta).await;
+                self.pending_buffer.add(PendingCommand {
+                    log_index: index,
+                    log_term: term,
+                    required_meta_index: required_meta,
+                    command_bytes: command.to_vec(),
+                });
+                
+                // Mark as applied (buffered) to satisfy Raft log progress
+                self.last_applied_index.store(index, Ordering::Release);
+                self.last_applied_term.store(term, Ordering::Release);
+
+                return Ok(ApplyResult::NoOp);
             }
         }
 

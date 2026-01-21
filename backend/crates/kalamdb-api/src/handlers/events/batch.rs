@@ -81,6 +81,16 @@ pub async fn handle_next_batch(
                 batch_control,
             );
             let _ = send_json(session, &msg).await;
+
+            if !result.has_more {
+                let flushed = connection_state.read().complete_initial_load(subscription_id);
+                if flushed > 0 {
+                    info!(
+                        "Flushed {} buffered notifications after initial load for {}",
+                        flushed, subscription_id
+                    );
+                }
+            }
             Ok(())
         },
         Err(e) => {

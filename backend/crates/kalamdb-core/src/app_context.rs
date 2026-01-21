@@ -774,7 +774,7 @@ impl AppContext {
 
     /// Check if this node is running in cluster mode
     pub fn is_cluster_mode(&self) -> bool {
-        self.executor.is_cluster_mode()
+        self.config.cluster.is_some()
     }
 
     // ===== Leadership Check Methods (Spec 021 - Raft Replication Semantics) =====

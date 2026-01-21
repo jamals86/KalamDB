@@ -10,6 +10,7 @@ use crate::schema_registry::TableType;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
+use datafusion::arrow::array::{Array, Int64Array};
 use kalamdb_commons::constants::{AuthConstants, SystemColumnNames};
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
@@ -194,7 +195,7 @@ impl InitialDataFetcher {
         let user_id = UserId::new(live_id.user_id().to_string());
 
         // Determine role based on user_id
-        let role = if user_id.as_str() == AuthConstants::DEFAULT_ROOT_USER_ID {
+        let role = if user_id.is_admin() {
             Role::System
         } else {
             Role::User
@@ -209,8 +210,9 @@ impl InitialDataFetcher {
         // Create execution context with user scope for row-level security
         // Use ReadContext::Internal to allow followers to read local data for subscriptions
         // (subscriptions will receive live updates via Raft replication)
-        let exec_ctx = ExecutionContext::new(user_id.clone(), role, Arc::clone(&self.base_session_context))
-            .with_read_context(ReadContext::Internal);
+        let exec_ctx =
+            ExecutionContext::new(user_id.clone(), role, Arc::clone(&self.base_session_context))
+                .with_read_context(ReadContext::Internal);
 
         // Construct SQL query with projections
         let table_name = table_id.full_name(); // "namespace.table"
@@ -230,31 +232,7 @@ impl InitialDataFetcher {
 
         let mut sql = format!("SELECT {} FROM {}", select_clause, table_name);
 
-        let mut where_clauses = Vec::new();
-
-        // Add _seq filters
-        if let Some(since) = options.since_seq {
-            where_clauses.push(format!("{} > {}", SystemColumnNames::SEQ, since.as_i64()));
-        }
-        if let Some(until) = options.until_seq {
-            where_clauses.push(format!("{} <= {}", SystemColumnNames::SEQ, until.as_i64()));
-        }
-
-        // Add deleted filter
-        if !options.include_deleted
-            && matches!(table_type, TableType::User | TableType::Shared)
-            && self.table_has_column(
-                table_id,
-                SystemColumnNames::DELETED,
-            )?
-        {
-            where_clauses.push(format!("{} = false", SystemColumnNames::DELETED));
-        }
-
-        // Add custom filter from subscription
-        if let Some(where_sql) = where_clause {
-            where_clauses.push(where_sql.to_string());
-        }
+        let where_clauses = self.build_where_clauses(table_id, table_type, &options, where_clause)?;
 
         if !where_clauses.is_empty() {
             sql.push_str(" WHERE ");
@@ -358,6 +336,109 @@ impl InitialDataFetcher {
             has_more,
             snapshot_end_seq,
         })
+    }
+
+    /// Compute snapshot end sequence for a subscription
+    ///
+    /// Uses MAX(_seq) with the same filters as initial data to define a snapshot boundary.
+    pub async fn compute_snapshot_end_seq(
+        &self,
+        live_id: &kalamdb_commons::models::LiveQueryId,
+        table_id: &TableId,
+        table_type: TableType,
+        options: &InitialDataOptions,
+        where_clause: Option<&str>,
+    ) -> Result<Option<SeqId>, KalamDbError> {
+        // Extract user_id from LiveId for RLS
+        let user_id = UserId::new(live_id.user_id().to_string());
+
+        // Determine role based on user_id
+        let role = if user_id.as_str() == AuthConstants::DEFAULT_ROOT_USER_ID {
+            Role::System
+        } else {
+            Role::User
+        };
+
+        let sql_executor = self.sql_executor.get().cloned().ok_or_else(|| {
+            KalamDbError::InvalidOperation(
+                "SqlExecutor not configured for InitialDataFetcher".to_string(),
+            )
+        })?;
+
+        let exec_ctx =
+            ExecutionContext::new(user_id.clone(), role, Arc::clone(&self.base_session_context))
+                .with_read_context(ReadContext::Internal);
+
+        let table_name = table_id.full_name();
+        let mut sql = format!("SELECT MAX({}) AS max_seq FROM {}", SystemColumnNames::SEQ, table_name);
+
+        let where_clauses = self.build_where_clauses(table_id, table_type, options, where_clause)?;
+        if !where_clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&where_clauses.join(" AND "));
+        }
+
+        let execution_result =
+            sql_executor.execute(&sql, &exec_ctx, Vec::<ScalarValue>::new()).await?;
+
+        let batches = match execution_result {
+            ExecutionResult::Rows { batches, .. } => batches,
+            other => {
+                return Err(KalamDbError::ExecutionError(format!(
+                    "Snapshot query returned non-row result: {:?}",
+                    other
+                )))
+            },
+        };
+
+        if batches.is_empty() || batches[0].num_rows() == 0 {
+            return Ok(None);
+        }
+
+        let batch = &batches[0];
+        let array = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .ok_or_else(|| {
+                KalamDbError::Other("max_seq column is not Int64".to_string())
+            })?;
+
+        if array.is_null(0) {
+            return Ok(None);
+        }
+
+        Ok(Some(SeqId::from(array.value(0))))
+    }
+
+    fn build_where_clauses(
+        &self,
+        table_id: &TableId,
+        table_type: TableType,
+        options: &InitialDataOptions,
+        where_clause: Option<&str>,
+    ) -> Result<Vec<String>, KalamDbError> {
+        let mut where_clauses = Vec::new();
+
+        if let Some(since) = options.since_seq {
+            where_clauses.push(format!("{} > {}", SystemColumnNames::SEQ, since.as_i64()));
+        }
+        if let Some(until) = options.until_seq {
+            where_clauses.push(format!("{} <= {}", SystemColumnNames::SEQ, until.as_i64()));
+        }
+
+        if !options.include_deleted
+            && matches!(table_type, TableType::User | TableType::Shared)
+            && self.table_has_column(table_id, SystemColumnNames::DELETED)?
+        {
+            where_clauses.push(format!("{} = false", SystemColumnNames::DELETED));
+        }
+
+        if let Some(where_sql) = where_clause {
+            where_clauses.push(where_sql.to_string());
+        }
+
+        Ok(where_clauses)
     }
 
     fn table_has_column(
@@ -641,7 +722,7 @@ mod tests {
         .expect("create table def");
 
         schema_registry
-            .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
+            .insert_cached(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
 
         // Create and register provider
         let core = Arc::new(TableProviderCore::from_app_context(
@@ -802,7 +883,7 @@ mod tests {
         .expect("create table def");
 
         schema_registry
-            .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
+            .insert_cached(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
 
         // Create and register provider
         let core = Arc::new(TableProviderCore::from_app_context(

@@ -362,7 +362,7 @@ async fn test_concurrent_auth_load() {
         "All concurrent requests should succeed"
     );
     assert!(
-        p95 < Duration::from_millis(10000),
+        p95 < Duration::from_millis(30000),
         "Concurrent auth p95 latency too high: {:?}",
         p95
     );

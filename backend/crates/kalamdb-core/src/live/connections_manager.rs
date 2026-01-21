@@ -18,8 +18,8 @@ use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, LiveQueryId, TableId, UserId};
 use kalamdb_commons::{NodeId, Notification};
 use log::{debug, info, warn};
-use parking_lot::RwLock;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use parking_lot::{Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -71,6 +71,84 @@ pub struct SubscriptionHandle {
     pub projections: Option<Arc<Vec<String>>>,
     /// Shared notification channel
     pub notification_tx: Arc<NotificationSender>,
+    /// Flow control for initial load buffering and snapshot gating
+    pub flow_control: Arc<SubscriptionFlowControl>,
+}
+
+/// Buffered notification with optional SeqId ordering key
+#[derive(Debug, Clone)]
+pub struct BufferedNotification {
+    pub seq: Option<SeqId>,
+    pub notification: Arc<Notification>,
+}
+
+/// Flow control for subscription initial load gating
+#[derive(Debug)]
+pub struct SubscriptionFlowControl {
+    snapshot_end_seq: AtomicI64,
+    has_snapshot: AtomicBool,
+    initial_complete: AtomicBool,
+    buffer: Mutex<Vec<BufferedNotification>>,
+}
+
+impl SubscriptionFlowControl {
+    pub fn new() -> Self {
+        Self {
+            snapshot_end_seq: AtomicI64::new(0),
+            has_snapshot: AtomicBool::new(false),
+            initial_complete: AtomicBool::new(false),
+            buffer: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn set_snapshot_end_seq(&self, snapshot_end_seq: Option<SeqId>) {
+        if let Some(seq) = snapshot_end_seq {
+            self.snapshot_end_seq.store(seq.as_i64(), Ordering::Release);
+            self.has_snapshot.store(true, Ordering::Release);
+
+            let max_seq = seq.as_i64();
+            let mut buffer = self.buffer.lock();
+            buffer.retain(|item| match item.seq {
+                Some(item_seq) => item_seq.as_i64() > max_seq,
+                None => true,
+            });
+        } else {
+            self.has_snapshot.store(false, Ordering::Release);
+        }
+    }
+
+    pub fn snapshot_end_seq(&self) -> Option<i64> {
+        if self.has_snapshot.load(Ordering::Acquire) {
+            Some(self.snapshot_end_seq.load(Ordering::Acquire))
+        } else {
+            None
+        }
+    }
+
+    pub fn is_initial_complete(&self) -> bool {
+        self.initial_complete.load(Ordering::Acquire)
+    }
+
+    pub fn mark_initial_complete(&self) {
+        self.initial_complete.store(true, Ordering::Release);
+    }
+
+    pub fn buffer_notification(&self, notification: Arc<Notification>, seq: Option<SeqId>) {
+        let mut buffer = self.buffer.lock();
+        buffer.push(BufferedNotification { seq, notification });
+    }
+
+    pub fn drain_buffered_notifications(&self) -> Vec<BufferedNotification> {
+        let mut buffer = self.buffer.lock();
+        let mut drained = std::mem::take(&mut *buffer);
+        drained.sort_by(|a, b| match (a.seq, b.seq) {
+            (Some(a_seq), Some(b_seq)) => a_seq.as_i64().cmp(&b_seq.as_i64()),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
+        drained
+    }
 }
 
 /// Subscription state - stored only in ConnectionState.subscriptions
@@ -103,6 +181,8 @@ pub struct SubscriptionState {
     /// Current batch number for pagination tracking (0-indexed)
     /// Incremented after each batch is sent
     pub current_batch_num: u32,
+    /// Flow control for initial load buffering and snapshot gating
+    pub flow_control: Arc<SubscriptionFlowControl>,
 }
 
 /// Connection state - everything about a connection in one struct
@@ -193,7 +273,38 @@ impl ConnectionState {
     pub fn update_snapshot_end_seq(&self, subscription_id: &str, snapshot_end_seq: Option<SeqId>) {
         if let Some(mut sub) = self.subscriptions.get_mut(subscription_id) {
             sub.snapshot_end_seq = snapshot_end_seq;
+            sub.flow_control.set_snapshot_end_seq(snapshot_end_seq);
         }
+    }
+
+    /// Mark initial load complete and flush buffered notifications
+    pub fn complete_initial_load(&self, subscription_id: &str) -> usize {
+        if let Some(sub) = self.subscriptions.get(subscription_id) {
+            let flow_control = Arc::clone(&sub.flow_control);
+            flow_control.mark_initial_complete();
+            let buffered = flow_control.drain_buffered_notifications();
+
+            let mut sent = 0usize;
+            for item in buffered {
+                // TODO: Backpressure limitation: buffered notifications are flushed with try_send.
+                // If the channel is full, remaining buffered notifications are dropped.
+                // Consider a blocking flush, retry queue, or persistent spool for lossless delivery.
+                if let Err(e) = self.notification_tx.try_send(item.notification) {
+                    if matches!(e, mpsc::error::TrySendError::Full(_)) {
+                        warn!(
+                            "Notification channel full while flushing buffered notifications for {}",
+                            subscription_id
+                        );
+                        break;
+                    }
+                } else {
+                    sent += 1;
+                }
+            }
+
+            return sent;
+        }
+        0
     }
 
     /// Increment current_batch_num for a subscription and return the new value

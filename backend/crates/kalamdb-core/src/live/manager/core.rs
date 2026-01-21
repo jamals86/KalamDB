@@ -62,8 +62,7 @@ impl LiveQueryManager {
         let subscription_service =
             Arc::new(SubscriptionService::new(registry.clone(), node_id, app_context));
 
-        let notification_service =
-            NotificationService::new(registry.clone(), live_queries_provider.clone());
+        let notification_service = NotificationService::new(registry.clone());
 
         Self {
             registry,
@@ -240,9 +239,29 @@ impl LiveQueryManager {
             .await?;
 
         // Fetch initial data if requested
-        let initial_data = if let Some(fetch_options) = initial_data_options {
+        let initial_data = if let Some(mut fetch_options) = initial_data_options {
             // Extract WHERE clause from SQL for initial data fetch
-            let where_clause = QueryParser::extract_where_clause(&request.sql);
+            let where_clause = QueryParser::extract_where_clause(&request.sql)?;
+
+            // Compute snapshot boundary (MAX(_seq)) before initial load
+            let snapshot_seq = self
+                .initial_data_fetcher
+                .compute_snapshot_end_seq(
+                    &live_id,
+                    &table_id,
+                    table_def.table_type,
+                    &fetch_options,
+                    where_clause.as_deref(),
+                )
+                .await?
+                .unwrap_or_else(|| SeqId::from(0));
+
+            fetch_options.until_seq = Some(snapshot_seq);
+            self.subscription_service.update_snapshot_end_seq(
+                connection_state,
+                &request.id,
+                snapshot_seq,
+            );
 
             let result = self
                 .initial_data_fetcher
@@ -251,19 +270,10 @@ impl LiveQueryManager {
                     &table_id,
                     table_def.table_type,
                     fetch_options,
-                    where_clause?.as_deref(),
+                    where_clause.as_deref(),
                     projections.as_deref(),
                 )
                 .await?;
-
-            // Update snapshot_end_seq in subscription state
-            if let Some(snapshot_seq) = result.snapshot_end_seq {
-                self.subscription_service.update_snapshot_end_seq(
-                    connection_state,
-                    &request.id,
-                    snapshot_seq,
-                );
-            }
 
             Some(result)
         } else {
@@ -401,11 +411,6 @@ impl LiveQueryManager {
         self.subscription_service
             .unregister_subscription(&connection_state, subscription_id, live_id)
             .await
-    }
-
-    /// Increment the changes counter for a live query
-    pub async fn increment_changes(&self, live_id: &LiveQueryId) -> Result<(), KalamDbError> {
-        self.notification_service.increment_changes(live_id).await
     }
 
     /// Get all subscriptions for a user

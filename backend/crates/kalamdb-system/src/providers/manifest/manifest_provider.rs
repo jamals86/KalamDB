@@ -231,7 +231,7 @@ mod tests {
 
         let batch = provider.scan_to_record_batch().unwrap();
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 11); // Updated column count
+        assert_eq!(batch.num_columns(), 10);
 
         // Verify column names match schema
         let schema = batch.schema();
@@ -241,6 +241,6 @@ mod tests {
         assert_eq!(schema.field(3).name(), "scope");
         assert_eq!(schema.field(4).name(), "etag");
         assert_eq!(schema.field(7).name(), "in_memory");
-        assert_eq!(schema.field(10).name(), "manifest_json");
+        assert_eq!(schema.field(9).name(), "manifest_json");
     }
 }

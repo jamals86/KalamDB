@@ -43,6 +43,7 @@ use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use bytes::Bytes;
 use futures_util::StreamExt;
+use kalamdb_commons::models::storage::StorageType;
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::system::Storage;
@@ -342,11 +343,11 @@ impl StorageCached {
         user_id: Option<&UserId>,
         manifest: &serde_json::Value,
     ) -> Result<()> {
-         let path_result = self.get_manifest_path(table_type, table_id, user_id);
          let data = serde_json::to_vec_pretty(manifest)
             .map_err(|e| FilestoreError::Format(format!("Failed to serialize manifest: {}", e)))?;
             
-         self.put_sync(table_type, table_id, user_id, &path_result.full_path, bytes::Bytes::from(data))?;
+         // Pass just the filename, not the full path - put_sync will construct the full path
+         self.put_sync(table_type, table_id, user_id, "manifest.json", bytes::Bytes::from(data))?;
          Ok(())
     }
 
@@ -660,6 +661,14 @@ impl StorageCached {
                 .map_err(|e| FilestoreError::ObjectStore(e.to_string()))?;
 
             deleted_paths.push(path.to_string());
+        }
+
+        if matches!(self.storage.storage_type, StorageType::Filesystem) {
+            let full_path = self.join_paths(cleanup_prefix.as_ref());
+            let dir_path = std::path::Path::new(&full_path);
+            if dir_path.exists() {
+                std::fs::remove_dir_all(dir_path)?;
+            }
         }
 
         Ok(DeletePrefixResult::new(cleanup_prefix.into_owned(), deleted_paths))

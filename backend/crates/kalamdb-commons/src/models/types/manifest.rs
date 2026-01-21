@@ -328,6 +328,9 @@ impl Manifest {
             }
         }
 
+        // Remove any existing segment with the same ID to prevent duplicates
+        self.segments.retain(|s| s.id != segment.id);
+
         self.segments.push(segment);
         self.updated_at = chrono::Utc::now().timestamp();
         self.version += 1;
@@ -361,12 +364,8 @@ mod tests {
     fn test_manifest_cache_entry_is_stale() {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
-        let entry = ManifestCacheEntry::new(
-            manifest,
-            Some("etag123".to_string()),
-            1000,
-            SyncState::InSync,
-        );
+        let entry =
+            ManifestCacheEntry::new(manifest, Some("etag123".to_string()), 1000, SyncState::InSync);
 
         // Not stale within TTL
         assert!(!entry.is_stale(3600, 1000 + 1800));
@@ -379,8 +378,7 @@ mod tests {
     fn test_manifest_cache_entry_state_transitions() {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
-        let mut entry =
-            ManifestCacheEntry::new(manifest, None, 1000, SyncState::InSync);
+        let mut entry = ManifestCacheEntry::new(manifest, None, 1000, SyncState::InSync);
 
         entry.mark_stale();
         assert_eq!(entry.sync_state, SyncState::Stale);
@@ -398,12 +396,7 @@ mod tests {
     fn test_sync_state_syncing_transition() {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
-        let mut entry = ManifestCacheEntry::new(
-            manifest,
-            None,
-            1000,
-            SyncState::PendingWrite,
-        );
+        let mut entry = ManifestCacheEntry::new(manifest, None, 1000, SyncState::PendingWrite);
 
         // Transition: PendingWrite -> Syncing (flush started)
         entry.mark_syncing();
@@ -419,8 +412,7 @@ mod tests {
     fn test_sync_state_syncing_to_error() {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
-        let mut entry =
-            ManifestCacheEntry::new(manifest, None, 1000, SyncState::InSync);
+        let mut entry = ManifestCacheEntry::new(manifest, None, 1000, SyncState::InSync);
 
         // Transition: InSync -> Syncing (new flush started)
         entry.mark_syncing();
@@ -469,12 +461,7 @@ mod tests {
         // Simulate the complete flush lifecycle with the new Syncing state
         let table_id = TableId::new(NamespaceId::new("myns"), TableName::new("mytable"));
         let manifest = Manifest::new(table_id, None);
-        let mut entry = ManifestCacheEntry::new(
-            manifest,
-            None,
-            1000,
-            SyncState::InSync,
-        );
+        let mut entry = ManifestCacheEntry::new(manifest, None, 1000, SyncState::InSync);
 
         // 1. Data is written to hot storage (RocksDB), manifest goes PendingWrite
         entry.mark_pending_write();
@@ -592,5 +579,42 @@ mod tests {
         assert_eq!(Manifest::extract_batch_number("other-0.parquet"), None);
         assert_eq!(Manifest::extract_batch_number("batch-0.csv"), None);
         assert_eq!(Manifest::extract_batch_number("batch.parquet"), None);
+    }
+
+    #[test]
+    fn test_manifest_prevent_duplicate_segments() {
+        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let mut manifest = Manifest::new(table_id, None);
+
+        // Add first version of segment
+        let segment1 = SegmentMetadata::new(
+            "segment-1".to_string(),
+            "segment-1.parquet".to_string(),
+            HashMap::new(),
+            1000,
+            2000,
+            50,
+            512,
+        );
+        manifest.add_segment(segment1);
+        assert_eq!(manifest.segments.len(), 1);
+        assert_eq!(manifest.segments[0].min_seq, 1000);
+
+        // Add updated version of same segment (same ID)
+        let segment1_v2 = SegmentMetadata::new(
+            "segment-1".to_string(),
+            "segment-1.parquet".to_string(),
+            HashMap::new(),
+            1500, // Changed min_seq
+            2500,
+            60,
+            600,
+        );
+        manifest.add_segment(segment1_v2);
+
+        // Should still have 1 segment, but updated
+        assert_eq!(manifest.segments.len(), 1);
+        assert_eq!(manifest.segments[0].min_seq, 1500);
+        assert_eq!(manifest.segments[0].id, "segment-1");
     }
 }

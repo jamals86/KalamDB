@@ -424,6 +424,16 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             ))
         })?;
 
+        // Mark manifest as having pending writes (hot data needs to be flushed)
+        let manifest_service = self.core.app_context.manifest_service();
+        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
+            log::warn!(
+                "Failed to mark manifest as pending_write for {}: {}",
+                self.core.table_id(),
+                e
+            );
+        }
+
         log::debug!(
             "Batch inserted {} shared table rows with _seq range [{}, {}]",
             row_count,
@@ -506,6 +516,17 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         self.store.insert(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to update shared table row: {}", e))
         })?;
+
+        // Mark manifest as having pending writes (hot data needs to be flushed)
+        let manifest_service = self.core.app_context.manifest_service();
+        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
+            log::warn!(
+                "Failed to mark manifest as pending_write for {}: {}",
+                self.core.table_id(),
+                e
+            );
+        }
+
         Ok(row_key)
     }
 
@@ -548,6 +569,17 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         self.store.insert(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to update shared table row: {}", e))
         })?;
+
+        // Mark manifest as having pending writes (hot data needs to be flushed)
+        let manifest_service = self.core.app_context.manifest_service();
+        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
+            log::warn!(
+                "Failed to mark manifest as pending_write for {}: {}",
+                self.core.table_id(),
+                e
+            );
+        }
+
         Ok(row_key)
     }
 
@@ -591,6 +623,17 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         self.store.insert(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to delete shared table row: {}", e))
         })?;
+
+        // Mark manifest as having pending writes (hot data needs to be flushed)
+        let manifest_service = self.core.app_context.manifest_service();
+        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
+            log::warn!(
+                "Failed to mark manifest as pending_write for {}: {}",
+                self.core.table_id(),
+                e
+            );
+        }
+
         Ok(())
     }
 

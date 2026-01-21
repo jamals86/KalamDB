@@ -9,7 +9,8 @@
 //! They are sharded by user_id for efficient per-user subscription management.
 
 use super::connections_manager::{
-    ConnectionsManager, SharedConnectionState, SubscriptionHandle, SubscriptionState,
+    ConnectionsManager, SharedConnectionState, SubscriptionFlowControl, SubscriptionHandle,
+    SubscriptionState,
 };
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
@@ -108,6 +109,8 @@ impl SubscriptionService {
         let projections_arc = projections.map(Arc::new);
 
         // Create SubscriptionState with all necessary data (stored in ConnectionState)
+        let flow_control = Arc::new(SubscriptionFlowControl::new());
+
         let subscription_state = SubscriptionState {
             live_id: live_id.clone(),
             table_id: table_id.clone(),
@@ -117,6 +120,7 @@ impl SubscriptionService {
             batch_size,
             snapshot_end_seq: None,
             current_batch_num: 0, // Start at batch 0
+            flow_control: Arc::clone(&flow_control),
         };
 
         // Create lightweight handle for the index (~48 bytes vs ~800+ bytes)
@@ -124,6 +128,7 @@ impl SubscriptionService {
             filter_expr: filter_expr_arc,
             projections: projections_arc,
             notification_tx,
+            flow_control,
         };
 
         // CRITICAL: Index subscription BEFORE sending Raft command to avoid race condition.

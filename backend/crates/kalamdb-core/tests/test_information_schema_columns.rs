@@ -4,12 +4,12 @@
 //! registered and can be queried via SQL.
 
 mod test_helpers;
-use test_helpers::test_app_context;
+use test_helpers::test_app_context_simple;
 
 #[tokio::test]
 async fn test_information_schema_columns_query() {
     // Initialize AppContext (which registers information_schema.columns)
-    let app_ctx = test_app_context();
+    let app_ctx = test_app_context_simple();
 
     // Get the base session context
     let session = app_ctx.base_session_context();
@@ -39,7 +39,7 @@ async fn test_information_schema_columns_query() {
 #[tokio::test]
 async fn test_information_schema_columns_shows_system_jobs() {
     // Initialize AppContext
-    let app_ctx = test_app_context();
+    let app_ctx = test_app_context_simple();
 
     // Get the base session context
     let session = app_ctx.base_session_context();
