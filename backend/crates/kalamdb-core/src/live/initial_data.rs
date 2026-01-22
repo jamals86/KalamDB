@@ -458,6 +458,7 @@ mod tests {
     use crate::providers::base::TableProviderCore;
     use crate::providers::UserTableProvider;
     use crate::schema_registry::CachedTableData;
+    use crate::schema_registry::TablesSchemaRegistryAdapter;
     use crate::sql::executor::SqlExecutor;
     use kalamdb_commons::ids::{SeqId, UserTableRowId};
     use kalamdb_commons::models::datatypes::KalamDataType;
@@ -595,10 +596,18 @@ mod tests {
         schema_registry.put(table_def);
 
         // Create a mock provider with the store
-        let core = Arc::new(TableProviderCore::from_app_context(
-            &app_context,
+        let tables_schema_registry = Arc::new(TablesSchemaRegistryAdapter::new(
+            app_context.schema_registry(),
+        ));
+        let core = Arc::new(TableProviderCore::new(
             table_id.clone(),
             TableType::User,
+            tables_schema_registry.clone(),
+            app_context.system_columns_service(),
+            Some(app_context.storage_registry()),
+            app_context.manifest_service(),
+            app_context.live_query_manager(),
+            app_context.clone(),
         ));
         let provider = Arc::new(
             UserTableProvider::try_new(core, store, "id".to_string())
@@ -725,10 +734,18 @@ mod tests {
             .insert_cached(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
 
         // Create and register provider
-        let core = Arc::new(TableProviderCore::from_app_context(
-            &app_context,
+        let tables_schema_registry = Arc::new(TablesSchemaRegistryAdapter::new(
+            app_context.schema_registry(),
+        ));
+        let core = Arc::new(TableProviderCore::new(
             table_id.clone(),
             TableType::User,
+            tables_schema_registry.clone(),
+            app_context.system_columns_service(),
+            Some(app_context.storage_registry()),
+            app_context.manifest_service(),
+            app_context.live_query_manager(),
+            app_context.clone(),
         ));
         let provider = Arc::new(
             UserTableProvider::try_new(core, store, "id".to_string())
@@ -886,10 +903,18 @@ mod tests {
             .insert_cached(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
 
         // Create and register provider
-        let core = Arc::new(TableProviderCore::from_app_context(
-            &app_context,
+        let tables_schema_registry = Arc::new(TablesSchemaRegistryAdapter::new(
+            app_context.schema_registry(),
+        ));
+        let core = Arc::new(TableProviderCore::new(
             table_id.clone(),
             TableType::User,
+            tables_schema_registry.clone(),
+            app_context.system_columns_service(),
+            Some(app_context.storage_registry()),
+            app_context.manifest_service(),
+            app_context.live_query_manager(),
+            app_context.clone(),
         ));
         let provider = Arc::new(
             UserTableProvider::try_new(core, store, "id".to_string())

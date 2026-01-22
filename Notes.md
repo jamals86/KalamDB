@@ -547,9 +547,33 @@ Transaction:
 and things like this:
         let name = statement.name.as_str();
         let namespace_id = NamespaceId::new(name);
-117) [MEDIUM] Make the link client send a X-Request-ID header with a unique id per request for better tracing and debugging
-118) [MEDIUM] Add to kalamdb-link client the ability to set custom headers for each request
-120) [MEDIUM] Now configs are centralized inside AppContext and accessible everywhere easily, we need to check:
+117) [COMPLETED] Consolidate duplicated ScalarValue conversion logic into centralized module
+    We have many places where we duplicate this similar logic:
+    /// Encode a PK value to bytes for index key
+    fn encode_pk_value(value: &ScalarValue) -> Vec<u8> {
+        match value {
+            ScalarValue::Int64(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::Int32(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::Int16(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::UInt64(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::UInt32(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s.as_bytes().to_vec(),
+            // For other types, convert to string
+            _ => value.to_string().into_bytes(),
+        }
+    }
+
+  ✅ SOLUTION IMPLEMENTED:
+  - Created backend/crates/kalamdb-commons/src/conversions.rs module
+  - Centralized function: pub fn scalar_value_to_bytes(value: &ScalarValue) -> Vec<u8>
+  - Added backwards compatibility alias: pub fn encode_pk_value() for existing code
+  - Removed duplicates from:
+    * backend/crates/kalamdb-tables/src/user_tables/pk_index.rs
+    * backend/crates/kalamdb-tables/src/shared_tables/pk_index.rs
+  - Added comprehensive unit tests in conversions.rs
+  - Updated all call sites to use the centralized function
+  - Re-exported from kalamdb-commons lib.rs for easy access
+  - Workspace builds successfully with all crates compiling
   - All places where we read config from file directly and change them to read from AppContext
   - Remove any duplicate config models which is a dto and use only the configs instead of mirroring it to different structs
 
@@ -1212,35 +1236,6 @@ make only one place where it reads parquet extract the common logic and check wh
 
 
 
-
-
-117) we have many places where we duplicate this similar logic:
-    /// Encode a PK value to bytes for index key
-    fn encode_pk_value(value: &ScalarValue) -> Vec<u8> {
-        match value {
-            ScalarValue::Int64(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::Int32(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::Int16(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::UInt64(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::UInt32(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s.as_bytes().to_vec(),
-            // For other types, convert to string
-            _ => value.to_string().into_bytes(),
-        }
-    }
-
-  I want to have one place inside commons backend/crates/kalamdb-commons/src/conversions
-  where we have all the mapping between datatypes/values/arrowtypes and other conversions we need across the codebase
-  like this file: backend/crates/kalamdb-commons/src/models/datatypes/arrow_conversion.rs
-
-
-
-
-118) every place where we have parition: String use instead Partition type, for example in this UserTablePkIndex and other places
-pub struct SharedTablePkIndex {
-    /// Partition name for the index
-    partition: String,
-
 119) change backend/crates/kalamdb-core/src/jobs/jobs_manager to backend/crates/kalamdb-core/src/jobs/manager
 
 120) should we move: backend/crates/kalamdb-core/src/error_extensions.rs to commons crate src/errors, and use the same error extension across the codebase? everywhere? because currently we have many scattered errors and error enums we can organize them better, also take a look at this one: backend/crates/kalamdb-core/src/error.rs
@@ -1251,5 +1246,30 @@ maybe we can have a big list of all error codes with categories and then we can 
 backend/crates/kalamdb-core/src/providers/users.rs
 backend/crates/kalamdb-core/src/providers/shared.rs
 check if we can move these to kalamdb-tables crate since they are table providers only for specific table types
-for the shared logic we can create in kalamdb-system a LiveQueryManager interface and also the interface for ManifestService 
+for the shared logic we can create in kalamdb-system a LiveQueryManager interface and also the interface for ManifestService inside folder: src/impls
+if there is anything else needed in those providers then we can do the same to it as we did to livequerymanager and manifestservice
+
+these wont be needed since we pass whatever they is needed for in the constructor, like: primary_key_column_id
+
+    /// Schema registry for table metadata and Arrow schema caching
+    pub schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
+    /// System columns service for _seq and _deleted management
+    pub system_columns: Arc<crate::system_columns::SystemColumnsService>,
+    /// Storage registry for resolving full storage paths (optional)
+    pub storage_registry: Option<Arc<StorageRegistry>>,
+
+backend/crates/kalamdb-core/src/schema_registry/system_columns_service.rs can be moved to kalamdb-system src/services
+
+
+122) 📍 Remaining Work (Future Optimization)
+Files with duplicate functions that could be migrated to commons/src/conversion/
+update.rs - scalar_to_f64(), scalar_to_i64() (lines 702, 715)
+filter_eval.rs - as_f64() (line 177)
+parameter_validation.rs - estimate_scalar_value_size() (line 75)
+parameter_binding.rs - estimate_scalar_value_size() (line 47)
+Note: These functions have slight implementation variations and are used in hot paths. Migration should be done carefully with performance testing.
+
+123) move backend/crates/kalamdb-tables/src/providers/arrow_json_conversion.rs to kalamdb-commons/src/conversion/arrow_json_conversion.rs it doesnt depend on anyothers
+
+124) remove all EntityStoreV2 and stick with the actual EntityStore and whenever we need a calling method we cll it from inside store not doing EntityStore::method_call()
 

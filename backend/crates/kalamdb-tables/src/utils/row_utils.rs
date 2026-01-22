@@ -1,12 +1,21 @@
 use crate::error::KalamDbError;
+use crate::error_extensions::KalamDbResultExt;
+use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::catalog::Session;
 use datafusion::logical_expr::{Expr, Operator};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
+use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{ReadContext, Role, UserId};
-use kalamdb_session::{extract_full_user_context as extract_full_user_context_session, extract_user_context as extract_user_context_session};
+use kalamdb_commons::conversions::arrow_json_conversion::json_rows_to_arrow_batch;
+use kalamdb_session::{
+    extract_full_user_context as extract_full_user_context_session,
+    extract_user_context as extract_user_context_session,
+};
 use once_cell::sync::Lazy;
+use std::sync::Arc;
 
 static SYSTEM_USER_ID: Lazy<UserId> = Lazy::new(|| UserId::from("_system"));
 
@@ -32,9 +41,7 @@ fn invert_comparison_operator(op: Operator) -> Option<Operator> {
     }
 }
 
-fn normalize_seq_comparison(
-    binary: &datafusion::logical_expr::BinaryExpr,
-) -> Option<(Operator, i64)> {
+fn normalize_seq_comparison(binary: &datafusion::logical_expr::BinaryExpr) -> Option<(Operator, i64)> {
     if is_seq_column(&binary.left) {
         let value = extract_i64_literal(&binary.right)?;
         return Some((binary.op, value));
@@ -88,19 +95,11 @@ pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<Seq
                         (Some(SeqId::from(since)), Some(SeqId::from(val)))
                     },
                     Operator::Gt | Operator::GtEq => {
-                        let since = if op == Operator::Gt {
-                            val
-                        } else {
-                            val.saturating_sub(1)
-                        };
+                        let since = if op == Operator::Gt { val } else { val.saturating_sub(1) };
                         (Some(SeqId::from(since)), None)
                     },
                     Operator::Lt | Operator::LtEq => {
-                        let until = if op == Operator::Lt {
-                            val.saturating_sub(1)
-                        } else {
-                            val
-                        };
+                        let until = if op == Operator::Lt { val.saturating_sub(1) } else { val };
                         (None, Some(SeqId::from(until)))
                     },
                     _ => (None, None),
@@ -144,4 +143,123 @@ pub fn extract_full_user_context(
             e
         ))
     })
+}
+
+/// Helper function to inject system columns (_seq, _deleted) into Row values
+pub fn inject_system_columns(
+    schema: &SchemaRef,
+    row: &mut Row,
+    seq_value: i64,
+    deleted_value: bool,
+) {
+    if schema.field_with_name(SystemColumnNames::SEQ).is_ok() {
+        row.values
+            .insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq_value)));
+    }
+    if schema.field_with_name(SystemColumnNames::DELETED).is_ok() {
+        row.values.insert(
+            SystemColumnNames::DELETED.to_string(),
+            ScalarValue::Boolean(Some(deleted_value)),
+        );
+    }
+}
+
+/// Trait implemented by provider row types to expose system columns and JSON payload
+pub trait ScanRow {
+    fn row(&self) -> &Row;
+    fn seq_value(&self) -> i64;
+    fn deleted_flag(&self) -> bool;
+}
+
+impl ScanRow for crate::SharedTableRow {
+    fn row(&self) -> &Row {
+        &self.fields
+    }
+
+    fn seq_value(&self) -> i64 {
+        self._seq.as_i64()
+    }
+
+    fn deleted_flag(&self) -> bool {
+        self._deleted
+    }
+}
+
+impl ScanRow for crate::UserTableRow {
+    fn row(&self) -> &Row {
+        &self.fields
+    }
+
+    fn seq_value(&self) -> i64 {
+        self._seq.as_i64()
+    }
+
+    fn deleted_flag(&self) -> bool {
+        self._deleted
+    }
+}
+
+impl ScanRow for crate::StreamTableRow {
+    fn row(&self) -> &Row {
+        &self.fields
+    }
+
+    fn seq_value(&self) -> i64 {
+        self._seq.as_i64()
+    }
+
+    fn deleted_flag(&self) -> bool {
+        false
+    }
+}
+
+/// Convert resolved key-value rows into an Arrow RecordBatch with system columns injected
+pub fn rows_to_arrow_batch<K, R, F>(
+    schema: &SchemaRef,
+    kvs: Vec<(K, R)>,
+    projection: Option<&Vec<usize>>,
+    mut enrich_row: F,
+) -> Result<RecordBatch, KalamDbError>
+where
+    R: ScanRow,
+    F: FnMut(&mut Row, &R),
+{
+    let row_count = kvs.len();
+
+    if let Some(proj) = projection {
+        if proj.is_empty() {
+            let empty_fields: Vec<datafusion::arrow::datatypes::Field> = Vec::new();
+            let empty_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(empty_fields));
+            if row_count == 0 {
+                return Ok(RecordBatch::new_empty(empty_schema));
+            }
+
+            let options = RecordBatchOptions::new().with_row_count(Some(row_count));
+            return RecordBatch::try_new_with_options(empty_schema, vec![], &options).map_err(
+                |e| KalamDbError::InvalidOperation(format!("Failed to build Arrow batch: {}", e)),
+            );
+        }
+    }
+
+    let mut rows: Vec<Row> = Vec::with_capacity(row_count);
+
+    for (_key, row) in kvs.into_iter() {
+        let mut materialized = row.row().clone();
+
+        enrich_row(&mut materialized, &row);
+
+        inject_system_columns(schema, &mut materialized, row.seq_value(), row.deleted_flag());
+        rows.push(materialized);
+    }
+
+    let target_schema = if let Some(proj) = projection {
+        let fields: Vec<datafusion::arrow::datatypes::Field> =
+            proj.iter().map(|i| schema.field(*i).clone()).collect();
+        Arc::new(datafusion::arrow::datatypes::Schema::new(fields))
+    } else {
+        schema.clone()
+    };
+
+    json_rows_to_arrow_batch(&target_schema, rows)
+        .into_invalid_operation("Failed to build Arrow batch")
 }

@@ -84,7 +84,7 @@ impl IndexDefinition<JobId, Job> for JobIdempotencyKeyIndex {
 
 /// Convert JobStatus to a u8 for index key ordering.
 ///
-/// Order: New(0) < Queued(1) < Running(2) < Retrying(3) < Completed(4) < Failed(5) < Cancelled(6)
+/// Order: New(0) < Queued(1) < Running(2) < Retrying(3) < Completed(4) < Failed(5) < Cancelled(6) < Skipped(7)
 pub fn status_to_u8(status: JobStatus) -> u8 {
     match status {
         JobStatus::New => 0,
@@ -94,6 +94,7 @@ pub fn status_to_u8(status: JobStatus) -> u8 {
         JobStatus::Completed => 4,
         JobStatus::Failed => 5,
         JobStatus::Cancelled => 6,
+        JobStatus::Skipped => 7,
     }
 }
 
@@ -107,6 +108,7 @@ pub fn parse_job_status(s: &str) -> Option<JobStatus> {
         "completed" => Some(JobStatus::Completed),
         "failed" => Some(JobStatus::Failed),
         "cancelled" => Some(JobStatus::Cancelled),
+        "skipped" => Some(JobStatus::Skipped),
         _ => None,
     }
 }
@@ -149,6 +151,7 @@ mod tests {
             finished_at: if status == JobStatus::Completed
                 || status == JobStatus::Failed
                 || status == JobStatus::Cancelled
+                || status == JobStatus::Skipped
             {
                 Some(now)
             } else {

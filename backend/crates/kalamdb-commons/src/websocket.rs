@@ -93,15 +93,17 @@
 //! ```
 
 use crate::ids::SeqId;
+use crate::models::rows::Row;
 use crate::schemas::SchemaField;
 
 // Simple Row type for WASM (JSON only)
 #[cfg(feature = "wasm")]
 pub type Row = serde_json::Map<String, serde_json::Value>;
 
+use datafusion::scalar::ScalarValue;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Type alias for row data in WebSocket messages (column_name -> JSON value)
 pub type RowData = HashMap<String, JsonValue>;
@@ -439,6 +441,65 @@ pub enum ChangeType {
 
     /// Row(s) deleted
     Delete,
+}
+
+/// Change notification for live query subscribers
+#[derive(Debug, Clone)]
+pub struct ChangeNotification {
+    pub change_type: ChangeType,
+    pub table_id: crate::models::TableId,
+    pub row_data: Row,
+    pub old_data: Option<Row>,  // For UPDATE notifications
+    pub row_id: Option<String>, // For DELETE notifications (hard delete)
+}
+
+impl ChangeNotification {
+    /// Create an INSERT notification
+    pub fn insert(table_id: crate::models::TableId, row_data: Row) -> Self {
+        Self {
+            change_type: ChangeType::Insert,
+            table_id,
+            row_data,
+            old_data: None,
+            row_id: None,
+        }
+    }
+
+    /// Create an UPDATE notification with old and new values
+    pub fn update(table_id: crate::models::TableId, old_data: Row, new_data: Row) -> Self {
+        Self {
+            change_type: ChangeType::Update,
+            table_id,
+            row_data: new_data,
+            old_data: Some(old_data),
+            row_id: None,
+        }
+    }
+
+    /// Create a DELETE notification (soft delete with data)
+    pub fn delete_soft(table_id: crate::models::TableId, row_data: Row) -> Self {
+        Self {
+            change_type: ChangeType::Delete,
+            table_id,
+            row_data,
+            old_data: None,
+            row_id: None,
+        }
+    }
+
+    /// Create a DELETE notification (hard delete, row_id only)
+    pub fn delete_hard(table_id: crate::models::TableId, row_id: String) -> Self {
+        let mut values = BTreeMap::new();
+        values.insert("row_id".to_string(), ScalarValue::Utf8(Some(row_id.clone())));
+
+        Self {
+            change_type: ChangeType::Delete,
+            table_id,
+            row_data: Row::new(values),
+            old_data: None,
+            row_id: Some(row_id),
+        }
+    }
 }
 
 impl WebSocketMessage {

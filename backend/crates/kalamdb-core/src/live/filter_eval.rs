@@ -175,19 +175,7 @@ fn scalars_equal(left: &ScalarValue, right: &ScalarValue) -> bool {
 
 /// Helper to convert ScalarValue to f64 if possible
 fn as_f64(v: &ScalarValue) -> Option<f64> {
-    match v {
-        ScalarValue::Int8(Some(v)) => Some(*v as f64),
-        ScalarValue::Int16(Some(v)) => Some(*v as f64),
-        ScalarValue::Int32(Some(v)) => Some(*v as f64),
-        ScalarValue::Int64(Some(v)) => Some(*v as f64),
-        ScalarValue::UInt8(Some(v)) => Some(*v as f64),
-        ScalarValue::UInt16(Some(v)) => Some(*v as f64),
-        ScalarValue::UInt32(Some(v)) => Some(*v as f64),
-        ScalarValue::UInt64(Some(v)) => Some(*v as f64),
-        ScalarValue::Float32(Some(v)) => Some(*v as f64),
-        ScalarValue::Float64(Some(v)) => Some(*v),
-        _ => None,
-    }
+    kalamdb_commons::as_f64(v)
 }
 
 /// Helper to compare two ScalarValues for numeric comparisons

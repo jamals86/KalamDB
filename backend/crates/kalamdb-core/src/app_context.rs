@@ -17,6 +17,7 @@ use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::sql::executor::SqlExecutor;
 use crate::views::datatypes::{DatatypesTableProvider, DatatypesView};
 use crate::views::settings::{SettingsTableProvider, SettingsView};
+use async_trait::async_trait;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::UserId;
@@ -26,7 +27,7 @@ use kalamdb_filestore::StorageRegistry;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_store::StorageBackend;
-use kalamdb_system::{SystemTable, SystemTablesRegistry};
+use kalamdb_system::{ClusterCoordinator, SystemTable, SystemTablesRegistry};
 use kalamdb_tables::{SharedTableStore, UserTableStore};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
@@ -1026,5 +1027,24 @@ impl AppContext {
                 cluster_groups_provider,
             )
             .expect("Failed to register system.cluster_groups");
+    }
+}
+
+#[async_trait]
+impl ClusterCoordinator for AppContext {
+    async fn is_cluster_mode(&self) -> bool {
+        self.is_cluster_mode()
+    }
+
+    async fn is_leader_for_user(&self, user_id: &UserId) -> bool {
+        self.is_leader_for_user(user_id).await
+    }
+
+    async fn is_leader_for_shared(&self) -> bool {
+        self.is_leader_for_shared().await
+    }
+
+    async fn leader_addr_for_user(&self, user_id: &UserId) -> Option<String> {
+        self.leader_addr_for_user(user_id).await
     }
 }

@@ -579,6 +579,7 @@ fn validate_job_update(job: &Job) -> Result<(), SystemError> {
             | JobStatus::Completed
             | JobStatus::Failed
             | JobStatus::Cancelled
+            | JobStatus::Skipped
     ) && job.started_at.is_none()
     {
         return Err(SystemError::Other(format!(
@@ -587,7 +588,7 @@ fn validate_job_update(job: &Job) -> Result<(), SystemError> {
         )));
     }
 
-    if matches!(status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled)
+    if matches!(status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped)
         && job.finished_at.is_none()
     {
         return Err(SystemError::Other(format!(
@@ -599,6 +600,13 @@ fn validate_job_update(job: &Job) -> Result<(), SystemError> {
     if status == JobStatus::Completed && job.message.is_none() {
         return Err(SystemError::Other(format!(
             "Job {}: result/message must be set before marking status {}",
+            job.job_id, status
+        )));
+    }
+
+    if status == JobStatus::Skipped && job.message.is_none() {
+        return Err(SystemError::Other(format!(
+            "Job {}: message must be set before marking status {}",
             job.job_id, status
         )));
     }

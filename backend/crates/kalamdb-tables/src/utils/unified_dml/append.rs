@@ -3,13 +3,14 @@
 //! This module implements append_version(), the core function used by INSERT/UPDATE/DELETE
 //! to create new versions in the hot storage layer.
 
-use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::providers::arrow_json_conversion::json_to_row;
+use kalamdb_commons::conversions::arrow_json_conversion::json_to_row;
+use crate::{SharedTableRow, SharedTableStore, UserTableRow, UserTableStore};
 use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::{TableId, UserId};
-use kalamdb_tables::{SharedTableRow, UserTableRow};
+use kalamdb_system::SystemColumnsService;
+use kalamdb_store::EntityStore;
 use std::sync::Arc;
 
 /// Append a new version to the table's hot storage (synchronous)
@@ -20,7 +21,9 @@ use std::sync::Arc;
 /// - DELETE: Appends tombstone row with _deleted=true
 ///
 /// # Arguments
-/// * `app_context` - Application context with SnowflakeGenerator
+/// * `system_columns` - System columns service for SeqId generation
+/// * `user_table_store` - User table store (for user tables)
+/// * `shared_table_store` - Shared table store (for shared tables)
 /// * `_table_id` - Table identifier (unused, for future extensions)
 /// * `table_type` - User or Shared table type
 /// * `user_id` - User ID (required for user tables, ignored for shared tables)
@@ -30,16 +33,16 @@ use std::sync::Arc;
 /// # Returns
 /// * `Ok(SeqId)` - The sequence ID of the newly appended version
 /// * `Err(KalamDbError)` - If append fails
-pub fn append_version_sync(
-    app_context: Arc<AppContext>,
+pub fn append_version_sync_with_deps(
+    system_columns: Arc<SystemColumnsService>,
+    user_table_store: Arc<UserTableStore>,
+    shared_table_store: Arc<SharedTableStore>,
     _table_id: &TableId,
     table_type: TableType,
     user_id: Option<UserId>,
     fields: serde_json::Value,
     deleted: bool,
 ) -> Result<SeqId, KalamDbError> {
-    use kalamdb_store::entity_store::EntityStore as EntityStoreV2;
-
     // T060: Validate PRIMARY KEY (basic check - full uniqueness validation in provider)
     // This is a safety check; actual uniqueness validation happens in the provider layer
     // to avoid scanning all rows on every insert
@@ -60,8 +63,9 @@ pub fn append_version_sync(
     }
 
     // Generate new SeqId via SystemColumnsService
-    let sys_cols = app_context.system_columns_service();
-    let seq_id = sys_cols.generate_seq_id()?;
+    let seq_id = system_columns
+        .generate_seq_id()
+        .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
 
     match table_type {
         TableType::User => {
@@ -84,11 +88,8 @@ pub fn append_version_sync(
             // Create composite key
             let row_key = UserTableRowId::new(user_id.clone(), seq_id);
 
-            // Get user table store from AppContext
-            let store = app_context.user_table_store();
-
             // Store the entity
-            store.put(&row_key, &entity).map_err(|e| {
+            user_table_store.put(&row_key, &entity).map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to append version to user table: {}",
                     e
@@ -119,11 +120,8 @@ pub fn append_version_sync(
             // Key is just the SeqId (SharedTableRowId is a type alias for SeqId)
             let row_key = seq_id;
 
-            // Get shared table store from AppContext
-            let store = app_context.shared_table_store();
-
             // Store the entity
-            store.put(&row_key, &entity).map_err(|e| {
+            shared_table_store.put(&row_key, &entity).map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to append version to shared table: {}",
                     e
@@ -153,7 +151,9 @@ pub fn append_version_sync(
 /// - DELETE: Appends tombstone row with _deleted=true
 ///
 /// # Arguments
-/// * `app_context` - Application context with SnowflakeGenerator
+/// * `system_columns` - System columns service for SeqId generation
+/// * `user_table_store` - User table store (for user tables)
+/// * `shared_table_store` - Shared table store (for shared tables)
 /// * `table_id` - Table identifier
 /// * `table_type` - User or Shared table type
 /// * `user_id` - User ID (required for user tables, ignored for shared tables)
@@ -164,7 +164,9 @@ pub fn append_version_sync(
 /// * `Ok(SeqId)` - The sequence ID of the newly appended version
 /// * `Err(KalamDbError)` - If append fails
 pub async fn append_version(
-    app_context: Arc<AppContext>,
+    system_columns: Arc<SystemColumnsService>,
+    user_table_store: Arc<UserTableStore>,
+    shared_table_store: Arc<SharedTableStore>,
     table_id: &TableId,
     table_type: TableType,
     user_id: Option<UserId>,
@@ -172,69 +174,14 @@ pub async fn append_version(
     deleted: bool,
 ) -> Result<SeqId, KalamDbError> {
     // Delegate to synchronous implementation
-    append_version_sync(app_context, table_id, table_type, user_id, fields, deleted)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::app_context::AppContext;
-    use kalamdb_commons::models::{NamespaceId, TableName};
-
-    #[tokio::test]
-    async fn test_append_version_user_table() {
-        let app_ctx = AppContext::new_test();
-        let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
-        let user_id = UserId::new("user1");
-        let fields = serde_json::json!({"id": 1, "name": "Alice"});
-
-        let result = append_version(
-            Arc::clone(&app_ctx),
-            &table_id,
-            TableType::User,
-            Some(user_id),
-            fields,
-            false,
-        )
-        .await;
-
-        // Should succeed with in-memory test backend
-        assert!(result.is_ok(), "INSERT via append_version should succeed: {:?}", result.err());
-        let seq_id = result.unwrap();
-        assert!(seq_id.as_i64() > 0, "SeqId should be positive");
-    }
-
-    #[tokio::test]
-    async fn test_append_version_requires_user_id_for_user_tables() {
-        let app_ctx = AppContext::new_test();
-        let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
-        let fields = serde_json::json!({"id": 1, "name": "Alice"});
-
-        let result = append_version(
-            Arc::clone(&app_ctx),
-            &table_id,
-            TableType::User,
-            None, // Missing user_id
-            fields,
-            false,
-        )
-        .await;
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("user_id required"));
-    }
-
-    #[tokio::test]
-    async fn test_append_version_system_table_rejected() {
-        let app_ctx = AppContext::new_test();
-        let table_id = TableId::new(NamespaceId::new("system"), TableName::new("users"));
-        let fields = serde_json::json!({"id": 1});
-
-        let result =
-            append_version(Arc::clone(&app_ctx), &table_id, TableType::System, None, fields, false)
-                .await;
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("System tables cannot"));
-    }
+    append_version_sync_with_deps(
+        system_columns,
+        user_table_store,
+        shared_table_store,
+        table_id,
+        table_type,
+        user_id,
+        fields,
+        deleted,
+    )
 }

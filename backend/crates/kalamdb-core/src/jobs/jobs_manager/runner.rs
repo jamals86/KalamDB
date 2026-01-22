@@ -125,6 +125,37 @@ impl JobsManager {
         Ok(())
     }
 
+    /// Mark a job as skipped via Raft (for cluster replication)
+    async fn mark_job_skipped(
+        &self,
+        job_id: &kalamdb_commons::JobId,
+        skip_message: String,
+    ) -> Result<(), KalamDbError> {
+        let app_ctx = self.get_attached_app_context();
+        let cmd = MetaCommand::CompleteJob {
+            job_id: job_id.clone(),
+            result: Some(serde_json::json!({ "message": skip_message, "skipped": true }).to_string()),
+            completed_at: chrono::Utc::now(),
+        };
+        app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
+            KalamDbError::Other(format!("Failed to mark job as skipped via Raft: {}", e))
+        })?;
+
+        // Mark job as skipped in the jobs table
+        let cmd_status = MetaCommand::UpdateJobStatus {
+            job_id: job_id.clone(),
+            status: JobStatus::Skipped,
+            updated_at: chrono::Utc::now(),
+        };
+        app_ctx.executor().execute_meta(cmd_status).await.map_err(|e| {
+            KalamDbError::Other(format!("Failed to update job status to Skipped via Raft: {}", e))
+        })?;
+
+        self.finalize_job_nodes(job_id, JobStatus::Skipped, Some(skip_message))
+            .await?;
+        Ok(())
+    }
+
     /// Update a job in the database asynchronously (for retrying status only)
     ///
     /// Delegates to provider's async method which handles spawn_blocking internally.
@@ -320,7 +351,7 @@ impl JobsManager {
             return Ok(None);
         };
 
-        if matches!(job.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled) {
+        if matches!(job.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
             self.update_job_node_status(&job_node.job_id, job.status, None)
                 .await?;
             return Ok(None);
@@ -421,6 +452,16 @@ impl JobsManager {
                 self.log_job_event(&job_id, &Level::Error, &format!("Job failed in local phase: {}", message));
                 return Ok(());
             },
+            JobDecision::Skipped { message } => {
+                self.update_job_node_status(&job_id, JobStatus::Completed, None)
+                    .await?;
+                self.log_job_event(
+                    &job_id,
+                    &Level::Debug,
+                    &format!("Local phase skipped: {}", message),
+                );
+                // Continue to leader phase if applicable
+            },
             JobDecision::Retry { message, exception_trace, backoff_ms } => {
                 // Handle retry for local phase
                 return self
@@ -506,6 +547,20 @@ impl JobsManager {
                             &job_id,
                             &Level::Debug,
                             &format!("Job completed (leader phase): {}", message.unwrap_or_default()),
+                        );
+                    },
+                    JobDecision::Skipped { message } => {
+                        if let Err(e) = self.mark_job_skipped(&job_id, message.clone()).await {
+                            log::error!("[{}] Failed to mark job as skipped via Raft: {}", job_id, e);
+                            return Err(KalamDbError::Other(format!(
+                                "Failed to update job status to Skipped: {}",
+                                e
+                            )));
+                        }
+                        self.log_job_event(
+                            &job_id,
+                            &Level::Info,
+                            &format!("Job skipped (leader phase): {}", message),
                         );
                     },
                     JobDecision::Failed { message, .. } => {
@@ -746,6 +801,9 @@ impl JobsManager {
                 },
                 JobDecision::Failed { message, .. } => {
                     self.mark_job_failed(&job_id, message).await?;
+                },
+                JobDecision::Skipped { message } => {
+                    self.mark_job_skipped(&job_id, message).await?;
                 },
                 JobDecision::Retry { message, exception_trace, backoff_ms } => {
                     return self

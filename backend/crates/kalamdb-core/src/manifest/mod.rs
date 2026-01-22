@@ -11,8 +11,8 @@
 
 pub mod flush;
 mod flush_helper;
-pub mod manifest_helpers;
-mod planner;
+pub use kalamdb_tables::manifest::manifest_helpers;
+pub use kalamdb_tables::manifest::planner;
 mod service;
 
 pub use flush::{
@@ -20,6 +20,6 @@ pub use flush::{
 	SharedTableFlushMetadata, TableFlush, UserTableFlushJob, UserTableFlushMetadata,
 };
 pub use flush_helper::FlushManifestHelper;
-pub use manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
-pub use planner::{ManifestAccessPlanner, RowGroupSelection};
+pub use kalamdb_tables::manifest::{ensure_manifest_ready, load_row_from_parquet_by_seq};
+pub use kalamdb_tables::manifest::{ManifestAccessPlanner, RowGroupSelection};
 pub use service::ManifestService;

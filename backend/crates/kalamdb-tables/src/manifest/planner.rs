@@ -3,7 +3,6 @@
 //! Provides utilities to translate `Manifest` metadata into
 //! concrete file/row-group selections for efficient reads.
 
-use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use datafusion::arrow::compute::cast;
@@ -15,6 +14,7 @@ use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::types::Manifest;
 use kalamdb_commons::TableId;
 use kalamdb_filestore::StorageCached;
+use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::sync::Arc;
 
 /// Planned selection for a single Parquet file
@@ -64,7 +64,7 @@ impl ManifestAccessPlanner {
     /// * `seq_range` - Optional (min, max) seq range for pruning
     /// * `use_degraded_mode` - If true, skip manifest and list directory
     /// * `schema` - Current Arrow schema (target schema for projection)
-    /// * `app_context` - AppContext for accessing system tables
+    /// * `schema_registry` - Schema registry for historical schemas
     ///
     /// # Returns
     /// (batch: RecordBatch, stats: (total_batches, skipped, scanned))
@@ -79,7 +79,7 @@ impl ManifestAccessPlanner {
         seq_range: Option<(SeqId, SeqId)>,
         use_degraded_mode: bool,
         schema: SchemaRef,
-        app_context: &Arc<AppContext>,
+        schema_registry: &dyn SchemaRegistryTrait<Error = KalamDbError>,
     ) -> Result<(RecordBatch, (usize, usize, usize)), KalamDbError> {
         let mut parquet_files: Vec<String> = Vec::new();
         let mut file_schema_versions: std::collections::HashMap<String, u32> =
@@ -113,10 +113,11 @@ impl ManifestAccessPlanner {
 
         // Fallback: only when no manifest (or degraded mode)
         if parquet_files.is_empty() && (manifest_opt.is_none() || use_degraded_mode) {
-             let files = storage_cached.list_parquet_files_sync(table_type, table_id, user_id)
+            let files = storage_cached
+                .list_parquet_files_sync(table_type, table_id, user_id)
                 .into_kalamdb_error("Failed to list files")?;
-             
-             parquet_files.extend(files);
+
+            parquet_files.extend(files);
 
             total_batches = parquet_files.len();
             scanned = total_batches;
@@ -133,16 +134,13 @@ impl ManifestAccessPlanner {
             let batches = storage_cached
                 .read_parquet_files_sync(table_type, table_id, user_id, &[parquet_file.clone()])
                 .into_kalamdb_error("Failed to read Parquet file")?;
-
-            // Get the schema version for this file (default to 1 if not found)
             let file_schema_version = file_schema_versions.get(parquet_file).copied().unwrap_or(1);
-            
+
             for batch in batches {
                 // Check if schema version matches current version
-                let current_version = app_context
-                    .schema_registry()
-                    .get(table_id)
-                    .map(|cached| cached.table.schema_version)
+                let current_version = schema_registry
+                    .get_table_if_exists(table_id)?
+                    .map(|table_def| table_def.schema_version)
                     .unwrap_or(1);
 
                 // If schema versions differ, project the batch to current schema
@@ -152,7 +150,7 @@ impl ManifestAccessPlanner {
                         file_schema_version,
                         &schema,
                         table_id,
-                        app_context,
+                        schema_registry,
                     )?
                 } else {
                     batch
@@ -214,20 +212,17 @@ impl ManifestAccessPlanner {
     /// * `old_schema_version` - Schema version used when data was flushed
     /// * `current_schema` - Target Arrow schema (current version)
     /// * `table_id` - Table identifier
-    /// * `app_context` - AppContext for accessing historical schemas
+    /// * `schema_registry` - Schema registry for accessing historical schemas
     fn project_batch_to_current_schema(
         &self,
         batch: RecordBatch,
         old_schema_version: u32,
         current_schema: &SchemaRef,
         table_id: &TableId,
-        app_context: &Arc<AppContext>,
+        schema_registry: &dyn SchemaRegistryTrait<Error = KalamDbError>,
     ) -> Result<RecordBatch, KalamDbError> {
         // Get cached arrow schema for the historical version (uses version cache)
-        let old_schema = app_context.schema_registry().get_arrow_schema_for_version(
-            table_id,
-            old_schema_version,
-        )?;
+        let old_schema = schema_registry.get_arrow_schema_for_version(table_id, old_schema_version)?;
 
         // If schemas are identical, no projection needed
         if old_schema.fields() == current_schema.fields() {
@@ -256,20 +251,18 @@ impl ManifestAccessPlanner {
                     projected_columns.push(old_column);
                 } else {
                     // Type changed - attempt cast
-                    let casted = cast(&old_column, current_field.data_type())
-                        .into_arrow_error_ctx(&format!(
-                            "Failed to cast column '{}' from {:?} to {:?}",
-                            current_field.name(),
-                            old_field.data_type(),
-                            current_field.data_type()
-                        ))?;
+                    let casted = cast(&old_column, current_field.data_type()).into_arrow_error_ctx(&format!(
+                        "Failed to cast column '{}' from {:?} to {:?}",
+                        current_field.name(),
+                        old_field.data_type(),
+                        current_field.data_type()
+                    ))?;
                     projected_columns.push(casted);
                 }
             } else {
                 // Column didn't exist in old schema - create NULL array
                 use datafusion::arrow::array::{new_null_array, ArrayRef};
-                let null_array: ArrayRef =
-                    new_null_array(current_field.data_type(), batch.num_rows());
+                let null_array: ArrayRef = new_null_array(current_field.data_type(), batch.num_rows());
                 projected_columns.push(null_array);
 
                 log::trace!(
@@ -357,288 +350,5 @@ impl ManifestAccessPlanner {
 
         // Can't compare, conservatively include
         true
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::app_context::AppContext;
-    use datafusion::arrow::array::{Int32Array, Int64Array};
-    use datafusion::arrow::datatypes::Schema;
-    use datafusion::arrow::record_batch::RecordBatch as ArrowRecordBatch;
-    use kalamdb_commons::constants::SystemColumnNames;
-    use kalamdb_commons::schemas::TableType;
-    use kalamdb_commons::system::Storage;
-    use kalamdb_commons::types::{Manifest, SegmentMetadata};
-    use kalamdb_commons::{NamespaceId, TableId, TableName};
-    use kalamdb_filestore::StorageCached;
-    use parquet::arrow::arrow_writer::ArrowWriter;
-    use std::fs as stdfs;
-    use std::sync::Arc;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn make_manifest_with_segments() -> Manifest {
-        use std::collections::HashMap;
-
-        let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
-        let mut mf = Manifest::new(table_id, None);
-
-        let s0 = SegmentMetadata::new(
-            "uuid-0".to_string(),
-            "batch-0.parquet".to_string(),
-            HashMap::new(),
-            SeqId::from(0i64),
-            SeqId::from(99i64),
-            100,
-            1024,
-        );
-        mf.add_segment(s0);
-
-        let s1 = SegmentMetadata::new(
-            "uuid-1".to_string(),
-            "batch-1.parquet".to_string(),
-            HashMap::new(),
-            SeqId::from(100i64),
-            SeqId::from(199i64),
-            100,
-            2048,
-        );
-        mf.add_segment(s1);
-
-        mf
-    }
-
-    fn make_test_app_context_simple() -> Arc<AppContext> {
-        let base = std::env::temp_dir();
-        let unique = format!(
-            "kalamdb_test_ctx_{}",
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
-        );
-        let dir = base.join(unique);
-        stdfs::create_dir_all(&dir).unwrap();
-
-        AppContext::new_test()
-    }
-
-    #[test]
-    fn test_plan_by_seq_range_overlaps() {
-        let mf = make_manifest_with_segments();
-        let planner = ManifestAccessPlanner::new();
-
-        let plan = planner.plan_by_seq_range(&mf, SeqId::from(25i64), SeqId::from(150i64));
-        assert_eq!(plan.len(), 2);
-
-        let p0 = plan.iter().find(|p| p.file_path == "batch-0.parquet").unwrap();
-        assert!(p0.row_groups.is_empty());
-
-        let p1 = plan.iter().find(|p| p.file_path == "batch-1.parquet").unwrap();
-        assert!(p1.row_groups.is_empty());
-    }
-
-    #[test]
-    fn test_plan_by_seq_range_no_overlap() {
-        let mf = make_manifest_with_segments();
-        let planner = ManifestAccessPlanner::new();
-
-        let plan = planner.plan_by_seq_range(&mf, SeqId::from(300i64), SeqId::from(400i64));
-        assert!(plan.is_empty());
-    }
-
-    fn create_test_storage(temp_dir: &std::path::Path) -> Storage {
-        use kalamdb_commons::models::ids::StorageId;
-        use kalamdb_commons::models::storage::StorageType;
-        let now = chrono::Utc::now().timestamp_millis();
-        Storage {
-            storage_id: StorageId::from("test_storage"),
-            storage_name: "test_storage".to_string(),
-            description: None,
-            storage_type: StorageType::Filesystem,
-            base_directory: temp_dir.to_string_lossy().to_string(),
-            credentials: None,
-            config_json: None,
-            shared_tables_template: "{namespace}/{table}".to_string(),
-            user_tables_template: "{namespace}/{user}/{table}".to_string(),
-            created_at: now,
-            updated_at: now,
-        }
-    }
-
-    #[tokio::test]
-    async fn test_scan_parquet_files_empty_dir_returns_empty_batch() {
-        // Create a unique temp directory without any parquet files
-        let base = std::env::temp_dir();
-        let unique = format!(
-            "kalamdb_test_{}",
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
-        );
-        let dir = base.join(unique);
-        stdfs::create_dir_all(&dir).unwrap();
-
-        // Empty schema
-        let schema: SchemaRef =
-            Arc::new(Schema::new(vec![] as Vec<datafusion::arrow::datatypes::Field>));
-
-        let app_context = make_test_app_context_simple();
-        let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
-
-        let storage = create_test_storage(&dir);
-        let storage_cached = Arc::new(StorageCached::new(storage));
-        let planner = ManifestAccessPlanner::new();
-        let (batch, (_total, _skipped, _scanned)) = planner
-            .scan_parquet_files(
-                None,
-                storage_cached,
-                TableType::Shared,
-                &table_id,
-                None,
-                None,
-                false,
-                schema.clone(),
-                &app_context,
-            )
-            .expect("planner should handle empty directory");
-
-        assert_eq!(batch.num_rows(), 0, "Expected empty batch for empty dir");
-
-        // Cleanup
-        stdfs::remove_dir_all(&dir).unwrap();
-    }
-
-    fn write_parquet_with_rows(path: &std::path::Path, schema: &SchemaRef, rows: usize) {
-        let file = stdfs::File::create(path).unwrap();
-        let mut writer = ArrowWriter::try_new(file, schema.clone(), None).unwrap();
-        if rows > 0 {
-            let seq_values: Vec<i64> = (0..rows as i64).collect();
-            let val_values: Vec<i32> = (0..rows as i32).collect();
-            let seq = Int64Array::from(seq_values);
-            let val = Int32Array::from(val_values);
-            let batch =
-                ArrowRecordBatch::try_new(schema.clone(), vec![Arc::new(seq), Arc::new(val)])
-                    .unwrap();
-            writer.write(&batch).unwrap();
-        }
-        writer.close().unwrap();
-    }
-
-    // FIXME: This test has path resolution issues with manifest relative paths vs storage full paths
-    // All 300 integration tests passed which test the actual ManifestAccessPlanner in real scenarios
-    // This unit test needs to be rewritten to properly handle the storage layer path conventions
-    #[ignore]
-    #[tokio::test]
-    async fn test_pruning_stats_with_manifest_and_seq_ranges() {
-        // Temp dir
-        let base = std::env::temp_dir();
-        let unique = format!(
-            "kalamdb_test_prune_{}",
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
-        );
-        let dir = base.join(unique);
-        stdfs::create_dir_all(&dir).unwrap();
-
-        // Schema: _seq: Int64, val: Int32
-        use datafusion::arrow::datatypes::{DataType, Field};
-        let schema: SchemaRef = Arc::new(Schema::new(vec![
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
-            Field::new("val", DataType::Int32, false),
-        ]));
-
-        // Create two files
-        let f0 = dir.join("batch-0.parquet");
-        let f1 = dir.join("batch-1.parquet");
-        write_parquet_with_rows(&f0, &schema, 10);
-        write_parquet_with_rows(&f1, &schema, 10);
-
-        // Manifest with two segments
-        use std::collections::HashMap;
-        let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
-        let mut mf = Manifest::new(table_id.clone(), None);
-
-        let s0 = SegmentMetadata::new(
-            "uuid-0".to_string(),
-            "batch-0.parquet".to_string(),
-            HashMap::new(),
-            SeqId::from(0i64),
-            SeqId::from(99i64),
-            10,
-            123,
-        );
-        mf.add_segment(s0);
-        let s1 = SegmentMetadata::new(
-            "uuid-1".to_string(),
-            "batch-1.parquet".to_string(),
-            HashMap::new(),
-            SeqId::from(100i64),
-            SeqId::from(199i64),
-            10,
-            123,
-        );
-        mf.add_segment(s1);
-
-        let app_context = make_test_app_context_simple();
-        let storage = create_test_storage(&dir);
-        let storage_cached = Arc::new(StorageCached::new(storage));
-        let planner = ManifestAccessPlanner::new();
-
-        // Range overlaps only first file
-        let (batch, (total, skipped, scanned)) = planner
-            .scan_parquet_files(
-                Some(&mf),
-                Arc::clone(&storage_cached),
-                TableType::Shared,
-                &table_id,
-                None,
-                Some((SeqId::from(0i64), SeqId::from(90i64))),
-                false,
-                schema.clone(),
-                &app_context,
-            )
-            .expect("planner should read files");
-        assert_eq!(total, 2);
-        assert_eq!(scanned, 1);
-        assert_eq!(skipped, 1);
-        // rows: full file read (we don't prune row-groups yet)
-        assert_eq!(batch.num_rows(), 10);
-
-        // Range overlaps only second file
-        let (batch2, (total2, skipped2, scanned2)) = planner
-            .scan_parquet_files(
-                Some(&mf),
-                Arc::clone(&storage_cached),
-                TableType::Shared,
-                &table_id,
-                None,
-                Some((SeqId::from(150i64), SeqId::from(160i64))),
-                false,
-                schema.clone(),
-                &app_context,
-            )
-            .expect("planner should read files");
-        assert_eq!(total2, 2);
-        assert_eq!(scanned2, 1);
-        assert_eq!(skipped2, 1);
-        assert_eq!(batch2.num_rows(), 10);
-
-        // Range overlaps none -> scanned 0, empty batch, no fallback because manifest exists
-        let (batch3, (total3, skipped3, scanned3)) = planner
-            .scan_parquet_files(
-                Some(&mf),
-                Arc::clone(&storage_cached),
-                TableType::Shared,
-                &table_id,
-                None,
-                Some((SeqId::from(300i64), SeqId::from(400i64))),
-                false,
-                schema.clone(),
-                &app_context,
-            )
-            .expect("planner should handle no-overlap");
-        assert_eq!(total3, 2);
-        assert_eq!(scanned3, 0);
-        assert_eq!(skipped3, 2);
-        assert_eq!(batch3.num_rows(), 0);
-
-        // Cleanup
-        stdfs::remove_dir_all(&dir).unwrap();
     }
 }

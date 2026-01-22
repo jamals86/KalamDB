@@ -10,7 +10,10 @@ use kalamdb_commons::models::rows::Row;
 /// Extract primary key value from a `Row`
 pub fn extract_user_pk_value(fields: &Row, pk_column: &str) -> Result<String, KalamDbError> {
     let pk_value = fields.get(pk_column).ok_or_else(|| {
-        KalamDbError::InvalidSql(format!("Primary key column '{}' not found in fields", pk_column))
+        KalamDbError::InvalidOperation(format!(
+            "Primary key column '{}' not found in fields",
+            pk_column
+        ))
     })?;
 
     scalar_pk_to_string(pk_value, pk_column)
@@ -48,7 +51,7 @@ fn scalar_pk_to_string(value: &ScalarValue, column: &str) -> Result<String, Kala
         ScalarValue::UInt64(Some(v)) => Ok(v.to_string()),
         ScalarValue::Float32(Some(v)) => Ok(v.to_string()),
         ScalarValue::Float64(Some(v)) => Ok(v.to_string()),
-        _ => Err(KalamDbError::InvalidSql(format!(
+        _ => Err(KalamDbError::InvalidOperation(format!(
             "Primary key column '{}' has unsupported or NULL value",
             column
         ))),

@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn test_user_table_store_create() {
         let store = create_test_store();
-        assert!(store.partition().contains("user_"));
+        assert!(store.partition().name().contains("user_"));
     }
 
     #[test]

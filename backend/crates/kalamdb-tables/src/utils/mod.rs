@@ -1,0 +1,52 @@
+//! Table utilities module - unified provider support with BaseTableProvider trait
+//!
+//! **Phase 13: Provider Consolidation**
+//!
+//! This module introduces the new utils/ architecture that eliminates ~1200 lines
+//! of duplicate code across User/Shared/Stream table providers.
+
+pub mod base;
+pub mod core;
+pub mod parquet;
+pub mod pk; // Primary key utilities and existence checking
+pub mod row_utils;
+pub mod unified_dml; // Phase 13.6: Moved from tables/
+pub mod version_resolution; // Phase 13.6: Moved from tables/
+
+// Provider implementations live alongside table stores
+pub mod users {
+	pub use crate::user_tables::user_table_provider::*;
+}
+pub mod shared {
+	pub use crate::shared_tables::shared_table_provider::*;
+}
+pub mod streams {
+	pub use crate::stream_tables::stream_table_provider::*;
+}
+
+// Re-export key types for convenience
+pub use base::{BaseTableProvider, TableProviderCore};
+pub use shared::SharedTableProvider;
+pub use streams::StreamTableProvider;
+pub use users::UserTableProvider;
+
+// Re-export unified DML functions
+pub use unified_dml::{append_version, append_version_sync, extract_user_pk_value, resolve_latest_version, validate_primary_key};
+
+// Re-export version resolution helpers
+pub use version_resolution::{resolve_latest_version as resolve_latest_version_batch, scan_with_version_resolution_to_kvs};
+
+/// Provider consolidation summary
+///
+/// **Code Reduction**: ~1200 lines eliminated
+/// - UserTableShared wrapper: ~200 lines
+/// - Duplicate DML methods: ~800 lines
+/// - Handler indirection: ~200 lines
+///
+/// **Architecture Benefits**:
+/// - Generic trait over storage key (K) and value (V) types
+/// - Shared core reduces memory overhead (Arc<TableProviderCore>)
+/// - Direct DML implementation (no handler layer)
+/// - Stateless providers with per-operation user_id passing
+/// - SessionState extraction for DataFusion integration
+pub const PROVIDER_CONSOLIDATION_VERSION: &str = "13.0.0";

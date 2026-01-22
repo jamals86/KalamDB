@@ -27,6 +27,7 @@ use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::websocket::SubscriptionRequest;
 use kalamdb_commons::NodeId;
 use kalamdb_system::LiveQueriesTableProvider;
+use kalamdb_system::LiveQueryManager as LiveQueryManagerTrait;
 use std::sync::Arc;
 
 /// Live query manager
@@ -510,5 +511,18 @@ impl LiveQueryManager {
     /// Get the total number of subscriptions
     pub fn total_subscriptions(&self) -> usize {
         self.registry.subscription_count()
+    }
+}
+
+impl LiveQueryManagerTrait for LiveQueryManager {
+    type Notification = ChangeNotification;
+
+    fn notify_table_change_async(
+        &self,
+        user_id: UserId,
+        table_id: TableId,
+        notification: ChangeNotification,
+    ) {
+        self.notification_service.notify_async(user_id, table_id, notification);
     }
 }

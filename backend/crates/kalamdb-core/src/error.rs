@@ -699,7 +699,9 @@ impl From<kalamdb_tables::TableError> for KalamDbError {
         use kalamdb_tables::TableError;
         match err {
             TableError::Storage(msg) => KalamDbError::Storage(CoreStorageError::Other(msg)),
+            TableError::AlreadyExists(msg) => KalamDbError::AlreadyExists(msg),
             TableError::NotFound(msg) => KalamDbError::NotFound(msg),
+            TableError::TableNotFound(msg) => KalamDbError::TableNotFound(msg),
             TableError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
             TableError::Serialization(msg) => KalamDbError::SerializationError(msg),
             TableError::DataFusion(msg) => {

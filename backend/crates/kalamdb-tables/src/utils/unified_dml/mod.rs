@@ -10,6 +10,6 @@ mod append;
 mod resolve;
 mod validate;
 
-pub use append::{append_version, append_version_sync};
+pub use append::{append_version, append_version_sync_with_deps as append_version_sync};
 pub use resolve::resolve_latest_version;
 pub use validate::{extract_user_pk_value, validate_primary_key};

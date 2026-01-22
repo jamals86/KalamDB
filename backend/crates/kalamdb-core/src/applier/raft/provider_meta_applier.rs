@@ -317,7 +317,7 @@ impl MetaApplier for ProviderMetaApplier {
             node.status = status;
             node.updated_at = updated_at;
             node.error_message = error_message.map(|s| s.to_string());
-            if matches!(status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled) {
+            if matches!(status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
                 node.finished_at = Some(updated_at);
             }
 

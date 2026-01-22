@@ -48,7 +48,7 @@ async fn test_live_query_detects_deletes() -> anyhow::Result<()> {
 
     // Consume Initial Data
     let mut initial_count = 0;
-    let mut timeout = tokio::time::sleep(Duration::from_secs(5));
+    let timeout = tokio::time::sleep(Duration::from_secs(5));
     tokio::pin!(timeout);
 
     loop {
@@ -80,7 +80,7 @@ async fn test_live_query_detects_deletes() -> anyhow::Result<()> {
 
     // Receive DELETE notification
     let mut delete_received = false;
-    let mut timeout = tokio::time::sleep(Duration::from_secs(5));
+    let timeout = tokio::time::sleep(Duration::from_secs(5));
     tokio::pin!(timeout);
 
     loop {

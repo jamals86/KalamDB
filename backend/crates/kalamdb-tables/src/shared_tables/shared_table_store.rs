@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn test_shared_table_store_create() {
         let store = create_test_store();
-        assert!(store.partition().contains("shared_"));
+        assert!(store.partition().name().contains("shared_"));
     }
 
     #[test]

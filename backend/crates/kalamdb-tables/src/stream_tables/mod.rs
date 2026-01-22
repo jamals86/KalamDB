@@ -5,10 +5,12 @@
 //! - MVCC architecture with user_id and _seq system columns
 //! - Persistent append-only logs for fast replay
 
+pub mod stream_table_provider;
 pub mod stream_table_store;
 
 pub use kalamdb_commons::models::StreamTableRow;
 pub use stream_table_store::{new_stream_table_store, StreamTableStore, StreamTableStoreConfig};
+pub use stream_table_provider::StreamTableProvider;
 
 // Re-export StreamTableRowId from kalamdb_commons for convenience
 pub use kalamdb_commons::ids::StreamTableRowId;

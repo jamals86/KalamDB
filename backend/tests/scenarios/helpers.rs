@@ -8,12 +8,10 @@
 //! - Parallel test utilities
 
 use anyhow::Result;
-use kalam_link::models::{ChangeEvent, QueryResponse, ResponseStatus};
+use kalam_link::models::{ChangeEvent, ResponseStatus};
 use kalam_link::SubscriptionManager;
-use kalamdb_commons::Role;
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::time::{sleep, timeout, Instant};
 
@@ -44,7 +42,7 @@ pub async fn wait_for_flush_complete(
     server: &HttpTestServer,
     ns: &str,
     table: &str,
-    timeout_duration: Duration,
+    _timeout_duration: Duration,
 ) -> Result<()> {
     crate::test_support::flush::wait_for_flush_jobs_settled(server, ns, table).await
 }

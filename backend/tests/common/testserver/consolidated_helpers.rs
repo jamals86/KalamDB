@@ -21,7 +21,7 @@ use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tokio::time::{sleep, timeout, Instant};
+use tokio::time::{timeout, Instant};
 
 use super::http_server::HttpTestServer;
 

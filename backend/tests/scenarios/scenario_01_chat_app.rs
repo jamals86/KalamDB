@@ -166,7 +166,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     let mut subscription = u1_client.subscribe(&subscription_sql).await?;
 
     // Wait for ACK
-    let (_sub_id, total_rows) = wait_for_ack(&mut subscription, Duration::from_secs(5)).await?;
+    let (_sub_id, _total_rows) = wait_for_ack(&mut subscription, Duration::from_secs(5)).await?;
 
     // Drain initial data
     let initial_count = drain_initial_data(&mut subscription, Duration::from_secs(5)).await?;
@@ -244,7 +244,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     let storage_root = server.storage_root();
     // Note: Parquet files might take time to appear, just check they eventually exist
     // This assertion is lenient since flush is async
-    let parquet_files = crate::test_support::flush::find_parquet_files(&storage_root);
+    let _parquet_files = crate::test_support::flush::find_parquet_files(&storage_root);
     // We don't strictly require parquet files for this test since flush might not have
     // written yet or might write to a different path
 
@@ -254,7 +254,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     let resp = u1_client
         .execute_query(&format!("SELECT id FROM {}.messages ORDER BY id", ns), None, None)
         .await?;
-    let mut ids: Vec<i64> = resp
+    let ids: Vec<i64> = resp
         .rows_as_maps()
         .iter()
         .filter_map(|r| r.get("id").and_then(json_to_i64))
@@ -327,7 +327,7 @@ async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
     let service_client = server.link_client("root");
 
     // Insert as service (this goes to service's own partition by default)
-    let resp = service_client
+    let _resp = service_client
                 .execute_query(
                     &format!("INSERT INTO {}.messages (id, role_id, content) VALUES (2, 'assistant', 'AI Response')", ns),
                     None,

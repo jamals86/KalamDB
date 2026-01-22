@@ -36,15 +36,19 @@ pub mod macros;
 
 pub mod error;
 pub mod initialization;
+pub mod impls;
 pub mod providers;
 pub mod registry;
+pub mod services;
 pub mod system_table_store;
 pub mod system_table_trait;
 
 // Re-export main types
 pub use error::{Result, SystemError};
 pub use initialization::initialize_system_tables;
+pub use impls::{ClusterCoordinator, LiveQueryManager, ManifestService, SchemaRegistry};
 pub use registry::SystemTablesRegistry;
+pub use services::SystemColumnsService;
 pub use system_table_trait::SystemTableProviderExt;
 // Re-export SystemTable and StoragePartition from kalamdb_commons for consistent usage
 pub use kalamdb_commons::{StoragePartition, SystemTable};

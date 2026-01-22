@@ -10,10 +10,12 @@ use kalamdb_commons::types::Manifest;
 use kalamdb_commons::UserId;
 use std::sync::Arc;
 
-use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::manifest::ManifestAccessPlanner;
+use kalamdb_filestore::StorageRegistry;
+use kalamdb_system::ManifestService as ManifestServiceTrait;
+use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 
 /// Result of a primary key existence check
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,13 +62,23 @@ impl PkCheckResult {
 /// 4. Apply min/max pruning to skip irrelevant segments
 /// 5. Scan only necessary Parquet files
 pub struct PkExistenceChecker {
-    app_context: Arc<AppContext>,
+    schema_registry: Arc<dyn SchemaRegistryTrait<Error = KalamDbError>>,
+    storage_registry: Arc<StorageRegistry>,
+    manifest_service: Arc<dyn ManifestServiceTrait>,
 }
 
 impl PkExistenceChecker {
     /// Create a new PK existence checker
-    pub fn new(app_context: Arc<AppContext>) -> Self {
-        Self { app_context }
+    pub fn new(
+        schema_registry: Arc<dyn SchemaRegistryTrait<Error = KalamDbError>>,
+        storage_registry: Arc<StorageRegistry>,
+        manifest_service: Arc<dyn ManifestServiceTrait>,
+    ) -> Self {
+        Self {
+            schema_registry,
+            storage_registry,
+            manifest_service,
+        }
     }
 
     /// Check if a PK column is configured for auto-increment
@@ -186,11 +198,30 @@ impl PkExistenceChecker {
             .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
 
         // 1. Get CachedTableData for storage access
-        let cached = match self.app_context.schema_registry().get(table_id) {
-            Some(c) => c,
+        let storage_id = match self.schema_registry.get_storage_id(table_id) {
+            Ok(id) => id,
+            Err(e) => {
+                log::trace!(
+                    "[PkExistenceChecker] No storage id for {}.{} {} - PK not in cold: {}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label,
+                    e
+                );
+                return Ok(None);
+            },
+        };
+
+        // 2. Get StorageCached from registry
+        let storage_cached = match self
+            .storage_registry
+            .get_cached(&storage_id)
+            .into_kalamdb_error("Failed to get storage cache")?
+        {
+            Some(cached) => cached,
             None => {
                 log::trace!(
-                    "[PkExistenceChecker] No cached table data for {}.{} {} - PK not in cold",
+                    "[PkExistenceChecker] Storage not found for {}.{} {}",
                     namespace.as_str(),
                     table.as_str(),
                     scope_label
@@ -198,11 +229,6 @@ impl PkExistenceChecker {
                 return Ok(None);
             },
         };
-
-        // 2. Get StorageCached from registry
-        let storage_cached = cached
-            .storage_cached(&self.app_context.storage_registry())
-            .into_kalamdb_error("Failed to get storage cache")?;
 
         // 3. List parquet files using optimized method
         let all_parquet_files = match storage_cached.list_parquet_files_sync(table_type, table_id, user_id) {
@@ -229,8 +255,7 @@ impl PkExistenceChecker {
         }
 
         // 4. Load manifest from cache (L1 → L2 → storage)
-        let manifest_service = self.app_context.manifest_service();
-        let manifest: Option<Manifest> = match manifest_service.get_or_load(table_id, user_id) {
+        let manifest: Option<Manifest> = match self.manifest_service.get_or_load(table_id, user_id) {
             Ok(Some(entry)) => {
                 log::trace!(
                     "[PkExistenceChecker] Manifest loaded from cache for {}.{} {}",

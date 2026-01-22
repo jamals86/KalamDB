@@ -10,7 +10,7 @@ use crate::{
 };
 use kalamdb_commons::ids::{SharedTableRowId, StreamTableRowId, UserTableRowId};
 use kalamdb_commons::StorageKey;
-use kalamdb_store::entity_store::EntityStore;
+use kalamdb_store::EntityStore;
 
 /// Extension trait for user table stores
 pub trait UserTableStoreExt {
@@ -26,7 +26,8 @@ impl UserTableStoreExt for UserTableStore {
         &self,
         user_key_prefix: &UserTableRowId,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, TableError> {
-        let raw_results = EntityStore::scan_prefix(self, user_key_prefix)
+        let raw_results = self
+            .scan_prefix(user_key_prefix)
             .map_err(|e| TableError::Storage(e.to_string()))?;
 
         // Deserialize Vec<u8> keys back to UserTableRowId
@@ -45,7 +46,8 @@ impl UserTableStoreExt for UserTableStore {
         let rows = self.scan_user(user_key_prefix)?;
         let count = rows.len();
         for (key, _) in rows {
-            EntityStore::delete(self, &key).map_err(|e| TableError::Storage(e.to_string()))?;
+            self.delete(&key)
+                .map_err(|e| TableError::Storage(e.to_string()))?;
         }
         Ok(count)
     }
@@ -58,7 +60,8 @@ pub trait SharedTableStoreExt {
 
 impl SharedTableStoreExt for SharedTableStore {
     fn scan_all_shared(&self) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, TableError> {
-        let raw_results = EntityStore::scan_all(self, None, None, None)
+        let raw_results = self
+            .scan_all(None, None, None)
             .map_err(|e| TableError::Storage(e.to_string()))?;
 
         // Deserialize Vec<u8> keys back to SharedTableRowId (SeqId)

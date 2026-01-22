@@ -100,13 +100,13 @@ async fn test_schema_cache_basic_operations() {
     let schema_after = cache.get(&users_table_id);
     assert!(schema_after.is_some(), "Schema should be in cache");
 
-    // Verify cache statistics
-    let (size, hits, misses, _evictions) = cache.stats();
+    // Verify cache size
+    let size = cache.stats();
     assert!(size >= 1, "Cache should have at least 1 entry");
 
     println!(
-        "✅ Cache basic operations: {} size, {} hits, {} misses, was_preloaded={}",
-        size, hits, misses, was_preloaded
+        "✅ Cache basic operations: {} size, was_preloaded={}",
+        size, was_preloaded
     );
 }
 

@@ -1,14 +1,14 @@
 use crate::error::KalamDbError;
-use crate::providers::core::TableProviderCore;
-use crate::providers::parquet::scan_parquet_files_as_batch;
-use crate::providers::version_resolution::{parquet_batch_to_rows, ParquetRowData};
-use kalamdb_commons::models::schemas::TableType;
+use crate::utils::core::TableProviderCore;
+use crate::utils::parquet::scan_parquet_files_as_batch;
+use crate::utils::version_resolution::{parquet_batch_to_rows, ParquetRowData};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::logical_expr::Expr;
 use datafusion::prelude::{col, lit};
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::UserId;
+use kalamdb_commons::models::schemas::TableType;
 
 /// Ensure manifest.json exists (and is cached) for the current scope before hot writes.
 pub fn ensure_manifest_ready(
@@ -20,7 +20,7 @@ pub fn ensure_manifest_ready(
     let table_id = core.table_id();
     let namespace = table_id.namespace_id().clone();
     let table = table_id.table_name().clone();
-    let manifest_service = core.app_context.manifest_service();
+    let manifest_service = core.manifest_service.clone();
 
     match manifest_service.get_or_load(table_id, user_id) {
         Ok(Some(_)) => return Ok(()),
@@ -42,7 +42,7 @@ pub fn ensure_manifest_ready(
     let manifest = manifest_service.ensure_manifest_initialized(table_id, table_type, user_id)?;
 
     // Get cached table data for path resolution using storage templates
-    let _cached = core.app_context.schema_registry().get(table_id).ok_or_else(|| {
+    let _cached = core.schema_registry.get_table_if_exists(table_id).ok().flatten().ok_or_else(|| {
         KalamDbError::TableNotFound(format!(
             "Table {}.{} not found in schema registry",
             namespace.as_str(),

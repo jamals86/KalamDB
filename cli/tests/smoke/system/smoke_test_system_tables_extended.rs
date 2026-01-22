@@ -230,8 +230,8 @@ fn smoke_test_system_live_queries() {
 /// Test \stats CLI meta-command
 ///
 /// Verifies:
-/// - \stats returns cache statistics
-/// - Output contains schema_cache_hit_rate, schema_cache_size, etc.
+/// - \stats returns server statistics
+/// - Output contains basic metrics like schema_cache_size, total_users, etc.
 /// - system.stats table is queryable
 #[ntest::timeout(180000)]
 #[test]
@@ -249,20 +249,20 @@ fn smoke_test_system_stats_meta_command() {
 
     println!("system.stats output:\n{}", output);
 
-    // Verify expected stat keys exist
+    // Verify expected stat keys exist (basic server metrics only)
     let expected_keys = vec![
-        "schema_cache_hit_rate",
         "schema_cache_size",
-        "schema_cache_hits",
-        "schema_cache_misses",
-        // "schema_cache_evictions", // Not yet implemented in SchemaRegistry stats
+        "schema_registry_size",
+        "total_users",
+        "total_tables",
+        "server_version",
     ];
 
     for key in expected_keys {
         assert!(output.contains(key), "Expected stat key '{}' in system.stats", key);
     }
 
-    println!("✅ Verified system.stats contains cache statistics");
+    println!("✅ Verified system.stats contains server statistics");
 
     // TODO: Test actual \stats meta-command once we have CLI meta-command execution helper
 }

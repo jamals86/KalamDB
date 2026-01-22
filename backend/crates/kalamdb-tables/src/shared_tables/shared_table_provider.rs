@@ -11,14 +11,13 @@
 //! - SessionState NOT extracted in scan_rows() (scans all rows)
 //! - PK Index: Uses SharedTableIndexedStore for efficient O(1) lookups by PK value
 
-use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::providers::arrow_json_conversion::coerce_rows;
-use crate::providers::base::{self, BaseTableProvider, TableProviderCore};
-use crate::providers::helpers::extract_full_user_context;
+use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
+use crate::utils::base::{self, BaseTableProvider, TableProviderCore};
+use crate::utils::row_utils::extract_full_user_context;
 use crate::manifest::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
-use crate::schema_registry::TableType;
+use kalamdb_commons::schemas::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -33,14 +32,15 @@ use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::TableId;
 use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use kalamdb_session::check_shared_table_access;
-use kalamdb_store::entity_store::EntityStore;
-use kalamdb_tables::{SharedTableIndexedStore, SharedTablePkIndex, SharedTableRow};
+use kalamdb_store::EntityStore;
+use crate::shared_tables::{SharedTableIndexedStore, SharedTablePkIndex, SharedTableRow};
 use std::any::Any;
 use std::sync::Arc;
 
 // Arrow <-> JSON helpers
-use crate::providers::version_resolution::{merge_versioned_rows, parquet_batch_to_rows};
+use crate::utils::version_resolution::{merge_versioned_rows, parquet_batch_to_rows};
 
 /// Shared table provider without RLS
 ///
@@ -86,14 +86,12 @@ impl SharedTableProvider {
         // Cache schema at creation time to avoid "Table not found" panics if table is dropped
         // while provider is still in use by a query plan
         let schema = core
-            .app_context
-            .schema_registry()
+            .schema_registry
             .get_arrow_schema(core.table_id())
             .expect("Failed to get Arrow schema from registry during provider creation");
 
         let table_def = core
-            .app_context
-            .schema_registry()
+            .schema_registry
             .get_table_if_exists(core.table_id())
             .expect("Failed to load table definition from registry during provider creation")
             .unwrap_or_else(|| {
@@ -112,6 +110,11 @@ impl SharedTableProvider {
             table_def,
         }
     }
+    
+        /// Access the underlying indexed store (used by flush jobs)
+        pub fn store(&self) -> Arc<SharedTableIndexedStore> {
+            Arc::clone(&self.store)
+        }
 
     /// Scan Parquet files from cold storage for shared table
     ///
@@ -189,8 +192,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         self.core.table_type()
     }
 
-    fn app_context(&self) -> &Arc<AppContext> {
-        &self.core.app_context
+    fn schema_registry(&self) -> &Arc<dyn SchemaRegistryTrait<Error = KalamDbError>> {
+        &self.core.schema_registry
     }
 
     fn primary_key_field_name(&self) -> &str {
@@ -208,7 +211,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         id_value: &str,
     ) -> Result<Option<SharedTableRowId>, KalamDbError> {
         // Use shared helper to parse PK value
-        let pk_value = crate::providers::pk::parse_pk_value(id_value);
+        let pk_value = crate::utils::pk::parse_pk_value(id_value);
 
         // Fast path: return the latest non-deleted row from hot storage if it exists.
         if let Some((row_id, _row)) = self.find_by_pk(&pk_value)? {
@@ -260,7 +263,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
         // Generate new SeqId via SystemColumnsService
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols.generate_seq_id()?;
+        let seq_id = sys_cols
+            .generate_seq_id()
+            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
 
         // Create SharedTableRow directly
         let entity = SharedTableRow {
@@ -321,7 +326,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             if let Some(pk_value) = row_data.get(pk_name) {
                 if !matches!(pk_value, ScalarValue::Null) {
                     let pk_str =
-                        crate::providers::unified_dml::extract_user_pk_value(row_data, pk_name)?;
+                        crate::utils::unified_dml::extract_user_pk_value(row_data, pk_name)?;
                     pk_values_to_check.push(pk_str);
                 }
             }
@@ -398,7 +403,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
         // Generate all SeqIds in single mutex acquisition
         let sys_cols = self.core.system_columns.clone();
-        let seq_ids = sys_cols.generate_seq_ids(row_count)?;
+        let seq_ids = sys_cols
+            .generate_seq_ids(row_count)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId batch generation failed: {}", e)))?;
 
         // Build all entities and keys
         let mut entries: Vec<(SharedTableRowId, SharedTableRow)> = Vec::with_capacity(row_count);
@@ -425,7 +432,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         })?;
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.app_context.manifest_service();
+        let manifest_service = self.core.manifest_service.clone();
         if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
             log::warn!(
                 "Failed to mark manifest as pending_write for {}: {}",
@@ -455,7 +462,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let pk_name = self.primary_key_field_name().to_string();
         // Load referenced prior version to derive PK value if not present in updates
         // Try RocksDB first, then Parquet
-        let prior_opt = EntityStore::get(&*self.store, key)
+        let prior_opt = self.store.get(key)
             .into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
@@ -505,7 +512,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let new_fields = Row::new(merged);
 
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols.generate_seq_id()?;
+        let seq_id = sys_cols
+            .generate_seq_id()
+            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
         let entity = SharedTableRow {
             _seq: seq_id,
             _deleted: false,
@@ -518,7 +527,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         })?;
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.app_context.manifest_service();
+        let manifest_service = self.core.manifest_service.clone();
         if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
             log::warn!(
                 "Failed to mark manifest as pending_write for {}: {}",
@@ -558,7 +567,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let new_fields = Row::new(merged);
 
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols.generate_seq_id()?;
+        let seq_id = sys_cols
+            .generate_seq_id()
+            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
         let entity = SharedTableRow {
             _seq: seq_id,
             _deleted: false,
@@ -571,7 +582,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         })?;
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.app_context.manifest_service();
+        let manifest_service = self.core.manifest_service.clone();
         if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
             log::warn!(
                 "Failed to mark manifest as pending_write for {}: {}",
@@ -587,7 +598,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // IGNORE user_id parameter - no RLS for shared tables
         // Load referenced version to extract PK so tombstone groups with same logical row
         // Try RocksDB first, then Parquet
-        let prior_opt = EntityStore::get(&*self.store, key)
+        let prior_opt = self.store.get(key)
             .into_kalamdb_error("Failed to load prior version")?;
 
         let prior = if let Some(p) = prior_opt {
@@ -609,7 +620,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         };
 
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols.generate_seq_id()?;
+        let seq_id = sys_cols
+            .generate_seq_id()
+            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
         // Preserve ALL fields in the tombstone
         let values = prior.fields.values.clone();
 
@@ -625,7 +638,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         })?;
 
         // Mark manifest as having pending writes (hot data needs to be flushed)
-        let manifest_service = self.core.app_context.manifest_service();
+        let manifest_service = self.core.manifest_service.clone();
         if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
             log::warn!(
                 "Failed to mark manifest as pending_write for {}: {}",
@@ -664,7 +677,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
         // Convert to JSON rows aligned with schema
         let schema = self.schema_ref();
-        crate::providers::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
+        crate::utils::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
     }
 
     fn scan_with_version_resolution_to_kvs(
@@ -798,8 +811,8 @@ impl TableProvider for SharedTableProvider {
 
         // Check if this is a client read that requires leader (shared data shard)
         // Skip check for internal reads (jobs, live query notifications, etc.)
-        if read_context.requires_leader() && self.core.app_context.is_cluster_mode() {
-            let is_leader = self.core.app_context.is_leader_for_shared().await;
+        if read_context.requires_leader() && self.core.cluster_coordinator.is_cluster_mode().await {
+            let is_leader = self.core.cluster_coordinator.is_leader_for_shared().await;
             if !is_leader {
                 // For shared tables, redirect to leader
                 // We don't have a specific user, so we just report not leader

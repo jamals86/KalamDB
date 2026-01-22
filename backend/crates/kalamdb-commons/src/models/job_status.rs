@@ -16,6 +16,7 @@ pub enum JobStatus {
     Completed,
     Failed,
     Cancelled,
+    Skipped,
 }
 
 impl JobStatus {
@@ -28,6 +29,7 @@ impl JobStatus {
             JobStatus::Completed => "completed",
             JobStatus::Failed => "failed",
             JobStatus::Cancelled => "cancelled",
+            JobStatus::Skipped => "skipped",
         }
     }
 
@@ -40,6 +42,7 @@ impl JobStatus {
             "completed" => Some(JobStatus::Completed),
             "failed" => Some(JobStatus::Failed),
             "cancelled" => Some(JobStatus::Cancelled),
+            "skipped" => Some(JobStatus::Skipped),
             _ => None,
         }
     }
@@ -68,6 +71,7 @@ impl From<&str> for JobStatus {
             "completed" => JobStatus::Completed,
             "failed" => JobStatus::Failed,
             "cancelled" => JobStatus::Cancelled,
+            "skipped" => JobStatus::Skipped,
             _ => JobStatus::Failed,
         }
     }

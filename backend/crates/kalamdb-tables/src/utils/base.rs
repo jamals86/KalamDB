@@ -10,13 +10,12 @@
 //! - No separate handlers - DML logic implemented directly in providers
 //! - Shared core reduces memory overhead (Arc<TableProviderCore> vs per-provider fields)
 
-use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::manifest::ManifestAccessPlanner;
-use crate::providers::arrow_json_conversion::coerce_rows;
-use crate::providers::unified_dml;
-use crate::schema_registry::TableType;
+use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
+use crate::utils::unified_dml;
+use kalamdb_commons::schemas::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
     Array, BooleanArray, Int16Array, Int32Array, Int64Array, StringArray, UInt32Array, UInt64Array,
@@ -36,16 +35,17 @@ use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 use kalamdb_commons::types::Manifest;
 use kalamdb_commons::{StorageKey, TableId};
+use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 // Re-export types moved to submodules
-pub use crate::providers::core::TableProviderCore;
-pub use crate::providers::helpers::{
+pub use crate::utils::core::TableProviderCore;
+pub use crate::utils::row_utils::{
     extract_seq_bounds_from_filter, resolve_user_scope, system_user_id,
 };
-pub(crate) use crate::providers::parquet::scan_parquet_files_as_batch;
-pub use crate::providers::scan_row::{inject_system_columns, rows_to_arrow_batch, ScanRow};
+pub(crate) use crate::utils::parquet::scan_parquet_files_as_batch;
+pub use crate::utils::row_utils::{inject_system_columns, rows_to_arrow_batch, ScanRow};
 
 /// Unified trait for all table providers with generic storage abstraction
 ///
@@ -109,8 +109,8 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     // Storage Access
     // ===========================
 
-    /// Access to AppContext for SystemColumnsService, SnowflakeGenerator, etc.
-    fn app_context(&self) -> &Arc<AppContext>;
+    /// Access to schema registry for table metadata
+    fn schema_registry(&self) -> &Arc<dyn SchemaRegistryTrait<Error = KalamDbError>>;
 
     /// Primary key field name from schema definition (e.g., "id", "email")
     fn primary_key_field_name(&self) -> &str;
@@ -514,12 +514,12 @@ pub fn pk_exists_in_cold(
         .map(|uid| format!("user={}", uid.as_str()))
         .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
 
-    // 1. Get CachedTableData for storage access
-    let cached = match core.app_context.schema_registry().get(table_id) {
-        Some(c) => c,
-        None => {
+    // 1. Get storage_id from schema registry
+    let storage_id = match core.schema_registry.get_storage_id(table_id) {
+        Ok(id) => id,
+        Err(_) => {
             log::trace!(
-                "[pk_exists_in_cold] No cached table data for {}.{} {} - PK not in cold",
+                "[pk_exists_in_cold] No storage id for {}.{} {} - PK not in cold",
                 namespace.as_str(),
                 table.as_str(),
                 scope_label
@@ -529,9 +529,14 @@ pub fn pk_exists_in_cold(
     };
 
     // 2. Get StorageCached from registry
-    let storage_cached = cached
-        .storage_cached(&core.app_context.storage_registry())
-        .into_kalamdb_error("Failed to get storage cache")?;
+    let storage_registry = core.storage_registry.as_ref().ok_or_else(|| {
+        KalamDbError::InvalidOperation("Storage registry not configured".to_string())
+    })?;
+    let storage_cached = storage_registry
+        .get_cached(&storage_id)?
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
+        })?;
 
     let list_result = match storage_cached.list_sync(table_type, table_id, user_id) {
         Ok(result) => result,
@@ -557,7 +562,7 @@ pub fn pk_exists_in_cold(
     }
 
     // 4. Load manifest from cache
-    let manifest_service = core.app_context.manifest_service();
+    let manifest_service = core.manifest_service.clone();
     let cache_result = manifest_service.get_or_load(table_id, user_id);
 
     let manifest: Option<Manifest> = match &cache_result {
@@ -691,12 +696,12 @@ pub fn pk_exists_batch_in_cold(
         .map(|uid| format!("user={}", uid.as_str()))
         .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
 
-    // 1. Get CachedTableData for storage access
-    let cached = match core.app_context.schema_registry().get(table_id) {
-        Some(c) => c,
-        None => {
+    // 1. Get storage_id from schema registry
+    let storage_id = match core.schema_registry.get_storage_id(table_id) {
+        Ok(id) => id,
+        Err(_) => {
             log::trace!(
-                "[pk_exists_batch_in_cold] No cached table data for {}.{} {} - PK not in cold",
+                "[pk_exists_batch_in_cold] No storage id for {}.{} {} - PK not in cold",
                 namespace.as_str(),
                 table.as_str(),
                 scope_label
@@ -706,9 +711,14 @@ pub fn pk_exists_batch_in_cold(
     };
 
     // 2. Get StorageCached from registry
-    let storage_cached = cached
-        .storage_cached(&core.app_context.storage_registry())
-        .into_kalamdb_error("Failed to get storage cache")?;
+    let storage_registry = core.storage_registry.as_ref().ok_or_else(|| {
+        KalamDbError::InvalidOperation("Storage registry not configured".to_string())
+    })?;
+    let storage_cached = storage_registry
+        .get_cached(&storage_id)?
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
+        })?;
 
     let list_result = match storage_cached.list_sync(table_type, table_id, user_id) {
         Ok(result) => result,
@@ -734,7 +744,7 @@ pub fn pk_exists_batch_in_cold(
     }
 
     // 4. Load manifest from cache
-    let manifest_service = core.app_context.manifest_service();
+    let manifest_service = core.manifest_service.clone();
     let cache_result = manifest_service.get_or_load(table_id, user_id);
 
     let manifest: Option<Manifest> = match &cache_result {
@@ -1067,13 +1077,10 @@ where
     let table_id = provider.table_id();
 
     // Get table definition to check if PK is auto-increment
-    if let Some(table_def) = provider
-        .app_context()
-        .schema_registry()
-        .get_table_if_exists(table_id)?
+    if let Some(table_def) = provider.schema_registry().get_table_if_exists(table_id)?
     {
         // Fast path: Skip uniqueness check if PK is auto-increment
-        if crate::providers::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
+        if crate::utils::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
             log::trace!(
                 "[ensure_unique_pk_value] Skipping PK check for {} - PK is auto-increment",
                 table_id
@@ -1170,12 +1177,9 @@ where
     }
 
     // Get table definition to check if PK is auto-increment
-    if let Some(table_def) = provider
-        .app_context()
-        .schema_registry()
-        .get_table_if_exists(table_id)?
+    if let Some(table_def) = provider.schema_registry().get_table_if_exists(table_id)?
     {
-        if crate::providers::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
+        if crate::utils::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Cannot modify auto-increment primary key column '{}' in table {}",
                 pk_name, table_id

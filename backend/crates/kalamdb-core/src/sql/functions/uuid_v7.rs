@@ -89,7 +89,7 @@ impl ScalarUDFImpl for UuidV7Function {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::{logical_expr::ScalarUDF, sql::sqlparser::ast::DataType};
+    use datafusion::logical_expr::ScalarUDF;
     use std::collections::HashSet;
 
     #[test]

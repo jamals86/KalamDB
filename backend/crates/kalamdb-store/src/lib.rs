@@ -38,7 +38,7 @@ pub use kalamdb_commons::StorageKey;
 // Phase 14: Export new type-safe EntityStore traits
 pub use entity_store::{
     CrossUserTableStore,
-    EntityStore as EntityStoreV2, // Alias to avoid conflict during migration, FIXME: Rename to EntityStore later
+    EntityStore,
     EntityStoreAsync,             // Async versions using spawn_blocking internally
 };
 

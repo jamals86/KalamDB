@@ -17,7 +17,7 @@
 //! - Test various SQL operations (COUNT, SUM, AVG, WHERE, ORDER BY, etc.)
 
 use super::test_support::{
-    fixtures, flush_helpers, get_count_value, TestServer,
+    fixtures, flush_helpers, query_helpers, TestServer,
 };
 use kalam_link::models::ResponseStatus;
 use kalam_link::parse_i64;
@@ -85,7 +85,7 @@ async fn test_01_combined_data_count_and_select() {
             user_id,
         )
         .await;
-    let count = get_count_value(&pre_flush_count, 0);
+    let count = query_helpers::get_count_value(&pre_flush_count, 0);
     println!("  Pre-flush count: {} rows in RocksDB", count);
 
     // Execute flush synchronously
@@ -145,7 +145,7 @@ async fn test_01_combined_data_count_and_select() {
         "SQL failed: {:?}",
         count_response.error
     );
-    let total = get_count_value(&count_response, 0);
+    let total = query_helpers::get_count_value(&count_response, 0);
     assert_eq!(total, 15, "Should have 15 total rows (10 flushed + 5 buffered), got {}", total);
     println!("  ✓ Count verified: {} total rows (10 Parquet + 5 RocksDB)", total);
 

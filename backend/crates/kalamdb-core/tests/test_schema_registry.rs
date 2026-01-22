@@ -186,23 +186,20 @@ fn test_concurrent_access() {
 }
 
 #[test]
-fn test_metrics() {
+fn test_size() {
     let cache = SchemaRegistry::new(1000);
     let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
     let defn = create_test_defn(table_id.clone());
 
     cache.insert_cached(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(defn))));
 
-    // Generate hits and misses
-    cache.get(&table_id); // Hit
-    cache.get(&table_id); // Hit
-    cache.get(&TableId::new(NamespaceId::new("ns1"), TableName::new("nonexistent"))); // Miss
+    // Verify cache size
+    cache.get(&table_id);
+    cache.get(&table_id);
+    cache.get(&TableId::new(NamespaceId::new("ns1"), TableName::new("nonexistent")));
 
-    let (size, hits, misses, hit_rate) = cache.stats();
+    let size = cache.stats();
     assert_eq!(size, 1);
-    assert_eq!(hits, 2);
-    assert_eq!(misses, 1);
-    assert!((hit_rate - 0.666).abs() < 0.01); // ~66.7%
 }
 
 #[test]
@@ -216,8 +213,7 @@ fn test_clear() {
 
     cache.clear();
     assert_eq!(cache.len(), 0);
-    assert_eq!(cache.stats().1, 0); // hits reset
-    assert_eq!(cache.stats().2, 0); // misses reset
+    assert_eq!(cache.stats(), 0); // size reset
 }
 
 // ========================================================================
@@ -225,7 +221,7 @@ fn test_clear() {
 // ========================================================================
 
 #[test]
-fn bench_cache_hit_rate() {
+fn bench_cache_lookup_latency() {
     use std::time::Instant;
 
     let cache = SchemaRegistry::new(10000); // Large enough for all tables
@@ -260,17 +256,9 @@ fn bench_cache_hit_rate() {
     let avg_latency_ns = elapsed.as_nanos() / total_lookups as u128;
     let avg_latency_us = avg_latency_ns as f64 / 1000.0;
 
-    // Verify performance targets
-    let (_, hits, misses, hit_rate) = cache.stats();
-
-    // Assert >99% cache hit rate (should be 100% since we never evict)
-    assert!(
-        hit_rate > 0.99,
-        "Cache hit rate {} is below 99% target (hits: {}, misses: {})",
-        hit_rate,
-        hits,
-        misses
-    );
+    // Verify cache size
+    let size = cache.stats();
+    assert_eq!(size, num_tables);
 
     // Assert <100μs average latency per lookup
     assert!(
@@ -478,10 +466,9 @@ fn stress_concurrent_access() {
         elapsed.as_secs_f64()
     );
 
-    // Verify metrics are consistent
-    let (size, hits, misses, hit_rate) = cache.stats();
+    // Verify cache size is consistent
+    let size = cache.stats();
     let total_ops = (num_threads * ops_per_thread) as u64;
-    let recorded_ops = hits + misses;
 
     println!(
         "✅ Completed {} operations in {:.2}s ({} threads × {} ops)",
@@ -490,14 +477,7 @@ fn stress_concurrent_access() {
         num_threads,
         ops_per_thread
     );
-    println!(
-        "✅ Cache metrics: size={}, hits={}, misses={}, hit_rate={:.2}%",
-        size,
-        hits,
-        misses,
-        hit_rate * 100.0
-    );
-    println!("✅ Recorded ops: {} (get operations only)", recorded_ops);
+    println!("✅ Cache size: {}", size);
     println!("✅ No deadlocks, no panics!");
 }
 

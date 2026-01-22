@@ -2,9 +2,10 @@
 //
 // Selects MAX(_seq) per row_id with tie-breaker: FastStorage (priority=2) > Parquet (priority=1)
 
-use super::arrow_json_conversion::arrow_value_to_scalar;
+use kalamdb_commons::conversions::arrow_json_conversion::arrow_value_to_scalar;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use crate::{SharedTableRow, UserTableRow};
 use datafusion::arrow::array::{
     Array, ArrayRef, BooleanArray, Int32Array, Int64Array, RecordBatch, StringArray, UInt64Array,
 };
@@ -14,7 +15,6 @@ use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
-use kalamdb_tables::{SharedTableRow, UserTableRow};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -287,7 +287,7 @@ mod tests {
 /// * `V` - Row value type
 /// * `F` - Function to scan RocksDB, returns RecordBatch
 /// * `G` - Function to scan Parquet, returns RecordBatch
-/// * `H` - Function to convert RecordBatch row to (key, value) pair
+/// * `H` - Function to convert Arrow row to (key, value) pair
 ///
 /// # Arguments
 /// * `schema` - Arrow schema with system columns

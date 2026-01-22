@@ -10,8 +10,7 @@
 use super::TestServer;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
-use kalamdb_core::providers::flush::{FlushJobResult, SharedTableFlushJob, UserTableFlushJob};
-use kalamdb_core::providers::TableFlush;
+use kalamdb_core::manifest::{FlushJobResult, SharedTableFlushJob, TableFlush, UserTableFlushJob};
 use kalamdb_tables::new_indexed_user_table_store;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

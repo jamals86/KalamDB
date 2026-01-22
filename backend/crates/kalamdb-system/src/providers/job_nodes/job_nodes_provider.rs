@@ -215,7 +215,7 @@ impl JobNodesTableProvider {
         for (_key, node) in rows {
             if !matches!(
                 node.status,
-                JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
+                JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped
             ) {
                 continue;
             }

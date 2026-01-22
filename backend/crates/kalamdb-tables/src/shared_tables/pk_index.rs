@@ -24,6 +24,7 @@
 //! 3. Results are ordered by seq (big-endian ensures lexicographic = numeric order)
 
 use datafusion::scalar::ScalarValue;
+use kalamdb_commons::conversions::scalar_value_to_bytes;
 use kalamdb_commons::ids::SharedTableRowId;
 use kalamdb_commons::storage::Partition;
 use kalamdb_store::IndexDefinition;
@@ -57,25 +58,11 @@ impl SharedTablePkIndex {
         }
     }
 
-    /// Encode a PK value to bytes for index key
-    fn encode_pk_value(value: &ScalarValue) -> Vec<u8> {
-        match value {
-            ScalarValue::Int64(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::Int32(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::Int16(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::UInt64(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::UInt32(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s.as_bytes().to_vec(),
-            // For other types, convert to string
-            _ => value.to_string().into_bytes(),
-        }
-    }
-
     /// Build a prefix for scanning all versions of a PK.
     ///
     /// Returns: `{pk_value_encoded}:`
     pub fn build_prefix_for_pk(&self, pk_value: &ScalarValue) -> Vec<u8> {
-        let pk_bytes = Self::encode_pk_value(pk_value);
+        let pk_bytes = scalar_value_to_bytes(pk_value);
         let mut prefix = Vec::with_capacity(pk_bytes.len() + 1);
         prefix.extend_from_slice(&pk_bytes);
         prefix.push(b':');
@@ -116,7 +103,7 @@ impl IndexDefinition<SharedTableRowId, SharedTableRow> for SharedTablePkIndex {
         let pk_value = entity.fields.get(&self.pk_field_name)?;
 
         // Build key: {pk_value_encoded}:{seq_be_8bytes}
-        let pk_bytes = Self::encode_pk_value(pk_value);
+        let pk_bytes = scalar_value_to_bytes(pk_value);
         let seq_bytes = primary_key.to_bytes(); // 8 bytes big-endian
 
         let mut key = Vec::with_capacity(pk_bytes.len() + 1 + 8);
@@ -134,14 +121,14 @@ impl IndexDefinition<SharedTableRowId, SharedTableRow> for SharedTablePkIndex {
         if let Some((col, val)) = extract_string_equality(filter) {
             if col == self.pk_field_name {
                 let pk_value = ScalarValue::Utf8(Some(val.to_string()));
-                return Some(Self::encode_pk_value(&pk_value));
+                return Some(scalar_value_to_bytes(&pk_value));
             }
         }
 
         if let Some((col, val)) = extract_i64_equality(filter) {
             if col == self.pk_field_name {
                 let pk_value = ScalarValue::Int64(Some(val));
-                return Some(Self::encode_pk_value(&pk_value));
+                return Some(scalar_value_to_bytes(&pk_value));
             }
         }
 
@@ -254,6 +241,6 @@ mod tests {
     fn test_partition_name() {
         let table_id = kalamdb_commons::TableId::from_strings("my_namespace", "my_table");
         let index = SharedTablePkIndex::new(&table_id, "id");
-        assert_eq!(index.partition(), "shared_my_namespace:my_table_pk_idx");
+        assert_eq!(index.partition().name(), "shared_my_namespace:my_table_pk_idx");
     }
 }

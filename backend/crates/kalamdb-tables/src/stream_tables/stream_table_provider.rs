@@ -11,12 +11,11 @@
 //! - Commit log-backed storage (append-only, no Parquet)
 //! - TTL-based eviction in scan operations
 
-use super::base::{extract_seq_bounds_from_filter, BaseTableProvider, TableProviderCore};
-use super::helpers::extract_user_context;
-use crate::app_context::AppContext;
+use crate::utils::base::{extract_seq_bounds_from_filter, BaseTableProvider, TableProviderCore};
+use crate::utils::row_utils::extract_user_context;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::schema_registry::TableType;
+use kalamdb_commons::schemas::TableType;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -30,13 +29,14 @@ use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::{SeqId, StreamTableRowId};
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::TableId;
-use kalamdb_tables::{StreamTableRow, StreamTableStore};
+use crate::stream_tables::{StreamTableRow, StreamTableStore};
+use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::any::Any;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // Arrow <-> JSON helpers
-use crate::live_query::ChangeNotification;
+use kalamdb_commons::websocket::ChangeNotification;
 use kalamdb_commons::models::rows::Row;
 
 /// Stream table provider with RLS and TTL filtering
@@ -87,8 +87,7 @@ impl StreamTableProvider {
         // Cache schema at creation time to avoid "Table not found" panics if table is dropped
         // while provider is still in use by a query plan
         let schema = core
-            .app_context
-            .schema_registry()
+            .schema_registry
             .get_arrow_schema(core.table_id())
             .expect("Failed to get Arrow schema from registry during provider creation");
         let has_user_column = schema.field_with_name("user_id").is_ok();
@@ -143,8 +142,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         self.core.table_type()
     }
 
-    fn app_context(&self) -> &Arc<AppContext> {
-        &self.core.app_context
+    fn schema_registry(&self) -> &Arc<dyn SchemaRegistryTrait<Error = KalamDbError>> {
+        &self.core.schema_registry
     }
 
     fn primary_key_field_name(&self) -> &str {
@@ -156,7 +155,9 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         // Call SystemColumnsService to generate SeqId
         let sys_cols = self.core.system_columns.clone();
-        let seq_id = sys_cols.generate_seq_id()?;
+        let seq_id = sys_cols
+            .generate_seq_id()
+            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
 
         // Create StreamTableRow (no _deleted field for stream tables)
         let user_id = user_id.clone();
@@ -182,7 +183,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         );
 
         // Fire live query notification (INSERT)
-        let manager = self.core.app_context.live_query_manager();
+        let manager = self.core.live_query_manager.clone();
         let table_id = self.core.table_id().clone();
         let table_name = table_id.full_name();
 
@@ -238,7 +239,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         })?;
 
         // Fire live query notification (DELETE hard)
-        let manager = self.core.app_context.live_query_manager();
+        let manager = self.core.live_query_manager.clone();
         let table_id = self.core.table_id().clone();
 
         let row_id_str = format!("{}:{}", key.user_id().as_str(), key.seq().as_i64());
@@ -284,7 +285,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         );
 
         let schema = self.schema_ref();
-        crate::providers::base::rows_to_arrow_batch(&schema, kvs, projection, |row_values, row| {
+        crate::utils::base::rows_to_arrow_batch(&schema, kvs, projection, |row_values, row| {
             if self.has_user_column {
                 row_values.values.insert(
                     "user_id".to_string(),

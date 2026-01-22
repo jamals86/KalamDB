@@ -6,8 +6,10 @@ use crate::error_extensions::KalamDbResultExt;
 use crate::schema_registry::cached_table_data::CachedTableData;
 use dashmap::DashMap;
 use datafusion::datasource::TableProvider;
+use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::models::schemas::{TableDefinition, TableType};
-use kalamdb_commons::models::{TableId, TableVersionId};
+use kalamdb_commons::models::{StorageId, TableId, TableVersionId};
+use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::sync::{Arc, OnceLock};
 
 /// Unified schema cache for table metadata, schemas, and providers
@@ -196,6 +198,7 @@ impl SchemaRegistry {
         use kalamdb_tables::{new_indexed_shared_table_store, new_indexed_user_table_store, new_stream_table_store, StreamTableStoreConfig};
         use kalamdb_sharding::ShardRouter;
         use kalamdb_commons::schemas::TableOptions;
+        use crate::schema_registry::TablesSchemaRegistryAdapter;
 
         let app_ctx = self.app_context();
         let table_id = TableId::from_strings(table_def.namespace_id.as_str(), table_def.table_name.as_str());
@@ -208,6 +211,8 @@ impl SchemaRegistry {
             .map(|c| c.column_name.clone())
             .unwrap_or_else(|| "id".to_string());
 
+        let tables_schema_registry = Arc::new(TablesSchemaRegistryAdapter::new(app_ctx.schema_registry()));
+
         match table_def.table_type {
             TableType::User => {
                 let user_table_store = Arc::new(new_indexed_user_table_store(
@@ -216,9 +221,16 @@ impl SchemaRegistry {
                     &pk_field
                 ));
                 
-                let core = Arc::new(
-                    TableProviderCore::from_app_context(app_ctx, table_id.clone(), TableType::User)
-                );
+                let core = Arc::new(TableProviderCore::new(
+                    table_id.clone(),
+                    TableType::User,
+                    tables_schema_registry.clone(),
+                    app_ctx.system_columns_service(),
+                    Some(app_ctx.storage_registry()),
+                    app_ctx.manifest_service(),
+                    app_ctx.live_query_manager(),
+                    app_ctx.clone(),
+                ));
 
                 let provider = UserTableProvider::try_new(core, user_table_store, pk_field)?;
                 Ok(Arc::new(provider))
@@ -230,9 +242,16 @@ impl SchemaRegistry {
                     &pk_field,
                 ));
 
-                let core = Arc::new(
-                    TableProviderCore::from_app_context(app_ctx, table_id.clone(), TableType::Shared)
-                );
+                let core = Arc::new(TableProviderCore::new(
+                    table_id.clone(),
+                    TableType::Shared,
+                    tables_schema_registry.clone(),
+                    app_ctx.system_columns_service(),
+                    Some(app_ctx.storage_registry()),
+                    app_ctx.manifest_service(),
+                    app_ctx.live_query_manager(),
+                    app_ctx.clone(),
+                ));
 
                 let provider = SharedTableProvider::new(core, shared_store, pk_field);
                 Ok(Arc::new(provider))
@@ -258,9 +277,16 @@ impl SchemaRegistry {
                     },
                 ));
 
-                let core = Arc::new(
-                    TableProviderCore::from_app_context(app_ctx, table_id.clone(), TableType::Stream)
-                );
+                let core = Arc::new(TableProviderCore::new(
+                    table_id.clone(),
+                    TableType::Stream,
+                    tables_schema_registry.clone(),
+                    app_ctx.system_columns_service(),
+                    Some(app_ctx.storage_registry()),
+                    app_ctx.manifest_service(),
+                    app_ctx.live_query_manager(),
+                    app_ctx.clone(),
+                ));
                 
                 let provider = StreamTableProvider::new(core, stream_store, Some(ttl_seconds), pk_field);
                 Ok(Arc::new(provider))
@@ -634,6 +660,21 @@ impl SchemaRegistry {
         Err(KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))
     }
 
+    /// Get storage ID for a table
+    pub fn get_storage_id(&self, table_id: &TableId) -> Result<StorageId, KalamDbError> {
+        if let Some(cached) = self.get(table_id) {
+            return Ok(cached.storage_id.clone());
+        }
+
+        if let Some(table_def) = self.get_table_if_exists(table_id)? {
+            if let Some(storage_id) = CachedTableData::extract_storage_id(&table_def) {
+                return Ok(storage_id);
+            }
+        }
+
+        Err(KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))
+    }
+
     /// Get Arrow schema for a specific table version (for reading old Parquet files)
     ///
     /// Uses version-specific cache to avoid repeated schema conversions when reading
@@ -677,6 +718,33 @@ impl SchemaRegistry {
         self.insert_version(version_id, Arc::new(cached_data));
 
         Ok(arrow_schema)
+    }
+}
+
+impl SchemaRegistryTrait for SchemaRegistry {
+    type Error = KalamDbError;
+
+    fn get_arrow_schema(&self, table_id: &TableId) -> Result<SchemaRef, Self::Error> {
+        self.get_arrow_schema(table_id)
+    }
+
+    fn get_table_if_exists(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Option<Arc<TableDefinition>>, Self::Error> {
+        self.get_table_if_exists(table_id)
+    }
+
+    fn get_arrow_schema_for_version(
+        &self,
+        table_id: &TableId,
+        schema_version: u32,
+    ) -> Result<SchemaRef, Self::Error> {
+        self.get_arrow_schema_for_version(table_id, schema_version)
+    }
+
+    fn get_storage_id(&self, table_id: &TableId) -> Result<StorageId, Self::Error> {
+        self.get_storage_id(table_id)
     }
 }
 

@@ -75,9 +75,9 @@ pub fn compute_metrics(ctx: &crate::app_context::AppContext) -> Vec<(String, Str
     let cache_size = ctx.schema_registry().len();
     metrics.push(("schema_cache_size".to_string(), cache_size.to_string()));
 
-    // Schema registry stats (cache_hits removed - DashMap provides built-in performance)
-    let stats_size = ctx.schema_registry().stats();
-    metrics.push(("schema_registry_size".to_string(), stats_size.to_string()));
+    // Schema registry size (returns usize now, not a tuple)
+    let registry_size = ctx.schema_registry().stats();
+    metrics.push(("schema_registry_size".to_string(), registry_size.to_string()));
 
     // Manifest Cache Metrics
     // Manifests in hot cache (memory)

@@ -246,7 +246,7 @@ mod tests {
     fn test_stream_table_store_create() {
         let temp_dir = tempfile::tempdir().unwrap();
         let store = create_test_store(temp_dir.path());
-        assert!(store.partition().contains("stream_"));
+        assert!(store.partition().name().contains("stream_"));
     }
 
     #[test]

@@ -101,7 +101,7 @@ impl ManifestTableProvider {
                         err
                     );
                     if let Ok(cache_key) = ManifestId::from_storage_key(&key_bytes) {
-                        let _ = EntityStore::delete(self.store(), &cache_key);
+                        let _ = self.store().delete(&cache_key);
                     }
                 }
                 Err(err) => return Err(SystemError::Storage(err.to_string())),

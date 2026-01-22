@@ -290,7 +290,7 @@ impl DmlExecutor {
     ) -> Result<usize, ApplierError> {
         match provider.update_by_id_field(user_id, pk_value, updates.clone()) {
             Ok(_) => Ok(1),
-            Err(crate::error::KalamDbError::NotFound(_)) => {
+            Err(kalamdb_tables::TableError::NotFound(_)) => {
                 if let Some(key) =
                     provider.find_row_key_by_id_field(user_id, pk_value).map_err(|e| {
                         ApplierError::Execution(format!("Failed to find row key: {}", e))
@@ -318,7 +318,7 @@ impl DmlExecutor {
     ) -> Result<usize, ApplierError> {
         match provider.update_by_id_field(user_id, pk_value, updates.clone()) {
             Ok(_) => Ok(1),
-            Err(crate::error::KalamDbError::NotFound(_)) => {
+            Err(kalamdb_tables::TableError::NotFound(_)) => {
                 if let Some(key) =
                     provider.find_row_key_by_id_field(user_id, pk_value).map_err(|e| {
                         ApplierError::Execution(format!("Failed to find row key: {}", e))

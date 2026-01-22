@@ -330,7 +330,7 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
 
     if alter_resp.status == ResponseStatus::Success {
         // Insert with new column
-        let resp = client
+        let _resp = client
                     .execute_query(
                         &format!(
                             "INSERT INTO {}.events (id, event_name, metadata) VALUES (100, 'new_event', 'some metadata')",

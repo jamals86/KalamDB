@@ -76,7 +76,7 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
     let query_count = Arc::new(AtomicU64::new(0));
     let error_count = Arc::new(AtomicU64::new(0));
 
-    let soak_duration = Duration::from_secs(30);
+    let _soak_duration = Duration::from_secs(30);
     let start_time = Instant::now();
 
     // =========================================================

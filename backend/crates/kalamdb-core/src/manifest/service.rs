@@ -15,6 +15,7 @@ use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_filestore::StorageRegistry;
 use kalamdb_store::entity_store::{EntityStore, KSerializable};
 use kalamdb_store::{StorageBackend, StorageError};
+use kalamdb_system::ManifestService as ManifestServiceTrait;
 use kalamdb_system::providers::ManifestTableProvider;
 use log::{debug, info, warn};
 use std::collections::HashMap;
@@ -103,7 +104,7 @@ impl ManifestService {
         user_id: Option<&UserId>,
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
-        match EntityStore::get(self.provider.store(), &rocksdb_key) {
+        match self.provider.store().get(&rocksdb_key) {
             Ok(Some(entry)) => Ok(Some(Arc::new(entry))),
             Ok(None) => Ok(None),
             Err(StorageError::SerializationError(err)) => {
@@ -112,7 +113,7 @@ impl ManifestService {
                     rocksdb_key.as_str(),
                     err
                 );
-                let _ = EntityStore::delete(self.provider.store(), &rocksdb_key);
+                let _ = self.provider.store().delete(&rocksdb_key);
                 Ok(None)
             }
             Err(err) => Err(err),
@@ -265,9 +266,9 @@ impl ManifestService {
     ) -> Result<(), StorageError> {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
-        if let Some(mut entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
+        if let Some(mut entry) = self.provider.store().get(&rocksdb_key)? {
             entry.mark_stale();
-            EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
+            self.provider.store().put(&rocksdb_key, &entry)?;
         }
 
         Ok(())
@@ -281,10 +282,10 @@ impl ManifestService {
     ) -> Result<(), StorageError> {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
-        match EntityStore::get(self.provider.store(), &rocksdb_key) {
+        match self.provider.store().get(&rocksdb_key) {
             Ok(Some(mut entry)) => {
                 entry.mark_error();
-                EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
+                self.provider.store().put(&rocksdb_key, &entry)?;
             }
             Ok(None) => {}
             Err(StorageError::SerializationError(err)) => {
@@ -293,7 +294,7 @@ impl ManifestService {
                     rocksdb_key.as_str(),
                     err
                 );
-                let _ = EntityStore::delete(self.provider.store(), &rocksdb_key);
+                let _ = self.provider.store().delete(&rocksdb_key);
             }
             Err(err) => return Err(err),
         }
@@ -309,10 +310,10 @@ impl ManifestService {
     ) -> Result<(), StorageError> {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
-        match EntityStore::get(self.provider.store(), &rocksdb_key) {
+        match self.provider.store().get(&rocksdb_key) {
             Ok(Some(mut entry)) => {
                 entry.mark_syncing();
-                EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
+                self.provider.store().put(&rocksdb_key, &entry)?;
             }
             Ok(None) => {}
             Err(StorageError::SerializationError(err)) => {
@@ -321,7 +322,7 @@ impl ManifestService {
                     rocksdb_key.as_str(),
                     err
                 );
-                let _ = EntityStore::delete(self.provider.store(), &rocksdb_key);
+                let _ = self.provider.store().delete(&rocksdb_key);
             }
             Err(err) => return Err(err),
         }
@@ -341,10 +342,10 @@ impl ManifestService {
     ) -> Result<(), StorageError> {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
-        match EntityStore::get(self.provider.store(), &rocksdb_key) {
+        match self.provider.store().get(&rocksdb_key) {
             Ok(Some(mut entry)) => {
                 entry.mark_pending_write();
-                EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
+                self.provider.store().put(&rocksdb_key, &entry)?;
                 debug!(
                     "Marked manifest entry as pending_write: table={}, user={:?}",
                     table_id,
@@ -366,7 +367,7 @@ impl ManifestService {
                     rocksdb_key.as_str(),
                     err
                 );
-                let _ = EntityStore::delete(self.provider.store(), &rocksdb_key);
+                let _ = self.provider.store().delete(&rocksdb_key);
             }
             Err(err) => return Err(err),
         }
@@ -382,7 +383,7 @@ impl ManifestService {
     ) -> Result<bool, StorageError> {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
-        if let Some(entry) = EntityStore::get(self.provider.store(), &rocksdb_key)? {
+        if let Some(entry) = self.provider.store().get(&rocksdb_key)? {
             let now = chrono::Utc::now().timestamp();
             Ok(!entry.is_stale(self.config.ttl_seconds(), now))
         } else {
@@ -397,7 +398,7 @@ impl ManifestService {
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
-        EntityStore::delete(self.provider.store(), &rocksdb_key)
+        self.provider.store().delete(&rocksdb_key)
     }
 
     /// Invalidate all cache entries for a table (all users + shared).
@@ -438,13 +439,13 @@ impl ManifestService {
     /// With no hot cache, we check RocksDB existence.
     pub fn is_in_hot_cache(&self, table_id: &TableId, user_id: Option<&UserId>) -> bool {
          let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
-         EntityStore::get(self.provider.store(), &rocksdb_key).unwrap_or(None).is_some()
+         self.provider.store().get(&rocksdb_key).unwrap_or(None).is_some()
     }
 
     /// Check if a cache key string is in hot cache (for system.manifest table compatibility).
     pub fn is_in_hot_cache_by_string(&self, cache_key_str: &str) -> bool {
         let rocksdb_key = ManifestId::from(cache_key_str);
-        EntityStore::get(self.provider.store(), &rocksdb_key).unwrap_or(None).is_some()
+        self.provider.store().get(&rocksdb_key).unwrap_or(None).is_some()
     }
 
     /// Evict stale manifest entries from RocksDB.
@@ -790,12 +791,73 @@ impl ManifestService {
 
         let entry = ManifestCacheEntry::new(manifest.clone(), etag, now, sync_state);
 
-        EntityStore::put(self.provider.store(), &rocksdb_key, &entry)?;
+        self.provider.store().put(&rocksdb_key, &entry)?;
 
         Ok(())
     }
 
     // Private helper methods removed - now using StorageCached operations directly
+}
+
+impl ManifestServiceTrait for ManifestService {
+    fn get_or_load(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
+        self.get_or_load(table_id, user_id)
+    }
+
+    fn validate_manifest(&self, manifest: &Manifest) -> Result<(), StorageError> {
+        self.validate_manifest(manifest)
+    }
+
+    fn mark_as_stale(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), StorageError> {
+        self.mark_as_stale(table_id, user_id)
+    }
+
+    fn rebuild_manifest(
+        &self,
+        table_id: &TableId,
+        table_type: kalamdb_commons::models::schemas::TableType,
+        user_id: Option<&UserId>,
+    ) -> Result<Manifest, StorageError> {
+        self.rebuild_manifest(table_id, table_type, user_id)
+    }
+
+    fn mark_pending_write(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), StorageError> {
+        self.mark_pending_write(table_id, user_id)
+    }
+
+    fn ensure_manifest_initialized(
+        &self,
+        table_id: &TableId,
+        table_type: kalamdb_commons::models::schemas::TableType,
+        user_id: Option<&UserId>,
+    ) -> Result<Manifest, StorageError> {
+        self.ensure_manifest_initialized(table_id, table_type, user_id)
+    }
+
+    fn stage_before_flush(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        manifest: &Manifest,
+    ) -> Result<(), StorageError> {
+        self.stage_before_flush(table_id, user_id, manifest)
+    }
+
+    fn get_manifest_user_ids(&self, table_id: &TableId) -> Result<Vec<UserId>, StorageError> {
+        self.get_manifest_user_ids(table_id)
+    }
 }
 
 #[cfg(test)]

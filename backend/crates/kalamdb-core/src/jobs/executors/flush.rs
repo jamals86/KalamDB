@@ -89,10 +89,37 @@ impl FlushExecutor {
         let app_ctx = &ctx.app_ctx;
         let schema_registry = app_ctx.schema_registry();
 
-        // // Get table definition (optional)
-        // let table_def = schema_registry
-        //     .get_table_if_exists(app_ctx.as_ref(), &table_id)?
-        //     .ok_or_else(|| KalamDbError::NotFound(format!("Table {} not found", table_id)))?;
+        // Check if table exists before attempting to flush
+        // If table doesn't exist (e.g., dropped after flush job was queued), skip the job
+        let table_def = match schema_registry.get_table_if_exists(&table_id)? {
+            Some(def) => def,
+            None => {
+                ctx.log_info(&format!(
+                    "Table {} no longer exists, skipping flush job",
+                    table_id
+                ));
+                return Ok(JobDecision::Skipped {
+                    message: format!(
+                        "Table {} not found (table may have been dropped)",
+                        table_id
+                    ),
+                });
+            },
+        };
+
+        // Verify table type matches expected type (safety check)
+        if table_def.table_type != table_type {
+            ctx.log_warn(&format!(
+                "Table {} type mismatch: expected {:?}, found {:?}, skipping flush",
+                table_id, table_type, table_def.table_type
+            ));
+            return Ok(JobDecision::Skipped {
+                message: format!(
+                    "Table {} type mismatch (expected {:?}, found {:?})",
+                    table_id, table_type, table_def.table_type
+                ),
+            });
+        }
 
         // Get current Arrow schema from the registry (already includes system columns)
         let schema = schema_registry
@@ -133,7 +160,7 @@ impl FlushExecutor {
                         )
                     })?;
 
-                let store = provider.store.clone();
+                let store = provider.store();
 
                 let flush_job = UserTableFlushJob::new(
                     app_ctx.clone(),
@@ -173,7 +200,7 @@ impl FlushExecutor {
                         )
                     })?;
 
-                let store = provider.store.clone();
+                let store = provider.store();
 
                 let flush_job = SharedTableFlushJob::new(
                     app_ctx.clone(),

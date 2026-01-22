@@ -1,10 +1,10 @@
 use crate::error::KalamDbError;
 use crate::manifest::ManifestAccessPlanner;
-use crate::providers::core::TableProviderCore;
-use kalamdb_commons::models::schemas::TableType;
+use crate::utils::core::TableProviderCore;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::logical_expr::Expr;
+use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::types::Manifest;
 use kalamdb_commons::TableId;
@@ -22,25 +22,22 @@ pub(crate) fn scan_parquet_files_as_batch(
         .map(|uid| format!("user={}", uid.as_str()))
         .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
 
-    // 1. Get CachedTableData
-    let cached = core
-        .app_context
-        .schema_registry()
-        .get(table_id)
-        .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
+    // 1. Get storage_id from schema registry
+    let storage_id = core
+        .schema_registry
+        .get_storage_id(table_id)
+        .map_err(|_| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
 
-    // 2. Get StorageCached from registry (cached lookup)
-    let storage_id = cached.storage_id.clone();
-
-    let storage_cached = core
-        .app_context
-        .storage_registry()
+    let storage_registry = core.storage_registry.as_ref().ok_or_else(|| {
+        KalamDbError::InvalidOperation("Storage registry not configured".to_string())
+    })?;
+    let storage_cached = storage_registry
         .get_cached(&storage_id)?
         .ok_or_else(|| {
             KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
         })?;
 
-    let manifest_service = core.app_context.manifest_service();
+    let manifest_service = core.manifest_service.clone();
     let cache_result = manifest_service.get_or_load(table_id, user_id);
     let mut manifest_opt: Option<Manifest> = None;
     let mut use_degraded_mode = false;
@@ -70,7 +67,7 @@ pub(crate) fn scan_parquet_files_as_batch(
                 let scope_for_spawn = scope_label.clone();
                 let manifest_table_type = table_type;
                 let table_id_for_spawn = table_id.clone();
-                let manifest_service_clone = core.app_context.manifest_service();
+                let manifest_service_clone = core.manifest_service.clone();
                 tokio::spawn(async move {
                     log::info!(
                         "🔧 [MANIFEST REBUILD STARTED] table={} {}",
@@ -128,7 +125,7 @@ pub(crate) fn scan_parquet_files_as_batch(
 
     let planner = ManifestAccessPlanner::new();
     let (min_seq, max_seq) = filter
-        .map(crate::providers::helpers::extract_seq_bounds_from_filter)
+        .map(crate::utils::row_utils::extract_seq_bounds_from_filter)
         .unwrap_or((None, None));
     let seq_range = match (min_seq, max_seq) {
         (Some(min), Some(max)) => Some((min, max)),
@@ -144,7 +141,7 @@ pub(crate) fn scan_parquet_files_as_batch(
         seq_range,
         use_degraded_mode,
         schema.clone(),
-        &core.app_context,
+        core.schema_registry.as_ref(),
     )?;
 
     if total_batches > 0 {
