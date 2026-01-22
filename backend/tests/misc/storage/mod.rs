@@ -2,7 +2,7 @@
 //!
 //! Tests covering:
 //! - Cold storage manifest
-//! - Manifest cache operations
+//! - Manifest cache operations (moved to kalamdb-core tests)
 //! - Manifest flush integration
 //! - RocksDB persistence
 //! - Parquet file management
@@ -15,5 +15,4 @@ mod test_helpers;
 
 // Storage Tests
 mod test_cold_storage_manifest;
-mod test_manifest_cache;
 mod test_storage_compact;

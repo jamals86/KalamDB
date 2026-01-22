@@ -1144,11 +1144,6 @@ i guess we need to add a new column to the jobs table to track each node the sta
 
 71) Is it better to use macros for MetaCommand and other commands to make the code runs faster and more clear?
 
-72) stuck stream_Evicted statuses:
-● KalamDB[local-cluster] root@http://127.0.0.1:8081 ❯ select * from system.jobs where status = 'queued';
-...
-(7 rows)
-
 73) add test which check the server health and cpompliance after some of the big tests before/after which check jobs stuck, cluster not in sync and memory usages being skyrocketing
 
 74) Add another columns which are computed ones from manifest table
@@ -1261,15 +1256,31 @@ these wont be needed since we pass whatever they is needed for in the constructo
 backend/crates/kalamdb-core/src/schema_registry/system_columns_service.rs can be moved to kalamdb-system src/services
 
 
-122) 📍 Remaining Work (Future Optimization)
-Files with duplicate functions that could be migrated to commons/src/conversion/
-update.rs - scalar_to_f64(), scalar_to_i64() (lines 702, 715)
-filter_eval.rs - as_f64() (line 177)
-parameter_validation.rs - estimate_scalar_value_size() (line 75)
-parameter_binding.rs - estimate_scalar_value_size() (line 47)
-Note: These functions have slight implementation variations and are used in hot paths. Migration should be done carefully with performance testing.
+125) no need for a column node_id in: system.jobs only the leader is needed there, also cpu_used not needed
 
-123) move backend/crates/kalamdb-tables/src/providers/arrow_json_conversion.rs to kalamdb-commons/src/conversion/arrow_json_conversion.rs it doesnt depend on anyothers
+127) check the ability to do the storedkey tuple with a delimiter which is not possible to be in the actual id's like ':' or '|' so that when we filter by prefix we dont get collisions with other ids which starts with the same prefix, when making this tuples make it generic so we can use it in other places or id's as well and also we can use it for also filtering and scanning with prefixes easily
+my suggestion is the StorageKey which we extend in each id type to have a method which return a prefix for part1 part2 part3 which we can use for filtering and scanning and no need to repeat the same logics each time in the scan functions
 
-124) remove all EntityStoreV2 and stick with the actual EntityStore and whenever we need a calling method we cll it from inside store not doing EntityStore::method_call()
+add test which cover and make sure keys doesnt collide or get in the filtering of other keys when scanning with prefix
+these should be unit tests
+
+also add tests which cover the users/shared/stream providers for scanning with prefix as well
+
+128) Make sure we have a complete support for datafusion where we have indexes works per primary keys as well as starts with keys
+
+129) check if these functions/methods inside this file already exists in other places and remove duplicates: backend/crates/kalamdb-core/src/manifest/flush/base.rs
+
+130) Make insert/updating into manifest table check also the nullable we currently could insert into it without validations
+[2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_flush_mkpsil4e_4cb_0user_flush_mkpsil4e_4cb_0root
+[2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_flush_ns_mkpsiju7_4b2_3test_table_mkpsiju7_4b2_0root
+[2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_ns_mkpsii6t_49o_0ordering_mkpsii6t_49o_0root
+[2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_ns_mkpsii81_49s_0multi_batch_mkpsii81_49s_0root
+
+
+
+
+
+
+
+
 

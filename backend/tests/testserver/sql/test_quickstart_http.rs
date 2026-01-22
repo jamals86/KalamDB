@@ -1,18 +1,13 @@
 //! Quickstart end-to-end smoke over the real HTTP SQL API.
 
+use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
 use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::UserName;
+use kalamdb_commons::{Role, UserName};
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
     let password = "UserPass123!";
-    let resp = server
-        .execute_sql(&format!(
-            "CREATE USER '{}' WITH PASSWORD '{}' ROLE 'user'",
-            username, password
-        ))
-        .await?;
-    anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE USER failed: {:?}", resp.error);
+    let _ = ensure_user_exists(server, username, password, &Role::User).await?;
     Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
 }
 
@@ -20,9 +15,8 @@ async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<
 #[ntest::timeout(60000)] // 60 seconds - comprehensive quickstart test
 async fn test_quickstart_workflow_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
-    let suffix = std::process::id();
-    let ns = format!("qs_{}", suffix);
-    let user = format!("user_qs_{}", suffix);
+    let ns = unique_namespace("qs");
+    let user = unique_table("user_qs");
     let auth = create_user(server, &user).await?;
 
     let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;

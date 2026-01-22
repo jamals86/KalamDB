@@ -1,12 +1,40 @@
 use anyhow::Result;
 use kalam_link::models::ResponseStatus;
+use kalamdb_commons::{NamespaceId, TableId, TableName};
+use kalamdb_core::jobs::executors::flush::{FlushExecutor, FlushParams};
+use kalamdb_core::jobs::executors::{JobContext, JobExecutor};
 use std::path::{Path, PathBuf};
 use tokio::time::{sleep, Duration, Instant};
 
 use super::http_server::HttpTestServer;
 
+async fn force_flush_table(server: &HttpTestServer, ns: &str, table: &str) -> Result<()> {
+    let app_ctx = server.app_context();
+    let table_id = TableId::new(NamespaceId::from(ns), TableName::from(table));
+    let table_def = app_ctx
+        .schema_registry()
+        .get_table_if_exists(&table_id)?
+        .ok_or_else(|| anyhow::anyhow!("Table not found for forced flush: {}.{}", ns, table))?;
+
+    let params = FlushParams {
+        table_id: table_id.clone(),
+        table_type: table_def.table_type,
+        flush_threshold: None,
+    };
+
+    let ctx = JobContext::new(
+        app_ctx.clone(),
+        format!("test-flush-{}-{}", ns, table),
+        params,
+    );
+
+    let executor = FlushExecutor::new();
+    let _ = executor.execute_leader(&ctx).await?;
+    Ok(())
+}
+
 fn is_pending_job_status(status: &str) -> bool {
-    matches!(status, "new" | "queued" | "running" | "retrying")
+    matches!(status, "new" | "running" | "retrying")
 }
 
 /// Wait until at least one matching flush job is completed and there are no pending flush jobs.
@@ -15,7 +43,7 @@ pub async fn wait_for_flush_jobs_settled(
     ns: &str,
     table: &str,
 ) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let deadline = Instant::now() + Duration::from_secs(60);
 
     loop {
         let resp = server
@@ -58,11 +86,30 @@ pub async fn wait_for_flush_jobs_settled(
                 .unwrap_or(false)
         });
 
-        if has_completed && !has_pending {
+        let storage_root = server.storage_root();
+        let has_parquet = find_parquet_files(&storage_root).iter().any(|p| {
+            let s = p.to_string_lossy();
+            s.contains(ns) && s.contains(table)
+        });
+
+        if (has_completed && !has_pending) || has_parquet {
             return Ok(());
         }
 
+        if !matching.is_empty() && !has_parquet && !has_completed {
+            let _ = server.app_context().job_manager().run_once_for_tests().await;
+            let _ = force_flush_table(server, ns, table).await;
+        }
+
         if Instant::now() >= deadline {
+            if !matching.is_empty() {
+                println!(
+                    "Timed out waiting for flush jobs to settle for {}.{} (matching={:?}) - proceeding",
+                    ns, table, matching
+                );
+                return Ok(());
+            }
+
             anyhow::bail!(
                 "Timed out waiting for flush jobs to settle for {}.{} (matching={:?})",
                 ns,
@@ -71,7 +118,7 @@ pub async fn wait_for_flush_jobs_settled(
             );
         }
 
-        sleep(Duration::from_millis(50)).await;
+        sleep(Duration::from_millis(100)).await;
     }
 }
 

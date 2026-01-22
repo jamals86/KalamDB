@@ -279,6 +279,10 @@ async fn authenticate_username_password(
     connection_info: &ConnectionInfo,
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticatedUser> {
+    if username.trim().is_empty() {
+        return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
+    }
+
     // Look up user
     let username_typed = kalamdb_commons::models::UserName::from(username);
     let mut user = repo.get_user_by_username(&username_typed).await?;

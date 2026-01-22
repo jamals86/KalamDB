@@ -1,5 +1,6 @@
 //! Shared table lifecycle tests over the real HTTP SQL API.
 
+use super::test_support::consolidated_helpers::unique_namespace;
 use super::test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_table};
 use super::test_support::jobs::{
     extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent,
@@ -9,9 +10,9 @@ use tokio::time::Duration;
 
 #[tokio::test]
 async fn test_shared_tables_lifecycle_over_http() -> anyhow::Result<()> {
+    let _guard = super::test_support::http_server::acquire_test_lock().await;
     let server = super::test_support::http_server::get_global_server().await;
-    let suffix = std::process::id();
-    let ns = format!("st_{}", suffix);
+    let ns = unique_namespace("st");
     let table = "audit";
 
     let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
@@ -81,7 +82,7 @@ async fn test_shared_tables_lifecycle_over_http() -> anyhow::Result<()> {
     // Flush + parquet exists
     flush_table_and_wait(server, &ns, table).await?;
     let parquet =
-        wait_for_parquet_files_for_table(server, &ns, table, 1, Duration::from_secs(10)).await?;
+        wait_for_parquet_files_for_table(server, &ns, table, 1, Duration::from_secs(20)).await?;
     let parquet_dir = parquet
         .first()
         .and_then(|p| p.parent())

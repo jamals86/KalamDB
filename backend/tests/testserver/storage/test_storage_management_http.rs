@@ -6,12 +6,12 @@
 //! - Template validation
 //! - Prevent dropping in-use storage
 
+use super::test_support::consolidated_helpers::{unique_namespace, unique_table};
 use kalam_link::models::ResponseStatus;
 
 #[tokio::test]
 async fn test_storage_management_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
-    let suffix = std::process::id();
 
     // Default storage exists
     let resp = server.execute_sql("SHOW STORAGES").await?;
@@ -27,7 +27,7 @@ async fn test_storage_management_over_http() -> anyhow::Result<()> {
         "expected local storage in SHOW STORAGES"
     );
 
-    let storage_id = format!("archive_{}", suffix);
+    let storage_id = unique_table("archive");
     let base = server.data_path().join("storages").join(&storage_id);
 
     // CREATE STORAGE (filesystem)
@@ -79,7 +79,7 @@ async fn test_storage_management_over_http() -> anyhow::Result<()> {
     anyhow::ensure!(resp.status == ResponseStatus::Error);
 
     // Template validation should error (missing {userId})
-    let bad_id = format!("badtpl_{}", suffix);
+    let bad_id = unique_table("badtpl");
     let bad_path = server.data_path().join("storages").join(&bad_id);
     let resp = server
         .execute_sql(&format!(
@@ -123,7 +123,7 @@ async fn test_storage_management_over_http() -> anyhow::Result<()> {
     );
 
     // Prevent dropping an in-use storage
-    let ns = format!("stg_{}", suffix);
+    let ns = unique_namespace("stg");
     let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
 

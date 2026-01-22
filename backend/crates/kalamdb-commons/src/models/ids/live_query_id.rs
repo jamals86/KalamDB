@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 
 use crate::models::{ConnectionId, UserId};
-use crate::StorageKey;
+use crate::{encode_prefix, StorageKey};
 
 /// Unique identifier for live query subscriptions.
 ///
@@ -176,17 +176,15 @@ impl LiveQueryId {
     /// Creates a prefix key for scanning all live queries for a user+connection.
     ///
     /// Used by `delete_by_connection_id` for efficient range deletion.
-    /// Format: "{user_id}-{connection_id}-"
-    pub fn user_connection_prefix(user_id: &UserId, connection_id: &ConnectionId) -> String {
-        format!("{}-{}-", user_id.as_str(), connection_id.as_str())
+    pub fn user_connection_prefix(user_id: &UserId, connection_id: &ConnectionId) -> Vec<u8> {
+        encode_prefix(&(user_id.as_str(), connection_id.as_str()))
     }
 
     /// Creates a prefix key for scanning all live queries for a user.
     ///
     /// Used for getting all live queries belonging to a user.
-    /// Format: "{user_id}-"
-    pub fn user_prefix(user_id: &UserId) -> String {
-        format!("{}-", user_id.as_str())
+    pub fn user_prefix(user_id: &UserId) -> Vec<u8> {
+        encode_prefix(&(user_id.as_str(),))
     }
 }
 

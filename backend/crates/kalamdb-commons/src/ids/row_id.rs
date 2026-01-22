@@ -6,7 +6,7 @@
 
 use crate::ids::SeqId;
 use crate::models::UserId;
-use crate::storage_key::{decode_key, encode_key};
+use crate::storage_key::{decode_key, encode_key, encode_prefix};
 use crate::StorageKey;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -53,6 +53,11 @@ impl UserTableRowId {
     /// Get the sequence ID component
     pub fn seq(&self) -> SeqId {
         self.seq
+    }
+
+    /// Prefix for scanning all rows for a user.
+    pub fn user_prefix(user_id: &UserId) -> Vec<u8> {
+        encode_prefix(&(user_id.as_str(),))
     }
 }
 
@@ -116,6 +121,11 @@ impl StreamTableRowId {
     /// Get the sequence ID component
     pub fn seq(&self) -> SeqId {
         self.seq
+    }
+
+    /// Prefix for scanning all rows for a user.
+    pub fn user_prefix(user_id: &UserId) -> Vec<u8> {
+        encode_prefix(&(user_id.as_str(),))
     }
 }
 

@@ -8,7 +8,10 @@
 //! - Shared table PK index: INSERT 100 rows → UPDATE by PK → verify O(1) lookup
 //! - Performance comparison: Update with many rows vs few rows should have similar latency
 
-use super::test_support::{fixtures, TestServer};
+use super::test_support::flush_helpers::{
+    execute_flush_synchronously, execute_shared_flush_synchronously,
+};
+use super::test_support::{consolidated_helpers, fixtures, TestServer};
 use kalam_link::models::ResponseStatus;
 use std::time::{Duration, Instant};
 
@@ -26,12 +29,14 @@ use std::time::{Duration, Instant};
 #[actix_web::test]
 async fn test_user_table_pk_index_update() {
     let server = TestServer::new_shared().await;
+    let ns = consolidated_helpers::unique_namespace("idx_test");
 
     // Setup namespace and user table
-    fixtures::create_namespace(&server, "idx_test_ns").await;
+    fixtures::create_namespace(&server, &ns).await;
     let create_response = server
         .execute_sql_as_user(
-            r#"CREATE TABLE idx_test_ns.user_items (
+            &format!(
+                r#"CREATE TABLE {}.user_items (
                 id INT PRIMARY KEY,
                 name TEXT,
                 value INT
@@ -39,6 +44,8 @@ async fn test_user_table_pk_index_update() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
+                ns
+            ),
             "test_user",
         )
         .await;
@@ -54,8 +61,8 @@ async fn test_user_table_pk_index_update() {
         let insert_response = server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO idx_test_ns.user_items (id, name, value) VALUES ({}, 'item_{}', {})",
-                    i, i, i * 10
+                    "INSERT INTO {}.user_items (id, name, value) VALUES ({}, 'item_{}', {})",
+                    ns, i, i, i * 10
                 ),
                 "test_user",
             )
@@ -73,7 +80,7 @@ async fn test_user_table_pk_index_update() {
     for _ in 0..3 {
         server
             .execute_sql_as_user(
-                "UPDATE idx_test_ns.user_items SET value = 1 WHERE id = 1",
+                &format!("UPDATE {}.user_items SET value = 1 WHERE id = 1", ns),
                 "test_user",
             )
             .await;
@@ -83,7 +90,7 @@ async fn test_user_table_pk_index_update() {
     let start_100 = Instant::now();
     let update_response = server
         .execute_sql_as_user(
-            "UPDATE idx_test_ns.user_items SET value = 999 WHERE id = 50",
+            &format!("UPDATE {}.user_items SET value = 999 WHERE id = 50", ns),
             "test_user",
         )
         .await;
@@ -99,7 +106,7 @@ async fn test_user_table_pk_index_update() {
     // Verify the update worked
     let select_response = server
         .execute_sql_as_user(
-            "SELECT id, value FROM idx_test_ns.user_items WHERE id = 50",
+            &format!("SELECT id, value FROM {}.user_items WHERE id = 50", ns),
             "test_user",
         )
         .await;
@@ -113,8 +120,8 @@ async fn test_user_table_pk_index_update() {
         let insert_response = server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO idx_test_ns.user_items (id, name, value) VALUES ({}, 'item_{}', {})",
-                    i, i, i * 10
+                    "INSERT INTO {}.user_items (id, name, value) VALUES ({}, 'item_{}', {})",
+                    ns, i, i, i * 10
                 ),
                 "test_user",
             )
@@ -132,7 +139,7 @@ async fn test_user_table_pk_index_update() {
     let start_1000 = Instant::now();
     let update_response = server
         .execute_sql_as_user(
-            "UPDATE idx_test_ns.user_items SET value = 888 WHERE id = 50",
+            &format!("UPDATE {}.user_items SET value = 888 WHERE id = 50", ns),
             "test_user",
         )
         .await;
@@ -148,7 +155,7 @@ async fn test_user_table_pk_index_update() {
     // Verify the update worked
     let select_response = server
         .execute_sql_as_user(
-            "SELECT id, value FROM idx_test_ns.user_items WHERE id = 50",
+            &format!("SELECT id, value FROM {}.user_items WHERE id = 50", ns),
             "test_user",
         )
         .await;
@@ -188,12 +195,14 @@ async fn test_user_table_pk_index_update() {
 #[actix_web::test]
 async fn test_shared_table_pk_index_update() {
     let server = TestServer::new_shared().await;
+    let ns = consolidated_helpers::unique_namespace("idx_shared");
 
     // Setup namespace and shared table
-    fixtures::create_namespace(&server, "idx_shared_ns").await;
+    fixtures::create_namespace(&server, &ns).await;
     let create_response = server
         .execute_sql(
-            r#"CREATE TABLE idx_shared_ns.products (
+            &format!(
+                r#"CREATE TABLE {}.products (
                 id INT PRIMARY KEY,
                 name TEXT,
                 price INT
@@ -201,6 +210,8 @@ async fn test_shared_table_pk_index_update() {
                 TYPE = 'SHARED',
                 STORAGE_ID = 'local'
             )"#,
+                ns
+            ),
         )
         .await;
     assert_eq!(
@@ -214,8 +225,8 @@ async fn test_shared_table_pk_index_update() {
     for i in 1..=100 {
         let insert_response = server
             .execute_sql(&format!(
-                "INSERT INTO idx_shared_ns.products (id, name, price) VALUES ({}, 'product_{}', {})",
-                i, i, i * 100
+                "INSERT INTO {}.products (id, name, price) VALUES ({}, 'product_{}', {})",
+                ns, i, i, i * 100
             ))
             .await;
         assert_eq!(
@@ -230,7 +241,7 @@ async fn test_shared_table_pk_index_update() {
     // Measure UPDATE latency with 100 rows
     let start_100 = Instant::now();
     let update_response = server
-        .execute_sql("UPDATE idx_shared_ns.products SET price = 9999 WHERE id = 50")
+        .execute_sql(&format!("UPDATE {}.products SET price = 9999 WHERE id = 50", ns))
         .await;
     let latency_100_rows = start_100.elapsed();
 
@@ -243,7 +254,7 @@ async fn test_shared_table_pk_index_update() {
 
     // Verify the update worked
     let select_response = server
-        .execute_sql("SELECT id, price FROM idx_shared_ns.products WHERE id = 50")
+        .execute_sql(&format!("SELECT id, price FROM {}.products WHERE id = 50", ns))
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
     let rows = select_response.rows_as_maps();
@@ -254,8 +265,8 @@ async fn test_shared_table_pk_index_update() {
     for i in 101..=1000 {
         let insert_response = server
             .execute_sql(&format!(
-                "INSERT INTO idx_shared_ns.products (id, name, price) VALUES ({}, 'product_{}', {})",
-                i, i, i * 100
+                "INSERT INTO {}.products (id, name, price) VALUES ({}, 'product_{}', {})",
+                ns, i, i, i * 100
             ))
             .await;
         assert_eq!(
@@ -270,7 +281,7 @@ async fn test_shared_table_pk_index_update() {
     // Measure UPDATE latency with 1000 rows
     let start_1000 = Instant::now();
     let update_response = server
-        .execute_sql("UPDATE idx_shared_ns.products SET price = 8888 WHERE id = 50")
+        .execute_sql(&format!("UPDATE {}.products SET price = 8888 WHERE id = 50", ns))
         .await;
     let latency_1000_rows = start_1000.elapsed();
 
@@ -283,7 +294,7 @@ async fn test_shared_table_pk_index_update() {
 
     // Verify the update worked
     let select_response = server
-        .execute_sql("SELECT id, price FROM idx_shared_ns.products WHERE id = 50")
+        .execute_sql(&format!("SELECT id, price FROM {}.products WHERE id = 50", ns))
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
     let rows = select_response.rows_as_maps();
@@ -319,18 +330,22 @@ async fn test_shared_table_pk_index_update() {
 #[actix_web::test]
 async fn test_user_table_pk_index_select() {
     let server = TestServer::new_shared().await;
+    let ns = consolidated_helpers::unique_namespace("select_test");
 
     // Setup
-    fixtures::create_namespace(&server, "select_test_ns").await;
+    fixtures::create_namespace(&server, &ns).await;
     let create_response = server
         .execute_sql_as_user(
-            r#"CREATE TABLE select_test_ns.records (
+            &format!(
+                r#"CREATE TABLE {}.records (
                 id INT PRIMARY KEY,
                 data TEXT
             ) WITH (
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
+                ns
+            ),
             "select_user",
         )
         .await;
@@ -346,8 +361,8 @@ async fn test_user_table_pk_index_select() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO select_test_ns.records (id, data) VALUES ({}, 'data_for_{}')",
-                    i, i
+                    "INSERT INTO {}.records (id, data) VALUES ({}, 'data_for_{}')",
+                    ns, i, i
                 ),
                 "select_user",
             )
@@ -358,7 +373,7 @@ async fn test_user_table_pk_index_select() {
     let start_500 = Instant::now();
     let select_response = server
         .execute_sql_as_user(
-            "SELECT id, data FROM select_test_ns.records WHERE id = 250",
+            &format!("SELECT id, data FROM {}.records WHERE id = 250", ns),
             "select_user",
         )
         .await;
@@ -374,8 +389,8 @@ async fn test_user_table_pk_index_select() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO select_test_ns.records (id, data) VALUES ({}, 'data_for_{}')",
-                    i, i
+                    "INSERT INTO {}.records (id, data) VALUES ({}, 'data_for_{}')",
+                    ns, i, i
                 ),
                 "select_user",
             )
@@ -386,7 +401,7 @@ async fn test_user_table_pk_index_select() {
     let start_2500 = Instant::now();
     let select_response = server
         .execute_sql_as_user(
-            "SELECT id, data FROM select_test_ns.records WHERE id = 250",
+            &format!("SELECT id, data FROM {}.records WHERE id = 250", ns),
             "select_user",
         )
         .await;
@@ -423,18 +438,22 @@ async fn test_user_table_pk_index_select() {
 #[actix_web::test]
 async fn test_user_table_pk_index_delete() {
     let server = TestServer::new_shared().await;
+    let ns = consolidated_helpers::unique_namespace("delete_test");
 
     // Setup
-    fixtures::create_namespace(&server, "delete_test_ns").await;
+    fixtures::create_namespace(&server, &ns).await;
     let create_response = server
         .execute_sql_as_user(
-            r#"CREATE TABLE delete_test_ns.items (
+            &format!(
+                r#"CREATE TABLE {}.items (
                 id INT PRIMARY KEY,
                 description TEXT
             ) WITH (
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
+                ns
+            ),
             "delete_user",
         )
         .await;
@@ -450,8 +469,8 @@ async fn test_user_table_pk_index_delete() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO delete_test_ns.items (id, description) VALUES ({}, 'desc_{}')",
-                    i, i
+                    "INSERT INTO {}.items (id, description) VALUES ({}, 'desc_{}')",
+                    ns, i, i
                 ),
                 "delete_user",
             )
@@ -461,7 +480,10 @@ async fn test_user_table_pk_index_delete() {
     // Measure DELETE by PK latency with 300 rows
     let start_300 = Instant::now();
     let delete_response = server
-        .execute_sql_as_user("DELETE FROM delete_test_ns.items WHERE id = 150", "delete_user")
+        .execute_sql_as_user(
+            &format!("DELETE FROM {}.items WHERE id = 150", ns),
+            "delete_user",
+        )
         .await;
     let latency_300_rows = start_300.elapsed();
 
@@ -474,7 +496,10 @@ async fn test_user_table_pk_index_delete() {
 
     // Verify the delete worked
     let select_response = server
-        .execute_sql_as_user("SELECT id FROM delete_test_ns.items WHERE id = 150", "delete_user")
+        .execute_sql_as_user(
+            &format!("SELECT id FROM {}.items WHERE id = 150", ns),
+            "delete_user",
+        )
         .await;
     assert_eq!(select_response.status, ResponseStatus::Success);
     let rows = select_response.rows_as_maps();
@@ -485,8 +510,8 @@ async fn test_user_table_pk_index_delete() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO delete_test_ns.items (id, description) VALUES ({}, 'desc_{}')",
-                    i, i
+                    "INSERT INTO {}.items (id, description) VALUES ({}, 'desc_{}')",
+                    ns, i, i
                 ),
                 "delete_user",
             )
@@ -496,7 +521,10 @@ async fn test_user_table_pk_index_delete() {
     // Measure DELETE by PK latency with ~1500 rows
     let start_1500 = Instant::now();
     let delete_response = server
-        .execute_sql_as_user("DELETE FROM delete_test_ns.items WHERE id = 750", "delete_user")
+        .execute_sql_as_user(
+            &format!("DELETE FROM {}.items WHERE id = 750", ns),
+            "delete_user",
+        )
         .await;
     let latency_1500_rows = start_1500.elapsed();
 
@@ -539,15 +567,15 @@ async fn test_user_table_pk_index_delete() {
 /// 4. Verify the update worked correctly
 #[actix_web::test]
 async fn test_user_table_pk_index_update_after_flush() {
-    use super::test_support::flush_helpers::execute_flush_synchronously;
-
     let server = TestServer::new_shared().await;
+    let ns = consolidated_helpers::unique_namespace("flush_update");
 
     // Setup namespace and user table
-    fixtures::create_namespace(&server, "flush_update_ns").await;
+    fixtures::create_namespace(&server, &ns).await;
     let create_response = server
         .execute_sql_as_user(
-            r#"CREATE TABLE flush_update_ns.user_items (
+            &format!(
+                r#"CREATE TABLE {}.user_items (
                 id INT PRIMARY KEY,
                 name TEXT,
                 value INT
@@ -555,6 +583,8 @@ async fn test_user_table_pk_index_update_after_flush() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
+                ns
+            ),
             "flush_user",
         )
         .await;
@@ -570,8 +600,8 @@ async fn test_user_table_pk_index_update_after_flush() {
         let insert_response = server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO flush_update_ns.user_items (id, name, value) VALUES ({}, 'item_{}', {})",
-                    i, i, i * 10
+                    "INSERT INTO {}.user_items (id, name, value) VALUES ({}, 'item_{}', {})",
+                    ns, i, i, i * 10
                 ),
                 "flush_user",
             )
@@ -588,7 +618,7 @@ async fn test_user_table_pk_index_update_after_flush() {
     // Verify row exists before flush
     let select_before = server
         .execute_sql_as_user(
-            "SELECT id, value FROM flush_update_ns.user_items WHERE id = 25",
+            &format!("SELECT id, value FROM {}.user_items WHERE id = 25", ns),
             "flush_user",
         )
         .await;
@@ -598,7 +628,7 @@ async fn test_user_table_pk_index_update_after_flush() {
     assert_eq!(rows[0].get("value").unwrap().as_i64().unwrap(), 250);
 
     // Flush the table to Parquet (cold storage)
-    let flush_result = execute_flush_synchronously(&server, "flush_update_ns", "user_items").await;
+    let flush_result = execute_flush_synchronously(&server, &ns, "user_items").await;
     assert!(flush_result.is_ok(), "Flush failed: {:?}", flush_result.err());
     let flush_stats = flush_result.unwrap();
     println!("✅ Flushed {} rows to cold storage", flush_stats.rows_flushed);
@@ -607,7 +637,7 @@ async fn test_user_table_pk_index_update_after_flush() {
     // Update a row that is now in cold storage
     let update_response = server
         .execute_sql_as_user(
-            "UPDATE flush_update_ns.user_items SET value = 9999 WHERE id = 25",
+            &format!("UPDATE {}.user_items SET value = 9999 WHERE id = 25", ns),
             "flush_user",
         )
         .await;
@@ -621,7 +651,7 @@ async fn test_user_table_pk_index_update_after_flush() {
 
     // Debug: Check COUNT in a separate query
     let total_count = server
-        .execute_sql_as_user("SELECT COUNT(*) as cnt FROM flush_update_ns.user_items", "flush_user")
+        .execute_sql_as_user(&format!("SELECT COUNT(*) as cnt FROM {}.user_items", ns), "flush_user")
         .await;
     println!("📊 Total COUNT: {:?}", total_count.results);
 
@@ -629,7 +659,7 @@ async fn test_user_table_pk_index_update_after_flush() {
     // Also check row count to see how many versions exist
     let count_response = server
         .execute_sql_as_user(
-            "SELECT COUNT(*) as cnt FROM flush_update_ns.user_items WHERE id = 25",
+            &format!("SELECT COUNT(*) as cnt FROM {}.user_items WHERE id = 25", ns),
             "flush_user",
         )
         .await;
@@ -638,7 +668,10 @@ async fn test_user_table_pk_index_update_after_flush() {
     // Debug: Query with _deleted filter to see ALL versions (hot + cold, including tombstones)
     let all_with_deleted = server
         .execute_sql_as_user(
-            "SELECT id, value, _seq, _deleted FROM flush_update_ns.user_items WHERE _deleted = true OR _deleted = false",
+            &format!(
+                "SELECT id, value, _seq, _deleted FROM {}.user_items WHERE _deleted = true OR _deleted = false",
+                ns
+            ),
             "flush_user",
         )
         .await;
@@ -650,7 +683,10 @@ async fn test_user_table_pk_index_update_after_flush() {
     // Check the highest _seq value to see if UPDATE created a new version
     let max_seq = server
         .execute_sql_as_user(
-            "SELECT MAX(_seq) as max_seq FROM flush_update_ns.user_items WHERE id = 25 OR _deleted = true",
+            &format!(
+                "SELECT MAX(_seq) as max_seq FROM {}.user_items WHERE id = 25 OR _deleted = true",
+                ns
+            ),
             "flush_user",
         )
         .await;
@@ -658,7 +694,7 @@ async fn test_user_table_pk_index_update_after_flush() {
 
     let select_after = server
         .execute_sql_as_user(
-            "SELECT id, value, _seq FROM flush_update_ns.user_items WHERE id = 25",
+            &format!("SELECT id, value, _seq FROM {}.user_items WHERE id = 25", ns),
             "flush_user",
         )
         .await;
@@ -675,7 +711,7 @@ async fn test_user_table_pk_index_update_after_flush() {
     // Also verify that other rows are still accessible
     let select_other = server
         .execute_sql_as_user(
-            "SELECT id, value FROM flush_update_ns.user_items WHERE id = 1",
+            &format!("SELECT id, value FROM {}.user_items WHERE id = 1", ns),
             "flush_user",
         )
         .await;
@@ -697,15 +733,15 @@ async fn test_user_table_pk_index_update_after_flush() {
 /// rows that have been flushed to Parquet (cold storage).
 #[actix_web::test]
 async fn test_shared_table_pk_index_update_after_flush() {
-    use super::test_support::flush_helpers::execute_shared_flush_synchronously;
-
     let server = TestServer::new_shared().await;
+    let ns = consolidated_helpers::unique_namespace("flush_shared");
 
     // Setup namespace and shared table
-    fixtures::create_namespace(&server, "flush_shared_ns").await;
+    fixtures::create_namespace(&server, &ns).await;
     let create_response = server
         .execute_sql(
-            r#"CREATE TABLE flush_shared_ns.products (
+            &format!(
+                r#"CREATE TABLE {}.products (
                 id INT PRIMARY KEY,
                 name TEXT,
                 price INT
@@ -713,6 +749,8 @@ async fn test_shared_table_pk_index_update_after_flush() {
                 TYPE = 'SHARED',
                 STORAGE_ID = 'local'
             )"#,
+                ns
+            ),
         )
         .await;
     assert_eq!(
@@ -726,8 +764,8 @@ async fn test_shared_table_pk_index_update_after_flush() {
     for i in 1..=50 {
         let insert_response = server
             .execute_sql(&format!(
-                "INSERT INTO flush_shared_ns.products (id, name, price) VALUES ({}, 'product_{}', {})",
-                i, i, i * 100
+                "INSERT INTO {}.products (id, name, price) VALUES ({}, 'product_{}', {})",
+                ns, i, i, i * 100
             ))
             .await;
         assert_eq!(
@@ -741,7 +779,7 @@ async fn test_shared_table_pk_index_update_after_flush() {
 
     // Verify row exists before flush
     let select_before = server
-        .execute_sql("SELECT id, price FROM flush_shared_ns.products WHERE id = 25")
+        .execute_sql(&format!("SELECT id, price FROM {}.products WHERE id = 25", ns))
         .await;
     assert_eq!(select_before.status, ResponseStatus::Success);
     let rows = select_before.rows_as_maps();
@@ -750,7 +788,7 @@ async fn test_shared_table_pk_index_update_after_flush() {
 
     // Flush the table to Parquet (cold storage)
     let flush_result =
-        execute_shared_flush_synchronously(&server, "flush_shared_ns", "products").await;
+        execute_shared_flush_synchronously(&server, &ns, "products").await;
     assert!(flush_result.is_ok(), "Shared table flush failed: {:?}", flush_result.err());
     let flush_stats = flush_result.unwrap();
     println!("✅ Flushed {} rows to cold storage (shared table)", flush_stats.rows_flushed);
@@ -758,7 +796,7 @@ async fn test_shared_table_pk_index_update_after_flush() {
 
     // Update a row that is now in cold storage
     let update_response = server
-        .execute_sql("UPDATE flush_shared_ns.products SET price = 99999 WHERE id = 25")
+        .execute_sql(&format!("UPDATE {}.products SET price = 99999 WHERE id = 25", ns))
         .await;
     assert_eq!(
         update_response.status,
@@ -769,7 +807,7 @@ async fn test_shared_table_pk_index_update_after_flush() {
 
     // Verify the update worked
     let select_after = server
-        .execute_sql("SELECT id, price FROM flush_shared_ns.products WHERE id = 25")
+        .execute_sql(&format!("SELECT id, price FROM {}.products WHERE id = 25", ns))
         .await;
     assert_eq!(select_after.status, ResponseStatus::Success);
     let rows = select_after.rows_as_maps();
@@ -782,7 +820,7 @@ async fn test_shared_table_pk_index_update_after_flush() {
 
     // Also verify that other rows are still accessible
     let select_other = server
-        .execute_sql("SELECT id, price FROM flush_shared_ns.products WHERE id = 1")
+        .execute_sql(&format!("SELECT id, price FROM {}.products WHERE id = 1", ns))
         .await;
     assert_eq!(select_other.status, ResponseStatus::Success);
     let rows = select_other.rows_as_maps();
@@ -803,18 +841,22 @@ async fn test_shared_table_pk_index_update_after_flush() {
 #[actix_web::test]
 async fn test_user_table_pk_index_isolation() {
     let server = TestServer::new_shared().await;
+    let ns = consolidated_helpers::unique_namespace("isolation");
 
     // Setup
-    fixtures::create_namespace(&server, "isolation_ns").await;
+    fixtures::create_namespace(&server, &ns).await;
     let create_response = server
         .execute_sql_as_user(
-            r#"CREATE TABLE isolation_ns.user_data (
+            &format!(
+                r#"CREATE TABLE {}.user_data (
                 id INT PRIMARY KEY,
                 secret TEXT
             ) WITH (
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
+                ns
+            ),
             "alice",
         )
         .await;
@@ -830,8 +872,8 @@ async fn test_user_table_pk_index_isolation() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO isolation_ns.user_data (id, secret) VALUES ({}, 'alice_secret_{}')",
-                    i, i
+                    "INSERT INTO {}.user_data (id, secret) VALUES ({}, 'alice_secret_{}')",
+                    ns, i, i
                 ),
                 "alice",
             )
@@ -843,8 +885,8 @@ async fn test_user_table_pk_index_isolation() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO isolation_ns.user_data (id, secret) VALUES ({}, 'bob_secret_{}')",
-                    i, i
+                    "INSERT INTO {}.user_data (id, secret) VALUES ({}, 'bob_secret_{}')",
+                    ns, i, i
                 ),
                 "bob",
             )
@@ -854,7 +896,7 @@ async fn test_user_table_pk_index_isolation() {
     // Alice updates her row id=5
     let update_response = server
         .execute_sql_as_user(
-            "UPDATE isolation_ns.user_data SET secret = 'alice_updated' WHERE id = 5",
+            &format!("UPDATE {}.user_data SET secret = 'alice_updated' WHERE id = 5", ns),
             "alice",
         )
         .await;
@@ -867,7 +909,10 @@ async fn test_user_table_pk_index_isolation() {
 
     // Verify Alice's update worked
     let alice_select = server
-        .execute_sql_as_user("SELECT id, secret FROM isolation_ns.user_data WHERE id = 5", "alice")
+        .execute_sql_as_user(
+            &format!("SELECT id, secret FROM {}.user_data WHERE id = 5", ns),
+            "alice",
+        )
         .await;
     assert_eq!(alice_select.status, ResponseStatus::Success);
     let rows = alice_select.rows_as_maps();
@@ -876,7 +921,10 @@ async fn test_user_table_pk_index_isolation() {
 
     // Verify Bob's row id=5 is unchanged
     let bob_select = server
-        .execute_sql_as_user("SELECT id, secret FROM isolation_ns.user_data WHERE id = 5", "bob")
+        .execute_sql_as_user(
+            &format!("SELECT id, secret FROM {}.user_data WHERE id = 5", ns),
+            "bob",
+        )
         .await;
     assert_eq!(bob_select.status, ResponseStatus::Success);
     let rows = bob_select.rows_as_maps();
@@ -886,7 +934,7 @@ async fn test_user_table_pk_index_isolation() {
     // Bob updates his row id=5
     let update_response = server
         .execute_sql_as_user(
-            "UPDATE isolation_ns.user_data SET secret = 'bob_updated' WHERE id = 5",
+            &format!("UPDATE {}.user_data SET secret = 'bob_updated' WHERE id = 5", ns),
             "bob",
         )
         .await;
@@ -899,14 +947,20 @@ async fn test_user_table_pk_index_isolation() {
 
     // Verify Bob's update worked and Alice's is still correct
     let alice_select = server
-        .execute_sql_as_user("SELECT id, secret FROM isolation_ns.user_data WHERE id = 5", "alice")
+        .execute_sql_as_user(
+            &format!("SELECT id, secret FROM {}.user_data WHERE id = 5", ns),
+            "alice",
+        )
         .await;
     assert_eq!(alice_select.status, ResponseStatus::Success);
     let rows = alice_select.rows_as_maps();
     assert_eq!(rows[0].get("secret").unwrap().as_str().unwrap(), "alice_updated");
 
     let bob_select = server
-        .execute_sql_as_user("SELECT id, secret FROM isolation_ns.user_data WHERE id = 5", "bob")
+        .execute_sql_as_user(
+            &format!("SELECT id, secret FROM {}.user_data WHERE id = 5", ns),
+            "bob",
+        )
         .await;
     assert_eq!(bob_select.status, ResponseStatus::Success);
     let rows = bob_select.rows_as_maps();

@@ -1,18 +1,18 @@
 //! Production-readiness observability checks over the real HTTP SQL API.
 
+use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
 use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::UserName;
+use kalamdb_commons::{Role, UserName};
 use tokio::time::{sleep, Duration, Instant};
 
 #[tokio::test]
 #[ntest::timeout(60000)] // 60 seconds - observability test with job polling
 async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
-    let suffix = std::process::id();
 
     // system.tables reflects created tables
-    let ns_tables = format!("app_systab_{}", suffix);
+    let ns_tables = unique_namespace("app_systab");
     let resp = server
         .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns_tables))
         .await?;
@@ -38,7 +38,7 @@ async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result
     assert_eq!(rows[0].get("table_type").unwrap().as_str().unwrap(), "user");
 
     // system.jobs tracks flush operations
-    let ns_jobs = format!("app_jobs_{}", suffix);
+    let ns_jobs = unique_namespace("app_jobs");
     let resp = server
         .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns_jobs))
         .await?;
@@ -52,16 +52,9 @@ async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result
         .await?;
     assert_eq!(resp.status, ResponseStatus::Success);
 
-    let username = format!("user1_{}", suffix);
+    let username = unique_table("user1");
     let password = "UserPass123!";
-
-    let resp = server
-        .execute_sql(&format!(
-            "CREATE USER '{}' WITH PASSWORD '{}' ROLE 'user'",
-            username, password
-        ))
-        .await?;
-    assert_eq!(resp.status, ResponseStatus::Success);
+    let _ = ensure_user_exists(server, &username, password, &Role::User).await?;
 
     let user_auth = HttpTestServer::basic_auth_header(&UserName::new(&username), password);
 

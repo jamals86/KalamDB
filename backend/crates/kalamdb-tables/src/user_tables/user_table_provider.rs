@@ -385,6 +385,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Create composite key
         let row_key = UserTableRowId::new(user_id.clone(), seq_id);
 
+        log::info!("🔍 [AS_USER_DEBUG] Inserting row for user_id='{}' _seq={}", 
+                   user_id.as_str(), seq_id);
+
         // Store the entity in RocksDB (hot storage) with PK index maintenance
         self.store.insert(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to insert user table row: {}", e))
@@ -827,6 +830,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let (user_id, role) = extract_user_context(state)?;
         let allow_all_users = can_read_all_users(role);
 
+        log::info!("🔍 [AS_USER_DEBUG] scan_rows: user_id='{}' role={:?} allow_all={}", 
+                   user_id.as_str(), role, allow_all_users);
+
         // Extract sequence bounds from filter to optimize RocksDB scan
         let (since_seq, _until_seq) = if let Some(expr) = filter {
             base::extract_seq_bounds_from_filter(expr)
@@ -877,12 +883,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Warn if no filter or limit - potential performance issue
         base::warn_if_unfiltered_scan(table_id, filter, limit, self.core.table_type());
 
-        // 1) Scan hot storage (RocksDB) with per-user filtering using prefix scan
-        let user_bytes = user_id.as_str().as_bytes();
-        let len = (user_bytes.len().min(255)) as u8;
-        let mut prefix = Vec::with_capacity(1 + len as usize);
-        prefix.push(len);
-        prefix.extend_from_slice(&user_bytes[..len as usize]);
+        // 1) Scan hot storage (RocksDB) scoped to the user using a storekey prefix.
+        let user_prefix = UserTableRowId::user_prefix(user_id);
 
         // Construct start_key if since_seq is provided
         let start_key_bytes = if let Some(seq) = since_seq {
@@ -895,12 +897,13 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         };
 
         // Calculate scan limit using common helper
-        let scan_limit = base::calculate_scan_limit(limit);
+        //  Need to scan more than requested limit because we'll filter by user_id
+        let scan_limit = base::calculate_scan_limit(limit) * 10; // Buffer for filtering
 
         let raw_all = self
             .store
             .scan_limited_with_prefix_and_start(
-                Some(&prefix),
+                Some(&user_prefix),
                 start_key_bytes.as_deref(),
                 scan_limit,
             )
@@ -922,6 +925,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     },
                 }
             })
+            .take(limit.unwrap_or(usize::MAX)) // Apply limit after filtering
             .collect();
 
         log::trace!(

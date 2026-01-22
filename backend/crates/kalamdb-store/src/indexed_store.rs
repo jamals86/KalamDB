@@ -957,6 +957,7 @@ mod tests {
                 JobStatus::Completed => 4,
                 JobStatus::Failed => 5,
                 JobStatus::Cancelled => 6,
+                JobStatus::Skipped => 7,
             };
             let mut key = Vec::with_capacity(1 + 8 + job.job_id.as_bytes().len());
             key.push(status_byte);
@@ -990,6 +991,7 @@ mod tests {
             finished_at: if status == JobStatus::Completed
                 || status == JobStatus::Failed
                 || status == JobStatus::Cancelled
+                || status == JobStatus::Skipped
             {
                 Some(now)
             } else {

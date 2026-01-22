@@ -323,6 +323,19 @@ impl JobsManager {
         Ok(())
     }
 
+    /// Run a single job execution cycle (test helper).
+    ///
+    /// Returns Ok(true) if a job was executed, Ok(false) if no jobs were available.
+    pub async fn run_once_for_tests(&self) -> Result<bool, KalamDbError> {
+        let is_leader = self.is_cluster_leader().await;
+        if let Some((job, job_node)) = self.poll_next().await? {
+            self.execute_job(job, job_node, is_leader).await?;
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
     /// Poll for next per-node job entry to execute
     ///
     /// Finds the next queued job with idempotency check.

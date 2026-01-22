@@ -3,14 +3,16 @@
 //! This test executes the SQL script from test_stream_ttl.sql to validate
 //! that stream tables with TTL properly evict old events.
 
+use super::test_support::consolidated_helpers::unique_namespace;
 use kalam_link::models::ResponseStatus;
 use tokio::time::{sleep, Duration};
 
 /// Test stream table TTL eviction using the SQL script approach
 #[tokio::test]
 async fn test_stream_ttl_eviction_from_sql_script() -> anyhow::Result<()> {
+    let _guard = super::test_support::http_server::acquire_test_lock().await;
     let server = super::test_support::http_server::get_global_server().await;
-    let ns = format!("test_stream_ttl_{}", std::process::id());
+    let ns = unique_namespace("test_stream_ttl");
     let table = "events";
 
     // Create namespace
@@ -70,7 +72,17 @@ async fn test_stream_ttl_eviction_from_sql_script() -> anyhow::Result<()> {
         .await?;
     assert_eq!(resp.status, ResponseStatus::Success);
     let rows = resp.rows_as_maps();
-    assert_eq!(rows.len(), 3, "Should have 3 events initially, got {}", rows.len());
+    let event_ids: std::collections::HashSet<_> = rows
+        .iter()
+        .filter_map(|row| row.get("event_id").and_then(|v| v.as_str()))
+        .collect();
+    for expected in ["evt1", "evt2", "evt3"] {
+        assert!(
+            event_ids.contains(expected),
+            "Missing expected event_id {}",
+            expected
+        );
+    }
 
     // Wait for TTL to expire (need to wait 3+ seconds for eviction to run)
     // The eviction job runs periodically, so we need to wait a bit longer

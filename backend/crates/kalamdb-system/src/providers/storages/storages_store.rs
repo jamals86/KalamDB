@@ -62,6 +62,7 @@ mod tests {
             SystemTable::Storages
                 .column_family_name()
                 .expect("Storages is a table, not a view")
+                .into()
         );
     }
 

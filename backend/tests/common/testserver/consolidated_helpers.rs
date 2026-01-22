@@ -220,47 +220,50 @@ pub async fn ensure_user_exists(
     password: &str,
     role: &Role,
 ) -> Result<String> {
-    // Check if user already exists
     let lookup_sql = format!(
         "SELECT user_id FROM system.users WHERE username = '{}' LIMIT 1",
         username
     );
-    if let Ok(resp) = server.execute_sql(&lookup_sql).await {
-        if resp.status == ResponseStatus::Success {
-            if let Some(rows) = resp.rows_as_maps().first() {
-                if let Some(user_id_val) = rows.get("user_id") {
-                    // Handle both direct strings and Arrow-wrapped strings
-                    let user_id_str = match user_id_val {
-                        JsonValue::String(s) => s.clone(),
-                        JsonValue::Object(map) if map.contains_key("Utf8") => {
-                            map.get("Utf8")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string()
-                        },
-                        _ => user_id_val.as_str().unwrap_or("").to_string(),
-                    };
+    let create_sql = format!(
+        "CREATE USER '{}' WITH PASSWORD '{}' ROLE '{}'",
+        username, password, role
+    );
 
-                    if !user_id_str.is_empty() {
-                        server.cache_user_id(username, &user_id_str);
-                        server.cache_user_password(username, password);
-                        return Ok(user_id_str);
+    for attempt in 0..10 {
+        if let Ok(resp) = server.execute_sql(&lookup_sql).await {
+            if resp.status == ResponseStatus::Success {
+                if let Some(rows) = resp.rows_as_maps().first() {
+                    if let Some(user_id_val) = rows.get("user_id") {
+                        let user_id_str = match user_id_val {
+                            JsonValue::String(s) => s.clone(),
+                            JsonValue::Object(map) if map.contains_key("Utf8") => {
+                                map.get("Utf8")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string()
+                            },
+                            _ => user_id_val.as_str().unwrap_or("").to_string(),
+                        };
+
+                        if !user_id_str.is_empty() {
+                            server.cache_user_id(username, &user_id_str);
+                            server.cache_user_password(username, password);
+                            return Ok(user_id_str);
+                        }
                     }
                 }
             }
         }
+
+        let _ = server.execute_sql(&create_sql).await;
+
+        if attempt < 9 {
+            let backoff = 100u64.saturating_mul((attempt + 1) as u64);
+            tokio::time::sleep(Duration::from_millis(backoff)).await;
+        }
     }
 
-    // Try to create user
-    let create_sql = format!("CREATE USER '{}' WITH PASSWORD '{}' ROLE '{}'", username, password, role);
-    let _ = server.execute_sql(&create_sql).await;
-
-    // Get the user_id
-    let get_id_sql = format!(
-        "SELECT user_id FROM system.users WHERE username = '{}' LIMIT 1",
-        username
-    );
-    let resp = server.execute_sql(&get_id_sql).await?;
+    let resp = server.execute_sql(&lookup_sql).await?;
     let user_id = resp
         .rows_as_maps()
         .first()
@@ -471,7 +474,7 @@ where
 pub fn unique_namespace(prefix: &str) -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
+        .map(|d| d.as_nanos())
         .unwrap_or(0);
     format!("{}_{}", prefix, nanos)
 }
@@ -480,7 +483,7 @@ pub fn unique_namespace(prefix: &str) -> String {
 pub fn unique_table(prefix: &str) -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
+        .map(|d| d.as_nanos())
         .unwrap_or(0);
     format!("{}_{}", prefix, nanos)
 }

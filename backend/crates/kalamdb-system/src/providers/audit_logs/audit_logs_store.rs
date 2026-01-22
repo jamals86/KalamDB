@@ -61,7 +61,7 @@ mod tests {
                 .column_family_name()
                 .expect("AuditLog is a table, not a view")
         );
-        assert_eq!(store.partition(), &expected_partition);
+        assert_eq!(store.partition(), expected_partition);
     }
 
     #[test]

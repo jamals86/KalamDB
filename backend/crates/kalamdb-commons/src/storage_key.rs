@@ -73,6 +73,21 @@ pub fn encode_key<T: Encode>(value: &T) -> Vec<u8> {
     storekey::encode_vec(value).expect("storekey encoding should not fail for valid types")
 }
 
+/// Encode a value as a prefix for range scans.
+///
+/// This is identical to `encode_key` but makes the intent clear when used for prefix scans.
+/// For tuple encodings like `(user_id, seq)`, encode just the prefix tuple `(user_id,)`.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// // For scanning all rows for a user
+/// let prefix = encode_prefix(&("alice",));
+/// ```
+pub fn encode_prefix<T: Encode>(value: &T) -> Vec<u8> {
+    encode_key(value)
+}
+
 /// Decode a value from storekey-encoded bytes.
 ///
 /// # Errors

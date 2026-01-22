@@ -2,8 +2,8 @@
 //!
 //! Tests covering:
 //! - DML operations (INSERT, UPDATE, DELETE)
-//! - Data type preservation
-//! - DateTime and timezone storage
+//! - Data type preservation (moved to kalamdb-core/kalamdb-commons tests)
+//! - DateTime and timezone storage (moved to kalamdb-commons tests)
 //! - Edge cases
 //! - Index efficiency
 //! - Row count behavior
@@ -17,8 +17,6 @@ pub(super) use crate::test_support;
 // SQL & Data Tests
 mod test_combined_data_integrity;
 mod test_datafusion_commands;
-mod test_datatypes_preservation;
-mod test_datetime_timezone_storage;
 mod test_dml_complex;
 mod test_edge_cases;
 mod test_explain_index_usage;

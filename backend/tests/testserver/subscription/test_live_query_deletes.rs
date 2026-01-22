@@ -1,5 +1,6 @@
 //! Integration test for Live Query DELETE detection via WebSocket
 
+use super::test_support::consolidated_helpers::unique_namespace;
 use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;
 use tokio::time::Duration;
@@ -8,7 +9,7 @@ use tokio::time::Duration;
 #[tokio::test]
 async fn test_live_query_detects_deletes() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
-    let ns = format!("test_deletes_{}", std::process::id());
+    let ns = unique_namespace("test_deletes");
     let table = "records";
 
     // Setup namespace and table as root

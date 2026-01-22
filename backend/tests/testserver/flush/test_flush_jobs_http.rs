@@ -1,5 +1,6 @@
 //! Flush-related SQL tests over the real HTTP SQL API.
 
+use super::test_support::consolidated_helpers::unique_namespace;
 use kalam_link::models::ResponseStatus;
 use tokio::time::{sleep, Duration, Instant};
 
@@ -7,7 +8,7 @@ use tokio::time::{sleep, Duration, Instant};
 #[ntest::timeout(120000)] // 120 seconds - allow for server startup + job persistence
 async fn test_flush_table_persists_job_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
-    let ns = format!("app_flush_jobs_{}", std::process::id());
+    let ns = unique_namespace("app_flush_jobs");
     let create_ns = format!("CREATE NAMESPACE IF NOT EXISTS {}", ns);
     let resp = server.execute_sql(&create_ns).await?;
     assert_eq!(resp.status, ResponseStatus::Success, "CREATE NAMESPACE failed");

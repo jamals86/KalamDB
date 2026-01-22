@@ -1,5 +1,6 @@
 //! Manifest flush behavior over the real HTTP SQL API.
 
+use super::test_support::consolidated_helpers::unique_namespace;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::types::Manifest;
 use tokio::time::{sleep, Duration, Instant};
@@ -66,7 +67,7 @@ async fn wait_for_flush_job_completed(
 #[tokio::test]
 async fn test_shared_flush_creates_manifest_json_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
-    let namespace = format!("test_manifest_flush_{}", std::process::id());
+    let namespace = unique_namespace("test_manifest_flush");
     let table = "products";
 
     let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await?;

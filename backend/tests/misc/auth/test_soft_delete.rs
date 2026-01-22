@@ -6,25 +6,22 @@
 //! - Deleted data can be recovered
 //! - _deleted field is accessible when explicitly selected
 
-use super::test_support::{fixtures, TestServer};
+use super::test_support::{consolidated_helpers::unique_namespace, fixtures, TestServer};
 use kalam_link::models::ResponseStatus;
 
 #[actix_web::test]
 async fn test_soft_delete_hides_rows() {
     let server = TestServer::new_shared().await;
+    let namespace = unique_namespace("test_hide");
 
     // Setup
-    fixtures::create_namespace(&server, "test_hide").await;
+    fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_hide.tasks (
-                id TEXT PRIMARY KEY,
-                title TEXT,
-                completed BOOLEAN
-            ) WITH (
-                TYPE = 'USER',
-                STORAGE_ID = 'local'
-            )"#,
+            &format!(
+                "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title TEXT,\n                completed BOOLEAN\n            ) WITH (\n                TYPE = 'USER',\n                STORAGE_ID = 'local'\n            )",
+                namespace
+            ),
             "user1",
         )
         .await;
@@ -32,23 +29,27 @@ async fn test_soft_delete_hides_rows() {
     // Insert test data
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_hide.tasks (id, title, completed) 
-               VALUES ('task1', 'First task', false)"#,
+            &format!(
+                "INSERT INTO {}.tasks (id, title, completed) VALUES ('task1', 'First task', false)",
+                namespace
+            ),
             "user1",
         )
         .await;
 
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_hide.tasks (id, title, completed) 
-               VALUES ('task2', 'Second task', false)"#,
+            &format!(
+                "INSERT INTO {}.tasks (id, title, completed) VALUES ('task2', 'Second task', false)",
+                namespace
+            ),
             "user1",
         )
         .await;
 
     // Verify both tasks exist
     let response = server
-        .execute_sql_as_user("SELECT id FROM test_hide.tasks ORDER BY id", "user1")
+        .execute_sql_as_user(&format!("SELECT id FROM {}.tasks ORDER BY id", namespace), "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -60,7 +61,10 @@ async fn test_soft_delete_hides_rows() {
 
     // Delete task1 (soft delete)
     let response = server
-        .execute_sql_as_user("DELETE FROM test_hide.tasks WHERE id = 'task1'", "user1")
+        .execute_sql_as_user(
+            &format!("DELETE FROM {}.tasks WHERE id = 'task1'", namespace),
+            "user1",
+        )
         .await;
 
     assert_eq!(
@@ -72,7 +76,7 @@ async fn test_soft_delete_hides_rows() {
 
     // Verify task1 is hidden from SELECT
     let response = server
-        .execute_sql_as_user("SELECT id FROM test_hide.tasks ORDER BY id", "user1")
+        .execute_sql_as_user(&format!("SELECT id FROM {}.tasks ORDER BY id", namespace), "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -90,19 +94,16 @@ async fn test_soft_delete_hides_rows() {
 #[actix_web::test]
 async fn test_soft_delete_preserves_data() {
     let server = TestServer::new_shared().await;
+    let namespace = unique_namespace("test_soft_preserves");
 
     // Setup
-    fixtures::create_namespace(&server, "test_soft_preserves").await;
+    fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_soft_preserves.tasks (
-                id TEXT PRIMARY KEY,
-                title TEXT,
-                completed BOOLEAN
-            ) WITH (
-                TYPE = 'USER',
-                STORAGE_ID = 'local'
-            )"#,
+            &format!(
+                "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title TEXT,\n                completed BOOLEAN\n            ) WITH (\n                TYPE = 'USER',\n                STORAGE_ID = 'local'\n            )",
+                namespace
+            ),
             "user1",
         )
         .await;
@@ -110,20 +111,28 @@ async fn test_soft_delete_preserves_data() {
     // Insert and delete
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_soft_preserves.tasks (id, title, completed) 
-               VALUES ('task1', 'Important task', false)"#,
+            &format!(
+                "INSERT INTO {}.tasks (id, title, completed) VALUES ('task1', 'Important task', false)",
+                namespace
+            ),
             "user1",
         )
         .await;
 
     server
-        .execute_sql_as_user("DELETE FROM test_soft_preserves.tasks WHERE id = 'task1'", "user1")
+        .execute_sql_as_user(
+            &format!("DELETE FROM {}.tasks WHERE id = 'task1'", namespace),
+            "user1",
+        )
         .await;
 
     // Query with explicit _deleted column
     let response = server
         .execute_sql_as_user(
-            "SELECT id, title, _deleted FROM test_soft_preserves.tasks WHERE id = 'task1'",
+            &format!(
+                "SELECT id, title, _deleted FROM {}.tasks WHERE id = 'task1'",
+                namespace
+            ),
             "user1",
         )
         .await;
@@ -144,18 +153,16 @@ async fn test_soft_delete_preserves_data() {
 #[actix_web::test]
 async fn test_deleted_field_default_false() {
     let server = TestServer::new_shared().await;
+    let namespace = unique_namespace("test_soft_deleted_field");
 
     // Setup
-    fixtures::create_namespace(&server, "test_soft_deleted_field").await;
+    fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_soft_deleted_field.tasks (
-                id TEXT PRIMARY KEY,
-                title TEXT
-            ) WITH (
-                TYPE = 'USER',
-                STORAGE_ID = 'local'
-            )"#,
+            &format!(
+                "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title TEXT\n            ) WITH (\n                TYPE = 'USER',\n                STORAGE_ID = 'local'\n            )",
+                namespace
+            ),
             "user1",
         )
         .await;
@@ -163,8 +170,10 @@ async fn test_deleted_field_default_false() {
     // Insert data
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_soft_deleted_field.tasks (id, title) 
-               VALUES ('task1', 'New task')"#,
+            &format!(
+                "INSERT INTO {}.tasks (id, title) VALUES ('task1', 'New task')",
+                namespace
+            ),
             "user1",
         )
         .await;
@@ -172,7 +181,7 @@ async fn test_deleted_field_default_false() {
     // Select with _deleted column
     let response = server
         .execute_sql_as_user(
-            "SELECT id, title, _deleted FROM test_soft_deleted_field.tasks",
+            &format!("SELECT id, title, _deleted FROM {}.tasks", namespace),
             "user1",
         )
         .await;
@@ -190,18 +199,16 @@ async fn test_deleted_field_default_false() {
 #[actix_web::test]
 async fn test_multiple_deletes() {
     let server = TestServer::new_shared().await;
+    let namespace = unique_namespace("test_soft_multi");
 
     // Setup
-    fixtures::create_namespace(&server, "test_soft_multi").await;
+    fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_soft_multi.tasks (
-                id TEXT PRIMARY KEY,
-                title TEXT
-            ) WITH (
-                TYPE = 'USER',
-                STORAGE_ID = 'local'
-            )"#,
+            &format!(
+                "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title TEXT\n            ) WITH (\n                TYPE = 'USER',\n                STORAGE_ID = 'local'\n            )",
+                namespace
+            ),
             "user1",
         )
         .await;
@@ -211,8 +218,8 @@ async fn test_multiple_deletes() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO test_soft_multi.tasks (id, title) VALUES ('task{}', 'Task {}')",
-                    i, i
+                    "INSERT INTO {}.tasks (id, title) VALUES ('task{}', 'Task {}')",
+                    namespace, i, i
                 ),
                 "user1",
             )
@@ -221,16 +228,22 @@ async fn test_multiple_deletes() {
 
     // Delete tasks 2 and 4
     server
-        .execute_sql_as_user("DELETE FROM test_soft_multi.tasks WHERE id = 'task2'", "user1")
+        .execute_sql_as_user(
+            &format!("DELETE FROM {}.tasks WHERE id = 'task2'", namespace),
+            "user1",
+        )
         .await;
 
     server
-        .execute_sql_as_user("DELETE FROM test_soft_multi.tasks WHERE id = 'task4'", "user1")
+        .execute_sql_as_user(
+            &format!("DELETE FROM {}.tasks WHERE id = 'task4'", namespace),
+            "user1",
+        )
         .await;
 
     // Verify only 3 tasks remain
     let response = server
-        .execute_sql_as_user("SELECT id FROM test_soft_multi.tasks ORDER BY id", "user1")
+        .execute_sql_as_user(&format!("SELECT id FROM {}.tasks ORDER BY id", namespace), "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -247,19 +260,16 @@ async fn test_multiple_deletes() {
 #[actix_web::test]
 async fn test_delete_with_where_clause() {
     let server = TestServer::new_shared().await;
+    let namespace = unique_namespace("test_soft_where");
 
     // Setup
-    fixtures::create_namespace(&server, "test_soft_where").await;
+    fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_soft_where.tasks (
-                id TEXT PRIMARY KEY,
-                title TEXT,
-                priority INT
-            ) WITH (
-                TYPE = 'USER',
-                STORAGE_ID = 'local'
-            )"#,
+            &format!(
+                "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title TEXT,\n                priority INT\n            ) WITH (\n                TYPE = 'USER',\n                STORAGE_ID = 'local'\n            )",
+                namespace
+            ),
             "user1",
         )
         .await;
@@ -267,38 +277,47 @@ async fn test_delete_with_where_clause() {
     // Insert tasks with different priorities
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_soft_where.tasks (id, title, priority) 
-               VALUES ('task1', 'Low priority', 1)"#,
+            &format!(
+                "INSERT INTO {}.tasks (id, title, priority) VALUES ('task1', 'Low priority', 1)",
+                namespace
+            ),
             "user1",
         )
         .await;
 
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_soft_where.tasks (id, title, priority) 
-               VALUES ('task2', 'High priority', 5)"#,
+            &format!(
+                "INSERT INTO {}.tasks (id, title, priority) VALUES ('task2', 'High priority', 5)",
+                namespace
+            ),
             "user1",
         )
         .await;
 
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_soft_where.tasks (id, title, priority) 
-               VALUES ('task3', 'Low priority', 1)"#,
+            &format!(
+                "INSERT INTO {}.tasks (id, title, priority) VALUES ('task3', 'Low priority', 1)",
+                namespace
+            ),
             "user1",
         )
         .await;
 
     // Delete all low priority tasks
     let response = server
-        .execute_sql_as_user("DELETE FROM test_soft_where.tasks WHERE priority = 1", "user1")
+        .execute_sql_as_user(
+            &format!("DELETE FROM {}.tasks WHERE priority = 1", namespace),
+            "user1",
+        )
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
 
     // Verify only high priority task remains
     let response = server
-        .execute_sql_as_user("SELECT id FROM test_soft_where.tasks", "user1")
+        .execute_sql_as_user(&format!("SELECT id FROM {}.tasks", namespace), "user1")
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -312,18 +331,16 @@ async fn test_delete_with_where_clause() {
 #[actix_web::test]
 async fn test_count_excludes_deleted_rows() {
     let server = TestServer::new_shared().await;
+    let namespace = unique_namespace("test_soft_count");
 
     // Setup
-    fixtures::create_namespace(&server, "test_soft_count").await;
+    fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_soft_count.tasks (
-                id TEXT PRIMARY KEY,
-                title TEXT
-            ) WITH (
-                TYPE = 'USER',
-                STORAGE_ID = 'local'
-            )"#,
+            &format!(
+                "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title TEXT\n            ) WITH (\n                TYPE = 'USER',\n                STORAGE_ID = 'local'\n            )",
+                namespace
+            ),
             "user1",
         )
         .await;
@@ -333,8 +350,8 @@ async fn test_count_excludes_deleted_rows() {
         server
             .execute_sql_as_user(
                 &format!(
-                    "INSERT INTO test_soft_count.tasks (id, title) VALUES ('task{}', 'Task {}')",
-                    i, i
+                    "INSERT INTO {}.tasks (id, title) VALUES ('task{}', 'Task {}')",
+                    namespace, i, i
                 ),
                 "user1",
             )
@@ -343,7 +360,10 @@ async fn test_count_excludes_deleted_rows() {
 
     // Count before delete
     let response = server
-        .execute_sql_as_user("SELECT COUNT(*) as count FROM test_soft_count.tasks", "user1")
+        .execute_sql_as_user(
+            &format!("SELECT COUNT(*) as count FROM {}.tasks", namespace),
+            "user1",
+        )
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);
@@ -374,43 +394,58 @@ async fn test_count_excludes_deleted_rows() {
     // Delete 2 tasks
     server
         .execute_sql_as_user(
-            "DELETE FROM test_soft_count.tasks WHERE id IN ('task1', 'task3')",
+            &format!("DELETE FROM {}.tasks WHERE id IN ('task1', 'task3')", namespace),
             "user1",
         )
         .await;
 
-    // Count after delete
-    let response = server
-        .execute_sql_as_user("SELECT COUNT(*) as count FROM test_soft_count.tasks", "user1")
-        .await;
+    // Count after delete (retry to allow async propagation)
+    let mut count = None;
+    for _ in 0..30 {
+        let response = server
+            .execute_sql_as_user(
+                &format!("SELECT COUNT(*) as count FROM {}.tasks", namespace),
+                "user1",
+            )
+            .await;
 
-    assert_eq!(response.status, ResponseStatus::Success);
-    let rows = response.rows_as_maps();
-    if rows.is_empty() {
-        panic!("No result rows returned for COUNT(*) after delete");
+        assert_eq!(response.status, ResponseStatus::Success);
+        let rows = response.rows_as_maps();
+        if rows.is_empty() {
+            panic!("No result rows returned for COUNT(*) after delete");
+        }
+
+        let count_val = rows[0]
+            .get("count")
+            .or_else(|| rows[0].get("COUNT(*)"))
+            .or_else(|| {
+                rows[0]
+                    .iter()
+                    .find(|(k, _)| k.to_lowercase() == "count" || k.contains("COUNT(*)"))
+                    .map(|(_, v)| v)
+            })
+            .expect(&format!(
+                "Missing count column after delete. Available columns: {:?}",
+                rows[0].keys()
+            ));
+
+        let current = match count_val {
+            serde_json::Value::Number(n) => n.as_i64().unwrap(),
+            serde_json::Value::String(s) => s
+                .parse::<i64>()
+                .expect("Count string after delete is not a valid i64"),
+            _ => panic!("Unexpected count value type after delete: {:?}", count_val),
+        };
+
+        if current == 3 {
+            count = Some(current);
+            break;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    let count_val = rows[0]
-        .get("count")
-        .or_else(|| rows[0].get("COUNT(*)"))
-        .or_else(|| {
-            rows[0]
-                .iter()
-                .find(|(k, _)| k.to_lowercase() == "count" || k.contains("COUNT(*)"))
-                .map(|(_, v)| v)
-        })
-        .expect(&format!(
-            "Missing count column after delete. Available columns: {:?}",
-            rows[0].keys()
-        ));
 
-    let count = match count_val {
-        serde_json::Value::Number(n) => n.as_i64().unwrap(),
-        serde_json::Value::String(s) => {
-            s.parse::<i64>().expect("Count string after delete is not a valid i64")
-        },
-        _ => panic!("Unexpected count value type after delete: {:?}", count_val),
-    };
-    assert_eq!(count, 3, "Should count 3 tasks after soft delete");
+    assert_eq!(count, Some(3), "Should count 3 tasks after soft delete");
 
     println!("✅ COUNT excludes soft deleted rows");
 }

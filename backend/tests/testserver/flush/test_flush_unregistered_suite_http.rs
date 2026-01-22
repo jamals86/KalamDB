@@ -4,13 +4,15 @@
 //! registered in `backend/Cargo.toml`, so they never ran. This suite migrates
 //! them to the near-production HTTP harness.
 
+use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
+use super::test_support::flush::find_parquet_files;
 use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::UserName;
+use kalamdb_commons::{Role, UserName};
 use tokio::time::{sleep, Duration, Instant};
 
 fn is_pending_job_status(status: &str) -> bool {
-    matches!(status, "new" | "queued" | "running" | "retrying")
+    matches!(status, "new" | "running" | "retrying")
 }
 
 async fn wait_for_flush_jobs_settled(
@@ -18,63 +20,7 @@ async fn wait_for_flush_jobs_settled(
     ns: &str,
     table: &str,
 ) -> anyhow::Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-
-    loop {
-        let resp = server
-            .execute_sql(
-                "SELECT job_type, status, parameters FROM system.jobs WHERE job_type = 'flush'",
-            )
-            .await?;
-
-        if resp.status != ResponseStatus::Success {
-            if Instant::now() >= deadline {
-                anyhow::bail!("Timed out waiting for system.jobs to be queryable");
-            }
-            sleep(Duration::from_millis(50)).await;
-            continue;
-        }
-
-        let rows = resp.rows_as_maps();
-        let matching: Vec<_> = rows
-            .iter()
-            .filter(|r| {
-                r.get("parameters")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.contains(ns) && s.contains(table))
-                    .unwrap_or(false)
-            })
-            .collect();
-
-        let has_completed = matching.iter().any(|r| {
-            r.get("status")
-                .and_then(|v| v.as_str())
-                .map(|s| s == "completed")
-                .unwrap_or(false)
-        });
-
-        let has_pending = matching.iter().any(|r| {
-            r.get("status")
-                .and_then(|v| v.as_str())
-                .map(is_pending_job_status)
-                .unwrap_or(false)
-        });
-
-        if has_completed && !has_pending {
-            return Ok(());
-        }
-
-        if Instant::now() >= deadline {
-            anyhow::bail!(
-                "Timed out waiting for flush jobs to settle for {}.{} (matching={:?})",
-                ns,
-                table,
-                matching
-            );
-        }
-
-        sleep(Duration::from_millis(50)).await;
-    }
+    super::test_support::flush::wait_for_flush_jobs_settled(server, ns, table).await
 }
 
 async fn count_rows(
@@ -108,13 +54,7 @@ async fn create_user(
     username: &str,
     password: &str,
 ) -> anyhow::Result<String> {
-    let resp = server
-        .execute_sql(&format!(
-            "CREATE USER '{}' WITH PASSWORD '{}' ROLE 'user'",
-            username, password
-        ))
-        .await?;
-    anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE USER failed: {:?}", resp.error);
+    let _ = ensure_user_exists(server, username, password, &Role::User).await?;
     Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
 }
 
@@ -181,11 +121,11 @@ async fn flush_table_and_wait(
 #[tokio::test]
 #[ntest::timeout(300000)] // 5 minutes max for this comprehensive test
 async fn test_flush_concurrency_and_correctness_over_http() {
+    let _guard = super::test_support::http_server::acquire_test_lock().await;
     (async {
         let server = super::test_support::http_server::get_global_server().await;
-        let suffix = std::process::id();
-        let user_a = format!("user_a_{}", suffix);
-        let user_b = format!("user_b_{}", suffix);
+        let user_a = unique_table("user_a");
+        let user_b = unique_table("user_b");
         let password = "UserPass123!";
         let auth_a = create_user(server, &user_a, password).await?;
         let auth_b = create_user(server, &user_b, password).await?;
@@ -194,7 +134,7 @@ async fn test_flush_concurrency_and_correctness_over_http() {
         // test_flush_concurrent_dml
         // -----------------------------------------------------------------
         {
-            let ns = format!("flush_concurrent_ns_{}", suffix);
+            let ns = unique_namespace("flush_concurrent_ns");
             let table = "items";
             create_user_table(server, &ns, table, "rows:50").await?;
 
@@ -314,7 +254,7 @@ async fn test_flush_concurrency_and_correctness_over_http() {
         // test_queries_remain_consistent_during_flush
         // -----------------------------------------------------------------
         {
-            let ns = format!("flush_consistency_ns_{}", suffix);
+            let ns = unique_namespace("flush_consistency_ns");
             let table = "items";
             create_user_table(server, &ns, table, "rows:8").await?;
 
@@ -356,7 +296,7 @@ async fn test_flush_concurrency_and_correctness_over_http() {
         // test_flush_preserves_read_visibility
         // -----------------------------------------------------------------
         {
-            let ns = format!("flush_vis_ns_{}", suffix);
+            let ns = unique_namespace("flush_vis_ns");
             let table = "items";
             create_user_table(server, &ns, table, "rows:20").await?;
 
@@ -400,7 +340,7 @@ async fn test_flush_concurrency_and_correctness_over_http() {
         // test_updates_persist_across_flushes
         // -----------------------------------------------------------------
         {
-            let ns = format!("flush_update_ns_{}", suffix);
+            let ns = unique_namespace("flush_update_ns");
             let table = "items";
             create_user_table(server, &ns, table, "rows:10").await?;
 
@@ -448,7 +388,7 @@ async fn test_flush_concurrency_and_correctness_over_http() {
         // test_deletes_persist_across_flushes
         // -----------------------------------------------------------------
         {
-            let ns = format!("flush_delete_ns_{}", suffix);
+            let ns = unique_namespace("flush_delete_ns");
             let table = "items";
             create_user_table(server, &ns, table, "rows:15").await?;
 
@@ -497,7 +437,7 @@ async fn test_flush_concurrency_and_correctness_over_http() {
         // test_interleaved_batches_and_flushes
         // -----------------------------------------------------------------
         {
-            let ns = format!("flush_interleave_ns_{}", suffix);
+            let ns = unique_namespace("flush_interleave_ns");
             let table = "items";
             create_user_table(server, &ns, table, "rows:25").await?;
 
@@ -598,7 +538,7 @@ async fn test_flush_concurrency_and_correctness_over_http() {
         // test_flush_isolation_between_tables
         // -----------------------------------------------------------------
         {
-            let ns = format!("flush_iso_ns_{}", suffix);
+            let ns = unique_namespace("flush_iso_ns");
             let t1 = "alpha";
             let t2 = "beta";
             create_user_table(server, &ns, t1, "rows:5").await?;
@@ -647,7 +587,7 @@ async fn test_flush_concurrency_and_correctness_over_http() {
         // test_concurrent_flushes_across_tables
         // -----------------------------------------------------------------
         {
-            let ns = format!("flush_concurrent_multi_ns_{}", suffix);
+            let ns = unique_namespace("flush_concurrent_multi_ns");
             let t1 = "alpha";
             let t2 = "beta";
             create_user_table(server, &ns, t1, "rows:30").await?;

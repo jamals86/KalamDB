@@ -1,22 +1,14 @@
-use super::test_support::TestServer;
+use super::test_support::{consolidated_helpers, TestServer};
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, UserId};
 use kalamdb_commons::websocket::{SubscriptionOptions, SubscriptionRequest};
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-static UNIQUE_NS_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-fn unique_namespace(prefix: &str) -> String {
-    let id = UNIQUE_NS_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{}_{}", prefix, id)
-}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_live_queries_metadata() {
     let server = TestServer::new_shared().await;
     let manager = server.app_context.live_query_manager();
     let registry = manager.registry();
-    let ns = unique_namespace("live_queries_meta");
+    let ns = consolidated_helpers::unique_namespace("live_queries_meta");
 
     // 1. Register Connection
     let user_id = UserId::new("root");

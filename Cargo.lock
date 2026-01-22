@@ -3525,6 +3525,7 @@ dependencies = [
  "kalamdb-tables",
  "log",
  "moka",
+ "ntest",
  "once_cell",
  "parking_lot",
  "parquet",

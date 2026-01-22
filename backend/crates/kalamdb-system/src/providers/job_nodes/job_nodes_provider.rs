@@ -91,10 +91,11 @@ impl JobNodesTableProvider {
         statuses: &[JobStatus],
         limit: usize,
     ) -> Result<Vec<JobNode>, SystemError> {
-        let prefix = JobNodeId::from(JobNodeId::prefix_for_node(node_id));
+        let prefix = JobNodeId::prefix_for_node(node_id);
+        let scan_limit = if limit == 0 { 10_000 } else { limit.saturating_mul(10) };
         let rows = self
             .store
-            .scan_all(None, Some(&prefix), None)
+            .scan_limited_with_prefix_and_start(Some(&prefix), None, scan_limit)
             .into_system_error("scan job_nodes error")?;
 
         let mut filtered: Vec<JobNode> = rows
@@ -116,12 +117,16 @@ impl JobNodesTableProvider {
         statuses: &[JobStatus],
         limit: usize,
     ) -> Result<Vec<JobNode>, SystemError> {
-        let prefix = JobNodeId::from(JobNodeId::prefix_for_node(node_id));
-        let rows = self
-            .store
-            .scan_all_async(None, Some(prefix), None)
+        let prefix = JobNodeId::prefix_for_node(node_id);
+        let scan_limit = if limit == 0 { 10_000 } else { limit.saturating_mul(10) };
+        let rows = {
+            let store = self.store.clone();
+            tokio::task::spawn_blocking(move || {
+                store.scan_limited_with_prefix_and_start(Some(&prefix), None, scan_limit)
+            })
             .await
-            .into_system_error("scan_async job_nodes error")?;
+            .into_system_error("scan_async job_nodes join error")??
+        };
 
         let mut filtered: Vec<JobNode> = rows
             .into_iter()

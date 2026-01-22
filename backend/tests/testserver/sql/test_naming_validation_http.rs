@@ -1,5 +1,6 @@
 //! Naming validation tests over the real HTTP SQL API.
 
+use super::test_support::consolidated_helpers::unique_namespace;
 use kalam_link::models::ResponseStatus;
 
 #[tokio::test]
@@ -20,7 +21,11 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
     }
 
     // Valid namespace names
-    let valid_names = ["validns1", "validns2", "validns3"];
+    let valid_names = [
+        unique_namespace("validns1"),
+        unique_namespace("validns2"),
+        unique_namespace("validns3"),
+    ];
     for name in valid_names {
         let sql = format!("CREATE NAMESPACE {}", name);
         let response = server.execute_sql(&sql).await?;
@@ -34,15 +39,18 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
     }
 
     // Reserved column names
-    let response = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_cols").await?;
+    let test_cols = unique_namespace("test_cols");
+    let response = server
+        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_cols))
+        .await?;
     assert_eq!(response.status, ResponseStatus::Success);
 
     let reserved_columns = ["_seq", "_deleted"];
     for col_name in reserved_columns {
         let table_name = format!("test_{}", col_name.replace('_', ""));
         let sql = format!(
-            "CREATE TABLE test_cols.{} ({} TEXT PRIMARY KEY) WITH (TYPE = 'USER')",
-            table_name, col_name
+            "CREATE TABLE {}.{} ({} TEXT PRIMARY KEY) WITH (TYPE = 'USER')",
+            test_cols, table_name, col_name
         );
         let response = server.execute_sql(&sql).await?;
         assert_eq!(
@@ -52,10 +60,10 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
             col_name
         );
     }
-    let _ = server.execute_sql("DROP NAMESPACE test_cols").await;
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {}", test_cols)).await;
 
     // Valid column names
-    let ns = format!("test_valid_cols_{}", std::process::id());
+    let ns = unique_namespace("test_valid_cols");
     let response = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
     assert_eq!(response.status, ResponseStatus::Success);
 
@@ -76,33 +84,49 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
     let _ = server.execute_sql(&format!("DROP NAMESPACE {}", ns)).await;
 
     // No auto id injection / basic CRUD
-    let response = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_no_id").await?;
+    let test_no_id = unique_namespace("test_no_id");
+    let response = server
+        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_no_id))
+        .await?;
     assert_eq!(response.status, ResponseStatus::Success);
 
-    let sql = "CREATE TABLE test_no_id.messages (message TEXT PRIMARY KEY, content TEXT) WITH (TYPE = 'USER')";
-    let response = server.execute_sql(sql).await?;
+    let sql = format!(
+        "CREATE TABLE {}.messages (message TEXT PRIMARY KEY, content TEXT) WITH (TYPE = 'USER')",
+        test_no_id
+    );
+    let response = server.execute_sql(&sql).await?;
     assert_eq!(response.status, ResponseStatus::Success);
 
-    let insert_sql = "INSERT INTO test_no_id.messages (message, content) VALUES ('msg1', 'Hello')";
-    let response = server.execute_sql(insert_sql).await?;
+    let insert_sql = format!(
+        "INSERT INTO {}.messages (message, content) VALUES ('msg1', 'Hello')",
+        test_no_id
+    );
+    let response = server.execute_sql(&insert_sql).await?;
     assert_eq!(response.status, ResponseStatus::Success);
 
-    let response = server.execute_sql("SELECT message, content FROM test_no_id.messages").await?;
+    let response = server
+        .execute_sql(&format!("SELECT message, content FROM {}.messages", test_no_id))
+        .await?;
     assert_eq!(response.status, ResponseStatus::Success);
 
-    let _ = server.execute_sql("DROP NAMESPACE test_no_id").await;
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {}", test_no_id)).await;
 
     // Users can use "id" as a column name
-    let response = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_user_id").await?;
+    let test_user_id = unique_namespace("test_user_id");
+    let response = server
+        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_user_id))
+        .await?;
     assert_eq!(response.status, ResponseStatus::Success);
-    let sql =
-        "CREATE TABLE test_user_id.products (id TEXT PRIMARY KEY, name TEXT) WITH (TYPE = 'USER')";
-    let response = server.execute_sql(sql).await?;
+    let sql = format!(
+        "CREATE TABLE {}.products (id TEXT PRIMARY KEY, name TEXT) WITH (TYPE = 'USER')",
+        test_user_id
+    );
+    let response = server.execute_sql(&sql).await?;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
         "Should allow user-defined 'id' column"
     );
-    let _ = server.execute_sql("DROP NAMESPACE test_user_id").await;
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {}", test_user_id)).await;
     Ok(())
 }

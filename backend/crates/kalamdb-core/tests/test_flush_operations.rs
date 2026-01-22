@@ -4,7 +4,8 @@
 
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use kalamdb_core::error::KalamDbError;
-use kalamdb_core::providers::flush::base::{helpers, FlushJobResult, FlushMetadata, TableFlush};
+use kalamdb_core::manifest::flush::helpers;
+use kalamdb_core::manifest::{FlushJobResult, FlushMetadata, TableFlush};
 use std::sync::Arc;
 
 #[test]

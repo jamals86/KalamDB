@@ -55,6 +55,7 @@ mod tests {
             SystemTable::Namespaces
                 .column_family_name()
                 .expect("Namespaces is a table, not a view")
+                .into()
         );
     }
 

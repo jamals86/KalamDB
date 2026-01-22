@@ -1,5 +1,6 @@
 //! Integration test for Live Query UPDATE detection via WebSocket
 
+use super::test_support::consolidated_helpers::unique_namespace;
 use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;
 use tokio::time::Duration;
@@ -8,7 +9,7 @@ use tokio::time::Duration;
 #[tokio::test]
 async fn test_live_query_detects_updates() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
-    let ns = format!("test_updates_{}", std::process::id());
+    let ns = unique_namespace("test_updates");
     let table = "tasks";
 
     // Setup namespace and table as root

@@ -165,7 +165,13 @@ mod tests {
     fn test_create_users_indexes() {
         let indexes = create_users_indexes();
         assert_eq!(indexes.len(), 2);
-        assert_eq!(indexes[0].partition(), StoragePartition::SystemUsersUsernameIdx.name());
-        assert_eq!(indexes[1].partition(), StoragePartition::SystemUsersRoleIdx.name());
+        assert_eq!(
+            indexes[0].partition(),
+            StoragePartition::SystemUsersUsernameIdx.name().into()
+        );
+        assert_eq!(
+            indexes[1].partition(),
+            StoragePartition::SystemUsersRoleIdx.name().into()
+        );
     }
 }

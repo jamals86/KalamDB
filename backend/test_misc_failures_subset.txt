@@ -1,0 +1,5 @@
+error: unexpected argument 'test_delete_with_where_clause' found
+
+Usage: cargo test [OPTIONS] [TESTNAME] [-- [ARGS]...]
+
+For more information, try '--help'.

@@ -85,6 +85,7 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 rocksdb = { workspace = true }  # Only for TestDb in tests
 parquet = { workspace = true }
+ntest = { workspace = true }
 
 [features]
 # Feature to run expensive/slow tests (disabled by default)

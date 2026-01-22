@@ -1,0 +1,520 @@
+   Compiling kalamdb-server v0.2.0 (/Users/jamal/git/KalamDB/backend)
+warning: struct `ClusterTestServer` is never constructed
+ --> backend/tests/misc/../common/testserver/cluster.rs:8:12
+  |
+8 | pub struct ClusterTestServer {
+  |            ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: multiple associated items are never used
+   --> backend/tests/misc/../common/testserver/cluster.rs:17:12
+    |
+ 15 | impl ClusterTestServer {
+    | ---------------------- associated items in this implementation
+ 16 |     /// Get a reference to a node in the cluster (0, 1, or 2)
+ 17 |     pub fn get_node(&self, index: usize) -> Result<&HttpTestServer> {
+    |            ^^^^^^^^
+...
+ 24 |     pub async fn is_node_online(&self, index: usize) -> Result<bool> {
+    |                  ^^^^^^^^^^^^^^
+...
+ 33 |     pub async fn wait_for_node_online(&self, index: usize) -> Result<()> {
+    |                  ^^^^^^^^^^^^^^^^^^^^
+...
+ 47 |     pub async fn take_node_offline(&self, index: usize) -> Result<()> {
+    |                  ^^^^^^^^^^^^^^^^^
+...
+ 59 |     pub async fn bring_node_online(&self, index: usize) -> Result<()> {
+    |                  ^^^^^^^^^^^^^^^^^
+...
+ 71 |     pub async fn execute_sql_on_random(&self, sql: &str) -> Result<QueryResponse> {
+    |                  ^^^^^^^^^^^^^^^^^^^^^
+...
+ 95 |     pub async fn execute_sql_on_all(&self, sql: &str) -> Result<Vec<QueryResponse>> {
+    |                  ^^^^^^^^^^^^^^^^^^
+...
+108 |     pub async fn execute_sql_on_all_with_indices(
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+124 |     pub async fn verify_data_consistency(&self, query: &str) -> Result<bool> {
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^
+...
+185 |     pub fn new(nodes: Vec<HttpTestServer>) -> Self {
+    |            ^^^
+
+warning: function `get_count_value` is never used
+  --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:43:8
+   |
+43 | pub fn get_count_value(response: &QueryResponse, default: i64) -> i64 {
+   |        ^^^^^^^^^^^^^^^
+
+warning: function `get_first_string` is never used
+  --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:64:8
+   |
+64 | pub fn get_first_string(resp: &QueryResponse, column: &str) -> Option<String> {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `get_first_i64` is never used
+  --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:69:8
+   |
+69 | pub fn get_first_i64(resp: &QueryResponse, column: &str) -> Option<i64> {
+   |        ^^^^^^^^^^^^^
+
+warning: function `get_count` is never used
+  --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:74:8
+   |
+74 | pub fn get_count(resp: &QueryResponse) -> i64 {
+   |        ^^^^^^^^^
+
+warning: function `get_response_rows` is never used
+  --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:79:8
+   |
+79 | pub fn get_response_rows(resp: &QueryResponse) -> Vec<HashMap<String, JsonValue>> {
+   |        ^^^^^^^^^^^^^^^^^
+
+warning: function `json_to_i64` is never used
+  --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:84:8
+   |
+84 | pub fn json_to_i64(v: &JsonValue) -> Option<i64> {
+   |        ^^^^^^^^^^^
+
+warning: function `extract_i64` is never used
+  --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:93:4
+   |
+93 | fn extract_i64(v: &JsonValue) -> Option<i64> {
+   |    ^^^^^^^^^^^
+
+warning: function `get_rows` is never used
+  --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:98:8
+   |
+98 | pub fn get_rows(resp: &QueryResponse) -> Vec<Vec<JsonValue>> {
+   |        ^^^^^^^^
+
+warning: function `get_column_index` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:103:8
+    |
+103 | pub fn get_column_index(resp: &QueryResponse, column_name: &str) -> Option<usize> {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `get_string_value` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:108:8
+    |
+108 | pub fn get_string_value(row: &[JsonValue], idx: usize) -> Option<String> {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `get_i64_value` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:117:8
+    |
+117 | pub fn get_i64_value(row: &[JsonValue], idx: usize) -> Option<i64> {
+    |        ^^^^^^^^^^^^^
+
+warning: function `assert_query_success` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:129:8
+    |
+129 | pub fn assert_query_success(response: &QueryResponse, context: &str) {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_success` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:140:8
+    |
+140 | pub fn assert_success(resp: &QueryResponse, context: &str) {
+    |        ^^^^^^^^^^^^^^
+
+warning: function `assert_query_has_results` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:145:8
+    |
+145 | pub fn assert_query_has_results(response: &QueryResponse, context: &str) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_row_count` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:155:8
+    |
+155 | pub fn assert_row_count(response: &QueryResponse, expected: usize, context: &str) {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `assert_min_row_count` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:166:8
+    |
+166 | pub fn assert_min_row_count(resp: &QueryResponse, min: usize, context: &str) {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_error_contains` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:179:8
+    |
+179 | pub fn assert_error_contains(resp: &QueryResponse, expected: &str, context: &str) {
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_no_duplicates` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:192:8
+    |
+192 | pub fn assert_no_duplicates(resp: &QueryResponse, pk_column: &str) -> Result<()> {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ensure_user_exists` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:217:14
+    |
+217 | pub async fn ensure_user_exists(
+    |              ^^^^^^^^^^^^^^^^^^
+
+warning: function `create_test_users` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:278:14
+    |
+278 | pub async fn create_test_users(
+    |              ^^^^^^^^^^^^^^^^^
+
+warning: function `create_user_and_client` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:289:14
+    |
+289 | pub async fn create_user_and_client(
+    |              ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `find_files_recursive` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:304:8
+    |
+304 | pub fn find_files_recursive(root: &Path, filename: &str) -> Vec<PathBuf> {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_manifest_exists` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:320:8
+    |
+320 | pub fn assert_manifest_exists(storage_root: &Path, ns: &str, table: &str) -> Result<()> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_parquet_exists_and_nonempty` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:343:8
+    |
+343 | pub fn assert_parquet_exists_and_nonempty(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `wait_for_ack` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:382:14
+    |
+382 | pub async fn wait_for_ack(
+    |              ^^^^^^^^^^^^
+
+warning: function `drain_initial_data` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:407:14
+    |
+407 | pub async fn drain_initial_data(
+    |              ^^^^^^^^^^^^^^^^^^
+
+warning: function `run_parallel_users` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:441:14
+    |
+441 | pub async fn run_parallel_users<F, Fut>(
+    |              ^^^^^^^^^^^^^^^^^^
+
+warning: function `unique_table` is never used
+   --> backend/tests/misc/../common/testserver/consolidated_helpers.rs:480:8
+    |
+480 | pub fn unique_table(prefix: &str) -> String {
+    |        ^^^^^^^^^^^^
+
+warning: function `execute_sql` is never used
+  --> backend/tests/misc/../common/testserver/fixtures.rs:64:14
+   |
+64 | pub async fn execute_sql(server: &TestServer, sql: &str, user_id: &str) -> Result<QueryResponse> {
+   |              ^^^^^^^^^^^
+
+warning: function `create_namespace_with_options` is never used
+   --> backend/tests/misc/../common/testserver/fixtures.rs:114:14
+    |
+114 | pub async fn create_namespace_with_options(
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `create_user_table_with_flush` is never used
+   --> backend/tests/misc/../common/testserver/fixtures.rs:208:14
+    |
+208 | pub async fn create_user_table_with_flush(
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `drop_table` is never used
+   --> backend/tests/misc/../common/testserver/fixtures.rs:322:14
+    |
+322 | pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) -> QueryResponse {
+    |              ^^^^^^^^^^
+
+warning: function `insert_message` is never used
+   --> backend/tests/misc/../common/testserver/fixtures.rs:389:14
+    |
+389 | pub async fn insert_message(
+    |              ^^^^^^^^^^^^^^
+
+warning: function `update_message` is never used
+   --> backend/tests/misc/../common/testserver/fixtures.rs:414:14
+    |
+414 | pub async fn update_message(
+    |              ^^^^^^^^^^^^^^
+
+warning: function `delete_message` is never used
+   --> backend/tests/misc/../common/testserver/fixtures.rs:434:14
+    |
+434 | pub async fn delete_message(server: &TestServer, namespace: &str, id: i64) -> QueryResponse {
+    |              ^^^^^^^^^^^^^^
+
+warning: function `query_user_messages` is never used
+   --> backend/tests/misc/../common/testserver/fixtures.rs:446:14
+    |
+446 | pub async fn query_user_messages(
+    |              ^^^^^^^^^^^^^^^^^^^
+
+warning: function `generate_stream_events` is never used
+   --> backend/tests/misc/../common/testserver/fixtures.rs:485:8
+    |
+485 | pub fn generate_stream_events(count: usize) -> Vec<(String, String)> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `is_pending_job_status` is never used
+ --> backend/tests/misc/../common/testserver/flush.rs:8:4
+  |
+8 | fn is_pending_job_status(status: &str) -> bool {
+  |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `wait_for_flush_jobs_settled` is never used
+  --> backend/tests/misc/../common/testserver/flush.rs:13:14
+   |
+13 | pub async fn wait_for_flush_jobs_settled(
+   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `flush_table_and_wait` is never used
+  --> backend/tests/misc/../common/testserver/flush.rs:79:14
+   |
+79 | pub async fn flush_table_and_wait(server: &HttpTestServer, ns: &str, table: &str) -> Result<()> {
+   |              ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `find_parquet_files` is never used
+   --> backend/tests/misc/../common/testserver/flush.rs:101:8
+    |
+101 | pub fn find_parquet_files(root: &Path) -> Vec<PathBuf> {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `count_parquet_files_for_table` is never used
+   --> backend/tests/misc/../common/testserver/flush.rs:122:8
+    |
+122 | pub fn count_parquet_files_for_table(storage_root: &Path, ns: &str, table: &str) -> usize {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `wait_for_parquet_files_for_table` is never used
+   --> backend/tests/misc/../common/testserver/flush.rs:133:14
+    |
+133 | pub async fn wait_for_parquet_files_for_table(
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `wait_for_parquet_files_for_user_table` is never used
+   --> backend/tests/misc/../common/testserver/flush.rs:173:14
+    |
+173 | pub async fn wait_for_parquet_files_for_user_table(
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: static `GLOBAL_CLUSTER_SERVER` is never used
+  --> backend/tests/misc/../common/testserver/http_server.rs:37:8
+   |
+37 | static GLOBAL_CLUSTER_SERVER: OnceCell<ClusterTestServer> = OnceCell::const_new();
+   |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_cluster_server` is never used
+  --> backend/tests/misc/../common/testserver/http_server.rs:99:14
+   |
+99 | pub async fn get_cluster_server() -> &'static ClusterTestServer {
+   |              ^^^^^^^^^^^^^^^^^^
+
+warning: fields `user_id_cache` and `user_password_cache` are never read
+   --> backend/tests/misc/../common/testserver/http_server.rs:124:5
+    |
+110 | pub struct HttpTestServer {
+    |            -------------- fields in this struct
+...
+124 |     user_id_cache: std::sync::Mutex<HashMap<String, String>>,
+    |     ^^^^^^^^^^^^^
+125 |     /// Cache of username -> password for basic auth test clients
+126 |     user_password_cache: std::sync::Mutex<HashMap<String, String>>,
+    |     ^^^^^^^^^^^^^^^^^^^
+
+warning: function `acquire_global_http_test_server_lock` is never used
+   --> backend/tests/misc/../common/testserver/http_server.rs:131:4
+    |
+131 | fn acquire_global_http_test_server_lock() -> Result<Option<std::fs::File>> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: multiple methods are never used
+   --> backend/tests/misc/../common/testserver/http_server.rs:217:12
+    |
+161 | impl HttpTestServer {
+    | ------------------- methods in this implementation
+...
+217 |     pub fn websocket_url(&self) -> String {
+    |            ^^^^^^^^^^^^^
+...
+248 |     pub fn create_jwt_token(&self, username: &UserName) -> String {
+    |            ^^^^^^^^^^^^^^^^
+...
+276 |     pub fn cache_user_id(&self, username: &str, user_id: &str) {
+    |            ^^^^^^^^^^^^^
+...
+282 |     pub fn cache_user_password(&self, username: &str, password: &str) {
+    |            ^^^^^^^^^^^^^^^^^^^
+...
+289 |     pub fn get_cached_user_id(&self, username: &str) -> Option<String> {
+    |            ^^^^^^^^^^^^^^^^^^
+...
+295 |     pub fn get_cached_user_password(&self, username: &str) -> Option<String> {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+301 |     pub async fn ensure_user_exists(
+    |                  ^^^^^^^^^^^^^^^^^^
+...
+348 |     pub fn link_client_with_id(
+    |            ^^^^^^^^^^^^^^^^^^^
+...
+391 |     pub fn link_client(&self, username: &str) -> KalamLinkClient {
+    |            ^^^^^^^^^^^
+...
+416 |     pub async fn execute_sql_with_params(
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `start_cluster_server` is never used
+   --> backend/tests/misc/../common/testserver/http_server.rs:871:10
+    |
+871 | async fn start_cluster_server() -> Result<ClusterTestServer> {
+    |          ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `is_pending_job_status` is never used
+ --> backend/tests/misc/../common/testserver/jobs.rs:7:4
+  |
+7 | fn is_pending_job_status(status: &str) -> bool {
+  |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `extract_cleanup_job_id` is never used
+  --> backend/tests/misc/../common/testserver/jobs.rs:14:8
+   |
+14 | pub fn extract_cleanup_job_id(message: &str) -> Option<String> {
+   |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `wait_for_job_completion` is never used
+  --> backend/tests/misc/../common/testserver/jobs.rs:19:14
+   |
+19 | pub async fn wait_for_job_completion(
+   |              ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `wait_for_path_absent` is never used
+  --> backend/tests/misc/../common/testserver/jobs.rs:72:14
+   |
+72 | pub async fn wait_for_path_absent(path: &std::path::Path, timeout: Duration) -> bool {
+   |              ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_query_success` is never used
+  --> backend/tests/misc/../common/testserver/query_helpers.rs:50:8
+   |
+50 | pub fn assert_query_success(response: &QueryResponse, context: &str) {
+   |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_query_has_results` is never used
+  --> backend/tests/misc/../common/testserver/query_helpers.rs:67:8
+   |
+67 | pub fn assert_query_has_results(response: &QueryResponse, context: &str) {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_row_count` is never used
+  --> backend/tests/misc/../common/testserver/query_helpers.rs:83:8
+   |
+83 | pub fn assert_row_count(response: &QueryResponse, expected: usize, context: &str) {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `get_value_or_default` is never used
+   --> backend/tests/misc/../common/testserver/query_helpers.rs:100:8
+    |
+100 | pub fn get_value_or_default(
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_i64_or_default` is never used
+   --> backend/tests/misc/../common/testserver/query_helpers.rs:117:8
+    |
+117 | pub fn get_i64_or_default(response: &QueryResponse, column_name: &str, default: i64) -> i64 {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `get_string_or_default` is never used
+   --> backend/tests/misc/../common/testserver/query_helpers.rs:128:8
+    |
+128 | pub fn get_string_or_default(
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated function `new` is never used
+  --> backend/tests/misc/../common/testserver/test_server.rs:34:18
+   |
+26 | impl TestServer {
+   | --------------- associated function in this implementation
+...
+34 |     pub async fn new() -> Self {
+   |                  ^^^
+
+warning: `kalamdb-server` (test "test_misc") generated 63 warnings
+    Finished `test` profile [unoptimized] target(s) in 8.84s
+warning: the following packages contain code that will be rejected by a future version of Rust: num-bigint-dig v0.8.4
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running tests/misc/test_misc.rs (/Users/jamal/git/KalamDB/target/debug/deps/test_misc-68479a43aa0f5a5c)
+
+running 60 tests
+test auth::test_auth_performance::benchmark_basic_auth_performance ... ignored, Known actix-web test framework limitation with connection_info()
+test auth::test_as_user_impersonation::test_as_user_with_dba_role ... ok
+test auth::test_auth_performance::test_auth_cache_effectiveness ... ignored, Known actix-web test framework limitation with connection_info()
+test auth::test_as_user_impersonation::test_as_user_blocked_for_regular_user ... ok
+test auth::test_as_user_impersonation::test_as_user_nonexistent_user ... ok
+test auth::test_as_user_impersonation::test_insert_as_user_ownership ... ok
+test auth::test_basic_auth::test_basic_auth_malformed_header ... ok
+test auth::test_basic_auth::test_basic_auth_missing_header ... ok
+test auth::test_basic_auth::test_basic_auth_nonexistent_user ... ok
+test auth::test_cli_auth::test_init_creates_system_user ... ok
+test auth::test_cli_auth::test_system_user_has_metadata ... ok
+test auth::test_cli_auth::test_system_user_password_is_hashed ... ok
+test auth::test_as_user_impersonation::test_delete_as_user ... ok
+test auth::test_as_user_impersonation::test_as_user_on_shared_table_rejected ... ok
+test auth::test_as_user_impersonation::test_as_user_with_service_role ... ok
+test auth::test_as_user_impersonation::test_update_as_user ... ok
+test auth::test_as_user_impersonation::test_as_user_performance ... ok
+test auth::test_jwt_auth::test_jwt_auth_malformed_header ... ok
+test auth::test_jwt_auth::test_jwt_auth_missing_sub_claim ... ok
+test auth::test_auth_performance::benchmark_jwt_auth_performance ... ok
+test auth::test_jwt_auth::test_jwt_auth_expired_token ... ok
+test auth::test_jwt_auth::test_jwt_auth_invalid_signature ... ok
+test auth::test_jwt_auth::test_jwt_auth_success ... ok
+test auth::test_e2e_auth_flow::test_e2e_auth_flow ... ok
+test auth::test_oauth::test_oauth_auto_provision_disabled_by_default ... ok
+test auth::test_live_queries_auth_expiry::test_live_query_auth_expiry ... ok
+test auth::test_jwt_auth::test_jwt_auth_untrusted_issuer ... ok
+test auth::test_basic_auth::test_basic_auth_invalid_credentials ... ok
+test auth::test_basic_auth::test_basic_auth_success ... ok
+test auth::test_e2e_auth_flow::test_password_security_e2e ... ok
+test auth::test_oauth::test_oauth_azure_provider ... ok
+test auth::test_oauth::test_oauth_subject_matching ... ok
+test auth::test_password_complexity::test_complexity_digit_required ... ok
+test auth::test_oauth::test_oauth_google_success ... ok
+test auth::test_password_complexity::test_complexity_lowercase_required ... ok
+test auth::test_password_complexity::test_complexity_special_required ... ok
+test auth::test_password_complexity::test_complexity_uppercase_required ... ok
+test auth::test_oauth::test_oauth_user_missing_fields ... ok
+test auth::test_last_seen::test_authentication_returns_user ... ok
+test auth::test_oauth::test_oauth_user_password_rejected ... ok
+test auth::test_last_seen::test_multiple_authentications_succeed ... ok
+test auth::test_password_complexity::test_complexity_alter_user_requires_special_character ... ok
+test auth::test_e2e_auth_flow::test_role_based_auth_e2e ... ok
+test auth::test_password_complexity::test_complexity_disabled_allows_simple_password ... ok
+test auth::test_password_complexity::test_complexity_valid_password_succeeds ... ok
+test auth::test_rbac::test_service_role_cannot_manage_users ... ok
+test auth::test_password_complexity::test_complexity_alter_user_valid_password_succeeds ... ok
+test auth::test_rbac::test_user_cannot_manage_users ... ok
+test auth::test_soft_delete::test_count_excludes_deleted_rows ... ok
+test auth::test_rbac::test_dba_can_manage_users ... ok
+test auth::test_rbac::test_system_role_all_access_smoke ... ok
+test auth::test_soft_delete::test_deleted_field_default_false ... ok
+test auth::test_soft_delete::test_soft_delete_preserves_data ... ok
+test auth::test_soft_delete::test_soft_delete_hides_rows ... ok
+test auth::test_rbac::test_service_role_flush_operations ... ok
+test auth::test_soft_delete::test_delete_with_where_clause ... ok
+test auth::test_soft_delete::test_multiple_deletes ... ok
+test auth::test_rbac::test_user_role_own_tables_access_and_isolation ... ok
+test auth::test_rbac::test_service_role_cross_user_access ... ok
+test auth::test_auth_performance::test_concurrent_auth_load ... ok
+
+test result: ok. 58 passed; 0 failed; 2 ignored; 0 measured; 131 filtered out; finished in 17.11s
+

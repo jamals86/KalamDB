@@ -1,5 +1,6 @@
 //! Integration test for Live Query INSERT detection via WebSocket
 
+use super::test_support::consolidated_helpers::unique_namespace;
 use futures_util::StreamExt;
 use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;
@@ -9,7 +10,7 @@ use tokio::time::Duration;
 #[tokio::test]
 async fn test_live_query_detects_inserts() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
-    let ns = format!("test_inserts_{}", std::process::id());
+    let ns = unique_namespace("test_inserts");
     let table = "messages";
 
     // Create namespace and table as root

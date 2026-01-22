@@ -3,20 +3,18 @@
 //! These are intentionally short (seconds, not minutes) and run through the real
 //! HTTP surface to cover business logic without flaking CI.
 
+use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
 use super::test_support::http_server::HttpTestServer;
 use futures_util::future::try_join_all;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::UserName;
+use kalamdb_commons::{Role, UserName};
 
 async fn create_user(
     server: &super::test_support::http_server::HttpTestServer,
     user: &str,
 ) -> anyhow::Result<String> {
     let password = "UserPass123!";
-    let resp = server
-        .execute_sql(&format!("CREATE USER '{}' WITH PASSWORD '{}' ROLE 'user'", user, password))
-        .await?;
-    anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE USER failed: {:?}", resp.error);
+    let _ = ensure_user_exists(server, user, password, &Role::User).await?;
     Ok(HttpTestServer::basic_auth_header(&UserName::new(user), password))
 }
 
@@ -50,8 +48,7 @@ async fn count_rows(
 async fn test_stress_smoke_over_http() {
     (async {
     let server = super::test_support::http_server::get_global_server().await;
-    let suffix = std::process::id();
-    let ns = format!("stress_{}", suffix);
+    let ns = unique_namespace("stress");
 
     let resp = server
         .execute_sql(&format!("CREATE NAMESPACE {}", ns))
@@ -62,7 +59,7 @@ async fn test_stress_smoke_over_http() {
         resp.error
     );
 
-    let user = format!("stress_user_{}", suffix);
+    let user = unique_table("stress_user");
     let auth = create_user(server, &user).await?;
 
     let resp = server

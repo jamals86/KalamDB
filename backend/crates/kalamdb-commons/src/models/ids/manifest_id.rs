@@ -5,6 +5,7 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::storage_key::{decode_key, encode_key, encode_prefix};
 use crate::{StorageKey, TableId, UserId};
 
 /// Type-safe wrapper for manifest cache identifiers.
@@ -52,6 +53,14 @@ impl ManifestId {
             Some(uid) => uid.as_str().to_string(),
             None => "shared".to_string(),
         }
+    }
+
+    /// Create a prefix for scanning all manifest entries for a table.
+    pub fn table_prefix(table_id: &TableId) -> Vec<u8> {
+        encode_prefix(&(
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
+        ))
     }
 
     /// Get the ID as a string representation
@@ -110,10 +119,27 @@ impl fmt::Display for ManifestId {
 
 impl StorageKey for ManifestId {
     fn storage_key(&self) -> Vec<u8> {
-        self.as_str().as_bytes().to_vec()
+        encode_key(&(
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str(),
+            self.scope_str(),
+        ))
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        if let Ok((namespace_id, table_name, scope)) =
+            decode_key::<(String, String, String)>(bytes)
+        {
+            let table_id = TableId::from_strings(&namespace_id, &table_name);
+            let user_id = if scope == "shared" {
+                None
+            } else {
+                Some(UserId::from(scope.as_str()))
+            };
+            return Ok(Self { table_id, user_id });
+        }
+
+        // Legacy delimiter-based format fallback
         String::from_utf8(bytes.to_vec())
             .map(|s| ManifestId::from(s))
             .map_err(|e| e.to_string())

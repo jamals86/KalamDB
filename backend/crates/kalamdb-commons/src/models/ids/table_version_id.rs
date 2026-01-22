@@ -3,17 +3,16 @@
 //! This module provides `TableVersionId` - a composite key that combines a TableId
 //! with a version number for storing and retrieving specific schema versions.
 //!
-//! Key format:
-//! - Latest pointer: "{namespace}:{table}<lat>" -> points to current version number
-//! - Versioned:      "{namespace}:{table}<ver>{version:08}" -> full TableDefinition
-//!
-//! The zero-padded version (8 digits) ensures lexicographic ordering for range scans.
+//! Storage key format (storekey tuple encoding):
+//! - Latest pointer: (namespace, table, VERSION_KIND_LATEST)
+//! - Versioned:      (namespace, table, VERSION_KIND_VERSIONED, version)
 
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use super::table_id::TableId;
+use crate::storage_key::{decode_key, encode_key, encode_prefix};
 use crate::StorageKey;
 
 /// Marker for the "latest" version pointer
@@ -21,6 +20,12 @@ pub const LATEST_MARKER: &str = "<lat>";
 
 /// Marker for versioned entries
 pub const VERSION_MARKER: &str = "<ver>";
+
+/// Discriminator for latest pointer keys
+pub const VERSION_KIND_LATEST: u8 = 0;
+
+/// Discriminator for versioned keys
+pub const VERSION_KIND_VERSIONED: u8 = 1;
 
 /// Composite key for versioned table schema storage
 ///
@@ -31,12 +36,11 @@ pub const VERSION_MARKER: &str = "<ver>";
 /// # Storage Key Format
 ///
 /// ```text
-/// Latest:    "default:users<lat>"
-/// Versioned: "default:users<ver>00000001"
+/// Latest:    ("default", "users", 0u8)
+/// Versioned: ("default", "users", 1u8, 1u32)
 /// ```
 ///
-/// The 8-digit zero-padded version ensures lexicographic ordering for efficient
-/// range scans when listing all versions of a table.
+/// Storekey preserves lexicographic ordering for efficient range scans.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
 pub struct TableVersionId {
     /// The base table identifier
@@ -53,7 +57,7 @@ impl TableVersionId {
     /// ```rust,ignore
     /// let table_id = TableId::from_strings("default", "users");
     /// let latest = TableVersionId::latest(table_id);
-    /// // Storage key: "default:users<lat>"
+    /// // Storage key: ("default", "users", 0u8)
     /// ```
     pub fn latest(table_id: TableId) -> Self {
         Self {
@@ -68,7 +72,7 @@ impl TableVersionId {
     /// ```rust,ignore
     /// let table_id = TableId::from_strings("default", "users");
     /// let v1 = TableVersionId::versioned(table_id, 1);
-    /// // Storage key: "default:users<ver>00000001"
+    /// // Storage key: ("default", "users", 1u8, 1u32)
     /// ```
     pub fn versioned(table_id: TableId, version: u32) -> Self {
         Self {
@@ -111,55 +115,62 @@ impl TableVersionId {
     /// ```rust,ignore
     /// let table_id = TableId::from_strings("default", "users");
     /// let prefix = TableVersionId::version_scan_prefix(&table_id);
-    /// // Returns: b"default:users<ver>"
+    /// // Returns storekey prefix for versioned entries
     /// ```
     pub fn version_scan_prefix(table_id: &TableId) -> Vec<u8> {
-        let mut key = table_id.as_storage_key();
-        key.extend_from_slice(VERSION_MARKER.as_bytes());
-        key
+        encode_prefix(&(
+            table_id.namespace_id().as_str(),
+            table_id.table_name().as_str(),
+            VERSION_KIND_VERSIONED,
+        ))
     }
 
     /// Format as bytes for storage
     ///
-    /// - Latest: "{namespace}:{table}<lat>"
-    /// - Versioned: "{namespace}:{table}<ver>{version:08}"
+    /// - Latest: (namespace, table, VERSION_KIND_LATEST)
+    /// - Versioned: (namespace, table, VERSION_KIND_VERSIONED, version)
     pub fn as_storage_key(&self) -> Vec<u8> {
-        let mut key = self.table_id.as_storage_key();
+        let namespace_id = self.table_id.namespace_id().as_str();
+        let table_name = self.table_id.table_name().as_str();
 
         match self.version {
-            None => {
-                key.extend_from_slice(LATEST_MARKER.as_bytes());
-            },
-            Some(v) => {
-                key.extend_from_slice(VERSION_MARKER.as_bytes());
-                // Zero-pad to 8 digits for lexicographic ordering
-                key.extend_from_slice(format!("{:08}", v).as_bytes());
-            },
+            None => encode_key(&(namespace_id, table_name, VERSION_KIND_LATEST)),
+            Some(v) => encode_key(&(namespace_id, table_name, VERSION_KIND_VERSIONED, v)),
         }
-
-        key
     }
 
     /// Parse from storage key bytes
     ///
     /// Handles both latest pointer and versioned formats.
     pub fn from_storage_key(key: &[u8]) -> Option<Self> {
-        let key_str = std::str::from_utf8(key).ok()?;
+        if let Ok((namespace_id, table_name, kind, version)) =
+            decode_key::<(String, String, u8, u32)>(key)
+        {
+            if kind == VERSION_KIND_VERSIONED {
+                let table_id = TableId::from_strings(&namespace_id, &table_name);
+                return Some(Self::versioned(table_id, version));
+            }
+        }
 
-        // Check for latest marker
+        if let Ok((namespace_id, table_name, kind)) = decode_key::<(String, String, u8)>(key) {
+            if kind == VERSION_KIND_LATEST {
+                let table_id = TableId::from_strings(&namespace_id, &table_name);
+                return Some(Self::latest(table_id));
+            }
+        }
+
+        // Legacy delimiter-based format fallback
+        let key_str = std::str::from_utf8(key).ok()?;
         if let Some(base) = key_str.strip_suffix(LATEST_MARKER) {
             let table_id = TableId::from_storage_key(base.as_bytes())?;
             return Some(Self::latest(table_id));
         }
 
-        // Check for version marker
         if let Some(pos) = key_str.find(VERSION_MARKER) {
             let base = &key_str[..pos];
             let version_str = &key_str[pos + VERSION_MARKER.len()..];
-
             let table_id = TableId::from_storage_key(base.as_bytes())?;
             let version = version_str.parse::<u32>().ok()?;
-
             return Some(Self::versioned(table_id, version));
         }
 
@@ -204,7 +215,9 @@ mod tests {
         assert_eq!(latest.version(), None);
 
         let key = latest.as_storage_key();
-        assert_eq!(key, b"default:users<lat>");
+        assert!(!key.is_empty());
+        let parsed = TableVersionId::from_storage_key(&key).unwrap();
+        assert_eq!(parsed, latest);
     }
 
     #[test]
@@ -215,7 +228,9 @@ mod tests {
         assert_eq!(v1.version(), Some(1));
 
         let key = v1.as_storage_key();
-        assert_eq!(key, b"default:users<ver>00000001");
+        assert!(!key.is_empty());
+        let parsed = TableVersionId::from_storage_key(&key).unwrap();
+        assert_eq!(parsed, v1);
     }
 
     #[test]
@@ -256,8 +271,6 @@ mod tests {
     fn test_version_scan_prefix() {
         let table_id = test_table_id();
         let prefix = TableVersionId::version_scan_prefix(&table_id);
-        assert_eq!(prefix, b"default:users<ver>");
-
         // Test that prefix matches versioned keys
         let v1 = TableVersionId::versioned(table_id.clone(), 1);
         let v1_key = v1.as_storage_key();

@@ -219,7 +219,7 @@ impl LiveQueriesTableProvider {
 
     /// Delete live queries by user ID and connection ID using efficient primary key prefix scan.
     ///
-    /// PERFORMANCE: Uses prefix scan on primary key format `{user_id}-{connection_id}-`.
+    /// PERFORMANCE: Uses storekey prefix scan on (user_id, connection_id).
     /// With max ~10 live queries per user, this is effectively O(1).
     /// No secondary index needed - saves write overhead on every insert/update/delete.
     pub fn delete_by_connection_id(
@@ -227,13 +227,12 @@ impl LiveQueriesTableProvider {
         user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<(), SystemError> {
-        // Create prefix key for scanning: "user_id-connection_id-"
-        let prefix = LiveQueryId::user_connection_prefix(user_id, connection_id);
-        let prefix_bytes = prefix.as_bytes();
+        // Create prefix key for scanning
+        let prefix_bytes = LiveQueryId::user_connection_prefix(user_id, connection_id);
 
         // Scan all keys with this prefix (max ~10 per user)
         let results =
-            self.store.scan_limited_with_prefix_and_start(Some(prefix_bytes), None, 100)?;
+            self.store.scan_limited_with_prefix_and_start(Some(&prefix_bytes), None, 100)?;
 
         // Delete each matching key (uses atomic WriteBatch internally)
         for (key_bytes, _) in results {
@@ -246,15 +245,14 @@ impl LiveQueriesTableProvider {
 
     /// Async version of `delete_by_connection_id()` - offloads to blocking thread pool.
     ///
-    /// Uses efficient primary key prefix scan on `{user_id}-{connection_id}-`.
+    /// Uses efficient primary key prefix scan on (user_id, connection_id).
     pub async fn delete_by_connection_id_async(
         &self,
         user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<(), SystemError> {
-        // Create prefix key for scanning: "user_id-connection_id-"
-        let prefix = LiveQueryId::user_connection_prefix(user_id, connection_id);
-        let prefix_bytes = prefix.as_bytes().to_vec();
+        // Create prefix key for scanning
+        let prefix_bytes = LiveQueryId::user_connection_prefix(user_id, connection_id);
 
         // Scan all keys with this prefix (async)
         let results: Vec<(Vec<u8>, LiveQuery)> = {
