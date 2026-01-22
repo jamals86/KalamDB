@@ -30,7 +30,7 @@ use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::User;
 use kalamdb_commons::RecordBatchBuilder;
-use kalamdb_commons::{StorageKey, UserId};
+use kalamdb_commons::UserId;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
@@ -221,7 +221,7 @@ impl UsersTableProvider {
     }
 
     /// Helper to create RecordBatch from users
-    fn create_batch(&self, users: Vec<(Vec<u8>, User)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch(&self, users: Vec<(UserId, User)>) -> Result<RecordBatch, SystemError> {
         // Extract data into vectors
         let mut user_ids = Vec::with_capacity(users.len());
         let mut usernames = Vec::with_capacity(users.len());
@@ -277,12 +277,7 @@ impl UsersTableProvider {
 
     /// Scan all users and return as RecordBatch
     pub fn scan_all_users(&self) -> Result<RecordBatch, SystemError> {
-        let iter = self.store.scan_iterator(None, None)?;
-        let mut users: Vec<(Vec<u8>, User)> = Vec::new();
-        for item in iter {
-            let (id, user) = item?;
-            users.push((id.storage_key(), user));
-        }
+        let users = self.store.scan_all_typed(None, None, None)?;
         self.create_batch(users)
     }
 }
@@ -365,7 +360,7 @@ impl TableProvider for UsersTableProvider {
 
         // Prefer secondary index scans when possible (auto-picks from store.indexes()).
         // Falls back to main-partition scan with (user_id) prefix/start_key.
-        let users: Vec<(Vec<u8>, User)> = if let Some((index_idx, index_prefix)) =
+        let users: Vec<(UserId, User)> = if let Some((index_idx, index_prefix)) =
             self.store.find_best_index_for_filters(filters)
         {
             log::debug!(
@@ -378,16 +373,13 @@ impl TableProvider for UsersTableProvider {
                 .map_err(|e| {
                     DataFusionError::Execution(format!("Failed to scan users by index: {}", e))
                 })?
-                .into_iter()
-                .map(|(id, user)| (id.storage_key(), user))
-                .collect()
         } else {
             log::debug!(
                 "[system.users] Full table scan (no index match) for filters: {:?}",
                 filters
             );
             self.store
-                .scan_all(limit, prefix.as_ref(), start_key.as_ref())
+                .scan_all_typed(limit, prefix.as_ref(), start_key.as_ref())
                 .map_err(|e| DataFusionError::Execution(format!("Failed to scan users: {}", e)))?
         };
 

@@ -16,7 +16,6 @@ use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::AuditLogId;
 use kalamdb_commons::system::AuditLogEntry;
 use kalamdb_commons::RecordBatchBuilder;
-use kalamdb_commons::StorageKey;
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -94,7 +93,7 @@ impl AuditLogsTableProvider {
     /// Helper to create RecordBatch from entries
     fn create_batch(
         &self,
-        entries: Vec<(Vec<u8>, AuditLogEntry)>,
+        entries: Vec<(AuditLogId, AuditLogEntry)>,
     ) -> Result<RecordBatch, SystemError> {
         // Extract data into vectors
         let mut audit_ids = Vec::with_capacity(entries.len());
@@ -136,12 +135,7 @@ impl AuditLogsTableProvider {
 
     /// Scan all audit log entries and return as RecordBatch
     pub fn scan_all_entries(&self) -> Result<RecordBatch, SystemError> {
-        let iter = self.store.scan_iterator(None, None)?;
-        let mut entries: Vec<(Vec<u8>, AuditLogEntry)> = Vec::new();
-        for item in iter {
-            let (id, entry) = item?;
-            entries.push((id.storage_key(), entry));
-        }
+        let entries = self.store.scan_all_typed(None, None, None)?;
         self.create_batch(entries)
     }
 
@@ -149,11 +143,7 @@ impl AuditLogsTableProvider {
     pub fn scan_entries_limited(&self, limit: usize) -> Result<RecordBatch, SystemError> {
         use kalamdb_store::entity_store::{EntityStore, ScanDirection};
         let iter = self.store.scan_directional(None, ScanDirection::Newer, limit)?;
-        let mut entries: Vec<(Vec<u8>, AuditLogEntry)> = Vec::new();
-        for item in iter {
-            let (id, entry) = item?;
-            entries.push((id.storage_key(), entry));
-        }
+        let entries: Vec<(AuditLogId, AuditLogEntry)> = iter.collect::<Result<Vec<_>, _>>()?;
         self.create_batch(entries)
     }
 
@@ -256,7 +246,7 @@ impl TableProvider for AuditLogsTableProvider {
         let schema = AuditLogsTableSchema::schema();
         let entries = self
             .store
-            .scan_all(limit, prefix.as_ref(), start_key.as_ref())
+            .scan_all_typed(limit, prefix.as_ref(), start_key.as_ref())
             .map_err(|e| DataFusionError::Execution(format!("Failed to scan audit logs: {}", e)))?;
 
         let batch = self.create_batch(entries).map_err(|e| {

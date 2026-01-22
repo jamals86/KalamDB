@@ -14,11 +14,9 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::StorageKey;
-use kalamdb_commons::storage::StorageError;
 use kalamdb_commons::types::ManifestCacheEntry;
 use kalamdb_commons::RecordBatchBuilder;
-use kalamdb_store::entity_store::{EntityStore, KSerializable};
+use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::{Arc, RwLock};
@@ -85,28 +83,11 @@ impl ManifestTableProvider {
     ///
     /// Uses schema-driven array building for optimal performance and correctness.
     pub fn scan_to_record_batch(&self) -> Result<RecordBatch, SystemError> {
-        let partition = self.store.partition();
-        let iter = self
+        // Use typed scan which properly deserializes ManifestId keys via StorageKey trait
+        let entries: Vec<(ManifestId, ManifestCacheEntry)> = self
             .store
-            .backend()
-            .scan(&partition, None, None, Some(100000))?;
-
-        let mut entries: Vec<(Vec<u8>, ManifestCacheEntry)> = Vec::new();
-        for (key_bytes, value_bytes) in iter {
-            match ManifestCacheEntry::decode(&value_bytes) {
-                Ok(entry) => entries.push((key_bytes, entry)),
-                Err(StorageError::SerializationError(err)) => {
-                    log::warn!(
-                        "Corrupted manifest cache entry skipped: {}",
-                        err
-                    );
-                    if let Ok(cache_key) = ManifestId::from_storage_key(&key_bytes) {
-                        let _ = self.store().delete(&cache_key);
-                    }
-                }
-                Err(err) => return Err(SystemError::Storage(err.to_string())),
-            }
-        }
+            .scan_all_typed(Some(100000), None, None)
+            .map_err(|e| SystemError::Storage(e.to_string()))?;
 
         // Extract data into vectors
         let mut cache_keys = Vec::with_capacity(entries.len());
@@ -121,32 +102,20 @@ impl ManifestTableProvider {
         let mut manifest_jsons = Vec::with_capacity(entries.len());
 
         // Build arrays by iterating entries once
-        for (key_bytes, entry) in entries {
-            let cache_key = String::from_utf8_lossy(&key_bytes);
-
-            // Parse cache key (format: namespace:table:scope)
-            let mut parts = cache_key.splitn(3, ':');
-            let namespace = parts.next();
-            let table = parts.next();
-            let scope = parts.next();
-            if namespace.is_none() || table.is_none() || scope.is_none() {
-                log::warn!("Invalid cache key format: {}", cache_key);
-                continue;
-            }
-
-            let cache_key_str = cache_key.to_string();
+        for (manifest_id, entry) in entries {
+            let cache_key_str = manifest_id.as_str();
             let is_hot = self.is_in_memory(&cache_key_str);
 
             // Serialize manifest_json before moving entry fields
             let manifest_json_str = entry.manifest_json();
 
             cache_keys.push(Some(cache_key_str));
-            namespace_ids.push(Some(namespace.unwrap().to_string()));
-            table_names.push(Some(table.unwrap().to_string()));
-            scopes.push(Some(scope.unwrap().to_string()));
+            namespace_ids.push(Some(manifest_id.table_id().namespace_id().as_str().to_string()));
+            table_names.push(Some(manifest_id.table_id().table_name().as_str().to_string()));
+            scopes.push(Some(manifest_id.scope_str()));
             etags.push(entry.etag);
             last_refreshed_vals.push(Some(entry.last_refreshed * 1000)); // Convert to milliseconds
-                                                                         // last_accessed = last_refreshed (moka manages TTI internally, we can't get actual access time)
+            // last_accessed = last_refreshed (moka manages TTI internally, we can't get actual access time)
             last_accessed_vals.push(Some(entry.last_refreshed * 1000));
             in_memory_vals.push(Some(is_hot));
             sync_states.push(Some(entry.sync_state.to_string()));
@@ -223,6 +192,7 @@ mod tests {
     use super::*;
     use kalamdb_commons::types::{Manifest, ManifestCacheEntry, SyncState};
     use kalamdb_commons::{NamespaceId, TableId, TableName};
+    use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     #[tokio::test]

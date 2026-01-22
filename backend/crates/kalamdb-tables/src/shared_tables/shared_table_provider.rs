@@ -694,10 +694,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // IGNORE user_id parameter - scan ALL rows (hot storage)
 
         // Construct start_key if since_seq is provided
-        let start_key_bytes = if let Some(seq) = since_seq {
+        let start_key = if let Some(seq) = since_seq {
             // since_seq is exclusive, so start at seq + 1
-            let start_seq = kalamdb_commons::ids::SeqId::from(seq.as_i64() + 1);
-            Some(kalamdb_commons::StorageKey::storage_key(&start_seq))
+            Some(kalamdb_commons::ids::SeqId::from(seq.as_i64() + 1))
         } else {
             None
         };
@@ -705,34 +704,21 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Calculate scan limit using common helper
         let scan_limit = base::calculate_scan_limit(limit);
 
-        let raw = self
+        let hot_rows = self
             .store
-            .scan_limited_with_prefix_and_start(None, start_key_bytes.as_deref(), scan_limit)
+            .scan_typed_with_prefix_and_start(None, start_key.as_ref(), scan_limit)
             .map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to scan shared table hot storage: {}",
                     e
                 ))
             })?;
-        log::debug!("[SharedProvider] RocksDB scan returned {} rows", raw.len());
+        log::debug!("[SharedProvider] RocksDB scan returned {} rows", hot_rows.len());
 
         // Scan cold storage (Parquet files) - pass filter for pruning
         let parquet_batch = self.scan_parquet_files_as_batch(filter)?;
 
         let pk_name = self.primary_key_field_name().to_string();
-
-        let hot_rows: Vec<(SharedTableRowId, SharedTableRow)> = raw
-            .into_iter()
-            .filter_map(|(key_bytes, row)| {
-                match kalamdb_commons::ids::SeqId::from_bytes(&key_bytes) {
-                    Ok(seq) => Some((seq, row)),
-                    Err(err) => {
-                        log::warn!("Skipping invalid SeqId key bytes: {}", err);
-                        None
-                    },
-                }
-            })
-            .collect();
 
         let cold_rows: Vec<(SharedTableRowId, SharedTableRow)> =
             parquet_batch_to_rows(&parquet_batch)?

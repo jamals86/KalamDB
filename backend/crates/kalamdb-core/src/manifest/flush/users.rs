@@ -12,6 +12,7 @@ use crate::schema_registry::SchemaRegistry;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::ids::UserTableRowId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::schemas::TableType;
@@ -277,11 +278,11 @@ impl TableFlush for UserTableFlushJob {
         let mut stats = FlushDedupStats::default();
 
         // Batched scan with cursor
-        let mut cursor: Option<Vec<u8>> = None;
+        let mut cursor: Option<UserTableRowId> = None;
         loop {
             let batch = self
                 .store
-                .scan_limited_with_prefix_and_start(None, cursor.as_deref(), config::BATCH_SIZE)
+                .scan_typed_with_prefix_and_start(None, cursor.as_ref(), config::BATCH_SIZE)
                 .map_err(|e| {
                     log::error!("❌ Failed to scan table={}: {}", self.table_id, e);
                     KalamDbError::Other(format!("Failed to scan table: {}", e))
@@ -294,27 +295,20 @@ impl TableFlush for UserTableFlushJob {
             log::trace!(
                 "[FLUSH] Processing batch of {} rows (cursor={:?})",
                 batch.len(),
-                cursor.as_ref().map(|c| c.len())
+                cursor.as_ref().map(|c| c.seq().as_i64())
             );
 
             // Update cursor for next batch
-            cursor = batch.last().map(|(key, _)| helpers::advance_cursor(key));
+            cursor = batch.last().map(|(key, _)| key.clone());
 
             let batch_len = batch.len();
             stats.rows_before_dedup += batch_len;
 
-            for (key_bytes, row) in batch {
+            for (row_id, row) in batch {
                 // Track ALL keys for deletion (before dedup)
-                all_keys_to_delete.push(key_bytes.clone());
+                all_keys_to_delete.push(row_id.storage_key());
 
                 // Parse user_id from key
-                let row_id = match kalamdb_commons::ids::UserTableRowId::from_storage_key(&key_bytes) {
-                    Ok(id) => id,
-                    Err(e) => {
-                        log::warn!("Skipping row due to invalid key format: {}", e);
-                        continue;
-                    },
-                };
                 let user_id = row_id.user_id().as_str().to_string();
 
                 // Extract PK value from fields
@@ -334,11 +328,11 @@ impl TableFlush for UserTableFlushJob {
                         if seq_val > *existing_seq {
                             log::trace!("[FLUSH DEDUP] Replacing user={}, pk={}: old_seq={}, new_seq={}, deleted={}",
                                        user_id, pk_value, existing_seq, seq_val, row._deleted);
-                            latest_versions.insert(group_key, (key_bytes, row, seq_val));
+                            latest_versions.insert(group_key, (row_id.storage_key(), row, seq_val));
                         }
                     },
                     None => {
-                        latest_versions.insert(group_key, (key_bytes, row, seq_val));
+                        latest_versions.insert(group_key, (row_id.storage_key(), row, seq_val));
                     },
                 }
             }

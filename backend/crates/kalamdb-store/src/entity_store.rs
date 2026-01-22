@@ -370,56 +370,82 @@ where
 
     /// Scans entities with keys matching the given prefix.
     ///
-    /// Returns a vector of (key, entity) pairs. Keys are deserialized from bytes.
-    ///
-    /// **Note**: This method returns raw byte keys. Subtraits may provide
-    /// type-safe key deserialization for specific key types.
+    /// Returns a vector of (K, V) pairs with properly deserialized keys.
+    /// Entries with malformed keys are skipped with a warning log.
     ///
     /// ## Example
     ///
     /// ```rust,ignore
     /// let prefix = UserId::new("user_");
-    /// let results = store.scan_prefix(&prefix)?;
-    /// for (key_bytes, user) in results {
-    ///     println!("User: {}", user.name);
+    /// let results = store.scan_prefix_typed(&prefix, None)?;
+    /// for (user_id, user) in results {
+    ///     println!("User {}: {}", user_id, user.name);
     /// }
     /// ```
-    fn scan_prefix(&self, prefix: &K) -> Result<Vec<(Vec<u8>, V)>> {
+    fn scan_prefix_typed(&self, prefix: &K, limit: Option<usize>) -> Result<Vec<(K, V)>> {
+        const MAX_SCAN_LIMIT: usize = 100000;
+        let effective_limit = limit.unwrap_or(MAX_SCAN_LIMIT);
         let partition = self.partition();
-        let iter = self.backend().scan(&partition, Some(&prefix.storage_key()), None, None)?;
+        let iter = self.backend().scan(
+            &partition,
+            Some(&prefix.storage_key()),
+            None,
+            Some(effective_limit),
+        )?;
 
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
-            let entity = self.deserialize(&value_bytes)?;
-            results.push((key_bytes, entity));
+            let key = match K::from_storage_key(&key_bytes) {
+                Ok(k) => k,
+                Err(e) => {
+                    log::warn!("Skipping entry with malformed key: {}", e);
+                    continue;
+                }
+            };
+            let entity = match self.deserialize(&value_bytes) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("Skipping entry with malformed value: {}", e);
+                    continue;
+                }
+            };
+            results.push((key, entity));
+            if results.len() >= effective_limit {
+                break;
+            }
         }
 
         Ok(results)
     }
 
-    /// Scans entities in the partition with optional limit, prefix, and start key.
+    /// Scans all entities in the partition with typed key deserialization.
     ///
-    /// **Warning**: If limit is None, this loads all entities into memory (up to a hard limit).
-    /// Use with caution on large datasets.
+    /// Returns a vector of (K, V) pairs with properly deserialized keys.
+    /// Entries with malformed keys are skipped with a warning log.
+    ///
+    /// ## Arguments
+    /// * `limit` - Maximum entries to return (defaults to 100,000)
+    /// * `prefix` - Optional key prefix to filter by
+    /// * `start_key` - Optional key to start scanning from
     ///
     /// ## Example
     ///
     /// ```rust,ignore
-    /// let all_users = store.scan_all(None, None, None)?;
-    /// println!("Total users: {}", all_users.len());
+    /// let all_users = store.scan_all_typed(None, None, None)?;
+    /// for (user_id, user) in all_users {
+    ///     println!("User {}: {}", user_id, user.name);
+    /// }
     /// ```
-    fn scan_all(
+    fn scan_all_typed(
         &self,
         limit: Option<usize>,
         prefix: Option<&K>,
         start_key: Option<&K>,
-    ) -> Result<Vec<(Vec<u8>, V)>> {
-        // Place a hard limit to bypass scanning massive tables into memory
+    ) -> Result<Vec<(K, V)>> {
         const MAX_SCAN_LIMIT: usize = 100000;
         let effective_limit = limit.unwrap_or(MAX_SCAN_LIMIT);
 
         let partition = self.partition();
-
         let prefix_bytes = prefix.map(|k| k.storage_key());
         let start_key_bytes = start_key.map(|k| k.storage_key());
 
@@ -432,8 +458,21 @@ where
 
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
-            let entity = self.deserialize(&value_bytes)?;
-            results.push((key_bytes, entity));
+            let key = match K::from_storage_key(&key_bytes) {
+                Ok(k) => k,
+                Err(e) => {
+                    log::warn!("Skipping entry with malformed key: {}", e);
+                    continue;
+                }
+            };
+            let entity = match self.deserialize(&value_bytes) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("Skipping entry with malformed value: {}", e);
+                    continue;
+                }
+            };
+            results.push((key, entity));
             if results.len() >= effective_limit {
                 break;
             }
@@ -442,20 +481,46 @@ where
         Ok(results)
     }
 
-    /// Scans entities with limit, optional prefix, and optional start key.
-    fn scan_limited_with_prefix_and_start(
+    /// Scans entities with raw byte prefix (for partial key prefixes).
+    ///
+    /// This method accepts a raw byte prefix (e.g., for scanning with partial composite keys)
+    /// but always returns properly typed (K, V) pairs. Use this when you have a raw byte prefix
+    /// that doesn't correspond to a complete key (e.g., JobNodeId::prefix_for_node returns only
+    /// the node_id component, not a complete JobNodeId).
+    ///
+    /// ## Example
+    /// ```rust,ignore
+    /// // When prefix_for_node returns Vec<u8> (partial key)
+    /// let prefix_bytes = JobNodeId::prefix_for_node(&node_id);
+    /// let results = store.scan_with_raw_prefix(&prefix_bytes, None, limit)?;
+    /// // Returns Vec<(JobNodeId, JobNode)> with properly typed keys
+    /// ```
+    fn scan_with_raw_prefix(
         &self,
-        prefix: Option<&[u8]>,
+        prefix: &[u8],
         start_key: Option<&[u8]>,
         limit: usize,
-    ) -> Result<Vec<(Vec<u8>, V)>> {
+    ) -> Result<Vec<(K, V)>> {
         let partition = self.partition();
-        let iter = self.backend().scan(&partition, prefix, start_key, Some(limit))?;
+        let iter = self.backend().scan(&partition, Some(prefix), start_key, Some(limit))?;
 
         let mut results = Vec::with_capacity(limit);
         for (key_bytes, value_bytes) in iter {
-            let entity = self.deserialize(&value_bytes)?;
-            results.push((key_bytes, entity));
+            let key = match K::from_storage_key(&key_bytes) {
+                Ok(k) => k,
+                Err(e) => {
+                    log::warn!("Skipping entry with malformed key: {}", e);
+                    continue;
+                }
+            };
+            let entity = match self.deserialize(&value_bytes) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("Skipping entry with malformed value: {}", e);
+                    continue;
+                }
+            };
+            results.push((key, entity));
             if results.len() >= limit {
                 break;
             }
@@ -463,25 +528,82 @@ where
         Ok(results)
     }
 
-    /// Scans keys with limit, optional prefix, and optional start key.
+    /// Scans entities with typed prefix and start key (returns typed keys).
+    ///
+    /// Similar to `scan_all_typed` but uses typed prefix and start_key.
+    fn scan_typed_with_prefix_and_start(
+        &self,
+        prefix: Option<&K>,
+        start_key: Option<&K>,
+        limit: usize,
+    ) -> Result<Vec<(K, V)>> {
+        let partition = self.partition();
+        let prefix_bytes = prefix.map(|k| k.storage_key());
+        let start_bytes = start_key.map(|k| k.storage_key());
+        let iter = self.backend().scan(
+            &partition,
+            prefix_bytes.as_deref(),
+            start_bytes.as_deref(),
+            Some(limit),
+        )?;
+
+        let mut results = Vec::with_capacity(limit);
+        for (key_bytes, value_bytes) in iter {
+            let key = match K::from_storage_key(&key_bytes) {
+                Ok(k) => k,
+                Err(e) => {
+                    log::warn!("Skipping entry with malformed key: {}", e);
+                    continue;
+                }
+            };
+            let entity = match self.deserialize(&value_bytes) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("Skipping entry with malformed value: {}", e);
+                    continue;
+                }
+            };
+            results.push((key, entity));
+            if results.len() >= limit {
+                break;
+            }
+        }
+        Ok(results)
+    }
+
+    /// Scans keys with typed prefix and start key (returns typed keys).
     ///
     /// This avoids deserializing values, which is useful for TTL eviction and key-only scans.
-    fn scan_keys_limited_with_prefix_and_start(
+    fn scan_keys_typed(
         &self,
-        prefix: Option<&[u8]>,
-        start_key: Option<&[u8]>,
+        prefix: Option<&K>,
+        start_key: Option<&K>,
         limit: usize,
-    ) -> Result<Vec<Vec<u8>>> {
+    ) -> Result<Vec<K>> {
         if limit == 0 {
             return Ok(Vec::new());
         }
 
         let partition = self.partition();
-        let iter = self.backend().scan(&partition, prefix, start_key, Some(limit))?;
+        let prefix_bytes = prefix.map(|k| k.storage_key());
+        let start_bytes = start_key.map(|k| k.storage_key());
+        let iter = self.backend().scan(
+            &partition,
+            prefix_bytes.as_deref(),
+            start_bytes.as_deref(),
+            Some(limit),
+        )?;
 
         let mut keys = Vec::with_capacity(limit);
         for (key_bytes, _) in iter {
-            keys.push(key_bytes);
+            let key = match K::from_storage_key(&key_bytes) {
+                Ok(k) => k,
+                Err(e) => {
+                    log::warn!("Skipping entry with malformed key: {}", e);
+                    continue;
+                }
+            };
+            keys.push(key);
             if keys.len() >= limit {
                 break;
             }
@@ -634,7 +756,8 @@ where
     ) -> Result<Vec<(Vec<u8>, V)>> {
         let store = self.clone();
         tokio::task::spawn_blocking(move || {
-            store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+            let typed_results = store.scan_all_typed(limit, prefix.as_ref(), start_key.as_ref())?;
+            Ok(typed_results.into_iter().map(|(k, v)| (k.storage_key(), v)).collect())
         })
         .await
         .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
@@ -646,9 +769,12 @@ where
     async fn scan_prefix_async(&self, prefix: &K) -> Result<Vec<(Vec<u8>, V)>> {
         let store = self.clone();
         let prefix = prefix.clone();
-        tokio::task::spawn_blocking(move || store.scan_prefix(&prefix))
-            .await
-            .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+        tokio::task::spawn_blocking(move || {
+            let typed_results = store.scan_prefix_typed(&prefix, None)?;
+            Ok(typed_results.into_iter().map(|(k, v)| (k.storage_key(), v)).collect())
+        })
+        .await
+        .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
     }
 
     /// Async version of `scan_directional()` - scans relative to a starting key.

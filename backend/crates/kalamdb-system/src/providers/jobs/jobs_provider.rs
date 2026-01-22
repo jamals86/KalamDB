@@ -34,7 +34,7 @@ use kalamdb_commons::{
     system::{Job, JobFilter, JobSortField, SortOrder},
     JobId, JobStatus,
 };
-use kalamdb_commons::{StorageKey, SystemTable};
+use kalamdb_commons::SystemTable;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
@@ -239,7 +239,7 @@ impl JobsTableProvider {
         }
 
         // Fallback to full scan
-        let all_jobs = self.store.scan_all(None, None, None)?;
+        let all_jobs = self.store.scan_all_typed(None, None, None)?;
         let mut jobs: Vec<Job> = all_jobs.into_iter().map(|(_, job)| job).collect();
 
         // Apply filters in memory
@@ -501,7 +501,7 @@ impl JobsTableProvider {
     }
 
     /// Helper to create RecordBatch from jobs
-    fn create_batch(&self, jobs: Vec<(Vec<u8>, Job)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch(&self, jobs: Vec<(JobId, Job)>) -> Result<RecordBatch, SystemError> {
         // Extract data into vectors
         let mut job_ids = Vec::with_capacity(jobs.len());
         let mut job_types = Vec::with_capacity(jobs.len());
@@ -564,7 +564,7 @@ impl JobsTableProvider {
 
     /// Scan all jobs and return as RecordBatch
     pub fn scan_all_jobs(&self) -> Result<RecordBatch, SystemError> {
-        let jobs = self.store.scan_all(None, None, None)?;
+        let jobs = self.store.scan_all_typed(None, None, None)?;
         self.create_batch(jobs)
     }
 }
@@ -722,7 +722,7 @@ impl TableProvider for JobsTableProvider {
 
         // Prefer secondary index scans when possible (auto-picks from store.indexes()).
         // Falls back to main-partition scan with (job_id) prefix/start_key.
-        let jobs: Vec<(Vec<u8>, Job)> = if let Some((index_idx, index_prefix)) =
+        let jobs: Vec<(JobId, Job)> = if let Some((index_idx, index_prefix)) =
             self.store.find_best_index_for_filters(filters)
         {
             log::trace!(
@@ -735,16 +735,13 @@ impl TableProvider for JobsTableProvider {
                 .map_err(|e| {
                     DataFusionError::Execution(format!("Failed to scan jobs by index: {}", e))
                 })?
-                .into_iter()
-                .map(|(id, job)| (id.storage_key(), job))
-                .collect()
         } else {
             log::debug!(
                 "[system.jobs] Full table scan (no index match) for filters: {:?}",
                 filters
             );
             self.store
-                .scan_all(limit, prefix.as_ref(), start_key.as_ref())
+                .scan_all_typed(limit, prefix.as_ref(), start_key.as_ref())
                 .map_err(|e| DataFusionError::Execution(format!("Failed to scan jobs: {}", e)))?
         };
 

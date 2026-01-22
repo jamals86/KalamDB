@@ -110,7 +110,7 @@ mod tests {
         }
 
         // Scan all
-        let storages = store.scan_all(None, None, None).unwrap();
+        let storages = store.scan_all_typed(None, None, None).unwrap();
         assert_eq!(storages.len(), 3);
     }
 

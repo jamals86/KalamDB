@@ -215,28 +215,15 @@ impl UserTableProvider {
         base::warn_if_unfiltered_scan(table_id, filter, limit, self.core.table_type());
 
         let scan_limit = base::calculate_scan_limit(limit);
-        let raw_all = self
+        let hot_rows = self
             .store
-            .scan_limited_with_prefix_and_start(None, None, scan_limit)
+            .scan_typed_with_prefix_and_start(None, None, scan_limit)
             .map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to scan user table hot storage: {}",
                     e
                 ))
             })?;
-
-        let hot_rows: Vec<(UserTableRowId, UserTableRow)> = raw_all
-            .into_iter()
-            .filter_map(|(key_bytes, row)| {
-                match kalamdb_commons::ids::UserTableRowId::from_storage_key(&key_bytes) {
-                    Ok(k) => Some((k, row)),
-                    Err(err) => {
-                        log::warn!("Skipping invalid UserTableRowId key bytes: {}", err);
-                        None
-                    },
-                }
-            })
-            .collect();
 
         let mut user_ids = HashSet::new();
         for (_row_id, row) in &hot_rows {
@@ -900,10 +887,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         //  Need to scan more than requested limit because we'll filter by user_id
         let scan_limit = base::calculate_scan_limit(limit) * 10; // Buffer for filtering
 
-        let raw_all = self
+        // Using scan_with_raw_prefix for raw byte prefix (user_prefix is Vec<u8>)
+        let hot_rows = self
             .store
-            .scan_limited_with_prefix_and_start(
-                Some(&user_prefix),
+            .scan_with_raw_prefix(
+                &user_prefix,
                 start_key_bytes.as_deref(),
                 scan_limit,
             )
@@ -913,20 +901,6 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     e
                 ))
             })?;
-
-        let hot_rows: Vec<(UserTableRowId, UserTableRow)> = raw_all
-            .into_iter()
-            .filter_map(|(key_bytes, row)| {
-                match kalamdb_commons::ids::UserTableRowId::from_storage_key(&key_bytes) {
-                    Ok(k) => Some((k, row)),
-                    Err(err) => {
-                        log::warn!("Skipping invalid UserTableRowId key bytes: {}", err);
-                        None
-                    },
-                }
-            })
-            .take(limit.unwrap_or(usize::MAX)) // Apply limit after filtering
-            .collect();
 
         log::trace!(
             "[UserProvider] Hot scan: {} rows for user={} (table={})",

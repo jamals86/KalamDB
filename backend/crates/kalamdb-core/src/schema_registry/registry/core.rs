@@ -579,7 +579,8 @@ impl SchemaRegistry {
         let tables_provider = app_ctx.system_tables().tables();
 
         // Scan all tables from storage
-        tables_provider.scan_all().into_kalamdb_error("Failed to scan tables")
+        let all_entries = tables_provider.scan_all().into_kalamdb_error("Failed to scan tables")?;
+        Ok(all_entries)
     }
 
     /// Get table definition if it exists (optimized single-call pattern)

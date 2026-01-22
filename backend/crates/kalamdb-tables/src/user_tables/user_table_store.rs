@@ -192,7 +192,7 @@ mod tests {
         }
 
         // Scan all
-        let all_rows = store.scan_all(None, None, None).unwrap();
+        let all_rows = store.scan_all_typed(None, None, None).unwrap();
         assert_eq!(all_rows.len(), 6); // 2 users * 3 rows
     }
 

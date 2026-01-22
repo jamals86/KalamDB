@@ -1276,6 +1276,8 @@ also add tests which cover the users/shared/stream providers for scanning with p
 [2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_ns_mkpsii6t_49o_0ordering_mkpsii6t_49o_0root
 [2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_ns_mkpsii81_49s_0multi_batch_mkpsii81_49s_0root
 
+131) why we need: SystemTableProviderExt? why not directly use TableProvider trait?
+
 
 
 

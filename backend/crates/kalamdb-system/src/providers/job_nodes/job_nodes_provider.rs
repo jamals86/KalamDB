@@ -14,7 +14,7 @@ use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::models::JobNodeId;
 use kalamdb_commons::system::JobNode;
-use kalamdb_commons::{JobId, JobStatus, NodeId, SystemTable};
+use kalamdb_commons::{JobId, JobStatus, NodeId, StorageKey, SystemTable};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
@@ -95,7 +95,7 @@ impl JobNodesTableProvider {
         let scan_limit = if limit == 0 { 10_000 } else { limit.saturating_mul(10) };
         let rows = self
             .store
-            .scan_limited_with_prefix_and_start(Some(&prefix), None, scan_limit)
+            .scan_with_raw_prefix(&prefix, None, scan_limit)
             .into_system_error("scan job_nodes error")?;
 
         let mut filtered: Vec<JobNode> = rows
@@ -122,10 +122,11 @@ impl JobNodesTableProvider {
         let rows = {
             let store = self.store.clone();
             tokio::task::spawn_blocking(move || {
-                store.scan_limited_with_prefix_and_start(Some(&prefix), None, scan_limit)
+                store.scan_with_raw_prefix(&prefix, None, scan_limit)
             })
             .await
-            .into_system_error("scan_async job_nodes join error")??
+            .into_system_error("scan_async job_nodes join error")?
+            .into_system_error("scan_async job_nodes error")?
         };
 
         let mut filtered: Vec<JobNode> = rows
@@ -160,7 +161,7 @@ impl JobNodesTableProvider {
         Ok(filtered)
     }
 
-    fn create_batch(&self, nodes: Vec<(Vec<u8>, JobNode)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch(&self, nodes: Vec<(JobNodeId, JobNode)>) -> Result<RecordBatch, SystemError> {
         let mut job_ids = Vec::with_capacity(nodes.len());
         let mut node_ids = Vec::with_capacity(nodes.len());
         let mut statuses = Vec::with_capacity(nodes.len());
@@ -197,7 +198,7 @@ impl JobNodesTableProvider {
     }
 
     pub fn scan_all_job_nodes(&self) -> Result<RecordBatch, SystemError> {
-        let nodes = self.store.scan_all(None, None, None)?;
+        let nodes = self.store.scan_all_typed(None, None, None)?;
         self.create_batch(nodes)
     }
 
@@ -212,7 +213,7 @@ impl JobNodesTableProvider {
 
         let rows = self
             .store
-            .scan_all(None, None, None)
+            .scan_all_typed(None, None, None)
             .into_system_error("scan job_nodes error")?;
 
         let mut deleted = 0;

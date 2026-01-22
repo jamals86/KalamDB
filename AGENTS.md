@@ -169,4 +169,4 @@ specs/010-core-architecture-v2/ # CURRENT: Arrow memoization, views
 - **Import Updates**: Changed from `kalamdb_registry::` and `kalamdb_live::` to `crate::schema_registry::` and `crate::live::`
 - **Error Type Consolidation**: RegistryError and LiveError now part of kalamdb-core error module
 - **Workspace Size**: Reduced from 11 crates to 9 crates (more maintainable)
-- **Stats Provider**: Moved from kalamdb-system to kalamdb-core/src/schema_registry/stats.rs
+- **Stats Provider**: Moved from kalamdb-system to kalamdb-core/src/views/stats.rs (virtual view implementation)

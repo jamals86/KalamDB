@@ -8,7 +8,6 @@ pub mod cached_table_data;
 pub mod error;
 pub mod projection;
 pub mod registry;
-pub mod stats;
 
 pub use arrow_schema::ArrowSchemaWithOptions;
 pub use cached_table_data::CachedTableData;
@@ -18,7 +17,6 @@ pub use kalamdb_commons::helpers::string_interner::SystemColumns;
 pub use projection::{project_batch, schemas_compatible};
 pub use registry::SchemaRegistry;
 pub use registry::TablesSchemaRegistryAdapter;
-pub use stats::StatsTableProvider;
 pub use kalamdb_system::SystemColumnsService;
 
 // Re-export common types from kalamdb_commons for convenience

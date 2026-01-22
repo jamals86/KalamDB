@@ -12,9 +12,11 @@ use crate::schema_registry::SchemaRegistry;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::ids::SharedTableRowId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::StorageKey;
 use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
 use std::sync::Arc;
 
@@ -146,11 +148,11 @@ impl TableFlush for SharedTableFlushJob {
         let mut stats = FlushDedupStats::default();
 
         // Batched scan with cursor
-        let mut cursor: Option<Vec<u8>> = None;
+        let mut cursor: Option<SharedTableRowId> = None;
         loop {
             let batch = self
                 .store
-                .scan_limited_with_prefix_and_start(None, cursor.as_deref(), config::BATCH_SIZE)
+                .scan_typed_with_prefix_and_start(None, cursor.as_ref(), config::BATCH_SIZE)
                 .map_err(|e| {
                     log::error!("❌ Failed to scan rows for shared table={}: {}", self.table_id, e);
                     KalamDbError::Other(format!("Failed to scan rows: {}", e))
@@ -163,18 +165,18 @@ impl TableFlush for SharedTableFlushJob {
             log::trace!(
                 "[FLUSH] Processing batch of {} rows (cursor={:?})",
                 batch.len(),
-                cursor.as_ref().map(|c| c.len())
+                cursor.as_ref().map(|c| c.as_i64())
             );
 
             // Update cursor for next batch
-            cursor = batch.last().map(|(key, _)| helpers::advance_cursor(key));
+            cursor = batch.last().map(|(key, _)| key.clone());
 
             let batch_len = batch.len();
             stats.rows_before_dedup += batch_len;
 
-            for (key_bytes, row) in batch {
+            for (key, row) in batch {
                 // Track ALL keys for deletion (before dedup)
-                all_keys_to_delete.push(key_bytes.clone());
+                all_keys_to_delete.push(key.storage_key());
 
                 // Extract PK value from fields
                 let seq_val = row._seq.as_i64();
@@ -189,11 +191,11 @@ impl TableFlush for SharedTableFlushJob {
                 match latest_versions.get(&pk_value) {
                     Some((_existing_key, _existing_row, existing_seq)) => {
                         if seq_val > *existing_seq {
-                            latest_versions.insert(pk_value, (key_bytes, row, seq_val));
+                            latest_versions.insert(pk_value, (key.storage_key(), row, seq_val));
                         }
                     },
                     None => {
-                        latest_versions.insert(pk_value, (key_bytes, row, seq_val));
+                        latest_versions.insert(pk_value, (key.storage_key(), row, seq_val));
                     },
                 }
             }

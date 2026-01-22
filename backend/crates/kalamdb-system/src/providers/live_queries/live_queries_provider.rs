@@ -163,7 +163,7 @@ impl LiveQueriesTableProvider {
 
     /// List all live queries
     pub fn list_live_queries(&self) -> Result<Vec<LiveQuery>, SystemError> {
-        let live_queries = self.store.scan_all(None, None, None)?;
+        let live_queries = self.store.scan_all_typed(None, None, None)?;
         Ok(live_queries.into_iter().map(|(_, lq)| lq).collect())
     }
 
@@ -230,14 +230,11 @@ impl LiveQueriesTableProvider {
         // Create prefix key for scanning
         let prefix_bytes = LiveQueryId::user_connection_prefix(user_id, connection_id);
 
-        // Scan all keys with this prefix (max ~10 per user)
-        let results =
-            self.store.scan_limited_with_prefix_and_start(Some(&prefix_bytes), None, 100)?;
+        // Scan all keys with this prefix (max ~10 per user) - using raw bytes for prefix
+        let results = self.store.scan_with_raw_prefix(&prefix_bytes, None, 100)?;
 
         // Delete each matching key (uses atomic WriteBatch internally)
-        for (key_bytes, _) in results {
-            let key = LiveQueryId::from_storage_key(&key_bytes)
-                .map_err(|e| SystemError::InvalidOperation(format!("Invalid key: {}", e)))?;
+        for (key, _) in results {
             self.store.delete(&key)?;
         }
         Ok(())
@@ -254,20 +251,18 @@ impl LiveQueriesTableProvider {
         // Create prefix key for scanning
         let prefix_bytes = LiveQueryId::user_connection_prefix(user_id, connection_id);
 
-        // Scan all keys with this prefix (async)
-        let results: Vec<(Vec<u8>, LiveQuery)> = {
+        // Scan all keys with this prefix (async) - using raw bytes for prefix
+        let results: Vec<(LiveQueryId, LiveQuery)> = {
             let store = self.store.clone();
             tokio::task::spawn_blocking(move || {
-                store.scan_limited_with_prefix_and_start(Some(&prefix_bytes), None, 100)
+                store.scan_with_raw_prefix(&prefix_bytes, None, 100)
             })
             .await
-            .into_system_error("Join error")??
+            .into_system_error("Join error")??  
         };
 
         // Delete each matching key asynchronously
-        for (key_bytes, _) in results {
-            let key = LiveQueryId::from_storage_key(&key_bytes)
-                .map_err(|e| SystemError::InvalidOperation(format!("Invalid key: {}", e)))?;
+        for (key, _) in results {
             self.delete_live_query_async(&key).await?;
         }
         Ok(())
@@ -279,11 +274,9 @@ impl LiveQueriesTableProvider {
     /// Live queries don't persist across server restarts since WebSocket connections
     /// are lost on restart.
     pub fn clear_all(&self) -> Result<usize, SystemError> {
-        let all = self.store.scan_all(None, None, None)?;
+        let all = self.store.scan_all_typed(None, None, None)?;
         let count = all.len();
-        for (key_bytes, _) in all {
-            let key = LiveQueryId::from_storage_key(&key_bytes)
-                .map_err(|e| SystemError::InvalidOperation(format!("Invalid key: {}", e)))?;
+        for (key, _) in all {
             self.store.delete(&key)?;
         }
         Ok(count)
@@ -292,15 +285,13 @@ impl LiveQueriesTableProvider {
     /// Async version of `clear_all()`.
     pub async fn clear_all_async(&self) -> Result<usize, SystemError> {
         let store = self.store.clone();
-        let all: Vec<(Vec<u8>, LiveQuery)> =
-            tokio::task::spawn_blocking(move || store.scan_all(None, None, None))
+        let all: Vec<(LiveQueryId, LiveQuery)> =
+            tokio::task::spawn_blocking(move || store.scan_all_typed(None, None, None))
                 .await
                 .into_system_error("Join error")??;
 
         let count = all.len();
-        for (key_bytes, _) in all {
-            let key = LiveQueryId::from_storage_key(&key_bytes)
-                .map_err(|e| SystemError::InvalidOperation(format!("Invalid key: {}", e)))?;
+        for (key, _) in all {
             self.delete_live_query_async(&key).await?;
         }
         Ok(count)
@@ -308,14 +299,14 @@ impl LiveQueriesTableProvider {
 
     /// Scan all live queries and return as RecordBatch
     pub fn scan_all_live_queries(&self) -> Result<RecordBatch, SystemError> {
-        let live_queries = self.store.scan_all(None, None, None)?;
+        let live_queries = self.store.scan_all_typed(None, None, None)?;
         self.create_batch(live_queries)
     }
 
     /// Helper to create RecordBatch from live queries
     fn create_batch(
         &self,
-        live_queries: Vec<(Vec<u8>, LiveQuery)>,
+        live_queries: Vec<(LiveQueryId, LiveQuery)>,
     ) -> Result<RecordBatch, SystemError> {
         // Extract data into vectors
         let mut live_ids = Vec::with_capacity(live_queries.len());
@@ -474,7 +465,7 @@ impl TableProvider for LiveQueriesTableProvider {
 
         // Prefer secondary index scans when possible (auto-picks from store.indexes()).
         // Falls back to scan_all if no index matches.
-        let live_queries: Vec<(Vec<u8>, LiveQuery)> = if let Some((index_idx, index_prefix)) =
+        let live_queries: Vec<(LiveQueryId, LiveQuery)> = if let Some((index_idx, index_prefix)) =
             self.store.find_best_index_for_filters(filters)
         {
             log::debug!(
@@ -490,15 +481,12 @@ impl TableProvider for LiveQueriesTableProvider {
                         e
                     ))
                 })?
-                .into_iter()
-                .map(|(id, lq)| (id.storage_key(), lq))
-                .collect()
         } else {
             log::debug!(
                 "[system.live_queries] Full table scan (no index match) for filters: {:?}",
                 filters
             );
-            self.store.scan_all(limit, None, None).map_err(|e| {
+            self.store.scan_all_typed(limit, None, None).map_err(|e| {
                 DataFusionError::Execution(format!("Failed to scan live_queries: {}", e))
             })?
         };

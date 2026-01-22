@@ -864,7 +864,8 @@ where
     ) -> Result<Vec<(Vec<u8>, V)>> {
         let store = self.clone();
         tokio::task::spawn_blocking(move || {
-            store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+            let typed_results = store.scan_all_typed(limit, prefix.as_ref(), start_key.as_ref())?;
+            Ok(typed_results.into_iter().map(|(k, v)| (k.storage_key(), v)).collect())
         })
         .await
         .map_err(|e| StorageError::Other(format!("spawn_blocking error: {}", e)))?

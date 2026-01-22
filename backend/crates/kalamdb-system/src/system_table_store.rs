@@ -6,6 +6,12 @@
 //!
 //! For system tables that need secondary indexes, use `IndexedEntityStore` from `kalamdb-store`
 //! instead. It provides automatic atomic index management via RocksDB WriteBatch.
+//!
+//! ## Key Serialization
+//!
+//! All keys are serialized using `StorageKey::storage_key()` which uses storekey encoding
+//! for proper lexicographic ordering. Use `EntityStore::scan_all_typed()` and
+//! `EntityStore::scan_prefix_typed()` for properly deserialized keys.
 
 use crate::error::SystemError;
 use crate::system_table_trait::SystemTableProviderExt;
@@ -24,12 +30,17 @@ use std::sync::Arc;
 /// - Admin-only access control (CrossUserTableStore returns None for table_access)
 /// - Integration with SystemTableProviderExt trait
 ///
+/// All scan operations with typed keys are available via the `EntityStore` trait methods:
+/// - `scan_all_typed()` - Scan all entries with typed (K, V) pairs
+/// - `scan_prefix_typed()` - Scan entries matching a key prefix
+/// - `scan_iterator()` - Returns an iterator over typed (K, V) pairs
+///
 /// For tables that need secondary indexes, use `IndexedEntityStore` instead.
 #[derive(Clone)]
 pub struct SystemTableStore<K, V> {
     backend: Arc<dyn StorageBackend>,
     system_table: SystemTable,
-    partition: &'static str,
+    partition: Partition,
     _phantom: std::marker::PhantomData<(K, V)>,
 }
 
@@ -40,15 +51,20 @@ impl<K, V> SystemTableStore<K, V> {
     /// * `backend` - Storage backend (RocksDB or mock)
     /// * `system_table` - Which system table this store manages
     pub fn new(backend: Arc<dyn StorageBackend>, system_table: SystemTable) -> Self {
-        let partition = system_table
+        let partition_name = system_table
             .column_family_name()
             .expect("SystemTableStore requires a persisted system table (not a view)");
         Self {
             backend,
             system_table,
-            partition,
+            partition: Partition::new(partition_name),
             _phantom: std::marker::PhantomData,
         }
+    }
+
+    /// Get the system table type
+    pub fn system_table(&self) -> &SystemTable {
+        &self.system_table
     }
 }
 
@@ -63,7 +79,7 @@ where
     }
 
     fn partition(&self) -> Partition {
-        Partition::new(self.partition)
+        self.partition.clone()
     }
 }
 

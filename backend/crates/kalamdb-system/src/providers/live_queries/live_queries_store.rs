@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn test_create_store() {
         let store = create_test_store();
-        assert!(store.scan_all(None, None, None).unwrap().is_empty());
+        assert!(store.scan_all_typed(None, None, None).unwrap().is_empty());
     }
 
     #[test]
@@ -128,7 +128,7 @@ mod tests {
             store.insert(&live_query.live_id, &live_query).unwrap();
         }
 
-        let all = store.scan_all(None, None, None).unwrap();
+        let all = store.scan_all_typed(None, None, None).unwrap();
         assert_eq!(all.len(), 3);
     }
 

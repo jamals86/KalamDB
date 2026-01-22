@@ -11,9 +11,9 @@ use crate::jobs::executors::{
 };
 use crate::live::ConnectionsManager;
 use crate::live_query::LiveQueryManager;
-use crate::schema_registry::stats::StatsTableProvider;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
+use crate::views::stats::{StatsTableProvider, StatsView};
 use crate::sql::executor::SqlExecutor;
 use crate::views::datatypes::{DatatypesTableProvider, DatatypesView};
 use crate::views::settings::{SettingsTableProvider, SettingsView};
@@ -218,8 +218,9 @@ impl AppContext {
             let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
             // Create StatsTableProvider (callback will be set after AppContext is created)
-            let stats_provider = Arc::new(StatsTableProvider::new());
-            system_tables.set_stats_provider(stats_provider.clone());
+            let stats_view = Arc::new(StatsView::new());
+            let stats_provider = Arc::new(StatsTableProvider::new(Arc::clone(&stats_view)));
+            system_tables.set_stats_provider(stats_provider);
 
             // Inject SettingsTableProvider with config access (Phase 15)
             let settings_view = Arc::new(SettingsView::with_config((*config).clone()));
@@ -430,7 +431,7 @@ impl AppContext {
 
             // Wire up StatsTableProvider metrics callback now that AppContext exists
             let app_ctx_for_stats = Arc::clone(&app_ctx);
-            stats_provider
+            stats_view
                 .set_metrics_callback(Arc::new(move || app_ctx_for_stats.compute_metrics()));
 
             // Wire up ManifestTableProvider in_memory_checker callback
@@ -584,8 +585,8 @@ impl AppContext {
         let schema_registry = Arc::new(SchemaRegistry::new(100));
 
         // Create StatsTableProvider (callback will be set after AppContext is created for tests)
-        let stats_provider = Arc::new(StatsTableProvider::new());
-        system_tables.set_stats_provider(stats_provider.clone());
+        let stats_provider = crate::views::stats::create_stats_provider();
+        system_tables.set_stats_provider(Arc::new(stats_provider));
 
         // Inject SettingsTableProvider with default config for testing
         let settings_view = Arc::new(SettingsView::with_config(ServerConfig::default()));
