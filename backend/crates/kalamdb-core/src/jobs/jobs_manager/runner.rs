@@ -397,8 +397,9 @@ impl JobsManager {
         let job_id = job.job_id.clone();
         let job_type = job.job_type;
 
-        // Mark job as Running (leader only)
-        if is_leader {
+        // Mark job as Running if still Queued/New (leader coordination)
+        // Only leader should be executing jobs at this point due to creation constraints
+        if is_leader && matches!(job.status, JobStatus::Queued | JobStatus::New) {
             self.mark_job_running(&job_id).await?;
         }
 
@@ -786,9 +787,12 @@ impl JobsManager {
                 return Ok(());
             },
             JobNodeQuorumResult::TimedOut { completed, total } => {
+                // If completed=0, job was never started on workers (failover of queued job)
+                // Use debug level to reduce noise, otherwise warn
+                let level = if completed == 0 { Level::Debug } else { Level::Warn };
                 self.log_job_event(
                     &job_id,
-                    &Level::Warn,
+                    &level,
                     &format!(
                         "Quorum timeout (completed {}/{}); proceeding with leader actions",
                         completed, total

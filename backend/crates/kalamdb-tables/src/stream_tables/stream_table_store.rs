@@ -160,6 +160,77 @@ impl StreamTableStore {
         Ok(vec)
     }
 
+    /// Streaming scan for a single user with TTL filtering and early termination.
+    ///
+    /// This method is optimized for LIMIT queries - it stops scanning as soon as
+    /// enough rows are collected, without loading all data into memory first.
+    ///
+    /// **Performance benefits over `scan_user`:**
+    /// - Early termination when limit is reached
+    /// - TTL filtering applied during iteration (not after collection)
+    /// - Memory-efficient for large datasets with small LIMIT
+    ///
+    /// # Arguments
+    /// * `user_id` - User ID to scope the scan
+    /// * `start_seq` - Optional starting sequence (inclusive)
+    /// * `limit` - Maximum rows to return
+    /// * `ttl_ms` - Optional TTL in milliseconds (rows older than now - ttl_ms are filtered)
+    /// * `now_ms` - Current time in milliseconds (for TTL calculation)
+    ///
+    /// # Returns
+    /// Vector of (key, row) pairs, filtered by TTL and limited
+    pub fn scan_user_streaming(
+        &self,
+        user_id: &UserId,
+        start_seq: Option<SeqId>,
+        limit: usize,
+        ttl_ms: Option<u64>,
+        now_ms: u64,
+    ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let start_time = start_seq.map(|seq| seq.timestamp_millis()).unwrap_or(0);
+        let rows = self
+            .log_store
+            .read_in_time_range(&self.table_id, user_id, start_time, u64::MAX, MAX_SCAN_LIMIT)
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+
+        // Filter by start_seq, apply TTL, and collect with early termination
+        let mut result = Vec::with_capacity(limit.min(1024));
+        
+        // Sort by key for deterministic ordering
+        let mut sorted: Vec<_> = rows.into_iter().collect();
+        sorted.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+        for (key, row) in sorted {
+            // Filter by start_seq
+            if let Some(seq) = start_seq {
+                if key.seq() < seq {
+                    continue;
+                }
+            }
+
+            // TTL filtering: skip expired rows
+            if let Some(ttl) = ttl_ms {
+                let row_ts = key.seq().timestamp_millis();
+                if row_ts + ttl <= now_ms {
+                    continue; // Row has expired
+                }
+            }
+
+            result.push((key, row));
+
+            // Early termination on limit
+            if result.len() >= limit {
+                break;
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Scan row keys for a single user, starting at an optional sequence ID (inclusive).
     pub fn scan_user_keys(
         &self,

@@ -2,19 +2,20 @@
 
 use super::JobNodesTableSchema;
 use crate::error::{SystemError, SystemResultExt};
+use crate::providers::base::SystemTableScan;
 use async_trait::async_trait;
 use chrono::Utc;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::models::JobNodeId;
 use kalamdb_commons::system::JobNode;
-use kalamdb_commons::{JobId, JobStatus, NodeId, StorageKey, SystemTable};
+use kalamdb_commons::{JobId, JobStatus, NodeId, SystemTable};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
@@ -243,6 +244,32 @@ impl JobNodesTableProvider {
     }
 }
 
+impl SystemTableScan<JobNodeId, JobNode> for JobNodesTableProvider {
+    fn store(&self) -> &kalamdb_store::IndexedEntityStore<JobNodeId, JobNode> {
+        &self.store
+    }
+
+    fn table_name(&self) -> &str {
+        JobNodesTableSchema::table_name()
+    }
+
+    fn primary_key_column(&self) -> &str {
+        "id"
+    }
+
+    fn arrow_schema(&self) -> SchemaRef {
+        JobNodesTableSchema::schema()
+    }
+
+    fn parse_key(&self, value: &str) -> Option<JobNodeId> {
+        JobNodeId::from_string(value).ok()
+    }
+
+    fn create_batch_from_pairs(&self, pairs: Vec<(JobNodeId, JobNode)>) -> Result<RecordBatch, SystemError> {
+        self.create_batch(pairs)
+    }
+}
+
 #[async_trait]
 impl TableProvider for JobNodesTableProvider {
     fn as_any(&self) -> &dyn Any {
@@ -259,24 +286,13 @@ impl TableProvider for JobNodesTableProvider {
 
     async fn scan(
         &self,
-        _state: &dyn datafusion::catalog::Session,
+        state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::datasource::MemTable;
-
-        let _ = (filters, limit);
-
-        let batch = self
-            .scan_all_job_nodes()
-            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-
-        let schema = JobNodesTableSchema::schema();
-        let table = MemTable::try_new(schema, vec![vec![batch]])
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-
-        table.scan(_state, projection, filters, limit).await
+        // Use the common SystemTableScan implementation
+        self.base_system_scan(state, projection, filters, limit).await
     }
 
     fn supports_filters_pushdown(

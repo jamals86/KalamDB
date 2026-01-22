@@ -7,7 +7,9 @@
 //! - `*TableSchema` structs: Contain the `TableDefinition` (source of truth)
 //! - `*TableProvider` structs: Implement DataFusion's `TableProvider` trait
 //! - Each `*TableSchema` memoizes its Arrow schema (OnceLock)
+//! - `base` module: Common traits for unified scan logic
 
+pub mod base;
 pub mod audit_logs;
 pub mod jobs;
 pub mod job_nodes;
@@ -17,6 +19,9 @@ pub mod namespaces;
 pub mod storages;
 pub mod tables;
 pub mod users;
+
+// Re-export base traits
+pub use base::{SystemTableScan, SimpleSystemTableScan, extract_filter_value, extract_range_filters};
 
 // Re-export all providers
 pub use audit_logs::AuditLogsTableProvider;

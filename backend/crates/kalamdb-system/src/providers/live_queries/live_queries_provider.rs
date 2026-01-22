@@ -5,19 +5,20 @@
 
 use super::{new_live_queries_store, LiveQueriesStore, LiveQueriesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
+use crate::providers::base::SystemTableScan;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::ConnectionId;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::types::LiveQueryStatus;
 use kalamdb_commons::RecordBatchBuilder;
-use kalamdb_commons::{LiveQueryId, NodeId, StorageKey, TableId, UserId};
+use kalamdb_commons::{LiveQueryId, NodeId, TableId, UserId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -429,6 +430,32 @@ impl LiveQueriesTableProvider {
     }
 }
 
+impl SystemTableScan<LiveQueryId, LiveQuery> for LiveQueriesTableProvider {
+    fn store(&self) -> &kalamdb_store::IndexedEntityStore<LiveQueryId, LiveQuery> {
+        &self.store
+    }
+
+    fn table_name(&self) -> &str {
+        LiveQueriesTableSchema::table_name()
+    }
+
+    fn primary_key_column(&self) -> &str {
+        "live_id"
+    }
+
+    fn arrow_schema(&self) -> SchemaRef {
+        LiveQueriesTableSchema::schema()
+    }
+
+    fn parse_key(&self, value: &str) -> Option<LiveQueryId> {
+        LiveQueryId::from_string(value).ok()
+    }
+
+    fn create_batch_from_pairs(&self, pairs: Vec<(LiveQueryId, LiveQuery)>) -> Result<RecordBatch, SystemError> {
+        self.create_batch(pairs)
+    }
+}
+
 #[async_trait]
 impl TableProvider for LiveQueriesTableProvider {
     fn as_any(&self) -> &dyn Any {
@@ -454,59 +481,19 @@ impl TableProvider for LiveQueriesTableProvider {
 
     async fn scan(
         &self,
-        _state: &dyn datafusion::catalog::Session,
+        state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::datasource::MemTable;
-
-        let schema = LiveQueriesTableSchema::schema();
-
-        // Prefer secondary index scans when possible (auto-picks from store.indexes()).
-        // Falls back to scan_all if no index matches.
-        let live_queries: Vec<(LiveQueryId, LiveQuery)> = if let Some((index_idx, index_prefix)) =
-            self.store.find_best_index_for_filters(filters)
-        {
-            log::debug!(
-                "[system.live_queries] Using secondary index {} for filters: {:?}",
-                index_idx,
-                filters
-            );
-            self.store
-                .scan_by_index(index_idx, Some(&index_prefix), limit)
-                .map_err(|e| {
-                    DataFusionError::Execution(format!(
-                        "Failed to scan live_queries by index: {}",
-                        e
-                    ))
-                })?
-        } else {
-            log::debug!(
-                "[system.live_queries] Full table scan (no index match) for filters: {:?}",
-                filters
-            );
-            self.store.scan_all_typed(limit, None, None).map_err(|e| {
-                DataFusionError::Execution(format!("Failed to scan live_queries: {}", e))
-            })?
-        };
-
-        let batch = self.create_batch(live_queries).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build live_queries batch: {}", e))
-        })?;
-
-        let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-
-        // Always pass through projection and filters to MemTable - it will handle them
-        table.scan(_state, projection, filters, limit).await
+        // Use the common SystemTableScan implementation
+        self.base_system_scan(state, projection, filters, limit).await
     }
 }
 
 impl SystemTableProviderExt for LiveQueriesTableProvider {
     fn table_name(&self) -> &str {
-        "system.live_queries"
+        LiveQueriesTableSchema::table_name()
     }
 
     fn schema_ref(&self) -> SchemaRef {

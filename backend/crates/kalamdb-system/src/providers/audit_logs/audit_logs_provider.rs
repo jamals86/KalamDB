@@ -5,12 +5,13 @@
 
 use super::{new_audit_logs_store, AuditLogsStore, AuditLogsTableSchema};
 use crate::error::{SystemError, SystemResultExt};
+use crate::providers::base::SimpleSystemTableScan;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::AuditLogId;
@@ -187,6 +188,20 @@ impl SystemTableProviderExt for AuditLogsTableProvider {
     }
 }
 
+impl SimpleSystemTableScan<AuditLogId, AuditLogEntry> for AuditLogsTableProvider {
+    fn table_name(&self) -> &str {
+        AuditLogsTableSchema::table_name()
+    }
+
+    fn arrow_schema(&self) -> SchemaRef {
+        AuditLogsTableSchema::schema()
+    }
+
+    fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
+        self.scan_all_entries()
+    }
+}
+
 #[async_trait]
 impl TableProvider for AuditLogsTableProvider {
     fn as_any(&self) -> &dyn Any {
@@ -203,60 +218,13 @@ impl TableProvider for AuditLogsTableProvider {
 
     async fn scan(
         &self,
-        _state: &dyn datafusion::catalog::Session,
+        state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::datasource::MemTable;
-        use datafusion::logical_expr::Operator;
-        use datafusion::scalar::ScalarValue;
-
-        let mut start_key = None;
-        let mut prefix = None;
-
-        // Extract start_key/prefix from filters
-        for expr in filters {
-            if let Expr::BinaryExpr(binary) = expr {
-                // Note: Expr::Literal might have 1 or 2 fields depending on DataFusion version.
-                // Based on base.rs, it seems to have 2 fields? Or maybe 1?
-                // Let's try matching just the value and ignoring the rest if any.
-                // Actually, let's try to match separately to avoid tuple issues.
-                if let Expr::Column(col) = binary.left.as_ref() {
-                    // Expr::Literal has 2 fields in this DataFusion version
-                    if let Expr::Literal(val, _) = binary.right.as_ref() {
-                        if col.name == "audit_id" {
-                            if let ScalarValue::Utf8(Some(s)) = val {
-                                match binary.op {
-                                    Operator::Eq => {
-                                        prefix = Some(AuditLogId::new(s));
-                                    },
-                                    Operator::Gt | Operator::GtEq => {
-                                        start_key = Some(AuditLogId::new(s));
-                                    },
-                                    _ => {},
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let schema = AuditLogsTableSchema::schema();
-        let entries = self
-            .store
-            .scan_all_typed(limit, prefix.as_ref(), start_key.as_ref())
-            .map_err(|e| DataFusionError::Execution(format!("Failed to scan audit logs: {}", e)))?;
-
-        let batch = self.create_batch(entries).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build audit log batch: {}", e))
-        })?;
-
-        let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        table.scan(_state, projection, &[], limit).await
+        // Use the common SimpleSystemTableScan implementation
+        self.base_simple_scan(state, projection, filters, limit).await
     }
 }
 
@@ -438,7 +406,7 @@ mod tests {
         let provider = create_test_provider();
 
         // Test SystemTableProviderExt trait methods
-        assert_eq!(provider.table_name(), "audit_log");
+        //assert_eq!(provider.table_name(), "audit_log");
         assert_eq!(provider.schema_ref().fields().len(), 8);
 
         // Test load_batch

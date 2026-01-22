@@ -304,84 +304,36 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         _keep_deleted: bool,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
         let table_id = self.core.table_id();
-        // 1) Scan hot storage for the user
+        
         // since_seq is exclusive, so start at seq + 1
         let start_seq = since_seq.map(|seq| SeqId::from_i64(seq.as_i64().saturating_add(1)));
 
         let ttl_ms = self.ttl_seconds.map(|s| s * 1000);
         let now_ms = Self::now_millis()?;
+        
         log::debug!(
-            "[StreamProvider] user scan: table={} user={} ttl_ms={:?} now_ms={}",
+            "[StreamProvider] streaming scan: table={} user={} ttl_ms={:?} limit={:?}",
             table_id,
             user_id.as_str(),
             ttl_ms,
-            now_ms
+            limit
         );
 
-        // Use limit if provided, otherwise default to 100,000
-        let scan_limit = limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000);
-
-        let initial_capacity = limit.unwrap_or(scan_limit.min(1024));
-        let mut results: Vec<(StreamTableRowId, StreamTableRow)> =
-            Vec::with_capacity(initial_capacity);
-        let mut next_start_seq = start_seq;
-
-        loop {
-            let raw = self.store.scan_user(user_id, next_start_seq, scan_limit).map_err(|e| {
+        // Use streaming scan with TTL filtering and early termination
+        // This is more efficient than the pagination loop for LIMIT queries
+        let scan_limit = limit.unwrap_or(100_000);
+        
+        let results = self.store
+            .scan_user_streaming(user_id, start_seq, scan_limit, ttl_ms, now_ms)
+            .map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to scan stream table hot storage: {}",
                     e
                 ))
             })?;
-            if raw.is_empty() {
-                break;
-            }
-
-            let raw_len = raw.len();
-            log::debug!(
-                "[StreamProvider] raw scan results: table={} user={} count={}",
-                table_id,
-                user_id.as_str(),
-                raw_len
-            );
-
-            let mut last_seq: Option<SeqId> = None;
-            for (key, row) in raw.into_iter() {
-                last_seq = Some(key.seq());
-
-                // TTL check: keep if no TTL or not expired
-                let keep = match ttl_ms {
-                    None => true,
-                    Some(ttl) => {
-                        let ts = row._seq.timestamp_millis();
-                        ts + ttl > now_ms
-                    },
-                };
-
-                if keep {
-                    results.push((key, row));
-                    if let Some(limit) = limit {
-                        if results.len() >= limit {
-                            return Ok(results);
-                        }
-                    }
-                }
-            }
-
-            if limit.is_none() || raw_len < scan_limit {
-                break;
-            }
-
-            if let Some(last_seq) = last_seq {
-                let next_seq = SeqId::from_i64(last_seq.as_i64().saturating_add(1));
-                next_start_seq = Some(next_seq);
-            } else {
-                break;
-            }
-        }
 
         log::debug!(
-            "[StreamProvider] ttl-filtered results: table={} user={} kept={}",
+            "[StreamProvider] streaming scan complete: table={} user={} rows={}",
             table_id,
             user_id.as_str(),
             results.len()

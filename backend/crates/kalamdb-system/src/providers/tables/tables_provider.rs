@@ -5,12 +5,13 @@
 
 use super::{new_tables_store, TablesStore, TablesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
+use crate::providers::base::SimpleSystemTableScan;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::TableId;
@@ -332,6 +333,20 @@ impl TablesTableProvider {
     }
 }
 
+impl SimpleSystemTableScan<TableId, TableDefinition> for TablesTableProvider {
+    fn table_name(&self) -> &str {
+        TablesTableSchema::table_name()
+    }
+
+    fn arrow_schema(&self) -> SchemaRef {
+        TablesTableSchema::schema()
+    }
+
+    fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
+        self.scan_all_tables()
+    }
+}
+
 #[async_trait]
 impl TableProvider for TablesTableProvider {
     fn as_any(&self) -> &dyn Any {
@@ -348,26 +363,19 @@ impl TableProvider for TablesTableProvider {
 
     async fn scan(
         &self,
-        _state: &dyn datafusion::catalog::Session,
+        state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
-        _limit: Option<usize>,
+        filters: &[Expr],
+        limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::datasource::MemTable;
-        let schema = TablesTableSchema::schema();
-        let batch = self.scan_all_tables().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build tables batch: {}", e))
-        })?;
-        let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        table.scan(_state, projection, &[], _limit).await
+        // Use the common SimpleSystemTableScan implementation
+        self.base_simple_scan(state, projection, filters, limit).await
     }
 }
 
 impl SystemTableProviderExt for TablesTableProvider {
     fn table_name(&self) -> &str {
-        "system.tables"
+        TablesTableSchema::table_name()
     }
 
     fn schema_ref(&self) -> SchemaRef {

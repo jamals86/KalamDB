@@ -9,6 +9,49 @@
 //! - Generic over storage key (K) and value (V) types
 //! - No separate handlers - DML logic implemented directly in providers
 //! - Shared core reduces memory overhead (Arc<TableProviderCore> vs per-provider fields)
+//!
+//! ## Streaming vs MVCC Constraints
+//!
+//! **Why full iterator-based streaming is NOT possible for User/Shared tables:**
+//!
+//! User and Shared tables use MVCC (Multi-Version Concurrency Control) with version
+//! resolution. This means:
+//!
+//! 1. Multiple versions of the same row may exist (each INSERT/UPDATE creates a new _seq)
+//! 2. To return the "current" row, we must find MAX(_seq) per primary key
+//! 3. Tombstones (_deleted = true) must hide older versions
+//!
+//! This inherently requires seeing ALL rows before returning ANY results, making
+//! true streaming impossible. The flow is:
+//!
+//! ```text
+//! Hot Storage (RocksDB) ─┐
+//!                        ├──> Merge ──> Version Resolution ──> Filter Deleted ──> Result
+//! Cold Storage (Parquet) ┘       (requires ALL rows to find MAX(_seq) per PK)
+//! ```
+//!
+//! **Stream tables ARE streamable** because they:
+//! - Are append-only (no updates, no version resolution needed)
+//! - Use TTL-based eviction instead of tombstones
+//! - Can return rows as they're scanned with early termination on LIMIT
+//!
+//! ## Architecture
+//!
+//! ```text
+//! TableProvider::scan()
+//!        │
+//!        ▼
+//! base_scan() ── combines filters, calls scan_rows()
+//!        │
+//!        ▼
+//! scan_rows() ── extracts user context, calls scan_with_version_resolution_to_kvs()
+//!        │
+//!        ▼
+//! scan_with_version_resolution_to_kvs() ── provider-specific implementation:
+//!   • User: user-scoped RocksDB prefix + Parquet, MVCC merge
+//!   • Shared: full RocksDB + Parquet, MVCC merge
+//!   • Stream: user-scoped RocksDB only, TTL filter, streamable
+//! ```
 
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;

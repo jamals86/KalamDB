@@ -49,6 +49,23 @@ impl JobsManager {
         idempotency_key: Option<String>,
         options: Option<JobOptions>,
     ) -> Result<JobId, KalamDbError> {
+        // Only leader can create jobs (ensures single source of truth for job orchestration)
+        // In standalone mode, this node is always the leader.
+        // In cluster mode, admin operations (FLUSH, COMPACT, etc.) must be executed on the leader.
+        if !self.is_cluster_leader().await {
+            let app_ctx = self.get_attached_app_context();
+            let cluster_info = app_ctx.executor().get_cluster_info();
+            
+            // Find leader's API address for error message
+            let leader_addr = cluster_info
+                .nodes
+                .iter()
+                .find(|n| n.is_leader)
+                .map(|n| n.api_addr.clone());
+            
+            return Err(KalamDbError::NotLeader { leader_addr });
+        }
+
         // Check idempotency: prevent duplicate jobs with same key
         if let Some(ref key) = idempotency_key {
             if self.has_active_job_with_key(key).await? {

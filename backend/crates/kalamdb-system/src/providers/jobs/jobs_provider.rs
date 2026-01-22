@@ -20,12 +20,13 @@
 use super::jobs_indexes::{create_jobs_indexes, status_to_u8};
 use super::JobsTableSchema;
 use crate::error::{SystemError, SystemResultExt};
+use crate::providers::base::SystemTableScan;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
@@ -649,6 +650,32 @@ fn matches_filter_sync(job: &Job, filter: &JobFilter) -> bool {
     true
 }
 
+impl SystemTableScan<JobId, Job> for JobsTableProvider {
+    fn store(&self) -> &IndexedEntityStore<JobId, Job> {
+        &self.store
+    }
+
+    fn table_name(&self) -> &str {
+        "system.jobs"
+    }
+
+    fn primary_key_column(&self) -> &str {
+        "job_id"
+    }
+
+    fn arrow_schema(&self) -> SchemaRef {
+        JobsTableSchema::schema()
+    }
+
+    fn parse_key(&self, value: &str) -> Option<JobId> {
+        Some(JobId::new(value))
+    }
+
+    fn create_batch_from_pairs(&self, pairs: Vec<(JobId, Job)>) -> Result<RecordBatch, SystemError> {
+        self.create_batch(pairs)
+    }
+}
+
 #[async_trait]
 impl TableProvider for JobsTableProvider {
     fn as_any(&self) -> &dyn Any {
@@ -683,78 +710,13 @@ impl TableProvider for JobsTableProvider {
 
     async fn scan(
         &self,
-        _state: &dyn datafusion::catalog::Session,
+        state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::datasource::MemTable;
-        use datafusion::logical_expr::Operator;
-        use datafusion::scalar::ScalarValue;
-
-        let mut start_key = None;
-        let mut prefix = None;
-
-        // Extract start_key/prefix from filters
-        for expr in filters {
-            if let Expr::BinaryExpr(binary) = expr {
-                if let Expr::Column(col) = binary.left.as_ref() {
-                    if let Expr::Literal(val, _) = binary.right.as_ref() {
-                        if col.name == "job_id" {
-                            if let ScalarValue::Utf8(Some(s)) = val {
-                                match binary.op {
-                                    Operator::Eq => {
-                                        prefix = Some(JobId::new(s));
-                                    },
-                                    Operator::Gt | Operator::GtEq => {
-                                        start_key = Some(JobId::new(s));
-                                    },
-                                    _ => {},
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let schema = JobsTableSchema::schema();
-
-        // Prefer secondary index scans when possible (auto-picks from store.indexes()).
-        // Falls back to main-partition scan with (job_id) prefix/start_key.
-        let jobs: Vec<(JobId, Job)> = if let Some((index_idx, index_prefix)) =
-            self.store.find_best_index_for_filters(filters)
-        {
-            log::trace!(
-                "[system.jobs] Using secondary index {} for filters: {:?}",
-                index_idx,
-                filters
-            );
-            self.store
-                .scan_by_index(index_idx, Some(&index_prefix), limit)
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to scan jobs by index: {}", e))
-                })?
-        } else {
-            log::debug!(
-                "[system.jobs] Full table scan (no index match) for filters: {:?}",
-                filters
-            );
-            self.store
-                .scan_all_typed(limit, prefix.as_ref(), start_key.as_ref())
-                .map_err(|e| DataFusionError::Execution(format!("Failed to scan jobs: {}", e)))?
-        };
-
-        let batch = self.create_batch(jobs).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build jobs batch: {}", e))
-        })?;
-
-        let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-
-        // Always pass through projection and filters to MemTable - it will handle them
-        table.scan(_state, projection, filters, limit).await
+        // Use the common SystemTableScan implementation
+        self.base_system_scan(state, projection, filters, limit).await
     }
 }
 
