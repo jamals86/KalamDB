@@ -1,0 +1,125 @@
+warning: kalamdb-api@0.2.0: Building UI for release...
+warning: kalamdb-api@0.2.0: Running UI build (npm run build) — this can take a few minutes...
+warning: kalamdb-api@0.2.0: UI build completed successfully
+   Compiling kalamdb-server v0.2.0 (C:\Jamal\git\KalamDB\backend)
+    Finished `release` profile [optimized] target(s) in 8.56s
+warning: the following packages contain code that will be rejected by a future version of Rust: num-bigint-dig v0.8.4
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `C:\Jamal\git\KalamDB\target\release\kalamdb-server.exe`
+✅ Loaded config from: \\?\C:\Jamal\git\KalamDB\backend\server.toml
+╔═══════════════════════════════════════════════════════════════════╗
+║               ⚠️  SECURITY WARNING: JWT SECRET ⚠️                  ║
+╠═══════════════════════════════════════════════════════════════════╣
+║  The configured JWT secret is a known default/placeholder.       ║
+║  This is INSECURE and allows token forgery!                       ║
+║                                                                   ║
+║  To fix: Set a strong, unique secret in server.toml:             ║
+║    [auth]                                                         ║
+║    jwt_secret = "your-unique-32-char-minimum-secret-here"         ║
+║                                                                   ║
+║  Or set via environment variable:                                ║
+║    export KALAMDB_JWT_SECRET="$(openssl rand -base64 32)"         ║
+║                                                                   ║
+║  Generate a secure random secret:                                ║
+║    openssl rand -base64 32                                        ║
+║    # or                                                           ║
+║    cat /dev/urandom | head -c 32 | base64                        ║
+║                                                                   ║
+║  ⚠️ Allowing insecure secret for localhost development only.      ║
+║  This configuration would be REJECTED for production use.        ║
+╚═══════════════════════════════════════════════════════════════════╝
+[2026-01-23 16:32:35.708] [INFO ] - main - kalamdb_server:163 - KalamDB Server v0.2.0                                
+[2026-01-23 16:32:35.709] [INFO ] - main - kalamdb_server:164 - Build date: 2026-01-23 14:25:47 UTC
+[2026-01-23 16:32:35.969] [INFO ] - main - kalamdb_store::rocksdb_init:110 - Running startup compaction for 285 column families...
+[2026-01-23 16:32:35.992] [INFO ] - main - kalamdb_store::rocksdb_init:117 - Startup compaction completed in 22.9437ms
+[2026-01-23 16:32:35.992] [INFO ] - main - kalamdb_server::lifecycle:46 - RocksDB initialized at C:\Jamal\git\KalamDB\backend\./data\rocksdb (283.25ms)
+[2026-01-23 16:32:35.994] [INFO ] - main - kalamdb_core::sql::datafusion_session:178 - Registered 60 namespace(s) as DataFusion schemas
+[2026-01-23 16:32:36.437] [INFO ] - main - kalamdb_core::app_context:968 - Runtime metrics: uptime=0m mem=64MB used=35330MB cpu=0.00% pid=16300 threads=N/A sys_mem=35330MB/48867MB
+[2026-01-23 16:32:36.439] [INFO ] - main - kalamdb_raft::network::service:404 - Starting Raft RPC server on 0.0.0.0:9100 (advertising as 0.0.0.0:9100)
+[2026-01-23 16:32:36.440] [INFO ] - main - kalamdb_raft::network::service:428 - ✓ Raft RPC server started successfully on 0.0.0.0:9100
+[2026-01-23 16:32:36.440] [INFO ] - main - kalamdb_raft::manager::raft_manager:303 - Starting Raft Cluster: node=1 rpc=0.0.0.0:9100 api=0.0.0.0:8080
+[2026-01-23 16:32:36.447] [INFO ] - main - kalamdb_raft::manager::raft_manager:402 - Cluster already initialized (meta last_applied=1377); skipping group initialization
+[2026-01-23 16:32:36.447] [INFO ] - main - kalamdb_server::lifecycle:142 - ✓ Raft cluster started (10.64ms)
+[2026-01-23 16:32:36.448] [INFO ] - main - kalamdb_core::schema_registry::registry::core:77 - Initializing SchemaRegistry: Loading existing tables...
+[2026-01-23 16:32:36.450] [INFO ] - main - kalamdb_core::schema_registry::registry::core:105 - SchemaRegistry initialized. Loaded: 98, Failed: 0
+[2026-01-23 16:32:36.450] [INFO ] - main - kalamdb_raft::state_machine::meta:571 - MetaStateMachine: Restored snapshot at index 999 term 1
+[2026-01-23 16:32:36.451] [INFO ] - main - kalamdb_raft::storage::raft_store:407 - KalamRaftStorage[meta]: Restored state machine from snapshot (last_applied_index=999, last_applied_term=1) - deserialize: 0.03ms, restore: 0.04ms, total: 0.07ms
+[2026-01-23 16:32:36.451] [INFO ] - main - kalamdb_raft::state_machine::shared_data:444 - SharedDataStateMachine[0]: Restored from snapshot at index 999, term 1, 0 pending commands
+[2026-01-23 16:32:36.451] [INFO ] - main - kalamdb_raft::storage::raft_store:407 - KalamRaftStorage[data:shared:00]: Restored state machine from snapshot (last_applied_index=999, last_applied_term=1) - deserialize: 0.01ms, restore: 0.06ms, total: 0.07ms
+[2026-01-23 16:32:36.451] [INFO ] - main - kalamdb_raft::manager::raft_manager:1076 - RaftManager: Restored 2 state machines from snapshots in 0.20ms
+[2026-01-23 16:32:36.451] [INFO ] - main - kalamdb_server::lifecycle:474 - Starting HTTP server on 127.0.0.1:8080
+[2026-01-23 16:32:36.451] [INFO ] - main - kalamdb_server::lifecycle:478 - Server config: workers=16, max_connections=25000, backlog=4096, blocking_threads=512, body_limit=10MB
+[2026-01-23 16:32:36.451] [INFO ] - main - kalamdb_server::lifecycle:534 - Admin UI enabled at /ui (embedded in binary)
+[2026-01-23 16:32:36.451] [INFO ] - main - kalamdb_server::lifecycle:575 - HTTP/2 support enabled (h2c - HTTP/2 cleartext)
+[2026-01-23 16:32:36.451] [INFO ] - main - kalamdb_server::lifecycle:582 - 🚀 Server started in 745.22ms
+[2026-01-23 16:32:37.487] [INFO ] - main - kalamdb_core::jobs::jobs_manager::runner:258 - [JobLoop] This node became leader - handling failover
+[2026-01-23 16:33:20.645] [INFO ] - main - kalamdb_core::schema_registry::registry::core:129 - Registering table test_update_types_mkqzdmyj_hyw_0:all_types_user_mkqzdmyj_hyw_0 via SchemaRegistry
+[2026-01-23 16:33:20.987] [INFO ] - actix-rt|system:0|arbiter:10 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:20.987] [INFO ] - actix-rt|system:0|arbiter:10 - kalamdb_tables::utils::parquet:41 - [PARQUET_SCAN_DEBUG] About to get_or_load manifest: table=test_update_types_mkqzdmyj_hyw_0:all_types_user_mkqzdmyj_hyw_0 user=root
+[2026-01-23 16:33:20.987] [INFO ] - actix-rt|system:0|arbiter:10 - kalamdb_tables::utils::parquet:53 - [PARQUET_SCAN_DEBUG] Got manifest: table=test_update_types_mkqzdmyj_hyw_0:all_types_user_mkqzdmyj_hyw_0 user=root segments=0 sync_state=PendingWrite
+[2026-01-23 16:33:21.036] [INFO ] - main - kalamdb_core::jobs::jobs_manager::runner:329 - [FL-2f51bb86736e] Job fetched for execution: type=Flush, status=Queued, is_leader=true
+[2026-01-23 16:33:21.036] [INFO ] - main - kalamdb_core::jobs::jobs_manager::runner:474 - [FL-2f51bb86736e] execute_job started: type=Flush, has_local_work=true, has_leader_actions=true
+[2026-01-23 16:33:21.036] [INFO ] - main - kalamdb_core::applier::raft::provider_meta_applier:361 - ProviderMetaApplier: Claiming job FL-2f51bb86736e by node 1
+[2026-01-23 16:33:21.037] [INFO ] - main - kalamdb_core::jobs::jobs_manager::runner:610 - [FL-2f51bb86736e] Starting leader phase execution
+[2026-01-23 16:33:21.037] [INFO ] - main - kalamdb_core::jobs::executors::flush:355 - [FL-2f51bb86736e] FlushExecutor.execute_leader called - executing full flush
+[2026-01-23 16:33:21.053] [INFO ] - main - kalamdb_core::applier::raft::provider_meta_applier:445 - ProviderMetaApplier: Completing job FL-2f51bb86736e
+[2026-01-23 16:33:21.317] [INFO ] - actix-rt|system:0|arbiter:13 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:21.556] [INFO ] - actix-rt|system:0|arbiter:15 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:21.800] [INFO ] - actix-rt|system:0|arbiter:1 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:22.044] [INFO ] - actix-rt|system:0|arbiter:3 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:22.282] [INFO ] - actix-rt|system:0|arbiter:5 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:22.521] [INFO ] - actix-rt|system:0|arbiter:7 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:22.753] [INFO ] - actix-rt|system:0|arbiter:9 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:22.985] [INFO ] - actix-rt|system:0|arbiter:11 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:23.215] [INFO ] - actix-rt|system:0|arbiter:13 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:23.447] [INFO ] - actix-rt|system:0|arbiter:15 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:23.736] [INFO ] - actix-rt|system:0|arbiter:1 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:24.006] [INFO ] - actix-rt|system:0|arbiter:3 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:24.297] [INFO ] - actix-rt|system:0|arbiter:5 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:24.590] [INFO ] - actix-rt|system:0|arbiter:7 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:24.824] [INFO ] - actix-rt|system:0|arbiter:9 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:25.057] [INFO ] - actix-rt|system:0|arbiter:11 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:25.325] [INFO ] - actix-rt|system:0|arbiter:13 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:25.646] [INFO ] - actix-rt|system:0|arbiter:15 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:25.898] [INFO ] - actix-rt|system:0|arbiter:1 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:26.173] [INFO ] - actix-rt|system:0|arbiter:3 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:33:26.421] [INFO ] - actix-rt|system:0|arbiter:5 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:38:44.745] [INFO ] - main - kalamdb_core::jobs::jobs_manager::runner:329 - [FL-7c9fea3f5945] Job fetched for execution: type=Flush, status=Queued, is_leader=true
+[2026-01-23 16:38:44.745] [INFO ] - main - kalamdb_core::jobs::jobs_manager::runner:474 - [FL-7c9fea3f5945] execute_job started: type=Flush, has_local_work=true, has_leader_actions=true
+[2026-01-23 16:38:44.745] [INFO ] - main - kalamdb_core::applier::raft::provider_meta_applier:361 - ProviderMetaApplier: Claiming job FL-7c9fea3f5945 by node 1
+[2026-01-23 16:38:44.746] [INFO ] - main - kalamdb_core::jobs::jobs_manager::runner:610 - [FL-7c9fea3f5945] Starting leader phase execution
+[2026-01-23 16:38:44.746] [INFO ] - main - kalamdb_core::jobs::executors::flush:355 - [FL-7c9fea3f5945] FlushExecutor.execute_leader called - executing full flush
+[2026-01-23 16:38:44.746] [WARN ] - main - kalamdb_raft::state_machine::meta:454 - MetaStateMachine: FailJob FL-7c9fea3f5945: Leader executor error: Arrow schema not found for system:users: Table not found: Table not found: system:users
+[2026-01-23 16:38:44.746] [WARN ] - main - kalamdb_core::applier::raft::provider_meta_applier:487 - ProviderMetaApplier: Failing job FL-7c9fea3f5945: Leader executor error: Arrow schema not found for system:users: Table not found: Table not found: system:users
+[2026-01-23 16:38:44.746] [ERROR] - main - kalamdb_core::jobs::jobs_manager::utils:69 - [FL-7c9fea3f5945] Job failed in leader phase: Arrow schema not found for system:users: Table not found: Table not found: system:users
+[2026-01-23 16:49:24.158] [INFO ] - main - kalamdb_core::schema_registry::registry::core:129 - Registering table test_update_types_mkqzyagd_hek_0:all_types_user_mkqzyagd_hek_0 via SchemaRegistry
+[2026-01-23 16:49:24.487] [INFO ] - actix-rt|system:0|arbiter:8 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:24.488] [INFO ] - actix-rt|system:0|arbiter:8 - kalamdb_tables::utils::parquet:41 - [PARQUET_SCAN_DEBUG] About to get_or_load manifest: table=test_update_types_mkqzyagd_hek_0:all_types_user_mkqzyagd_hek_0 user=root
+[2026-01-23 16:49:24.488] [INFO ] - actix-rt|system:0|arbiter:8 - kalamdb_tables::utils::parquet:53 - [PARQUET_SCAN_DEBUG] Got manifest: table=test_update_types_mkqzyagd_hek_0:all_types_user_mkqzyagd_hek_0 user=root segments=0 sync_state=PendingWrite
+[2026-01-23 16:49:24.520] [INFO ] - main - kalamdb_core::jobs::jobs_manager::runner:329 - [FL-463bad5f0dc2] Job fetched for execution: type=Flush, status=Queued, is_leader=true
+[2026-01-23 16:49:24.520] [INFO ] - main - kalamdb_core::jobs::jobs_manager::runner:474 - [FL-463bad5f0dc2] execute_job started: type=Flush, has_local_work=true, has_leader_actions=true
+[2026-01-23 16:49:24.520] [INFO ] - main - kalamdb_core::applier::raft::provider_meta_applier:361 - ProviderMetaApplier: Claiming job FL-463bad5f0dc2 by node 1
+[2026-01-23 16:49:24.520] [INFO ] - main - kalamdb_core::jobs::jobs_manager::runner:610 - [FL-463bad5f0dc2] Starting leader phase execution
+[2026-01-23 16:49:24.520] [INFO ] - main - kalamdb_core::jobs::executors::flush:355 - [FL-463bad5f0dc2] FlushExecutor.execute_leader called - executing full flush
+[2026-01-23 16:49:24.534] [INFO ] - main - kalamdb_core::applier::raft::provider_meta_applier:445 - ProviderMetaApplier: Completing job FL-463bad5f0dc2
+[2026-01-23 16:49:24.768] [INFO ] - actix-rt|system:0|arbiter:11 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:24.999] [INFO ] - actix-rt|system:0|arbiter:13 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:25.229] [INFO ] - actix-rt|system:0|arbiter:15 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:25.496] [INFO ] - actix-rt|system:0|arbiter:1 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:25.777] [INFO ] - actix-rt|system:0|arbiter:3 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:26.011] [INFO ] - actix-rt|system:0|arbiter:5 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:26.299] [INFO ] - actix-rt|system:0|arbiter:7 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:26.606] [INFO ] - actix-rt|system:0|arbiter:9 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:26.870] [INFO ] - actix-rt|system:0|arbiter:11 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:27.161] [INFO ] - actix-rt|system:0|arbiter:13 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:27.421] [INFO ] - actix-rt|system:0|arbiter:15 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:27.714] [INFO ] - actix-rt|system:0|arbiter:1 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:27.949] [INFO ] - actix-rt|system:0|arbiter:3 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:28.190] [INFO ] - actix-rt|system:0|arbiter:5 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:28.428] [INFO ] - actix-rt|system:0|arbiter:7 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:28.760] [INFO ] - actix-rt|system:0|arbiter:9 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:29.029] [INFO ] - actix-rt|system:0|arbiter:11 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:29.300] [INFO ] - actix-rt|system:0|arbiter:13 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:29.532] [INFO ] - actix-rt|system:0|arbiter:15 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+[2026-01-23 16:49:29.763] [INFO ] - actix-rt|system:0|arbiter:1 - kalamdb_tables::user_tables::user_table_provider:820 - 🔍 [AS_USER_DEBUG] scan_rows: user_id='root' role=System allow_all=true
+error: process didn't exit successfully: `C:\Jamal\git\KalamDB\target\release\kalamdb-server.exe` (exit code: 0xffffffff)

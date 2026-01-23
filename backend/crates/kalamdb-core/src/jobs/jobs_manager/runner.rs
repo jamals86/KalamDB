@@ -326,6 +326,8 @@ impl JobsManager {
 
             match job_result {
                 Ok(Some((job, job_node))) => {
+                    log::info!("[{}] Job fetched for execution: type={:?}, status={:?}, is_leader={}", 
+                        job.job_id, job.job_type, job.status, is_leader);
                     let jobs_manager = Arc::clone(&job_manager);
                     join_set.spawn(async move {
                         let _permit = permit;
@@ -367,6 +369,7 @@ impl JobsManager {
 
         // Skip if already processed
         if matches!(job_node.status, JobStatus::Running | JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
+            log::info!("[{}] Skipping job_node already processed: status={:?}", job_id.as_str(), job_node.status);
             return Ok(None);
         }
 
@@ -383,6 +386,7 @@ impl JobsManager {
 
         // Skip if job already terminal
         if matches!(job.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
+            log::info!("[{}] Skipping job already terminal: status={:?}", job_id.as_str(), job.status);
             self.update_job_node_status(job_id, job.status, None).await?;
             return Ok(None);
         }
@@ -466,6 +470,9 @@ impl JobsManager {
     ) -> Result<(), KalamDbError> {
         let job_id = job.job_id.clone();
         let job_type = job.job_type;
+
+        log::info!("[{}] execute_job started: type={:?}, has_local_work={}, has_leader_actions={}", 
+            job_id, job_type, job_type.has_local_work(), job_type.has_leader_actions());
 
         // Mark job as Running if still Queued/New (leader coordination)
         // Only leader should be executing jobs at this point due to creation constraints
@@ -600,6 +607,7 @@ impl JobsManager {
             }
 
             if job_type.has_leader_actions() {
+                log::info!("[{}] Starting leader phase execution", job_id);
                 self.log_job_event(&job_id, &Level::Debug, "Executing leader phase");
 
                 let leader_decision = match self.job_registry.execute_leader(app_ctx, &job).await {

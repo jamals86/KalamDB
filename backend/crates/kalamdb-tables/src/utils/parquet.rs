@@ -38,6 +38,11 @@ pub(crate) fn scan_parquet_files_as_batch(
         })?;
 
     let manifest_service = core.manifest_service.clone();
+    log::info!(
+        "[PARQUET_SCAN_DEBUG] About to get_or_load manifest: table={} {}",
+        table_id,
+        scope_label
+    );
     let cache_result = manifest_service.get_or_load(table_id, user_id);
     let mut manifest_opt: Option<Manifest> = None;
     let mut use_degraded_mode = false;
@@ -45,6 +50,13 @@ pub(crate) fn scan_parquet_files_as_batch(
     match &cache_result {
         Ok(Some(entry)) => {
             let manifest = entry.manifest.clone();
+            log::info!(
+                "[PARQUET_SCAN_DEBUG] Got manifest: table={} {} segments={} sync_state={:?}",
+                table_id,
+                scope_label,
+                manifest.segments.len(),
+                entry.sync_state
+            );
             // Validate manifest using service
             if let Err(e) = manifest_service.validate_manifest(&manifest) {
                 log::warn!(
@@ -101,8 +113,8 @@ pub(crate) fn scan_parquet_files_as_batch(
             }
         },
         Ok(None) => {
-            log::debug!(
-                "⚠️  Manifest cache MISS | table={} | {} | fallback=directory_scan",
+            log::info!(
+                "[PARQUET_SCAN_DEBUG] Manifest cache MISS | table={} | {} | fallback=directory_scan",
                 table_id,
                 scope_label
             );
@@ -143,6 +155,17 @@ pub(crate) fn scan_parquet_files_as_batch(
         schema.clone(),
         core.schema_registry.as_ref(),
     )?;
+
+    log::info!(
+        "[PARQUET_SCAN_DEBUG] Scan complete: table={} {} total_batches={} skipped={} scanned={} rows={} use_degraded_mode={}",
+        table_id,
+        scope_label,
+        total_batches,
+        skipped,
+        scanned,
+        combined.num_rows(),
+        use_degraded_mode
+    );
 
     if total_batches > 0 {
         log::debug!(

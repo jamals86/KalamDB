@@ -352,6 +352,7 @@ impl JobExecutor for FlushExecutor {
         &self,
         ctx: &JobContext<Self::Params>,
     ) -> Result<JobDecision, KalamDbError> {
+        log::info!("[{}] FlushExecutor.execute_leader called - executing full flush", ctx.job_id);
         ctx.log_debug("Flush leader phase - executing full flush");
         self.do_flush(ctx).await
     }
