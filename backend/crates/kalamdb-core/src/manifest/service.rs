@@ -13,7 +13,7 @@ use kalamdb_commons::models::types::{Manifest, ManifestCacheEntry, SegmentMetada
 use kalamdb_commons::{ManifestId, TableId, UserId};
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_filestore::StorageRegistry;
-use kalamdb_store::entity_store::{EntityStore, KSerializable};
+use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{StorageBackend, StorageError};
 use kalamdb_system::ManifestService as ManifestServiceTrait;
 use kalamdb_system::providers::ManifestTableProvider;
@@ -122,67 +122,24 @@ impl ManifestService {
 
     /// Count all cached manifest entries.
     pub fn count(&self) -> Result<usize, StorageError> {
-        let partition = self.provider.store().partition();
-        let iter = self
-            .provider
-            .store()
-            .backend()
-            .scan(&partition, None, None, Some(MAX_MANIFEST_SCAN_LIMIT))?;
-        let mut count = 0usize;
-        for _ in iter {
-            count += 1;
-        }
-        Ok(count)
+        self.provider.store().count_all()
     }
 
     /// Return all cached entries with their storage keys.
     pub fn get_all(&self) -> Result<Vec<(String, ManifestCacheEntry)>, StorageError> {
-        let partition = self.provider.store().partition();
-        let iter = self
-            .provider
-            .store()
-            .backend()
-            .scan(&partition, None, None, Some(MAX_MANIFEST_SCAN_LIMIT))?;
-        let mut results = Vec::new();
-        for (key_bytes, value_bytes) in iter {
-            match ManifestCacheEntry::decode(&value_bytes) {
-                Ok(entry) => {
-                    let key = String::from_utf8(key_bytes).unwrap_or_default();
-                    results.push((key, entry));
-                }
-                Err(StorageError::SerializationError(err)) => {
-                    warn!(
-                        "Manifest cache entry corrupted for key {}: {} (dropping)",
-                        String::from_utf8_lossy(&key_bytes),
-                        err
-                    );
-                    let _ = self
-                        .provider
-                        .store()
-                        .backend()
-                        .delete(&partition, &key_bytes);
-                }
-                Err(err) => return Err(err),
-            }
-        }
+        let entries = self.provider.store().scan_all_typed(Some(MAX_MANIFEST_SCAN_LIMIT), None, None)?;
+        let results: Vec<(String, ManifestCacheEntry)> = entries
+            .into_iter()
+            .map(|(key, entry)| (key.to_string(), entry))
+            .collect();
         Ok(results)
     }
 
     /// Clear all cached entries.
     pub fn clear(&self) -> Result<(), StorageError> {
-        let partition = self.provider.store().partition();
-        let iter = self
-            .provider
-            .store()
-            .backend()
-            .scan(&partition, None, None, Some(MAX_MANIFEST_SCAN_LIMIT))?;
-        let keys: Vec<Vec<u8>> = iter.map(|(key_bytes, _)| key_bytes).collect();
-
-        for key_bytes in keys {
-            self.provider
-                .store()
-                .backend()
-                .delete(&partition, &key_bytes)?;
+        let keys = self.provider.store().scan_keys_typed(None, None, MAX_MANIFEST_SCAN_LIMIT)?;
+        if !keys.is_empty() {
+            self.provider.store().delete_batch(&keys)?;
         }
         Ok(())
     }
@@ -191,36 +148,16 @@ impl ManifestService {
     pub fn cache_stats(&self) -> Result<(usize, usize, usize), StorageError> {
         let mut shared_count = 0usize;
         let mut user_count = 0usize;
-        let partition = self.provider.store().partition();
-        let iter = self
-            .provider
-            .store()
-            .backend()
-            .scan(&partition, None, None, Some(MAX_MANIFEST_SCAN_LIMIT))?;
-        for (key_bytes, value_bytes) in iter {
-            match ManifestCacheEntry::decode(&value_bytes) {
-                Ok(entry) => {
-                    if entry.manifest.user_id.is_some() {
-                        user_count += 1;
-                    } else {
-                        shared_count += 1;
-                    }
-                }
-                Err(StorageError::SerializationError(err)) => {
-                    warn!(
-                        "Manifest cache entry corrupted for key {}: {} (dropping)",
-                        String::from_utf8_lossy(&key_bytes),
-                        err
-                    );
-                    let _ = self
-                        .provider
-                        .store()
-                        .backend()
-                        .delete(&partition, &key_bytes);
-                }
-                Err(err) => return Err(err),
+        let entries = self.provider.store().scan_all_typed(Some(MAX_MANIFEST_SCAN_LIMIT), None, None)?;
+        
+        for (_, entry) in entries {
+            if entry.manifest.user_id.is_some() {
+                user_count += 1;
+            } else {
+                shared_count += 1;
             }
         }
+        
         let weight_factor = self.config.user_table_weight_factor as usize;
         let total_weight = shared_count + (user_count * weight_factor);
         Ok((shared_count, user_count, total_weight))
@@ -403,31 +340,13 @@ impl ManifestService {
 
     /// Invalidate all cache entries for a table (all users + shared).
     pub fn invalidate_table(&self, table_id: &TableId) -> Result<usize, StorageError> {
-        let key_prefix = format!(
-            "{}:",
-            table_id // TableId Display: "namespace:table"
-        );
-
-        let mut invalidated = 0;
-        let partition = self.provider.store().partition();
-        let iter = self
-            .provider
-            .store()
-            .backend()
-            .scan(
-                &partition,
-                Some(key_prefix.as_bytes()),
-                None,
-                Some(MAX_MANIFEST_SCAN_LIMIT),
-            )?;
-        let keys: Vec<Vec<u8>> = iter.map(|(key_bytes, _)| key_bytes).collect();
-
-        for key_bytes in keys {
-            self.provider
-                .store()
-                .backend()
-                .delete(&partition, &key_bytes)?;
-            invalidated += 1;
+        // Create a prefix key for this table (all versions/users)
+        let prefix_key = ManifestId::new(table_id.clone(), None);
+        let keys = self.provider.store().scan_keys_typed(Some(&prefix_key), None, MAX_MANIFEST_SCAN_LIMIT)?;
+        let invalidated = keys.len();
+        
+        if !keys.is_empty() {
+            self.provider.store().delete_batch(&keys)?;
         }
 
         debug!("Invalidated {} manifest cache entries for table {}", invalidated, table_id);
@@ -457,40 +376,22 @@ impl ManifestService {
     pub fn evict_stale_entries(&self, ttl_seconds: i64) -> Result<usize, StorageError> {
         let now = chrono::Utc::now().timestamp();
         let cutoff = now - ttl_seconds;
-        let mut evicted_count = 0;
-        let partition = self.provider.store().partition();
-        let iter = self
-            .provider
-            .store()
-            .backend()
-            .scan(&partition, None, None, Some(MAX_MANIFEST_SCAN_LIMIT))?;
-        let mut delete_keys = Vec::new();
-
-        for (key_bytes, value_bytes) in iter {
-            match ManifestCacheEntry::decode(&value_bytes) {
-                Ok(entry) => {
-                    if entry.last_refreshed < cutoff {
-                        delete_keys.push(key_bytes);
-                    }
+        let entries = self.provider.store().scan_all_typed(Some(MAX_MANIFEST_SCAN_LIMIT), None, None)?;
+        
+        let delete_keys: Vec<ManifestId> = entries
+            .into_iter()
+            .filter_map(|(key, entry)| {
+                if entry.last_refreshed < cutoff {
+                    Some(key)
+                } else {
+                    None
                 }
-                Err(StorageError::SerializationError(err)) => {
-                    warn!(
-                        "Manifest cache entry corrupted for key {}: {} (dropping)",
-                        String::from_utf8_lossy(&key_bytes),
-                        err
-                    );
-                    delete_keys.push(key_bytes);
-                }
-                Err(err) => return Err(err),
-            }
-        }
+            })
+            .collect();
 
-        for key_bytes in delete_keys {
-            self.provider
-                .store()
-                .backend()
-                .delete(&partition, &key_bytes)?;
-            evicted_count += 1;
+        let evicted_count = delete_keys.len();
+        if !delete_keys.is_empty() {
+            self.provider.store().delete_batch(&delete_keys)?;
         }
 
         info!(
@@ -743,33 +644,14 @@ impl ManifestService {
         &self,
         table_id: &TableId,
     ) -> Result<Vec<UserId>, StorageError> {
-        let prefix = format!("{}:", table_id);
-        let partition = self.provider.store().partition();
-        let iter = self
-            .provider
-            .store()
-            .backend()
-            .scan(
-                &partition,
-                Some(prefix.as_bytes()),
-                None,
-                Some(MAX_MANIFEST_SCAN_LIMIT),
-            )?;
+        let prefix_key = ManifestId::new(table_id.clone(), None);
+        let entries = self.provider.store().scan_keys_typed(Some(&prefix_key), None, MAX_MANIFEST_SCAN_LIMIT)?;
         let mut user_ids = HashSet::new();
 
-        for (key_bytes, _value_bytes) in iter {
-            let key_str = match std::str::from_utf8(&key_bytes) {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-            let mut parts = key_str.splitn(3, ':');
-            let _namespace = parts.next();
-            let _table = parts.next();
-            let scope = parts.next();
-            if let Some(scope) = scope {
-                if scope != "shared" {
-                    user_ids.insert(UserId::from(scope));
-                }
+        for key in entries {
+            // ManifestId has user_id field we can extract directly
+            if let Some(user_id) = key.user_id {
+                user_ids.insert(user_id);
             }
         }
 

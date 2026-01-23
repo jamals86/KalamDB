@@ -55,7 +55,7 @@ use kalamdb_commons::{
         AuditLogEntry, Job, JobNode, LiveQuery, ManifestCacheEntry, Namespace,
         Storage as SystemStorage, User,
     },
-    StorageKey, UserId,
+    next_storage_key_bytes, StorageKey, UserId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -69,13 +69,6 @@ pub enum ScanDirection {
 }
 
 pub type EntityIterator<K, V> = Box<dyn Iterator<Item = Result<(K, V)>> + Send>;
-
-fn next_storage_key_bytes(bytes: &[u8]) -> Vec<u8> {
-    let mut next = Vec::with_capacity(bytes.len() + 1);
-    next.extend_from_slice(bytes);
-    next.push(0);
-    next
-}
 
 /// Trait for typed entity storage with type-safe keys and automatic serialization.
 ///
@@ -164,6 +157,18 @@ where
     V: KSerializable + 'static,
 {
     /// Returns a reference to the storage backend.
+    ///
+    /// ⚠️ **INTERNAL USE ONLY** - Do not call this method directly from outside the trait!
+    /// This method is only meant to be used internally by EntityStore trait methods.
+    /// Use the provided EntityStore methods (get, put, delete, scan_*, etc.) instead.
+    ///
+    /// **Rationale**: Direct backend access bypasses type safety and proper key serialization.
+    /// All operations should go through EntityStore methods which ensure:
+    /// - Proper key serialization via StorageKey trait
+    /// - Type-safe deserialization via KSerializable trait  
+    /// - Consistent error handling
+    /// - Future optimizations (caching, batching, etc.)
+    #[doc(hidden)]
     fn backend(&self) -> &Arc<dyn StorageBackend>;
 
     /// Returns the partition for this entity type.
@@ -672,6 +677,76 @@ where
                 Ok(keys)
             },
         }
+    }
+
+    /// Count all entities in the partition.
+    ///
+    /// This is useful for monitoring and validation. Note that this does a full scan
+    /// and can be expensive for large datasets.
+    fn count_all(&self) -> Result<usize> {
+        const MAX_COUNT_LIMIT: usize = 1_000_000;
+        let partition = self.partition();
+        let iter = self.backend().scan(&partition, None, None, Some(MAX_COUNT_LIMIT))?;
+        let mut count = 0usize;
+        for _ in iter {
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Compact the partition to reclaim space and optimize reads.
+    ///
+    /// This triggers RocksDB compaction which removes deleted entries (tombstones)
+    /// and reorganizes SSTables for better read performance. This is typically called
+    /// after bulk deletes or flushes.
+    fn compact(&self) -> Result<()> {
+        let partition = self.partition();
+        self.backend().compact_partition(&partition)
+    }
+
+    /// Create the partition if it doesn't exist.
+    ///
+    /// This creates the RocksDB column family for this entity store. It's safe to call
+    /// multiple times - if the partition already exists, this is a no-op.
+    fn ensure_partition_exists(&self) -> Result<()> {
+        let partition = self.partition();
+        self.backend().create_partition(&partition)
+    }
+
+    /// Delete multiple entities by keys.
+    ///
+    /// This is useful for bulk deletion operations. Unlike `batch_put`, this doesn't
+    /// return the deleted values.
+    fn delete_batch(&self, keys: &[K]) -> Result<()> {
+        use crate::storage_trait::Operation;
+        let partition = self.partition();
+        
+        let operations: Vec<Operation> = keys
+            .iter()
+            .map(|key| {
+                Operation::Delete {
+                    partition: partition.clone(),
+                    key: key.storage_key(),
+                }
+            })
+            .collect();
+
+        self.backend().batch(operations)
+    }
+
+    /// Scan and get all raw key-value pairs (as bytes) matching a prefix.
+    ///
+    /// This is useful for operations that need raw keys (like deletion) without
+    /// deserializing values. Use sparingly - prefer typed scan methods when possible.
+    fn scan_raw_keys(
+        &self,
+        prefix: Option<&[u8]>,
+        start_key: Option<&[u8]>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Vec<u8>>> {
+        let partition = self.partition();
+        let iter = self.backend().scan(&partition, prefix, start_key, limit)?;
+        Ok(iter.map(|(key_bytes, _)| key_bytes).collect())
     }
 }
 

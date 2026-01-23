@@ -343,9 +343,8 @@ impl TableFlush for SharedTableFlushJob {
 
         // Compact RocksDB column family after flush to free space and optimize reads
         use kalamdb_store::entity_store::EntityStore;
-        let partition = self.store.partition();
-        log::debug!("🔧 Compacting RocksDB column family after flush: {}", partition.name());
-        if let Err(e) = self.store.backend().compact_partition(&partition) {
+        log::debug!("🔧 Compacting RocksDB column family after flush: {}", self.store.partition().name());
+        if let Err(e) = self.store.compact() {
             log::warn!("⚠️  Failed to compact partition after flush: {}", e);
             // Non-fatal: flush succeeded, compaction is optimization
         }

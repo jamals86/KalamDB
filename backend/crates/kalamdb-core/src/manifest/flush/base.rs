@@ -194,6 +194,7 @@ pub mod helpers {
     use datafusion::arrow::record_batch::RecordBatch;
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::constants::SystemColumnNames;
+    use kalamdb_commons::next_storage_key_bytes;
     use kalamdb_commons::models::rows::Row;
 
     /// Extract primary key field name from Arrow schema
@@ -210,9 +211,7 @@ pub mod helpers {
 
     /// Update cursor for next batch (append null byte to skip current key)
     pub fn advance_cursor(last_key: &[u8]) -> Vec<u8> {
-        let mut next = last_key.to_vec();
-        next.push(0);
-        next
+        next_storage_key_bytes(last_key)
     }
 
     /// Calculate deduplication ratio

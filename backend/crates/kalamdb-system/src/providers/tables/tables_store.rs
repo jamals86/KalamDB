@@ -97,8 +97,7 @@ impl TablesStore {
     pub fn debug_dump_keys_for_table(&self, table_id: &TableId) {
         let prefix_key = TableVersionId::latest(table_id.clone());
         log::debug!(
-            "[TablesStore::debug_dump] Backend ptr: {:p}, Partition: {}",
-            Arc::as_ptr(self.backend()),
+            "[TablesStore::debug_dump] Partition: {}",
             self.partition()
         );
         match self.scan_keys_typed(Some(&prefix_key), None, 1000) {

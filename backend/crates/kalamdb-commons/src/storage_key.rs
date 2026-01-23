@@ -105,6 +105,18 @@ pub fn decode_key<T: Decode>(bytes: &[u8]) -> Result<T, String> {
         .map_err(|e| format!("storekey decode error: {:?}", e))
 }
 
+/// Compute the next lexicographic key after the provided encoded bytes.
+///
+/// This is used to make range scans exclusive of a specific key. It appends
+/// a null byte which is safe for storekey-encoded values because the encoded
+/// bytes are prefix-free for complete keys.
+pub fn next_storage_key_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut next = Vec::with_capacity(bytes.len() + 1);
+    next.extend_from_slice(bytes);
+    next.push(0);
+    next
+}
+
 /// Trait for keys that can be serialized for storage in EntityStore
 ///
 /// All keys used with SystemTableStore must implement this trait to ensure

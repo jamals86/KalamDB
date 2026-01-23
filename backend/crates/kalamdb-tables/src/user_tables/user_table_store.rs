@@ -53,6 +53,7 @@ impl UserTableStore {
 
 /// Implement EntityStore trait for typed CRUD operations
 impl EntityStore<UserTableRowId, UserTableRow> for UserTableStore {
+    #[doc(hidden)]
     fn backend(&self) -> &Arc<dyn StorageBackend> {
         &self.backend
     }

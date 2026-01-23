@@ -1278,7 +1278,90 @@ also add tests which cover the users/shared/stream providers for scanning with p
 
 131) why we need: SystemTableProviderExt? why not directly use TableProvider trait?
 
+131) Check if we need to use the storekey for this one
+fn next_storage_key_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut next = Vec::with_capacity(bytes.len() + 1);
+    next.extend_from_slice(bytes);
+    next.push(0);
+    next
+}
+search other places where we may written similar thing and also replace it with the best practice we have for storekey
 
+
+
+132) Manifest and Flushing
+I want to go over how manifest and flushing works or should be working:
+
+Insert:
+1) User perform insert/update/delete
+2) We check if we have specified a pk identifier
+   - yes - then we need to check if already exists using (getByPk flow below)
+     - exists - we return error pk already exists
+     - not exists - we proceed to step 3
+
+   - No - we generate a new unique pk identifier according to the auto-gen defined in tabledefinition
+3) We insert into rocksdb the new row with the pk identifier and other columns
+5) Update manifest Segments/SyncState using updateManifest()
+
+
+Update:
+1) User perform update
+2) We check if we have specified a pk identifier
+    - yes - then we need to check if already exists using (getByPk flow below)
+      - exists - we proceed to step 3
+      - not exists - we return error pk not found
+    - No - we return error pk must be specified for update
+3) we fetch it using getByPk flow below to have all the fields and then we update the fields with the new values
+3) We update/insert the row in rocksdb with the new values (since it may be in parquet and not in hot storage)
+4) Update manifest Segments/SyncState using updateManifest()
+
+Delete:
+Similar to update but we mark the row as deleted instead of updating values
+
+
+
+getByPk - Checking pk exists or fetch by pk flow:
+1) We first go to manifest service
+2) make sure we have the latest manifest object in rocksdb as a cache
+3) we verify the id is in one of the segments range
+4) if yes
+5) we check where? hot or cold
+6) we read the parquet file or the hot storage (rocksdb) to verify if the pk exists or not
+Note: The same pk might be in hot and cold we read the hot first
+7) if not we return not exists
+
+
+markManifest - Marking manifest sync state:
+1) we fetch the manifest from rocksdb cache
+2) We check if we have segments with: in_progress status
+3) if yes we update it with the latest the max seq number
+(We should add another status for each segment which is: in_progress - this way when flushing fails we can retry it again later on the same segment without creating duplicates segments)
+4) Updating the manifest object to have SyncState = Pendingwrite
+5) Add the manifest to secondary index on manifest table for easily looking up
+PendingWrite manifests by tableid with a key: <TableId>:PendingWrite:<Optional<UserId>> so that flush job can easily lookup manifests which needs flushing
+
+
+Flushing:
+1) Then the flush table command is run or scheduled later by job system
+2) The flush job will look for manifests with Tableid:PendingWrite status and process them one by one
+3) Either for each userid or the whole for shared tables we already have this done
+4) We also write the manifest to external storage
+5) After successful writing we update the manifest syncstate to Synced
+6) We remove the secondary index entry for PendingWrite for this manifest
+7) we remove the flushed rows from hot storage (rocksdb) to free memory
+
+
+Select:
+1) User perform select
+2) for this we rely on datafusion to read from both hot and cold storage
+3) datafusion will read from rocksdb for hot storage and parquet files for cold storage
+4) we merge the results from both hot and cold
+5) We take the latest version depending on SeqId and _deleted columns
+6) return the final result to user
+
+
+Notice:
+1) these should work for batch inserts/updates/deletes as well so the updating of rocksdb and manifest should be done in batch as well and not in each insert/update/delete, so if a user run multiple inserts or updates or deletes
 
 
 
