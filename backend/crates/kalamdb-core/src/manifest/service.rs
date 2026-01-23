@@ -644,16 +644,37 @@ impl ManifestService {
         &self,
         table_id: &TableId,
     ) -> Result<Vec<UserId>, StorageError> {
-        let prefix_key = ManifestId::new(table_id.clone(), None);
-        let entries = self.provider.store().scan_keys_typed(Some(&prefix_key), None, MAX_MANIFEST_SCAN_LIMIT)?;
+        // Use storekey-encoded prefix for proper RocksDB scan
+        let prefix = ManifestId::table_prefix(table_id);
+        log::debug!(
+            "[MANIFEST_CACHE_DEBUG] get_manifest_user_ids: table={} partition={} prefix_len={}",
+            table_id,
+            self.provider.store().partition().name(),
+            prefix.len()
+        );
+        
+        // Use scan_keys_with_raw_prefix to only fetch keys (no value deserialization)
+        let keys: Vec<ManifestId> = self
+            .provider
+            .store()
+            .scan_keys_with_raw_prefix(&prefix, None, MAX_MANIFEST_SCAN_LIMIT)?;
+        
         let mut user_ids = HashSet::new();
 
-        for key in entries {
-            // ManifestId has user_id field we can extract directly
-            if let Some(user_id) = key.user_id {
-                user_ids.insert(user_id);
+        for manifest_id in keys {
+            log::debug!(
+                "[MANIFEST_CACHE_DEBUG] get_manifest_user_ids: found manifest_id={}",
+                manifest_id.as_str()
+            );
+            if let Some(user_id) = manifest_id.user_id() {
+                user_ids.insert(user_id.clone());
             }
         }
+
+        log::debug!(
+            "[MANIFEST_CACHE_DEBUG] get_manifest_user_ids: result user_ids={:?}",
+            user_ids.iter().map(|u| u.as_str()).collect::<Vec<_>>()
+        );
 
         Ok(user_ids.into_iter().collect())
     }
@@ -670,6 +691,13 @@ impl ManifestService {
     ) -> Result<(), StorageError> {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
         let now = chrono::Utc::now().timestamp();
+
+        log::debug!(
+            "[MANIFEST_CACHE_DEBUG] upsert_cache_entry: key={} segments={} sync_state={:?}",
+            rocksdb_key.as_str(),
+            manifest.segments.len(),
+            sync_state
+        );
 
         let entry = ManifestCacheEntry::new(manifest.clone(), etag, now, sync_state);
 
