@@ -10,7 +10,7 @@
 use crate::schema_registry::SchemaRegistry;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::types::{Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
-use kalamdb_commons::{ManifestId, TableId, UserId};
+use kalamdb_commons::{ManifestId, StorageKey, TableId, UserId};
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_filestore::StorageRegistry;
 use kalamdb_store::entity_store::{EntityStore, KSerializable};
@@ -743,35 +743,53 @@ impl ManifestService {
         &self,
         table_id: &TableId,
     ) -> Result<Vec<UserId>, StorageError> {
-        let prefix = format!("{}:", table_id);
+        // Use storekey-encoded prefix for proper RocksDB scan
+        let prefix = ManifestId::table_prefix(table_id);
         let partition = self.provider.store().partition();
+        log::debug!(
+            "[MANIFEST_CACHE_DEBUG] get_manifest_user_ids: table={} partition={} prefix_len={}",
+            table_id,
+            partition.name(),
+            prefix.len()
+        );
         let iter = self
             .provider
             .store()
             .backend()
             .scan(
                 &partition,
-                Some(prefix.as_bytes()),
+                Some(&prefix),
                 None,
                 Some(MAX_MANIFEST_SCAN_LIMIT),
             )?;
         let mut user_ids = HashSet::new();
 
         for (key_bytes, _value_bytes) in iter {
-            let key_str = match std::str::from_utf8(&key_bytes) {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-            let mut parts = key_str.splitn(3, ':');
-            let _namespace = parts.next();
-            let _table = parts.next();
-            let scope = parts.next();
-            if let Some(scope) = scope {
-                if scope != "shared" {
-                    user_ids.insert(UserId::from(scope));
-                }
+            // Decode storekey-encoded ManifestId
+            match ManifestId::from_storage_key(&key_bytes) {
+                Ok(manifest_id) => {
+                    log::debug!(
+                        "[MANIFEST_CACHE_DEBUG] get_manifest_user_ids: found manifest_id={}",
+                        manifest_id.as_str()
+                    );
+                    if let Some(user_id) = manifest_id.user_id() {
+                        user_ids.insert(user_id.clone());
+                    }
+                },
+                Err(e) => {
+                    log::warn!(
+                        "[MANIFEST_CACHE_DEBUG] get_manifest_user_ids: failed to decode key: {}",
+                        e
+                    );
+                    continue;
+                },
             }
         }
+
+        log::debug!(
+            "[MANIFEST_CACHE_DEBUG] get_manifest_user_ids: result user_ids={:?}",
+            user_ids.iter().map(|u| u.as_str()).collect::<Vec<_>>()
+        );
 
         Ok(user_ids.into_iter().collect())
     }
@@ -788,6 +806,13 @@ impl ManifestService {
     ) -> Result<(), StorageError> {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
         let now = chrono::Utc::now().timestamp();
+
+        log::debug!(
+            "[MANIFEST_CACHE_DEBUG] upsert_cache_entry: key={} segments={} sync_state={:?}",
+            rocksdb_key.as_str(),
+            manifest.segments.len(),
+            sync_state
+        );
 
         let entry = ManifestCacheEntry::new(manifest.clone(), etag, now, sync_state);
 
