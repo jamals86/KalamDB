@@ -616,6 +616,53 @@ where
         Ok(keys)
     }
 
+    /// Scans keys with raw byte prefix (returns typed keys, skips values).
+    ///
+    /// This method accepts a raw byte prefix (e.g., for scanning with partial composite keys)
+    /// but only returns properly typed keys without deserializing values. This is more efficient
+    /// than `scan_with_raw_prefix` when you don't need the values.
+    ///
+    /// Use this when you have a raw byte prefix that doesn't correspond to a complete key
+    /// (e.g., JobNodeId::prefix_for_node returns only the node_id component) and you only
+    /// need to collect the keys.
+    ///
+    /// ## Example
+    /// ```rust,ignore
+    /// // When prefix_for_node returns Vec<u8> (partial key)
+    /// let prefix_bytes = JobNodeId::prefix_for_node(&node_id);
+    /// let keys = store.scan_keys_with_raw_prefix(&prefix_bytes, None, limit)?;
+    /// // Returns Vec<JobNodeId> without deserializing JobNode values
+    /// ```
+    fn scan_keys_with_raw_prefix(
+        &self,
+        prefix: &[u8],
+        start_key: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<Vec<K>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let partition = self.partition();
+        let iter = self.backend().scan(&partition, Some(prefix), start_key, Some(limit))?;
+
+        let mut keys = Vec::with_capacity(limit);
+        for (key_bytes, _) in iter {
+            let key = match K::from_storage_key(&key_bytes) {
+                Ok(k) => k,
+                Err(e) => {
+                    log::warn!("Skipping entry with malformed key: {}", e);
+                    continue;
+                }
+            };
+            keys.push(key);
+            if keys.len() >= limit {
+                break;
+            }
+        }
+        Ok(keys)
+    }
+
     /// Scans keys relative to a starting key in a specified direction.
     ///
     /// This avoids deserializing values, which reduces CPU and allocation pressure.

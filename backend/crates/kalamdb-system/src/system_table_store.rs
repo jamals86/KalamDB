@@ -74,6 +74,12 @@ where
     K: StorageKey,
     V: KSerializable + 'static,
 {
+    /// Returns a reference to the storage backend.
+    ///
+    /// ⚠️ **INTERNAL USE ONLY** - Do not call this method directly from outside the trait!
+    /// This method is only meant to be used internally by EntityStore trait methods.
+    /// Use the provided EntityStore methods (get, put, delete, scan_*, etc.) instead.
+    #[doc(hidden)]
     fn backend(&self) -> &Arc<dyn StorageBackend> {
         &self.backend
     }

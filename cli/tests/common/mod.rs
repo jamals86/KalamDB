@@ -267,9 +267,7 @@ pub fn test_context() -> &'static TestContext {
                     .split('/')
                     .next()
                     .unwrap_or("127.0.0.1:8081");
-                std::net::TcpStream::connect(host_port)
-                    .map(|_| true)
-                    .unwrap_or(false)
+                host_port_reachable(host_port)
             })
             .cloned()
             .collect();
@@ -715,7 +713,54 @@ pub fn is_server_running() -> bool {
 }
 
 fn is_server_reachable() -> bool {
-    std::net::TcpStream::connect(server_host_port()).map(|_| true).unwrap_or(false)
+    host_port_reachable(&server_host_port())
+}
+
+fn host_port_reachable(host_port: &str) -> bool {
+    if std::net::TcpStream::connect(host_port).map(|_| true).unwrap_or(false) {
+        return true;
+    }
+
+    let Some((host, port)) = split_host_port(host_port) else {
+        return false;
+    };
+
+    let mut fallbacks: Vec<String> = Vec::new();
+    match host.as_str() {
+        "127.0.0.1" => {
+            fallbacks.push(format!("localhost:{}", port));
+            fallbacks.push(format!("[::1]:{}", port));
+        }
+        "localhost" => {
+            fallbacks.push(format!("127.0.0.1:{}", port));
+            fallbacks.push(format!("[::1]:{}", port));
+        }
+        "::1" => {
+            fallbacks.push(format!("127.0.0.1:{}", port));
+            fallbacks.push(format!("localhost:{}", port));
+        }
+        _ => {}
+    }
+
+    fallbacks
+        .into_iter()
+        .any(|candidate| std::net::TcpStream::connect(candidate).map(|_| true).unwrap_or(false))
+}
+
+fn split_host_port(host_port: &str) -> Option<(String, String)> {
+    let trimmed = host_port.trim();
+    if trimmed.starts_with('[') {
+        let end = trimmed.find(']')?;
+        let host = trimmed[1..end].to_string();
+        let port = trimmed[end + 1..].strip_prefix(':')?.to_string();
+        return Some((host, port));
+    }
+
+    let (host, port) = trimmed.rsplit_once(':')?;
+    if host.is_empty() || port.is_empty() {
+        return None;
+    }
+    Some((host.to_string(), port.to_string()))
 }
 
 fn server_requires_auth() -> Option<bool> {
@@ -730,7 +775,7 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
         .next()
         .unwrap_or("127.0.0.1:8080");
 
-    if std::net::TcpStream::connect(host_port).map(|_| true).unwrap_or(false) == false {
+    if !host_port_reachable(host_port) {
         return None;
     }
 
