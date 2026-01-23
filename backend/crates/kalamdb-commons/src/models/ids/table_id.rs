@@ -7,9 +7,10 @@ use std::fmt;
 
 use super::namespace_id::NamespaceId;
 use crate::models::table_name::TableName;
+use crate::storage_key::{decode_key, encode_key, encode_prefix};
 use crate::StorageKey;
 
-/// Composite key for system.tables entries: {namespace_id}:{table_name}
+/// Composite key for system.tables entries: (namespace_id, table_name)
 ///
 /// This composite key provides type-safe access to table metadata,
 /// ensuring namespace and table name are always paired correctly.
@@ -55,20 +56,28 @@ impl TableId {
         }
     }
 
-    /// Format as bytes for storage: "{namespace_id}:{table_name}"
+    /// Create a prefix for scanning all tables in a namespace.
     #[inline]
-    pub fn as_storage_key(&self) -> Vec<u8> {
-        let ns = self.namespace_id.as_str();
-        let tn = self.table_name.as_str();
-        let mut key = Vec::with_capacity(ns.len() + 1 + tn.len());
-        key.extend_from_slice(ns.as_bytes());
-        key.push(b':');
-        key.extend_from_slice(tn.as_bytes());
-        key
+    pub fn namespace_prefix(namespace_id: &NamespaceId) -> Vec<u8> {
+        encode_prefix(&(namespace_id.as_str(),))
     }
 
-    /// Parse from storage key format: "{namespace_id}:{table_name}"
+    /// Format as bytes for storage using storekey tuple encoding
+    #[inline]
+    pub fn as_storage_key(&self) -> Vec<u8> {
+        encode_key(&(self.namespace_id.as_str(), self.table_name.as_str()))
+    }
+
+    /// Parse from storage key bytes
     pub fn from_storage_key(key: &[u8]) -> Option<Self> {
+        if let Ok((namespace_id, table_name)) = decode_key::<(String, String)>(key) {
+            return Some(Self {
+                namespace_id: NamespaceId::new(namespace_id),
+                table_name: TableName::new(table_name),
+            });
+        }
+
+        // Legacy delimiter-based format fallback
         let key_str = std::str::from_utf8(key).ok()?;
         let pos = key_str.find(':')?;
         let namespace_id = &key_str[..pos];
@@ -88,7 +97,7 @@ impl TableId {
     /// Returns the fully qualified table name in SQL format: "namespace.table"
     ///
     /// This is the format used in SQL queries (e.g., `SELECT * FROM app.users`).
-    /// For storage key format (namespace:table), use `as_storage_key()` instead.
+    /// For storage key format (storekey tuple), use `as_storage_key()` instead.
     pub fn full_name(&self) -> String {
         format!("{}.{}", self.namespace_id.as_str(), self.table_name.as_str())
     }
@@ -217,13 +226,15 @@ mod tests {
     fn test_table_id_as_storage_key() {
         let table_id = TableId::from_strings("ns1", "users");
         let key = table_id.as_storage_key();
-        assert_eq!(key, b"ns1:users");
+        assert!(!key.is_empty());
+        let parsed = TableId::from_storage_key(&key).unwrap();
+        assert_eq!(parsed, table_id);
     }
 
     #[test]
     fn test_table_id_from_storage_key() {
-        let key = b"ns1:users";
-        let table_id = TableId::from_storage_key(key).unwrap();
+        let key = TableId::from_strings("ns1", "users").as_storage_key();
+        let table_id = TableId::from_storage_key(&key).unwrap();
 
         assert_eq!(table_id.namespace_id().as_str(), "ns1");
         assert_eq!(table_id.table_name().as_str(), "users");

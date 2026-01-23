@@ -189,16 +189,32 @@ fn test_update_all_types_user_table() {
     // --- NEW SCENARIO: Flush initial data to cold storage before update ---
     println!("Flushing initial data to cold storage...");
     let flush_sql = format!("STORAGE FLUSH TABLE {}", full_table_name);
-    let output = execute_sql_as_root_via_cli(&flush_sql).unwrap();
+    let flush_output = execute_sql_as_root_via_cli(&flush_sql).unwrap();
+    println!("[DEBUG] Flush output: {}", flush_output);
 
-    // Wait for flush to complete
-    if let Ok(job_id) = parse_job_id_from_flush_output(&output) {
-        println!("Waiting for initial flush job {}...", job_id);
-        if let Err(e) = verify_job_completed(&job_id, Duration::from_secs(10)) {
-            eprintln!("Initial flush job failed or timed out: {}", e);
+    // Wait for flush to complete - MUST succeed, otherwise data is not visible
+    let job_id = match parse_job_id_from_flush_output(&flush_output) {
+        Ok(id) => {
+            println!("[DEBUG] Parsed initial flush job ID: {}", id);
+            id
         }
-    } else {
-        thread::sleep(Duration::from_millis(200));
+        Err(e) => {
+            panic!("[ERROR] Failed to parse job ID from flush output: {} | Output: {}", e, flush_output);
+        }
+    };
+    
+    println!("[DEBUG] Waiting for initial flush job {}...", job_id);
+    match verify_job_completed(&job_id, Duration::from_secs(20)) {
+        Ok(()) => println!("[DEBUG] Initial flush job {} completed successfully", job_id),
+        Err(e) => {
+            // Query job status for debugging
+            if let Ok(status_out) = execute_sql_as_root_via_cli_json(&format!(
+                "SELECT job_id, status, error_message FROM system.jobs WHERE job_id = '{}'", job_id
+            )) {
+                eprintln!("[DEBUG] Job status query result: {}", status_out);
+            }
+            panic!("[ERROR] Initial flush job {} failed or timed out: {}", job_id, e);
+        }
     }
 
     // Verify initial data is still readable after flush

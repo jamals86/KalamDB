@@ -5,14 +5,17 @@
 
 use super::{new_manifest_store, ManifestStore, ManifestTableSchema};
 use crate::error::{SystemError, SystemResultExt};
+use crate::providers::base::SimpleSystemTableScan;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
+use kalamdb_commons::ManifestId;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::types::ManifestCacheEntry;
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
@@ -60,6 +63,11 @@ impl ManifestTableProvider {
         }
     }
 
+    /// Access the underlying ManifestStore
+    pub fn store(&self) -> &ManifestStore {
+        &self.store
+    }
+
     /// Check if a cache key is in hot memory
     fn is_in_memory(&self, cache_key: &str) -> bool {
         if let Ok(guard) = self.in_memory_checker.read() {
@@ -76,7 +84,11 @@ impl ManifestTableProvider {
     ///
     /// Uses schema-driven array building for optimal performance and correctness.
     pub fn scan_to_record_batch(&self) -> Result<RecordBatch, SystemError> {
-        let entries = self.store.scan_all(None, None, None)?;
+        // Use typed scan which properly deserializes ManifestId keys via StorageKey trait
+        let entries: Vec<(ManifestId, ManifestCacheEntry)> = self
+            .store
+            .scan_all_typed(Some(100000), None, None)
+            .map_err(|e| SystemError::Storage(e.to_string()))?;
 
         // Extract data into vectors
         let mut cache_keys = Vec::with_capacity(entries.len());
@@ -87,40 +99,26 @@ impl ManifestTableProvider {
         let mut last_refreshed_vals = Vec::with_capacity(entries.len());
         let mut last_accessed_vals = Vec::with_capacity(entries.len());
         let mut in_memory_vals = Vec::with_capacity(entries.len());
-        let mut source_paths = Vec::with_capacity(entries.len());
         let mut sync_states = Vec::with_capacity(entries.len());
         let mut manifest_jsons = Vec::with_capacity(entries.len());
 
         // Build arrays by iterating entries once
-        for (key_bytes, entry) in entries {
-            let cache_key = String::from_utf8_lossy(&key_bytes);
-
-            // Parse cache key (format: namespace:table:scope)
-            let mut parts = cache_key.splitn(3, ':');
-            let namespace = parts.next();
-            let table = parts.next();
-            let scope = parts.next();
-            if namespace.is_none() || table.is_none() || scope.is_none() {
-                log::warn!("Invalid cache key format: {}", cache_key);
-                continue;
-            }
-
-            let cache_key_str = cache_key.to_string();
+        for (manifest_id, entry) in entries {
+            let cache_key_str = manifest_id.as_str();
             let is_hot = self.is_in_memory(&cache_key_str);
 
             // Serialize manifest_json before moving entry fields
             let manifest_json_str = entry.manifest_json();
 
             cache_keys.push(Some(cache_key_str));
-            namespace_ids.push(Some(namespace.unwrap().to_string()));
-            table_names.push(Some(table.unwrap().to_string()));
-            scopes.push(Some(scope.unwrap().to_string()));
+            namespace_ids.push(Some(manifest_id.table_id().namespace_id().as_str().to_string()));
+            table_names.push(Some(manifest_id.table_id().table_name().as_str().to_string()));
+            scopes.push(Some(manifest_id.scope_str()));
             etags.push(entry.etag);
             last_refreshed_vals.push(Some(entry.last_refreshed * 1000)); // Convert to milliseconds
-                                                                         // last_accessed = last_refreshed (moka manages TTI internally, we can't get actual access time)
+            // last_accessed = last_refreshed (moka manages TTI internally, we can't get actual access time)
             last_accessed_vals.push(Some(entry.last_refreshed * 1000));
             in_memory_vals.push(Some(is_hot));
-            source_paths.push(Some(entry.source_path));
             sync_states.push(Some(entry.sync_state.to_string()));
             manifest_jsons.push(Some(manifest_json_str));
         }
@@ -136,11 +134,24 @@ impl ManifestTableProvider {
             .add_timestamp_micros_column(last_refreshed_vals)
             .add_timestamp_micros_column(last_accessed_vals)
             .add_boolean_column(in_memory_vals)
-            .add_string_column_owned(source_paths)
             .add_string_column_owned(sync_states)
             .add_string_column_owned(manifest_jsons);
 
         builder.build().into_arrow_error("Failed to create RecordBatch")
+    }
+}
+
+impl SimpleSystemTableScan<ManifestId, ManifestCacheEntry> for ManifestTableProvider {
+    fn table_name(&self) -> &str {
+        ManifestTableSchema::table_name()
+    }
+
+    fn arrow_schema(&self) -> SchemaRef {
+        ManifestTableSchema::schema()
+    }
+
+    fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
+        self.scan_to_record_batch()
     }
 }
 
@@ -160,20 +171,13 @@ impl TableProvider for ManifestTableProvider {
 
     async fn scan(
         &self,
-        _state: &dyn datafusion::catalog::Session,
+        state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
-        _limit: Option<usize>,
+        filters: &[Expr],
+        limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::datasource::MemTable;
-        let schema = ManifestTableSchema::schema();
-        let batch = self.scan_to_record_batch().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build manifest batch: {}", e))
-        })?;
-        let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        table.scan(_state, projection, &[], _limit).await
+        // Use the common SimpleSystemTableScan implementation
+        self.base_simple_scan(state, projection, filters, limit).await
     }
 }
 
@@ -196,6 +200,7 @@ mod tests {
     use super::*;
     use kalamdb_commons::types::{Manifest, ManifestCacheEntry, SyncState};
     use kalamdb_commons::{NamespaceId, TableId, TableName};
+    use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     #[tokio::test]
@@ -205,7 +210,7 @@ mod tests {
 
         let batch = provider.scan_to_record_batch().unwrap();
         assert_eq!(batch.num_rows(), 0);
-        assert_eq!(batch.num_columns(), 11); // Updated column count
+        assert_eq!(batch.num_columns(), 10); // Updated column count
     }
 
     #[tokio::test]
@@ -220,17 +225,15 @@ mod tests {
             manifest,
             Some("etag123".to_string()),
             1000,
-            "s3://bucket/ns1/tbl1/manifest.json".to_string(),
             SyncState::InSync,
         );
 
-        use super::super::manifest_store::ManifestCacheKey;
-        let key = ManifestCacheKey::from("ns1:tbl1:shared");
+        let key = ManifestId::from("ns1:tbl1:shared");
         provider.store.put(&key, &entry).unwrap();
 
         let batch = provider.scan_to_record_batch().unwrap();
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 11); // Updated column count
+        assert_eq!(batch.num_columns(), 10);
 
         // Verify column names match schema
         let schema = batch.schema();
@@ -240,6 +243,6 @@ mod tests {
         assert_eq!(schema.field(3).name(), "scope");
         assert_eq!(schema.field(4).name(), "etag");
         assert_eq!(schema.field(7).name(), "in_memory");
-        assert_eq!(schema.field(10).name(), "manifest_json");
+        assert_eq!(schema.field(9).name(), "manifest_json");
     }
 }

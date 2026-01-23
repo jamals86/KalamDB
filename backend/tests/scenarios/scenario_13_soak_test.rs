@@ -76,7 +76,7 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
     let query_count = Arc::new(AtomicU64::new(0));
     let error_count = Arc::new(AtomicU64::new(0));
 
-    let soak_duration = Duration::from_secs(30);
+    let _soak_duration = Duration::from_secs(30);
     let start_time = Instant::now();
 
     // =========================================================
@@ -84,9 +84,11 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
     // =========================================================
     let num_users = 3;
     let mut handles = Vec::new();
+    let user_prefix = unique_table("soak_user");
+    let first_username = format!("{}_0", user_prefix);
 
     for user_idx in 0..num_users {
-        let username = format!("soak_user_{}", user_idx);
+        let username = format!("{}_{}", user_prefix, user_idx);
         let client = create_user_and_client(server, &username, &Role::User).await?;
         let ns_clone = ns.clone();
         let insert_count_clone = Arc::clone(&insert_count);
@@ -205,7 +207,8 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
     // Background flush task (inline using link client instead of server.clone)
     // =========================================================
     let ns_for_flush = ns.clone();
-    let flush_client = create_user_and_client(server, "flush_user", &Role::User).await?;
+    let flush_username = unique_table("flush_user");
+    let flush_client = create_user_and_client(server, &flush_username, &Role::User).await?;
     let flush_handle = tokio::spawn(async move {
         let mut flush_count = 0u32;
         let flush_start = Instant::now();
@@ -226,7 +229,8 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
     // =========================================================
     // Subscription monitoring
     // =========================================================
-    let sub_client = create_user_and_client(server, "soak_subscriber", &Role::User).await?;
+    let subscriber_username = unique_table("soak_subscriber");
+    let sub_client = create_user_and_client(server, &subscriber_username, &Role::User).await?;
     let ns_for_sub = ns.clone();
     let subscription_events = Arc::new(AtomicU64::new(0));
     let subscription_events_clone = Arc::clone(&subscription_events);
@@ -313,7 +317,7 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
 
     // Final data verification - check that one of the soak users can see their data
     // Note: USER tables have per-user RLS, so each user only sees their own rows
-    let soak_user_client = create_user_and_client(server, "soak_user_0", &Role::User).await?;
+    let soak_user_client = create_user_and_client(server, &first_username, &Role::User).await?;
     let resp = soak_user_client
         .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.orders", ns), None, None)
         .await?;

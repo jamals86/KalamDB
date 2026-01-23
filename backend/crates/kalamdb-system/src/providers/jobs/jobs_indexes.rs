@@ -3,6 +3,7 @@
 //! This module defines secondary indexes for the system.jobs table.
 
 use crate::StoragePartition;
+use kalamdb_commons::storage::Partition;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::{JobId, JobStatus};
 use kalamdb_store::IndexDefinition;
@@ -23,8 +24,8 @@ use std::sync::Arc;
 pub struct JobStatusCreatedAtIndex;
 
 impl IndexDefinition<JobId, Job> for JobStatusCreatedAtIndex {
-    fn partition(&self) -> &str {
-        StoragePartition::SystemJobsStatusIdx.name()
+    fn partition(&self) -> Partition {
+        Partition::new(StoragePartition::SystemJobsStatusIdx.name())
     }
 
     fn indexed_columns(&self) -> Vec<&str> {
@@ -63,8 +64,8 @@ impl IndexDefinition<JobId, Job> for JobStatusCreatedAtIndex {
 pub struct JobIdempotencyKeyIndex;
 
 impl IndexDefinition<JobId, Job> for JobIdempotencyKeyIndex {
-    fn partition(&self) -> &str {
-        StoragePartition::SystemJobsIdempotencyIdx.name()
+    fn partition(&self) -> Partition {
+        Partition::new(StoragePartition::SystemJobsIdempotencyIdx.name())
     }
 
     fn indexed_columns(&self) -> Vec<&str> {
@@ -83,7 +84,7 @@ impl IndexDefinition<JobId, Job> for JobIdempotencyKeyIndex {
 
 /// Convert JobStatus to a u8 for index key ordering.
 ///
-/// Order: New(0) < Queued(1) < Running(2) < Retrying(3) < Completed(4) < Failed(5) < Cancelled(6)
+/// Order: New(0) < Queued(1) < Running(2) < Retrying(3) < Completed(4) < Failed(5) < Cancelled(6) < Skipped(7)
 pub fn status_to_u8(status: JobStatus) -> u8 {
     match status {
         JobStatus::New => 0,
@@ -93,6 +94,7 @@ pub fn status_to_u8(status: JobStatus) -> u8 {
         JobStatus::Completed => 4,
         JobStatus::Failed => 5,
         JobStatus::Cancelled => 6,
+        JobStatus::Skipped => 7,
     }
 }
 
@@ -106,6 +108,7 @@ pub fn parse_job_status(s: &str) -> Option<JobStatus> {
         "completed" => Some(JobStatus::Completed),
         "failed" => Some(JobStatus::Failed),
         "cancelled" => Some(JobStatus::Cancelled),
+        "skipped" => Some(JobStatus::Skipped),
         _ => None,
     }
 }
@@ -148,6 +151,7 @@ mod tests {
             finished_at: if status == JobStatus::Completed
                 || status == JobStatus::Failed
                 || status == JobStatus::Cancelled
+                || status == JobStatus::Skipped
             {
                 Some(now)
             } else {

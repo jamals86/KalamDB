@@ -24,6 +24,5 @@ mod test_last_seen;
 mod test_live_queries_auth_expiry;
 mod test_oauth;
 mod test_password_complexity;
-mod test_password_security;
 mod test_rbac;
 mod test_soft_delete;

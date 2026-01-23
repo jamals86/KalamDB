@@ -73,50 +73,7 @@ pub fn validate_parameters(
 ///
 /// Conservative estimation for memory safety.
 fn estimate_scalar_value_size(value: &ScalarValue) -> usize {
-    match value {
-        ScalarValue::Null => 1,
-        ScalarValue::Boolean(_) => 1,
-        ScalarValue::Int8(_) => 1,
-        ScalarValue::Int16(_) => 2,
-        ScalarValue::Int32(_) => 4,
-        ScalarValue::Int64(_) => 8,
-        ScalarValue::UInt8(_) => 1,
-        ScalarValue::UInt16(_) => 2,
-        ScalarValue::UInt32(_) => 4,
-        ScalarValue::UInt64(_) => 8,
-        ScalarValue::Float32(_) => 4,
-        ScalarValue::Float64(_) => 8,
-        ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s.len(),
-        ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) => 0,
-        ScalarValue::Binary(Some(b)) | ScalarValue::LargeBinary(Some(b)) => b.len(),
-        ScalarValue::Binary(None) | ScalarValue::LargeBinary(None) => 0,
-        ScalarValue::FixedSizeBinary(_, Some(b)) => b.len(),
-        ScalarValue::FixedSizeBinary(size, None) => *size as usize,
-        ScalarValue::Date32(_) => 4,
-        ScalarValue::Date64(_) => 8,
-        ScalarValue::Time32Second(_) | ScalarValue::Time32Millisecond(_) => 4,
-        ScalarValue::Time64Microsecond(_) | ScalarValue::Time64Nanosecond(_) => 8,
-        ScalarValue::TimestampSecond(_, _)
-        | ScalarValue::TimestampMillisecond(_, _)
-        | ScalarValue::TimestampMicrosecond(_, _)
-        | ScalarValue::TimestampNanosecond(_, _) => 8,
-        ScalarValue::IntervalYearMonth(_) => 4,
-        ScalarValue::IntervalDayTime(_) => 8,
-        ScalarValue::IntervalMonthDayNano(_) => 16,
-        ScalarValue::DurationSecond(_)
-        | ScalarValue::DurationMillisecond(_)
-        | ScalarValue::DurationMicrosecond(_)
-        | ScalarValue::DurationNanosecond(_) => 8,
-        ScalarValue::Decimal128(_, _, _) => 16,
-        ScalarValue::Decimal256(_, _, _) => 32,
-        // For complex types, estimate conservatively (assume 1KB per item)
-        ScalarValue::List(_) => 1024,
-        ScalarValue::LargeList(_) => 1024,
-        ScalarValue::FixedSizeList(_) => 1024,
-        ScalarValue::Struct(_) => 1024,
-        ScalarValue::Dictionary(_, v) => estimate_scalar_value_size(v),
-        _ => 8, // Default estimate for unknown types
-    }
+    kalamdb_commons::estimate_scalar_value_size(value)
 }
 
 #[cfg(test)]

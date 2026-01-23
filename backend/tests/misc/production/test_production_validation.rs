@@ -3,7 +3,7 @@
 //! Tests error message clarity, validation logic, and graceful failure modes.
 //! These tests ensure users get helpful feedback when things go wrong.
 
-use super::test_support::TestServer;
+use super::test_support::{consolidated_helpers, TestServer};
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::Role;
 
@@ -201,27 +201,34 @@ async fn flush_on_stream_table_rejected() {
 #[tokio::test]
 async fn user_isolation_in_user_tables() {
     let server = TestServer::new_shared().await;
+    let ns = consolidated_helpers::unique_namespace("app_isolation");
 
     let resp = server
-        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_isolation", "root")
+        .execute_sql_as_user(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns), "root")
         .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
-    let create_table = r#"
-        CREATE TABLE app_isolation.private_data (
+    let create_table = format!(
+        r#"
+        CREATE TABLE {}.private_data (
             id INT PRIMARY KEY,
             secret VARCHAR
         )
         WITH (TYPE = 'USER')
-    "#;
-    let resp = server.execute_sql(create_table).await;
+    "#,
+        ns
+    );
+    let resp = server.execute_sql(&create_table).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     // User1 inserts data
     let user1_id = server.create_user("user1_iso", "Pass123!", Role::User).await;
     let resp = server
         .execute_sql_as_user(
-            "INSERT INTO app_isolation.private_data (id, secret) VALUES (1, 'user1_secret')",
+            &format!(
+                "INSERT INTO {}.private_data (id, secret) VALUES (1, 'user1_secret')",
+                ns
+            ),
             user1_id.as_str(),
         )
         .await;
@@ -230,7 +237,7 @@ async fn user_isolation_in_user_tables() {
     // User2 tries to query - should see no rows (user isolation)
     let user2_id = server.create_user("user2_iso", "Pass123!", Role::User).await;
     let resp = server
-        .execute_sql_as_user("SELECT * FROM app_isolation.private_data", user2_id.as_str())
+        .execute_sql_as_user(&format!("SELECT * FROM {}.private_data", ns), user2_id.as_str())
         .await;
 
     assert_eq!(resp.status, ResponseStatus::Success);
@@ -240,7 +247,7 @@ async fn user_isolation_in_user_tables() {
 
     // User1 can still see their own data
     let resp = server
-        .execute_sql_as_user("SELECT * FROM app_isolation.private_data", user1_id.as_str())
+        .execute_sql_as_user(&format!("SELECT * FROM {}.private_data", ns), user1_id.as_str())
         .await;
 
     assert_eq!(resp.status, ResponseStatus::Success);
@@ -253,20 +260,24 @@ async fn user_isolation_in_user_tables() {
 #[tokio::test]
 async fn duplicate_primary_key_rejected() {
     let server = TestServer::new_shared().await;
+    let ns = consolidated_helpers::unique_namespace("app_dupkey");
 
     let resp = server
-        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_dupkey", "root")
+        .execute_sql_as_user(&format!("CREATE NAMESPACE {}", ns), "root")
         .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
-    let create_table = r#"
-        CREATE TABLE app_dupkey.items (
+    let create_table = format!(
+        r#"
+        CREATE TABLE {}.items (
             id INT PRIMARY KEY,
             value VARCHAR
         )
         WITH (TYPE = 'USER')
-    "#;
-    let resp = server.execute_sql(create_table).await;
+    "#,
+        ns
+    );
+    let resp = server.execute_sql(&create_table).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let user_id = server.create_user("user1_dupkey", "Pass123!", Role::User).await;
@@ -274,7 +285,7 @@ async fn duplicate_primary_key_rejected() {
     // Insert first row
     let resp = server
         .execute_sql_as_user(
-            "INSERT INTO app_dupkey.items (id, value) VALUES (1, 'first')",
+            &format!("INSERT INTO {}.items (id, value) VALUES (1, 'first')", ns),
             user_id.as_str(),
         )
         .await;
@@ -283,7 +294,7 @@ async fn duplicate_primary_key_rejected() {
     // Try to insert duplicate PRIMARY KEY
     let resp = server
         .execute_sql_as_user(
-            "INSERT INTO app_dupkey.items (id, value) VALUES (1, 'duplicate')",
+            &format!("/* strict */ INSERT INTO {}.items (id, value) VALUES (1, 'duplicate')", ns),
             user_id.as_str(),
         )
         .await;

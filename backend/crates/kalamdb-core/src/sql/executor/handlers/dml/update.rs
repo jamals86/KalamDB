@@ -69,7 +69,7 @@ impl StatementHandler for UpdateHandler {
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
         let def = schema_registry
-            .get_table_if_exists(self.app_context.as_ref(), &table_id)?
+            .get_table_if_exists(&table_id)?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table {}.{} not found",
@@ -700,27 +700,11 @@ impl UpdateHandler {
     }
 
     fn scalar_to_f64(value: &ScalarValue) -> Option<f64> {
-        match value {
-            ScalarValue::Float64(Some(v)) => Some(*v),
-            ScalarValue::Float32(Some(v)) => Some(f64::from(*v)),
-            ScalarValue::Int64(Some(v)) => Some(*v as f64),
-            ScalarValue::Int32(Some(v)) => Some(*v as f64),
-            ScalarValue::Int16(Some(v)) => Some(*v as f64),
-            ScalarValue::UInt64(Some(v)) => Some(*v as f64),
-            ScalarValue::UInt32(Some(v)) => Some(*v as f64),
-            _ => None,
-        }
+        kalamdb_commons::scalar_to_f64(value)
     }
 
     fn scalar_to_i64(value: &ScalarValue) -> Option<i64> {
-        match value {
-            ScalarValue::Int64(Some(v)) => Some(*v),
-            ScalarValue::Int32(Some(v)) => Some(*v as i64),
-            ScalarValue::Int16(Some(v)) => Some(*v as i64),
-            ScalarValue::UInt64(Some(v)) => i64::try_from(*v).ok(),
-            ScalarValue::UInt32(Some(v)) => Some(*v as i64),
-            _ => None,
-        }
+        kalamdb_commons::scalar_to_i64(value)
     }
 
     /// Execute UPDATE via Raft consensus for cluster replication

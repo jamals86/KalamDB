@@ -6,6 +6,7 @@
 
 use crate::ids::SeqId;
 use crate::models::UserId;
+use crate::storage_key::{decode_key, encode_key, encode_prefix};
 use crate::StorageKey;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -15,7 +16,9 @@ use std::cmp::Ordering;
 /// **MVCC Architecture**: Similar to TableId pattern, this is a composite struct
 /// with two fields that implements StorageKey trait for RocksDB storage.
 ///
-/// **Storage Format**: `{user_id_len:1byte}{user_id:variable}{seq:8bytes}`
+/// **Storage Format**: Uses `storekey` order-preserving encoding as tuple (user_id, seq).
+/// This ensures proper lexicographic ordering: all rows for "alice" come before "bob"
+/// regardless of user_id length.
 ///
 /// # Examples
 ///
@@ -52,49 +55,21 @@ impl UserTableRowId {
         self.seq
     }
 
-    /// Parse from storage bytes (user_id_len:user_id:seq_bytes)
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.len() < 9 {
-            // Minimum: 1 byte len + 1 char user_id + 8 bytes seq
-            return Err("Invalid byte length for UserTableRowId".to_string());
-        }
-
-        // First byte is user_id length
-        let user_id_len = bytes[0] as usize;
-        if bytes.len() < 1 + user_id_len + 8 {
-            return Err("Invalid byte structure for UserTableRowId".to_string());
-        }
-
-        // Extract user_id
-        let user_id_bytes = &bytes[1..1 + user_id_len];
-        let user_id_str = String::from_utf8(user_id_bytes.to_vec())
-            .map_err(|e| format!("Invalid UTF-8 in user_id: {}", e))?;
-        let user_id = UserId::new(user_id_str);
-
-        // Extract seq (last 8 bytes)
-        let seq_bytes = &bytes[1 + user_id_len..1 + user_id_len + 8];
-        let seq = SeqId::from_bytes(seq_bytes)?;
-
-        Ok(Self::new(user_id, seq))
+    /// Prefix for scanning all rows for a user.
+    pub fn user_prefix(user_id: &UserId) -> Vec<u8> {
+        encode_prefix(&(user_id.as_str(),))
     }
 }
 
 impl StorageKey for UserTableRowId {
     fn storage_key(&self) -> Vec<u8> {
-        // Format: user_id_len (1 byte) + user_id (variable) + seq (8 bytes big-endian)
-        let user_id_bytes = self.user_id.as_str().as_bytes();
-        let user_id_len = user_id_bytes.len().min(255) as u8;
-        let seq_bytes = self.seq.to_bytes();
-
-        let mut key = Vec::with_capacity(1 + user_id_len as usize + 8);
-        key.push(user_id_len);
-        key.extend_from_slice(&user_id_bytes[..user_id_len as usize]);
-        key.extend_from_slice(&seq_bytes);
-        key
+        // Use storekey's order-preserving encoding for (user_id, seq) tuple
+        encode_key(&(self.user_id.as_str(), self.seq.as_i64()))
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
-        Self::from_bytes(bytes)
+        let (user_id_str, seq_val): (String, i64) = decode_key(bytes)?;
+        Ok(Self::new(UserId::new(user_id_str), SeqId::new(seq_val)))
     }
 }
 
@@ -109,7 +84,9 @@ pub type SharedTableRowId = SeqId;
 /// **MVCC Architecture (Phase 13.2)**: Stream tables now use the same MVCC
 /// architecture as user tables with composite keys for user isolation.
 ///
-/// **Storage Format**: Same as UserTableRowId: `{user_id_len:1byte}{user_id:variable}{seq:8bytes}`
+/// **Storage Format**: Uses `storekey` order-preserving encoding as tuple (user_id, seq).
+/// This ensures proper lexicographic ordering: all rows for "alice" come before "bob"
+/// regardless of user_id length.
 ///
 /// # Examples
 ///
@@ -146,28 +123,9 @@ impl StreamTableRowId {
         self.seq
     }
 
-    /// Parse from storage bytes (user_id_len:user_id:seq_bytes)
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.len() < 9 {
-            return Err("Invalid byte length for StreamTableRowId".to_string());
-        }
-
-        let user_id_len = bytes[0] as usize;
-        if bytes.len() < 1 + user_id_len + 8 {
-            return Err("Invalid byte structure for StreamTableRowId".to_string());
-        }
-
-        // Extract user_id
-        let user_id_bytes = &bytes[1..1 + user_id_len];
-        let user_id_str = String::from_utf8(user_id_bytes.to_vec())
-            .map_err(|e| format!("Invalid UTF-8 in user_id: {}", e))?;
-        let user_id = UserId::new(user_id_str);
-
-        // Extract seq
-        let seq_bytes = &bytes[1 + user_id_len..1 + user_id_len + 8];
-        let seq = SeqId::from_bytes(seq_bytes)?;
-
-        Ok(Self::new(user_id, seq))
+    /// Prefix for scanning all rows for a user.
+    pub fn user_prefix(user_id: &UserId) -> Vec<u8> {
+        encode_prefix(&(user_id.as_str(),))
     }
 }
 
@@ -188,20 +146,13 @@ impl PartialOrd for StreamTableRowId {
 
 impl StorageKey for StreamTableRowId {
     fn storage_key(&self) -> Vec<u8> {
-        // Same format as UserTableRowId
-        let user_id_bytes = self.user_id.as_str().as_bytes();
-        let user_id_len = user_id_bytes.len().min(255) as u8;
-        let seq_bytes = self.seq.to_bytes();
-
-        let mut key = Vec::with_capacity(1 + user_id_len as usize + 8);
-        key.push(user_id_len);
-        key.extend_from_slice(&user_id_bytes[..user_id_len as usize]);
-        key.extend_from_slice(&seq_bytes);
-        key
+        // Use storekey's order-preserving encoding for (user_id, seq) tuple
+        encode_key(&(self.user_id.as_str(), self.seq.as_i64()))
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
-        Self::from_bytes(bytes)
+        let (user_id_str, seq_val): (String, i64) = decode_key(bytes)?;
+        Ok(Self::new(UserId::new(user_id_str), SeqId::new(seq_val)))
     }
 }
 
@@ -210,46 +161,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_user_table_row_id_storage_key() {
+    fn test_user_table_row_id_storage_key_round_trip() {
         let user_id = UserId::new("user1");
         let seq = SeqId::new(12345);
         let row_id = UserTableRowId::new(user_id.clone(), seq);
 
-        // Verify storage key format
+        // Serialize and deserialize using StorageKey trait
         let key_bytes = row_id.storage_key();
+        let parsed = UserTableRowId::from_storage_key(&key_bytes).unwrap();
 
-        // First byte should be user_id length
-        assert_eq!(key_bytes[0], 5); // "user1" = 5 bytes
-
-        // Parse back
-        let parsed = UserTableRowId::from_bytes(&key_bytes).unwrap();
         assert_eq!(parsed.user_id(), &user_id);
         assert_eq!(parsed.seq(), seq);
     }
 
     #[test]
-    fn test_user_table_row_id_round_trip() {
-        let user_id = UserId::new("alice");
-        let seq = SeqId::new(99999);
-        let row_id = UserTableRowId::new(user_id.clone(), seq);
+    fn test_user_table_row_id_ordering() {
+        // Critical test: verify lexicographic ordering is correct
+        let alice = UserTableRowId::new(UserId::new("alice"), SeqId::new(100));
+        let bob = UserTableRowId::new(UserId::new("bob"), SeqId::new(50));
 
-        // Serialize and deserialize
-        let bytes = row_id.storage_key();
-        let parsed = UserTableRowId::from_bytes(&bytes).unwrap();
+        // "alice" < "bob" lexicographically, so alice's key should sort first
+        assert!(
+            alice.storage_key() < bob.storage_key(),
+            "alice should sort before bob"
+        );
 
-        assert_eq!(parsed.user_id, user_id);
-        assert_eq!(parsed.seq, seq);
+        // Same user, different seq: should sort by seq
+        let alice_100 = UserTableRowId::new(UserId::new("alice"), SeqId::new(100));
+        let alice_200 = UserTableRowId::new(UserId::new("alice"), SeqId::new(200));
+        assert!(
+            alice_100.storage_key() < alice_200.storage_key(),
+            "alice:100 should sort before alice:200"
+        );
     }
 
     #[test]
-    fn test_user_table_row_id_invalid_bytes() {
-        // Too short
-        let result = UserTableRowId::from_bytes(&[1, 2, 3]);
-        assert!(result.is_err());
+    fn test_variable_length_user_id_ordering() {
+        // This tests the bug that was fixed: "bob" (3 chars) vs "alice" (5 chars)
+        // Previously, bob would sort before alice due to length-first encoding
+        let bob = UserTableRowId::new(UserId::new("bob"), SeqId::new(100));
+        let alice = UserTableRowId::new(UserId::new("alice"), SeqId::new(100));
 
-        // Length mismatch
-        let result = UserTableRowId::from_bytes(&[10, b'a', b'b', 0, 0, 0, 0, 0, 0, 0, 0]);
-        assert!(result.is_err());
+        // "alice" < "bob" lexicographically
+        assert!(
+            alice.storage_key() < bob.storage_key(),
+            "alice should sort before bob despite shorter length"
+        );
     }
 
     #[test]
@@ -260,33 +217,28 @@ mod tests {
     }
 
     #[test]
-    fn test_stream_table_row_id_storage_key() {
-        let user_id = UserId::new("user1");
-        let seq = SeqId::new(67890);
-        let row_id = StreamTableRowId::new(user_id.clone(), seq);
-
-        // Verify storage key format (same as UserTableRowId)
-        let key_bytes = row_id.storage_key();
-
-        assert_eq!(key_bytes[0], 5); // "user1" = 5 bytes
-
-        // Parse back
-        let parsed = StreamTableRowId::from_bytes(&key_bytes).unwrap();
-        assert_eq!(parsed.user_id(), &user_id);
-        assert_eq!(parsed.seq(), seq);
-    }
-
-    #[test]
     fn test_stream_table_row_id_round_trip() {
         let user_id = UserId::new("bob");
         let seq = SeqId::new(88888);
         let row_id = StreamTableRowId::new(user_id.clone(), seq);
 
-        // Serialize and deserialize
+        // Serialize and deserialize using StorageKey trait
         let bytes = row_id.storage_key();
-        let parsed = StreamTableRowId::from_bytes(&bytes).unwrap();
+        let parsed = StreamTableRowId::from_storage_key(&bytes).unwrap();
 
         assert_eq!(parsed.user_id, user_id);
         assert_eq!(parsed.seq, seq);
+    }
+
+    #[test]
+    fn test_stream_table_row_id_ordering() {
+        // Same ordering tests for StreamTableRowId
+        let alice = StreamTableRowId::new(UserId::new("alice"), SeqId::new(100));
+        let bob = StreamTableRowId::new(UserId::new("bob"), SeqId::new(50));
+
+        assert!(
+            alice.storage_key() < bob.storage_key(),
+            "alice should sort before bob"
+        );
     }
 }

@@ -1,0 +1,61 @@
+   Compiling windows-sys v0.61.2
+   Compiling windows-sys v0.60.2
+   Compiling windows-sys v0.59.0
+   Compiling serde_core v1.0.228
+   Compiling memchr v2.7.6
+   Compiling socket2 v0.6.1
+   Compiling mio v1.0.4
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling url v2.5.7
+   Compiling chrono v0.4.43
+   Compiling tokio v1.49.0
+   Compiling rustls-platform-verifier v0.6.2
+   Compiling tokio-util v0.7.18
+   Compiling tokio-rustls v0.26.4
+   Compiling tower v0.5.2
+   Compiling tokio-tungstenite v0.28.0
+   Compiling tower-http v0.6.8
+   Compiling h2 v0.4.12
+   Compiling hyper v1.7.0
+   Compiling hyper-util v0.1.17
+   Compiling hyper-rustls v0.27.7
+   Compiling reqwest v0.13.1
+   Compiling kalam-link v0.2.0 (C:\Jamal\git\KalamDB\link)
+    Finished `test` profile [unoptimized] target(s) in 22.27s
+────────────
+ Nextest run ID f332330d-bc01-4329-9a6c-62c75e6e1941 with nextest profile: default
+    Starting 10 tests across 5 binaries (114 tests skipped)
+        PASS [   0.015s] ( 1/10) kalam-link credentials::tests::test_credentials_expiry_check
+        PASS [   0.024s] ( 2/10) kalam-link credentials::tests::test_credentials_creation
+        FAIL [   0.020s] ( 3/10) kalam-link credentials::tests::test_credentials_with_refresh_token
+  stdout ───
+
+    running 1 test
+    test credentials::tests::test_credentials_with_refresh_token ... FAILED
+
+    failures:
+
+    failures:
+        credentials::tests::test_credentials_with_refresh_token
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 70 filtered out; finished in 0.00s
+
+  stderr ───
+
+    thread 'credentials::tests::test_credentials_with_refresh_token' (40176) panicked at link\src\credentials.rs:468:9:
+    assertion failed: !creds.is_expired()
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+  Cancelling due to test failure: 7 tests still running
+        PASS [   0.029s] ( 4/10) kalam-link credentials::tests::test_credentials_refresh_expired
+        PASS [   0.034s] ( 5/10) kalam-link credentials::tests::test_credentials_no_refresh_token
+        PASS [   0.040s] ( 6/10) kalam-link credentials::tests::test_credentials_with_details
+        PASS [   0.045s] ( 7/10) kalam-link credentials::tests::test_memory_store_basic_operations
+        PASS [   0.050s] ( 8/10) kalam-link credentials::tests::test_credentials_serialization
+        PASS [   0.056s] ( 9/10) kalam-link credentials::tests::test_memory_store_multiple_instances
+        PASS [   0.060s] (10/10) kalam-link credentials::tests::test_memory_store_overwrite
+────────────
+     Summary [   0.063s] 10 tests run: 9 passed, 1 failed, 114 skipped
+        FAIL [   0.020s] ( 3/10) kalam-link credentials::tests::test_credentials_with_refresh_token
+error: test run failed

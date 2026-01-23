@@ -2009,12 +2009,14 @@ impl CLISession {
 
                 match login_result {
                     Ok(login_response) => {
-                        let creds = Credentials::with_details(
+                        let creds = Credentials::with_refresh_token(
                             instance.clone(),
                             login_response.access_token,
                             login_response.user.username.clone(),
                             login_response.expires_at.clone(),
                             Some(self.server_url.clone()),
+                            login_response.refresh_token.clone(),
+                            login_response.refresh_expires_at.clone(),
                         );
 
                         store.set_credentials(&creds)?;
@@ -2023,6 +2025,9 @@ impl CLISession {
                         println!("  Instance: {}", instance.cyan());
                         println!("  Username: {}", login_response.user.username.cyan());
                         println!("  Expires: {}", login_response.expires_at.cyan());
+                        if let Some(ref refresh_expires) = login_response.refresh_expires_at {
+                            println!("  Refresh expires: {}", refresh_expires.cyan());
+                        }
                         println!("  Server URL: {}", self.server_url.cyan());
                         println!();
                         println!("{}", "Security Reminder:".yellow().bold());

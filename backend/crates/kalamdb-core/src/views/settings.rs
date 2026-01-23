@@ -24,7 +24,8 @@ use kalamdb_commons::schemas::{
 use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_configs::ServerConfig;
 use kalamdb_system::SystemTable;
-use std::sync::{Arc, OnceLock, RwLock};
+use parking_lot::RwLock;
+use std::sync::{Arc, OnceLock};
 
 /// Get the settings schema (memoized)
 fn settings_schema() -> SchemaRef {
@@ -145,7 +146,7 @@ impl SettingsView {
 
     /// Set the configuration (called after AppContext init)
     pub fn set_config(&self, config: ServerConfig) {
-        *self.config.write().unwrap() = Some(config);
+        *self.config.write() = Some(config);
     }
 }
 
@@ -170,7 +171,7 @@ impl VirtualView for SettingsView {
         let mut descriptions = StringBuilder::new();
         let mut categories = StringBuilder::new();
 
-        let config_guard = self.config.read().unwrap();
+        let config_guard = self.config.read();
 
         if let Some(config) = config_guard.as_ref() {
             // Server Settings

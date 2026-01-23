@@ -3,6 +3,7 @@
 //! This module defines secondary indexes for the system.users table.
 
 use crate::StoragePartition;
+use kalamdb_commons::storage::Partition;
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;
 use kalamdb_store::IndexDefinition;
@@ -17,8 +18,8 @@ use std::sync::Arc;
 pub struct UserUsernameIndex;
 
 impl IndexDefinition<UserId, User> for UserUsernameIndex {
-    fn partition(&self) -> &str {
-        StoragePartition::SystemUsersUsernameIdx.name()
+    fn partition(&self) -> Partition {
+        Partition::new(StoragePartition::SystemUsersUsernameIdx.name())
     }
 
     fn indexed_columns(&self) -> Vec<&str> {
@@ -78,8 +79,8 @@ impl IndexDefinition<UserId, User> for UserUsernameIndex {
 pub struct UserRoleIndex;
 
 impl IndexDefinition<UserId, User> for UserRoleIndex {
-    fn partition(&self) -> &str {
-        StoragePartition::SystemUsersRoleIdx.name()
+    fn partition(&self) -> Partition {
+        Partition::new(StoragePartition::SystemUsersRoleIdx.name())
     }
 
     fn indexed_columns(&self) -> Vec<&str> {
@@ -164,7 +165,13 @@ mod tests {
     fn test_create_users_indexes() {
         let indexes = create_users_indexes();
         assert_eq!(indexes.len(), 2);
-        assert_eq!(indexes[0].partition(), StoragePartition::SystemUsersUsernameIdx.name());
-        assert_eq!(indexes[1].partition(), StoragePartition::SystemUsersRoleIdx.name());
+        assert_eq!(
+            indexes[0].partition(),
+            StoragePartition::SystemUsersUsernameIdx.name().into()
+        );
+        assert_eq!(
+            indexes[1].partition(),
+            StoragePartition::SystemUsersRoleIdx.name().into()
+        );
     }
 }

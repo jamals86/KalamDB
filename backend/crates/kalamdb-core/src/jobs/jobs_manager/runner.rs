@@ -9,6 +9,7 @@ use kalamdb_raft::commands::MetaCommand;
 use kalamdb_raft::GroupId;
 use log::Level;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio::time::{sleep, Duration, Instant};
@@ -125,6 +126,37 @@ impl JobsManager {
         Ok(())
     }
 
+    /// Mark a job as skipped via Raft (for cluster replication)
+    async fn mark_job_skipped(
+        &self,
+        job_id: &kalamdb_commons::JobId,
+        skip_message: String,
+    ) -> Result<(), KalamDbError> {
+        let app_ctx = self.get_attached_app_context();
+        let cmd = MetaCommand::CompleteJob {
+            job_id: job_id.clone(),
+            result: Some(serde_json::json!({ "message": skip_message, "skipped": true }).to_string()),
+            completed_at: chrono::Utc::now(),
+        };
+        app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
+            KalamDbError::Other(format!("Failed to mark job as skipped via Raft: {}", e))
+        })?;
+
+        // Mark job as skipped in the jobs table
+        let cmd_status = MetaCommand::UpdateJobStatus {
+            job_id: job_id.clone(),
+            status: JobStatus::Skipped,
+            updated_at: chrono::Utc::now(),
+        };
+        app_ctx.executor().execute_meta(cmd_status).await.map_err(|e| {
+            KalamDbError::Other(format!("Failed to update job status to Skipped via Raft: {}", e))
+        })?;
+
+        self.finalize_job_nodes(job_id, JobStatus::Skipped, Some(skip_message))
+            .await?;
+        Ok(())
+    }
+
     /// Update a job in the database asynchronously (for retrying status only)
     ///
     /// Delegates to provider's async method which handles spawn_blocking internally.
@@ -173,6 +205,13 @@ impl JobsManager {
     /// ```
     pub async fn run_loop(&self, max_concurrent: usize) -> Result<(), KalamDbError> {
         log::debug!("Starting job processing loop (max {} concurrent)", max_concurrent);
+
+        // Take the awake receiver - can only run one loop per JobsManager
+        let mut awake_receiver: mpsc::UnboundedReceiver<JobId> = self
+            .awake_receiver
+            .lock()
+            .take()
+            .expect("run_loop can only be called once per JobsManager");
 
         // Perform crash recovery on startup
         self.recover_incomplete_jobs().await?;
@@ -265,9 +304,30 @@ impl JobsManager {
                 },
             };
 
-            // Poll for next job (all nodes poll for jobs)
-            match self.poll_next().await {
+            // Wait for awakened job or poll after timeout (fallback for crash recovery)
+            // The awake channel provides instant dispatch when CreateJobNode is applied.
+            // Fallback polling ensures jobs aren't stuck if awakening fails.
+            let job_id_opt = tokio::select! {
+                biased;
+                // Priority 1: Check for awakened jobs from state machine
+                Some(job_id) = awake_receiver.recv() => Some(job_id),
+                // Priority 2: Fallback polling every 500ms (for crash recovery, retries)
+                _ = sleep(Duration::from_millis(500)) => None,
+            };
+
+            // Fetch job to execute
+            let job_result = if let Some(job_id) = job_id_opt {
+                // Awakened job - fetch it directly
+                self.fetch_awakened_job(&job_id).await
+            } else {
+                // Fallback polling
+                self.poll_next().await
+            };
+
+            match job_result {
                 Ok(Some((job, job_node))) => {
+                    log::info!("[{}] Job fetched for execution: type={:?}, status={:?}, is_leader={}", 
+                        job.job_id, job.job_type, job.status, is_leader);
                     let jobs_manager = Arc::clone(&job_manager);
                     join_set.spawn(async move {
                         let _permit = permit;
@@ -278,8 +338,7 @@ impl JobsManager {
                 },
                 Ok(None) => {
                     drop(permit);
-                    // No jobs available, sleep briefly
-                    sleep(Duration::from_millis(100)).await;
+                    // No jobs available - continue loop (select! already waited)
                 },
                 Err(e) => {
                     drop(permit);
@@ -290,6 +349,65 @@ impl JobsManager {
         }
 
         Ok(())
+    }
+
+    /// Fetch an awakened job by ID for execution.
+    ///
+    /// Called when a job_id arrives via the awake channel.
+    async fn fetch_awakened_job(&self, job_id: &JobId) -> Result<Option<(Job, JobNode)>, KalamDbError> {
+        // Fetch the job_node for this node
+        let job_node_opt = self
+            .job_nodes_provider
+            .get_job_node_async(job_id, &self.node_id)
+            .await
+            .into_kalamdb_error("Failed to get job_node")?;
+
+        let Some(job_node) = job_node_opt else {
+            log::warn!("[{}] Awakened but no job_node found for this node", job_id.as_str());
+            return Ok(None);
+        };
+
+        // Skip if already processed
+        if matches!(job_node.status, JobStatus::Running | JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
+            log::info!("[{}] Skipping job_node already processed: status={:?}", job_id.as_str(), job_node.status);
+            return Ok(None);
+        }
+
+        // Fetch the job
+        let Some(job) = self.get_job(job_id).await? else {
+            self.update_job_node_status(
+                job_id,
+                JobStatus::Failed,
+                Some("Job not found for awakened job_node".to_string()),
+            )
+            .await?;
+            return Ok(None);
+        };
+
+        // Skip if job already terminal
+        if matches!(job.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
+            log::info!("[{}] Skipping job already terminal: status={:?}", job_id.as_str(), job.status);
+            self.update_job_node_status(job_id, job.status, None).await?;
+            return Ok(None);
+        }
+
+        // Claim the job_node
+        self.claim_job_node(job_id).await?;
+
+        Ok(Some((job, job_node)))
+    }
+
+    /// Run a single job execution cycle (test helper).
+    ///
+    /// Returns Ok(true) if a job was executed, Ok(false) if no jobs were available.
+    pub async fn run_once_for_tests(&self) -> Result<bool, KalamDbError> {
+        let is_leader = self.is_cluster_leader().await;
+        if let Some((job, job_node)) = self.poll_next().await? {
+            self.execute_job(job, job_node, is_leader).await?;
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 
     /// Poll for next per-node job entry to execute
@@ -320,7 +438,7 @@ impl JobsManager {
             return Ok(None);
         };
 
-        if matches!(job.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled) {
+        if matches!(job.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
             self.update_job_node_status(&job_node.job_id, job.status, None)
                 .await?;
             return Ok(None);
@@ -353,8 +471,12 @@ impl JobsManager {
         let job_id = job.job_id.clone();
         let job_type = job.job_type;
 
-        // Mark job as Running (leader only)
-        if is_leader {
+        log::info!("[{}] execute_job started: type={:?}, has_local_work={}, has_leader_actions={}", 
+            job_id, job_type, job_type.has_local_work(), job_type.has_leader_actions());
+
+        // Mark job as Running if still Queued/New (leader coordination)
+        // Only leader should be executing jobs at this point due to creation constraints
+        if is_leader && matches!(job.status, JobStatus::Queued | JobStatus::New) {
             self.mark_job_running(&job_id).await?;
         }
 
@@ -421,6 +543,16 @@ impl JobsManager {
                 self.log_job_event(&job_id, &Level::Error, &format!("Job failed in local phase: {}", message));
                 return Ok(());
             },
+            JobDecision::Skipped { message } => {
+                self.update_job_node_status(&job_id, JobStatus::Completed, None)
+                    .await?;
+                self.log_job_event(
+                    &job_id,
+                    &Level::Debug,
+                    &format!("Local phase skipped: {}", message),
+                );
+                // Continue to leader phase if applicable
+            },
             JobDecision::Retry { message, exception_trace, backoff_ms } => {
                 // Handle retry for local phase
                 return self
@@ -475,6 +607,7 @@ impl JobsManager {
             }
 
             if job_type.has_leader_actions() {
+                log::info!("[{}] Starting leader phase execution", job_id);
                 self.log_job_event(&job_id, &Level::Debug, "Executing leader phase");
 
                 let leader_decision = match self.job_registry.execute_leader(app_ctx, &job).await {
@@ -506,6 +639,20 @@ impl JobsManager {
                             &job_id,
                             &Level::Debug,
                             &format!("Job completed (leader phase): {}", message.unwrap_or_default()),
+                        );
+                    },
+                    JobDecision::Skipped { message } => {
+                        if let Err(e) = self.mark_job_skipped(&job_id, message.clone()).await {
+                            log::error!("[{}] Failed to mark job as skipped via Raft: {}", job_id, e);
+                            return Err(KalamDbError::Other(format!(
+                                "Failed to update job status to Skipped: {}",
+                                e
+                            )));
+                        }
+                        self.log_job_event(
+                            &job_id,
+                            &Level::Info,
+                            &format!("Job skipped (leader phase): {}", message),
                         );
                     },
                     JobDecision::Failed { message, .. } => {
@@ -718,9 +865,12 @@ impl JobsManager {
                 return Ok(());
             },
             JobNodeQuorumResult::TimedOut { completed, total } => {
+                // If completed=0, job was never started on workers (failover of queued job)
+                // Use debug level to reduce noise, otherwise warn
+                let level = if completed == 0 { Level::Debug } else { Level::Warn };
                 self.log_job_event(
                     &job_id,
-                    &Level::Warn,
+                    &level,
                     &format!(
                         "Quorum timeout (completed {}/{}); proceeding with leader actions",
                         completed, total
@@ -746,6 +896,9 @@ impl JobsManager {
                 },
                 JobDecision::Failed { message, .. } => {
                     self.mark_job_failed(&job_id, message).await?;
+                },
+                JobDecision::Skipped { message } => {
+                    self.mark_job_skipped(&job_id, message).await?;
                 },
                 JobDecision::Retry { message, exception_trace, backoff_ms } => {
                     return self

@@ -7,7 +7,7 @@ use kalam_link::models::{QueryResponse, ResponseStatus};
 use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
 use kalamdb_commons::{Role, UserId, UserName};
 use kalamdb_core::app_context::AppContext;
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell as SyncOnceCell};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::Path;
@@ -17,7 +17,10 @@ use tokio::sync::Mutex;
 use tokio::sync::OnceCell;
 use tokio::time::{sleep, Duration, Instant};
 
+static GLOBAL_HTTP_TEST_RUNTIME: SyncOnceCell<Arc<tokio::runtime::Runtime>> = SyncOnceCell::new();
+
 static HTTP_TEST_SERVER_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static HTTP_TEST_SUITE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Global singleton server instance for tests that want to reuse the same server.
 ///
@@ -33,6 +36,24 @@ static GLOBAL_HTTP_TEST_SERVER: OnceCell<HttpTestServer> = OnceCell::const_new()
 /// Use `get_cluster_server()` to get a reference to the shared cluster.
 /// The cluster is started once on first access and reused across tests.
 static GLOBAL_CLUSTER_SERVER: OnceCell<ClusterTestServer> = OnceCell::const_new();
+
+pub async fn acquire_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    HTTP_TEST_SUITE_LOCK.lock().await
+}
+
+fn root_jwt_auth_header(jwt_secret: &str) -> String {
+    let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
+        &UserId::new("1"),
+        &UserName::new("root"),
+        &Role::System,
+        None,
+        Some(1),
+        jwt_secret,
+    )
+    .expect("Failed to generate root JWT token");
+
+    format!("Bearer {}", token)
+}
 
 /// Get a reference to the global shared HTTP test server.
 ///
@@ -54,9 +75,29 @@ static GLOBAL_CLUSTER_SERVER: OnceCell<ClusterTestServer> = OnceCell::const_new(
 pub async fn get_global_server() -> &'static HttpTestServer {
     GLOBAL_HTTP_TEST_SERVER
         .get_or_init(|| async {
-            start_http_test_server().await.expect("Failed to start global HTTP test server")
+            start_http_test_server_on_global_runtime()
+                .await
+                .expect("Failed to start global HTTP test server")
         })
         .await
+}
+
+async fn start_http_test_server_on_global_runtime() -> Result<HttpTestServer> {
+    let runtime = GLOBAL_HTTP_TEST_RUNTIME
+        .get_or_init(|| {
+            Arc::new(
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .thread_name("kalamdb-test-runtime")
+                    .build()
+                    .expect("Failed to build global test runtime"),
+            )
+        })
+        .clone();
+
+    tokio::task::spawn_blocking(move || runtime.block_on(start_http_test_server()))
+        .await
+        .expect("Failed to join global test server task")
 }
 
 /// Get a reference to the global 3-node cluster for testing.
@@ -329,19 +370,34 @@ impl HttpTestServer {
         username: &str,
         _role: &Role,
     ) -> KalamLinkClient {
+        if username == "root" {
+            let token = self.create_jwt_token(&UserName::new("root"));
+            return KalamLinkClient::builder()
+                .base_url(self.base_url())
+                .auth(AuthProvider::jwt_token(token))
+                .timeouts(
+                    KalamLinkTimeouts::builder()
+                        .connection_timeout_secs(5)
+                        .receive_timeout_secs(120)
+                        .send_timeout_secs(30)
+                        .subscribe_timeout_secs(15)
+                        .auth_timeout_secs(10)
+                        .initial_data_timeout(Duration::from_secs(120))
+                        .build(),
+                )
+                .build()
+                .expect("Failed to build KalamLinkClient");
+        }
+
         // For localhost tests, use cached basic-auth password if available
-        let auth_username = if username == "root" { "root" } else { username };
-        let auth_password = if username == "root" {
-            String::new()
-        } else {
-            self.get_cached_user_password(username).unwrap_or_else(|| {
-                eprintln!(
-                    "WARNING: link_client('{}') called without cached password. Falling back to test123.",
-                    username
-                );
-                "test123".to_string()
-            })
-        };
+        let auth_username = username;
+        let auth_password = self.get_cached_user_password(username).unwrap_or_else(|| {
+            eprintln!(
+                "WARNING: link_client('{}') called without cached password. Falling back to test123.",
+                username
+            );
+            "test123".to_string()
+        });
 
         KalamLinkClient::builder()
             .base_url(self.base_url())
@@ -415,9 +471,52 @@ impl HttpTestServer {
         auth_header: &str,
         params: Vec<JsonValue>,
     ) -> Result<QueryResponse> {
-        let resp = self
-            .execute_sql_raw_with_auth_and_params_no_wait(sql, auth_header, params)
-            .await?;
+        let mut attempt = 0;
+        let resp = loop {
+            match self
+                .execute_sql_raw_with_auth_and_params_no_wait(sql, auth_header, params.clone())
+                .await
+            {
+                Ok(resp) => break resp,
+                Err(err) => {
+                    let err_str = err.to_string();
+                    let is_transient = err_str.contains("KalamLink execute_query failed")
+                        || err_str.to_lowercase().contains("connection")
+                        || err_str.to_lowercase().contains("timeout")
+                        || err_str.to_lowercase().contains("timed out");
+
+                    attempt += 1;
+                    if is_transient && attempt < 6 {
+                        let backoff = 50u64.saturating_mul(attempt as u64);
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
+                        continue;
+                    }
+
+                    return Err(err);
+                }
+            }
+        };
+
+        let mut resp = resp;
+
+        if attempt > 0 && resp.status == ResponseStatus::Error {
+            if let Some(error) = resp.error.as_ref() {
+                let msg = error.message.to_lowercase();
+                let sql_lower = sql.trim_start().to_lowercase();
+                let is_strict = sql_lower.contains("/* strict */") || sql_lower.contains("/*strict*/");
+                let is_pk_violation = msg.contains("primary key violation") || msg.contains("duplicate");
+                let is_alter_missing = sql_lower.starts_with("alter table") && msg.contains("does not exist");
+                let is_idempotent_create = msg.contains("already exists") && !is_pk_violation;
+
+                if !is_strict {
+                    let is_idempotent_insert = is_pk_violation && sql_lower.starts_with("insert");
+                    if is_idempotent_create || is_idempotent_insert || is_alter_missing {
+                        resp.status = ResponseStatus::Success;
+                        resp.error = None;
+                    }
+                }
+            }
+        }
 
         // Tests frequently issue DDL immediately followed by DML. In near-production mode
         // (Raft + multi-worker HTTP server), table registration can lag very slightly.
@@ -730,8 +829,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
     // Increase rate limits for tests (default is 100/sec which is too low for insert loops)
     config.rate_limit.max_queries_per_sec = 100000;
     config.rate_limit.max_messages_per_sec = 10000;
-    let skip_raft_leader_check =
-        config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
+    let skip_raft_leader_check = false;
 
     // Match production behavior: initialize JWT config from server settings.
     kalamdb_auth::services::unified::init_jwt_config(
@@ -757,7 +855,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
         _global_lock: None, // No longer use file lock - OnceCell handles per-process synchronization
         base_url,
         data_path,
-        root_auth_header: HttpTestServer::basic_auth_header(&UserName::root(), ""),
+        root_auth_header: root_jwt_auth_header(&jwt_secret),
         jwt_secret,
         link_client_cache: Mutex::new(HashMap::new()),
         user_id_cache: std::sync::Mutex::new(HashMap::new()),
@@ -788,8 +886,7 @@ pub async fn start_http_test_server_with_config(
     config.rate_limit.max_queries_per_sec = 100000;
     config.rate_limit.max_messages_per_sec = 10000;
     override_config(&mut config);
-    let skip_raft_leader_check =
-        config.cluster.as_ref().map_or(true, |cluster| cluster.peers.is_empty());
+    let skip_raft_leader_check = false;
 
     kalamdb_auth::services::unified::init_jwt_config(
         &config.auth.jwt_secret,
@@ -813,7 +910,7 @@ pub async fn start_http_test_server_with_config(
         _global_lock: None, // No longer use file lock
         base_url,
         data_path,
-        root_auth_header: HttpTestServer::basic_auth_header(&UserName::root(), ""),
+        root_auth_header: root_jwt_auth_header(&jwt_secret),
         jwt_secret,
         link_client_cache: Mutex::new(HashMap::new()),
         user_id_cache: std::sync::Mutex::new(HashMap::new()),

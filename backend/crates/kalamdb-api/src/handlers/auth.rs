@@ -64,6 +64,10 @@ pub struct LoginResponse {
     pub expires_at: String,
     /// JWT access token for SDK usage (also set as HttpOnly cookie)
     pub access_token: String,
+    /// Refresh token for obtaining new access tokens (longer-lived)
+    pub refresh_token: String,
+    /// Refresh token expiration time in RFC3339 format
+    pub refresh_expires_at: String,
 }
 
 /// User info returned in responses
@@ -140,7 +144,7 @@ pub async fn login_handler(
         },
     };
 
-    // Generate JWT token
+    // Generate JWT access token
     let (token, _claims) = match create_and_sign_token(
         &user.id,
         &user.username,
@@ -157,6 +161,24 @@ pub async fn login_handler(
         },
     };
 
+    // Generate refresh token (7 days by default, or 7x access token expiry)
+    let refresh_expiry_hours = config.jwt_expiry_hours * 7;
+    let (refresh_token, _refresh_claims) = match create_and_sign_token(
+        &user.id,
+        &user.username,
+        &user.role,
+        user.email.as_deref(),
+        Some(refresh_expiry_hours),
+        &config.jwt_secret,
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            log::error!("Error generating refresh token: {}", e);
+            return HttpResponse::InternalServerError()
+                .json(AuthErrorResponse::new("internal_error", "Failed to generate token"));
+        },
+    };
+
     // Create HttpOnly cookie
     let cookie_config = CookieConfig {
         secure: config.cookie_secure,
@@ -166,6 +188,7 @@ pub async fn login_handler(
         create_auth_cookie(&token, Duration::hours(config.jwt_expiry_hours), &cookie_config);
 
     let expires_at = Utc::now() + Duration::hours(config.jwt_expiry_hours);
+    let refresh_expires_at = Utc::now() + Duration::hours(refresh_expiry_hours);
 
     // Convert timestamps properly
     let created_at = chrono::DateTime::from_timestamp_millis(user.created_at)
@@ -186,6 +209,8 @@ pub async fn login_handler(
         },
         expires_at: expires_at.to_rfc3339(),
         access_token: token,
+        refresh_token,
+        refresh_expires_at: refresh_expires_at.to_rfc3339(),
     })
 }
 
@@ -257,7 +282,7 @@ pub async fn refresh_handler(
         },
     };
 
-    // Generate new token
+    // Generate new access token
     let (new_token, _new_claims) = match create_and_sign_token(
         &user.id,
         &user.username,
@@ -274,6 +299,24 @@ pub async fn refresh_handler(
         },
     };
 
+    // Generate new refresh token (7 days by default, or 7x access token expiry)
+    let refresh_expiry_hours = config.jwt_expiry_hours * 7;
+    let (new_refresh_token, _refresh_claims) = match create_and_sign_token(
+        &user.id,
+        &user.username,
+        &user.role,
+        user.email.as_deref(),
+        Some(refresh_expiry_hours),
+        &config.jwt_secret,
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            log::error!("Error generating refresh token: {}", e);
+            return HttpResponse::InternalServerError()
+                .json(AuthErrorResponse::new("internal_error", "Failed to refresh token"));
+        },
+    };
+
     // Create new cookie
     let cookie_config = CookieConfig {
         secure: config.cookie_secure,
@@ -283,6 +326,7 @@ pub async fn refresh_handler(
         create_auth_cookie(&new_token, Duration::hours(config.jwt_expiry_hours), &cookie_config);
 
     let expires_at = Utc::now() + Duration::hours(config.jwt_expiry_hours);
+    let refresh_expires_at = Utc::now() + Duration::hours(refresh_expiry_hours);
 
     // Convert timestamps properly
     let created_at = chrono::DateTime::from_timestamp_millis(user.created_at)
@@ -303,6 +347,8 @@ pub async fn refresh_handler(
         },
         expires_at: expires_at.to_rfc3339(),
         access_token: new_token,
+        refresh_token: new_refresh_token,
+        refresh_expires_at: refresh_expires_at.to_rfc3339(),
     })
 }
 

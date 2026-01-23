@@ -55,6 +55,7 @@ mod tests {
             SystemTable::Namespaces
                 .column_family_name()
                 .expect("Namespaces is a table, not a view")
+                .into()
         );
     }
 
@@ -102,7 +103,7 @@ mod tests {
         }
 
         // Scan all
-        let namespaces = store.scan_all(None, None, None).unwrap();
+        let namespaces = store.scan_all_typed(None, None, None).unwrap();
         assert_eq!(namespaces.len(), 3);
     }
 

@@ -5,29 +5,25 @@ use datafusion::datasource::TableProvider;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{StorageId, TableId};
-use object_store::ObjectStore;
+use kalamdb_filestore::StorageCached;
+use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// Cached table data containing all metadata and schema information
 ///
 /// This struct consolidates data previously split between separate caches
 /// to eliminate duplication.
 ///
-/// **Performance Note**: Cache access updates `last_accessed` via an atomic field.
-/// This avoids a separate "LRU timestamps" map (which would otherwise duplicate keys and add
-/// extra DashMap overhead) while keeping per-access work O(1).
+/// **Performance Note**: Moka cache handles LRU eviction automatically based on
+/// access patterns, so we only track timestamps for metrics and debugging.
 #[derive(Debug)]
 pub struct CachedTableData {
     /// Full schema definition with all columns
     pub table: Arc<TableDefinition>,
 
     /// Reference to storage configuration in system.storages
-    pub storage_id: Option<StorageId>,
-
-    /// Partially-resolved storage path template
-    /// Static placeholders substituted ({namespace}, {tableName}), dynamic ones remain ({userId}, {shard})
-    pub storage_path_template: String,
+    pub storage_id: StorageId,
 
     /// Current schema version number
     pub schema_version: u32,
@@ -43,7 +39,7 @@ pub struct CachedTableData {
 
     /// Last access timestamp in milliseconds since Unix epoch.
     ///
-    /// Used for LRU eviction in `TableCache` without maintaining a separate timestamp map.
+    /// Used for metrics and debugging. Moka cache handles LRU eviction automatically.
     last_accessed_ms: AtomicU64,
 
     /// Bloom filter columns (PRIMARY KEY + _seq) - computed once on cache entry creation
@@ -69,7 +65,6 @@ impl Clone for CachedTableData {
         Self {
             table: Arc::clone(&self.table),
             storage_id: self.storage_id.clone(),
-            storage_path_template: self.storage_path_template.clone(),
             schema_version: self.schema_version,
             arrow_schema: Arc::clone(&self.arrow_schema),
             last_accessed_ms: AtomicU64::new(self.last_accessed_ms.load(Ordering::Relaxed)),
@@ -81,6 +76,35 @@ impl Clone for CachedTableData {
 }
 
 impl CachedTableData {
+    /// Create new cached table data with required storage_id
+    pub fn new(schema: Arc<TableDefinition>) -> Self {
+        let schema_version = schema.schema_version;
+        let storage_id = Self::extract_storage_id(&schema).unwrap_or_else(|| StorageId::local());
+        let (bloom_filter_columns, indexed_columns) = Self::compute_indexed_columns(&schema);
+        Self {
+            table: schema,
+            storage_id,
+            schema_version,
+            arrow_schema: Arc::new(RwLock::new(None)),
+            last_accessed_ms: AtomicU64::new(Self::now_millis()),
+            bloom_filter_columns,
+            indexed_columns,
+            provider: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Create cached table data from a table definition with full initialization
+    ///
+    /// This method resolves storage_id and computes all cached fields.
+    /// Used when loading table definitions from persistence or creating new tables.
+    pub fn from_table_definition(
+        _app_ctx: &AppContext,
+        _table_id: &TableId,
+        table_def: Arc<TableDefinition>,
+    ) -> Result<Self, KalamDbError> {
+        Ok(Self::new(table_def))
+    }
+
     fn now_millis() -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
@@ -110,56 +134,6 @@ impl CachedTableData {
         (bloom_filter_columns, indexed_columns)
     }
 
-    /// Create new cached table data
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(schema: Arc<TableDefinition>) -> Self {
-        let schema_version = schema.schema_version;
-        let (bloom_filter_columns, indexed_columns) = Self::compute_indexed_columns(&schema);
-        Self {
-            table: schema,
-            storage_id: None,
-            storage_path_template: String::new(),
-            schema_version,
-            arrow_schema: Arc::new(RwLock::new(None)),
-            last_accessed_ms: AtomicU64::new(Self::now_millis()),
-            bloom_filter_columns,
-            indexed_columns,
-            provider: Arc::new(RwLock::new(None)),
-        }
-    }
-
-    /// Create a fully initialized CachedTableData with storage configuration
-    ///
-    /// This is the preferred way to create CachedTableData as it ensures all
-    /// storage-related fields are properly set. Use this method in:
-    /// - CREATE TABLE
-    /// - ALTER TABLE  
-    /// - Startup/persistence loading
-    ///
-    /// # Arguments
-    /// * `table_def` - The table definition
-    /// * `storage_id` - Storage ID (from table options)
-    /// * `storage_path_template` - Pre-resolved storage path template
-    pub fn with_storage_config(
-        table_def: Arc<TableDefinition>,
-        storage_id: Option<StorageId>,
-        storage_path_template: String,
-    ) -> Self {
-        let schema_version = table_def.schema_version;
-        let (bloom_filter_columns, indexed_columns) = Self::compute_indexed_columns(&table_def);
-        Self {
-            table: table_def,
-            storage_id,
-            storage_path_template,
-            schema_version,
-            arrow_schema: Arc::new(RwLock::new(None)),
-            last_accessed_ms: AtomicU64::new(Self::now_millis()),
-            bloom_filter_columns,
-            indexed_columns,
-            provider: Arc::new(RwLock::new(None)),
-        }
-    }
-
     /// Extract storage ID from table definition options
     ///
     /// Returns the storage_id from the table's options, or None for system tables.
@@ -168,84 +142,8 @@ impl CachedTableData {
         match &table_def.table_options {
             TableOptions::User(opts) => Some(opts.storage_id.clone()),
             TableOptions::Shared(opts) => Some(opts.storage_id.clone()),
-            TableOptions::Stream(_) => Some(StorageId::from("local")), // Default for streams
+            TableOptions::Stream(_) => Some(StorageId::local()), // Default for streams
             TableOptions::System(_) => None,
-        }
-    }
-
-    /// Create CachedTableData from TableDefinition by resolving storage configuration
-    ///
-    /// This factory method handles the complete initialization including:
-    /// 1. Extracting storage_id from table options
-    /// 2. Resolving the storage path template via PathResolver
-    ///
-    /// Use this for loading tables from persistence (startup, cache miss).
-    ///
-    /// # Arguments
-    /// * `table_id` - The table identifier
-    /// * `table_def` - The table definition
-    ///
-    /// # Returns
-    /// A fully initialized CachedTableData with storage fields populated
-    pub fn from_table_definition(
-        app_ctx: &AppContext,
-        table_id: &TableId,
-        table_def: Arc<TableDefinition>,
-    ) -> Result<Self, KalamDbError> {
-        use crate::schema_registry::PathResolver;
-
-        let storage_id = Self::extract_storage_id(&table_def);
-        let table_type = table_def.table_type;
-
-        let storage_path_template = if let Some(ref sid) = storage_id {
-            PathResolver::resolve_storage_path_template(app_ctx, table_id, table_type, sid)
-                .unwrap_or_else(|e| {
-                    log::warn!(
-                        "Failed to resolve storage path template for {}: {}. Using empty template.",
-                        table_id,
-                        e
-                    );
-                    String::new()
-                })
-        } else {
-            String::new()
-        };
-
-        Ok(Self::with_storage_config(table_def, storage_id, storage_path_template))
-    }
-
-    /// Create CachedTableData for an altered table, preserving storage config from old entry
-    ///
-    /// Use this when updating a table after ALTER TABLE. It preserves the storage
-    /// configuration from the existing cache entry to avoid recalculation.
-    ///
-    /// # Arguments
-    /// * `table_id` - The table identifier
-    /// * `new_table_def` - The updated table definition
-    /// * `old_entry` - Optional previous cache entry to copy storage config from
-    ///
-    /// # Returns
-    /// A CachedTableData with updated schema but preserved storage config
-    pub fn from_altered_table(
-        app_ctx: &AppContext,
-        table_id: &TableId,
-        new_table_def: Arc<TableDefinition>,
-        old_entry: Option<&CachedTableData>,
-    ) -> Result<Self, KalamDbError> {
-        if let Some(old) = old_entry {
-            // Preserve storage config from old entry
-            Ok(Self::with_storage_config(
-                new_table_def,
-                old.storage_id.clone(),
-                old.storage_path_template.clone(),
-            ))
-        } else {
-            // No old entry - fully resolve storage config
-            log::warn!(
-                "⚠️  No existing cache entry for {} during ALTER. Resolving storage config...",
-                table_id
-            );
-            Self::from_table_definition(app_ctx, table_id, new_table_def)
         }
     }
 
@@ -278,8 +176,7 @@ impl CachedTableData {
         {
             let read_guard = self
                 .arrow_schema
-                .read()
-                .expect("RwLock poisoned: arrow_schema read lock failed");
+                .read();
             if let Some(schema) = read_guard.as_ref() {
                 return Ok(Arc::clone(schema)); // 1.5μs cached access
             }
@@ -289,8 +186,7 @@ impl CachedTableData {
         {
             let mut write_guard = self
                 .arrow_schema
-                .write()
-                .expect("RwLock poisoned: arrow_schema write lock failed");
+                .write();
 
             // Double-check: Another thread may have computed while we waited for write lock
             if let Some(schema) = write_guard.as_ref() {
@@ -310,30 +206,29 @@ impl CachedTableData {
         }
     }
 
-    /// Get ObjectStore instance from StorageRegistry (centralized caching)
+    /// Get StorageCached instance from StorageRegistry (centralized caching)
     ///
-    /// ObjectStore instances are now cached per-storage in StorageRegistry, not per-table.
-    /// This ensures that 100 tables using the same storage share 1 ObjectStore instance.
+    /// StorageCached provides unified operations (list, get, put, delete)
+    /// with built-in path template resolution. ObjectStore instances are
+    /// cached per-storage in StorageRegistry, not per-table.
     ///
     /// **Performance**: First call builds store (~50-200μs for cloud), subsequent calls return cached Arc (~1μs)
     ///
     /// # Returns
-    /// Arc-wrapped ObjectStore for zero-copy sharing across operations
+    /// Arc-wrapped StorageCached for zero-copy sharing across operations
     ///
     /// # Errors
-    /// Returns error if no storage_id configured or storage not found
-    pub fn object_store(&self, app_ctx: &AppContext) -> Result<Arc<dyn ObjectStore>, KalamDbError> {
-        let storage_id = self
-            .storage_id
-            .as_ref()
-            .cloned()
-            .or_else(|| Self::extract_storage_id(&self.table))
+    /// Returns error if storage not found
+    pub fn storage_cached(&self, storage_registry: &Arc<kalamdb_filestore::StorageRegistry>) -> Result<Arc<StorageCached>, KalamDbError> {
+        storage_registry
+            .get_cached(&self.storage_id)
+            .map_err(|e| KalamDbError::Other(format!("Filestore error: {}", e)))?
             .ok_or_else(|| {
-                KalamDbError::InvalidOperation(
-                    "Cannot get ObjectStore: no storage_id configured".to_string(),
-                )
-            })?;
-        app_ctx.storage_registry().get_object_store(&storage_id)
+                KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' not found in registry",
+                    self.storage_id.as_str()
+                ))
+            })
     }
 
     /// Get cached Bloom filter columns (PRIMARY KEY + _seq)
@@ -366,7 +261,7 @@ impl CachedTableData {
     ///
     /// **Performance**: O(1) access with read lock
     pub fn get_provider(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        let guard = self.provider.read().expect("RwLock poisoned: provider read lock failed");
+        let guard = self.provider.read();
         guard.as_ref().map(Arc::clone)
     }
 
@@ -377,13 +272,13 @@ impl CachedTableData {
     ///
     /// **Performance**: O(1) with write lock
     pub fn set_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
-        let mut guard = self.provider.write().expect("RwLock poisoned: provider write lock failed");
+        let mut guard = self.provider.write();
         *guard = Some(provider);
     }
 
     /// Clear the cached provider (used during table invalidation)
     pub fn clear_provider(&self) {
-        let mut guard = self.provider.write().expect("RwLock poisoned: provider write lock failed");
+        let mut guard = self.provider.write();
         *guard = None;
     }
 }

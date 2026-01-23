@@ -2,12 +2,13 @@
 
 use super::JobNodesTableSchema;
 use crate::error::{SystemError, SystemResultExt};
+use crate::providers::base::SystemTableScan;
 use async_trait::async_trait;
 use chrono::Utc;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
@@ -91,10 +92,11 @@ impl JobNodesTableProvider {
         statuses: &[JobStatus],
         limit: usize,
     ) -> Result<Vec<JobNode>, SystemError> {
-        let prefix = JobNodeId::from(JobNodeId::prefix_for_node(node_id));
+        let prefix = JobNodeId::prefix_for_node(node_id);
+        let scan_limit = if limit == 0 { 10_000 } else { limit.saturating_mul(10) };
         let rows = self
             .store
-            .scan_all(None, Some(&prefix), None)
+            .scan_with_raw_prefix(&prefix, None, scan_limit)
             .into_system_error("scan job_nodes error")?;
 
         let mut filtered: Vec<JobNode> = rows
@@ -116,12 +118,17 @@ impl JobNodesTableProvider {
         statuses: &[JobStatus],
         limit: usize,
     ) -> Result<Vec<JobNode>, SystemError> {
-        let prefix = JobNodeId::from(JobNodeId::prefix_for_node(node_id));
-        let rows = self
-            .store
-            .scan_all_async(None, Some(prefix), None)
+        let prefix = JobNodeId::prefix_for_node(node_id);
+        let scan_limit = if limit == 0 { 10_000 } else { limit.saturating_mul(10) };
+        let rows = {
+            let store = self.store.clone();
+            tokio::task::spawn_blocking(move || {
+                store.scan_with_raw_prefix(&prefix, None, scan_limit)
+            })
             .await
-            .into_system_error("scan_async job_nodes error")?;
+            .into_system_error("scan_async job_nodes join error")?
+            .into_system_error("scan_async job_nodes error")?
+        };
 
         let mut filtered: Vec<JobNode> = rows
             .into_iter()
@@ -155,7 +162,7 @@ impl JobNodesTableProvider {
         Ok(filtered)
     }
 
-    fn create_batch(&self, nodes: Vec<(Vec<u8>, JobNode)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch(&self, nodes: Vec<(JobNodeId, JobNode)>) -> Result<RecordBatch, SystemError> {
         let mut job_ids = Vec::with_capacity(nodes.len());
         let mut node_ids = Vec::with_capacity(nodes.len());
         let mut statuses = Vec::with_capacity(nodes.len());
@@ -192,7 +199,7 @@ impl JobNodesTableProvider {
     }
 
     pub fn scan_all_job_nodes(&self) -> Result<RecordBatch, SystemError> {
-        let nodes = self.store.scan_all(None, None, None)?;
+        let nodes = self.store.scan_all_typed(None, None, None)?;
         self.create_batch(nodes)
     }
 
@@ -207,7 +214,7 @@ impl JobNodesTableProvider {
 
         let rows = self
             .store
-            .scan_all(None, None, None)
+            .scan_all_typed(None, None, None)
             .into_system_error("scan job_nodes error")?;
 
         let mut deleted = 0;
@@ -215,7 +222,7 @@ impl JobNodesTableProvider {
         for (_key, node) in rows {
             if !matches!(
                 node.status,
-                JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
+                JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped
             ) {
                 continue;
             }
@@ -237,6 +244,32 @@ impl JobNodesTableProvider {
     }
 }
 
+impl SystemTableScan<JobNodeId, JobNode> for JobNodesTableProvider {
+    fn store(&self) -> &kalamdb_store::IndexedEntityStore<JobNodeId, JobNode> {
+        &self.store
+    }
+
+    fn table_name(&self) -> &str {
+        JobNodesTableSchema::table_name()
+    }
+
+    fn primary_key_column(&self) -> &str {
+        "id"
+    }
+
+    fn arrow_schema(&self) -> SchemaRef {
+        JobNodesTableSchema::schema()
+    }
+
+    fn parse_key(&self, value: &str) -> Option<JobNodeId> {
+        JobNodeId::from_string(value).ok()
+    }
+
+    fn create_batch_from_pairs(&self, pairs: Vec<(JobNodeId, JobNode)>) -> Result<RecordBatch, SystemError> {
+        self.create_batch(pairs)
+    }
+}
+
 #[async_trait]
 impl TableProvider for JobNodesTableProvider {
     fn as_any(&self) -> &dyn Any {
@@ -253,24 +286,13 @@ impl TableProvider for JobNodesTableProvider {
 
     async fn scan(
         &self,
-        _state: &dyn datafusion::catalog::Session,
+        state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::datasource::MemTable;
-
-        let _ = (filters, limit);
-
-        let batch = self
-            .scan_all_job_nodes()
-            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-
-        let schema = JobNodesTableSchema::schema();
-        let table = MemTable::try_new(schema, vec![vec![batch]])
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-
-        table.scan(_state, projection, filters, limit).await
+        // Use the common SystemTableScan implementation
+        self.base_system_scan(state, projection, filters, limit).await
     }
 
     fn supports_filters_pushdown(

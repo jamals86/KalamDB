@@ -212,6 +212,16 @@ impl From<kalamdb_filestore::FilestoreError> for KalamDbError {
             kalamdb_filestore::FilestoreError::ObjectStore(msg) => {
                 KalamDbError::Other(format!("ObjectStore error: {}", msg))
             },
+            kalamdb_filestore::FilestoreError::StorageError(msg) => {
+                KalamDbError::Other(format!("Storage error: {}", msg))
+            },
+            kalamdb_filestore::FilestoreError::InvalidTemplate(msg) => {
+                KalamDbError::InvalidOperation(format!("Invalid storage template: {}", msg))
+            },
+            kalamdb_filestore::FilestoreError::Format(msg) => {
+                KalamDbError::Other(format!("Format error: {}", msg))
+            },
+            kalamdb_filestore::FilestoreError::NotFound(msg) => KalamDbError::NotFound(msg),
             kalamdb_filestore::FilestoreError::Other(msg) => KalamDbError::Other(msg),
         }
     }
@@ -689,7 +699,9 @@ impl From<kalamdb_tables::TableError> for KalamDbError {
         use kalamdb_tables::TableError;
         match err {
             TableError::Storage(msg) => KalamDbError::Storage(CoreStorageError::Other(msg)),
+            TableError::AlreadyExists(msg) => KalamDbError::AlreadyExists(msg),
             TableError::NotFound(msg) => KalamDbError::NotFound(msg),
+            TableError::TableNotFound(msg) => KalamDbError::TableNotFound(msg),
             TableError::InvalidOperation(msg) => KalamDbError::InvalidOperation(msg),
             TableError::Serialization(msg) => KalamDbError::SerializationError(msg),
             TableError::DataFusion(msg) => {

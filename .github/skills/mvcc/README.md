@@ -1,0 +1,1 @@
+This folder contains the MVCC skill definition used by automated agents.

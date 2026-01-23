@@ -3,6 +3,8 @@
 //! These tests cover error scenarios, edge cases, and failure modes
 //! that could occur during manifest read/write operations.
 
+use kalamdb_commons::ids::SeqId;
+use kalamdb_commons::models::rows::StoredScalarValue;
 use kalamdb_commons::types::{Manifest, SegmentMetadata};
 use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
 use std::collections::HashMap;
@@ -19,8 +21,8 @@ fn test_manifest_serialization_deserialization() {
         "seg-1".to_string(),
         "batch-0.parquet".to_string(),
         HashMap::new(),
-        100,
-        200,
+        SeqId::from(100i64),
+        SeqId::from(200i64),
         50,
         1024,
     );
@@ -37,8 +39,8 @@ fn test_manifest_serialization_deserialization() {
     assert_eq!(deserialized.user_id, user_id);
     assert_eq!(deserialized.segments.len(), 1);
     assert_eq!(deserialized.segments[0].id, "seg-1");
-    assert_eq!(deserialized.segments[0].min_seq, 100);
-    assert_eq!(deserialized.segments[0].max_seq, 200);
+    assert_eq!(deserialized.segments[0].min_seq, SeqId::from(100i64));
+    assert_eq!(deserialized.segments[0].max_seq, SeqId::from(200i64));
 }
 
 #[test]
@@ -71,8 +73,8 @@ fn test_manifest_multiple_segments() {
             format!("seg-{}", i),
             format!("batch-{}.parquet", i),
             HashMap::new(),
-            (i * 100) as i64,
-            ((i + 1) * 100 - 1) as i64,
+            SeqId::from((i * 100) as i64),
+            SeqId::from(((i + 1) * 100 - 1) as i64),
             100,
             (1024 * (i + 1)) as u64,
         );
@@ -90,8 +92,8 @@ fn test_manifest_multiple_segments() {
     assert_eq!(deserialized.segments.len(), 10);
     for i in 0..10 {
         assert_eq!(deserialized.segments[i].id, format!("seg-{}", i));
-        assert_eq!(deserialized.segments[i].min_seq, (i * 100) as i64);
-        assert_eq!(deserialized.segments[i].max_seq, ((i + 1) * 100 - 1) as i64);
+        assert_eq!(deserialized.segments[i].min_seq, SeqId::from((i * 100) as i64));
+        assert_eq!(deserialized.segments[i].max_seq, SeqId::from(((i + 1) * 100 - 1) as i64));
     }
 }
 
@@ -100,21 +102,21 @@ fn test_manifest_with_column_stats() {
     let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
     let mut manifest = Manifest::new(table_id, None);
 
-    // Create column stats
+    // Create column stats using StoredScalarValue
     let mut column_stats = HashMap::new();
     column_stats.insert(
         1u64,
         kalamdb_commons::types::ColumnStats {
-            min: Some(serde_json::json!(1)),
-            max: Some(serde_json::json!(100)),
+            min: Some(StoredScalarValue::Int64(Some("1".to_string()))),
+            max: Some(StoredScalarValue::Int64(Some("100".to_string()))),
             null_count: Some(0),
         },
     );
     column_stats.insert(
         2u64,
         kalamdb_commons::types::ColumnStats {
-            min: Some(serde_json::json!("alice")),
-            max: Some(serde_json::json!("zoe")),
+            min: Some(StoredScalarValue::Utf8(Some("alice".to_string()))),
+            max: Some(StoredScalarValue::Utf8(Some("zoe".to_string()))),
             null_count: Some(5),
         },
     );
@@ -123,14 +125,14 @@ fn test_manifest_with_column_stats() {
         "seg-1".to_string(),
         "batch-0.parquet".to_string(),
         column_stats.clone(),
-        0,
-        99,
+        SeqId::from(0i64),
+        SeqId::from(99i64),
         100,
         2048,
     );
     manifest.add_segment(segment);
 
-    // Serialize
+    // Serialize (JSON for manifest.json file output)
     let json = serde_json::to_string(&manifest).expect("Failed to serialize");
 
     // Deserialize
@@ -141,13 +143,13 @@ fn test_manifest_with_column_stats() {
     assert_eq!(segment.column_stats.len(), 2);
 
     let id_stats = segment.column_stats.get(&1u64).unwrap();
-    assert_eq!(id_stats.min, Some(serde_json::json!(1)));
-    assert_eq!(id_stats.max, Some(serde_json::json!(100)));
+    assert_eq!(id_stats.min_as_i64(), Some(1));
+    assert_eq!(id_stats.max_as_i64(), Some(100));
     assert_eq!(id_stats.null_count, Some(0));
 
     let name_stats = segment.column_stats.get(&2u64).unwrap();
-    assert_eq!(name_stats.min, Some(serde_json::json!("alice")));
-    assert_eq!(name_stats.max, Some(serde_json::json!("zoe")));
+    assert_eq!(name_stats.min_as_str(), Some("alice".to_string()));
+    assert_eq!(name_stats.max_as_str(), Some("zoe".to_string()));
     assert_eq!(name_stats.null_count, Some(5));
 }
 
@@ -180,8 +182,8 @@ fn test_manifest_version_tracking() {
         "seg-1".to_string(),
         "batch-0.parquet".to_string(),
         HashMap::new(),
-        0,
-        99,
+        SeqId::from(0i64),
+        SeqId::from(99i64),
         100,
         1024,
     );
@@ -195,8 +197,8 @@ fn test_manifest_version_tracking() {
         "seg-2".to_string(),
         "batch-1.parquet".to_string(),
         HashMap::new(),
-        100,
-        199,
+        SeqId::from(100i64),
+        SeqId::from(199i64),
         100,
         1024,
     );
@@ -218,8 +220,8 @@ fn test_manifest_sequence_number_updates() {
         "seg-1".to_string(),
         "batch-0.parquet".to_string(),
         HashMap::new(),
-        0,
-        99,
+        SeqId::from(0i64),
+        SeqId::from(99i64),
         100,
         1024,
     );
@@ -234,8 +236,8 @@ fn test_manifest_sequence_number_updates() {
         "seg-2".to_string(),
         "batch-1.parquet".to_string(),
         HashMap::new(),
-        100,
-        199,
+        SeqId::from(100i64),
+        SeqId::from(199i64),
         100,
         1024,
     );
@@ -251,8 +253,8 @@ fn test_segment_metadata_schema_version() {
         "seg-1".to_string(),
         "batch-0.parquet".to_string(),
         HashMap::new(),
-        0,
-        99,
+        SeqId::from(0i64),
+        SeqId::from(99i64),
         100,
         1024,
         5, // schema version
@@ -275,8 +277,8 @@ fn test_segment_metadata_without_schema_version() {
         "seg-1".to_string(),
         "batch-0.parquet".to_string(),
         HashMap::new(),
-        0,
-        99,
+        SeqId::from(0i64),
+        SeqId::from(99i64),
         100,
         1024,
     );
@@ -294,8 +296,8 @@ fn test_manifest_large_sequence_numbers() {
         "seg-1".to_string(),
         "batch-0.parquet".to_string(),
         HashMap::new(),
-        1_000_000_000,
-        2_000_000_000,
+        SeqId::from(1_000_000_000i64),
+        SeqId::from(2_000_000_000i64),
         1_000_000_000,
         1024 * 1024 * 100, // 100 MB
     );
@@ -307,7 +309,7 @@ fn test_manifest_large_sequence_numbers() {
     // Deserialize
     let deserialized: Manifest = serde_json::from_str(&json).expect("Failed to deserialize");
 
-    assert_eq!(deserialized.segments[0].min_seq, 1_000_000_000);
-    assert_eq!(deserialized.segments[0].max_seq, 2_000_000_000);
+    assert_eq!(deserialized.segments[0].min_seq, SeqId::from(1_000_000_000i64));
+    assert_eq!(deserialized.segments[0].max_seq, SeqId::from(2_000_000_000i64));
     assert_eq!(deserialized.segments[0].row_count, 1_000_000_000);
 }

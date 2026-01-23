@@ -15,10 +15,12 @@ use kalamdb_system::{StoragePartition, SystemTable};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use std::sync::Once;
+use tempfile::TempDir;
 
 static TEST_DB: OnceCell<Arc<TestDb>> = OnceCell::new();
 static TEST_RUNTIME: OnceCell<Arc<tokio::runtime::Runtime>> = OnceCell::new();
 static TEST_APP_CONTEXT: OnceCell<Arc<AppContext>> = OnceCell::new();
+static TEST_DATA_DIR: OnceCell<TempDir> = OnceCell::new();
 static INIT: Once = Once::new();
 static BOOTSTRAP_INIT: Once = Once::new();
 
@@ -38,8 +40,15 @@ static BOOTSTRAP_INIT: Once = Once::new();
 /// }
 /// ```
 pub fn init_test_app_context() -> Arc<TestDb> {
+    // Ensure runtime is initialized first (outside INIT to allow reuse if INIT called once)
+    let rt = TEST_RUNTIME
+        .get_or_init(|| Arc::new(tokio::runtime::Runtime::new().expect("tokio runtime")))
+        .clone();
+
     // Use Once to ensure we only initialize once across all tests
     INIT.call_once(|| {
+        let _guard = rt.enter(); // Enter shared runtime for AppContext initialization tasks
+
         // Create test database with all required column families
         let mut column_families: Vec<&'static str> = SystemTable::all_tables()
             .iter()
@@ -57,9 +66,14 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         let storage_backend: Arc<dyn StorageBackend> =
             Arc::new(RocksDBBackend::new(test_db.db.clone()));
 
+        // Create isolated temp dir for Raft snapshots and storage
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let data_path = temp_dir.path().to_str().unwrap().to_string();
+        TEST_DATA_DIR.set(temp_dir).expect("Failed to set TEST_DATA_DIR");
+
         // Create minimal test config using Default + overrides
         let mut test_config = kalamdb_configs::ServerConfig::default();
-        test_config.storage.data_path = "data".to_string();
+        test_config.storage.data_path = data_path;
         test_config.execution.max_parameters = 50;
         test_config.execution.max_parameter_size_bytes = 512 * 1024;
 
@@ -80,8 +94,10 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         let app_ctx = test_app_context();
         let executor = app_ctx.executor();
 
+        // Use the existing shared runtime
         let rt = TEST_RUNTIME
-            .get_or_init(|| Arc::new(tokio::runtime::Runtime::new().expect("tokio runtime")))
+            .get()
+            .expect("TEST_RUNTIME should be initialized")
             .clone();
 
         let (tx, rx) = std::sync::mpsc::channel();

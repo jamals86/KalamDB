@@ -1,5 +1,6 @@
 //! Integration test for Live Query INSERT detection via WebSocket
 
+use super::test_support::consolidated_helpers::unique_namespace;
 use futures_util::StreamExt;
 use kalam_link::models::ChangeEvent;
 use kalam_link::models::ResponseStatus;
@@ -9,7 +10,7 @@ use tokio::time::Duration;
 #[tokio::test]
 async fn test_live_query_detects_inserts() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
-    let ns = format!("test_inserts_{}", std::process::id());
+    let ns = unique_namespace("test_inserts");
     let table = "messages";
 
     // Create namespace and table as root
@@ -52,8 +53,9 @@ async fn test_live_query_detects_inserts() -> anyhow::Result<()> {
         assert_eq!(resp.status, ResponseStatus::Success);
     }
 
-    // Verify notifications
+    // Verify notifications + initial data (no duplicates expected)
     let mut inserts_received = 0;
+    let mut initial_rows_received = 0;
     // Await notifications with timeout
     let timeout = tokio::time::sleep(Duration::from_secs(10));
     tokio::pin!(timeout);
@@ -63,7 +65,7 @@ async fn test_live_query_detects_inserts() -> anyhow::Result<()> {
             event = subscription.next() => {
                 match event {
                     Some(Ok(ChangeEvent::Insert { rows, .. })) => {
-                        inserts_received += 1;
+                        inserts_received += rows.len();
                         // rows is Vec<JsonValue>
                         // We expect 1 row per insert statement as we did single row inserts
                         // Wait, does the notification batch rows?
@@ -77,8 +79,8 @@ async fn test_live_query_detects_inserts() -> anyhow::Result<()> {
                     Some(Ok(ChangeEvent::Ack { .. })) => {
                         // Ignore Ack
                     }
-                    Some(Ok(ChangeEvent::InitialDataBatch { .. })) => {
-                        // Ignore initial data (table was empty)
+                    Some(Ok(ChangeEvent::InitialDataBatch { rows, .. })) => {
+                        initial_rows_received += rows.len();
                     }
                     Some(Ok(other)) => {
                         println!("Received other event: {:?}", other);
@@ -91,16 +93,25 @@ async fn test_live_query_detects_inserts() -> anyhow::Result<()> {
                     }
                 }
 
-                if inserts_received >= 10 {
+                if inserts_received + initial_rows_received >= 10 {
                     break;
                 }
             }
             _ = &mut timeout => {
-                panic!("Timed out waiting for 10 insert notifications. Got: {}", inserts_received);
+                panic!(
+                    "Timed out waiting for 10 insert rows. Got: {} (initial: {}, live: {})",
+                    inserts_received + initial_rows_received,
+                    initial_rows_received,
+                    inserts_received
+                );
             }
         }
     }
 
-    assert_eq!(inserts_received, 10, "Expected 10 INSERT notifications");
+    assert_eq!(
+        inserts_received + initial_rows_received,
+        10,
+        "Expected 10 insert rows across initial data and live notifications"
+    );
     Ok(())
 }

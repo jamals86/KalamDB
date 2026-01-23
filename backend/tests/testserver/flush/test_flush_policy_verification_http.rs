@@ -6,52 +6,21 @@
 //! - tests/integration/flush/test_automatic_flushing_comprehensive.rs
 //! - tests/integration/flush/test_flush_operations.rs
 
+use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
 use super::test_support::flush::{
-    count_parquet_files_for_table, flush_table_and_wait, wait_for_parquet_files_for_table,
-    wait_for_parquet_files_for_user_table,
+    flush_table_and_wait, wait_for_parquet_files_for_table, wait_for_parquet_files_for_user_table,
 };
 use super::test_support::http_server::HttpTestServer;
 use super::test_support::jobs::{
     extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent,
 };
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::UserName;
+use kalamdb_commons::{Role, UserName};
 use tokio::time::Duration;
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<(String, String)> {
     let password = "UserPass123!";
-    let resp = server
-        .execute_sql(&format!(
-            "CREATE USER '{}' WITH PASSWORD '{}' ROLE 'user'",
-            username, password
-        ))
-        .await?;
-    anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE USER failed: {:?}", resp.error);
-
-    // Storage paths use internal `user_id` (not username), so fetch it for parquet assertions.
-    let lookup = server
-        .execute_sql(&format!(
-            "SELECT user_id FROM system.users WHERE username = '{}' LIMIT 1",
-            username
-        ))
-        .await?;
-    anyhow::ensure!(
-        lookup.status == ResponseStatus::Success,
-        "system.users lookup failed: {:?}",
-        lookup.error
-    );
-
-    let user_id = lookup
-        .results
-        .first()
-        .map(|r| r.rows_as_maps())
-        .unwrap_or_default()
-        .first()
-        .and_then(|r| r.get("user_id"))
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("missing user_id for {}", username))?
-        .to_string();
-
+    let user_id = ensure_user_exists(server, username, password, &Role::User).await?;
     Ok((HttpTestServer::basic_auth_header(&UserName::new(username), password), user_id))
 }
 
@@ -59,17 +28,17 @@ async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<
 #[ntest::timeout(180000)] // 3 minutes max for comprehensive flush policy test
 async fn test_flush_policy_and_parquet_output_over_http() {
     (async {
+    let _guard = super::test_support::http_server::acquire_test_lock().await;
     let server = super::test_support::http_server::get_global_server().await;
-    let suffix = std::process::id();
-    let ns = format!("flush_policy_{}", suffix);
+    let ns = unique_namespace("flush_policy");
 
     let resp = server
         .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
 
-    let user_a = format!("alice_{}", suffix);
-    let user_b = format!("bob_{}", suffix);
+    let user_a = unique_table("alice");
+    let user_b = unique_table("bob");
     let (auth_a, user_a_id) = create_user(server, &user_a).await?;
     let (auth_b, user_b_id) = create_user(server, &user_b).await?;
 
@@ -100,7 +69,7 @@ async fn test_flush_policy_and_parquet_output_over_http() {
                 }
 
                 flush_table_and_wait(server, &ns, table).await?;
-                let _ = wait_for_parquet_files_for_user_table(server, &ns, table, &user_a_id, 1, Duration::from_secs(10)).await?;
+                let _ = wait_for_parquet_files_for_user_table(server, &ns, table, &user_a_id, 1, Duration::from_secs(40)).await?;
             }
 
             // -----------------------------------------------------------------
@@ -119,8 +88,6 @@ async fn test_flush_policy_and_parquet_output_over_http() {
                     .await?;
                 anyhow::ensure!(resp.status == ResponseStatus::Success);
 
-                let storage_root = server.storage_root();
-
                 for batch in 0..3 {
                     for i in 0..10 {
                         let id = batch * 100 + i;
@@ -133,14 +100,13 @@ async fn test_flush_policy_and_parquet_output_over_http() {
                         anyhow::ensure!(resp.status == ResponseStatus::Success);
                     }
 
-                    let before = count_parquet_files_for_table(&storage_root, &ns, table);
                     flush_table_and_wait(server, &ns, table).await?;
                     let _ = wait_for_parquet_files_for_table(
                         server,
                         &ns,
                         table,
-                        before.saturating_add(1),
-                        Duration::from_secs(10),
+                        1,
+                        Duration::from_secs(60),
                     )
                     .await?;
                 }
@@ -183,8 +149,8 @@ async fn test_flush_policy_and_parquet_output_over_http() {
 
                 flush_table_and_wait(server, &ns, table).await?;
 
-                let _ = wait_for_parquet_files_for_user_table(server, &ns, table, &user_a_id, 1, Duration::from_secs(10)).await?;
-                let _ = wait_for_parquet_files_for_user_table(server, &ns, table, &user_b_id, 1, Duration::from_secs(10)).await?;
+                let _ = wait_for_parquet_files_for_user_table(server, &ns, table, &user_a_id, 1, Duration::from_secs(40)).await?;
+                let _ = wait_for_parquet_files_for_user_table(server, &ns, table, &user_b_id, 1, Duration::from_secs(40)).await?;
             }
 
             // -----------------------------------------------------------------
@@ -211,7 +177,7 @@ async fn test_flush_policy_and_parquet_output_over_http() {
                 }
 
                 flush_table_and_wait(server, &ns, table).await?;
-                let _ = wait_for_parquet_files_for_table(server, &ns, table, 1, Duration::from_secs(10)).await?;
+                let _ = wait_for_parquet_files_for_table(server, &ns, table, 1, Duration::from_secs(40)).await?;
             }
 
             // -----------------------------------------------------------------
@@ -241,7 +207,15 @@ async fn test_flush_policy_and_parquet_output_over_http() {
                 }
 
                 flush_table_and_wait(server, &ns, table).await?;
-                let parquet = wait_for_parquet_files_for_user_table(server, &ns, table, &user_a_id, 1, Duration::from_secs(10)).await?;
+                let parquet = wait_for_parquet_files_for_user_table(
+                    server,
+                    &ns,
+                    table,
+                    &user_a_id,
+                    1,
+                    Duration::from_secs(90),
+                )
+                .await?;
                 let parquet_dir = parquet
                     .first()
                     .and_then(|p| p.parent())

@@ -1,6 +1,7 @@
 # Miscellaneous Integration Tests
 
 This folder contains integration tests that use the `TestServer` infrastructure from `../common/` but are not currently enabled in the default test suite.
+Some non-TestServer unit tests have been moved into their owning crates' `tests/` directories.
 
 All tests in this folder reference the shared test infrastructure via:
 ```rust
@@ -20,7 +21,6 @@ Most of these tests are **disabled** or **deprecated** for various reasons:
 - `test_as_user_impersonation.rs` - User impersonation
 - `test_cli_auth.rs` - CLI authentication
 - `test_e2e_auth_flow.rs` - End-to-end auth flows
-- `test_password_security.rs` - Password security
 - `test_password_complexity.rs` - Password complexity rules
 - `test_auth_performance.rs` - Auth performance benchmarks
 
@@ -30,18 +30,14 @@ Most of these tests are **disabled** or **deprecated** for various reasons:
 - `test_column_id_stability.rs` - Column ID stability
 - `test_column_ordering.rs` - Column ordering
 - `test_schema_cache_invalidation.rs` - Schema cache invalidation
-- `test_schema_consolidation.rs` - Schema consolidation
 
 ### Data Management Tests
 - `test_soft_delete.rs` - Soft delete functionality
 - `test_update_delete_version_resolution.rs` - MVCC version resolution
 - `test_mvcc_phase2.rs` - MVCC phase 2
 - `test_dml_complex.rs` - Complex DML operations
-- `test_datatypes_preservation.rs` - Datatype preservation (disabled)
-- `test_datetime_timezone_storage.rs` - DateTime/timezone storage
 
 ### Manifest & Flush Tests
-- `test_manifest_cache.rs` - Manifest caching
 - `test_manifest_flush_integration.rs` - Manifest flush integration (enabled)
 - `test_cold_storage_manifest.rs` - Cold storage manifest
 
@@ -68,10 +64,8 @@ Most of these tests are **disabled** or **deprecated** for various reasons:
 - `test_stream_ttl.sql` - Stream TTL SQL
 
 ### Other Tests
-- `test_config_access.rs` - Config access
 - `test_datafusion_commands.rs` - DataFusion commands
 - `test_edge_cases.rs` - Edge cases (disabled: deprecated patterns)
-- `test_unified_types.rs` - Unified type system
 
 ## Currently Enabled Tests
 

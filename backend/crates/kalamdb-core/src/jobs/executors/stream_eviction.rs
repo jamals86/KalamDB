@@ -32,6 +32,8 @@ use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::{JobType, TableId};
 #[cfg(test)]
 use kalamdb_sharding::ShardRouter;
+#[cfg(test)]
+use crate::schema_registry::TablesSchemaRegistryAdapter;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -236,7 +238,6 @@ mod tests {
     use crate::providers::arrow_json_conversion::json_to_row;
     use crate::providers::base::{BaseTableProvider, TableProviderCore};
     use crate::providers::StreamTableProvider;
-    use crate::schema_registry::CachedTableData;
     use crate::test_helpers::test_app_context_simple;
     use chrono::Utc;
     use datafusion::datasource::TableProvider;
@@ -328,7 +329,8 @@ mod tests {
 
         app_ctx
             .schema_registry()
-            .insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::new(table_def))));
+            .put(table_def)
+            .expect("Failed to put table def");
 
         let stream_temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
@@ -343,17 +345,25 @@ mod tests {
                 ttl_seconds: Some(1),
             },
         ));
-        let core = Arc::new(TableProviderCore::from_app_context(
-            app_ctx,
+        let tables_schema_registry = Arc::new(TablesSchemaRegistryAdapter::new(
+            app_ctx.schema_registry(),
+        ));
+        let core = Arc::new(TableProviderCore::new(
             table_id.clone(),
             TableType::Stream,
+            tables_schema_registry.clone(),
+            app_ctx.system_columns_service(),
+            Some(app_ctx.storage_registry()),
+            app_ctx.manifest_service(),
+            app_ctx.live_query_manager(),
+            app_ctx.clone(),
         ));
         let provider =
             Arc::new(StreamTableProvider::new(core, stream_store, Some(1), "event_id".to_string()));
         let provider_trait: Arc<dyn TableProvider> = provider.clone();
         app_ctx
             .schema_registry()
-            .insert_provider(app_ctx, table_id.clone(), provider_trait)
+            .insert_provider(table_id.clone(), provider_trait)
             .expect("register provider");
 
         StreamTestHarness {

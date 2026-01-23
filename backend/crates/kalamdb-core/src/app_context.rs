@@ -11,22 +11,23 @@ use crate::jobs::executors::{
 };
 use crate::live::ConnectionsManager;
 use crate::live_query::LiveQueryManager;
-use crate::schema_registry::stats::StatsTableProvider;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
+use crate::views::stats::{StatsTableProvider, StatsView};
 use crate::sql::executor::SqlExecutor;
-use crate::storage::storage_registry::StorageRegistry;
 use crate::views::datatypes::{DatatypesTableProvider, DatatypesView};
 use crate::views::settings::{SettingsTableProvider, SettingsView};
+use async_trait::async_trait;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::{constants::ColumnFamilyNames, NodeId};
 use kalamdb_configs::ServerConfig;
+use kalamdb_filestore::StorageRegistry;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_store::StorageBackend;
-use kalamdb_system::{SystemTable, SystemTablesRegistry};
+use kalamdb_system::{ClusterCoordinator, SystemTable, SystemTablesRegistry};
 use kalamdb_tables::{SharedTableStore, UserTableStore};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
@@ -217,8 +218,9 @@ impl AppContext {
             let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
             // Create StatsTableProvider (callback will be set after AppContext is created)
-            let stats_provider = Arc::new(StatsTableProvider::new());
-            system_tables.set_stats_provider(stats_provider.clone());
+            let stats_view = Arc::new(StatsView::new());
+            let stats_provider = Arc::new(StatsTableProvider::new(Arc::clone(&stats_view)));
+            system_tables.set_stats_provider(stats_provider);
 
             // Inject SettingsTableProvider with config access (Phase 15)
             let settings_view = Arc::new(SettingsView::with_config((*config).clone()));
@@ -313,14 +315,13 @@ impl AppContext {
                 Arc::new(crate::system_columns::SystemColumnsService::new(worker_id));
 
             // Create unified manifest service (hot cache + RocksDB + cold storage)
-            let base_storage_path = config.storage.storage_dir().to_string_lossy().into_owned();
-            let manifest_service = Arc::new(crate::manifest::ManifestService::new_with_registries(
-                storage_backend.clone(),
-                base_storage_path,
+            let mut manifest_service_obj = crate::manifest::ManifestService::new(
+                system_tables.manifest(),
                 config.manifest_cache.clone(),
-                schema_registry.clone(),
-                storage_registry.clone(),
-            ));
+            );
+            manifest_service_obj.set_schema_registry(schema_registry.clone());
+            manifest_service_obj.set_storage_registry(storage_registry.clone());
+            let manifest_service = Arc::new(manifest_service_obj);
 
             // Create command executor (Phase 20 - Unified Raft Executor)
             // ALWAYS use RaftExecutor - same code path for standalone and cluster
@@ -379,7 +380,7 @@ impl AppContext {
             let app_ctx = Arc::new(AppContext {
                 node_id,
                 config,
-                schema_registry,
+                schema_registry: schema_registry.clone(),
                 user_table_store,
                 shared_table_store,
                 storage_backend,
@@ -398,6 +399,9 @@ impl AppContext {
                 sql_executor: OnceCell::new(),
                 server_start_time: Instant::now(),
             });
+
+            // Set AppContext in SchemaRegistry to break circular dependency
+            schema_registry.set_app_context(app_ctx.clone());
 
             let job_manager = Arc::new(crate::jobs::JobsManager::new(
                 jobs_provider,
@@ -427,7 +431,7 @@ impl AppContext {
 
             // Wire up StatsTableProvider metrics callback now that AppContext exists
             let app_ctx_for_stats = Arc::clone(&app_ctx);
-            stats_provider
+            stats_view
                 .set_metrics_callback(Arc::new(move || app_ctx_for_stats.compute_metrics()));
 
             // Wire up ManifestTableProvider in_memory_checker callback
@@ -581,8 +585,8 @@ impl AppContext {
         let schema_registry = Arc::new(SchemaRegistry::new(100));
 
         // Create StatsTableProvider (callback will be set after AppContext is created for tests)
-        let stats_provider = Arc::new(StatsTableProvider::new());
-        system_tables.set_stats_provider(stats_provider.clone());
+        let stats_provider = crate::views::stats::create_stats_provider();
+        system_tables.set_stats_provider(Arc::new(stats_provider));
 
         // Inject SettingsTableProvider with default config for testing
         let settings_view = Arc::new(SettingsView::with_config(ServerConfig::default()));
@@ -772,7 +776,7 @@ impl AppContext {
 
     /// Check if this node is running in cluster mode
     pub fn is_cluster_mode(&self) -> bool {
-        self.executor.is_cluster_mode()
+        self.config.cluster.is_some()
     }
 
     // ===== Leadership Check Methods (Spec 021 - Raft Replication Semantics) =====
@@ -1024,5 +1028,24 @@ impl AppContext {
                 cluster_groups_provider,
             )
             .expect("Failed to register system.cluster_groups");
+    }
+}
+
+#[async_trait]
+impl ClusterCoordinator for AppContext {
+    async fn is_cluster_mode(&self) -> bool {
+        self.is_cluster_mode()
+    }
+
+    async fn is_leader_for_user(&self, user_id: &UserId) -> bool {
+        self.is_leader_for_user(user_id).await
+    }
+
+    async fn is_leader_for_shared(&self) -> bool {
+        self.is_leader_for_shared().await
+    }
+
+    async fn leader_addr_for_user(&self, user_id: &UserId) -> Option<String> {
+        self.leader_addr_for_user(user_id).await
     }
 }

@@ -107,6 +107,21 @@ pub struct ClusterConfig {
     /// Minimum interval in milliseconds between reconnect attempts to an unreachable peer
     #[serde(default = "default_reconnect_interval_ms")]
     pub reconnect_interval_ms: u64,
+
+    /// Maximum number of retries when waiting for peers to come online during initialization
+    /// Default: 60 retries × 500ms = ~30s max wait
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_wait_max_retries: Option<u32>,
+
+    /// Initial delay in milliseconds between peer availability checks
+    /// Default: 500ms
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_wait_initial_delay_ms: Option<u64>,
+
+    /// Maximum delay in milliseconds between peer availability checks (exponential backoff cap)
+    /// Default: 2000ms
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_wait_max_delay_ms: Option<u64>,
 }
 
 /// Configuration for a peer node in the cluster
@@ -267,6 +282,9 @@ mod tests {
             max_snapshots_to_keep: 3,
             replication_timeout_ms: 5000,
             reconnect_interval_ms: 3000,
+            peer_wait_max_retries: None,
+            peer_wait_initial_delay_ms: None,
+            peer_wait_max_delay_ms: None,
         }
     }
 

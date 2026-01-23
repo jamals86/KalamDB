@@ -7,7 +7,7 @@
 //! - T088: Access level modification authorization (only service/dba/system can modify)
 //! - T089: Read-only enforcement for regular users on public tables
 
-use super::test_support::{QueryResultTestExt, TestServer};
+use super::test_support::{consolidated_helpers, TestServer};
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::Role;
 
@@ -20,7 +20,7 @@ async fn test_public_table_read_only_for_users() {
     let admin_id_str = admin_id.as_str();
 
     // Create test namespace
-    let namespace = "shared_test_public_ro";
+    let namespace = consolidated_helpers::unique_namespace("shared_test_public_ro");
     let res = server
         .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str)
         .await;
@@ -108,7 +108,7 @@ async fn test_private_table_service_dba_only() {
     let admin_id_str = admin_id.as_str();
 
     // Create test namespace
-    let namespace = "shared_test_private";
+    let namespace = consolidated_helpers::unique_namespace("shared_test_private");
     let res = server
         .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str)
         .await;
@@ -198,7 +198,7 @@ async fn test_shared_table_defaults_to_private() {
     let admin_id_str = admin_id.as_str();
 
     // Create test namespace
-    let namespace = "shared_test_defaults";
+    let namespace = consolidated_helpers::unique_namespace("shared_test_defaults");
     let res = server
         .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str)
         .await;
@@ -282,7 +282,7 @@ async fn test_change_access_level_requires_privileges() {
     let admin_id_str = admin_id.as_str();
 
     // Create test namespace
-    let namespace = "shared_test_alter";
+    let namespace = consolidated_helpers::unique_namespace("shared_test_alter");
     let res = server
         .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str)
         .await;
@@ -360,7 +360,7 @@ async fn test_user_cannot_modify_public_table() {
     let admin_id_str = admin_id.as_str();
 
     // Create test namespace
-    let namespace = "shared_test_modify";
+    let namespace = consolidated_helpers::unique_namespace("shared_test_modify");
     let res = server
         .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str)
         .await;
@@ -468,7 +468,7 @@ async fn test_access_level_only_on_shared_tables() {
     let admin_id_str = admin_id.as_str();
 
     // Create test namespace
-    let namespace = "shared_test_invalid";
+    let namespace = consolidated_helpers::unique_namespace("shared_test_invalid");
     let res = server
         .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str)
         .await;
@@ -523,7 +523,7 @@ async fn test_alter_access_level_only_on_shared_tables() {
     let admin_id_str = admin_id.as_str();
 
     // Create test namespace
-    let namespace = "shared_test_alter_invalid";
+    let namespace = consolidated_helpers::unique_namespace("shared_test_alter_invalid");
     let res = server
         .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str)
         .await;

@@ -15,7 +15,6 @@ use crate::SystemTable;
 use kalamdb_commons::models::{NamespaceId, TableId, TableVersionId};
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_store::entity_store::EntityStore;
-use kalamdb_store::storage_trait::Partition;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
@@ -96,19 +95,18 @@ impl TablesStore {
     /// Debug: dump all keys in the store matching a table_id prefix
     #[allow(dead_code)]
     pub fn debug_dump_keys_for_table(&self, table_id: &TableId) {
-        let prefix = table_id.as_storage_key();
-        let partition = Partition::new(self.partition());
-        log::debug!("[TablesStore::debug_dump] Backend ptr: {:p}, Partition: {}, prefix_bytes: {:?}", 
-            Arc::as_ptr(self.backend()), self.partition(), &prefix);
-        match self.backend().scan(&partition, Some(&prefix), None, None) {
-            Ok(iter) => {
+        let prefix_key = TableVersionId::latest(table_id.clone());
+        log::debug!(
+            "[TablesStore::debug_dump] Partition: {}",
+            self.partition()
+        );
+        match self.scan_keys_typed(Some(&prefix_key), None, 1000) {
+            Ok(keys) => {
                 log::debug!("[TablesStore::debug_dump] Keys for table_id={}:", table_id);
-                let mut count = 0;
-                for (key_bytes, _) in iter {
-                    log::debug!("  Key bytes: {:?}", &key_bytes);
-                    count += 1;
+                for key in &keys {
+                    log::debug!("  Key: {:?}", key);
                 }
-                log::debug!("[TablesStore::debug_dump] Total keys found: {}", count);
+                log::debug!("[TablesStore::debug_dump] Total keys found: {}", keys.len());
             }
             Err(e) => {
                 log::debug!("[TablesStore::debug_dump] Error scanning: {:?}", e);
@@ -130,13 +128,11 @@ impl TablesStore {
         self.delete(&latest_key)?;
         deleted_count += 1;
 
-        // Scan and delete all versioned entries
-        let prefix = TableVersionId::version_scan_prefix(table_id);
-        let partition = Partition::new(self.partition());
-        let iter = self.backend().scan(&partition, Some(&prefix), None, None)?;
-
-        for (key_bytes, _) in iter {
-            if let Some(version_key) = TableVersionId::from_storage_key(&key_bytes) {
+        // Scan and delete all versioned entries using typed scan
+        let entries = self.scan_all_typed(None, None, None)?;
+        for (version_key, _) in entries {
+            // Only delete entries for this table
+            if version_key.table_id() == table_id && !version_key.is_latest() {
                 self.delete(&version_key)?;
                 deleted_count += 1;
             }
@@ -152,20 +148,19 @@ impl TablesStore {
         &self,
         table_id: &TableId,
     ) -> Result<Vec<(u32, TableDefinition)>, kalamdb_store::StorageError> {
-        let prefix = TableVersionId::version_scan_prefix(table_id);
-        let partition = Partition::new(self.partition());
-        let iter = self.backend().scan(&partition, Some(&prefix), None, None)?;
-
-        let mut versions = Vec::new();
-        for (key_bytes, value_bytes) in iter {
-            if let Some(version_key) = TableVersionId::from_storage_key(&key_bytes) {
-                if let Some(version) = version_key.version() {
-                    if let Ok(table_def) = self.deserialize(&value_bytes) {
-                        versions.push((version, table_def));
-                    }
+        // Scan all and filter by table_id
+        let entries = self.scan_all_typed(None, None, None)?;
+        
+        let mut versions: Vec<(u32, TableDefinition)> = entries
+            .into_iter()
+            .filter_map(|(version_key, table_def)| {
+                if version_key.table_id() == table_id {
+                    version_key.version().map(|v| (v, table_def))
+                } else {
+                    None
                 }
-            }
-        }
+            })
+            .collect();
 
         // Sort by version ascending
         versions.sort_by_key(|(v, _)| *v);
@@ -186,24 +181,22 @@ impl TablesStore {
         &self,
         namespace_id: &NamespaceId,
     ) -> Result<Vec<(TableId, TableDefinition)>, kalamdb_store::StorageError> {
-        // Construct prefix: "{namespace_id}:"
-        let prefix = format!("{}:", namespace_id.as_str());
-        let prefix_bytes = prefix.as_bytes();
+        // Scan all and filter by namespace
+        let entries = self.scan_all_typed(None, None, None)?;
 
-        let partition = Partition::new(self.partition());
-        let iter = self.backend().scan(&partition, Some(prefix_bytes), None, None)?;
-
-        let mut result = Vec::new();
-        for (key_bytes, value_bytes) in iter {
-            if let Some(version_key) = TableVersionId::from_storage_key(&key_bytes) {
-                // Only include latest entries
-                if version_key.is_latest() {
-                    if let Ok(table_def) = self.deserialize(&value_bytes) {
-                        result.push((version_key.table_id().clone(), table_def));
-                    }
+        let result: Vec<(TableId, TableDefinition)> = entries
+            .into_iter()
+            .filter_map(|(version_key, table_def)| {
+                // Only include latest entries for the target namespace
+                if version_key.is_latest()
+                    && version_key.table_id().namespace_id() == namespace_id
+                {
+                    Some((version_key.table_id().clone(), table_def))
+                } else {
+                    None
                 }
-            }
-        }
+            })
+            .collect();
 
         Ok(result)
     }
@@ -214,18 +207,15 @@ impl TablesStore {
     pub fn scan_all_with_versions(
         &self,
     ) -> Result<Vec<(TableVersionId, TableDefinition, bool)>, kalamdb_store::StorageError> {
-        let partition = Partition::new(self.partition());
-        let iter = self.backend().scan(&partition, None, None, None)?;
+        let entries = self.scan_all_typed(None, None, None)?;
 
-        let mut result = Vec::new();
-        for (key_bytes, value_bytes) in iter {
-            if let Some(version_key) = TableVersionId::from_storage_key(&key_bytes) {
-                if let Ok(table_def) = self.deserialize(&value_bytes) {
-                    let is_latest = version_key.is_latest();
-                    result.push((version_key, table_def, is_latest));
-                }
-            }
-        }
+        let result: Vec<(TableVersionId, TableDefinition, bool)> = entries
+            .into_iter()
+            .map(|(version_key, table_def)| {
+                let is_latest = version_key.is_latest();
+                (version_key, table_def, is_latest)
+            })
+            .collect();
 
         Ok(result)
     }
@@ -315,7 +305,10 @@ mod tests {
         let store = create_test_store();
         assert_eq!(
             store.partition(),
-            SystemTable::Tables.column_family_name().expect("Tables is a table, not a view")
+            SystemTable::Tables
+                .column_family_name()
+                .expect("Tables is a table, not a view")
+                .into()
         );
     }
 

@@ -10,8 +10,7 @@
 use super::TestServer;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
-use kalamdb_core::providers::flush::{FlushJobResult, SharedTableFlushJob, UserTableFlushJob};
-use kalamdb_core::providers::TableFlush;
+use kalamdb_core::manifest::{FlushJobResult, SharedTableFlushJob, TableFlush, UserTableFlushJob};
 use kalamdb_tables::new_indexed_user_table_store;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -45,7 +44,7 @@ pub async fn execute_flush_synchronously(
     let table_def = server
         .app_context
         .schema_registry()
-        .get_table_if_exists(&server.app_context, &table_id)
+        .get_table_if_exists(&table_id)
         .map_err(|e| format!("Failed to get table definition: {}", e))?
         .ok_or_else(|| format!("Table {}.{} not found", namespace, table_name))?;
 
@@ -105,7 +104,7 @@ pub async fn execute_shared_flush_synchronously(
     let table_def = server
         .app_context
         .schema_registry()
-        .get_table_if_exists(&server.app_context, &table_id)
+        .get_table_if_exists(&table_id)
         .map_err(|e| format!("Failed to get table definition: {}", e))?
         .ok_or_else(|| format!("Table {}.{} not found", namespace, table_name))?;
 

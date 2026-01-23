@@ -8,7 +8,7 @@
 //! - Schema versioning
 //! - Cache invalidation after ALTER
 
-use super::test_support::{fixtures, QueryResultTestExt, TestServer};
+use super::test_support::{fixtures, TestServer};
 use kalam_link::models::ResponseStatus;
 
 /// T022a: ALTER TABLE ADD COLUMN

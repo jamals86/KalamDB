@@ -6,7 +6,7 @@
 //! 3. RENAME COLUMN - column_id stays the same
 //! 4. Flushed data - column statistics use column_id keys
 
-use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
+use super::test_support::{consolidated_helpers, fixtures, flush_helpers, TestServer};
 use kalam_link::models::ResponseStatus;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -15,7 +15,7 @@ use std::collections::HashMap;
 #[actix_web::test]
 async fn test_column_id_stability_across_schema_changes() {
     let server = TestServer::new_shared().await;
-    let ns = format!("col_id_stable_{}", std::process::id());
+    let ns = consolidated_helpers::unique_namespace("col_id_stable");
 
     // Step 1: Create table with initial columns
     fixtures::create_namespace(&server, &ns).await;
@@ -151,7 +151,7 @@ async fn test_column_id_stability_across_schema_changes() {
 #[actix_web::test]
 async fn test_column_stats_use_column_id() {
     let server = TestServer::new_shared().await;
-    let ns = format!("col_stats_{}", std::process::id());
+    let ns = consolidated_helpers::unique_namespace("col_stats");
 
     // Step 1: Create table with initial schema
     fixtures::create_namespace(&server, &ns).await;
@@ -268,7 +268,7 @@ async fn test_column_stats_use_column_id() {
 #[actix_web::test]
 async fn test_full_lifecycle_with_alter_and_flush() {
     let server = TestServer::new_shared().await;
-    let ns = format!("lifecycle_{}", std::process::id());
+    let ns = consolidated_helpers::unique_namespace("lifecycle");
 
     // ========== Step 1: Create table ==========
     fixtures::create_namespace(&server, &ns).await;

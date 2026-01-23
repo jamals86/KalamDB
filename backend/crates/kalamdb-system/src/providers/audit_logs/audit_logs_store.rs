@@ -56,12 +56,12 @@ mod tests {
     #[test]
     fn test_create_store() {
         let store = create_test_store();
-        assert_eq!(
-            store.partition(),
+        let expected_partition = kalamdb_store::Partition::new(
             SystemTable::AuditLog
                 .column_family_name()
                 .expect("AuditLog is a table, not a view")
         );
+        assert_eq!(store.partition(), expected_partition);
     }
 
     #[test]
@@ -98,7 +98,7 @@ mod tests {
         }
 
         // Verify all entries exist
-        let entries = store.scan_all(None, None, None).unwrap();
+        let entries = store.scan_all_typed(None, None, None).unwrap();
         assert_eq!(entries.len(), 3);
     }
 
@@ -118,7 +118,7 @@ mod tests {
         }
 
         // Scan all
-        let entries = store.scan_all(None, None, None).unwrap();
+        let entries = store.scan_all_typed(None, None, None).unwrap();
         assert_eq!(entries.len(), 5);
 
         // Verify actions
@@ -141,7 +141,7 @@ mod tests {
         }
 
         // Scan all entries
-        let mut entries = store.scan_all(None, None, None).unwrap();
+        let mut entries = store.scan_all_typed(None, None, None).unwrap();
         assert_eq!(entries.len(), 3);
 
         // Sort by timestamp to verify ordering capability
@@ -182,7 +182,7 @@ mod tests {
         }
 
         // Verify all 100 entries were written
-        let entries = store.scan_all(None, None, None).unwrap();
+        let entries = store.scan_all_typed(None, None, None).unwrap();
         assert_eq!(entries.len(), 100);
     }
 

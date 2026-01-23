@@ -43,6 +43,7 @@
 //! ```
 
 pub mod constants;
+pub mod conversions; // Centralized datatype and value conversion utilities (see conversions/mod.rs)
 pub mod errors;
 pub mod helpers;
 pub mod ids;
@@ -54,6 +55,15 @@ pub mod websocket;
 
 // Re-export commonly used types at crate root
 pub use constants::{ANONYMOUS_USER_ID, MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES};
+pub use conversions::{
+    as_f64,
+    encode_pk_value,
+    estimate_scalar_value_size,
+    scalar_to_f64,
+    scalar_to_i64,
+    scalar_to_pk_string,
+    scalar_value_to_bytes,
+};
 pub use errors::{CommonError, Result};
 pub use helpers::arrow_utils;
 pub use helpers::arrow_utils::{empty_batch, RecordBatchBuilder};
@@ -72,6 +82,7 @@ pub use models::{
     JobStatus,
     JobType,
     LiveQueryId,
+    ManifestId,
     NamespaceId,
     NodeId,
     Role,
@@ -84,7 +95,7 @@ pub use models::{
     UserName,
 };
 pub use schemas::TableType;
-pub use storage_key::StorageKey;
+pub use storage_key::{decode_key, encode_key, encode_prefix, next_storage_key_bytes, StorageKey};
 pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM_COLUMNS};
 pub use system_tables::{StoragePartition, SystemTable};
-pub use websocket::{ChangeType as WsChangeType, Notification, WebSocketMessage};
+pub use websocket::{ChangeNotification, ChangeType as WsChangeType, Notification, WebSocketMessage};

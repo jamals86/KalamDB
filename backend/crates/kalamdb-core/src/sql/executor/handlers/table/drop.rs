@@ -11,7 +11,7 @@ use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::block_system_namespace_modification;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use kalamdb_commons::models::{StorageId, TableId};
+use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::JobType;
 use kalamdb_sql::ddl::DropTableStatement;
@@ -200,32 +200,30 @@ pub async fn cleanup_parquet_files_internal(
         storage.storage_id.as_str()
     );
 
-    // Get the Storage object from the registry (cached lookup)
-    let storage_obj =
-        app_context
-            .storage_registry()
-            .get_storage(&storage.storage_id)?
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Storage '{}' not found during cleanup",
-                    storage.storage_id.as_str()
-                ))
-            })?;
+    // Get StorageCached from registry
+    let storage_cached = app_context
+        .storage_registry()
+        .get_cached(&storage.storage_id)?
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Storage '{}' not found during cleanup",
+                storage.storage_id.as_str()
+            ))
+        })?;
 
-    // Build ObjectStore for this storage
-    let object_store = kalamdb_filestore::build_object_store(&storage_obj)
-        .into_kalamdb_error("Failed to build object store")?;
+    // Delete Parquet files using StorageCached
+    // Note: For user tables, we'd need user_id, but cleanup is table-wide
+    let files_deleted = storage_cached
+        .delete_prefix_sync(
+            table_type,
+            table_id,
+            None,  // user_id - cleanup is table-wide
+        )
+        .into_kalamdb_error("Failed to delete Parquet tree")?
+        .files_deleted;
 
-    let bytes_freed = kalamdb_filestore::delete_parquet_tree_for_table(
-        object_store,
-        &storage_obj,
-        &storage.relative_path_template,
-        table_type,
-    )
-    .into_kalamdb_error("Filestore delete failed")?;
-
-    log::debug!("[CleanupHelper] Freed {} bytes from Parquet files", bytes_freed);
-    Ok(bytes_freed)
+    log::debug!("[CleanupHelper] Freed {} files from Parquet storage", files_deleted);
+    Ok(0) // Bytes freed not returned by delete_prefix_sync
 }
 
 /// Cleanup helper function: Remove table metadata from system tables
@@ -239,20 +237,23 @@ pub async fn cleanup_parquet_files_internal(
 /// # Returns
 /// Ok(()) on success
 pub async fn cleanup_metadata_internal(
-    app_ctx: &AppContext,
+    _app_ctx: &AppContext,
     schema_registry: &Arc<SchemaRegistry>,
     table_id: &TableId,
 ) -> Result<(), KalamDbError> {
     log::debug!("[CleanupHelper] Cleaning up metadata for {:?}", table_id);
 
-    if !schema_registry.table_exists(app_ctx, table_id)? {
-        log::debug!("[CleanupHelper] Metadata already removed for {:?}, skipping", table_id);
+    if schema_registry.get_table_if_exists(table_id)?.is_some() {
+        log::debug!(
+            "[CleanupHelper] Metadata present for {:?} (table re-created) - skipping cleanup",
+            table_id
+        );
         return Ok(());
     }
 
     // Delete table definition from SchemaRegistry
     // This removes from both cache and persistent store (delete-through pattern)
-    schema_registry.delete_table_definition(app_ctx, table_id)?;
+    schema_registry.delete_table_definition(table_id)?;
 
     log::debug!("[CleanupHelper] Metadata cleanup complete");
     Ok(())
@@ -278,31 +279,40 @@ impl DropTableHandler {
             KalamDbError::InvalidOperation(format!("Table cache entry not found for {}", table_id))
         })?;
 
-        let storage_id = cached.storage_id.clone().unwrap_or_else(StorageId::local);
-
-        let relative_template = if cached.storage_path_template.is_empty() {
-            use crate::schema_registry::PathResolver;
-            PathResolver::resolve_storage_path_template(
-                self.app_context.as_ref(),
-                table_id,
-                table_type,
-                &storage_id,
-            )?
-        } else {
-            cached.storage_path_template.clone()
-        };
+        let storage_id = cached.storage_id.clone();
 
         // Get storage from registry (cached lookup)
-        let base_dir = match self.app_context.storage_registry().get_storage(&storage_id) {
-            Ok(Some(storage)) => {
-                let trimmed = storage.base_directory.trim();
-                if trimmed.is_empty() {
-                    self.app_context.storage_registry().default_storage_path().to_string()
-                } else {
-                    storage.base_directory.clone()
-                }
+        let storage = self
+            .app_context
+            .storage_registry()
+            .get_storage(&storage_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' not found",
+                    storage_id.as_str()
+                ))
+            })?;
+
+        // Get the appropriate template for this table type
+        let relative_template = match table_type {
+            TableType::User => storage.user_tables_template.clone(),
+            TableType::Shared | TableType::Stream => storage.shared_tables_template.clone(),
+            TableType::System => {
+                return Err(KalamDbError::InvalidOperation(
+                    "System tables do not use storage templates".to_string(),
+                ))
             },
-            _ => self.app_context.storage_registry().default_storage_path().to_string(),
+        };
+
+        // Get base directory
+        let base_dir = {
+            let trimmed = storage.base_directory.trim();
+            if trimmed.is_empty() {
+                self.app_context.storage_registry().default_storage_path().to_string()
+            } else {
+                storage.base_directory.clone()
+            }
         };
 
         Ok(StorageCleanupDetails {
@@ -343,11 +353,11 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
 
         // RBAC: authorize based on actual table type if exists
         let registry = self.app_context.schema_registry();
-        let actual_type =
-            match registry.get_table_if_exists(self.app_context.as_ref(), &table_id)? {
-                Some(def) => def.table_type,
-                None => TableType::from(statement.table_type),
-            };
+        let registry_def = registry.get_table_if_exists(&table_id)?;
+        let actual_type = match registry_def.as_deref() {
+            Some(def) => def.table_type,
+            None => TableType::from(statement.table_type),
+        };
         let is_owner = false;
         if !crate::auth::rbac::can_delete_table(context.user_role(), actual_type, is_owner) {
             log::error!(
@@ -366,7 +376,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         // Check existence via system.tables provider (for IF EXISTS behavior)
         let tables = self.app_context.system_tables().tables();
         let table_metadata = tables.get_table_by_id(&table_id)?;
-        let exists = table_metadata.is_some();
+        let exists = table_metadata.is_some() || registry_def.is_some();
 
         if !exists {
             if statement.if_exists {
@@ -476,13 +486,6 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         }
 
         // TODO: Check active live queries/subscriptions before dropping (Phase 9 integration)
-
-        // Unregister provider from SchemaRegistry (auto-unregisters from DataFusion)
-        use crate::sql::executor::helpers::table_registration::unregister_table_provider;
-        unregister_table_provider(&self.app_context, &table_id)?;
-
-        // Mark table as deleted in SchemaRegistry (soft delete)
-        registry.delete_table_definition(self.app_context.as_ref(), &table_id)?;
 
         // Delegate to unified applier (handles standalone vs cluster internally)
         self.app_context

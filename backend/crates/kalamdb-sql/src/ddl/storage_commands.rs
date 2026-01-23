@@ -248,23 +248,27 @@ impl AlterStorageStatement {
 ///
 /// Syntax:
 /// ```sql
-/// DROP STORAGE storage_id;
+/// DROP STORAGE [IF EXISTS] storage_id;
 /// ```
 ///
 /// Example:
 /// ```sql
 /// DROP STORAGE old_storage;
+/// DROP STORAGE IF EXISTS old_storage;
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DropStorageStatement {
     /// Storage identifier to drop
     pub storage_id: StorageId,
+
+    /// If true, do not error when the storage does not exist
+    pub if_exists: bool,
 }
 
 impl DropStorageStatement {
     /// Parse DROP STORAGE from SQL
     pub fn parse(sql: &str) -> Result<Self, String> {
-        use crate::parser::utils::{extract_identifier, normalize_sql};
+        use crate::parser::utils::normalize_sql;
 
         let normalized = normalize_sql(sql);
         let sql_upper = normalized.to_uppercase();
@@ -273,10 +277,40 @@ impl DropStorageStatement {
             return Err("SQL must start with DROP STORAGE".to_string());
         }
 
-        let storage_id = extract_identifier(&normalized, 2)?;
+        let tokens: Vec<&str> = normalized.split_whitespace().collect();
+        if tokens.len() < 3 {
+            return Err("Expected storage identifier after DROP STORAGE".to_string());
+        }
+
+        let mut if_exists = false;
+        let mut storage_index = 2;
+
+        if tokens
+            .get(2)
+            .map(|token| token.eq_ignore_ascii_case("IF"))
+            .unwrap_or(false)
+        {
+            if tokens
+                .get(3)
+                .map(|token| token.eq_ignore_ascii_case("EXISTS"))
+                .unwrap_or(false)
+            {
+                if_exists = true;
+                storage_index = 4;
+            } else {
+                return Err("Expected EXISTS after IF in DROP STORAGE".to_string());
+            }
+        }
+
+        let storage_id = tokens
+            .get(storage_index)
+            .ok_or_else(|| "Expected storage identifier after DROP STORAGE".to_string())?
+            .trim_end_matches(';')
+            .to_string();
 
         Ok(DropStorageStatement {
             storage_id: StorageId::from(storage_id.as_str()),
+            if_exists,
         })
     }
 }
@@ -424,6 +458,16 @@ mod tests {
 
         let stmt = DropStorageStatement::parse(sql).unwrap();
         assert_eq!(stmt.storage_id.as_str(), "old_storage");
+        assert!(!stmt.if_exists);
+    }
+
+    #[test]
+    fn test_drop_storage_if_exists() {
+        let sql = "DROP STORAGE IF EXISTS old_storage";
+
+        let stmt = DropStorageStatement::parse(sql).unwrap();
+        assert_eq!(stmt.storage_id.as_str(), "old_storage");
+        assert!(stmt.if_exists);
     }
 
     #[test]

@@ -100,6 +100,11 @@ pub enum JobDecision {
         /// Optional stack trace
         exception_trace: Option<String>,
     },
+    /// Job was skipped (e.g., table doesn't exist, precondition not met)
+    Skipped {
+        /// Reason for skipping
+        message: String,
+    },
 }
 
 /// Trait for job parameters

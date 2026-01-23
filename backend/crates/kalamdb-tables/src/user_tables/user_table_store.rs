@@ -17,6 +17,7 @@ use super::pk_index::create_user_table_pk_index;
 use crate::common::{ensure_partition, new_indexed_store_with_pk, partition_name};
 use kalamdb_commons::ids::UserTableRowId;
 use kalamdb_commons::models::rows::UserTableRow;
+use kalamdb_commons::storage::Partition;
 use kalamdb_commons::TableId;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
@@ -33,7 +34,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct UserTableStore {
     backend: Arc<dyn StorageBackend>,
-    partition: String,
+    partition: Partition,
 }
 
 impl UserTableStore {
@@ -42,7 +43,7 @@ impl UserTableStore {
     /// # Arguments
     /// * `backend` - Storage backend (RocksDB or mock)
     /// * `partition` - Partition name (e.g., "user_default:users")
-    pub fn new(backend: Arc<dyn StorageBackend>, partition: impl Into<String>) -> Self {
+    pub fn new(backend: Arc<dyn StorageBackend>, partition: impl Into<Partition>) -> Self {
         Self {
             backend,
             partition: partition.into(),
@@ -52,12 +53,13 @@ impl UserTableStore {
 
 /// Implement EntityStore trait for typed CRUD operations
 impl EntityStore<UserTableRowId, UserTableRow> for UserTableStore {
+    #[doc(hidden)]
     fn backend(&self) -> &Arc<dyn StorageBackend> {
         &self.backend
     }
 
-    fn partition(&self) -> &str {
-        &self.partition
+    fn partition(&self) -> Partition {
+        self.partition.clone()
     }
 }
 
@@ -76,7 +78,7 @@ pub fn new_user_table_store(
 ) -> UserTableStore {
     let name =
         partition_name(kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX, table_id);
-    ensure_partition(&backend, &name);
+    ensure_partition(&backend, name.clone());
     UserTableStore::new(backend, name)
 }
 
@@ -103,11 +105,11 @@ pub fn new_indexed_user_table_store(
 ) -> UserTableIndexedStore {
     let name =
         partition_name(kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX, table_id);
-    ensure_partition(&backend, &name);
+    ensure_partition(&backend, name.clone());
 
     let pk_index = create_user_table_pk_index(table_id, pk_field_name);
     let index_partition_name = format!("user_{}_pk_idx", table_id);
-    ensure_partition(&backend, &index_partition_name);
+    ensure_partition(&backend, index_partition_name);
     new_indexed_store_with_pk(backend, name, vec![pk_index])
 }
 
@@ -144,7 +146,7 @@ mod tests {
     #[test]
     fn test_user_table_store_create() {
         let store = create_test_store();
-        assert!(store.partition().contains("user_"));
+        assert!(store.partition().name().contains("user_"));
     }
 
     #[test]
@@ -191,7 +193,7 @@ mod tests {
         }
 
         // Scan all
-        let all_rows = store.scan_all(None, None, None).unwrap();
+        let all_rows = store.scan_all_typed(None, None, None).unwrap();
         assert_eq!(all_rows.len(), 6); // 2 users * 3 rows
     }
 

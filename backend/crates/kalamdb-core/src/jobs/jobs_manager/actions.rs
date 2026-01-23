@@ -49,6 +49,23 @@ impl JobsManager {
         idempotency_key: Option<String>,
         options: Option<JobOptions>,
     ) -> Result<JobId, KalamDbError> {
+        // Only leader can create jobs (ensures single source of truth for job orchestration)
+        // In standalone mode, this node is always the leader.
+        // In cluster mode, admin operations (FLUSH, COMPACT, etc.) must be executed on the leader.
+        if !self.is_cluster_leader().await {
+            let app_ctx = self.get_attached_app_context();
+            let cluster_info = app_ctx.executor().get_cluster_info();
+            
+            // Find leader's API address for error message
+            let leader_addr = cluster_info
+                .nodes
+                .iter()
+                .find(|n| n.is_leader)
+                .map(|n| n.api_addr.clone());
+            
+            return Err(KalamDbError::NotLeader { leader_addr });
+        }
+
         // Check idempotency: prevent duplicate jobs with same key
         if let Some(ref key) = idempotency_key {
             if self.has_active_job_with_key(key).await? {
@@ -98,10 +115,17 @@ impl JobsManager {
         // Persist job
         self.insert_job_async(job.clone()).await?;
 
-        // Create per-node job entries (fan-out)
+        // Determine which nodes should execute this job
         let app_ctx = self.get_attached_app_context();
         let executor = app_ctx.executor();
-        let node_ids = self.active_cluster_node_ids();
+        let is_leader_only = job_type.is_leader_only();
+        let node_ids = if is_leader_only {
+            // Leader-only jobs: only create job_node for this node (the leader)
+            vec![self.node_id]
+        } else {
+            // All other jobs: create job_nodes for all active nodes
+            self.active_cluster_node_ids()
+        };
         let created_at = Utc::now();
 
         for node_id in node_ids {

@@ -30,7 +30,7 @@
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
-use crate::providers::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob};
+use crate::manifest::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob};
 use async_trait::async_trait;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::{JobType, TableId};
@@ -88,16 +88,42 @@ impl FlushExecutor {
         // Get dependencies from AppContext
         let app_ctx = &ctx.app_ctx;
         let schema_registry = app_ctx.schema_registry();
-        let live_query_manager = app_ctx.live_query_manager();
 
-        // // Get table definition (optional)
-        // let table_def = schema_registry
-        //     .get_table_if_exists(app_ctx.as_ref(), &table_id)?
-        //     .ok_or_else(|| KalamDbError::NotFound(format!("Table {} not found", table_id)))?;
+        // Check if table exists before attempting to flush
+        // If table doesn't exist (e.g., dropped after flush job was queued), skip the job
+        let table_def = match schema_registry.get_table_if_exists(&table_id)? {
+            Some(def) => def,
+            None => {
+                ctx.log_info(&format!(
+                    "Table {} no longer exists, skipping flush job",
+                    table_id
+                ));
+                return Ok(JobDecision::Skipped {
+                    message: format!(
+                        "Table {} not found (table may have been dropped)",
+                        table_id
+                    ),
+                });
+            },
+        };
+
+        // Verify table type matches expected type (safety check)
+        if table_def.table_type != table_type {
+            ctx.log_warn(&format!(
+                "Table {} type mismatch: expected {:?}, found {:?}, skipping flush",
+                table_id, table_type, table_def.table_type
+            ));
+            return Ok(JobDecision::Skipped {
+                message: format!(
+                    "Table {} type mismatch (expected {:?}, found {:?})",
+                    table_id, table_type, table_def.table_type
+                ),
+            });
+        }
 
         // Get current Arrow schema from the registry (already includes system columns)
         let schema = schema_registry
-            .get_arrow_schema(app_ctx.as_ref(), &table_id)
+            .get_arrow_schema(&table_id)
             .into_kalamdb_error(&format!("Arrow schema not found for {}", table_id))?;
 
         // Get current schema version for manifest recording
@@ -134,7 +160,7 @@ impl FlushExecutor {
                         )
                     })?;
 
-                let store = provider.store.clone();
+                let store = provider.store();
 
                 let flush_job = UserTableFlushJob::new(
                     app_ctx.clone(),
@@ -143,8 +169,7 @@ impl FlushExecutor {
                     schema.clone(),
                     schema_registry.clone(),
                     app_ctx.manifest_service(),
-                )
-                .with_live_query_manager(live_query_manager);
+                );
 
                 // Execute in blocking thread pool to avoid starving async runtime
                 tokio::task::spawn_blocking(move || flush_job.execute())
@@ -175,7 +200,7 @@ impl FlushExecutor {
                         )
                     })?;
 
-                let store = provider.store.clone();
+                let store = provider.store();
 
                 let flush_job = SharedTableFlushJob::new(
                     app_ctx.clone(),
@@ -184,8 +209,7 @@ impl FlushExecutor {
                     schema.clone(),
                     schema_registry.clone(),
                     app_ctx.manifest_service(),
-                )
-                .with_live_query_manager(live_query_manager);
+                );
 
                 // Execute in blocking thread pool to avoid starving async runtime
                 tokio::task::spawn_blocking(move || flush_job.execute())
@@ -328,6 +352,7 @@ impl JobExecutor for FlushExecutor {
         &self,
         ctx: &JobContext<Self::Params>,
     ) -> Result<JobDecision, KalamDbError> {
+        log::info!("[{}] FlushExecutor.execute_leader called - executing full flush", ctx.job_id);
         ctx.log_debug("Flush leader phase - executing full flush");
         self.do_flush(ctx).await
     }

@@ -36,7 +36,6 @@ impl ManifestTableSchema {
     /// - last_refreshed TIMESTAMP NOT NULL
     /// - last_accessed TIMESTAMP NOT NULL
     /// - in_memory BOOLEAN NOT NULL (true if manifest is in hot cache)
-    /// - source_path TEXT NOT NULL
     /// - sync_state TEXT NOT NULL (in_sync, stale, error)
     /// - manifest_json TEXT NOT NULL (serialized Manifest object)
     pub fn definition() -> TableDefinition {
@@ -131,19 +130,8 @@ impl ManifestTableSchema {
             ),
             ColumnDefinition::new(
                 9,
-                "source_path",
-                9,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Full path to manifest.json in storage".to_string()),
-            ),
-            ColumnDefinition::new(
-                10,
                 "sync_state",
-                10,
+                9,
                 KalamDataType::Text,
                 false,
                 false,
@@ -152,9 +140,9 @@ impl ManifestTableSchema {
                 Some("Synchronization state: in_sync, stale, error".to_string()),
             ),
             ColumnDefinition::new(
-                11,
+                10,
                 "manifest_json",
-                11,
+                10,
                 KalamDataType::Json,
                 false,
                 false,

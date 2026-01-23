@@ -38,10 +38,16 @@ pub fn can_delete_table(role: Role, table_type: TableType, _is_owner: bool) -> b
 
 /// Check if a role can alter a table.
 ///
-/// Only Dba/System can alter tables (no owner check).
+/// - System/Dba can alter any table.
+/// - Service can alter Shared/User/Stream tables.
+/// - User can alter User/Stream tables.
 #[inline]
-pub fn can_alter_table(role: Role, _table_type: TableType, _is_owner: bool) -> bool {
-    matches!(role, Role::System | Role::Dba)
+pub fn can_alter_table(role: Role, table_type: TableType, _is_owner: bool) -> bool {
+    match role {
+        Role::System | Role::Dba => true,
+        Role::Service => matches!(table_type, TableType::Shared | TableType::User | TableType::Stream),
+        Role::User => matches!(table_type, TableType::User | TableType::Stream),
+    }
 }
 
 /// Check if a role can manage users.

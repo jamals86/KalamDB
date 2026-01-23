@@ -6,57 +6,12 @@
 use crate::system_table_store::SystemTableStore;
 use crate::SystemTable;
 use kalamdb_commons::types::ManifestCacheEntry;
+use kalamdb_commons::ManifestId;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
-/// Cache key type (namespace:table:scope format)
-///
-/// Uses the same key format as ManifestService for consistency.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ManifestCacheKey(String);
-
-impl ManifestCacheKey {
-    /// Get the key as a string slice
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// Parse cache key into components (namespace, table, scope)
-    pub fn parse(&self) -> Option<(String, String, String)> {
-        let mut parts = self.0.splitn(3, ':');
-        let namespace = parts.next()?;
-        let table = parts.next()?;
-        let scope = parts.next()?;
-        Some((namespace.to_string(), table.to_string(), scope.to_string()))
-    }
-}
-
-impl From<String> for ManifestCacheKey {
-    fn from(s: String) -> Self {
-        Self(s)
-    }
-}
-
-impl From<&str> for ManifestCacheKey {
-    fn from(s: &str) -> Self {
-        Self(s.to_string())
-    }
-}
-
-impl kalamdb_commons::StorageKey for ManifestCacheKey {
-    fn storage_key(&self) -> Vec<u8> {
-        self.0.as_bytes().to_vec()
-    }
-
-    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
-        String::from_utf8(bytes.to_vec())
-            .map(ManifestCacheKey)
-            .map_err(|e| e.to_string())
-    }
-}
-
 /// Type alias for the manifest store
-pub type ManifestStore = SystemTableStore<ManifestCacheKey, ManifestCacheEntry>;
+pub type ManifestStore = SystemTableStore<ManifestId, ManifestCacheEntry>;
 
 /// Create a new manifest store
 ///
@@ -89,7 +44,6 @@ mod tests {
             manifest,
             Some("etag123".to_string()),
             1000,
-            "s3://bucket/ns1/tbl1/manifest.json".to_string(),
             SyncState::InSync,
         )
     }
@@ -97,22 +51,21 @@ mod tests {
     #[test]
     fn test_create_store() {
         let store = create_test_store();
-        assert!(store.scan_all(None, None, None).unwrap().is_empty());
+        assert!(store.scan_all_typed(None, None, None).unwrap().is_empty());
     }
 
     #[test]
     fn test_cache_key_parsing() {
-        let key = ManifestCacheKey::from("ns1:tbl1:shared");
-        let (namespace, table, scope) = key.parse().unwrap();
-        assert_eq!(namespace, "ns1");
-        assert_eq!(table, "tbl1");
-        assert_eq!(scope, "shared");
+        let key = ManifestId::from("ns1:tbl1:shared");
+        assert_eq!(key.table_id().namespace_id().as_str(), "ns1");
+        assert_eq!(key.table_id().table_name().as_str(), "tbl1");
+        assert_eq!(key.scope_str(), "shared");
     }
 
     #[test]
     fn test_put_and_get_entry() {
         let store = create_test_store();
-        let key = ManifestCacheKey::from("ns1:tbl1:shared");
+        let key = ManifestId::from("ns1:tbl1:shared");
         let entry = create_test_entry();
 
         store.put(&key, &entry).unwrap();
@@ -131,11 +84,11 @@ mod tests {
 
         // Insert multiple entries
         for i in 1..=3 {
-            let key = ManifestCacheKey::from(format!("ns{}:tbl{}:shared", i, i));
+            let key = ManifestId::from(format!("ns{}:tbl{}:shared", i, i));
             store.put(&key, &entry).unwrap();
         }
 
-        let all = store.scan_all(None, None, None).unwrap();
+        let all = store.scan_all_typed(None, None, None).unwrap();
         assert_eq!(all.len(), 3);
     }
 }

@@ -11,7 +11,7 @@
 //! - T067: Nanosecond collision test → verify +1ns increment
 //! - T068: Performance regression test → query latency with multiple versions
 
-use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
+use super::test_support::{consolidated_helpers, fixtures, flush_helpers, TestServer};
 use kalam_link::models::ResponseStatus;
 use std::sync::Arc;
 use tokio::task::JoinSet;
@@ -336,12 +336,14 @@ async fn test_multi_version_query() {
 #[ntest::timeout(60000)]
 async fn test_delete_excludes_record() {
     let server = TestServer::new_shared().await;
+    let namespace = consolidated_helpers::unique_namespace("test_uv_delexc");
 
     // Setup
-    fixtures::create_namespace(&server, "test_uv_delexc").await;
+    fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql_as_user(
-            r#"CREATE TABLE test_uv_delexc.users (
+            &format!(
+                r#"CREATE TABLE {}.users (
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 active BOOLEAN
@@ -349,6 +351,8 @@ async fn test_delete_excludes_record() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
+                namespace
+            ),
             "user1",
         )
         .await;
@@ -356,20 +360,29 @@ async fn test_delete_excludes_record() {
     // Insert records
     server
         .execute_sql_as_user(
-            r#"INSERT INTO test_uv_delexc.users (id, name, active) 
+            &format!(
+                r#"INSERT INTO {}.users (id, name, active) 
                VALUES ('user1', 'Alice', true), ('user2', 'Bob', true)"#,
+                namespace
+            ),
             "user1",
         )
         .await;
 
     // Delete user1
     server
-        .execute_sql_as_user(r#"DELETE FROM test_uv_delexc.users WHERE id = 'user1'"#, "user1")
+        .execute_sql_as_user(
+            &format!("DELETE FROM {}.users WHERE id = 'user1'", namespace),
+            "user1",
+        )
         .await;
 
     // Query should exclude deleted record
     let response = server
-        .execute_sql_as_user("SELECT id, name FROM test_uv_delexc.users ORDER BY id", "user1")
+        .execute_sql_as_user(
+            &format!("SELECT id, name FROM {}.users ORDER BY id", namespace),
+            "user1",
+        )
         .await;
 
     assert_eq!(response.status, ResponseStatus::Success);

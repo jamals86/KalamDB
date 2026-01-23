@@ -5,39 +5,36 @@
 //!
 //! ## Index Key Format
 //!
-//! The index key format is: `{pk_value_encoded}:{seq}`
+//! Storekey tuple encoding: `(pk_value_encoded, seq)`
 //!
-//! - `pk_value_encoded`: variable - PK value encoded as string bytes  
-//! - `:`: 1 byte separator
-//! - `seq`: 8 bytes - sequence ID in big-endian (for MVCC version ordering)
-//!
-//! ## Example
-//!
-//! For id=42 and seq=1000:
-//! Index key: `42:0000000000001000` (seq as 8-byte BE)
+//! - `pk_value_encoded`: PK value encoded as bytes
+//! - `seq`: sequence ID (i64) for MVCC ordering
 //!
 //! ## Prefix Scanning
 //!
 //! To find all versions of a row with a given PK:
-//! 1. Build prefix: `{pk_value_encoded}:`
+//! 1. Build prefix: `(pk_value_encoded)`
 //! 2. Scan all keys with that prefix
-//! 3. Results are ordered by seq (big-endian ensures lexicographic = numeric order)
+//! 3. Results are ordered by seq (storekey preserves numeric ordering)
 
 use datafusion::scalar::ScalarValue;
+use kalamdb_commons::conversions::scalar_value_to_bytes;
 use kalamdb_commons::ids::SharedTableRowId;
+use kalamdb_commons::storage::Partition;
+use kalamdb_commons::storage_key::{encode_key, encode_prefix};
 use kalamdb_store::IndexDefinition;
 
 use super::SharedTableRow;
 
 /// Index for querying shared table rows by primary key value.
 ///
-/// Key format: `{pk_value_encoded}:{seq_be_8bytes}`
+/// Key format (storekey tuple): `(pk_value_encoded, seq)`
 ///
 /// This index allows efficient lookups by PK value,
 /// returning all MVCC versions of rows with matching PK.
 pub struct SharedTablePkIndex {
-    /// Partition name for the index
-    partition: String,
+    /// Partition for the index
+    partition: Partition,
     /// Name of the primary key field (e.g., "id", "product_id", etc.)
     pk_field_name: String,
 }
@@ -51,55 +48,33 @@ impl SharedTablePkIndex {
     pub fn new(table_id: &kalamdb_commons::TableId, pk_field_name: &str) -> Self {
         let partition = format!("shared_{}_pk_idx", table_id); // TableId Display: "namespace:table"
         Self {
-            partition,
+            partition: Partition::new(partition),
             pk_field_name: pk_field_name.to_string(),
-        }
-    }
-
-    /// Encode a PK value to bytes for index key
-    fn encode_pk_value(value: &ScalarValue) -> Vec<u8> {
-        match value {
-            ScalarValue::Int64(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::Int32(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::Int16(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::UInt64(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::UInt32(Some(n)) => n.to_string().into_bytes(),
-            ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s.as_bytes().to_vec(),
-            // For other types, convert to string
-            _ => value.to_string().into_bytes(),
         }
     }
 
     /// Build a prefix for scanning all versions of a PK.
     ///
-    /// Returns: `{pk_value_encoded}:`
     pub fn build_prefix_for_pk(&self, pk_value: &ScalarValue) -> Vec<u8> {
-        let pk_bytes = Self::encode_pk_value(pk_value);
-        let mut prefix = Vec::with_capacity(pk_bytes.len() + 1);
-        prefix.extend_from_slice(&pk_bytes);
-        prefix.push(b':');
-        prefix
+        let pk_bytes = scalar_value_to_bytes(pk_value);
+        encode_prefix(&(pk_bytes,))
     }
 
     /// Build a prefix for a PK string value (for batch existence checks).
     ///
-    /// Returns: `{pk_value}:` as bytes
+    /// Returns a prefix for the PK value
     ///
     /// This is a simpler version of `build_prefix_for_pk` that takes a string
     /// directly, avoiding ScalarValue parsing overhead for batch operations.
     #[inline]
     pub fn build_pk_prefix(&self, pk_value: &str) -> Vec<u8> {
-        let pk_bytes = pk_value.as_bytes();
-        let mut prefix = Vec::with_capacity(pk_bytes.len() + 1);
-        prefix.extend_from_slice(pk_bytes);
-        prefix.push(b':');
-        prefix
+        encode_prefix(&(pk_value.as_bytes().to_vec(),))
     }
 }
 
 impl IndexDefinition<SharedTableRowId, SharedTableRow> for SharedTablePkIndex {
-    fn partition(&self) -> &str {
-        &self.partition
+    fn partition(&self) -> Partition {
+        self.partition.clone()
     }
 
     fn indexed_columns(&self) -> Vec<&str> {
@@ -114,15 +89,8 @@ impl IndexDefinition<SharedTableRowId, SharedTableRow> for SharedTablePkIndex {
         // Get the PK field value from the row
         let pk_value = entity.fields.get(&self.pk_field_name)?;
 
-        // Build key: {pk_value_encoded}:{seq_be_8bytes}
-        let pk_bytes = Self::encode_pk_value(pk_value);
-        let seq_bytes = primary_key.to_bytes(); // 8 bytes big-endian
-
-        let mut key = Vec::with_capacity(pk_bytes.len() + 1 + 8);
-        key.extend_from_slice(&pk_bytes);
-        key.push(b':');
-        key.extend_from_slice(&seq_bytes);
-        Some(key)
+        let pk_bytes = scalar_value_to_bytes(pk_value);
+        Some(encode_key(&(pk_bytes, primary_key.as_i64())))
     }
 
     fn filter_to_prefix(&self, filter: &datafusion::logical_expr::Expr) -> Option<Vec<u8>> {
@@ -133,14 +101,16 @@ impl IndexDefinition<SharedTableRowId, SharedTableRow> for SharedTablePkIndex {
         if let Some((col, val)) = extract_string_equality(filter) {
             if col == self.pk_field_name {
                 let pk_value = ScalarValue::Utf8(Some(val.to_string()));
-                return Some(Self::encode_pk_value(&pk_value));
+                let pk_bytes = scalar_value_to_bytes(&pk_value);
+                return Some(encode_prefix(&(pk_bytes,)));
             }
         }
 
         if let Some((col, val)) = extract_i64_equality(filter) {
             if col == self.pk_field_name {
                 let pk_value = ScalarValue::Int64(Some(val));
-                return Some(Self::encode_pk_value(&pk_value));
+                let pk_bytes = scalar_value_to_bytes(&pk_value);
+                return Some(encode_prefix(&(pk_bytes,)));
             }
         }
 
@@ -192,12 +162,8 @@ mod tests {
         assert!(index_key.is_some());
 
         let index_key = index_key.unwrap();
-        // Format: "42:" + 8 bytes seq = 2 + 1 + 8 = 11
-        assert_eq!(index_key.len(), 11);
-
-        // Verify format: starts with "42:"
-        let prefix_str = std::str::from_utf8(&index_key[..3]).unwrap();
-        assert_eq!(prefix_str, "42:");
+        let prefix = index.build_prefix_for_pk(&ScalarValue::Int64(Some(42)));
+        assert!(index_key.starts_with(&prefix));
     }
 
     #[test]
@@ -212,12 +178,10 @@ mod tests {
         let index_key1 = index.extract_key(&key1, &row1).unwrap();
         let index_key2 = index.extract_key(&key2, &row2).unwrap();
 
-        // Same pk_value, different seq
-        // Prefix "42:" = 3 bytes should be the same
-        assert_eq!(&index_key1[..3], &index_key2[..3]);
-
-        // Last 8 bytes (seq) should be different
-        assert_ne!(&index_key1[3..], &index_key2[3..]);
+        let prefix = index.build_prefix_for_pk(&ScalarValue::Int64(Some(42)));
+        assert!(index_key1.starts_with(&prefix));
+        assert!(index_key2.starts_with(&prefix));
+        assert_ne!(index_key1, index_key2);
     }
 
     #[test]
@@ -242,17 +206,15 @@ mod tests {
         let pk_value = ScalarValue::Int64(Some(42));
 
         let prefix = index.build_prefix_for_pk(&pk_value);
-
-        // Should be: "42:" = 3 bytes
-        assert_eq!(prefix.len(), 3);
-        let prefix_str = std::str::from_utf8(&prefix).unwrap();
-        assert_eq!(prefix_str, "42:");
+        let (key, row) = create_test_row(100, 42);
+        let index_key = index.extract_key(&key, &row).unwrap();
+        assert!(index_key.starts_with(&prefix));
     }
 
     #[test]
     fn test_partition_name() {
         let table_id = kalamdb_commons::TableId::from_strings("my_namespace", "my_table");
         let index = SharedTablePkIndex::new(&table_id, "id");
-        assert_eq!(index.partition(), "shared_my_namespace:my_table_pk_idx");
+        assert_eq!(index.partition().name(), "shared_my_namespace:my_table_pk_idx");
     }
 }

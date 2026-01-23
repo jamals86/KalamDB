@@ -152,6 +152,9 @@ impl ServerConfig {
                 max_snapshots_to_keep: 3,
                 replication_timeout_ms: 5000,
                 reconnect_interval_ms: 3000,
+                peer_wait_max_retries: None,
+                peer_wait_initial_delay_ms: None,
+                peer_wait_max_delay_ms: None,
             });
 
             if let Some(val) = cluster_id {

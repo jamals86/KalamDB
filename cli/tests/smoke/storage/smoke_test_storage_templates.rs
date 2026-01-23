@@ -494,30 +494,41 @@ fn assert_table_storage(namespace: &str, table_name: &str, expected_storage_id: 
 
 fn assert_manifest_path_contains(namespace: &str, table_name: &str, expected_subpath: &str) {
     let sql = format!(
-        "SELECT source_path FROM system.manifest WHERE namespace_id = '{}' AND table_name = '{}'",
+        "SELECT manifest_json FROM system.manifest WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table_name
     );
     let json_output =
-        execute_sql_as_root_via_client_json(&sql).expect("query system.manifest source_path");
+        execute_sql_as_root_via_client_json(&sql).expect("query system.manifest manifest_json");
     let parsed: JsonValue = serde_json::from_str(&json_output).expect("parse manifest JSON");
     let rows = get_rows_as_hashmaps(&parsed).unwrap_or_default();
 
     let mut paths = Vec::new();
     for row in rows {
-        if let Some(value) = row.get("source_path") {
-            if let Some(extracted) = extract_arrow_value(value) {
-                if let Some(path) = extracted.as_str() {
-                    paths.push(path.to_string());
+        if let Some(value) = row.get("manifest_json") {
+            let extracted = extract_arrow_value(value).unwrap_or_else(|| value.clone());
+            let manifest_json = if extracted.is_object() {
+                Some(extracted)
+            } else {
+                extracted
+                    .as_str()
+                    .and_then(|manifest_str| serde_json::from_str::<JsonValue>(manifest_str).ok())
+            };
+
+            if let Some(manifest_json) = manifest_json {
+                if let Some(segments) = manifest_json.get("segments").and_then(JsonValue::as_array) {
+                    for segment in segments {
+                        if let Some(path) = segment.get("path").and_then(JsonValue::as_str) {
+                            paths.push(path.to_string());
+                        }
+                    }
                 }
-            } else if let Some(path) = value.as_str() {
-                paths.push(path.to_string());
             }
         }
     }
 
     assert!(
         paths.iter().any(|path| path.contains(expected_subpath)),
-        "Expected manifest source_path containing '{}' for {}.{} (paths: {:?})",
+        "Expected manifest path containing '{}' for {}.{} (paths: {:?})",
         expected_subpath,
         namespace,
         table_name,

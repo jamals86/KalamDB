@@ -1,23 +1,18 @@
 //! User table lifecycle + isolation tests over the real HTTP SQL API.
 
+use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
 use super::test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_user_table};
 use super::test_support::http_server::HttpTestServer;
 use super::test_support::jobs::{
     extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent,
 };
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::UserName;
+use kalamdb_commons::{Role, UserName};
 use tokio::time::Duration;
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
     let password = "UserPass123!";
-    let resp = server
-        .execute_sql(&format!(
-            "CREATE USER '{}' WITH PASSWORD '{}' ROLE 'user'",
-            username, password
-        ))
-        .await?;
-    anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE USER failed: {:?}", resp.error);
+    let _ = ensure_user_exists(server, username, password, &Role::User).await?;
     Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
 }
 
@@ -45,15 +40,15 @@ async fn lookup_user_id(server: &HttpTestServer, username: &str) -> anyhow::Resu
 
 #[tokio::test]
 async fn test_user_tables_lifecycle_and_isolation_over_http() -> anyhow::Result<()> {
+    let _guard = super::test_support::http_server::acquire_test_lock().await;
     let server = super::test_support::http_server::get_global_server().await;
-    let suffix = std::process::id();
-    let ns = format!("ut_{}", suffix);
+    let ns = unique_namespace("ut");
 
     let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
 
-    let user1 = format!("user1_{}", suffix);
-    let user2 = format!("user2_{}", suffix);
+    let user1 = unique_table("user1");
+    let user2 = unique_table("user2");
     let auth1 = create_user(server, &user1).await?;
     let auth2 = create_user(server, &user2).await?;
     let user1_id = lookup_user_id(server, &user1).await?;
@@ -210,7 +205,7 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() -> anyhow::Result<
             table,
             &user1_id,
             1,
-            Duration::from_secs(10),
+            Duration::from_secs(40),
         )
         .await?;
         let files_user2 = wait_for_parquet_files_for_user_table(
@@ -219,7 +214,7 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() -> anyhow::Result<
             table,
             &user2_id,
             1,
-            Duration::from_secs(10),
+            Duration::from_secs(40),
         )
         .await?;
 

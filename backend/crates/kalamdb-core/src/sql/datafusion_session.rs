@@ -57,7 +57,7 @@ impl DataFusionSessionFactory {
     pub fn with_config(settings: &DataFusionSettings) -> DataFusionResult<Self> {
         // Determine target partitions: use config value or auto-detect CPU cores
         let target_partitions = if settings.query_parallelism == 0 {
-            num_cpus::get().max(1)
+            kalamdb_observability::get_cpu_count()
         } else {
             settings.query_parallelism
         };

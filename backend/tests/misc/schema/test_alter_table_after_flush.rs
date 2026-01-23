@@ -8,7 +8,7 @@
 //! This is a critical scenario because it tests schema compatibility
 //! between hot storage (RocksDB) and cold storage (Parquet files).
 
-use super::test_support::{fixtures, flush_helpers, QueryResultTestExt, TestServer};
+use super::test_support::{consolidated_helpers, fixtures, flush_helpers, TestServer};
 use kalam_link::models::ResponseStatus;
 use kalam_link::parse_i64;
 
@@ -27,7 +27,7 @@ async fn test_alter_table_add_column_after_flush() {
     let server = TestServer::new_shared().await;
 
     // Use unique namespace to avoid test conflicts
-    let ns = format!("alter_flush_{}", std::process::id());
+    let ns = consolidated_helpers::unique_namespace("alter_flush");
 
     // Step 1: Create namespace and messages table
     fixtures::create_namespace(&server, &ns).await;
@@ -192,7 +192,7 @@ async fn test_alter_table_add_column_after_flush() {
 async fn test_multiple_alter_operations_with_flushes() {
     let server = TestServer::new_shared().await;
 
-    let ns = format!("multi_alter_{}", std::process::id());
+    let ns = consolidated_helpers::unique_namespace("multi_alter");
 
     // Setup
     fixtures::create_namespace(&server, &ns).await;

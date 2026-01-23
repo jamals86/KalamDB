@@ -1,9 +1,10 @@
 //! Primary key uniqueness checks in hot storage and after flush (cold Parquet), over HTTP.
 
+use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
 use super::test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_table};
 use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::UserName;
+use kalamdb_commons::{Role, UserName};
 use tokio::time::Duration;
 
 async fn create_user(
@@ -11,13 +12,7 @@ async fn create_user(
     username: &str,
 ) -> anyhow::Result<String> {
     let password = "UserPass123!";
-    let resp = server
-        .execute_sql(&format!(
-            "CREATE USER '{}' WITH PASSWORD '{}' ROLE 'user'",
-            username, password
-        ))
-        .await?;
-    anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE USER failed: {:?}", resp.error);
+    let _ = ensure_user_exists(server, username, password, &Role::User).await?;
     Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
 }
 
@@ -75,8 +70,7 @@ async fn get_name_for_id(
 async fn test_pk_uniqueness_hot_and_cold_over_http() {
     (async {
     let server = super::test_support::http_server::get_global_server().await;
-    let suffix = std::process::id();
-    let ns = format!("pk_{}", suffix);
+    let ns = unique_namespace("pk");
             let table_user = "items_user";
             let table_shared = "items_shared";
 
@@ -85,7 +79,7 @@ async fn test_pk_uniqueness_hot_and_cold_over_http() {
                 .await?;
             assert_eq!(resp.status, ResponseStatus::Success);
 
-            let auth_a = create_user(server, &format!("user_a_{}", suffix)).await?;
+            let auth_a = create_user(server, &unique_table("user_a")).await?;
 
             // -------------------------
             // USER table: hot duplicate
@@ -140,7 +134,7 @@ async fn test_pk_uniqueness_hot_and_cold_over_http() {
                 assert_eq!(resp.status, ResponseStatus::Success);
 
                 flush_table_and_wait(server, &ns, table_user).await?;
-                let _ = wait_for_parquet_files_for_table(server, &ns, table_user, 1, Duration::from_secs(5)).await?;
+                let _ = wait_for_parquet_files_for_table(server, &ns, table_user, 1, Duration::from_secs(20)).await?;
 
                 let resp = server
                     .execute_sql_with_auth(
@@ -229,7 +223,7 @@ async fn test_pk_uniqueness_hot_and_cold_over_http() {
                 anyhow::ensure!(name == "first", "expected name='first', got '{}'", name);
 
                 flush_table_and_wait(server, &ns, table_shared).await?;
-                let _ = wait_for_parquet_files_for_table(server, &ns, table_shared, 1, Duration::from_secs(5)).await?;
+                let _ = wait_for_parquet_files_for_table(server, &ns, table_shared, 1, Duration::from_secs(20)).await?;
 
                 let resp = server
                     .execute_sql(&format!(

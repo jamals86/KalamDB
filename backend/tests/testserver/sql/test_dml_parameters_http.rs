@@ -5,18 +5,16 @@
 //! - Parameter validation (max 50 params, 512KB each)
 //! - Params not allowed with multi-statement batches
 
+use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
 use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::UserName;
+use kalamdb_commons::{Role, UserName};
 use serde_json::json;
 use tokio::time::{sleep, Duration, Instant};
 
 async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
     let password = "UserPass123!";
-    let resp = server
-        .execute_sql(&format!("CREATE USER '{}' WITH PASSWORD '{}' ROLE 'dba'", username, password))
-        .await?;
-    anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE USER failed: {:?}", resp.error);
+    let _ = ensure_user_exists(server, username, password, &Role::Dba).await?;
     Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
 }
 
@@ -51,8 +49,7 @@ async fn count_rows(
 async fn test_parameterized_dml_over_http() {
     (async {
     let server = super::test_support::http_server::get_global_server().await;
-    let suffix = std::process::id();
-    let ns = format!("params_{}", suffix);
+    let ns = unique_namespace("params");
     let table = "items";
 
     let resp = server
@@ -60,7 +57,7 @@ async fn test_parameterized_dml_over_http() {
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE NAMESPACE failed");
 
-    let auth = create_user(server, &format!("user_params_{}", suffix)).await?;
+    let auth = create_user(server, &unique_table("user_params")).await?;
 
     let resp = server
         .execute_sql(&format!(

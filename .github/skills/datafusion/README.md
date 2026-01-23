@@ -1,0 +1,1 @@
+This folder contains the DataFusion skill definition used by automated agents.

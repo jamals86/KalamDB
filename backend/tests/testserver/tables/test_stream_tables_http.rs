@@ -1,5 +1,6 @@
 //! Stream table DML checks over the real HTTP SQL API.
 
+use super::test_support::consolidated_helpers::unique_namespace;
 use kalam_link::models::ResponseStatus;
 
 async fn create_stream_table(
@@ -31,7 +32,7 @@ async fn create_stream_table(
 #[tokio::test]
 async fn test_stream_tables_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
-    let ns = format!("test_st_{}", std::process::id());
+    let ns = unique_namespace("test_st");
 
     let response = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
     assert_eq!(response.status, ResponseStatus::Success);

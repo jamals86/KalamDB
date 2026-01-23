@@ -547,9 +547,33 @@ Transaction:
 and things like this:
         let name = statement.name.as_str();
         let namespace_id = NamespaceId::new(name);
-117) [MEDIUM] Make the link client send a X-Request-ID header with a unique id per request for better tracing and debugging
-118) [MEDIUM] Add to kalamdb-link client the ability to set custom headers for each request
-120) [MEDIUM] Now configs are centralized inside AppContext and accessible everywhere easily, we need to check:
+117) [COMPLETED] Consolidate duplicated ScalarValue conversion logic into centralized module
+    We have many places where we duplicate this similar logic:
+    /// Encode a PK value to bytes for index key
+    fn encode_pk_value(value: &ScalarValue) -> Vec<u8> {
+        match value {
+            ScalarValue::Int64(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::Int32(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::Int16(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::UInt64(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::UInt32(Some(n)) => n.to_string().into_bytes(),
+            ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s.as_bytes().to_vec(),
+            // For other types, convert to string
+            _ => value.to_string().into_bytes(),
+        }
+    }
+
+  ✅ SOLUTION IMPLEMENTED:
+  - Created backend/crates/kalamdb-commons/src/conversions.rs module
+  - Centralized function: pub fn scalar_value_to_bytes(value: &ScalarValue) -> Vec<u8>
+  - Added backwards compatibility alias: pub fn encode_pk_value() for existing code
+  - Removed duplicates from:
+    * backend/crates/kalamdb-tables/src/user_tables/pk_index.rs
+    * backend/crates/kalamdb-tables/src/shared_tables/pk_index.rs
+  - Added comprehensive unit tests in conversions.rs
+  - Updated all call sites to use the centralized function
+  - Re-exported from kalamdb-commons lib.rs for easy access
+  - Workspace builds successfully with all crates compiling
   - All places where we read config from file directly and change them to read from AppContext
   - Remove any duplicate config models which is a dto and use only the configs instead of mirroring it to different structs
 
@@ -1120,11 +1144,6 @@ i guess we need to add a new column to the jobs table to track each node the sta
 
 71) Is it better to use macros for MetaCommand and other commands to make the code runs faster and more clear?
 
-72) stuck stream_Evicted statuses:
-● KalamDB[local-cluster] root@http://127.0.0.1:8081 ❯ select * from system.jobs where status = 'queued';
-...
-(7 rows)
-
 73) add test which check the server health and cpompliance after some of the big tests before/after which check jobs stuck, cluster not in sync and memory usages being skyrocketing
 
 74) Add another columns which are computed ones from manifest table
@@ -1148,8 +1167,6 @@ i guess we need to add a new column to the jobs table to track each node the sta
 83) maybe we should go with catalog for system and catalog for public/user namespaces instead of having system tables in the same catalog as user tables
 
 
-84) backend/crates/kalamdb-sql/src/classifier/engine/core.rs i think the parsing cna be done better and use the already sqlparser or datafusion things
-
 85) pub struct ErrorDetail.code: String,
 should be an enum so we can compare it when not leader
 err_msg.contains("NOT_LEADER")
@@ -1165,3 +1182,190 @@ err_msg.contains("NOT_LEADER")
                     "message": "WebSocket subscription created. Connect to ws_url to receive updates."
                 });
                 Ok(QueryResult::subscription(sub_data))
+
+88) remove object_store from kalamdb-code it should onloy be included in kalamdb-filestore if it needs any function we will be adding it in kalamdb-filestore then
+also sqlparser should be inside kalamdb-sql only since there we parse sql's
+tonic should be only in kalamdb-raft since there only we use the networking
+num_cpus should be inside kalamdb-observability only
+also check why we need reqwest?
+
+89) in backend\crates\kalamdb-sql\src\classifier\engine\core.rs we have a switch case which we use strings why not using enum's from: backend\crates\kalamdb-sql\src\classifier\types.rs its type-safe more than using case, also check if its the best way to parse them, i think the parsing cna be done better and use the already sqlparser or datafusion things
+
+90) move ShardingRegistry into kalamdb-sharding also split: backend\crates\kalamdb-sharding\src\lib.rs into multiple files for each struct, replace backend\crates\kalamdb-commons\src\models\ids\shard_id.rs with the Shard we already have and name it ShardId instead
+
+93) no need to have shard id in: impl StorageCached we can compute this in the template whenever we have a userid
+
+94) whene deleting a table/user we remove the folder not looping over the files all of them
+
+95) check that looping over a folder with parquet files do it depending on the manifest.json not all the list of parquet files
+
+97) since we now have StorageCache object, add unit tests which check each method in there 
+
+98) pass Appcontext to backend/crates/kalamdb-core/src/schema_registry/registry/core.rs and instead of passing it to each function
+
+99)         //TODO: Since we need only parquet lets only fetch parquet files here
+        let list_result = match storage_cached.list_sync(table_type, table_id, user_id) {
+            Ok(result) => result,
+100) check if we need to make this with other parquet file reading: backend/crates/kalamdb-core/src/pk/existence_checker.rs
+check all other functions which read parquet like: backend/crates/kalamdb-core/src/providers/flush
+and see if there is any pattern or duplication or things we can move to filestore
+and also this one reads them: backend/crates/kalamdb-core/src/manifest/planner.rs
+make only one place where it reads parquet extract the common logic and check whats the pattern in all the readers and combine them into one or few functions in filestore crate
+
+
+101) backend/crates/kalamdb-core/src/manifest/service.rs should contain storageregistry and schemaregistry as members not passing them to each function or computing them
+
+102) We dont need to have flushing of manifest and reading it using get path and them put or read we can directly call a function to do so
+
+107) add a cache to: backend/crates/kalamdb-system/src/providers/manifest/manifest_store.rs to in-memory and cache through fetching for shared tables only manifests and make sure ManifestService uses the manifestprovider with the caching as well
+
+108) evict_stale_entries(&self, ttl_seconds: i64) -> Result<usize, StorageError> {
+  is problematic since it scan all manifest's from rocksdb we should make a better way to do so maybe holding another column family with last_accessed timestamps only for faster eviction we now can have a secondary index easily for that
+
+109) is this needed: backend/crates/kalamdb-core/src/sql/executor/helpers/table_creation.rs
+
+110) Check how to make datafusion session or loader look for tables inside the schemaregistry we have directly? this way no need for registring into datafusion
+
+112) i think its better to store this as hashmap:    /// List of data segments
+    pub segments: Vec<SegmentMetadata>,
+
+
+
+119) change backend/crates/kalamdb-core/src/jobs/jobs_manager to backend/crates/kalamdb-core/src/jobs/manager
+
+120) should we move: backend/crates/kalamdb-core/src/error_extensions.rs to commons crate src/errors, and use the same error extension across the codebase? everywhere? because currently we have many scattered errors and error enums we can organize them better, also take a look at this one: backend/crates/kalamdb-core/src/error.rs
+maybe we can have a big list of all error codes with categories and then we can use them everywhere across the codebase, check if this is better for kalamdb or not, since each crate must be responsible for its error codes as well
+
+
+121) backend/crates/kalamdb-core/src/providers/streams.rs
+backend/crates/kalamdb-core/src/providers/users.rs
+backend/crates/kalamdb-core/src/providers/shared.rs
+check if we can move these to kalamdb-tables crate since they are table providers only for specific table types
+for the shared logic we can create in kalamdb-system a LiveQueryManager interface and also the interface for ManifestService inside folder: src/impls
+if there is anything else needed in those providers then we can do the same to it as we did to livequerymanager and manifestservice
+
+these wont be needed since we pass whatever they is needed for in the constructor, like: primary_key_column_id
+
+    /// Schema registry for table metadata and Arrow schema caching
+    pub schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
+    /// System columns service for _seq and _deleted management
+    pub system_columns: Arc<crate::system_columns::SystemColumnsService>,
+    /// Storage registry for resolving full storage paths (optional)
+    pub storage_registry: Option<Arc<StorageRegistry>>,
+
+backend/crates/kalamdb-core/src/schema_registry/system_columns_service.rs can be moved to kalamdb-system src/services
+
+
+125) no need for a column node_id in: system.jobs only the leader is needed there, also cpu_used not needed
+
+127) check the ability to do the storedkey tuple with a delimiter which is not possible to be in the actual id's like ':' or '|' so that when we filter by prefix we dont get collisions with other ids which starts with the same prefix, when making this tuples make it generic so we can use it in other places or id's as well and also we can use it for also filtering and scanning with prefixes easily
+my suggestion is the StorageKey which we extend in each id type to have a method which return a prefix for part1 part2 part3 which we can use for filtering and scanning and no need to repeat the same logics each time in the scan functions
+
+add test which cover and make sure keys doesnt collide or get in the filtering of other keys when scanning with prefix
+these should be unit tests
+
+also add tests which cover the users/shared/stream providers for scanning with prefix as well
+
+128) Make sure we have a complete support for datafusion where we have indexes works per primary keys as well as starts with keys
+
+129) check if these functions/methods inside this file already exists in other places and remove duplicates: backend/crates/kalamdb-core/src/manifest/flush/base.rs
+
+130) Make insert/updating into manifest table check also the nullable we currently could insert into it without validations
+[2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_flush_mkpsil4e_4cb_0user_flush_mkpsil4e_4cb_0root
+[2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_flush_ns_mkpsiju7_4b2_3test_table_mkpsiju7_4b2_0root
+[2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_ns_mkpsii6t_49o_0ordering_mkpsii6t_49o_0root
+[2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_ns_mkpsii81_49s_0multi_batch_mkpsii81_49s_0root
+
+131) why we need: SystemTableProviderExt? why not directly use TableProvider trait?
+
+131) Check if we need to use the storekey for this one
+fn next_storage_key_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut next = Vec::with_capacity(bytes.len() + 1);
+    next.extend_from_slice(bytes);
+    next.push(0);
+    next
+}
+search other places where we may written similar thing and also replace it with the best practice we have for storekey
+
+
+
+132) Manifest and Flushing
+I want to go over how manifest and flushing works or should be working:
+
+Insert:
+1) User perform insert/update/delete
+2) We check if we have specified a pk identifier
+   - yes - then we need to check if already exists using (getByPk flow below)
+     - exists - we return error pk already exists
+     - not exists - we proceed to step 3
+
+   - No - we generate a new unique pk identifier according to the auto-gen defined in tabledefinition
+3) We insert into rocksdb the new row with the pk identifier and other columns
+5) Update manifest Segments/SyncState using updateManifest()
+
+
+Update:
+1) User perform update
+2) We check if we have specified a pk identifier
+    - yes - then we need to check if already exists using (getByPk flow below)
+      - exists - we proceed to step 3
+      - not exists - we return error pk not found
+    - No - we return error pk must be specified for update
+3) we fetch it using getByPk flow below to have all the fields and then we update the fields with the new values
+3) We update/insert the row in rocksdb with the new values (since it may be in parquet and not in hot storage)
+4) Update manifest Segments/SyncState using updateManifest()
+
+Delete:
+Similar to update but we mark the row as deleted instead of updating values
+
+
+
+getByPk - Checking pk exists or fetch by pk flow:
+1) We first go to manifest service
+2) make sure we have the latest manifest object in rocksdb as a cache
+3) we verify the id is in one of the segments range
+4) if yes
+5) we check where? hot or cold
+6) we read the parquet file or the hot storage (rocksdb) to verify if the pk exists or not
+Note: The same pk might be in hot and cold we read the hot first
+7) if not we return not exists
+
+
+markManifest - Marking manifest sync state:
+1) we fetch the manifest from rocksdb cache
+2) We check if we have segments with: in_progress status
+3) if yes we update it with the latest the max seq number
+(We should add another status for each segment which is: in_progress - this way when flushing fails we can retry it again later on the same segment without creating duplicates segments)
+4) Updating the manifest object to have SyncState = Pendingwrite
+5) Add the manifest to secondary index on manifest table for easily looking up
+PendingWrite manifests by tableid with a key: <TableId>:PendingWrite:<Optional<UserId>> so that flush job can easily lookup manifests which needs flushing
+
+
+Flushing:
+1) Then the flush table command is run or scheduled later by job system
+2) The flush job will look for manifests with Tableid:PendingWrite status and process them one by one
+3) Either for each userid or the whole for shared tables we already have this done
+4) We also write the manifest to external storage
+5) After successful writing we update the manifest syncstate to Synced
+6) We remove the secondary index entry for PendingWrite for this manifest
+7) we remove the flushed rows from hot storage (rocksdb) to free memory
+
+
+Select:
+1) User perform select
+2) for this we rely on datafusion to read from both hot and cold storage
+3) datafusion will read from rocksdb for hot storage and parquet files for cold storage
+4) we merge the results from both hot and cold
+5) We take the latest version depending on SeqId and _deleted columns
+6) return the final result to user
+
+
+Notice:
+1) these should work for batch inserts/updates/deletes as well so the updating of rocksdb and manifest should be done in batch as well and not in each insert/update/delete, so if a user run multiple inserts or updates or deletes
+
+
+
+
+
+
+

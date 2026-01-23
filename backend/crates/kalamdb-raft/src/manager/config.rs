@@ -64,6 +64,15 @@ pub struct RaftManagerConfig {
 
     /// Minimum interval between reconnect attempts to an unreachable peer
     pub reconnect_interval_ms: u64,
+
+    /// Maximum number of retries when waiting for peer to come online during initialization
+    pub peer_wait_max_retries: u32,
+
+    /// Initial delay in milliseconds between peer availability checks
+    pub peer_wait_initial_delay_ms: u64,
+
+    /// Maximum delay in milliseconds between peer availability checks (exponential backoff cap)
+    pub peer_wait_max_delay_ms: u64,
 }
 
 impl Default for RaftManagerConfig {
@@ -83,6 +92,9 @@ impl Default for RaftManagerConfig {
             replication_timeout_ms: 5000,
             replication_timeout: Duration::from_secs(5),
             reconnect_interval_ms: 3000,
+            peer_wait_max_retries: 60,
+            peer_wait_initial_delay_ms: 500,
+            peer_wait_max_delay_ms: 2000,
         }
     }
 }
@@ -115,6 +127,9 @@ impl RaftManagerConfig {
             replication_timeout_ms: 5000,
             replication_timeout: Duration::from_secs(5),
             reconnect_interval_ms: 3000,
+            peer_wait_max_retries: 60,
+            peer_wait_initial_delay_ms: 500,
+            peer_wait_max_delay_ms: 2000,
         }
     }
 }
@@ -137,6 +152,9 @@ impl From<kalamdb_configs::ClusterConfig> for RaftManagerConfig {
             replication_timeout_ms: config.replication_timeout_ms,
             replication_timeout: Duration::from_millis(config.replication_timeout_ms),
             reconnect_interval_ms: config.reconnect_interval_ms,
+            peer_wait_max_retries: config.peer_wait_max_retries.unwrap_or(60),
+            peer_wait_initial_delay_ms: config.peer_wait_initial_delay_ms.unwrap_or(500),
+            peer_wait_max_delay_ms: config.peer_wait_max_delay_ms.unwrap_or(2000),
         }
     }
 }

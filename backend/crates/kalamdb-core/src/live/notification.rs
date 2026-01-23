@@ -7,28 +7,36 @@ use super::connections_manager::{ConnectionsManager, SubscriptionHandle};
 use super::filter_eval::matches as filter_matches;
 use super::types::{ChangeNotification, ChangeType};
 use crate::error::KalamDbError;
-use crate::error_extensions::KalamDbResultExt;
 use crate::providers::arrow_json_conversion::row_to_json_map;
 use datafusion::scalar::ScalarValue;
+use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{LiveQueryId, TableId, UserId};
-use kalamdb_system::LiveQueriesTableProvider;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
-use tokio::time::{self, Duration};
 
 const NOTIFY_QUEUE_CAPACITY: usize = 10_000;
-const INCREMENT_QUEUE_CAPACITY: usize = 50_000;
-const INCREMENT_BATCH_MAX: usize = 2048;
-const INCREMENT_FLUSH_INTERVAL_MS: u64 = 50;
 
 struct NotificationTask {
     user_id: UserId,
     table_id: TableId,
     notification: ChangeNotification,
+}
+
+#[inline]
+fn extract_seq(change_notification: &ChangeNotification) -> Option<SeqId> {
+    change_notification
+        .row_data
+        .values
+        .get(SystemColumnNames::SEQ)
+        .and_then(|value| match value {
+            ScalarValue::Int64(Some(seq)) => Some(SeqId::from(*seq)),
+            ScalarValue::UInt64(Some(seq)) => Some(SeqId::from(*seq as i64)),
+            _ => None,
+        })
 }
 
 /// Apply column projections to a Row, returning only the requested columns.
@@ -54,23 +62,17 @@ fn apply_projections<'a>(row: &'a Row, projections: &Option<Arc<Vec<String>>>) -
 pub struct NotificationService {
     /// Manager uses DashMap internally for lock-free access
     registry: Arc<ConnectionsManager>,
-    live_queries_provider: Arc<LiveQueriesTableProvider>,
     notify_tx: mpsc::Sender<NotificationTask>,
-    increment_tx: mpsc::Sender<LiveQueryId>,
 }
 
 impl NotificationService {
     pub fn new(
         registry: Arc<ConnectionsManager>,
-        live_queries_provider: Arc<LiveQueriesTableProvider>,
     ) -> Arc<Self> {
         let (notify_tx, mut notify_rx) = mpsc::channel(NOTIFY_QUEUE_CAPACITY);
-        let (increment_tx, mut increment_rx) = mpsc::channel(INCREMENT_QUEUE_CAPACITY);
         let service = Arc::new(Self {
             registry,
-            live_queries_provider,
             notify_tx,
-            increment_tx,
         });
 
         // Notification worker (single task, no per-notification spawn)
@@ -108,62 +110,7 @@ impl NotificationService {
             }
         });
 
-        // Increment worker (batched updates, off hot path)
-        let increment_service = Arc::clone(&service);
-        tokio::spawn(async move {
-            let mut pending = std::collections::HashMap::new();
-            let mut ticker = time::interval(Duration::from_millis(INCREMENT_FLUSH_INTERVAL_MS));
-
-            loop {
-                tokio::select! {
-                    Some(live_id) = increment_rx.recv() => {
-                        let counter = pending.entry(live_id).or_insert(0u64);
-                        *counter += 1;
-                        if pending.len() >= INCREMENT_BATCH_MAX {
-                            flush_increment_batch(&increment_service, &mut pending).await;
-                        }
-                    }
-                    _ = ticker.tick() => {
-                        if !pending.is_empty() {
-                            flush_increment_batch(&increment_service, &mut pending).await;
-                        }
-                    }
-                    else => {
-                        break;
-                    }
-                }
-            }
-        });
-
         service
-    }
-
-    /// Get current timestamp in milliseconds
-    fn current_timestamp_ms() -> i64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64
-    }
-
-    /// Increment the changes counter for a live query
-    ///
-    /// Uses provider's async method which handles spawn_blocking internally.
-    pub async fn increment_changes(&self, live_id: &LiveQueryId) -> Result<(), KalamDbError> {
-        let timestamp = Self::current_timestamp_ms();
-
-        self.live_queries_provider
-            .increment_changes_async(live_id.as_str(), timestamp)
-            .await
-            .into_kalamdb_error("Failed to increment changes")?;
-
-        Ok(())
-    }
-
-    #[inline]
-    fn enqueue_increment(&self, live_id: &LiveQueryId) {
-        if let Err(e) = self.increment_tx.try_send(live_id.clone()) {
-            if matches!(e, mpsc::error::TrySendError::Full(_)) {
-                log::warn!("Increment queue full for live_id={}, dropping", live_id);
-            }
-        }
     }
 
     /// Notify subscribers about a table change (fire-and-forget async)
@@ -219,12 +166,11 @@ impl NotificationService {
         let filtering_row = &change_notification.row_data;
         let mut full_row_json: Option<std::collections::HashMap<String, serde_json::Value>> = None;
         let mut full_old_json: Option<std::collections::HashMap<String, serde_json::Value>> = None;
+        let seq_value = extract_seq(&change_notification);
         for entry in all_handles.iter() {
             let live_id = entry.key();
             let handle = entry.value();
-            let should_notify = if matches!(change_notification.change_type, ChangeType::Flush) {
-                true
-            } else if let Some(ref filter_expr) = handle.filter_expr {
+            let should_notify = if let Some(ref filter_expr) = handle.filter_expr {
                 match filter_matches(filter_expr, filtering_row) {
                     Ok(true) => true,
                     Ok(false) => {
@@ -334,14 +280,26 @@ impl NotificationService {
                 ),
                 ChangeType::Delete => {
                     kalamdb_commons::Notification::delete(live_id_str, vec![row_json])
-                },
-                ChangeType::Flush => {
-                    kalamdb_commons::Notification::insert(live_id_str, vec![row_json])
-                },
+                }
             };
 
             // Send notification through channel (non-blocking, bounded)
             let notification = Arc::new(notification);
+            let flow_control = &handle.flow_control;
+
+            if !flow_control.is_initial_complete() {
+                if let Some(snapshot_seq) = flow_control.snapshot_end_seq() {
+                    if let Some(seq) = seq_value {
+                        if seq.as_i64() <= snapshot_seq {
+                            continue;
+                        }
+                    }
+                }
+
+                flow_control.buffer_notification(Arc::clone(&notification), seq_value);
+                continue;
+            }
+
             if let Err(e) = tx.try_send(notification) {
                 use tokio::sync::mpsc::error::TrySendError;
                 match e {
@@ -360,26 +318,9 @@ impl NotificationService {
                 }
             }
 
-            self.enqueue_increment(live_id);
             notification_count += 1;
         }
 
         Ok(notification_count)
-    }
-}
-
-async fn flush_increment_batch(
-    service: &NotificationService,
-    pending: &mut std::collections::HashMap<LiveQueryId, u64>,
-) {
-    let timestamp = NotificationService::current_timestamp_ms();
-    for (live_id, count) in pending.drain() {
-        if let Err(e) = service
-            .live_queries_provider
-            .increment_changes_by_async(live_id.as_str(), count, timestamp)
-            .await
-        {
-            log::error!("Failed to increment changes for live_id={}: {}", live_id, e);
-        }
     }
 }

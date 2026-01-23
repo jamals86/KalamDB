@@ -36,6 +36,7 @@ const STATUS_COLORS: Record<string, string> = {
   'Failed': 'bg-red-100 text-red-800',
   'Cancelled': 'bg-gray-100 text-gray-800',
   'Retrying': 'bg-orange-100 text-orange-800',
+  'Skipped': 'bg-purple-100 text-purple-800',
 };
 
 const STATUS_ICONS: Record<string, React.ReactNode> = {
@@ -46,6 +47,7 @@ const STATUS_ICONS: Record<string, React.ReactNode> = {
   'Failed': <XCircle className="h-3 w-3" />,
   'Cancelled': <XCircle className="h-3 w-3" />,
   'Retrying': <AlertCircle className="h-3 w-3" />,
+  'Skipped': <AlertCircle className="h-3 w-3" />,
 };
 
 // Helper to extract namespace_id and table_name from parameters JSON

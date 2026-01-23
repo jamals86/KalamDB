@@ -57,8 +57,8 @@
 //! struct JobStatusIndex;
 //!
 //! impl IndexDefinition<JobId, Job> for JobStatusIndex {
-//!     fn partition(&self) -> &str {
-//!         "system_jobs_status_idx"
+//!     fn partition(&self) -> Partition {
+//!         Partition::new("system_jobs_status_idx")
 //!     }
 //!
 //!     fn indexed_columns(&self) -> Vec<&str> {
@@ -134,11 +134,11 @@ where
     K: StorageKey,
     V: KSerializable,
 {
-    /// Returns the partition name for this index.
+    /// Returns the partition for this index.
     ///
     /// This should be unique across all indexes in the system.
     /// Convention: `{main_partition}_idx_{columns}` e.g., `system_jobs_idx_status`
-    fn partition(&self) -> &str;
+    fn partition(&self) -> Partition;
 
     /// Returns the column names this index covers.
     ///
@@ -213,7 +213,9 @@ where
 {
     backend: Arc<dyn StorageBackend>,
     partition: String,
+    main_partition: Partition,
     indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
+    index_partitions: Vec<Partition>,
     _marker: std::marker::PhantomData<(K, V)>,
 }
 
@@ -251,15 +253,19 @@ where
         let _ = backend.create_partition(&main_partition); // Ignore error if already exists
 
         // Ensure all index partitions exist
+        let mut index_partitions = Vec::with_capacity(indexes.len());
         for index in &indexes {
-            let index_partition = Partition::new(index.partition());
+            let index_partition = index.partition();
             let _ = backend.create_partition(&index_partition); // Ignore error if already exists
+            index_partitions.push(index_partition);
         }
 
         Self {
             backend,
             partition: partition_str,
+            main_partition,
             indexes,
+            index_partitions,
             _marker: std::marker::PhantomData,
         }
     }
@@ -296,7 +302,7 @@ where
         self.indexes
             .iter()
             .enumerate()
-            .find(|(_idx, index)| index.partition() == partition)
+            .find(|(_idx, index)| index.partition().name() == partition)
             .map(|(idx, _)| idx)
     }
 
@@ -360,7 +366,7 @@ where
         let mut operations = Vec::with_capacity(1 + self.indexes.len());
 
         // 1. Main entity write
-        let partition = Partition::new(&self.partition);
+        let partition = self.main_partition.clone();
         let value = entity.encode()?;
         operations.push(Operation::Put {
             partition,
@@ -369,12 +375,11 @@ where
         });
 
         // 2. Index writes
-        for index in &self.indexes {
+        for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
             if let Some(index_key) = index.extract_key(key, entity) {
-                let index_partition = Partition::new(index.partition());
                 let index_value = index.index_value(key, entity);
                 operations.push(Operation::Put {
-                    partition: index_partition,
+                    partition: index_partition.clone(),
                     key: index_key,
                     value: index_value,
                 });
@@ -424,7 +429,7 @@ where
         let ops_per_entry = 1 + self.indexes.len();
         let mut operations = Vec::with_capacity(entries.len() * ops_per_entry);
 
-        let partition = Partition::new(&self.partition);
+        let partition = self.main_partition.clone();
 
         for (key, entity) in entries {
             // 1. Main entity write
@@ -436,12 +441,11 @@ where
             });
 
             // 2. Index writes for this entity
-            for index in &self.indexes {
+            for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
                 if let Some(index_key) = index.extract_key(key, entity) {
-                    let index_partition = Partition::new(index.partition());
                     let index_value = index.index_value(key, entity);
                     operations.push(Operation::Put {
-                        partition: index_partition,
+                        partition: index_partition.clone(),
                         key: index_key,
                         value: index_value,
                     });
@@ -489,26 +493,8 @@ where
         let mut operations = Vec::with_capacity(1 + self.indexes.len() * 2);
 
         // 1. Delete stale index entries (if entity existed and index key changed)
-        if let Some(old) = old_entity {
-            for index in &self.indexes {
-                let old_index_key = index.extract_key(key, old);
-                let new_index_key = index.extract_key(key, new_entity);
-
-                // Only delete if index key changed
-                if old_index_key != new_index_key {
-                    if let Some(old_key) = old_index_key {
-                        let index_partition = Partition::new(index.partition());
-                        operations.push(Operation::Delete {
-                            partition: index_partition,
-                            key: old_key,
-                        });
-                    }
-                }
-            }
-        }
-
         // 2. Write new entity
-        let partition = Partition::new(&self.partition);
+        let partition = self.main_partition.clone();
         let value = new_entity.encode()?;
         operations.push(Operation::Put {
             partition,
@@ -517,17 +503,22 @@ where
         });
 
         // 3. Write new index entries (only if changed or new entity)
-        for index in &self.indexes {
-            let new_index_key = index.extract_key(key, new_entity);
+        for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
             let old_index_key = old_entity.and_then(|old| index.extract_key(key, old));
+            let new_index_key = index.extract_key(key, new_entity);
 
-            // Only write if index key changed or entity is new
-            if new_index_key != old_index_key {
+            if old_index_key != new_index_key {
+                if let Some(old_key) = old_index_key {
+                    operations.push(Operation::Delete {
+                        partition: index_partition.clone(),
+                        key: old_key,
+                    });
+                }
+
                 if let Some(idx_key) = new_index_key {
-                    let index_partition = Partition::new(index.partition());
                     let index_value = index.index_value(key, new_entity);
                     operations.push(Operation::Put {
-                        partition: index_partition,
+                        partition: index_partition.clone(),
                         key: idx_key,
                         value: index_value,
                     });
@@ -563,18 +554,17 @@ where
         let mut operations = Vec::with_capacity(1 + self.indexes.len());
 
         // 1. Delete main entity
-        let partition = Partition::new(&self.partition);
+        let partition = self.main_partition.clone();
         operations.push(Operation::Delete {
             partition,
             key: key.storage_key(),
         });
 
         // 2. Delete all index entries
-        for index in &self.indexes {
+        for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
             if let Some(index_key) = index.extract_key(key, entity) {
-                let index_partition = Partition::new(index.partition());
                 operations.push(Operation::Delete {
-                    partition: index_partition,
+                    partition: index_partition.clone(),
                     key: index_key,
                 });
             }
@@ -612,15 +602,14 @@ where
         prefix: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<Vec<(K, V)>> {
-        let index = self
-            .indexes
+        let index_partition = self
+            .index_partitions
             .get(index_idx)
-            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?;
-
-        let index_partition = Partition::new(index.partition());
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
+            .clone();
         let iter = self.backend.scan(&index_partition, prefix, None, limit)?;
 
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(limit.unwrap_or(0));
         for (_index_key, primary_key_bytes) in iter {
             // Deserialize primary key from index value
             let primary_key = K::from_storage_key(&primary_key_bytes)
@@ -644,15 +633,14 @@ where
         prefix: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<Vec<K>> {
-        let index = self
-            .indexes
+        let index_partition = self
+            .index_partitions
             .get(index_idx)
-            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?;
-
-        let index_partition = Partition::new(index.partition());
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
+            .clone();
         let iter = self.backend.scan(&index_partition, prefix, None, limit)?;
 
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(limit.unwrap_or(0));
         for (_index_key, primary_key_bytes) in iter {
             let primary_key = K::from_storage_key(&primary_key_bytes)
                 .map_err(StorageError::SerializationError)?;
@@ -676,12 +664,11 @@ where
     ///
     /// `true` if at least one entry exists with this prefix
     pub fn exists_by_index(&self, index_idx: usize, prefix: &[u8]) -> Result<bool> {
-        let index = self
-            .indexes
+        let index_partition = self
+            .index_partitions
             .get(index_idx)
-            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?;
-
-        let index_partition = Partition::new(index.partition());
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
+            .clone();
         // Only fetch 1 result - we just need to know if anything exists
         let iter = self.backend.scan(&index_partition, Some(prefix), None, Some(1))?;
 
@@ -716,12 +703,11 @@ where
             return Ok(HashSet::new());
         }
 
-        let index = self
-            .indexes
+        let index_partition = self
+            .index_partitions
             .get(index_idx)
-            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?;
-
-        let index_partition = Partition::new(index.partition());
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
+            .clone();
 
         // Scan all entries with the common prefix (e.g., all PKs for this user)
         let iter = self.backend.scan(&index_partition, Some(common_prefix), None, None)?;
@@ -731,7 +717,7 @@ where
 
         // Check which of the requested prefixes exist
         // Note: We check if any existing key starts with each prefix
-        let mut found = HashSet::new();
+        let mut found = HashSet::with_capacity(prefixes.len());
         for prefix in prefixes {
             if existing_keys.iter().any(|k| k.starts_with(prefix)) {
                 found.insert(prefix.clone());
@@ -751,12 +737,11 @@ where
         start_key: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
-        let index = self
-            .indexes
+        let index_partition = self
+            .index_partitions
             .get(index_idx)
-            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?;
-
-        let index_partition = Partition::new(index.partition());
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
+            .clone();
         let iter = self.backend.scan(&index_partition, prefix, start_key, limit)?;
 
         Ok(iter.collect())
@@ -776,8 +761,8 @@ where
         &self.backend
     }
 
-    fn partition(&self) -> &str {
-        &self.partition
+    fn partition(&self) -> Partition {
+        self.main_partition.clone()
     }
 }
 
@@ -794,7 +779,9 @@ where
         Self {
             backend: Arc::clone(&self.backend),
             partition: self.partition.clone(),
+            main_partition: self.main_partition.clone(),
             indexes: self.indexes.clone(),
+            index_partitions: self.index_partitions.clone(),
             _marker: std::marker::PhantomData,
         }
     }
@@ -877,7 +864,8 @@ where
     ) -> Result<Vec<(Vec<u8>, V)>> {
         let store = self.clone();
         tokio::task::spawn_blocking(move || {
-            store.scan_all(limit, prefix.as_ref(), start_key.as_ref())
+            let typed_results = store.scan_all_typed(limit, prefix.as_ref(), start_key.as_ref())?;
+            Ok(typed_results.into_iter().map(|(k, v)| (k.storage_key(), v)).collect())
         })
         .await
         .map_err(|e| StorageError::Other(format!("spawn_blocking error: {}", e)))?
@@ -953,8 +941,8 @@ mod tests {
     struct TestStatusIndex;
 
     impl IndexDefinition<JobId, Job> for TestStatusIndex {
-        fn partition(&self) -> &str {
-            "test_jobs_status_idx"
+        fn partition(&self) -> Partition {
+            Partition::new("test_jobs_status_idx")
         }
 
         fn indexed_columns(&self) -> Vec<&str> {
@@ -970,6 +958,7 @@ mod tests {
                 JobStatus::Completed => 4,
                 JobStatus::Failed => 5,
                 JobStatus::Cancelled => 6,
+                JobStatus::Skipped => 7,
             };
             let mut key = Vec::with_capacity(1 + 8 + job.job_id.as_bytes().len());
             key.push(status_byte);
@@ -1003,6 +992,7 @@ mod tests {
             finished_at: if status == JobStatus::Completed
                 || status == JobStatus::Failed
                 || status == JobStatus::Cancelled
+                || status == JobStatus::Skipped
             {
                 Some(now)
             } else {

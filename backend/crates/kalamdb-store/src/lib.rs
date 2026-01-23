@@ -23,19 +23,13 @@
 pub mod entity_store; // Phase 14: Type-safe EntityStore<K, V> with generic keys
 pub mod index; // Generic secondary index support
 pub mod indexed_store; // Phase 15: Automatic secondary index management
-pub mod key_encoding;
 pub mod raft_storage; // Phase 17: Raft log/meta persistence
 pub mod rocksdb_impl;
 pub mod rocksdb_init;
-pub mod sharding;
 pub mod storage_trait;
-pub mod traits; // Old EntityStore<T> trait (to be deprecated after Phase 14 migration)
 
 pub use rocksdb_impl::RocksDBBackend;
 pub use rocksdb_init::RocksDbInit;
-pub use sharding::{
-    AlphabeticSharding, ConsistentHashSharding, NumericSharding, ShardingRegistry, ShardingStrategy,
-};
 pub use storage_trait::{Operation, Partition, StorageBackend, StorageBackendAsync, StorageError};
 
 // Re-export StorageKey from kalamdb-commons to avoid import inconsistency
@@ -44,7 +38,7 @@ pub use kalamdb_commons::StorageKey;
 // Phase 14: Export new type-safe EntityStore traits
 pub use entity_store::{
     CrossUserTableStore,
-    EntityStore as EntityStoreV2, // Alias to avoid conflict during migration, FIXME: Rename to EntityStore later
+    EntityStore,
     EntityStoreAsync,             // Async versions using spawn_blocking internally
 };
 

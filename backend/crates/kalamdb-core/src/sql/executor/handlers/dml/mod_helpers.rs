@@ -106,19 +106,8 @@ pub fn coerce_scalar_to_type(
 }
 
 pub fn scalar_to_pk_string(value: &ScalarValue) -> Result<String, KalamDbError> {
-    match value {
-        ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => Ok(s.clone()),
-        ScalarValue::Int64(Some(n)) => Ok(n.to_string()),
-        ScalarValue::Int32(Some(n)) => Ok(n.to_string()),
-        ScalarValue::Int16(Some(n)) => Ok(n.to_string()),
-        ScalarValue::UInt64(Some(n)) => Ok(n.to_string()),
-        ScalarValue::UInt32(Some(n)) => Ok(n.to_string()),
-        ScalarValue::Boolean(Some(b)) => Ok(b.to_string()),
-        ScalarValue::Null => Err(KalamDbError::InvalidOperation(
-            "Primary key parameter cannot be NULL".to_string(),
-        )),
-        other => Ok(other.to_string()),
-    }
+    kalamdb_commons::scalar_to_pk_string(value)
+        .map_err(|e| KalamDbError::InvalidOperation(format!("Primary key conversion error: {}", e)))
 }
 
 pub fn function_expr_to_scalar(
@@ -188,7 +177,7 @@ pub fn expr_to_json_arg(
         Expr::Value(val_with_span) => match &val_with_span.value {
             Value::Placeholder(ph) => {
                 let value = scalar_from_placeholder(ph, params)?;
-                scalar_value_to_json(&value)
+                scalar_value_to_json(&value).map_err(KalamDbError::from)
             },
             Value::Number(n, _) => {
                 if let Ok(i) = n.parse::<i64>() {
@@ -210,11 +199,11 @@ pub fn expr_to_json_arg(
         },
         Expr::Identifier(ident) if ident.value.starts_with('$') => {
             let value = scalar_from_placeholder(&ident.value, params)?;
-            scalar_value_to_json(&value)
+            scalar_value_to_json(&value).map_err(KalamDbError::from)
         },
         Expr::Function(func) => {
             let scalar = function_expr_to_scalar(func, params, user_id, app_context)?;
-            scalar_value_to_json(&scalar)
+            scalar_value_to_json(&scalar).map_err(KalamDbError::from)
         },
         _ => Ok(JsonValue::String(expr.to_string())),
     }

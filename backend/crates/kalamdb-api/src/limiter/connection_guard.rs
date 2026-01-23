@@ -11,7 +11,7 @@
 use super::token_bucket::TokenBucket;
 use kalamdb_configs::RateLimitSettings;
 use moka::sync::Cache;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -54,8 +54,7 @@ impl IpState {
     fn is_banned(&self) -> Option<Instant> {
         let mut banned_until = self
             .banned_until
-            .lock()
-            .expect("Connection guard mutex poisoned");
+            .lock();
         if let Some(until) = *banned_until {
             if Instant::now() < until {
                 return Some(until);
@@ -71,8 +70,7 @@ impl IpState {
     fn set_banned_until(&self, until: Instant) {
         *self
             .banned_until
-            .lock()
-            .expect("Connection guard mutex poisoned") = Some(until);
+            .lock() = Some(until);
     }
 
     /// Clear ban
@@ -80,8 +78,7 @@ impl IpState {
     fn clear_ban(&self) {
         *self
             .banned_until
-            .lock()
-            .expect("Connection guard mutex poisoned") = None;
+            .lock() = None;
     }
 }
 
@@ -206,7 +203,6 @@ impl ConnectionGuard {
         if !state
             .request_bucket
             .lock()
-            .expect("Connection guard mutex poisoned")
             .try_consume(1)
         {
             let violations = state.violation_count.fetch_add(1, Ordering::Relaxed) + 1;
@@ -337,7 +333,7 @@ impl ConnectionGuard {
 
     /// Get statistics for monitoring
     pub fn get_stats(&self) -> ConnectionGuardStats {
-        let total_ips = self.ip_states.entry_count() as usize;
+        let total_ips = self.ip_states.iter().count();
         let mut banned_ips = 0usize;
         let mut total_connections = 0u32;
         let mut total_violations = 0u32;

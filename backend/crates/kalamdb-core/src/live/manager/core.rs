@@ -27,6 +27,7 @@ use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::websocket::SubscriptionRequest;
 use kalamdb_commons::NodeId;
 use kalamdb_system::LiveQueriesTableProvider;
+use kalamdb_system::LiveQueryManager as LiveQueryManagerTrait;
 use std::sync::Arc;
 
 /// Live query manager
@@ -62,8 +63,7 @@ impl LiveQueryManager {
         let subscription_service =
             Arc::new(SubscriptionService::new(registry.clone(), node_id, app_context));
 
-        let notification_service =
-            NotificationService::new(registry.clone(), live_queries_provider.clone());
+        let notification_service = NotificationService::new(registry.clone());
 
         Self {
             registry,
@@ -198,6 +198,13 @@ impl LiveQueryManager {
 
         // Parse filter expression from WHERE clause (if present)
         let filter_expr: Option<Expr> = QueryParser::extract_where_clause(&request.sql)
+            // Handle parsing errors by logging and ignoring (or propagating if critical)
+            .map_err(|e| {
+                log::warn!("Failed to extract WHERE clause: {}", e);
+                e
+            })
+            .ok()
+            .flatten()
             .map(|where_clause| {
                 // Resolve placeholders like CURRENT_USER() before parsing
                 let resolved =
@@ -213,7 +220,9 @@ impl LiveQueryManager {
             .flatten();
 
         // Extract column projections from SELECT clause (None = SELECT *, all columns)
-        let projections = QueryParser::extract_projections(&request.sql);
+        let projections = QueryParser::extract_projections(&request.sql)
+             .map_err(|e| KalamDbError::InvalidSql(format!("Failed to parse projections: {}", e)))?;
+        
         if let Some(ref cols) = projections {
             log::info!("Subscription projections: {:?}", cols);
         }
@@ -231,9 +240,29 @@ impl LiveQueryManager {
             .await?;
 
         // Fetch initial data if requested
-        let initial_data = if let Some(fetch_options) = initial_data_options {
+        let initial_data = if let Some(mut fetch_options) = initial_data_options {
             // Extract WHERE clause from SQL for initial data fetch
-            let where_clause = QueryParser::extract_where_clause(&request.sql);
+            let where_clause = QueryParser::extract_where_clause(&request.sql)?;
+
+            // Compute snapshot boundary (MAX(_seq)) before initial load
+            let snapshot_seq = self
+                .initial_data_fetcher
+                .compute_snapshot_end_seq(
+                    &live_id,
+                    &table_id,
+                    table_def.table_type,
+                    &fetch_options,
+                    where_clause.as_deref(),
+                )
+                .await?
+                .unwrap_or_else(|| SeqId::from(0));
+
+            fetch_options.until_seq = Some(snapshot_seq);
+            self.subscription_service.update_snapshot_end_seq(
+                connection_state,
+                &request.id,
+                snapshot_seq,
+            );
 
             let result = self
                 .initial_data_fetcher
@@ -246,15 +275,6 @@ impl LiveQueryManager {
                     projections.as_deref(),
                 )
                 .await?;
-
-            // Update snapshot_end_seq in subscription state
-            if let Some(snapshot_seq) = result.snapshot_end_seq {
-                self.subscription_service.update_snapshot_end_seq(
-                    connection_state,
-                    &request.id,
-                    snapshot_seq,
-                );
-            }
 
             Some(result)
         } else {
@@ -340,7 +360,7 @@ impl LiveQueryManager {
                 &sub_state.table_id,
                 table_def.table_type,
                 fetch_options,
-                where_clause.as_deref(),
+                where_clause?.as_deref(),
                 projections_ref,
             )
             .await
@@ -348,7 +368,7 @@ impl LiveQueryManager {
 
     /// Extract table name from SQL query
     pub fn extract_table_name_from_query(&self, query: &str) -> Result<String, KalamDbError> {
-        QueryParser::extract_table_name(query)
+        QueryParser::extract_table_name(query).map_err(|e| KalamDbError::InvalidSql(e.to_string()))
     }
 
     /// Unregister a WebSocket connection
@@ -392,11 +412,6 @@ impl LiveQueryManager {
         self.subscription_service
             .unregister_subscription(&connection_state, subscription_id, live_id)
             .await
-    }
-
-    /// Increment the changes counter for a live query
-    pub async fn increment_changes(&self, live_id: &LiveQueryId) -> Result<(), KalamDbError> {
-        self.notification_service.increment_changes(live_id).await
     }
 
     /// Get all subscriptions for a user
@@ -496,5 +511,18 @@ impl LiveQueryManager {
     /// Get the total number of subscriptions
     pub fn total_subscriptions(&self) -> usize {
         self.registry.subscription_count()
+    }
+}
+
+impl LiveQueryManagerTrait for LiveQueryManager {
+    type Notification = ChangeNotification;
+
+    fn notify_table_change_async(
+        &self,
+        user_id: UserId,
+        table_id: TableId,
+        notification: ChangeNotification,
+    ) {
+        self.notification_service.notify_async(user_id, table_id, notification);
     }
 }

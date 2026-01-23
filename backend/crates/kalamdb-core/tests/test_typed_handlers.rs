@@ -10,27 +10,33 @@ use kalamdb_core::sql::executor::models::ExecutionResult;
 use kalamdb_core::sql::executor::SqlExecutor;
 mod test_helpers;
 use std::sync::Arc;
-use test_helpers::create_test_session;
+use test_helpers::{test_app_context, test_app_context_simple};
 
 fn init_app_context() -> Arc<AppContext> {
-    test_helpers::test_app_context()
+    test_app_context_simple()
 }
 
 #[tokio::test]
+#[ignore = "Requires Raft for CREATE NAMESPACE"]
 async fn test_typed_handler_create_namespace() {
-    let app_ctx = init_app_context();
-    let executor = SqlExecutor::new(app_ctx, false);
-    let exec_ctx = ExecutionContext::new(UserId::from("admin"), Role::Dba, create_test_session());
+    let app_ctx = test_app_context();
+    let executor = SqlExecutor::new(Arc::clone(&app_ctx), false);
+    let exec_ctx = ExecutionContext::new(
+        UserId::from("admin"),
+        Role::Dba,
+        Arc::new(app_ctx.session_factory().create_session()),
+    );
 
     // Test CREATE NAMESPACE with typed handler
-    let sql = "CREATE NAMESPACE integration_test_ns";
-    let result = executor.execute(sql, &exec_ctx, vec![]).await;
+    let namespace = format!("integration_test_ns_{}", std::process::id());
+    let sql = format!("CREATE NAMESPACE {}", namespace);
+    let result = executor.execute(&sql, &exec_ctx, vec![]).await;
 
     assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
 
     match result.unwrap() {
         ExecutionResult::Success { message } => {
-            assert!(message.contains("integration_test_ns"));
+            assert!(message.contains(&namespace));
             assert!(message.contains("created successfully"));
         },
         _ => panic!("Expected Success result"),
@@ -40,9 +46,12 @@ async fn test_typed_handler_create_namespace() {
 #[tokio::test]
 async fn test_typed_handler_authorization() {
     let app_ctx = init_app_context();
-    let executor = SqlExecutor::new(app_ctx, false);
-    let user_ctx =
-        ExecutionContext::new(UserId::from("regular_user"), Role::User, create_test_session());
+    let executor = SqlExecutor::new(Arc::clone(&app_ctx), false);
+    let user_ctx = ExecutionContext::new(
+        UserId::from("regular_user"),
+        Role::User,
+        Arc::new(app_ctx.session_factory().create_session()),
+    );
 
     // Regular users cannot create namespaces
     let sql = "CREATE NAMESPACE unauthorized_ns";
@@ -56,8 +65,12 @@ async fn test_classifier_prioritizes_select() {
     // This test verifies that SELECT queries go through the fast path
     // without attempting DDL parsing
     let app_ctx = init_app_context();
-    let executor = SqlExecutor::new(app_ctx, false);
-    let exec_ctx = ExecutionContext::new(UserId::from("user"), Role::User, create_test_session());
+    let executor = SqlExecutor::new(Arc::clone(&app_ctx), false);
+    let exec_ctx = ExecutionContext::new(
+        UserId::from("user"),
+        Role::User,
+        Arc::new(app_ctx.session_factory().create_session()),
+    );
 
     // SELECT should hit the DataFusion path immediately
     let sql = "SELECT 1 as test";

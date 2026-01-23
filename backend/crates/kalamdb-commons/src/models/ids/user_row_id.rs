@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use super::user_id::UserId;
+use crate::storage_key::{decode_key, encode_key, encode_prefix};
 use crate::StorageKey;
 
-/// Composite key for user-scoped table rows: {user_id}:{row_id}
+/// Composite key for user-scoped table rows: (user_id, row_id)
 ///
 /// This composite key ensures type safety when accessing user-isolated
 /// table rows, preventing accidental access across user boundaries.
@@ -44,17 +45,26 @@ impl UserRowId {
         }
     }
 
-    /// Format as bytes for storage: "{user_id}:{row_id}"
-    pub fn as_storage_key(&self) -> Vec<u8> {
-        let mut key = Vec::new();
-        key.extend_from_slice(self.user_id.as_str().as_bytes());
-        key.push(b':');
-        key.extend_from_slice(&self.row_id);
-        key
+    /// Create a prefix for scanning all rows for a user.
+    pub fn user_prefix(user_id: &UserId) -> Vec<u8> {
+        encode_prefix(&(user_id.as_str(),))
     }
 
-    /// Parse from storage key format: "{user_id}:{row_id}"
+    /// Format as bytes for storage using storekey tuple encoding
+    pub fn as_storage_key(&self) -> Vec<u8> {
+        encode_key(&(self.user_id.as_str(), self.row_id.clone()))
+    }
+
+    /// Parse from storage key bytes
     pub fn from_storage_key(key: &[u8]) -> Option<Self> {
+        if let Ok((user_id_str, row_id)) = decode_key::<(String, Vec<u8>)>(key) {
+            return Some(Self {
+                user_id: UserId::new(user_id_str),
+                row_id,
+            });
+        }
+
+        // Legacy delimiter-based format fallback
         let pos = key.iter().position(|&b| b == b':')?;
         let user_id_str = std::str::from_utf8(&key[..pos]).ok()?;
         let row_id = key[pos + 1..].to_vec();
@@ -125,13 +135,15 @@ mod tests {
     fn test_user_row_id_as_storage_key() {
         let composite = UserRowId::from_strings("user123", "row456");
         let key = composite.as_storage_key();
-        assert_eq!(key, b"user123:row456");
+        assert!(!key.is_empty());
+        let parsed = UserRowId::from_storage_key(&key).unwrap();
+        assert_eq!(parsed, composite);
     }
 
     #[test]
     fn test_user_row_id_from_storage_key() {
-        let key = b"user123:row456";
-        let composite = UserRowId::from_storage_key(key).unwrap();
+        let key = UserRowId::from_strings("user123", "row456").as_storage_key();
+        let composite = UserRowId::from_storage_key(&key).unwrap();
 
         assert_eq!(composite.user_id().as_str(), "user123");
         assert_eq!(composite.row_id(), b"row456");

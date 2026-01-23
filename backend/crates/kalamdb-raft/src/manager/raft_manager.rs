@@ -90,6 +90,9 @@ pub struct RaftManager {
 
     /// Number of shared shards (cached from config)
     shared_shards_count: u32,
+
+    /// Handle to the background cluster initialization task
+    cluster_init_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl std::fmt::Debug for RaftManager {
@@ -101,6 +104,32 @@ impl std::fmt::Debug for RaftManager {
             .field("shared_data_shards", &self.shared_data_shards.len())
             .finish_non_exhaustive()
     }
+}
+
+// Module-level helper functions for adding nodes to Raft groups
+// These are shared by both add_node() and add_node_with_groups()
+
+/// Add a node as a learner to a Raft group and wait for it to catch up
+async fn add_learner_and_wait<SM: KalamStateMachine + Send + Sync + 'static>(
+    group: &Arc<RaftGroup<SM>>,
+    node_id_u64: u64,
+    node: &KalamNode,
+    timeout: Duration,
+) -> Result<(), RaftError> {
+    if !group.is_leader() {
+        return Err(RaftError::not_leader(group.group_id().to_string(), group.current_leader()));
+    }
+    group.add_learner(node_id_u64, node.clone()).await?;
+    group.wait_for_learner_catchup(node_id_u64, timeout).await?;
+    Ok(())
+}
+
+/// Promote a learner node to a voting member of the Raft group
+async fn promote_learner<SM: KalamStateMachine + Send + Sync + 'static>(
+    group: &Arc<RaftGroup<SM>>,
+    node_id_u64: u64,
+) -> Result<(), RaftError> {
+    group.promote_learner(node_id_u64).await
 }
 
 impl RaftManager {
@@ -141,6 +170,7 @@ impl RaftManager {
             config,
             user_shards_count,
             shared_shards_count,
+            cluster_init_handle: RwLock::new(None),
         }
     }
 
@@ -223,6 +253,7 @@ impl RaftManager {
             config,
             user_shards_count,
             shared_shards_count,
+            cluster_init_handle: RwLock::new(None),
         })
     }
 
@@ -417,8 +448,11 @@ impl RaftManager {
             let shared_data_shards = self.shared_data_shards.clone();
             let replication_timeout = self.config.replication_timeout;
             let node_id = self.node_id;
+            let peer_wait_max_retries = self.config.peer_wait_max_retries;
+            let peer_wait_initial_delay_ms = self.config.peer_wait_initial_delay_ms;
+            let peer_wait_max_delay_ms = self.config.peer_wait_max_delay_ms;
 
-            tokio::spawn(async move {
+            let join_handle = tokio::spawn(async move {
                 // Only perform membership operations when we lead all groups.
                 let leader_for_all_groups = meta.is_leader()
                     && user_data_shards.iter().all(|g| g.is_leader())
@@ -431,9 +465,7 @@ impl RaftManager {
 
                 log::info!("Waiting for {} peer nodes to come online...", peers.len());
 
-                const MAX_RETRIES: u32 = 60; // 60 retries × 0.5s initial = ~30s max wait
-                const INITIAL_DELAY_MS: u64 = 500;
-                const MAX_DELAY_MS: u64 = 2000;
+                // Peer wait configuration from RaftManagerConfig
 
                 for peer in &peers {
                     log::info!(
@@ -445,9 +477,9 @@ impl RaftManager {
                     // Wait for the peer's RPC endpoint to respond
                     match RaftManager::wait_for_peer_online(
                         &peer.rpc_addr,
-                        MAX_RETRIES,
-                        INITIAL_DELAY_MS,
-                        MAX_DELAY_MS,
+                        peer_wait_max_retries,
+                        peer_wait_initial_delay_ms,
+                        peer_wait_max_delay_ms,
                     )
                     .await
                     {
@@ -491,9 +523,33 @@ impl RaftManager {
                 }
                 log::info!("Cluster formation complete");
             });
+
+            let mut guard = self.cluster_init_handle.write();
+            *guard = Some(join_handle);
         }
 
         Ok(())
+    }
+
+    /// Wait for the cluster initialization background task to complete
+    ///
+    /// This allows checking if all peers have joined the cluster.
+    /// This consumes the wait handle - subsequent calls will return immediately.
+    pub async fn wait_for_cluster_formation(&self, timeout: Duration) -> Result<(), RaftError> {
+        let handle = {
+            let mut guard = self.cluster_init_handle.write();
+            guard.take()
+        };
+
+        if let Some(handle) = handle {
+            match tokio::time::timeout(timeout, handle).await {
+                Ok(Ok(_)) => Ok(()),
+                Ok(Err(e)) => Err(RaftError::Internal(format!("Cluster init task failed: {}", e))),
+                Err(_) => Err(RaftError::Timeout(timeout)),
+            }
+        } else {
+            Ok(())
+        }
     }
 
     /// Wait for a peer node to be online and ready to join the cluster
@@ -570,30 +626,6 @@ impl RaftManager {
         // The node's own metadata is populated when it initializes via with_auto_metadata
         let node = KalamNode::new(rpc_addr.clone(), api_addr.clone());
 
-        async fn add_learner_and_wait<SM: KalamStateMachine + Send + Sync + 'static>(
-            group: &Arc<RaftGroup<SM>>,
-            node_id_u64: u64,
-            node: &KalamNode,
-            timeout: Duration,
-        ) -> Result<(), RaftError> {
-            if !group.is_leader() {
-                return Err(RaftError::not_leader(
-                    group.group_id().to_string(),
-                    group.current_leader(),
-                ));
-            }
-            group.add_learner(node_id_u64, node.clone()).await?;
-            group.wait_for_learner_catchup(node_id_u64, timeout).await?;
-            Ok(())
-        }
-
-        async fn promote_learner<SM: KalamStateMachine + Send + Sync + 'static>(
-            group: &Arc<RaftGroup<SM>>,
-            node_id_u64: u64,
-        ) -> Result<(), RaftError> {
-            group.promote_learner(node_id_u64).await
-        }
-
         // Add to all groups as learner first
         log::info!(
             "[CLUSTER] Adding node {} as learner to all {} Raft groups...",
@@ -635,6 +667,29 @@ impl RaftManager {
         api_addr: String,
     ) -> Result<(), RaftError> {
         let node_id_u64 = node_id.as_u64();
+
+        // Validate inputs
+        if node_id_u64 == 0 {
+            return Err(RaftError::InvalidState("node_id must be > 0".to_string()));
+        }
+        if rpc_addr.trim().is_empty() {
+            return Err(RaftError::InvalidState("rpc_addr cannot be empty".to_string()));
+        }
+        if api_addr.trim().is_empty() {
+            return Err(RaftError::InvalidState("api_addr cannot be empty".to_string()));
+        }
+
+        // Check if node already exists in the cluster by checking meta group voters
+        if let Some(metrics) = self.meta.metrics() {
+            let voters: Vec<u64> = metrics.membership_config.voter_ids().collect();
+            if voters.contains(&node_id_u64) {
+                return Err(RaftError::InvalidState(format!(
+                    "Node {} already exists in cluster",
+                    node_id
+                )));
+            }
+        }
+
         log::info!(
             "[CLUSTER] Node {} joining cluster (rpc={}, api={})",
             node_id,
@@ -644,30 +699,6 @@ impl RaftManager {
         // Note: Node metadata is not available during add_learner (only rpc/api addrs)
         // The node's own metadata is populated when it initializes via with_auto_metadata
         let node = KalamNode::new(rpc_addr.clone(), api_addr.clone());
-
-        async fn add_learner_and_wait<SM: KalamStateMachine + Send + Sync + 'static>(
-            group: &Arc<RaftGroup<SM>>,
-            node_id_u64: u64,
-            node: &KalamNode,
-            timeout: Duration,
-        ) -> Result<(), RaftError> {
-            if !group.is_leader() {
-                return Err(RaftError::not_leader(
-                    group.group_id().to_string(),
-                    group.current_leader(),
-                ));
-            }
-            group.add_learner(node_id_u64, node.clone()).await?;
-            group.wait_for_learner_catchup(node_id_u64, timeout).await?;
-            Ok(())
-        }
-
-        async fn promote_learner<SM: KalamStateMachine + Send + Sync + 'static>(
-            group: &Arc<RaftGroup<SM>>,
-            node_id_u64: u64,
-        ) -> Result<(), RaftError> {
-            group.promote_learner(node_id_u64).await
-        }
 
         // Add to all groups as learner first
         log::info!(

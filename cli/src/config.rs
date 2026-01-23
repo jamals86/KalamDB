@@ -6,7 +6,7 @@
 //!
 //! ```toml
 //! [server]
-//! url = "http://localhost:8080"  # KalamDB server URL
+//! timeout = 30                   # Request timeout in seconds
 //! http_version = "http2"         # HTTP version: "http1", "http2", "auto"
 //!
 //! [connection]
@@ -49,9 +49,6 @@ pub struct CLIConfiguration {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
-    /// Server URL (e.g., http://localhost:3000)
-    pub url: Option<String>,
-
     /// Request timeout in seconds
     #[serde(default = "default_timeout")]
     pub timeout: u64,
@@ -158,7 +155,6 @@ impl Default for CLIConfiguration {
     fn default() -> Self {
         Self {
             server: Some(ServerConfig {
-                url: Some("http://localhost:8080".to_string()),
                 timeout: default_timeout(),
                 max_retries: default_retries(),
                 http_version: default_http_version(),
@@ -197,14 +193,23 @@ pub fn default_config_path() -> PathBuf {
 impl CLIConfiguration {
     /// Load configuration from file
     ///
-    /// Returns default configuration if file doesn't exist.
+    /// Creates a default configuration file if it doesn't exist.
     pub fn load(path: &Path) -> Result<Self> {
         let expanded_path = expand_config_path(path);
         let path = &expanded_path;
 
         if !path.exists() {
-            // Return default configuration if file doesn't exist
-            return Ok(Self::default());
+            // Create default configuration
+            let default_config = Self::default();
+            
+            // Try to save default config to disk
+            // If this fails (e.g., permissions), we'll still return the default config
+            // but log the warning
+            if let Err(e) = default_config.save(path) {
+                eprintln!("Warning: Could not create default config file at {}: {}", path.display(), e);
+            }
+            
+            return Ok(default_config);
         }
 
         let contents = std::fs::read_to_string(path).map_err(|e| {
@@ -275,7 +280,6 @@ impl CLIConfiguration {
 
     pub fn resolved_server(&self) -> ServerConfig {
         self.server.clone().unwrap_or(ServerConfig {
-            url: None,
             timeout: default_timeout(),
             max_retries: default_retries(),
             http_version: default_http_version(),
@@ -337,9 +341,9 @@ mod tests {
     fn test_default_config() {
         let config = CLIConfiguration::default();
         assert!(config.server.is_some());
-        assert_eq!(config.server.as_ref().unwrap().url, Some("http://localhost:8080".to_string()));
         // HTTP/2 should be the default
         assert_eq!(config.server.as_ref().unwrap().http_version, "http2");
+        assert_eq!(config.server.as_ref().unwrap().timeout, 30);
     }
 
     #[test]
@@ -358,7 +362,7 @@ mod tests {
         let config = CLIConfiguration::default();
         let toml = toml::to_string(&config).unwrap();
         assert!(toml.contains("[server]"));
-        assert!(toml.contains("url"));
+        assert!(toml.contains("timeout"));
         assert!(toml.contains("http_version"));
         assert!(toml.contains("[connection]"));
         assert!(toml.contains("auto_reconnect"));
@@ -417,5 +421,62 @@ mod tests {
         let options = config.to_connection_options();
         // 0 should be converted to None (unlimited)
         assert_eq!(options.max_reconnect_attempts, None);
+    }
+
+    #[test]
+    fn test_config_file_auto_creation() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        // Create a temporary directory
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        // Verify file doesn't exist initially
+        assert!(!config_path.exists());
+
+        // Load config from non-existent path (should create it)
+        let config = CLIConfiguration::load(&config_path).unwrap();
+
+        // Verify default values
+        assert_eq!(config.server.as_ref().unwrap().http_version, "http2");
+        assert_eq!(config.server.as_ref().unwrap().timeout, 30);
+
+        // Verify file was created
+        assert!(config_path.exists(), "Config file should have been created");
+
+        // Verify file contents can be parsed
+        let contents = fs::read_to_string(&config_path).unwrap();
+        assert!(contents.contains("[server]"));
+        assert!(contents.contains("timeout"));
+        assert!(contents.contains("[connection]"));
+        assert!(contents.contains("[ui]"));
+    }
+
+    #[test]
+    fn test_config_file_auto_creation_with_nested_dirs() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        // Create a temporary directory
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("nested").join("dirs").join("config.toml");
+
+        // Verify directory structure doesn't exist
+        assert!(!config_path.parent().unwrap().exists());
+
+        // Load config from non-existent path (should create directories and file)
+        let config = CLIConfiguration::load(&config_path).unwrap();
+
+        // Verify default values
+        assert!(config.server.is_some());
+
+        // Verify directory structure was created
+        assert!(config_path.parent().unwrap().exists());
+        assert!(config_path.exists(), "Config file should have been created");
+
+        // Verify file contents
+        let contents = fs::read_to_string(&config_path).unwrap();
+        assert!(contents.contains("[server]"));
     }
 }

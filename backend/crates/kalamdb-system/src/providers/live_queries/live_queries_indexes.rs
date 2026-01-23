@@ -18,6 +18,7 @@
 //! - No extra write overhead from maintaining a secondary index
 
 use crate::StoragePartition;
+use kalamdb_commons::storage::Partition;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::{LiveQueryId, TableId};
 use kalamdb_store::IndexDefinition;
@@ -36,8 +37,8 @@ pub const TABLE_ID_INDEX: usize = 0;
 pub struct TableIdIndex;
 
 impl IndexDefinition<LiveQueryId, LiveQuery> for TableIdIndex {
-    fn partition(&self) -> &str {
-        StoragePartition::SystemLiveQueriesTableIdx.name()
+    fn partition(&self) -> Partition {
+        Partition::new(StoragePartition::SystemLiveQueriesTableIdx.name())
     }
 
     fn indexed_columns(&self) -> Vec<&str> {

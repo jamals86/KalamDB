@@ -2,7 +2,7 @@
 //!
 //! Verifies role-based access control behavior using SQL executor paths.
 
-use super::test_support::{fixtures, QueryResultTestExt, TestServer};
+use super::test_support::{fixtures, TestServer};
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::models::{Role, UserId};
 

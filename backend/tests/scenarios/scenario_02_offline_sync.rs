@@ -67,10 +67,11 @@ async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
     // =========================================================
     let user_count = 10;
     let items_per_user = 50; // Reduced from 1200 for faster testing
+    let user_prefix = unique_table("user");
 
     for user_idx in 0..user_count {
-        let user_id = format!("user_{}", user_idx);
-        let client = create_user_and_client(server, &user_id, &Role::User).await?;
+        let username = format!("{}_{}", user_prefix, user_idx);
+        let client = create_user_and_client(server, &username, &Role::User).await?;
 
         for i in 0..items_per_user {
             let item_id = user_idx * 10000 + i;
@@ -100,7 +101,8 @@ async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
             let ns = ns.clone();
             let server_base = server.base_url().to_string();
             let success_count = Arc::clone(&sync_success_count);
-            let token = server.create_jwt_token(&UserName::new(format!("user_{}", user_idx)));
+            let username = format!("{}_{}", user_prefix, user_idx);
+            let token = server.create_jwt_token(&UserName::new(username));
 
             tokio::spawn(async move {
                 // Create client for this user

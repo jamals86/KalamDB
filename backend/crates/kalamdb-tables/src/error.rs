@@ -6,8 +6,14 @@ pub enum TableError {
     #[error("Storage error: {0}")]
     Storage(String),
 
+    #[error("Already exists: {0}")]
+    AlreadyExists(String),
+
     #[error("Not found: {0}")]
     NotFound(String),
+
+    #[error("Table not found: {0}")]
+    TableNotFound(String),
 
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
@@ -34,6 +40,9 @@ pub enum TableError {
 /// Result type for table operations
 pub type Result<T> = std::result::Result<T, TableError>;
 
+/// Compatibility alias used by moved provider code.
+pub type KalamDbError = TableError;
+
 // Convert from kalamdb_store::StorageError
 impl From<kalamdb_store::StorageError> for TableError {
     fn from(err: kalamdb_store::StorageError) -> Self {
@@ -52,5 +61,12 @@ impl From<kalamdb_filestore::FilestoreError> for TableError {
 impl From<serde_json::Error> for TableError {
     fn from(err: serde_json::Error) -> Self {
         TableError::Serialization(err.to_string())
+    }
+}
+
+// Convert from kalamdb_system::SystemError
+impl From<kalamdb_system::SystemError> for TableError {
+    fn from(err: kalamdb_system::SystemError) -> Self {
+        TableError::InvalidOperation(err.to_string())
     }
 }

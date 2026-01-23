@@ -5,7 +5,6 @@
 //! - DataFusion LogicalPlan placeholder replacement ($1, $2, ...)
 //! - ScalarValue type checking
 
-use arrow::array::Array;
 use datafusion::common::ParamValues;
 use datafusion::logical_expr::LogicalPlan;
 use datafusion::scalar::ScalarValue;
@@ -45,51 +44,7 @@ pub fn validate_params(params: &[ScalarValue]) -> Result<(), KalamDbError> {
 
 /// Estimate the memory size of a ScalarValue
 fn estimate_scalar_value_size(value: &ScalarValue) -> usize {
-    match value {
-        ScalarValue::Null => 0,
-        ScalarValue::Boolean(_) => 1,
-        ScalarValue::Int8(_) => 1,
-        ScalarValue::Int16(_) => 2,
-        ScalarValue::Int32(_) => 4,
-        ScalarValue::Int64(_) => 8,
-        ScalarValue::UInt8(_) => 1,
-        ScalarValue::UInt16(_) => 2,
-        ScalarValue::UInt32(_) => 4,
-        ScalarValue::UInt64(_) => 8,
-        ScalarValue::Float32(_) => 4,
-        ScalarValue::Float64(_) => 8,
-        ScalarValue::Utf8(s) | ScalarValue::LargeUtf8(s) => {
-            s.as_ref().map(|s| s.len()).unwrap_or(0)
-        },
-        ScalarValue::Binary(b)
-        | ScalarValue::LargeBinary(b)
-        | ScalarValue::FixedSizeBinary(_, b) => b.as_ref().map(|b| b.len()).unwrap_or(0),
-        // ScalarValue::List(arr) | ScalarValue::LargeList(arr) | ScalarValue::FixedSizeList(arr) => {
-        //     // Rough estimate: 64 bytes per array element
-        //     arr.len() * 64
-        // }
-        ScalarValue::Date32(_) | ScalarValue::Date64(_) => 8,
-        ScalarValue::Time32Second(_) | ScalarValue::Time32Millisecond(_) => 4,
-        ScalarValue::Time64Microsecond(_) | ScalarValue::Time64Nanosecond(_) => 8,
-        ScalarValue::TimestampSecond(_, _)
-        | ScalarValue::TimestampMillisecond(_, _)
-        | ScalarValue::TimestampMicrosecond(_, _)
-        | ScalarValue::TimestampNanosecond(_, _) => 8,
-        ScalarValue::IntervalYearMonth(_) => 4,
-        ScalarValue::IntervalDayTime(_) => 8,
-        ScalarValue::IntervalMonthDayNano(_) => 16,
-        ScalarValue::DurationSecond(_)
-        | ScalarValue::DurationMillisecond(_)
-        | ScalarValue::DurationMicrosecond(_)
-        | ScalarValue::DurationNanosecond(_) => 8,
-        ScalarValue::Struct(arr) => {
-            // Rough estimate: sum of all field sizes
-            arr.len() * 64
-        },
-        ScalarValue::Decimal128(_, _, _) | ScalarValue::Decimal256(_, _, _) => 16,
-        // Conservative fallback for any new types
-        _ => 64,
-    }
+    kalamdb_commons::estimate_scalar_value_size(value)
 }
 
 /// Replace placeholders ($1, $2, ...) in LogicalPlan with ScalarValue literals

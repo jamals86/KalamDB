@@ -1,8 +1,9 @@
 //! Namespace validation tests over the real HTTP SQL API.
 
+use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
 use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::UserName;
+use kalamdb_commons::{Role, UserName};
 use tokio::time::Duration;
 
 #[tokio::test]
@@ -11,24 +12,30 @@ async fn test_namespace_validation_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
     // CREATE TABLE should fail when namespace is missing.
     {
+        let missing_ns = unique_namespace("missing_ns");
         let response = server
             .execute_sql(
-                r#"CREATE TABLE missing_ns.audit_log (
+                &format!(
+                    r#"CREATE TABLE {}.audit_log (
                             id INT PRIMARY KEY,
                             action TEXT
                         )"#,
+                    missing_ns
+                ),
             )
             .await?;
 
         assert_eq!(response.status, ResponseStatus::Error);
         let error = response.error.expect("Expected an error payload");
         assert!(
-            error.message.contains("missing_ns"),
+            error.message.contains(&missing_ns),
             "Error should mention namespace: {:?}",
             error
         );
         assert!(
-            error.message.contains("Create it first with CREATE NAMESPACE missing_ns"),
+            error
+                .message
+                .contains(&format!("Create it first with CREATE NAMESPACE {}", missing_ns)),
             "Error should include recovery guidance: {:?}",
             error
         );
@@ -36,110 +43,126 @@ async fn test_namespace_validation_over_http() -> anyhow::Result<()> {
 
     // Once namespace exists, CREATE TABLE should work.
     {
-        let create_sql = r#"CREATE TABLE audit.trail (
+        let audit_ns = unique_namespace("audit");
+        let create_sql = format!(
+            r#"CREATE TABLE {}.trail (
                     id INT PRIMARY KEY,
                     actor TEXT
-                )"#;
+                )"#,
+            audit_ns
+        );
 
-        let initial = server.execute_sql(create_sql).await?;
+        let initial = server.execute_sql(&create_sql).await?;
         assert_eq!(initial.status, ResponseStatus::Error);
 
-        let ns_response = server.execute_sql("CREATE NAMESPACE audit").await?;
+        let ns_response = server
+            .execute_sql(&format!("CREATE NAMESPACE {}", audit_ns))
+            .await?;
         assert_eq!(ns_response.status, ResponseStatus::Success);
 
-        let retry = server.execute_sql(create_sql).await?;
+        let retry = server.execute_sql(&create_sql).await?;
         assert_eq!(retry.status, ResponseStatus::Success);
     }
 
     // USER table namespace validation (real auth required).
     {
-        let user = "user123";
+        let workspace_ns = unique_namespace("workspace");
+        let user = unique_table("user123");
         let password = "UserPass123!";
-        let resp = server
-            .execute_sql(&format!(
-                "CREATE USER '{}' WITH PASSWORD '{}' ROLE 'user'",
-                user, password
-            ))
-            .await?;
-        assert_eq!(resp.status, ResponseStatus::Success);
+        let _ = ensure_user_exists(server, &user, password, &Role::User).await?;
 
-        let auth = HttpTestServer::basic_auth_header(&UserName::new(user), password);
+        let auth = HttpTestServer::basic_auth_header(&UserName::new(&user), password);
 
-        let sql = r#"CREATE TABLE workspace.notes (
+        let sql = format!(
+            r#"CREATE TABLE {}.notes (
                     id INT PRIMARY KEY,
                     content TEXT
                 ) WITH (
                     TYPE = 'USER'
-                )"#;
+                )"#,
+            workspace_ns
+        );
 
-        let response = server.execute_sql_with_auth(sql, &auth).await?;
+        let response = server.execute_sql_with_auth(&sql, &auth).await?;
         assert_eq!(response.status, ResponseStatus::Error);
 
-        let ns_resp = server.execute_sql("CREATE NAMESPACE workspace").await?;
+        let ns_resp = server
+            .execute_sql(&format!("CREATE NAMESPACE {}", workspace_ns))
+            .await?;
         assert_eq!(ns_resp.status, ResponseStatus::Success);
 
-        let retry = server.execute_sql_with_auth(sql, &auth).await?;
+        let retry = server.execute_sql_with_auth(&sql, &auth).await?;
         assert_eq!(retry.status, ResponseStatus::Success);
     }
 
     // Shared table namespace validation.
     {
+        let ops_ns = unique_namespace("ops");
         let response = server
-            .execute_sql(
-                r#"CREATE TABLE ops.config (
+            .execute_sql(&format!(
+                r#"CREATE TABLE {}.config (
                             setting TEXT,
                             value TEXT
                         ) WITH (
                             TYPE = 'SHARED'
                         )"#,
-            )
+                ops_ns
+            ))
             .await?;
         assert_eq!(response.status, ResponseStatus::Error);
 
-        let ns_resp = server.execute_sql("CREATE NAMESPACE ops").await?;
+        let ns_resp = server
+            .execute_sql(&format!("CREATE NAMESPACE {}", ops_ns))
+            .await?;
         assert_eq!(ns_resp.status, ResponseStatus::Success);
 
         let retry = server
-            .execute_sql(
-                r#"CREATE TABLE ops.config (
+            .execute_sql(&format!(
+                r#"CREATE TABLE {}.config (
                             setting TEXT PRIMARY KEY,
                             value TEXT
                         ) WITH (
                             TYPE = 'SHARED'
                         )"#,
-            )
+                ops_ns
+            ))
             .await?;
         assert_eq!(retry.status, ResponseStatus::Success);
     }
 
     // Stream table namespace validation.
     {
+        let telemetry_ns = unique_namespace("telemetry");
         let response = server
-            .execute_sql(
-                r#"CREATE TABLE telemetry.events (
+            .execute_sql(&format!(
+                r#"CREATE TABLE {}.events (
                             event_id TEXT,
                             payload TEXT
                         ) WITH (
                             TYPE = 'STREAM',
                             TTL_SECONDS = 60
                         )"#,
-            )
+                telemetry_ns
+            ))
             .await?;
         assert_eq!(response.status, ResponseStatus::Error);
 
-        let ns_resp = server.execute_sql("CREATE NAMESPACE telemetry").await?;
+        let ns_resp = server
+            .execute_sql(&format!("CREATE NAMESPACE {}", telemetry_ns))
+            .await?;
         assert_eq!(ns_resp.status, ResponseStatus::Success);
 
         let retry = server
-            .execute_sql(
-                r#"CREATE TABLE telemetry.events (
+            .execute_sql(&format!(
+                r#"CREATE TABLE {}.events (
                             event_id TEXT,
                             payload TEXT
                         ) WITH (
                             TYPE = 'STREAM',
                             TTL_SECONDS = 60
                         )"#,
-            )
+                telemetry_ns
+            ))
             .await?;
         assert_eq!(retry.status, ResponseStatus::Success);
     }

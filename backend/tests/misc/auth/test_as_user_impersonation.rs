@@ -7,7 +7,7 @@
 //! - Audit logging: Both actor and subject logged
 //! - Performance: Permission checks complete in <10ms
 
-use super::test_support::{QueryResultTestExt, TestServer};
+use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
 

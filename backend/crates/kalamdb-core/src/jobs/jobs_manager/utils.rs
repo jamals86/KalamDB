@@ -184,7 +184,7 @@ impl JobsManager {
         let now = Utc::now();
 
         for node in job_nodes {
-            if matches!(node.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled) {
+            if matches!(node.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
                 continue;
             }
 

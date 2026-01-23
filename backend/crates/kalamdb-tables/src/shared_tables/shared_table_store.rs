@@ -18,6 +18,7 @@
 use crate::common::{ensure_partition, new_indexed_store_with_pk, partition_name};
 use kalamdb_commons::ids::{SeqId, SharedTableRowId};
 use kalamdb_commons::models::rows::Row;
+use kalamdb_commons::storage::Partition;
 use kalamdb_commons::TableId;
 use kalamdb_store::entity_store::{EntityStore, KSerializable};
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
@@ -56,7 +57,7 @@ impl KSerializable for SharedTableRow {}
 #[derive(Clone)]
 pub struct SharedTableStore {
     backend: Arc<dyn StorageBackend>,
-    partition: String,
+    partition: Partition,
 }
 
 impl SharedTableStore {
@@ -65,7 +66,7 @@ impl SharedTableStore {
     /// # Arguments
     /// * `backend` - Storage backend (RocksDB or mock)
     /// * `partition` - Partition name (e.g., "shared_default:products")
-    pub fn new(backend: Arc<dyn StorageBackend>, partition: impl Into<String>) -> Self {
+    pub fn new(backend: Arc<dyn StorageBackend>, partition: impl Into<Partition>) -> Self {
         Self {
             backend,
             partition: partition.into(),
@@ -79,8 +80,8 @@ impl EntityStore<SharedTableRowId, SharedTableRow> for SharedTableStore {
         &self.backend
     }
 
-    fn partition(&self) -> &str {
-        &self.partition
+    fn partition(&self) -> Partition {
+        self.partition.clone()
     }
 }
 
@@ -106,7 +107,7 @@ pub fn new_shared_table_store(
         kalamdb_commons::constants::ColumnFamilyNames::SHARED_TABLE_PREFIX,
         table_id,
     );
-    ensure_partition(&backend, &name);
+    ensure_partition(&backend, name.clone());
 
     SharedTableStore::new(backend, name)
 }
@@ -133,14 +134,14 @@ pub fn new_indexed_shared_table_store(
         kalamdb_commons::constants::ColumnFamilyNames::SHARED_TABLE_PREFIX,
         table_id,
     );
-    ensure_partition(&backend, &name);
+    ensure_partition(&backend, name.clone());
 
     // Create PK index
     let pk_index = create_shared_table_pk_index(table_id, pk_field_name);
 
     // Create index partition
     let index_partition_name = format!("shared_{}_pk_idx", table_id);
-    ensure_partition(&backend, &index_partition_name);
+    ensure_partition(&backend, index_partition_name);
 
     new_indexed_store_with_pk(Arc::clone(&backend), name, vec![pk_index])
 }
@@ -173,7 +174,7 @@ mod tests {
     #[test]
     fn test_shared_table_store_create() {
         let store = create_test_store();
-        assert!(store.partition().contains("shared_"));
+        assert!(store.partition().name().contains("shared_"));
     }
 
     #[test]
@@ -212,7 +213,7 @@ mod tests {
         }
 
         // Scan all
-        let all_rows = store.scan_all(None, None, None).unwrap();
+        let all_rows = store.scan_all_typed(None, None, None).unwrap();
         assert_eq!(all_rows.len(), 5);
     }
 }

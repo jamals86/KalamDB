@@ -24,17 +24,19 @@ use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::User;
 use kalamdb_commons::RecordBatchBuilder;
-use kalamdb_commons::{StorageKey, UserId};
+use kalamdb_commons::UserId;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
 use std::sync::Arc;
+
+use crate::providers::base::SystemTableScan;
 
 /// Type alias for the indexed users store
 pub type UsersStore = IndexedEntityStore<UserId, User>;
@@ -221,7 +223,7 @@ impl UsersTableProvider {
     }
 
     /// Helper to create RecordBatch from users
-    fn create_batch(&self, users: Vec<(Vec<u8>, User)>) -> Result<RecordBatch, SystemError> {
+    fn create_batch(&self, users: Vec<(UserId, User)>) -> Result<RecordBatch, SystemError> {
         // Extract data into vectors
         let mut user_ids = Vec::with_capacity(users.len());
         let mut usernames = Vec::with_capacity(users.len());
@@ -277,12 +279,7 @@ impl UsersTableProvider {
 
     /// Scan all users and return as RecordBatch
     pub fn scan_all_users(&self) -> Result<RecordBatch, SystemError> {
-        let iter = self.store.scan_iterator(None, None)?;
-        let mut users: Vec<(Vec<u8>, User)> = Vec::new();
-        for item in iter {
-            let (id, user) = item?;
-            users.push((id.storage_key(), user));
-        }
+        let users = self.store.scan_all_typed(None, None, None)?;
         self.create_batch(users)
     }
 }
@@ -298,6 +295,32 @@ impl SystemTableProviderExt for UsersTableProvider {
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {
         self.scan_all_users()
+    }
+}
+
+impl SystemTableScan<UserId, User> for UsersTableProvider {
+    fn store(&self) -> &IndexedEntityStore<UserId, User> {
+        &self.store
+    }
+
+    fn table_name(&self) -> &str {
+        UsersTableSchema::table_name()
+    }
+
+    fn primary_key_column(&self) -> &str {
+        "user_id"
+    }
+
+    fn arrow_schema(&self) -> SchemaRef {
+        UsersTableSchema::schema()
+    }
+
+    fn parse_key(&self, value: &str) -> Option<UserId> {
+        Some(UserId::new(value))
+    }
+
+    fn create_batch_from_pairs(&self, pairs: Vec<(UserId, User)>) -> Result<RecordBatch, SystemError> {
+        self.create_batch(pairs)
     }
 }
 
@@ -326,81 +349,13 @@ impl TableProvider for UsersTableProvider {
 
     async fn scan(
         &self,
-        _state: &dyn datafusion::catalog::Session,
+        state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::datasource::MemTable;
-        use datafusion::logical_expr::Operator;
-        use datafusion::scalar::ScalarValue;
-
-        let mut start_key = None;
-        let mut prefix = None;
-
-        // Extract start_key/prefix from filters
-        for expr in filters {
-            if let Expr::BinaryExpr(binary) = expr {
-                if let Expr::Column(col) = binary.left.as_ref() {
-                    if let Expr::Literal(val, _) = binary.right.as_ref() {
-                        if col.name == "user_id" {
-                            if let ScalarValue::Utf8(Some(s)) = val {
-                                match binary.op {
-                                    Operator::Eq => {
-                                        prefix = Some(UserId::new(s));
-                                    },
-                                    Operator::Gt | Operator::GtEq => {
-                                        start_key = Some(UserId::new(s));
-                                    },
-                                    _ => {},
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let schema = UsersTableSchema::schema();
-
-        // Prefer secondary index scans when possible (auto-picks from store.indexes()).
-        // Falls back to main-partition scan with (user_id) prefix/start_key.
-        let users: Vec<(Vec<u8>, User)> = if let Some((index_idx, index_prefix)) =
-            self.store.find_best_index_for_filters(filters)
-        {
-            log::debug!(
-                "[system.users] Using secondary index {} for filters: {:?}",
-                index_idx,
-                filters
-            );
-            self.store
-                .scan_by_index(index_idx, Some(&index_prefix), limit)
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to scan users by index: {}", e))
-                })?
-                .into_iter()
-                .map(|(id, user)| (id.storage_key(), user))
-                .collect()
-        } else {
-            log::debug!(
-                "[system.users] Full table scan (no index match) for filters: {:?}",
-                filters
-            );
-            self.store
-                .scan_all(limit, prefix.as_ref(), start_key.as_ref())
-                .map_err(|e| DataFusionError::Execution(format!("Failed to scan users: {}", e)))?
-        };
-
-        let batch = self.create_batch(users).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build users batch: {}", e))
-        })?;
-
-        let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-
-        // Always pass through projection and filters to MemTable - it will handle them
-        table.scan(_state, projection, filters, limit).await
+        // Use the common SystemTableScan implementation
+        self.base_system_scan(state, projection, filters, limit).await
     }
 }
 

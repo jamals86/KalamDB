@@ -5,19 +5,20 @@
 
 use super::{new_live_queries_store, LiveQueriesStore, LiveQueriesTableSchema};
 use crate::error::{SystemError, SystemResultExt};
+use crate::providers::base::SystemTableScan;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::ConnectionId;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::types::LiveQueryStatus;
 use kalamdb_commons::RecordBatchBuilder;
-use kalamdb_commons::{LiveQueryId, NodeId, StorageKey, TableId, UserId};
+use kalamdb_commons::{LiveQueryId, NodeId, TableId, UserId};
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -163,7 +164,7 @@ impl LiveQueriesTableProvider {
 
     /// List all live queries
     pub fn list_live_queries(&self) -> Result<Vec<LiveQuery>, SystemError> {
-        let live_queries = self.store.scan_all(None, None, None)?;
+        let live_queries = self.store.scan_all_typed(None, None, None)?;
         Ok(live_queries.into_iter().map(|(_, lq)| lq).collect())
     }
 
@@ -219,7 +220,7 @@ impl LiveQueriesTableProvider {
 
     /// Delete live queries by user ID and connection ID using efficient primary key prefix scan.
     ///
-    /// PERFORMANCE: Uses prefix scan on primary key format `{user_id}-{connection_id}-`.
+    /// PERFORMANCE: Uses storekey prefix scan on (user_id, connection_id).
     /// With max ~10 live queries per user, this is effectively O(1).
     /// No secondary index needed - saves write overhead on every insert/update/delete.
     pub fn delete_by_connection_id(
@@ -227,18 +228,14 @@ impl LiveQueriesTableProvider {
         user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<(), SystemError> {
-        // Create prefix key for scanning: "user_id-connection_id-"
-        let prefix = LiveQueryId::user_connection_prefix(user_id, connection_id);
-        let prefix_bytes = prefix.as_bytes();
+        // Create prefix key for scanning
+        let prefix_bytes = LiveQueryId::user_connection_prefix(user_id, connection_id);
 
-        // Scan all keys with this prefix (max ~10 per user)
-        let results =
-            self.store.scan_limited_with_prefix_and_start(Some(prefix_bytes), None, 100)?;
+        // Scan all keys with this prefix (max ~10 per user) - using raw bytes for prefix
+        let results = self.store.scan_with_raw_prefix(&prefix_bytes, None, 100)?;
 
         // Delete each matching key (uses atomic WriteBatch internally)
-        for (key_bytes, _) in results {
-            let key = LiveQueryId::from_storage_key(&key_bytes)
-                .map_err(|e| SystemError::InvalidOperation(format!("Invalid key: {}", e)))?;
+        for (key, _) in results {
             self.store.delete(&key)?;
         }
         Ok(())
@@ -246,30 +243,27 @@ impl LiveQueriesTableProvider {
 
     /// Async version of `delete_by_connection_id()` - offloads to blocking thread pool.
     ///
-    /// Uses efficient primary key prefix scan on `{user_id}-{connection_id}-`.
+    /// Uses efficient primary key prefix scan on (user_id, connection_id).
     pub async fn delete_by_connection_id_async(
         &self,
         user_id: &UserId,
         connection_id: &ConnectionId,
     ) -> Result<(), SystemError> {
-        // Create prefix key for scanning: "user_id-connection_id-"
-        let prefix = LiveQueryId::user_connection_prefix(user_id, connection_id);
-        let prefix_bytes = prefix.as_bytes().to_vec();
+        // Create prefix key for scanning
+        let prefix_bytes = LiveQueryId::user_connection_prefix(user_id, connection_id);
 
-        // Scan all keys with this prefix (async)
-        let results: Vec<(Vec<u8>, LiveQuery)> = {
+        // Scan all keys with this prefix (async) - using raw bytes for prefix
+        let results: Vec<(LiveQueryId, LiveQuery)> = {
             let store = self.store.clone();
             tokio::task::spawn_blocking(move || {
-                store.scan_limited_with_prefix_and_start(Some(&prefix_bytes), None, 100)
+                store.scan_with_raw_prefix(&prefix_bytes, None, 100)
             })
             .await
-            .into_system_error("Join error")??
+            .into_system_error("Join error")??  
         };
 
         // Delete each matching key asynchronously
-        for (key_bytes, _) in results {
-            let key = LiveQueryId::from_storage_key(&key_bytes)
-                .map_err(|e| SystemError::InvalidOperation(format!("Invalid key: {}", e)))?;
+        for (key, _) in results {
             self.delete_live_query_async(&key).await?;
         }
         Ok(())
@@ -281,11 +275,9 @@ impl LiveQueriesTableProvider {
     /// Live queries don't persist across server restarts since WebSocket connections
     /// are lost on restart.
     pub fn clear_all(&self) -> Result<usize, SystemError> {
-        let all = self.store.scan_all(None, None, None)?;
+        let all = self.store.scan_all_typed(None, None, None)?;
         let count = all.len();
-        for (key_bytes, _) in all {
-            let key = LiveQueryId::from_storage_key(&key_bytes)
-                .map_err(|e| SystemError::InvalidOperation(format!("Invalid key: {}", e)))?;
+        for (key, _) in all {
             self.store.delete(&key)?;
         }
         Ok(count)
@@ -294,86 +286,28 @@ impl LiveQueriesTableProvider {
     /// Async version of `clear_all()`.
     pub async fn clear_all_async(&self) -> Result<usize, SystemError> {
         let store = self.store.clone();
-        let all: Vec<(Vec<u8>, LiveQuery)> =
-            tokio::task::spawn_blocking(move || store.scan_all(None, None, None))
+        let all: Vec<(LiveQueryId, LiveQuery)> =
+            tokio::task::spawn_blocking(move || store.scan_all_typed(None, None, None))
                 .await
                 .into_system_error("Join error")??;
 
         let count = all.len();
-        for (key_bytes, _) in all {
-            let key = LiveQueryId::from_storage_key(&key_bytes)
-                .map_err(|e| SystemError::InvalidOperation(format!("Invalid key: {}", e)))?;
+        for (key, _) in all {
             self.delete_live_query_async(&key).await?;
         }
         Ok(count)
     }
 
-    /// Increment the changes counter for a live query
-    pub fn increment_changes(&self, live_id: &str, timestamp: i64) -> Result<(), SystemError> {
-        let mut live_query = self
-            .get_live_query(live_id)?
-            .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
-
-        live_query.changes += 1;
-        live_query.last_update = timestamp;
-
-        self.update_live_query(live_query)?;
-        Ok(())
-    }
-
-    /// Async version of `increment_changes()` - offloads to blocking thread pool.
-    ///
-    /// Use this in async contexts to avoid blocking the Tokio runtime.
-    pub async fn increment_changes_async(
-        &self,
-        live_id: &str,
-        timestamp: i64,
-    ) -> Result<(), SystemError> {
-        let mut live_query = self
-            .get_live_query_async(live_id)
-            .await?
-            .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
-
-        live_query.changes += 1;
-        live_query.last_update = timestamp;
-
-        self.update_live_query_async(live_query).await?;
-        Ok(())
-    }
-
-    /// Increment the changes counter by a delta (batched variant).
-    pub async fn increment_changes_by_async(
-        &self,
-        live_id: &str,
-        delta: u64,
-        timestamp: i64,
-    ) -> Result<(), SystemError> {
-        if delta == 0 {
-            return Ok(());
-        }
-
-        let mut live_query = self
-            .get_live_query_async(live_id)
-            .await?
-            .ok_or_else(|| SystemError::NotFound(format!("Live query not found: {}", live_id)))?;
-
-        live_query.changes = live_query.changes.saturating_add(delta as i64);
-        live_query.last_update = timestamp;
-
-        self.update_live_query_async(live_query).await?;
-        Ok(())
-    }
-
     /// Scan all live queries and return as RecordBatch
     pub fn scan_all_live_queries(&self) -> Result<RecordBatch, SystemError> {
-        let live_queries = self.store.scan_all(None, None, None)?;
+        let live_queries = self.store.scan_all_typed(None, None, None)?;
         self.create_batch(live_queries)
     }
 
     /// Helper to create RecordBatch from live queries
     fn create_batch(
         &self,
-        live_queries: Vec<(Vec<u8>, LiveQuery)>,
+        live_queries: Vec<(LiveQueryId, LiveQuery)>,
     ) -> Result<RecordBatch, SystemError> {
         // Extract data into vectors
         let mut live_ids = Vec::with_capacity(live_queries.len());
@@ -496,6 +430,32 @@ impl LiveQueriesTableProvider {
     }
 }
 
+impl SystemTableScan<LiveQueryId, LiveQuery> for LiveQueriesTableProvider {
+    fn store(&self) -> &kalamdb_store::IndexedEntityStore<LiveQueryId, LiveQuery> {
+        &self.store
+    }
+
+    fn table_name(&self) -> &str {
+        LiveQueriesTableSchema::table_name()
+    }
+
+    fn primary_key_column(&self) -> &str {
+        "live_id"
+    }
+
+    fn arrow_schema(&self) -> SchemaRef {
+        LiveQueriesTableSchema::schema()
+    }
+
+    fn parse_key(&self, value: &str) -> Option<LiveQueryId> {
+        LiveQueryId::from_string(value).ok()
+    }
+
+    fn create_batch_from_pairs(&self, pairs: Vec<(LiveQueryId, LiveQuery)>) -> Result<RecordBatch, SystemError> {
+        self.create_batch(pairs)
+    }
+}
+
 #[async_trait]
 impl TableProvider for LiveQueriesTableProvider {
     fn as_any(&self) -> &dyn Any {
@@ -521,62 +481,19 @@ impl TableProvider for LiveQueriesTableProvider {
 
     async fn scan(
         &self,
-        _state: &dyn datafusion::catalog::Session,
+        state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::datasource::MemTable;
-
-        let schema = LiveQueriesTableSchema::schema();
-
-        // Prefer secondary index scans when possible (auto-picks from store.indexes()).
-        // Falls back to scan_all if no index matches.
-        let live_queries: Vec<(Vec<u8>, LiveQuery)> = if let Some((index_idx, index_prefix)) =
-            self.store.find_best_index_for_filters(filters)
-        {
-            log::debug!(
-                "[system.live_queries] Using secondary index {} for filters: {:?}",
-                index_idx,
-                filters
-            );
-            self.store
-                .scan_by_index(index_idx, Some(&index_prefix), limit)
-                .map_err(|e| {
-                    DataFusionError::Execution(format!(
-                        "Failed to scan live_queries by index: {}",
-                        e
-                    ))
-                })?
-                .into_iter()
-                .map(|(id, lq)| (id.storage_key(), lq))
-                .collect()
-        } else {
-            log::debug!(
-                "[system.live_queries] Full table scan (no index match) for filters: {:?}",
-                filters
-            );
-            self.store.scan_all(limit, None, None).map_err(|e| {
-                DataFusionError::Execution(format!("Failed to scan live_queries: {}", e))
-            })?
-        };
-
-        let batch = self.create_batch(live_queries).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build live_queries batch: {}", e))
-        })?;
-
-        let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-
-        // Always pass through projection and filters to MemTable - it will handle them
-        table.scan(_state, projection, filters, limit).await
+        // Use the common SystemTableScan implementation
+        self.base_system_scan(state, projection, filters, limit).await
     }
 }
 
 impl SystemTableProviderExt for LiveQueriesTableProvider {
     fn table_name(&self) -> &str {
-        "system.live_queries"
+        LiveQueriesTableSchema::table_name()
     }
 
     fn schema_ref(&self) -> SchemaRef {

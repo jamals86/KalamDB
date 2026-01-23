@@ -1,0 +1,1 @@
+This folder contains the Raft skill definition used by automated agents.

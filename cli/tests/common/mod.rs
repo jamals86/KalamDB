@@ -267,9 +267,7 @@ pub fn test_context() -> &'static TestContext {
                     .split('/')
                     .next()
                     .unwrap_or("127.0.0.1:8081");
-                std::net::TcpStream::connect(host_port)
-                    .map(|_| true)
-                    .unwrap_or(false)
+                host_port_reachable(host_port)
             })
             .cloned()
             .collect();
@@ -676,19 +674,93 @@ fn cli_output_error(stdout: &str) -> Option<String> {
 }
 
 /// Check if the KalamDB server is running
+/// Panics if server is not reachable to ensure tests fail loudly
 pub fn is_server_running() -> bool {
     if !is_server_reachable() {
-        return false;
+        panic!(
+            "\n\n\
+            ╔══════════════════════════════════════════════════════════════════╗\n\
+            ║                    SERVER NOT REACHABLE                          ║\n\
+            ╠══════════════════════════════════════════════════════════════════╣\n\
+            ║  Tests require a running KalamDB server at {}    ║\n\
+            ║                                                                  ║\n\
+            ║  Start the server:                                               ║\n\
+            ║    cd backend && cargo run                                       ║\n\
+            ╚══════════════════════════════════════════════════════════════════╝\n\n",
+            server_url()
+        );
     }
-
+    
     match server_requires_auth() {
-        Some(_) => true,
-        None => false,
+        Some(_auth_required) => {
+            true
+        },
+        None => {
+            panic!(
+                "\n\n\
+                ╔══════════════════════════════════════════════════════════════════╗\n\
+                ║               SERVER AUTH CHECK FAILED                           ║\n\
+                ╠══════════════════════════════════════════════════════════════════╣\n\
+                ║  Could not determine server auth requirements at {}   ║\n\
+                ║                                                                  ║\n\
+                ║  Server may be starting up or not fully initialized.             ║\n\
+                ║  Please ensure the server is fully running.                      ║\n\
+                ╚══════════════════════════════════════════════════════════════════╝\n\n",
+                server_url()
+            );
+        }
     }
 }
 
 fn is_server_reachable() -> bool {
-    std::net::TcpStream::connect(server_host_port()).map(|_| true).unwrap_or(false)
+    host_port_reachable(&server_host_port())
+}
+
+fn host_port_reachable(host_port: &str) -> bool {
+    if std::net::TcpStream::connect(host_port).map(|_| true).unwrap_or(false) {
+        return true;
+    }
+
+    let Some((host, port)) = split_host_port(host_port) else {
+        return false;
+    };
+
+    let mut fallbacks: Vec<String> = Vec::new();
+    match host.as_str() {
+        "127.0.0.1" => {
+            fallbacks.push(format!("localhost:{}", port));
+            fallbacks.push(format!("[::1]:{}", port));
+        }
+        "localhost" => {
+            fallbacks.push(format!("127.0.0.1:{}", port));
+            fallbacks.push(format!("[::1]:{}", port));
+        }
+        "::1" => {
+            fallbacks.push(format!("127.0.0.1:{}", port));
+            fallbacks.push(format!("localhost:{}", port));
+        }
+        _ => {}
+    }
+
+    fallbacks
+        .into_iter()
+        .any(|candidate| std::net::TcpStream::connect(candidate).map(|_| true).unwrap_or(false))
+}
+
+fn split_host_port(host_port: &str) -> Option<(String, String)> {
+    let trimmed = host_port.trim();
+    if trimmed.starts_with('[') {
+        let end = trimmed.find(']')?;
+        let host = trimmed[1..end].to_string();
+        let port = trimmed[end + 1..].strip_prefix(':')?.to_string();
+        return Some((host, port));
+    }
+
+    let (host, port) = trimmed.rsplit_once(':')?;
+    if host.is_empty() || port.is_empty() {
+        return None;
+    }
+    Some((host.to_string(), port.to_string()))
 }
 
 fn server_requires_auth() -> Option<bool> {
@@ -703,54 +775,71 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
         .next()
         .unwrap_or("127.0.0.1:8080");
 
-    if std::net::TcpStream::connect(host_port).map(|_| true).unwrap_or(false) == false {
+    if !host_port_reachable(host_port) {
         return None;
     }
 
     let url = url.to_string();
-    let request = async move {
-        Client::new()
-            .post(format!("{}/v1/api/sql", url))
-            .json(&json!({ "sql": "SELECT 1" }))
-            .timeout(Duration::from_millis(800))
-            .send()
-            .await
-    };
+    let mut last_error = None;
 
-    let result = match tokio::runtime::Handle::try_current() {
-        Ok(_) => {
-            let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                let rt = match tokio::runtime::Runtime::new() {
-                    Ok(rt) => rt,
-                    Err(_) => return,
-                };
-                let _ = tx.send(rt.block_on(request));
-            });
-            match rx.recv_timeout(Duration::from_secs(2)) {
-                Ok(result) => result,
-                Err(_) => return None,
+    for _attempt in 0..3 {
+        let request_url = url.clone();
+        let request = async move {
+            Client::new()
+                .post(format!("{}/v1/api/sql", request_url))
+                .json(&json!({ "sql": "SELECT 1" }))
+                .timeout(Duration::from_millis(2000))
+                .send()
+                .await
+        };
+
+        let result = match tokio::runtime::Handle::try_current() {
+            Ok(_) => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let rt = match tokio::runtime::Runtime::new() {
+                        Ok(rt) => rt,
+                        Err(_) => return,
+                    };
+                    let _ = tx.send(rt.block_on(request));
+                });
+                match rx.recv_timeout(Duration::from_secs(5)) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        last_error = Some(err.to_string());
+                        continue;
+                    }
+                }
             }
-        },
-        Err(_) => {
-            let rt = tokio::runtime::Runtime::new().ok()?;
-            rt.block_on(request)
-        },
-    };
+            Err(_) => {
+                let rt = tokio::runtime::Runtime::new().ok()?;
+                rt.block_on(request)
+            }
+        };
 
-    let response = match result {
-        Ok(resp) => resp,
-        Err(_) => return None,
-    };
+        let response = match result {
+            Ok(resp) => resp,
+            Err(err) => {
+                last_error = Some(err.to_string());
+                continue;
+            }
+        };
 
-    if response.status().is_success() {
-        return Some(false);
+        if response.status().is_success() {
+            return Some(false);
+        }
+
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            || response.status() == reqwest::StatusCode::FORBIDDEN
+        {
+            return Some(true);
+        }
+
+        return Some(true);
     }
 
-    if response.status() == reqwest::StatusCode::UNAUTHORIZED
-        || response.status() == reqwest::StatusCode::FORBIDDEN
-    {
-        return Some(true);
+    if let Some(err) = last_error {
+        eprintln!("[DEBUG] Auth probe failed after retries: {}", err);
     }
 
     Some(true)
@@ -1027,28 +1116,24 @@ pub fn require_server_running() -> bool {
     let available_urls = get_available_server_urls();
 
     if available_urls.is_empty() {
-        if std::env::var("KALAMDB_REQUIRE_SERVER").ok().as_deref() == Some("1") {
-            panic!(
-                "\n\n\
-                ╔══════════════════════════════════════════════════════════════════╗\n\
-                ║                    SERVER NOT RUNNING                            ║\n\
-                ╠══════════════════════════════════════════════════════════════════╣\n\
-                ║  Smoke tests require a running KalamDB server!                   ║\n\
-                ║                                                                  ║\n\
-                ║  Single-node mode:                                               ║\n\
-                ║    cd backend && cargo run                                       ║\n\
-                ║                                                                  ║\n\
-                ║  Cluster mode (3 nodes):                                         ║\n\
-                ║    ./scripts/cluster.sh start                                    ║\n\
-                ║                                                                  ║\n\
-                ║  Then run the smoke tests:                                       ║\n\
-                ║    cd cli && cargo test --test smoke                             ║\n\
-                ╚══════════════════════════════════════════════════════════════════╝\n\n"
-            );
-        }
-
-        eprintln!("Skipping CLI smoke tests: no running KalamDB server detected.");
-        return false;
+        // ALWAYS fail tests when server is not running - don't silently skip!
+        panic!(
+            "\n\n\
+            ╔══════════════════════════════════════════════════════════════════╗\n\
+            ║                    SERVER NOT RUNNING                            ║\n\
+            ╠══════════════════════════════════════════════════════════════════╣\n\
+            ║  All tests require a running KalamDB server!                     ║\n\
+            ║                                                                  ║\n\
+            ║  Single-node mode:                                               ║\n\
+            ║    cd backend && cargo run                                       ║\n\
+            ║                                                                  ║\n\
+            ║  Cluster mode (3 nodes):                                         ║\n\
+            ║    ./scripts/cluster.sh start                                    ║\n\
+            ║                                                                  ║\n\
+            ║  Then run the tests:                                             ║\n\
+            ║    cd cli && cargo nextest run --no-fail-fast                    ║\n\
+            ╚══════════════════════════════════════════════════════════════════╝\n\n"
+        );
     }
 
     // Print mode information
@@ -1317,6 +1402,42 @@ pub fn execute_sql_as_root_via_cli(sql: &str) -> Result<String, Box<dyn std::err
 /// Helper to execute SQL as root user via CLI returning JSON output to avoid table truncation
 pub fn execute_sql_as_root_via_cli_json(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
     execute_sql_via_cli_as_with_args("root", root_password(), sql, &["--json"])
+}
+
+/// Wait for a SQL query to return output containing an expected substring.
+///
+/// Useful for eventual consistency scenarios where data may not be immediately visible.
+pub fn wait_for_sql_output_contains(
+    sql: &str,
+    expected: &str,
+    timeout: Duration,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    let mut last_output = String::new();
+    let mut last_error: Option<String> = None;
+
+    while start.elapsed() < timeout {
+        match execute_sql_as_root_via_cli(sql) {
+            Ok(output) => {
+                last_output = output.clone();
+                if output.contains(expected) {
+                    return Ok(output);
+                }
+            }
+            Err(e) => {
+                last_error = Some(e.to_string());
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(120));
+    }
+
+    let error_hint = last_error.unwrap_or_else(|| "<none>".to_string());
+    Err(format!(
+        "Timed out waiting for SQL output to contain '{}'. Last error: {}. Last output: {}",
+        expected, error_hint, last_output
+    )
+    .into())
 }
 
 // ============================================================================
@@ -2233,37 +2354,35 @@ pub fn verify_job_completed(
                     format!("Failed to parse JSON output: {}. Output: {}", e, output)
                 })?;
 
-                // Navigate to results[0].rows[0]
-                let row = json
-                    .get("results")
-                    .and_then(|v| v.as_array())
-                    .and_then(|arr| arr.first())
-                    .and_then(|res| res.get("rows"))
-                    .and_then(|v| v.as_array())
-                    .and_then(|arr| arr.first());
+                if let Some(rows) = get_rows_as_hashmaps(&json) {
+                    if let Some(row) = rows.first() {
+                        let status_value = row
+                            .get("status")
+                            .and_then(extract_arrow_value)
+                            .or_else(|| row.get("status").cloned())
+                            .unwrap_or(serde_json::Value::Null);
+                        let status_owned = status_value
+                            .as_str()
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| status_value.to_string());
+                        let status = status_owned.as_str();
 
-                if let Some(row) = row {
-                    // Rows are arrays: [job_id, status, error_message] (indices 0, 1, 2)
-                    let row_arr = row.as_array();
+                        let error_value = row
+                            .get("error_message")
+                            .and_then(extract_arrow_value)
+                            .or_else(|| row.get("error_message").cloned())
+                            .unwrap_or(serde_json::Value::Null);
+                        let error_message = error_value.as_str().unwrap_or("");
 
-                    let status = row_arr
-                        .and_then(|arr| arr.get(1))
-                        .map(|v| v.as_str().unwrap_or(""))
-                        .unwrap_or("");
+                        if status.eq_ignore_ascii_case("completed") {
+                            return Ok(());
+                        }
 
-                    let error_message = row_arr
-                        .and_then(|arr| arr.get(2))
-                        .map(|v| v.as_str().unwrap_or(""))
-                        .unwrap_or("");
-
-                    if status.eq_ignore_ascii_case("completed") {
-                        return Ok(());
-                    }
-
-                    if status.eq_ignore_ascii_case("failed") {
-                        return Err(
-                            format!("Job {} failed. Error: {}", job_id, error_message).into()
-                        );
+                        if status.eq_ignore_ascii_case("failed") {
+                            return Err(
+                                format!("Job {} failed. Error: {}", job_id, error_message).into()
+                            );
+                        }
                     }
                 } else {
                     // No row found - print debug info
@@ -2320,16 +2439,35 @@ pub fn wait_for_job_finished(
             job_id
         );
 
-        match execute_sql_as_root_via_client(&query) {
+        match execute_sql_as_root_via_client_json(&query) {
             Ok(output) => {
-                let lower = output.to_lowercase();
-                if lower.contains("completed") {
-                    return Ok("completed".to_string());
+                let json: serde_json::Value = serde_json::from_str(&output).map_err(|e| {
+                    format!("Failed to parse JSON output: {}. Output: {}", e, output)
+                })?;
+
+                if let Some(rows) = get_rows_as_hashmaps(&json) {
+                    if let Some(row) = rows.first() {
+                        let status_value = row
+                            .get("status")
+                            .and_then(extract_arrow_value)
+                            .or_else(|| row.get("status").cloned())
+                            .unwrap_or(serde_json::Value::Null);
+                        let status_owned = status_value
+                            .as_str()
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| status_value.to_string());
+                        let status = status_owned.as_str();
+                        let status_lower = status.to_lowercase();
+
+                        if status_lower.contains("completed") {
+                            return Ok("completed".to_string());
+                        }
+                        if status_lower.contains("failed") {
+                            return Ok("failed".to_string());
+                        }
+                    }
                 }
-                if lower.contains("failed") {
-                    return Ok("failed".to_string());
-                }
-            },
+            }
             Err(e) => return Err(e),
         }
 
@@ -2366,9 +2504,12 @@ pub struct SubscriptionListener {
 
 impl Drop for SubscriptionListener {
     fn drop(&mut self) {
-        // Signal the subscription task to stop
+        // Signal the subscription task to stop and join the thread to avoid leaks
         if let Some(sender) = self.stop_sender.take() {
             let _ = sender.send(());
+        }
+        if let Some(handle) = self._handle.take() {
+            let _ = handle.join();
         }
     }
 }
@@ -2553,10 +2694,15 @@ impl SubscriptionListener {
     }
 
     /// Stop the subscription listener gracefully
-    pub fn stop(mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Signal the subscription task to stop
+    pub fn stop(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // Signal the subscription task to stop and join the thread
         if let Some(sender) = self.stop_sender.take() {
             let _ = sender.send(());
+        }
+        if let Some(handle) = self._handle.take() {
+            handle
+                .join()
+                .map_err(|_| Box::<dyn std::error::Error>::from("Subscription listener thread panicked"))?;
         }
         Ok(())
     }

@@ -5,5 +5,4 @@ pub mod guards;
 pub mod namespace_helpers;
 pub mod storage;
 pub mod table_creation;
-pub mod table_registration;
 pub mod tables;

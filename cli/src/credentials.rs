@@ -69,6 +69,12 @@ struct StoredCredential {
     /// Server URL
     #[serde(skip_serializing_if = "Option::is_none")]
     server_url: Option<String>,
+    /// Refresh token for obtaining new access tokens
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refresh_token: Option<String>,
+    /// Refresh token expiration time in RFC3339 format
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refresh_expires_at: Option<String>,
 }
 
 /// Top-level TOML structure
@@ -261,6 +267,8 @@ impl CredentialStore for FileCredentialStore {
                 username: stored.username.clone(),
                 expires_at: stored.expires_at.clone(),
                 server_url: stored.server_url.clone(),
+                refresh_token: stored.refresh_token.clone(),
+                refresh_expires_at: stored.refresh_expires_at.clone(),
             }))
         } else {
             Ok(None)
@@ -273,6 +281,8 @@ impl CredentialStore for FileCredentialStore {
             username: credentials.username.clone(),
             expires_at: credentials.expires_at.clone(),
             server_url: credentials.server_url.clone(),
+            refresh_token: credentials.refresh_token.clone(),
+            refresh_expires_at: credentials.refresh_expires_at.clone(),
         };
 
         self.cache.insert(credentials.instance.clone(), stored);

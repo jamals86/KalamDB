@@ -22,7 +22,8 @@ use kalamdb_commons::schemas::{
 };
 use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_system::SystemTable;
-use std::sync::{Arc, OnceLock, RwLock};
+use parking_lot::RwLock;
+use std::sync::{Arc, OnceLock};
 
 /// Metrics provider callback type
 /// Returns a vector of (metric_name, metric_value) tuples
@@ -55,7 +56,7 @@ pub struct StatsView {
 impl std::fmt::Debug for StatsView {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StatsView")
-            .field("has_callback", &self.metrics_callback.read().unwrap().is_some())
+            .field("has_callback", &self.metrics_callback.read().is_some())
             .finish()
     }
 }
@@ -123,7 +124,7 @@ impl StatsView {
 
     /// Set the metrics callback (called after AppContext init)
     pub fn set_metrics_callback(&self, callback: MetricsCallback) {
-        *self.metrics_callback.write().unwrap() = Some(callback);
+        *self.metrics_callback.write() = Some(callback);
     }
 }
 
@@ -147,7 +148,7 @@ impl VirtualView for StatsView {
         let mut values = StringBuilder::new();
 
         // Try to get metrics from the callback
-        let callback_guard = self.metrics_callback.read().unwrap();
+        let callback_guard = self.metrics_callback.read();
         if let Some(ref callback) = *callback_guard {
             // Use real metrics from AppContext
             let metrics = callback();

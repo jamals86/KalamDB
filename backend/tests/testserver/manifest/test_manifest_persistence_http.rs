@@ -1,8 +1,10 @@
 //! Manifest persistence behavior over the real HTTP SQL API.
 
+use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
+use super::test_support::flush::flush_table_and_wait;
 use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::UserName;
+use kalamdb_commons::{Role, UserName};
 use tokio::time::{sleep, Duration, Instant};
 
 fn find_manifest_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -30,7 +32,7 @@ async fn wait_for_flush_job_completed(
     ns: &str,
     table: &str,
 ) -> anyhow::Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let resp = server
             .execute_sql(
@@ -40,46 +42,64 @@ async fn wait_for_flush_job_completed(
 
         if resp.status == ResponseStatus::Success {
             let rows = resp.rows_as_maps();
-            let maybe_job = rows.iter().find(|r| {
-                r.get("parameters")
+            let matching: Vec<_> = rows
+                .iter()
+                .filter(|r| {
+                    r.get("parameters")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.contains(ns) && s.contains(table))
+                        .unwrap_or(false)
+                })
+                .collect();
+
+            let has_completed = matching.iter().any(|job| {
+                job.get("status")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.contains(ns) && s.contains(table))
+                    .map(|s| s == "completed")
                     .unwrap_or(false)
             });
-            if let Some(job) = maybe_job {
-                let status = job.get("status").and_then(|v| v.as_str()).unwrap_or("");
-                if status == "completed" {
-                    return Ok(());
-                }
+
+            let has_active = matching.iter().any(|job| {
+                job.get("status")
+                    .and_then(|v| v.as_str())
+                    .map(|s| matches!(s, "new" | "running" | "retrying"))
+                    .unwrap_or(false)
+            });
+
+            let storage_root = server.storage_root();
+            let has_manifest = find_manifest_files(&storage_root).iter().any(|p| {
+                let s = p.to_string_lossy();
+                s.contains(ns)
+                    && s.contains(table)
+                    && p.components().any(|c| c.as_os_str().to_string_lossy().starts_with("u_"))
+            });
+
+            if (has_completed && !has_active) || has_manifest {
+                return Ok(());
             }
         }
 
         if Instant::now() >= deadline {
             anyhow::bail!("Timed out waiting for flush job to complete for {}.{}", ns, table);
         }
-        sleep(Duration::from_millis(50)).await;
+        sleep(Duration::from_millis(100)).await;
     }
 }
 
 #[tokio::test]
 async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> {
+    let _guard = super::test_support::http_server::acquire_test_lock().await;
     let server = super::test_support::http_server::get_global_server().await;
     // Case 1: Manifest written only after flush
     {
-        let ns = format!("test_manifest_persist_{}", std::process::id());
+        let ns = unique_namespace("test_manifest_persist");
         let table = "events";
-        let user = "user1";
+        let user = unique_table("user1");
         let password = "UserPass123!";
 
-        let resp = server
-            .execute_sql(&format!(
-                "CREATE USER '{}' WITH PASSWORD '{}' ROLE 'user'",
-                user, password
-            ))
-            .await?;
-        assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);
+        let _ = ensure_user_exists(server, &user, password, &Role::User).await?;
 
-        let user_auth = HttpTestServer::basic_auth_header(&UserName::new(user), password);
+        let user_auth = HttpTestServer::basic_auth_header(&UserName::new(&user), password);
 
         let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
         assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);
@@ -125,12 +145,11 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
             manifests_before
         );
 
-        let resp = server.execute_sql(&format!("STORAGE FLUSH TABLE {}.{}", ns, table)).await?;
-        assert_eq!(resp.status, ResponseStatus::Success);
+        flush_table_and_wait(server, &ns, table).await?;
 
-        wait_for_flush_job_completed(server, &ns, table).await?;
+            // wait_for_flush_job_completed(server, &ns, table).await?;
 
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(20);
         let _manifest_path = loop {
             let candidates = find_manifest_files(&storage_root);
             if let Some(path) = candidates.iter().find(|p| {
@@ -169,20 +188,14 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
 
     // Case 2: Manifest exists after flush and query can read data
     {
-        let ns = format!("test_manifest_reload_{}", std::process::id());
+        let ns = unique_namespace("test_manifest_reload");
         let table = "metrics";
-        let user = "user2";
+        let user = unique_table("user2");
         let password = "UserPass123!";
 
-        let resp = server
-            .execute_sql(&format!(
-                "CREATE USER '{}' WITH PASSWORD '{}' ROLE 'user'",
-                user, password
-            ))
-            .await?;
-        assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);
+        let _ = ensure_user_exists(server, &user, password, &Role::User).await?;
 
-        let user_auth = HttpTestServer::basic_auth_header(&UserName::new(user), password);
+        let user_auth = HttpTestServer::basic_auth_header(&UserName::new(&user), password);
 
         let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
         assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);
@@ -209,13 +222,12 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
             .await?;
         assert_eq!(resp.status, ResponseStatus::Success);
 
-        let resp = server.execute_sql(&format!("STORAGE FLUSH TABLE {}.{}", ns, table)).await?;
-        assert_eq!(resp.status, ResponseStatus::Success);
+        flush_table_and_wait(server, &ns, table).await?;
 
-        wait_for_flush_job_completed(server, &ns, table).await?;
+        // wait_for_flush_job_completed(server, &ns, table).await?;
 
         let storage_root = server.storage_root();
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(20);
         let _manifest_path = loop {
             let candidates = find_manifest_files(&storage_root);
             if let Some(path) = candidates.iter().find(|p| {

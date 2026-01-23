@@ -3407,6 +3407,7 @@ dependencies = [
  "log",
  "mime_guess",
  "moka",
+ "parking_lot",
  "reqwest 0.13.1",
  "rust-embed",
  "serde",
@@ -3476,6 +3477,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
+ "storekey",
  "thiserror 2.0.18",
  "toml",
  "uuid",
@@ -3502,6 +3504,7 @@ dependencies = [
  "base64",
  "bcrypt",
  "bincode",
+ "bytes",
  "chrono",
  "dashmap",
  "datafusion",
@@ -3522,13 +3525,11 @@ dependencies = [
  "kalamdb-tables",
  "log",
  "moka",
- "num_cpus",
- "object_store",
+ "ntest",
  "once_cell",
  "parking_lot",
  "parquet",
  "regex",
- "reqwest 0.13.1",
  "rocksdb",
  "serde",
  "serde_json",
@@ -3537,7 +3538,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
- "tonic",
  "ulid",
  "uuid",
 ]
@@ -3551,15 +3551,21 @@ dependencies = [
  "arrow-schema",
  "bytes",
  "chrono",
+ "dashmap",
  "datafusion",
  "datafusion-common",
  "futures-util",
  "kalamdb-commons",
+ "kalamdb-store",
+ "kalamdb-system",
  "log",
  "object_store",
+ "once_cell",
+ "parking_lot",
  "parquet",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "uuid",
@@ -3575,6 +3581,7 @@ dependencies = [
  "chrono",
  "kalamdb-commons",
  "log",
+ "num_cpus",
  "sysinfo",
  "thiserror 2.0.18",
  "tokio",
@@ -3761,6 +3768,7 @@ dependencies = [
  "kalamdb-store",
  "log",
  "once_cell",
+ "parking_lot",
  "serde",
  "serde_json",
  "tempfile",
@@ -3786,11 +3794,13 @@ dependencies = [
  "hex",
  "kalamdb-commons",
  "kalamdb-filestore",
+ "kalamdb-session",
  "kalamdb-sharding",
  "kalamdb-store",
  "kalamdb-streams",
  "kalamdb-system",
  "log",
+ "once_cell",
  "serde",
  "serde_json",
  "tempfile",
@@ -5877,6 +5887,26 @@ dependencies = [
  "libc",
  "psm",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "storekey"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd9a94571bde7369ecaac47cec2e6844642d99166bd452fbd8def74b5b917b2f"
+dependencies = [
+ "storekey-derive",
+]
+
+[[package]]
+name = "storekey-derive"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6079d53242246522ec982de613c5c952cc7b1380ef2f8622fcdab9bfe73c0098"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]

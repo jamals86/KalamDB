@@ -12,7 +12,7 @@
 
 use crate::common::*;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// T041: Test basic live query subscription
 #[test]
@@ -316,20 +316,15 @@ fn test_cli_subscription_comprehensive_crud() {
     let _ = execute_sql_as_root_via_cli(&update_sql);
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--username")
-        .arg("root")
-        .arg("--password")
-        .arg(root_password())
-        .arg("--command")
-        .arg(format!("SELECT * FROM {} WHERE id = 1", table_name));
-
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let select_updated_sql = format!("SELECT * FROM {} WHERE id = 1", table_name);
+    let updated_output = wait_for_sql_output_contains(
+        &select_updated_sql,
+        "updated_data",
+        Duration::from_secs(5),
+    )
+    .expect("Data should be updated");
     assert!(
-        output.status.success() && stdout.contains("updated_data"),
+        updated_output.contains("updated_data"),
         "Data should be updated"
     );
 
@@ -338,20 +333,21 @@ fn test_cli_subscription_comprehensive_crud() {
     let _ = execute_sql_as_root_via_cli(&delete_sql);
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--username")
-        .arg("root")
-        .arg("--password")
-        .arg(root_password())
-        .arg("--command")
-        .arg(format!("SELECT * FROM {} ORDER BY id", table_name));
+    let select_after_delete = format!("SELECT * FROM {} ORDER BY id", table_name);
+    let start = Instant::now();
+    let mut last_output = String::new();
+    while start.elapsed() < Duration::from_secs(5) {
+        if let Ok(output) = execute_sql_as_root_via_cli(&select_after_delete) {
+            last_output = output;
+            if last_output.contains("updated_data") && !last_output.contains("more_data") {
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(120));
+    }
 
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        output.status.success() && stdout.contains("updated_data") && !stdout.contains("more_data"),
+        last_output.contains("updated_data") && !last_output.contains("more_data"),
         "Should have only the updated row after delete"
     );
 

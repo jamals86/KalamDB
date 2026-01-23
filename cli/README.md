@@ -10,7 +10,7 @@ Interactive command-line client for KalamDB - a real-time database with WebSocke
 - 🎨 **Syntax Highlighting** - Beautiful colored SQL syntax
 - 📝 **Command History** - Persistent history with arrow key navigation
 - ⚡ **Auto-completion** - TAB completion for SQL keywords, tables, and columns
-- 🔐 **Authentication** - JWT token and API key support
+- 🔐 **Authentication** - JWT tokens, username/password, and stored credentials
 - 📁 **Batch Execution** - Run SQL scripts from files
 - 🎭 **Progress Indicators** - Visual feedback for long-running queries
 
@@ -23,51 +23,7 @@ cd cli
 cargo build --release
 ```
 
-The binary will be available at `target/release/kalam-cli`.
-
-### Using Cargo
-
-```bash
-cargo install --path kalam-cli
-```
-
-## Testing
-
-### Running Tests
-
-By default, tests connect to `http://127.0.0.1:8080`. Configure via environment variables or helper scripts.
-
-#### Using Helper Scripts (Recommended)
-
-**Unix/Linux/macOS:**
-```bash
-# Run all tests with defaults
-./run-tests.sh
-
-# Custom server URL
-./run-tests.sh --url http://localhost:3000
-
-# With authentication
-./run-tests.sh --url http://localhost:3000 --password mypass
-
-# Run specific test
-./run-tests.sh --test smoke --nocapture
-```
-
-**Windows PowerShell:**
-```powershell
-# Run all tests with defaults
-.\run-tests.ps1
-
-# Custom server URL
-.\run-tests.ps1 -Url "http://localhost:3000"
-
-# With authentication
-.\run-tests.ps1 -Url "http://localhost:3000" -Password "mypass"
-
-# Run specific test
-.\run-tests.ps1 -Test "smoke" -NoCapture
-```
+The binary will be available at `target/release/kalam`.
 
 #### Using Environment Variables
 
@@ -99,13 +55,13 @@ cargo test --test smoke -- --nocapture
 
 ```bash
 # Connect to default localhost:3000
-kalam-cli
+kalam
 
 # Connect to specific host
-kalam-cli -h myserver.com
+kalam --host myserver.com
 
 # Connect with authentication
-kalam-cli --token YOUR_JWT_TOKEN
+kalam --token YOUR_JWT_TOKEN
 ```
 
 ### Execute SQL
@@ -150,20 +106,76 @@ SUBSCRIBE TO app.messages WHERE user_id = 'user123';
 ### Command-Line Options
 
 ```
-kalam-cli [OPTIONS]
+kalam [OPTIONS]
 
-OPTIONS:
-    -h, --host <HOST>          Server hostname (default: localhost)
-    -p, --port <PORT>          Server port (default: 3000)
-    -u, --user-id <USER_ID>    User ID for authentication
-    --token <TOKEN>            JWT authentication token
-    --apikey <APIKEY>          API key for authentication
-    --json                     Output in JSON format
-    --csv                      Output in CSV format
-    --color                    Enable colored output (default: auto)
-    --file <FILE>              Execute SQL from file
-    --help                     Print help information
-    --version                  Print version information
+CONNECTION:
+    -u, --url <URL>                 Server URL (e.g., http://localhost:3000)
+    -H, --host <HOST>               Host address (alternative to URL)
+    -p, --port <PORT>               Port number (default: 3000)
+
+AUTHENTICATION:
+    --token <TOKEN>                 JWT authentication token
+    --username <USERNAME>           HTTP Basic Auth username
+    --password [PASSWORD]           HTTP Basic Auth password (prompts if flag is present without value)
+    --instance <INSTANCE>           Credential instance name (default: local)
+    --save-credentials              Save credentials after successful login
+
+EXECUTION:
+    -f, --file <FILE>               Execute SQL from file and exit
+    -c, --command <SQL>             Execute SQL command and exit
+    --subscribe <SQL>               Subscribe to a table or live query
+    --unsubscribe <ID>              Unsubscribe from a subscription (non-interactive)
+    --list-subscriptions            List active subscriptions (non-interactive)
+
+OUTPUT:
+    --format <FORMAT>               Output format: table|json|csv (default: table)
+    --json                          Shorthand for --format=json
+    --csv                           Shorthand for --format=csv
+    --no-color                      Disable colored output
+    --no-spinner                    Disable spinners/animations
+    --loading-threshold-ms <MS>     Loading indicator threshold (0 to always show)
+
+TIMEOUTS:
+    --timeout <SECONDS>             HTTP request timeout (default: 30)
+    --connection-timeout <SECONDS>  Connection timeout (default: 10)
+    --receive-timeout <SECONDS>     Receive timeout (default: 30)
+    --auth-timeout <SECONDS>        WebSocket auth timeout (default: 5)
+    --subscription-timeout <SECONDS>Subscription timeout (0 = no timeout, default: 0)
+    --initial-data-timeout <SECONDS>Initial data timeout (default: 30)
+    --fast-timeouts                 Fast timeout preset (local dev)
+    --relaxed-timeouts              Relaxed timeout preset (high latency)
+
+CONFIG:
+    --config <PATH>                 Configuration file path (default: ~/.kalam/config.toml)
+    -v, --verbose                   Enable verbose logging
+
+CREDENTIALS:
+    --show-credentials              Show stored credentials for instance
+    --update-credentials            Login and update stored credentials
+    --delete-credentials            Delete stored credentials
+    --list-instances                List all stored credential instances
+
+INFO:
+    --help                          Print help information
+    --version                       Print version information
+```
+
+### Non-Interactive Examples
+
+```bash
+# Run a single SQL command and exit
+kalam --command "SELECT * FROM system.tables LIMIT 5"
+
+# Run SQL from a file and exit
+kalam --file setup.sql
+
+# Subscribe to a live query (non-interactive)
+kalam --subscribe "SUBSCRIBE TO app.messages WHERE user_id = 'alice'"
+
+# Manage stored credentials
+kalam --update-credentials --instance local --username root --password ""
+kalam --show-credentials --instance local
+kalam --list-instances
 ```
 
 ### Interactive Commands
@@ -172,15 +184,44 @@ Special commands starting with backslash (`\`):
 
 | Command | Description |
 |---------|-------------|
-| `\help` | Show available commands |
-| `\quit` or `\q` | Exit the CLI |
-| `\connect HOST [PORT]` | Connect to different server |
-| `\config` | Show current configuration |
-| `\flush` | Execute STORAGE FLUSH ALL in current namespace |
+| `\help` / `\?` | Show available commands |
+| `\quit` / `\q` | Exit the CLI |
+| `\info` / `\session` | Show session info |
+| `\format <table\|json\|csv>` | Set output format |
+| `\dt` / `\tables` | List tables |
+| `\d <table>` / `\describe <table>` | Describe a table |
+| `\stats` / `\metrics` | Show system stats |
 | `\health` | Check server health |
-| `\pause` | Pause active subscription |
-| `\continue` | Resume paused subscription |
-| `\refresh-tables` | Refresh table/column autocomplete cache |
+| `\flush` | Execute STORAGE FLUSH ALL |
+| `\pause` | Pause ingestion |
+| `\continue` | Resume ingestion |
+| `\refresh-tables` / `\refresh` | Refresh autocomplete cache |
+| `\subscribe <SQL>` / `\watch <SQL>` | Start live query |
+| `\unsubscribe` / `\unwatch` | Cancel live query |
+| `\show-credentials` / `\credentials` | Show stored credentials |
+| `\update-credentials <u> <p>` | Update stored credentials |
+| `\delete-credentials` | Delete stored credentials |
+| `\cluster snapshot` | Trigger cluster snapshot |
+| `\cluster purge --upto <index>` | Purge cluster logs up to index |
+| `\cluster trigger-election` | Trigger cluster election |
+| `\cluster transfer-leader <node_id>` | Transfer cluster leadership |
+| `\cluster stepdown` | Request leader stepdown |
+| `\cluster clear` | Clear old snapshots |
+| `\cluster list` / `\cluster ls` | List cluster nodes |
+| `\cluster list groups` | List cluster groups |
+| `\cluster status` | Cluster status |
+| `\cluster join <addr>` | Join a node (not yet implemented) |
+| `\cluster leave` | Leave cluster (not yet implemented) |
+
+### Using the CLI (Interactive Mode)
+
+Once the CLI starts, type SQL directly and press **Enter** (or end with `;`) to run it. Use backslash commands (like `\help`) for CLI-specific actions.
+
+Tips:
+- Use **Tab** for auto-completion of SQL keywords, namespaces, tables, and columns.
+- Use **↑/↓** to navigate command history.
+- Use `\format json` or `\format csv` to switch output formats.
+- Use `\subscribe <SQL>` for live updates.
 
 ### Output Formats
 
@@ -200,7 +241,7 @@ Took: 5.234 ms
 #### JSON Format
 
 ```bash
-kalam-cli --json
+kalam --json
 ```
 
 ```json
@@ -221,7 +262,7 @@ kalam-cli --json
 #### CSV Format
 
 ```bash
-kalam-cli --csv
+kalam --csv
 ```
 
 ```csv
@@ -235,7 +276,7 @@ id,username,email,created_at
 Execute SQL from a file:
 
 ```bash
-kalam-cli --file setup.sql
+kalam --file setup.sql
 ```
 
 Example `setup.sql`:
@@ -253,25 +294,28 @@ INSERT INTO prod.events (event_type, data) VALUES ('login', '{"user":"alice"}');
 
 ### Configuration File
 
-The CLI reads configuration from `~/.kalam/config.toml`:
+The CLI automatically creates and reads configuration from `~/.kalam/config.toml` on first run:
 
 ```toml
+[server]
+timeout = 30
+max_retries = 0
+http_version = "http2"         # http1, http2, auto
+
 [connection]
-host = "localhost"
-port = 3000
+auto_reconnect = true
+reconnect_delay_ms = 100
+max_reconnect_delay_ms = 30000
+max_reconnect_attempts = 10
 
-[auth]
-user_id = "default_user"
-# token = "your_jwt_token"
-# apikey = "your_api_key"
-
-[output]
-format = "table"  # table, json, or csv
+[ui]
+format = "table"             # table, json, csv
 color = true
-
-[autocomplete]
-refresh_on_startup = true
+history_size = 1000
+timestamp_format = "iso8601" # iso8601, iso8601-date, iso8601-datetime, unix-ms, unix-sec, relative, rfc2822, rfc3339
 ```
+
+The configuration file is created with default values when you first run the CLI. You can edit it to customize the behavior or override settings with command-line flags.
 
 ## Authentication
 
@@ -280,25 +324,23 @@ refresh_on_startup = true
 When connecting from localhost without credentials, the CLI automatically uses a default user:
 
 ```bash
-kalam-cli  # Uses default user on localhost
+kalam  # Uses default user on localhost
 ```
 
 ### JWT Token
 
 ```bash
-kalam-cli --token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+kalam --token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
-### API Key
+### Username/Password + Stored Credentials
 
 ```bash
-kalam-cli --apikey YOUR_API_KEY
-```
+# Login and store credentials
+kalam --username root --password "" --save-credentials
 
-### User ID (Localhost Only)
-
-```bash
-kalam-cli -u myuser
+# Update stored credentials explicitly
+kalam --update-credentials --instance local --username root --password ""
 ```
 
 ## Advanced Features
@@ -374,7 +416,7 @@ Error: Authentication failed (401 Unauthorized)
 **Solution:** Provide valid credentials:
 
 ```bash
-kalam-cli --token YOUR_JWT_TOKEN
+kalam --token YOUR_JWT_TOKEN
 ```
 
 ### Table Not Found
@@ -460,7 +502,7 @@ INSERT INTO analytics.events (event_type, user_id, data) VALUES
 Execute:
 
 ```bash
-kalam-cli --file import.sql
+kalam --file import.sql
 ```
 
 ## Development
@@ -477,27 +519,6 @@ cargo test
 ```bash
 cd cli
 cargo build --release
-```
-
-### Project Structure
-
-```
-cli/
-├── kalam-link/          # Reusable library for KalamDB connectivity
-│   ├── src/
-│   │   ├── client.rs    # HTTP client
-│   │   ├── auth.rs      # Authentication
-│   │   └── models.rs    # Request/response models
-│   └── tests/
-├── kalam-cli/           # Interactive CLI application
-│   ├── src/
-│   │   ├── main.rs      # Entry point
-│   │   ├── session.rs   # Session management
-│   │   ├── formatter.rs # Output formatting
-│   │   ├── completer.rs # Auto-completion
-│   │   └── parser.rs    # Command parsing
-│   └── tests/
-└── Cargo.toml
 ```
 
 ## License

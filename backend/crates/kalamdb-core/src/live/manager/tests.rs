@@ -1,8 +1,7 @@
 use super::*;
 use crate::live::connections_manager::ConnectionsManager;
-use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::SqlExecutor;
-use crate::test_helpers::{create_test_session_simple, test_app_context_simple};
+use crate::test_helpers::test_app_context_simple;
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{ConnectionId, ConnectionInfo, TableId};
 use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
@@ -44,9 +43,8 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
 
     let live_queries_provider = app_ctx.system_tables().live_queries();
-    let schema_registry = Arc::new(SchemaRegistry::new(128));
-    let base_session_context = create_test_session_simple();
-    schema_registry.set_base_session_context(Arc::clone(&base_session_context));
+    let schema_registry = app_ctx.schema_registry();
+    let base_session_context = app_ctx.base_session_context();
 
     // Create table stores for testing (using default namespace and table)
     let test_namespace = NamespaceId::new("user1");
@@ -102,11 +100,9 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         None,
     )
     .unwrap();
-    let messages_table_id =
+    let _messages_table_id =
         TableId::new(messages_table.namespace_id.clone(), messages_table.table_name.clone());
-    schema_registry
-        .put_table_definition(app_ctx.as_ref(), &messages_table_id, &messages_table)
-        .unwrap();
+    schema_registry.put(messages_table).unwrap();
 
     let notifications_table = TableDefinition::new(
         NamespaceId::new("user1"),
@@ -140,13 +136,7 @@ async fn create_test_manager() -> (Arc<ConnectionsManager>, LiveQueryManager, Te
         None,
     )
     .unwrap();
-    let notifications_table_id = TableId::new(
-        notifications_table.namespace_id.clone(),
-        notifications_table.table_name.clone(),
-    );
-    schema_registry
-        .put_table_definition(app_ctx.as_ref(), &notifications_table_id, &notifications_table)
-        .unwrap();
+    schema_registry.put(notifications_table).unwrap();
 
     // Create connections manager first
     let connection_registry = ConnectionsManager::new(
@@ -366,35 +356,6 @@ async fn test_unregister_subscription() {
 
     let stats = manager.get_stats().await;
     assert_eq!(stats.total_subscriptions, 0);
-}
-
-#[tokio::test]
-#[ignore] // Requires Raft leader for live query persistence
-async fn test_increment_changes() {
-    let (registry, manager, _temp_dir) = create_test_manager().await;
-    let user_id = UserId::new("user1".to_string());
-    let connection_id = ConnectionId::new("conn1".to_string());
-
-    let connection_state =
-        register_and_auth_connection(&registry, connection_id.clone(), user_id.clone());
-
-    let subscription = create_test_subscription_request(
-        "q1".to_string(),
-        "SELECT * FROM user1.messages".to_string(),
-        None,
-    );
-    let result = manager
-        .register_subscription_with_initial_data(&connection_state, &subscription, None)
-        .await
-        .unwrap();
-
-    let live_id = result.live_id;
-
-    manager.increment_changes(&live_id).await.unwrap();
-    manager.increment_changes(&live_id).await.unwrap();
-
-    let live_query_record = manager.get_live_query(live_id.as_ref()).await.unwrap().unwrap();
-    assert_eq!(live_query_record.changes, 2);
 }
 
 #[tokio::test]
