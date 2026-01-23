@@ -421,6 +421,21 @@ impl TableFlush for UserTableFlushJob {
                 log::error!("Failed to delete flushed rows: {}", e);
                 error_messages.push(format!("Failed to delete flushed rows: {}", e));
             }
+            
+            // // Force manifest cache refresh for all affected users to ensure subsequent
+            // // reads immediately see the new Parquet files (fixes race condition in tests)
+            // log::debug!("📊 [FLUSH CLEANUP] Invalidating manifest cache to ensure visibility");
+            // let manifest_service = self.app_context.manifest_service();
+            // for user_id in rows_by_user.keys() {
+            //     let user_id_typed = kalamdb_commons::models::UserId::from(user_id.as_str());
+            //     if let Err(e) = manifest_service.invalidate(&self.table_id, Some(&user_id_typed)) {
+            //         log::warn!(
+            //             "Failed to invalidate manifest cache for user {}: {}",
+            //             user_id,
+            //             e
+            //         );
+            //     }
+            // }
         }
 
         // If any user flush failed, treat entire job as failed

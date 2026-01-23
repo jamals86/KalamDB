@@ -9,6 +9,7 @@ use kalamdb_raft::commands::MetaCommand;
 use kalamdb_raft::GroupId;
 use log::Level;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio::time::{sleep, Duration, Instant};
@@ -205,6 +206,13 @@ impl JobsManager {
     pub async fn run_loop(&self, max_concurrent: usize) -> Result<(), KalamDbError> {
         log::debug!("Starting job processing loop (max {} concurrent)", max_concurrent);
 
+        // Take the awake receiver - can only run one loop per JobsManager
+        let mut awake_receiver: mpsc::UnboundedReceiver<JobId> = self
+            .awake_receiver
+            .lock()
+            .take()
+            .expect("run_loop can only be called once per JobsManager");
+
         // Perform crash recovery on startup
         self.recover_incomplete_jobs().await?;
 
@@ -296,8 +304,27 @@ impl JobsManager {
                 },
             };
 
-            // Poll for next job (all nodes poll for jobs)
-            match self.poll_next().await {
+            // Wait for awakened job or poll after timeout (fallback for crash recovery)
+            // The awake channel provides instant dispatch when CreateJobNode is applied.
+            // Fallback polling ensures jobs aren't stuck if awakening fails.
+            let job_id_opt = tokio::select! {
+                biased;
+                // Priority 1: Check for awakened jobs from state machine
+                Some(job_id) = awake_receiver.recv() => Some(job_id),
+                // Priority 2: Fallback polling every 500ms (for crash recovery, retries)
+                _ = sleep(Duration::from_millis(500)) => None,
+            };
+
+            // Fetch job to execute
+            let job_result = if let Some(job_id) = job_id_opt {
+                // Awakened job - fetch it directly
+                self.fetch_awakened_job(&job_id).await
+            } else {
+                // Fallback polling
+                self.poll_next().await
+            };
+
+            match job_result {
                 Ok(Some((job, job_node))) => {
                     let jobs_manager = Arc::clone(&job_manager);
                     join_set.spawn(async move {
@@ -309,8 +336,7 @@ impl JobsManager {
                 },
                 Ok(None) => {
                     drop(permit);
-                    // No jobs available, sleep briefly
-                    sleep(Duration::from_millis(100)).await;
+                    // No jobs available - continue loop (select! already waited)
                 },
                 Err(e) => {
                     drop(permit);
@@ -321,6 +347,50 @@ impl JobsManager {
         }
 
         Ok(())
+    }
+
+    /// Fetch an awakened job by ID for execution.
+    ///
+    /// Called when a job_id arrives via the awake channel.
+    async fn fetch_awakened_job(&self, job_id: &JobId) -> Result<Option<(Job, JobNode)>, KalamDbError> {
+        // Fetch the job_node for this node
+        let job_node_opt = self
+            .job_nodes_provider
+            .get_job_node_async(job_id, &self.node_id)
+            .await
+            .into_kalamdb_error("Failed to get job_node")?;
+
+        let Some(job_node) = job_node_opt else {
+            log::warn!("[{}] Awakened but no job_node found for this node", job_id.as_str());
+            return Ok(None);
+        };
+
+        // Skip if already processed
+        if matches!(job_node.status, JobStatus::Running | JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
+            return Ok(None);
+        }
+
+        // Fetch the job
+        let Some(job) = self.get_job(job_id).await? else {
+            self.update_job_node_status(
+                job_id,
+                JobStatus::Failed,
+                Some("Job not found for awakened job_node".to_string()),
+            )
+            .await?;
+            return Ok(None);
+        };
+
+        // Skip if job already terminal
+        if matches!(job.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped) {
+            self.update_job_node_status(job_id, job.status, None).await?;
+            return Ok(None);
+        }
+
+        // Claim the job_node
+        self.claim_job_node(job_id).await?;
+
+        Ok(Some((job, job_node)))
     }
 
     /// Run a single job execution cycle (test helper).

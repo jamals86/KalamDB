@@ -63,12 +63,8 @@ pub async fn create_session(
                     "http://localhost:8080".to_string()
                 }
             } else {
-                // Fallback to config file, or default to localhost:8080
-                config
-                    .server
-                    .as_ref()
-                    .and_then(|s| s.url.clone())
-                    .unwrap_or_else(|| "http://localhost:8080".to_string())
+                // Default to localhost:8080 (credentials store URL per-instance)
+                "http://localhost:8080".to_string()
             }
         },
     };
@@ -122,6 +118,45 @@ pub async fn create_session(
         }
     }
 
+    // Helper function to refresh access token using refresh token
+    async fn try_refresh_token(
+        server_url: &str,
+        refresh_token: &str,
+        verbose: bool,
+    ) -> Option<LoginResponse> {
+        let temp_client = match KalamLinkClient::builder()
+            .base_url(server_url)
+            .timeout(Duration::from_secs(10))
+            .build()
+        {
+            Ok(client) => client,
+            Err(e) => {
+                if verbose {
+                    eprintln!("Warning: Could not create client for token refresh: {}", e);
+                }
+                return None;
+            },
+        };
+
+        match temp_client.refresh_access_token(refresh_token).await {
+            Ok(response) => {
+                if verbose {
+                    eprintln!(
+                        "Successfully refreshed token for '{}' (expires: {})",
+                        response.user.username, response.expires_at
+                    );
+                }
+                Some(response)
+            },
+            Err(e) => {
+                if verbose {
+                    eprintln!("Warning: Token refresh failed: {}", e);
+                }
+                None
+            },
+        }
+    }
+
     // Determine authentication (priority: CLI args > stored credentials > localhost auto-auth)
     // Track: authenticated username, whether credentials were loaded from storage
     let (auth, authenticated_username, credentials_loaded) = if let Some(token) = cli
@@ -145,12 +180,14 @@ pub async fn create_session(
 
             // Only save credentials if --save-credentials flag is set
             if cli.save_credentials {
-                let new_creds = Credentials::with_details(
+                let new_creds = Credentials::with_refresh_token(
                     cli.instance.clone(),
                     login_response.access_token.clone(),
                     login_response.user.username.clone(),
                     login_response.expires_at.clone(),
                     Some(server_url.clone()),
+                    login_response.refresh_token.clone(),
+                    login_response.refresh_expires_at.clone(),
                 );
 
                 if let Err(e) = credential_store.set_credentials(&new_creds) {
@@ -181,28 +218,116 @@ pub async fn create_session(
     {
         // Load from stored credentials (JWT token)
         if creds.is_expired() {
-            if cli.verbose {
-                eprintln!("Stored JWT token for instance '{}' has expired", cli.instance);
-            }
-            // Token expired - need to re-authenticate with --username/--password
-            return Err(CLIError::ConfigurationError(format!(
-                "Stored credentials for '{}' have expired. Please login again with --username and --password --save-credentials",
+            // Access token expired - try to refresh using refresh_token
+            eprintln!(
+                "Warning: Stored credentials for '{}' have expired.",
                 cli.instance
-            )));
-        }
+            );
 
-        let stored_username = creds.username.clone();
-        if cli.verbose {
-            if let Some(ref user) = stored_username {
-                eprintln!(
-                    "Using stored JWT token for user '{}' (instance: {})",
-                    user, cli.instance
-                );
+            // Try to refresh the token if we have a valid refresh token
+            if creds.can_refresh() {
+                if cli.verbose {
+                    eprintln!("Attempting to refresh access token...");
+                }
+
+                let refresh_server_url = creds.server_url.clone().unwrap_or(server_url.clone());
+                if let Some(login_response) =
+                    try_refresh_token(&refresh_server_url, creds.refresh_token.as_ref().unwrap(), cli.verbose).await
+                {
+                    // Save the refreshed credentials
+                    let new_creds = Credentials::with_refresh_token(
+                        cli.instance.clone(),
+                        login_response.access_token.clone(),
+                        login_response.user.username.clone(),
+                        login_response.expires_at.clone(),
+                        Some(refresh_server_url),
+                        login_response.refresh_token.clone(),
+                        login_response.refresh_expires_at.clone(),
+                    );
+
+                    if let Err(e) = credential_store.set_credentials(&new_creds) {
+                        if cli.verbose {
+                            eprintln!("Warning: Could not save refreshed credentials: {}", e);
+                        }
+                    } else {
+                        eprintln!("Successfully refreshed credentials for instance '{}'", cli.instance);
+                    }
+
+                    let authenticated_user = login_response.user.username.clone();
+                    (
+                        AuthProvider::jwt_token(login_response.access_token),
+                        Some(authenticated_user),
+                        true,
+                    )
+                } else {
+                    // Refresh failed - warn and fall back to localhost auto-auth or no auth
+                    eprintln!(
+                        "Warning: Could not refresh token. Please login again with --username and --password --save-credentials"
+                    );
+
+                    // Fall through to localhost auto-auth or no auth
+                    if is_localhost_url(&server_url) {
+                        let username = "root".to_string();
+                        let password = "".to_string();
+
+                        if let Some(login_response) =
+                            try_login(&server_url, &username, &password, cli.verbose).await
+                        {
+                            eprintln!("Auto-authenticated as root for localhost connection");
+                            (
+                                AuthProvider::jwt_token(login_response.access_token),
+                                Some(login_response.user.username),
+                                false,
+                            )
+                        } else {
+                            (AuthProvider::basic_auth(username.clone(), password), Some(username), false)
+                        }
+                    } else {
+                        (AuthProvider::None, None, false)
+                    }
+                }
             } else {
-                eprintln!("Using stored JWT token for instance '{}'", cli.instance);
+                // No refresh token available - warn and fall back
+                eprintln!(
+                    "Warning: No refresh token available. Please login again with --username and --password --save-credentials"
+                );
+
+                // Fall through to localhost auto-auth or no auth
+                if is_localhost_url(&server_url) {
+                    let username = "root".to_string();
+                    let password = "".to_string();
+
+                    if let Some(login_response) =
+                        try_login(&server_url, &username, &password, cli.verbose).await
+                    {
+                        eprintln!("Auto-authenticated as root for localhost connection");
+                        (
+                            AuthProvider::jwt_token(login_response.access_token),
+                            Some(login_response.user.username),
+                            false,
+                        )
+                    } else {
+                        (AuthProvider::basic_auth(username.clone(), password), Some(username), false)
+                    }
+                } else {
+                    (AuthProvider::None, None, false)
+                }
             }
+        } else {
+            // Token is still valid
+            let stored_username = creds.username.clone();
+            if cli.verbose {
+                if let Some(ref user) = stored_username {
+                    eprintln!(
+                        "Using stored JWT token for user '{}' (instance: {})",
+                        user, cli.instance
+                    );
+                } else {
+                    eprintln!("Using stored JWT token for instance '{}'", cli.instance);
+                }
+            }
+            (AuthProvider::jwt_token(creds.jwt_token), stored_username, true)
         }
-        (AuthProvider::jwt_token(creds.jwt_token), stored_username, true)
     } else if is_localhost_url(&server_url) {
         // Auto-authenticate with root user for localhost connections
         let username = "root".to_string();

@@ -678,9 +678,7 @@ fn cli_output_error(stdout: &str) -> Option<String> {
 /// Check if the KalamDB server is running
 /// Panics if server is not reachable to ensure tests fail loudly
 pub fn is_server_running() -> bool {
-    eprintln!("[DEBUG] Checking if server is running at {}", server_url());
     if !is_server_reachable() {
-        eprintln!("[DEBUG] Server is NOT reachable - will panic!");
         panic!(
             "\n\n\
             ╔══════════════════════════════════════════════════════════════════╗\n\
@@ -695,14 +693,11 @@ pub fn is_server_running() -> bool {
         );
     }
     
-    eprintln!("[DEBUG] Server is reachable, checking auth...");
     match server_requires_auth() {
-        Some(auth_required) => {
-            eprintln!("[DEBUG] Auth check passed, auth_required={}", auth_required);
+        Some(_auth_required) => {
             true
         },
         None => {
-            eprintln!("[DEBUG] Auth check failed - will panic!");
             panic!(
                 "\n\n\
                 ╔══════════════════════════════════════════════════════════════════╗\n\

@@ -228,6 +228,15 @@ impl MetaApplier for ProviderMetaApplier {
 
     // =========================================================================
     // Job Operations - Stay local (no SQL handlers for jobs)
+    //
+    // NEW DESIGN:
+    // - create_job is replicated to ALL nodes
+    // - Each node that receives create_job:
+    //   1. Persists the Job row
+    //   2. Checks if leader-only job → only leader creates its job_node
+    //   3. Otherwise → every node creates its OWN job_node
+    //   4. Awakens the job when job_node is created locally
+    // - The leader no longer creates job_nodes for all nodes
     // =========================================================================
 
     async fn create_job(&self, job: &Job) -> Result<String, RaftError> {
@@ -266,7 +275,16 @@ impl MetaApplier for ProviderMetaApplier {
             .system_tables()
             .job_nodes()
             .create_job_node(job_node)
-            .map_err(|e| RaftError::Internal(format!("Failed to create job_node: {}", e)))
+            .map_err(|e| RaftError::Internal(format!("Failed to create job_node: {}", e)))?;
+
+        // Awake the job on THIS node for immediate execution
+        // This provides instant dispatch rather than relying on polling
+        let this_node_id = *self.app_context.node_id().as_ref();
+        if node_id == this_node_id {
+            self.app_context.job_manager().awake_job(job_id.clone());
+        }
+
+        Ok(format!("Job node {} created and awakened", node_id))
     }
 
     async fn claim_job_node(

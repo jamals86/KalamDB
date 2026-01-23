@@ -43,6 +43,14 @@ pub struct Credentials {
     /// Optional: Server URL if different from instance name
     #[serde(default)]
     pub server_url: Option<String>,
+
+    /// Refresh token for obtaining new access tokens (longer-lived)
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+
+    /// Refresh token expiration time in RFC3339 format
+    #[serde(default)]
+    pub refresh_expires_at: Option<String>,
 }
 
 impl Credentials {
@@ -54,6 +62,8 @@ impl Credentials {
             username: None,
             expires_at: None,
             server_url: None,
+            refresh_token: None,
+            refresh_expires_at: None,
         }
     }
 
@@ -71,6 +81,29 @@ impl Credentials {
             username: Some(username),
             expires_at: Some(expires_at),
             server_url,
+            refresh_token: None,
+            refresh_expires_at: None,
+        }
+    }
+
+    /// Create new credentials with full details including refresh token
+    pub fn with_refresh_token(
+        instance: String,
+        jwt_token: String,
+        username: String,
+        expires_at: String,
+        server_url: Option<String>,
+        refresh_token: Option<String>,
+        refresh_expires_at: Option<String>,
+    ) -> Self {
+        Self {
+            instance,
+            jwt_token,
+            username: Some(username),
+            expires_at: Some(expires_at),
+            server_url,
+            refresh_token,
+            refresh_expires_at,
         }
     }
 
@@ -79,7 +112,7 @@ impl Credentials {
         self.server_url.as_deref().unwrap_or(&self.instance)
     }
 
-    /// Check if the token has expired (if expiration is known)
+    /// Check if the access token has expired (if expiration is known)
     /// Returns false if expiration is unknown (assume valid)
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = &self.expires_at {
@@ -88,6 +121,28 @@ impl Credentials {
             }
         }
         false
+    }
+
+    /// Check if the refresh token has expired (if expiration is known)
+    /// Returns true if no refresh token is available or if it has expired
+    pub fn is_refresh_expired(&self) -> bool {
+        match (&self.refresh_token, &self.refresh_expires_at) {
+            (Some(_), Some(expires_at)) => {
+                if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(expires_at) {
+                    exp < chrono::Utc::now()
+                } else {
+                    // Invalid format, assume expired
+                    true
+                }
+            },
+            // No refresh token available
+            _ => true,
+        }
+    }
+
+    /// Check if we can refresh the access token
+    pub fn can_refresh(&self) -> bool {
+        self.refresh_token.is_some() && !self.is_refresh_expired()
     }
 }
 
@@ -394,5 +449,58 @@ mod tests {
         let deserialized: Credentials = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized, creds);
+    }
+
+    #[test]
+    fn test_credentials_with_refresh_token() {
+        let creds = Credentials::with_refresh_token(
+            "prod".to_string(),
+            "access_token".to_string(),
+            "alice".to_string(),
+            "2099-01-01T00:00:00Z".to_string(),
+            Some("https://db.example.com".to_string()),
+            Some("refresh_token".to_string()),
+            Some("2099-01-08T00:00:00Z".to_string()),
+        );
+
+        assert_eq!(creds.refresh_token, Some("refresh_token".to_string()));
+        assert_eq!(creds.refresh_expires_at, Some("2099-01-08T00:00:00Z".to_string()));
+        assert!(!creds.is_expired());
+        assert!(!creds.is_refresh_expired());
+        assert!(creds.can_refresh());
+    }
+
+    #[test]
+    fn test_credentials_refresh_expired() {
+        // Access token valid, but refresh token expired
+        let creds = Credentials::with_refresh_token(
+            "test".to_string(),
+            "access_token".to_string(),
+            "user".to_string(),
+            "2099-12-31T23:59:59Z".to_string(),
+            None,
+            Some("old_refresh_token".to_string()),
+            Some("2020-01-01T00:00:00Z".to_string()), // Expired
+        );
+
+        assert!(!creds.is_expired());
+        assert!(creds.is_refresh_expired());
+        assert!(!creds.can_refresh());
+    }
+
+    #[test]
+    fn test_credentials_no_refresh_token() {
+        // No refresh token at all
+        let creds = Credentials::with_details(
+            "test".to_string(),
+            "access_token".to_string(),
+            "user".to_string(),
+            "2020-01-01T00:00:00Z".to_string(), // Expired access token
+            None,
+        );
+
+        assert!(creds.is_expired());
+        assert!(creds.is_refresh_expired()); // No refresh token = expired
+        assert!(!creds.can_refresh());
     }
 }

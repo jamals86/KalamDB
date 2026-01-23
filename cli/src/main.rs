@@ -57,6 +57,10 @@ async fn run() -> Result<()> {
         eprintln!("Verbose mode enabled");
     }
 
+    // Load configuration early to ensure config file exists
+    // This will create a default config file if it doesn't exist
+    let _config = CLIConfiguration::load(&cli.config)?;
+
     // Load credential store
     let mut credential_store = FileCredentialStore::new()?;
 

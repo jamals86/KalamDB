@@ -115,10 +115,17 @@ impl JobsManager {
         // Persist job
         self.insert_job_async(job.clone()).await?;
 
-        // Create per-node job entries (fan-out)
+        // Determine which nodes should execute this job
         let app_ctx = self.get_attached_app_context();
         let executor = app_ctx.executor();
-        let node_ids = self.active_cluster_node_ids();
+        let is_leader_only = job_type.is_leader_only();
+        let node_ids = if is_leader_only {
+            // Leader-only jobs: only create job_node for this node (the leader)
+            vec![self.node_id]
+        } else {
+            // All other jobs: create job_nodes for all active nodes
+            self.active_cluster_node_ids()
+        };
         let created_at = Utc::now();
 
         for node_id in node_ids {

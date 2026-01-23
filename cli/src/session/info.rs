@@ -123,7 +123,6 @@ impl CLISession {
                 "No".red()
             }
         );
-        println!("  Server URL:    {}", server_cfg.url.as_deref().unwrap_or("<not set>").green());
         println!("  Timeout:       {}s", server_cfg.timeout.to_string().green());
         println!("  Max Retries:   {}", server_cfg.max_retries.to_string().green());
         println!("  HTTP Version: {}", server_cfg.http_version.to_string().green());

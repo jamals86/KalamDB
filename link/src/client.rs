@@ -220,6 +220,69 @@ impl KalamLinkClient {
 
         Ok(login_response)
     }
+
+    /// Refresh an access token using a refresh token.
+    ///
+    /// This is useful when the access token has expired but the refresh token
+    /// is still valid. Returns a new LoginResponse with fresh tokens.
+    ///
+    /// # Arguments
+    /// * `refresh_token` - The refresh token obtained from a previous login
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use kalam_link::KalamLinkClient;
+    ///
+    /// # async fn example() -> kalam_link::Result<()> {
+    /// let client = KalamLinkClient::builder()
+    ///     .base_url("http://localhost:3000")
+    ///     .build()?;
+    ///
+    /// // Refresh using a stored refresh token
+    /// let response = client.refresh_access_token("old_refresh_token").await?;
+    /// println!("New access token: {}", response.access_token);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn refresh_access_token(
+        &self,
+        refresh_token: &str,
+    ) -> Result<crate::models::LoginResponse> {
+        let url = format!("{}/v1/api/auth/refresh", self.base_url);
+        log::debug!("[REFRESH] Refreshing access token at url={}", url);
+
+        let start = std::time::Instant::now();
+
+        // Send refresh token in Authorization header as Bearer token
+        let response = self
+            .http_client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", refresh_token))
+            .send()
+            .await?;
+
+        let status = response.status();
+        log::debug!(
+            "[REFRESH] HTTP response received in {:?}, status={}",
+            start.elapsed(),
+            status
+        );
+
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            log::debug!("[REFRESH] Token refresh failed: {}", error_text);
+            return Err(KalamLinkError::AuthenticationError(format!(
+                "Token refresh failed ({}): {}",
+                status, error_text
+            )));
+        }
+
+        let login_response = response.json::<crate::models::LoginResponse>().await?;
+        log::debug!("[REFRESH] Successfully refreshed token in {:?}", start.elapsed());
+
+        Ok(login_response)
+    }
 }
 
 /// Builder for configuring [`KalamLinkClient`] instances.

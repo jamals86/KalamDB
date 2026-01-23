@@ -1,5 +1,7 @@
+   Compiling kalam-cli v0.2.0 (C:\Jamal\git\KalamDB\cli)
+   Compiling kalam-link v0.2.0 (C:\Jamal\git\KalamDB\link)
 warning: variants `Milliseconds` and `Nanoseconds` are never constructed
-   --> cli/src/formatter.rs:490:5
+   --> cli\src\formatter.rs:490:5
     |
 489 | enum TimestampUnit {
     |      ------------- variants in this enum
@@ -13,158 +15,123 @@ warning: variants `Milliseconds` and `Nanoseconds` are never constructed
 
 warning: `kalam-cli` (lib) generated 1 warning
 warning: unused variable: `temp_dir`
-   --> cli/tests/cli/test_cli_auth.rs:311:10
+   --> cli\tests\cli\test_cli_auth.rs:311:10
     |
 311 |     let (temp_dir, creds_path) = create_temp_credentials_path();
     |          ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_temp_dir`
     |
     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
 
-warning: `kalam-cli` (test "cli") generated 1 warning (run `cargo fix --test "cli" -p kalam-cli` to apply 1 suggestion)
 warning: `kalam-cli` (lib test) generated 1 warning (1 duplicate)
-    Finished `test` profile [unoptimized] target(s) in 0.30s
+warning: `kalam-cli` (test "cli") generated 1 warning (run `cargo fix --test "cli" -p kalam-cli` to apply 1 suggestion)
+    Finished `test` profile [unoptimized] target(s) in 9.02s
 ────────────
- Nextest run ID 9fc43e22-1ed4-46eb-b184-542936994558 with nextest profile: default
-    Starting 140 tests across 11 binaries (3 tests skipped)
-        PASS [   0.022s] (  1/140) kalam-cli config::tests::test_default_connection_config
-        PASS [   0.025s] (  2/140) kalam-cli completer::tests::test_keyword_completion
-        PASS [   0.025s] (  3/140) kalam-cli completer::tests::test_context_aware_table_completion
-        PASS [   0.026s] (  4/140) kalam-cli completer::tests::test_meta_command_completion
-        PASS [   0.023s] (  5/140) kalam-cli config::tests::test_config_serialization
-        PASS [   0.028s] (  6/140) kalam-cli completer::tests::test_table_completion
-        PASS [   0.031s] (  7/140) kalam-cli config::tests::test_to_connection_options
-        PASS [   0.033s] (  8/140) kalam-cli config::tests::test_http_version_parsing
-        PASS [   0.033s] (  9/140) kalam-cli completer::tests::test_column_completion
-        PASS [   0.033s] ( 10/140) kalam-cli config::tests::test_default_config
-        PASS [   0.033s] ( 11/140) kalam-cli config::tests::test_unlimited_reconnect_attempts
-        PASS [   0.042s] ( 12/140) kalam-cli credentials::tests::test_toml_format
-        PASS [   0.042s] ( 13/140) kalam-cli credentials::tests::test_file_store_basic_operations
-        PASS [   0.044s] ( 14/140) kalam-cli formatter::tests::test_format_json_value
-        PASS [   0.044s] ( 15/140) kalam-cli formatter::tests::test_csv_escaping
-        PASS [   0.046s] ( 16/140) kalam-cli credentials::tests::test_file_permissions
-        PASS [   0.046s] ( 17/140) kalam-cli credentials::tests::test_file_store_overwrite
-        PASS [   0.047s] ( 18/140) kalam-cli credentials::tests::test_file_store_multiple_instances
-        PASS [   0.053s] ( 19/140) kalam-cli error::tests::test_error_display
-        PASS [   0.054s] ( 20/140) kalam-cli credentials::tests::test_file_store_persistence
-        PASS [   0.054s] ( 21/140) kalam-cli formatter::tests::test_terminal_width_detection
-        PASS [   0.041s] ( 22/140) kalam-cli history::tests::test_multiline_with_special_chars
-        PASS [   0.059s] ( 23/140) kalam-cli formatter::tests::test_truncate_value
-        PASS [   0.056s] ( 24/140) kalam-cli history::tests::test_clear
-        PASS [   0.056s] ( 25/140) kalam-cli history::tests::test_history_persistence
-        PASS [   0.059s] ( 26/140) kalam-cli history::tests::test_append
-        PASS [   0.048s] ( 27/140) kalam-cli parser::tests::test_parse_describe
-        PASS [   0.063s] ( 28/140) kalam-cli history::tests::test_multiline_commands
-        PASS [   0.064s] ( 29/140) kalam-cli history::tests::test_history_max_size
-        PASS [   0.059s] ( 30/140) kalam-cli parser::tests::test_empty_command
-        PASS [   0.033s] ( 31/140) kalam-cli parser::tests::test_parse_quit
-        PASS [   0.036s] ( 32/140) kalam-cli parser::tests::test_parse_help
-        PASS [   0.035s] ( 33/140) kalam-cli session::tests::test_extract_subscribe_options_with_semicolon
-        PASS [   0.036s] ( 34/140) kalam-cli parser::tests::test_parse_sql
-        PASS [   0.036s] ( 35/140) kalam-cli parser::tests::test_parse_unknown
-        PASS [   0.046s] ( 36/140) kalam-cli parser::tests::test_parse_stats
-        PASS [   0.048s] ( 37/140) kalam-cli session::tests::test_extract_subscribe_options_with_options_and_semicolon
-        PASS [   0.042s] ( 38/140) kalam-cli session::tests::test_output_format
-        PASS [   0.056s] ( 39/140) kalam-cli::auth test_auth::test_cli_authenticate_and_check_info
-        PASS [   0.058s] ( 40/140) kalam-cli::auth test_auth::test_cli_authenticate_unauthorized_user
-        PASS [   0.061s] ( 41/140) kalam-cli::auth test_auth::test_cli_invalid_token
-        PASS [   0.044s] ( 42/140) kalam-cli::auth test_auth::test_cli_localhost_auth_bypass
-        PASS [   0.069s] ( 43/140) kalam-cli::auth test_auth::test_cli_jwt_authentication
-        PASS [   0.050s] ( 44/140) kalam-cli::cli test_cli::test_cli_color_output
-        PASS [   0.043s] ( 45/140) kalam-cli::cli test_cli::test_cli_config_file_creation
-        PASS [   0.042s] ( 46/140) kalam-cli::cli test_cli::test_cli_config_precedence
-        PASS [   0.034s] ( 47/140) kalam-cli::cli test_cli::test_cli_connection_and_prompt
-        PASS [   0.067s] ( 48/140) kalam-cli::cli test_cli::test_cli_load_config_file
-        PASS [   0.039s] ( 49/140) kalam-cli::cli test_cli_auth::test_cli_credential_rotation
-        PASS [   0.046s] ( 50/140) kalam-cli::cli test_cli::test_cli_verbose_output
-        PASS [   0.058s] ( 51/140) kalam-cli::cli test_cli::test_cli_session_timeout
-        PASS [   0.049s] ( 52/140) kalam-cli::cli test_cli_auth::test_cli_credential_expiry_check
-        PASS [   0.049s] ( 53/140) kalam-cli::cli test_cli_auth::test_cli_credentials_with_server_url
-        PASS [   0.059s] ( 54/140) kalam-cli::cli test_cli_auth::test_cli_credentials_loaded_in_session
-        PASS [   0.037s] ( 55/140) kalam-cli::cli test_cli_auth::test_cli_empty_store
-        PASS [   0.042s] ( 56/140) kalam-cli::cli test_cli_auth::test_cli_delete_credentials
-        PASS [   0.054s] ( 57/140) kalam-cli::cli test_cli_auth::test_cli_jwt_credentials_stored_securely
-        PASS [   0.050s] ( 58/140) kalam-cli::cli test_cli_auth::test_cli_multiple_instance_selection
-        PASS [   0.062s] ( 59/140) kalam-cli::cli test_cli_auth::test_cli_delete_credentials_command
-        PASS [   0.032s] ( 60/140) kalam-cli::cli test_cli_auth::test_cli_save_credentials_creates_file
-        PASS [   0.048s] ( 61/140) kalam-cli::cli test_cli_auth::test_cli_multiple_instances
-        PASS [   0.086s] ( 62/140) kalam-cli::cli test_cli_auth::test_cli_show_credentials_command
-        PASS [   0.069s] ( 63/140) kalam-cli::cli test_cli_auth::test_cli_uses_jwt_for_requests
-        PASS [   0.070s] ( 64/140) kalam-cli::cli test_cli_auth_admin::test_cli_admin_operations
-        PASS [   0.060s] ( 65/140) kalam-cli::cli test_cli_auth_admin::test_cli_create_namespace_as_root
-        PASS [   0.061s] ( 66/140) kalam-cli::cli test_cli_auth_admin::test_cli_flush_all_tables
-        PASS [   0.024s] ( 67/140) kalam-cli::cli test_cli_auth_admin::test_cli_flush_table
-        PASS [   0.026s] ( 68/140) kalam-cli::cli test_cli_auth_admin::test_regular_user_cannot_create_namespace
-        PASS [   0.027s] ( 69/140) kalam-cli::cli test_cli_auth_admin::test_root_can_create_drop_tables
-        PASS [   0.034s] ( 70/140) kalam-cli::cli test_cli_auth_admin::test_cli_show_namespaces
-        PASS [   0.034s] ( 71/140) kalam-cli::cli test_cli_auth_admin::test_cli_with_explicit_credentials
-        PASS [   0.024s] ( 72/140) kalam-cli::cli test_cli_auth_admin::test_root_can_create_namespace
-        PASS [   0.027s] ( 73/140) kalam-cli::storage test_hot_cold_storage::test_duplicate_primary_key_insert_fails
-        PASS [   0.027s] ( 74/140) kalam-cli::storage test_hot_cold_storage::test_hot_cold_storage_data_integrity
-        PASS [   0.025s] ( 75/140) kalam-cli::storage test_hot_cold_storage::test_update_operations_hot_and_cold
-        PASS [   0.029s] ( 76/140) kalam-cli::repro_issue repro_duplicate_column_error
-        PASS [   0.034s] ( 77/140) kalam-cli::flushing test_flush::test_cli_explicit_flush
-        PASS [   0.018s] ( 78/140) kalam-cli::subscription live_connection_tests::test_connection_timeout_option
-        PASS [   0.020s] ( 79/140) kalam-cli::storage test_storage_lifecycle::test_storage_drop_requires_detached_tables
-        PASS [   0.018s] ( 80/140) kalam-cli::subscription live_connection_tests::test_live_http2_query_execution
-        PASS [   0.021s] ( 81/140) kalam-cli::subscription live_connection_tests::test_live_multiple_subscriptions
-        PASS [   0.035s] ( 82/140) kalam-cli::subscription live_connection_tests::test_client_builder_http_versions
-        PASS [   0.023s] ( 83/140) kalam-cli::subscription live_connection_tests::test_live_subscription_change_event_order
-        PASS [   0.025s] ( 84/140) kalam-cli::subscription live_connection_tests::test_live_subscription_seq_id_tracking
-        PASS [   0.027s] ( 85/140) kalam-cli::subscription live_connection_tests::test_live_subscription_default_options
-        PASS [   0.032s] ( 86/140) kalam-cli::subscription live_connection_tests::test_live_subscription_with_batch_size
-        PASS [   0.030s] ( 87/140) kalam-cli::subscription live_connection_tests::test_live_subscription_with_last_rows
-        PASS [   0.028s] ( 88/140) kalam-cli::subscription subscription_options_tests::test_seq_id_comparison
-        PASS [   0.026s] ( 89/140) kalam-cli::subscription subscription_options_tests::test_subscription_options_batch_size_only
-        PASS [   0.027s] ( 90/140) kalam-cli::subscription subscription_options_tests::test_seq_id_to_string
-        PASS [   0.024s] ( 91/140) kalam-cli::subscription subscription_options_tests::test_subscription_options_defaults
-        PASS [   0.026s] ( 92/140) kalam-cli::subscription subscription_options_tests::test_subscription_options_builder
-        PASS [   0.021s] ( 93/140) kalam-cli::subscription subscription_options_tests::test_subscription_options_has_resume_seq_id
-        PASS [   0.023s] ( 94/140) kalam-cli::subscription subscription_options_tests::test_subscription_options_from_seq_id_only
-        PASS [   0.025s] ( 95/140) kalam-cli::subscription subscription_options_tests::test_subscription_options_json_deserialization_empty
-        PASS [   0.020s] ( 96/140) kalam-cli::subscription subscription_options_tests::test_subscription_options_json_deserialization_full
-        PASS [   0.020s] ( 97/140) kalam-cli::subscription subscription_options_tests::test_subscription_options_last_rows_only
-        PASS [   0.020s] ( 98/140) kalam-cli::subscription subscription_options_tests::test_subscription_options_json_with_seq_id
-        PASS [   0.021s] ( 99/140) kalam-cli::subscription subscription_options_tests::test_subscription_options_no_connection_fields
-        PASS [   0.022s] (100/140) kalam-cli::subscription subscription_options_tests::test_subscription_options_json_serialization_sparse
-        PASS [   0.018s] (101/140) kalam-cli::subscription subscription_options_tests::test_subscription_options_reconnection_workflow
-        PASS [   0.018s] (102/140) kalam-cli::subscription test_link_subscription_initial_data::test_link_subscription_batch_status_transition
-        PASS [   0.020s] (103/140) kalam-cli::subscription subscription_options_tests::test_subscription_options_typical_use_case
-        PASS [   0.020s] (104/140) kalam-cli::subscription test_link_subscription_initial_data::test_link_subscription_empty_table_then_inserts
-        PASS [   0.020s] (105/140) kalam-cli::subscription test_link_subscription_initial_data::test_link_subscription_delete_events
-        PASS [   0.014s] (106/140) kalam-cli::subscription test_link_subscription_initial_data::test_link_subscription_multiple_live_inserts
-        PASS [   0.013s] (107/140) kalam-cli::subscription test_subscribe::test_cli_live_query_basic
-        PASS [   0.021s] (108/140) kalam-cli::subscription test_link_subscription_initial_data::test_link_subscription_initial_batch_then_inserts
-        PASS [   0.017s] (109/140) kalam-cli::subscription test_subscribe::test_cli_subscription_commands
-        PASS [   0.017s] (110/140) kalam-cli::subscription test_subscribe::test_cli_live_query_with_filter
-        PASS [   0.018s] (111/140) kalam-cli::subscription test_subscribe::test_cli_subscription_comprehensive_crud
-        PASS [   0.015s] (112/140) kalam-cli::subscription test_subscription_e2e::test_cli_subscription_initial_and_changes
-        PASS [   0.018s] (113/140) kalam-cli::subscription test_subscribe::test_cli_subscription_with_initial_data
-        PASS [   0.020s] (114/140) kalam-cli::subscription test_subscription_manual::test_subscription_listener_functionality
-        PASS [   0.024s] (115/140) kalam-cli::tables test_shared_tables::test_basic_table_creation_and_access
-        PASS [   0.020s] (116/140) kalam-cli::tables test_user_tables::test_cli_basic_query_execution
-        PASS [   0.014s] (117/140) kalam-cli::tables test_user_tables::test_cli_query_with_comments
-        PASS [   0.015s] (118/140) kalam-cli::tables test_user_tables::test_cli_json_output_format
-        PASS [   0.013s] (119/140) kalam-cli::tables test_user_tables::test_cli_result_pagination
-        PASS [   0.016s] (120/140) kalam-cli::tables test_user_tables::test_cli_empty_query
-        PASS [   0.023s] (121/140) kalam-cli::tables test_user_tables::test_cli_multiline_query
-        PASS [   0.014s] (122/140) kalam-cli::tables test_user_tables::test_cli_table_output_formatting
-        PASS [   0.020s] (123/140) kalam-cli::usecases test_batch_streaming::test_websocket_batch_streaming_rows
-        PASS [   0.020s] (124/140) kalam-cli::usecases test_chat_simulation::test_chat_simulation_memory_leak
-        PASS [   0.020s] (125/140) kalam-cli::usecases test_datatypes_json::test_datatypes_json_preservation
-        PASS [   0.025s] (126/140) kalam-cli::usecases test_update_all_types::test_update_all_types_shared_table
-        PASS [   0.025s] (127/140) kalam-cli::usecases test_update_all_types::test_update_all_types_user_table
-        PASS [   0.025s] (128/140) kalam-cli::users test_admin::test_cli_batch_file_execution
-        PASS [   0.025s] (129/140) kalam-cli::users test_admin::test_cli_describe_table
-        PASS [   0.017s] (130/140) kalam-cli::users test_admin::test_cli_health_check
-        PASS [   0.020s] (131/140) kalam-cli::users test_admin::test_cli_list_tables
-        PASS [   0.019s] (132/140) kalam-cli::users test_admin::test_cli_syntax_error_handling
-        PASS [   0.019s] (133/140) kalam-cli::users test_admin::test_server_health_check
-        PASS [   0.020s] (134/140) kalam-cli::users test_concurrent_users::test_concurrent_users_isolation
-        PASS [   0.944s] (135/140) kalam-cli::cli test_cli::test_cli_help_command
-        PASS [   0.923s] (136/140) kalam-cli::cli test_cli::test_cli_tab_completion
-        PASS [   0.967s] (137/140) kalam-cli::cli test_cli::test_cli_command_history
-        PASS [   0.242s] (138/140) kalam-cli::users test_admin::test_cli_connection_failure_handling
-        PASS [   0.814s] (139/140) kalam-cli::cli test_cli_auth::test_cli_show_credentials_missing_instance
-        PASS [   0.869s] (140/140) kalam-cli::cli test_cli_auth::test_cli_list_instances_command
+ Nextest run ID 5daa4b39-6590-4487-898d-9927a11b7ac0 with nextest profile: default
+    Starting 1 test across 11 binaries (143 tests skipped)
+        FAIL [  12.195s] (1/1) kalam-cli::usecases test_update_all_types::test_update_all_types_user_table
+  stdout ───
+
+    running 1 test
+    Flushing initial data to cold storage...
+    Waiting for initial flush job FL-7f4c8804ed88...
+    test test_update_all_types::test_update_all_types_user_table ... FAILED
+
+    failures:
+
+    failures:
+        test_update_all_types::test_update_all_types_user_table
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 12.18s
+
+  stderr ───
+    [TEST_CLI] Executing as root: "CREATE NAMESPACE IF NOT EXISTS test_update_types_mkqxafib_lw..."
+    [TEST_CLI] Process spawned in 322.6247ms
+    [TEST_CLI] Success: spawn=322.6247ms wait=34.8051ms total=357ms
+    [TEST_CLI] Executing as root: "CREATE TABLE test_update_types_mkqxafib_lww_0.all_types_user..."
+    [TEST_CLI] Process spawned in 4.6655ms
+    [TEST_CLI] Success: spawn=4.6655ms wait=156.8837ms total=161ms
+    [TEST_CLI] Executing as root: "INSERT INTO test_update_types_mkqxafib_lww_0.all_types_user_..."
+    [TEST_CLI] Process spawned in 4.8797ms
+    [TEST_CLI] Success: spawn=4.8797ms wait=32.2849ms total=37ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 5.2505ms
+    [TEST_CLI] Success: spawn=5.2505ms wait=39.7023ms total=44ms
+    [TEST_CLI] Executing as root: "STORAGE FLUSH TABLE test_update_types_mkqxafib_lww_0.all_typ..."
+    [TEST_CLI] Process spawned in 5.6551ms
+    [TEST_CLI] Success: spawn=5.6551ms wait=27.9042ms total=33ms
+    [TEST_CLIENT] Executing as root: "SELECT job_id, status, error_message FROM system.jobs WHERE ..."
+    [TEST_CLIENT] Success in 8.973ms
+    [TEST_CLIENT] Executing as root: "SELECT job_id, status, error_message FROM system.jobs WHERE ..."
+    [TEST_CLIENT] Success in 21.8014ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 9.0566ms
+    [TEST_CLI] Success: spawn=9.0566ms wait=35.3043ms total=44ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 7.4111ms
+    [TEST_CLI] Success: spawn=7.4111ms wait=34.758ms total=42ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 13.2872ms
+    [TEST_CLI] Success: spawn=13.2872ms wait=58.6839ms total=72ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 4.3728ms
+    [TEST_CLI] Success: spawn=4.3728ms wait=25.3974ms total=29ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 20.1879ms
+    [TEST_CLI] Success: spawn=20.1879ms wait=55.3163ms total=75ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 18.1014ms
+    [TEST_CLI] Success: spawn=18.1014ms wait=70.4798ms total=88ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 4.4085ms
+    [TEST_CLI] Success: spawn=4.4085ms wait=27.4553ms total=31ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 19.2987ms
+    [TEST_CLI] Success: spawn=19.2987ms wait=58.2662ms total=77ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 18.0516ms
+    [TEST_CLI] Success: spawn=18.0516ms wait=58.9754ms total=77ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 5.8855ms
+    [TEST_CLI] Success: spawn=5.8855ms wait=39.213ms total=45ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 19.9217ms
+    [TEST_CLI] Success: spawn=19.9217ms wait=77.7875ms total=97ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 5.7183ms
+    [TEST_CLI] Success: spawn=5.7183ms wait=57.3249ms total=63ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 6.1705ms
+    [TEST_CLI] Success: spawn=6.1705ms wait=39.8196ms total=46ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 15.3139ms
+    [TEST_CLI] Success: spawn=15.3139ms wait=59.8315ms total=75ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 4.3384ms
+    [TEST_CLI] Success: spawn=4.3384ms wait=25.2843ms total=29ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 4.18ms
+    [TEST_CLI] Success: spawn=4.18ms wait=25.7669ms total=29ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 5.9854ms
+    [TEST_CLI] Success: spawn=5.9854ms wait=38.3075ms total=44ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 4.0116ms
+    [TEST_CLI] Success: spawn=4.0116ms wait=25.7894ms total=29ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 4.0213ms
+    [TEST_CLI] Success: spawn=4.0213ms wait=42.8316ms total=46ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 18.4103ms
+    [TEST_CLI] Success: spawn=18.4103ms wait=53.4967ms total=72ms
+    [TEST_CLI] Executing as root: "SELECT * FROM test_update_types_mkqxafib_lww_0.all_types_use..."
+    [TEST_CLI] Process spawned in 18.1824ms
+    [TEST_CLI] Success: spawn=18.1824ms wait=49.3704ms total=67ms
+
+    thread 'test_update_all_types::test_update_all_types_user_table' (42352) panicked at cli\tests\usecases\test_update_all_types.rs:211:6:
+    called `Result::unwrap()` on an `Err` value: "Timeout waiting for query to contain 'initial text'. Last output: {\n  \"status\": \"success\",\n  \"results\": [\n    {\n      \"schema\": [\n        {\n          \"name\": \"id\",\n          \"data_type\": \"Text\",\n          \"index\": 0\n        },\n        {\n          \"name\": \"col_bool\",\n          \"data_type\": \"Boolean\",\n          \"index\": 1\n        },\n        {\n          \"name\": \"col_int\",\n          \"data_type\": \"Int\",\n          \"index\": 2\n        },\n        {\n          \"name\": \"col_bigint\",\n          \"data_type\": \"BigInt\",\n          \"index\": 3\n        },\n        {\n          \"name\": \"col_double\",\n          \"data_type\": \"Double\",\n          \"index\": 4\n        },\n        {\n          \"name\": \"col_float\",\n          \"data_type\": \"Float\",\n          \"index\": 5\n        },\n        {\n          \"name\": \"col_text\",\n          \"data_type\": \"Text\",\n          \"index\": 6\n        },\n        {\n          \"name\": \"col_timestamp\",\n          \"data_type\": \"Timestamp\",\n          \"index\": 7\n        },\n        {\n          \"name\": \"col_date\",\n          \"data_type\": \"Date\",\n          \"index\": 8\n        },\n        {\n          \"name\": \"col_datetime\",\n          \"data_type\": \"DateTime\",\n          \"index\": 9\n        },\n        {\n          \"name\": \"col_time\",\n          \"data_type\": \"Time\",\n          \"index\": 10\n        },\n        {\n          \"name\": \"col_json\",\n          \"data_type\": \"Text\",\n          \"index\": 11\n        },\n        {\n          \"name\": \"col_uuid\",\n          \"data_type\": \"Uuid\",\n          \"index\": 12\n        },\n        {\n          \"name\": \"col_decimal\",\n          \"data_type\": {\n            \"Decimal\": {\n              \"precision\": 10,\n              \"scale\": 2\n            }\n          },\n          \"index\": 13\n        },\n        {\n          \"name\": \"col_smallint\",\n          \"data_type\": \"SmallInt\",\n          \"index\": 14\n        },\n        {\n          \"name\": \"_seq\",\n          \"data_type\": \"BigInt\",\n          \"index\": 15\n        },\n        {\n          \"name\": \"_deleted\",\n          \"data_type\": \"Boolean\",\n          \"index\": 16\n        }\n      ],\n      \"rows\": [],\n      \"row_count\": 0\n    }\n  ],\n  \"took\": 1.1344\n}\n"
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
 ────────────
-     Summary [   1.165s] 140 tests run: 140 passed, 3 skipped
+     Summary [  12.199s] 1 test run: 0 passed, 1 failed, 143 skipped
+        FAIL [  12.195s] (1/1) kalam-cli::usecases test_update_all_types::test_update_all_types_user_table
+error: test run failed

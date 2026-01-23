@@ -42,6 +42,13 @@ pub fn handle_credentials(cli: &Cli, credential_store: &mut FileCredentialStore)
                     let expired = if creds.is_expired() { " (EXPIRED)" } else { "" };
                     println!("Expires: {}{}", expires, expired);
                 }
+                if let Some(ref refresh_token) = creds.refresh_token {
+                    println!("Refresh Token: {}...", &refresh_token[..refresh_token.len().min(20)]);
+                    if let Some(ref refresh_expires) = creds.refresh_expires_at {
+                        let expired = if creds.is_refresh_expired() { " (EXPIRED)" } else { "" };
+                        println!("Refresh Expires: {}{}", refresh_expires, expired);
+                    }
+                }
                 if let Some(ref url) = creds.server_url {
                     println!("Server URL: {}", url);
                 }
@@ -114,13 +121,15 @@ pub async fn login_and_store_credentials(
         .await
         .map_err(|e| CLIError::ConfigurationError(format!("Login failed: {}", e)))?;
 
-    // Store the JWT token
-    let creds = Credentials::with_details(
+    // Store the JWT token and refresh token
+    let creds = Credentials::with_refresh_token(
         cli.instance.clone(),
         login_response.access_token,
         login_response.user.username,
         login_response.expires_at.clone(),
         Some(server_url),
+        login_response.refresh_token.clone(),
+        login_response.refresh_expires_at.clone(),
     );
 
     credential_store
@@ -129,6 +138,9 @@ pub async fn login_and_store_credentials(
 
     println!("Successfully logged in and saved credentials for instance '{}'", cli.instance);
     println!("Token expires: {}", login_response.expires_at);
+    if let Some(ref refresh_expires) = login_response.refresh_expires_at {
+        println!("Refresh token expires: {}", refresh_expires);
+    }
 
     Ok(true)
 }

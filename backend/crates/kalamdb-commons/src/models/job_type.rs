@@ -124,6 +124,19 @@ impl JobType {
             JobType::Retention          // Local soft-delete cleanup
         )
     }
+
+    /// Whether this job should ONLY run on the leader.
+    ///
+    /// Leader-only jobs:
+    /// - Only the leader creates and executes the job
+    /// - Followers ignore job creation (don't create job_nodes)
+    /// - Used for jobs that don't have local work on followers
+    ///
+    /// Returns true for jobs that ONLY have leader actions and NO local work.
+    pub fn is_leader_only(&self) -> bool {
+        // If the job has leader actions but NO local work, it's leader-only
+        self.has_leader_actions() && !self.has_local_work()
+    }
 }
 
 impl FromStr for JobType {
