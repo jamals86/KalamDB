@@ -72,6 +72,21 @@ async fn execute_sql(sql: &str) -> Result<QueryResponse, Box<dyn std::error::Err
     Ok(client.execute_query(sql, None, None).await?)
 }
 
+/// Wait until a newly created table is visible for queries
+async fn wait_for_table_ready(table: &str) -> Result<(), Box<dyn std::error::Error>> {
+    for _ in 0..20 {
+        if execute_sql(&format!("SELECT 1 FROM {} LIMIT 1", table))
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+
+    Err(format!("Table not ready: {}", table).into())
+}
+
 /// Helper to setup test namespace and table
 async fn setup_test_data() -> Result<String, Box<dyn std::error::Error>> {
     static TABLE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -100,7 +115,8 @@ async fn setup_test_data() -> Result<String, Box<dyn std::error::Error>> {
         full_table
     ))
     .await?;
-    sleep(Duration::from_millis(50)).await;
+
+    wait_for_table_ready(&full_table).await?;
 
     Ok(full_table)
 }

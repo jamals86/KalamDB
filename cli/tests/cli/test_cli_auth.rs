@@ -308,7 +308,7 @@ fn test_cli_save_credentials_creates_file() {
         return;
     }
 
-    let (temp_dir, creds_path) = create_temp_credentials_path();
+    let (_temp_dir, creds_path) = create_temp_credentials_path();
     let instance = format!(
         "test_save_{}",
         std::time::SystemTime::now()

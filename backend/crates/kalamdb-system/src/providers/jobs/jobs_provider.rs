@@ -220,12 +220,13 @@ impl JobsTableProvider {
                 let prefix = vec![status_to_u8(status)];
 
                 // Scan by index - returns (JobId, Job) pairs
-                let job_entries = self
+                let iter = self
                     .store
-                    .scan_by_index(STATUS_INDEX, Some(&prefix), Some(limit - jobs.len()))
-                    .into_system_error("scan_by_index error")?;
+                    .scan_by_index_iter(STATUS_INDEX, Some(&prefix), Some(limit - jobs.len()))
+                    .into_system_error("scan_by_index_iter error")?;
 
-                for (_job_id, job) in job_entries {
+                for entry in iter {
+                    let (_job_id, job) = entry.into_system_error("scan_by_index_iter error")?;
                     // Apply other filters that index doesn't cover
                     if self.matches_filter(&job, filter) {
                         jobs.push(job);
@@ -462,10 +463,12 @@ impl JobsTableProvider {
             // Sorted by created_at ASC
             let iter = self
                 .store
-                .scan_index_raw(STATUS_INDEX, Some(&prefix), None, None)
-                .into_system_error("scan_index_raw error")?;
+                .scan_index_raw_typed_iter(STATUS_INDEX, Some(&prefix), None, None)
+                .into_system_error("scan_index_raw_typed_iter error")?;
 
-            for (key_bytes, job_id_bytes) in iter {
+            for entry in iter {
+                let (key_bytes, job_id) =
+                    entry.into_system_error("scan_index_raw_typed_iter error")?;
                 // Extract created_at (bytes 1..9)
                 if key_bytes.len() < 9 {
                     continue;
@@ -480,10 +483,6 @@ impl JobsTableProvider {
                 if created_at > cutoff_time {
                     break;
                 }
-
-                let job_id_str =
-                    String::from_utf8(job_id_bytes).into_system_error("Invalid JobId in index")?;
-                let job_id = JobId::new(job_id_str);
 
                 // Load job to check actual finished_at
                 if let Some(job) = self.store.get(&job_id)? {

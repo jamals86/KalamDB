@@ -1237,133 +1237,25 @@ make only one place where it reads parquet extract the common logic and check wh
 maybe we can have a big list of all error codes with categories and then we can use them everywhere across the codebase, check if this is better for kalamdb or not, since each crate must be responsible for its error codes as well
 
 
-121) backend/crates/kalamdb-core/src/providers/streams.rs
-backend/crates/kalamdb-core/src/providers/users.rs
-backend/crates/kalamdb-core/src/providers/shared.rs
-check if we can move these to kalamdb-tables crate since they are table providers only for specific table types
-for the shared logic we can create in kalamdb-system a LiveQueryManager interface and also the interface for ManifestService inside folder: src/impls
-if there is anything else needed in those providers then we can do the same to it as we did to livequerymanager and manifestservice
-
-these wont be needed since we pass whatever they is needed for in the constructor, like: primary_key_column_id
-
-    /// Schema registry for table metadata and Arrow schema caching
-    pub schema_registry: Arc<crate::schema_registry::SchemaRegistry>,
-    /// System columns service for _seq and _deleted management
-    pub system_columns: Arc<crate::system_columns::SystemColumnsService>,
-    /// Storage registry for resolving full storage paths (optional)
-    pub storage_registry: Option<Arc<StorageRegistry>>,
-
-backend/crates/kalamdb-core/src/schema_registry/system_columns_service.rs can be moved to kalamdb-system src/services
-
-
 125) no need for a column node_id in: system.jobs only the leader is needed there, also cpu_used not needed
-
-127) check the ability to do the storedkey tuple with a delimiter which is not possible to be in the actual id's like ':' or '|' so that when we filter by prefix we dont get collisions with other ids which starts with the same prefix, when making this tuples make it generic so we can use it in other places or id's as well and also we can use it for also filtering and scanning with prefixes easily
-my suggestion is the StorageKey which we extend in each id type to have a method which return a prefix for part1 part2 part3 which we can use for filtering and scanning and no need to repeat the same logics each time in the scan functions
 
 add test which cover and make sure keys doesnt collide or get in the filtering of other keys when scanning with prefix
 these should be unit tests
 
 also add tests which cover the users/shared/stream providers for scanning with prefix as well
 
-128) Make sure we have a complete support for datafusion where we have indexes works per primary keys as well as starts with keys
-
 129) check if these functions/methods inside this file already exists in other places and remove duplicates: backend/crates/kalamdb-core/src/manifest/flush/base.rs
-
-130) Make insert/updating into manifest table check also the nullable we currently could insert into it without validations
-[2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_flush_mkpsil4e_4cb_0user_flush_mkpsil4e_4cb_0root
-[2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_flush_ns_mkpsiju7_4b2_3test_table_mkpsiju7_4b2_0root
-[2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_ns_mkpsii6t_49o_0ordering_mkpsii6t_49o_0root
-[2026-01-22 20:35:39.488] [WARN ] - actix-rt|system:0|arbiter:7 - kalamdb_system::providers::manifest::manifest_provider:133 - Invalid cache key format: smoke_ns_mkpsii81_49s_0multi_batch_mkpsii81_49s_0root
 
 131) why we need: SystemTableProviderExt? why not directly use TableProvider trait?
 
-131) Check if we need to use the storekey for this one
-fn next_storage_key_bytes(bytes: &[u8]) -> Vec<u8> {
-    let mut next = Vec::with_capacity(bytes.len() + 1);
-    next.extend_from_slice(bytes);
-    next.push(0);
-    next
-}
-search other places where we may written similar thing and also replace it with the best practice we have for storekey
 
+133) add a new option in the sql api endpoint which i send with systemColumns = true or false
+by default it should be true all the time
+in the cli we can add a new config which the user can choose not to return system columns like seq and deleted
 
-
-132) Manifest and Flushing
-I want to go over how manifest and flushing works or should be working:
-
-Insert:
-1) User perform insert/update/delete
-2) We check if we have specified a pk identifier
-   - yes - then we need to check if already exists using (getByPk flow below)
-     - exists - we return error pk already exists
-     - not exists - we proceed to step 3
-
-   - No - we generate a new unique pk identifier according to the auto-gen defined in tabledefinition
-3) We insert into rocksdb the new row with the pk identifier and other columns
-5) Update manifest Segments/SyncState using updateManifest()
-
-
-Update:
-1) User perform update
-2) We check if we have specified a pk identifier
-    - yes - then we need to check if already exists using (getByPk flow below)
-      - exists - we proceed to step 3
-      - not exists - we return error pk not found
-    - No - we return error pk must be specified for update
-3) we fetch it using getByPk flow below to have all the fields and then we update the fields with the new values
-3) We update/insert the row in rocksdb with the new values (since it may be in parquet and not in hot storage)
-4) Update manifest Segments/SyncState using updateManifest()
-
-Delete:
-Similar to update but we mark the row as deleted instead of updating values
-
-
-
-getByPk - Checking pk exists or fetch by pk flow:
-1) We first go to manifest service
-2) make sure we have the latest manifest object in rocksdb as a cache
-3) we verify the id is in one of the segments range
-4) if yes
-5) we check where? hot or cold
-6) we read the parquet file or the hot storage (rocksdb) to verify if the pk exists or not
-Note: The same pk might be in hot and cold we read the hot first
-7) if not we return not exists
-
-
-markManifest - Marking manifest sync state:
-1) we fetch the manifest from rocksdb cache
-2) We check if we have segments with: in_progress status
-3) if yes we update it with the latest the max seq number
-(We should add another status for each segment which is: in_progress - this way when flushing fails we can retry it again later on the same segment without creating duplicates segments)
-4) Updating the manifest object to have SyncState = Pendingwrite
-5) Add the manifest to secondary index on manifest table for easily looking up
-PendingWrite manifests by tableid with a key: <TableId>:PendingWrite:<Optional<UserId>> so that flush job can easily lookup manifests which needs flushing
-
-
-Flushing:
-1) Then the flush table command is run or scheduled later by job system
-2) The flush job will look for manifests with Tableid:PendingWrite status and process them one by one
-3) Either for each userid or the whole for shared tables we already have this done
-4) We also write the manifest to external storage
-5) After successful writing we update the manifest syncstate to Synced
-6) We remove the secondary index entry for PendingWrite for this manifest
-7) we remove the flushed rows from hot storage (rocksdb) to free memory
-
-
-Select:
-1) User perform select
-2) for this we rely on datafusion to read from both hot and cold storage
-3) datafusion will read from rocksdb for hot storage and parquet files for cold storage
-4) we merge the results from both hot and cold
-5) We take the latest version depending on SeqId and _deleted columns
-6) return the final result to user
-
-
-Notice:
-1) these should work for batch inserts/updates/deletes as well so the updating of rocksdb and manifest should be done in batch as well and not in each insert/update/delete, so if a user run multiple inserts or updates or deletes
-
-
+134) fix this: ● KalamDB[docker-cluster] root@http://kalamdb-node1:8080 ❯ explain table chat.typing_events;
+✗ Server error (400): Statement 1 failed: Execution error: SQL error: ParserError("Expected: an SQL statement, found: table at Line: 1, Column: 9")
+and then make sure we have a test for it as well
 
 
 

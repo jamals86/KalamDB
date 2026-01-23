@@ -305,8 +305,8 @@ impl ManifestAccessPlanner {
         let mut selected_paths: Vec<String> = Vec::new();
 
         for segment in &manifest.segments {
-            // Skip tombstoned segments
-            if segment.tombstone {
+            // Skip non-readable segments (in_progress or tombstoned)
+            if !segment.is_readable() {
                 continue;
             }
 

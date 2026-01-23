@@ -13,7 +13,7 @@ use kalamdb_commons::models::schemas::TableType;
 /// Ensure manifest.json exists (and is cached) for the current scope before hot writes.
 pub fn ensure_manifest_ready(
     core: &TableProviderCore,
-    table_type: TableType,
+    _table_type: TableType,
     user_id: Option<&UserId>,
     log_label: &str,
 ) -> Result<(), KalamDbError> {
@@ -39,7 +39,7 @@ pub fn ensure_manifest_ready(
         },
     }
 
-    let manifest = manifest_service.ensure_manifest_initialized(table_id, table_type, user_id)?;
+    let manifest = manifest_service.ensure_manifest_initialized(table_id, user_id)?;
 
     // Get cached table data for path resolution using storage templates
     let _cached = core.schema_registry.get_table_if_exists(table_id).ok().flatten().ok_or_else(|| {

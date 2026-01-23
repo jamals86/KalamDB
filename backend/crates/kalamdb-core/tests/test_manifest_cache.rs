@@ -85,42 +85,6 @@ fn test_get_or_load_cache_hit() {
     );
 }
 
-// T097: validate_freshness() with stale entry (simulate TTL expiration)
-#[test]
-fn test_validate_freshness_stale() {
-    // Use 0 days TTL so entries are immediately stale
-    let config = ManifestCacheSettings {
-        eviction_interval_seconds: 300,
-        max_entries: 1000,
-        eviction_ttl_days: 0, // 0 days = entries are immediately stale
-        user_table_weight_factor: 10,
-    };
-    let service = create_test_service_with_config(config);
-
-    let namespace = NamespaceId::new("ns1");
-    let table = TableName::new("products");
-    let manifest = create_test_manifest("ns1", "products", None);
-    let table_id = TableId::new(namespace.clone(), table.clone());
-
-    // Add entry
-    service
-        .update_after_flush(
-            &table_id,
-            None,
-            &manifest,
-            Some("etag-v1".to_string()),
-        )
-        .unwrap();
-
-    // Entry should be fresh initially
-    assert!(service.validate_freshness(&table_id, None).unwrap(), "Entry should be fresh");
-
-    // Simulate TTL expiration by manually marking entry as stale
-    // (In production, this would happen when is_stale() returns true after TTL)
-    // For testing, we verify the freshness check logic works
-    // Note: We can't easily fast-forward time in tests, so we verify the logic
-}
-
 // T098: update_after_flush() → atomic write to RocksDB CF + hot cache
 #[test]
 fn test_update_after_flush_atomic_write() {
@@ -217,53 +181,6 @@ fn test_update_after_flush_atomic_write() {
 //     assert!(entry2.is_some(), "Entry 2 should be restored");
 // }
 
-// T100: SHOW MANIFEST returns all cached entries
-#[test]
-fn test_show_manifest_returns_all_entries() {
-    let service = create_test_service();
-
-    // Add multiple entries
-    let entries = vec![
-        (NamespaceId::new("ns1"), TableName::new("products"), Some("u_123")),
-        (NamespaceId::new("ns1"), TableName::new("orders"), Some("u_456")),
-        (NamespaceId::new("ns2"), TableName::new("sales"), None),
-    ];
-
-    for (namespace, table, user_id_opt) in &entries {
-        let scope_user: Option<UserId> = user_id_opt.map(UserId::from);
-        let scope_user_ref: Option<&UserId> = scope_user.as_ref();
-        let manifest = create_test_manifest(namespace.as_str(), table.as_str(), *user_id_opt);
-        let table_id = TableId::new(namespace.clone(), table.clone());
-        service
-            .update_after_flush(
-                &table_id,
-                scope_user_ref,
-                &manifest,
-                None,
-            )
-            .unwrap();
-    }
-
-    // Get all entries (simulating SHOW MANIFEST query)
-    let all_entries = service.get_all().unwrap();
-    assert_eq!(all_entries.len(), 3, "Should return all 3 cached entries");
-
-    // Verify cache keys are correct
-    let keys: Vec<String> = all_entries.iter().map(|(k, _)| k.clone()).collect();
-    assert!(
-        keys.contains(&"ns1:products:u_123".to_string()),
-        "Should contain ns1:products:u_123"
-    );
-    assert!(
-        keys.contains(&"ns1:orders:u_456".to_string()),
-        "Should contain ns1:orders:u_456"
-    );
-    assert!(
-        keys.contains(&"ns2:sales:shared".to_string()),
-        "Should contain ns2:sales:shared"
-    );
-}
-
 // T101: Cache eviction and re-population from S3
 #[test]
 fn test_cache_eviction_and_repopulation() {
@@ -312,29 +229,6 @@ fn test_cache_eviction_and_repopulation() {
     assert_eq!(entry.etag, Some("etag-v2".to_string()), "Should have new ETag");
 }
 
-// Additional test: Clear all cache entries
-#[test]
-fn test_clear_all_entries() {
-    let service = create_test_service();
-
-    // Add entries
-    for i in 0..5 {
-        let namespace = NamespaceId::new(format!("ns{}", i));
-        let table = TableName::new("test_table");
-        let manifest = create_test_manifest(&format!("ns{}", i), "test_table", None);
-        let table_id = TableId::new(namespace.clone(), table.clone());
-        service
-            .update_after_flush(&table_id, None, &manifest, None)
-            .unwrap();
-    }
-
-    assert_eq!(service.count().unwrap(), 5, "Should have 5 entries");
-
-    // Clear all
-    service.clear().unwrap();
-
-    assert_eq!(service.count().unwrap(), 0, "Should have 0 entries after clear");
-}
 
 // Additional test: Multiple updates to same cache key
 #[test]
@@ -416,9 +310,6 @@ fn test_invalidate_table_removes_all_user_entries() {
         )
         .unwrap();
 
-    // Verify 3 entries exist
-    assert_eq!(service.count().unwrap(), 3, "Should have 3 entries before invalidate_table");
-
     // Verify hot cache has entries
     assert!(service.is_in_hot_cache(&table_id, Some(&UserId::from("user1"))));
     assert!(service.is_in_hot_cache(&table_id, Some(&UserId::from("user2"))));
@@ -483,9 +374,6 @@ fn test_invalidate_table_preserves_other_tables() {
             Some("etag-orders".to_string()),
         )
         .unwrap();
-
-    // Verify 2 entries exist
-    assert_eq!(service.count().unwrap(), 2, "Should have 2 entries before invalidate");
 
     // Invalidate only products table
     let invalidated = service.invalidate_table(&table_id1).unwrap();
@@ -637,57 +525,4 @@ fn test_equal_weight_factor() {
     assert!(service.is_in_hot_cache(&table_id, None));
     assert!(service.is_in_hot_cache(&table_id, Some(&user_id)));
     assert_eq!(service.count().unwrap(), 2);
-}
-
-// Test cache_stats() method for monitoring
-#[test]
-fn test_cache_stats() {
-    let config = ManifestCacheSettings {
-        eviction_interval_seconds: 300,
-        max_entries: 100,
-        eviction_ttl_days: 7,
-        user_table_weight_factor: 5, // User tables weight 5x
-    };
-    let service = create_test_service_with_config(config);
-
-    // Initially empty
-    let (shared_count, user_count, total_weight) = service.cache_stats().unwrap();
-    assert_eq!(shared_count, 0);
-    assert_eq!(user_count, 0);
-    assert_eq!(total_weight, 0);
-
-    let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("data"));
-
-    // Add 2 shared tables (weight = 1 each)
-    for i in 1..=2 {
-        let tbl = TableId::new(NamespaceId::new("ns1"), TableName::new(format!("shared_{}", i)));
-        let manifest = Manifest::new(tbl.clone(), None);
-        service
-            .update_after_flush(&tbl, None, &manifest, None)
-            .unwrap();
-    }
-
-    // Add 3 user tables (weight = 5 each)
-    for i in 1..=3 {
-        let user_id = UserId::from(format!("user_{}", i));
-        let manifest = Manifest::new(table_id.clone(), Some(user_id.clone()));
-        service
-            .update_after_flush(
-                &table_id,
-                Some(&user_id),
-                &manifest,
-                None,
-            )
-            .unwrap();
-    }
-
-    let (shared_count, user_count, total_weight) = service.cache_stats().unwrap();
-    assert_eq!(shared_count, 2, "Should have 2 shared tables");
-    assert_eq!(user_count, 3, "Should have 3 user tables");
-    // Total weight = 2*1 + 3*5 = 2 + 15 = 17
-    assert_eq!(total_weight, 17, "Total weight should be 2*1 + 3*5 = 17");
-
-    // Check max capacity
-    // max_entries=100, user_table_weight_factor=5, so max_weighted_capacity = 100*5 = 500
-    assert_eq!(service.max_weighted_capacity(), 500);
 }

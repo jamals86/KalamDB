@@ -203,10 +203,7 @@ impl UserTableFlushJob {
         let schema_version = self.get_schema_version();
         self.manifest_helper.update_manifest_after_flush(
             &self.table_id,
-            kalamdb_commons::models::schemas::TableType::User,
             Some(&user_id_typed),
-            Some(&cached),
-            batch_number,
             batch_filename.clone(),
             &std::path::PathBuf::from(&destination_path),
             &batch,

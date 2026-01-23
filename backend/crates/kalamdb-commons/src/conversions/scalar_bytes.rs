@@ -39,6 +39,9 @@ use datafusion::scalar::ScalarValue;
 /// assert_eq!(str_bytes, b"hello".to_vec());
 /// ```
 pub fn scalar_value_to_bytes(value: &ScalarValue) -> Vec<u8> {
+    if value.is_null() {
+        return Vec::new();
+    }
     match value {
         ScalarValue::Int64(Some(n)) => n.to_string().into_bytes(),
         ScalarValue::Int32(Some(n)) => n.to_string().into_bytes(),

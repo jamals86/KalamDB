@@ -1,5 +1,5 @@
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::models::schemas::{TableDefinition, TableType};
+use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::types::{Manifest, ManifestCacheEntry};
 use kalamdb_commons::{StorageId, TableId, UserId};
 use kalamdb_store::StorageError;
@@ -36,7 +36,6 @@ pub trait ManifestService: Send + Sync {
     fn rebuild_manifest(
         &self,
         table_id: &TableId,
-        table_type: TableType,
         user_id: Option<&UserId>,
     ) -> Result<Manifest, StorageError>;
 
@@ -49,7 +48,6 @@ pub trait ManifestService: Send + Sync {
     fn ensure_manifest_initialized(
         &self,
         table_id: &TableId,
-        table_type: TableType,
         user_id: Option<&UserId>,
     ) -> Result<Manifest, StorageError>;
 

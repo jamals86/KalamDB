@@ -165,6 +165,11 @@ fn scalars_equal(left: &ScalarValue, right: &ScalarValue) -> bool {
         return true;
     }
 
+    // Try string coercion (Utf8 vs LargeUtf8)
+    if let (Some(l), Some(r)) = (as_str(left), as_str(right)) {
+        return l == r;
+    }
+
     // Try numeric coercion
     if let (Some(l), Some(r)) = (as_f64(left), as_f64(right)) {
         return (l - r).abs() < f64::EPSILON;
@@ -176,6 +181,14 @@ fn scalars_equal(left: &ScalarValue, right: &ScalarValue) -> bool {
 /// Helper to convert ScalarValue to f64 if possible
 fn as_f64(v: &ScalarValue) -> Option<f64> {
     kalamdb_commons::as_f64(v)
+}
+
+/// Helper to convert ScalarValue to &str if possible
+fn as_str(v: &ScalarValue) -> Option<&str> {
+    match v {
+        ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => Some(s.as_str()),
+        _ => None,
+    }
 }
 
 /// Helper to compare two ScalarValues for numeric comparisons
@@ -211,12 +224,29 @@ fn extract_value(expr: &Expr, row_data: &Row) -> Result<ScalarValue, KalamDbErro
         // Column reference: lookup in row_data
         Expr::Identifier(ident) => {
             let column_name = ident.value.as_str();
-            row_data.get(column_name).cloned().ok_or_else(|| {
+            lookup_column_value(row_data, column_name).ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Column not found in row data: {}",
                     column_name
                 ))
             })
+        }
+
+        // Qualified identifier (e.g. table.column) - use the last part
+        Expr::CompoundIdentifier(parts) => {
+            if let Some(ident) = parts.last() {
+                let column_name = ident.value.as_str();
+                lookup_column_value(row_data, column_name).ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Column not found in row data: {}",
+                        column_name
+                    ))
+                })
+            } else {
+                Err(KalamDbError::InvalidOperation(
+                    "Empty compound identifier".to_string(),
+                ))
+            }
         },
 
         // Literal value: convert to ScalarValue
@@ -244,6 +274,14 @@ fn extract_value(expr: &Expr, row_data: &Row) -> Result<ScalarValue, KalamDbErro
             expr
         ))),
     }
+}
+
+fn lookup_column_value(row_data: &Row, column_name: &str) -> Option<ScalarValue> {
+    row_data
+        .get(column_name)
+        .or_else(|| row_data.get(&column_name.to_lowercase()))
+        .or_else(|| row_data.get(&column_name.to_uppercase()))
+        .cloned()
 }
 
 #[cfg(test)]

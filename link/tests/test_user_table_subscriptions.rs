@@ -56,6 +56,23 @@ async fn execute_sql(sql: &str) -> Result<QueryResponse, Box<dyn std::error::Err
     Ok(client.execute_query(sql, None, None).await?)
 }
 
+/// Wait until a newly created table is visible for queries
+async fn wait_for_table_ready(
+    table: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    for _ in 0..20 {
+        if execute_sql(&format!("SELECT 1 FROM {} LIMIT 1", table))
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+
+    Err(format!("Table not ready: {}", table).into())
+}
+
 /// Generate a unique table name
 fn generate_table_name() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -67,6 +84,13 @@ fn generate_table_name() -> String {
         .as_nanos();
     let counter = COUNTER.fetch_add(1, Ordering::SeqCst);
     format!("messages_{}_{}", timestamp, counter)
+}
+
+/// Generate a unique row id for tests
+fn generate_row_id() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static ROW_ID: AtomicU64 = AtomicU64::new(1);
+    ROW_ID.fetch_add(1, Ordering::SeqCst)
 }
 
 /// Setup test namespace and USER table for subscription tests
@@ -85,7 +109,8 @@ async fn setup_user_table() -> Result<String, Box<dyn std::error::Error + Send +
         full_table
     ))
     .await?;
-    sleep(Duration::from_millis(50)).await;
+
+    wait_for_table_ready(&full_table).await?;
 
     Ok(full_table)
 }
@@ -93,6 +118,34 @@ async fn setup_user_table() -> Result<String, Box<dyn std::error::Error + Send +
 /// Cleanup test table
 async fn cleanup_table(table_name: &str) {
     let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", table_name)).await;
+}
+
+/// Insert a row with retry (guards against duplicate PK or transient errors)
+async fn insert_row_with_retry(
+    table: &str,
+    row_type: &str,
+    content: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut last_err: Option<Box<dyn std::error::Error + Send + Sync>> = None;
+
+    for _ in 0..6 {
+        let row_id = generate_row_id();
+        let sql = format!(
+            "INSERT INTO {} (id, type, content) VALUES ({}, '{}', '{}')",
+            table, row_id, row_type, content
+        );
+
+        match execute_sql(&sql).await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                last_err = Some(e);
+                let _ = wait_for_table_ready(table).await;
+                sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| "Insert failed".into()))
 }
 
 /// Drain initial messages (ACK, InitialData) from subscription
@@ -218,11 +271,12 @@ async fn test_multiple_filtered_subscriptions() {
     let insert_handle = tokio::spawn(async move {
         sleep(Duration::from_millis(50)).await;
 
-        // Insert a 'typing' row (id=1)
-        let typing_result = execute_sql(&format!(
-            "INSERT INTO {} (id, type, content) VALUES (1, 'typing', 'user is typing...')",
-            table_clone
-        ))
+        // Insert a 'typing' row
+        let typing_result = insert_row_with_retry(
+            &table_clone,
+            "typing",
+            "user is typing...",
+        )
         .await;
 
         if let Err(e) = typing_result {
@@ -233,11 +287,12 @@ async fn test_multiple_filtered_subscriptions() {
 
         sleep(Duration::from_millis(20)).await;
 
-        // Insert a 'thinking' row (id=2)
-        let thinking_result = execute_sql(&format!(
-            "INSERT INTO {} (id, type, content) VALUES (2, 'thinking', 'AI is thinking...')",
-            table_clone
-        ))
+        // Insert a 'thinking' row
+        let thinking_result = insert_row_with_retry(
+            &table_clone,
+            "thinking",
+            "AI is thinking...",
+        )
         .await;
 
         if let Err(e) = thinking_result {
@@ -521,11 +576,11 @@ async fn test_multiple_filtered_subscriptions() {
     let table_clone2 = table.clone();
     let insert_handle2 = tokio::spawn(async move {
         sleep(Duration::from_millis(50)).await;
-        // id=3 since we already inserted id=1 (typing) and id=2 (thinking)
-        let result = execute_sql(&format!(
-            "INSERT INTO {} (id, type, content) VALUES (3, 'typing', 'more typing - should not reach thinking sub')",
-            table_clone2
-        ))
+        let result = insert_row_with_retry(
+            &table_clone2,
+            "typing",
+            "more typing - should not reach thinking sub",
+        )
         .await;
 
         if let Err(e) = result {
@@ -637,13 +692,10 @@ async fn test_unsubscribe_stops_changes() {
     // Drain initial messages
     drain_initial_messages(&mut subscription).await;
 
-    // Insert a row to verify subscription is working (id=1)
-    execute_sql(&format!(
-        "INSERT INTO {} (id, type, content) VALUES (1, 'test', 'first insert')",
-        table
-    ))
-    .await
-    .expect("Failed to insert first row");
+    // Insert a row to verify subscription is working
+    insert_row_with_retry(&table, "test", "first insert")
+        .await
+        .expect("Failed to insert first row");
 
     // Wait for the change
     let received_first = matches!(
@@ -658,13 +710,10 @@ async fn test_unsubscribe_stops_changes() {
     subscription.close().await.expect("Failed to close subscription");
     println!("✅ Unsubscribed");
 
-    // Insert another row (id=2)
-    execute_sql(&format!(
-        "INSERT INTO {} (id, type, content) VALUES (2, 'test', 'second insert after unsubscribe')",
-        table
-    ))
-    .await
-    .expect("Failed to insert second row");
+    // Insert another row after unsubscribe
+    insert_row_with_retry(&table, "test", "second insert after unsubscribe")
+        .await
+        .expect("Failed to insert second row");
 
     // The subscription is closed, so we can't check it anymore
     // This test mainly verifies that close() works without errors

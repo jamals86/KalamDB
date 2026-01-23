@@ -291,14 +291,11 @@ impl StreamLogStore for MemoryStreamLogStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::time_bucket::StreamTimeBucket;
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::ids::SeqId;
     use kalamdb_commons::models::rows::Row;
     use kalamdb_commons::models::{NamespaceId, TableName};
-    use kalamdb_sharding::ShardRouter;
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
 
     fn build_row(user_id: &UserId, seq: SeqId) -> StreamTableRow {
         let values: BTreeMap<String, ScalarValue> = BTreeMap::new();

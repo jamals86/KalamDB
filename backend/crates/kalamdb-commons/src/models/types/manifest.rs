@@ -50,6 +50,46 @@ impl std::fmt::Display for SyncState {
     }
 }
 
+/// Status of a segment in the manifest lifecycle.
+///
+/// Tracks the write state of each segment to enable crash-safe flush operations.
+/// If a flush fails mid-way, `InProgress` segments can be cleaned up on restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SegmentStatus {
+    /// Segment write in progress (temp file exists, not yet renamed to final location)
+    /// If server crashes in this state, temp files should be cleaned up on restart.
+    InProgress,
+    /// Segment successfully written and committed (final file exists)
+    #[default]
+    Committed,
+    /// Segment marked for deletion (compaction/cleanup)
+    /// Will be removed by the next compaction job.
+    Tombstone,
+}
+
+impl std::fmt::Display for SegmentStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SegmentStatus::InProgress => write!(f, "in_progress"),
+            SegmentStatus::Committed => write!(f, "committed"),
+            SegmentStatus::Tombstone => write!(f, "tombstone"),
+        }
+    }
+}
+
+impl SegmentStatus {
+    /// Returns true if the segment is fully written and available for reads
+    pub fn is_readable(&self) -> bool {
+        matches!(self, SegmentStatus::Committed)
+    }
+
+    /// Returns true if the segment needs cleanup (incomplete or marked for deletion)
+    pub fn needs_cleanup(&self) -> bool {
+        matches!(self, SegmentStatus::InProgress | SegmentStatus::Tombstone)
+    }
+}
+
 /// Manifest cache entry stored in RocksDB (Phase 4 - US6).
 ///
 /// Fields:
@@ -244,8 +284,15 @@ pub struct SegmentMetadata {
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
 
-    /// If true, this segment is marked for deletion (compaction/cleanup)
-    pub tombstone: bool,
+    // /// If true, this segment is marked for deletion (compaction/cleanup)
+    // /// @deprecated Use `status == SegmentStatus::Tombstone` instead
+    // #[serde(default)]
+    // pub tombstone: bool,
+
+    /// Status of this segment in the flush lifecycle
+    /// InProgress → Committed → Tombstone
+    #[serde(default)]
+    pub status: SegmentStatus,
 }
 
 /// Default schema version for backward compatibility with existing manifests
@@ -272,8 +319,9 @@ impl SegmentMetadata {
             row_count,
             size_bytes,
             created_at: chrono::Utc::now().timestamp(),
-            tombstone: false,
+            // tombstone: false,
             schema_version: 1, // Default to version 1
+            status: SegmentStatus::Committed,
         }
     }
 
@@ -297,9 +345,58 @@ impl SegmentMetadata {
             row_count,
             size_bytes,
             created_at: chrono::Utc::now().timestamp(),
-            tombstone: false,
+            // tombstone: false,
             schema_version,
+            status: SegmentStatus::Committed,
         }
+    }
+
+    /// Create an in-progress segment (before Parquet write is complete)
+    ///
+    /// Used during flush to track segments that are being written.
+    /// If server crashes, these segments should be cleaned up on restart.
+    pub fn in_progress(
+        id: String,
+        path: String,
+        min_seq: SeqId,
+        max_seq: SeqId,
+        schema_version: u32,
+    ) -> Self {
+        Self {
+            id,
+            path,
+            column_stats: HashMap::new(),
+            min_seq,
+            max_seq,
+            row_count: 0,
+            size_bytes: 0,
+            created_at: chrono::Utc::now().timestamp(),
+            schema_version,
+            status: SegmentStatus::InProgress,
+        }
+    }
+
+    /// Mark this segment as committed (write complete)
+    pub fn mark_committed(&mut self, row_count: u64, size_bytes: u64, column_stats: HashMap<u64, ColumnStats>) {
+        self.status = SegmentStatus::Committed;
+        self.row_count = row_count;
+        self.size_bytes = size_bytes;
+        self.column_stats = column_stats;
+    }
+
+    /// Mark this segment for deletion
+    pub fn mark_tombstone(&mut self) {
+        self.status = SegmentStatus::Tombstone;
+    }
+
+    /// Check if this segment is readable (committed and not tombstoned)
+    pub fn is_readable(&self) -> bool {
+        self.status.is_readable()
+    }
+
+    /// Check if this segment needs cleanup
+    pub fn needs_cleanup(&self) -> bool {
+        self.status.needs_cleanup()
     }
 }
 
@@ -729,5 +826,103 @@ mod tests {
         assert_eq!(manifest.segments.len(), 1);
         assert_eq!(manifest.segments[0].min_seq, SeqId::from(1500i64));
         assert_eq!(manifest.segments[0].id, "segment-1");
+    }
+
+    // ========== SegmentStatus Tests ==========
+
+    #[test]
+    fn test_segment_status_display() {
+        assert_eq!(format!("{}", SegmentStatus::InProgress), "in_progress");
+        assert_eq!(format!("{}", SegmentStatus::Committed), "committed");
+        assert_eq!(format!("{}", SegmentStatus::Tombstone), "tombstone");
+    }
+
+    #[test]
+    fn test_segment_status_is_readable() {
+        assert!(!SegmentStatus::InProgress.is_readable());
+        assert!(SegmentStatus::Committed.is_readable());
+        assert!(!SegmentStatus::Tombstone.is_readable());
+    }
+
+    #[test]
+    fn test_segment_status_needs_cleanup() {
+        assert!(SegmentStatus::InProgress.needs_cleanup()); // orphaned in_progress segments
+        assert!(!SegmentStatus::Committed.needs_cleanup());
+        assert!(SegmentStatus::Tombstone.needs_cleanup());
+    }
+
+    #[test]
+    fn test_segment_in_progress_lifecycle() {
+        // Create in_progress segment
+        let mut segment = SegmentMetadata::in_progress(
+            "seg-001".to_string(),
+            "batch-001.parquet".to_string(),
+            SeqId::from(1000i64),
+            SeqId::from(2000i64),
+            1, // schema_version
+        );
+
+        // Initially in_progress
+        assert_eq!(segment.status, SegmentStatus::InProgress);
+        assert!(!segment.is_readable());
+        assert!(segment.needs_cleanup());
+        assert_eq!(segment.row_count, 0);
+        assert_eq!(segment.size_bytes, 0);
+
+        // After successful write, mark committed
+        segment.mark_committed(1000, 65536, HashMap::new());
+        assert_eq!(segment.status, SegmentStatus::Committed);
+        assert!(segment.is_readable());
+        assert!(!segment.needs_cleanup());
+        assert_eq!(segment.row_count, 1000);
+        assert_eq!(segment.size_bytes, 65536);
+    }
+
+    #[test]
+    fn test_segment_tombstone_lifecycle() {
+        // Create committed segment
+        let mut segment = SegmentMetadata::new(
+            "seg-002".to_string(),
+            "batch-002.parquet".to_string(),
+            HashMap::new(),
+            SeqId::from(3000i64),
+            SeqId::from(4000i64),
+            500,
+            32768,
+        );
+
+        // Initially committed
+        assert!(segment.is_readable());
+        assert!(!segment.needs_cleanup());
+
+        // After compaction or deletion, mark tombstone
+        segment.mark_tombstone();
+        assert_eq!(segment.status, SegmentStatus::Tombstone);
+        assert!(!segment.is_readable());
+        assert!(segment.needs_cleanup());
+    }
+
+    #[test]
+    fn test_segment_status_serde() {
+        // Test serialization/deserialization of SegmentStatus
+        let segment = SegmentMetadata::in_progress(
+            "seg-003".to_string(),
+            "batch-003.parquet".to_string(),
+            SeqId::from(5000i64),
+            SeqId::from(6000i64),
+            1,
+        );
+
+        let json = serde_json::to_string(&segment).unwrap();
+        assert!(json.contains("\"status\":\"in_progress\""));
+
+        let restored: SegmentMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.status, SegmentStatus::InProgress);
+    }
+
+    #[test]
+    fn test_segment_status_default() {
+        // Test that default status is Committed for backward compatibility
+        assert_eq!(SegmentStatus::default(), SegmentStatus::Committed);
     }
 }

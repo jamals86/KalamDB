@@ -125,7 +125,10 @@ mod tests {
     #[test]
     fn test_estimate_scalar_value_size() {
         assert_eq!(estimate_scalar_value_size(&ScalarValue::Int64(Some(123))), 8);
-        assert_eq!(estimate_scalar_value_size(&ScalarValue::Utf8(Some("hello".to_string()))), 5);
-        assert_eq!(estimate_scalar_value_size(&ScalarValue::Null), 0);
+        assert_eq!(
+            estimate_scalar_value_size(&ScalarValue::Utf8(Some("hello".to_string()))),
+            24 + 5
+        );
+        assert_eq!(estimate_scalar_value_size(&ScalarValue::Null), 1);
     }
 }

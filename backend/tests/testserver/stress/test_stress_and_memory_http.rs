@@ -45,6 +45,7 @@ async fn count_rows(
 }
 
 #[tokio::test]
+#[ntest::timeout(60000)] // 60 seconds - stress HTTP smoke test
 async fn test_stress_smoke_over_http() {
     (async {
     let server = super::test_support::http_server::get_global_server().await;

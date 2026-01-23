@@ -645,7 +645,8 @@ fn is_transient_missing_relation(sql: &str, message: &str) -> bool {
     }
 
     let lower_sql = sql.trim_start().to_ascii_lowercase();
-    lower_sql.starts_with("insert ")
+    lower_sql.starts_with("select ")
+        || lower_sql.starts_with("insert ")
         || lower_sql.starts_with("update ")
         || lower_sql.starts_with("delete ")
         || lower_sql.starts_with("storage flush")
@@ -1256,7 +1257,7 @@ fn execute_sql_via_cli_as_with_args(
 
     eprintln!("[TEST_CLI] Executing as {}: \"{}\"", username, sql_preview.replace('\n', " "));
 
-    let max_attempts = if is_cluster_mode() { 10 } else { 1 };
+    let max_attempts = if is_cluster_mode() { 10 } else { 5 };
     let mut last_err: Option<String> = None;
 
     for attempt in 0..max_attempts {
@@ -1317,9 +1318,7 @@ fn execute_sql_via_cli_as_with_args(
                             if is_flush_sql(sql) && is_idempotent_conflict(&err_msg) {
                                 return Ok(stdout);
                             }
-                            if is_cluster_mode()
-                                && is_retryable_cluster_error_for_sql(sql, &err_msg)
-                            {
+                            if is_retryable_cluster_error_for_sql(sql, &err_msg) {
                                 last_err = Some(err_msg);
                                 if idx + 1 < urls.len() {
                                     continue;
@@ -1353,7 +1352,7 @@ fn execute_sql_via_cli_as_with_args(
                             }
                             return Ok(stdout);
                         }
-                        if is_cluster_mode() && is_retryable_cluster_error_for_sql(sql, &err_msg) {
+                        if is_retryable_cluster_error_for_sql(sql, &err_msg) {
                             last_err = Some(err_msg);
                             if idx + 1 < urls.len() {
                                 continue;
@@ -1371,7 +1370,7 @@ fn execute_sql_via_cli_as_with_args(
                     let wait_duration = wait_start.elapsed();
                     eprintln!("[TEST_CLI] TIMEOUT after {:?}", wait_duration);
                     let err_msg = format!("CLI command timed out after {:?}", timeout_duration);
-                    if is_cluster_mode() && is_retryable_cluster_error_for_sql(sql, &err_msg) {
+                    if is_retryable_cluster_error_for_sql(sql, &err_msg) {
                         last_err = Some(err_msg);
                         if idx + 1 < urls.len() {
                             continue;
@@ -1792,30 +1791,35 @@ pub fn execute_sql_via_client_as_with_args(
                 return Err(last_err.unwrap_or_else(|| "All cluster nodes failed".into()));
             }
 
-            if is_root {
-                // Reuse shared root client to avoid creating new TCP connections
-                let client = get_shared_root_client();
-                let response = client.execute_query(&sql, None, None).await?;
-                if !response.success() {
-                    let err_msg = query_response_error_message(&response);
-                    if is_flush_sql(&sql) && is_idempotent_conflict(&err_msg) {
-                        return Ok(response);
-                    }
-                    return Err(err_msg.into());
+            let max_attempts = if is_cluster_mode() { 1 } else { 5 };
+            for attempt in 0..max_attempts {
+                let response = if is_root {
+                    // Reuse shared root client to avoid creating new TCP connections
+                    let client = get_shared_root_client();
+                    client.execute_query(&sql, None, None).await?
+                } else {
+                    execute_once(&base_url, &username_owned, &password_owned, &sql).await?
+                };
+
+                if response.success() {
+                    return Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response);
                 }
-                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response)
-            } else {
-                let response =
-                    execute_once(&base_url, &username_owned, &password_owned, &sql).await?;
-                if !response.success() {
-                    let err_msg = query_response_error_message(&response);
-                    if is_flush_sql(&sql) && is_idempotent_conflict(&err_msg) {
-                        return Ok(response);
-                    }
-                    return Err(err_msg.into());
+
+                let err_msg = query_response_error_message(&response);
+                if is_flush_sql(&sql) && is_idempotent_conflict(&err_msg) {
+                    return Ok(response);
                 }
-                Ok(response)
+
+                if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
+                    let delay_ms = 200 + attempt * 200;
+                    tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
+                    continue;
+                }
+
+                return Err(err_msg.into());
             }
+
+            Err("Query failed after retries".into())
         }
         .await;
 

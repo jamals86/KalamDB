@@ -64,7 +64,7 @@ pub use job::{Job, JobFilter, JobOptions, JobSortField, SortOrder};
 pub use job_node::JobNode;
 pub use live_query::LiveQuery;
 pub use live_query_status::LiveQueryStatus;
-pub use manifest::{ColumnStats, Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
+pub use manifest::{ColumnStats, Manifest, ManifestCacheEntry, SegmentMetadata, SegmentStatus, SyncState};
 pub use namespace::Namespace;
 pub use storage::Storage;
 pub use user::{User, DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS};

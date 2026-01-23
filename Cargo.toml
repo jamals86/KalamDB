@@ -82,7 +82,7 @@ uuid = { version = "1.19.0", features = ["v4", "v7", "serde"] }
 ulid = "1.1"
 
 # JWT authentication
-jsonwebtoken = { version = "10.2.0", default-features = false, features = ["use_pem", "rust_crypto"] }
+jsonwebtoken = { version = "10.2.0", default-features = false, features = ["aws_lc_rs"] }
 
 # Configuration
 toml = "0.9.8"
@@ -134,7 +134,7 @@ once_cell = "1.20"
 regex = "1.11"
 dashmap = "6.1"
 bytes = "1.11.0"
-cc = "1.2.53"
+cc = "1.2.54"
 
 # Object storage abstraction (S3/GCS/Azure/local)
 # Kept as a workspace dependency so only kalamdb-filestore needs to opt-in.

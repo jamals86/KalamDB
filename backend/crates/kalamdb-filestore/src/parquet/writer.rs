@@ -147,7 +147,7 @@ fn is_sorted_by_seq(batch: &RecordBatch, seq_idx: usize) -> Result<bool> {
 mod tests {
     use super::*;
     use arrow::array::StringArray;
-    use kalamdb_commons::arrow_utils::{field_int64, field_utf8, schema};
+    use kalamdb_commons::arrow_utils::{field_utf8, schema};
     use std::sync::Arc;
 
     fn make_test_batch() -> (SchemaRef, Vec<RecordBatch>) {
