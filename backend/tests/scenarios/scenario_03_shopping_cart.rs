@@ -94,7 +94,8 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
     // Pre-create all users and their clients
     let mut clients = Vec::new();
     for user_idx in 0..user_count {
-        let username = format!("shopper_{}", user_idx);
+        // Use namespace prefix for unique usernames to avoid parallel test interference
+        let username = format!("{}_shopper_{}", ns, user_idx);
         let client = create_user_and_client(server, &username, &Role::User).await?;
         clients.push((user_idx, client));
     }
@@ -221,9 +222,12 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
     // =========================================================
     // Step 3: Verify isolation (user 0 cannot see user 1's data)
     // =========================================================
-    create_test_users(server, &[("shopper_0", &Role::User), ("shopper_1", &Role::User)]).await?;
-    let u0_client = server.link_client("shopper_0");
-    let u1_client = server.link_client("shopper_1");
+    let user0 = format!("{}_shopper_0", ns);
+    let user1 = format!("{}_shopper_1", ns);
+    ensure_user_exists(server, &user0, "test123", &Role::User).await?;
+    ensure_user_exists(server, &user1, "test123", &Role::User).await?;
+    let u0_client = server.link_client(&user0);
+    let u1_client = server.link_client(&user1);
 
     let resp = u0_client
         .execute_query(&format!("SELECT * FROM {}.cart_items", ns), None, None)
@@ -317,7 +321,7 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
     assert_eq!(initial, 5, "Should see 5 items from cart 1");
 
     // Insert to cart 2 (should NOT appear in subscription)
-    let client2 = server.link_client("sub_user");
+    let client2 = client.clone();
     let resp = client2
                 .execute_query(
                     &format!(
@@ -377,10 +381,10 @@ async fn test_scenario_03_partial_flush() -> anyhow::Result<()> {
     assert_success(&resp, "CREATE cart_items table");
 
     // Insert data for two users
-    create_test_users(server, &[("flush_user1", &Role::User), ("flush_user2", &Role::User)])
-        .await?;
-    let u1_client = server.link_client("flush_user1");
-    let u2_client = server.link_client("flush_user2");
+    let user1 = format!("{}_flush_user1", ns);
+    let user2 = format!("{}_flush_user2", ns);
+    let u1_client = create_user_and_client(server, &user1, &Role::User).await?;
+    let u2_client = create_user_and_client(server, &user2, &Role::User).await?;
 
     for i in 1..=20 {
         let resp = u1_client

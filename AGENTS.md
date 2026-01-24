@@ -81,49 +81,22 @@ use kalamdb_commons::models::UserId;
 - **StorageBackend Abstraction**: `Arc<dyn StorageBackend>` isolates RocksDB dependencies
 
 ## Project Structure
-```
 backend/crates/
-├── kalamdb-core/               # Core library (embeddable)
-│   ├── app_context.rs          # Singleton AppContext
-│   ├── schema_registry/        # Schema management (consolidated from kalamdb-registry)
-│   │   ├── registry.rs         # Unified cache + Arrow memoization + persistence
-│   │   ├── arrow_schema.rs     # Arrow schema utilities
-│   │   ├── stats.rs            # Stats table provider
-│   │   ├── views/              # Virtual views (information_schema)
-│   │   └── error.rs            # Registry error types
-│   ├── live/                   # Live query management (consolidated from kalamdb-live)
-│   │   ├── manager.rs          # LiveQueryManager
-│   │   ├── connection_registry.rs # Connection tracking
-│   │   ├── filter.rs           # Filter cache
-│   │   ├── initial_data.rs     # Initial data fetcher
-│   │   └── error.rs            # Live query error types
-│   ├── tables/                 # Table implementations
-│   │   ├── base_table_provider.rs # Common interfaces
-│   │   ├── user_tables/        # User table provider
-│   │   ├── shared_tables/      # Shared table provider
-│   │   ├── stream_tables/      # Stream table provider
-│   │   └── system/             # System tables (10 providers)
-│   │       ├── registry.rs     # SystemTablesRegistry
-│   │       └── [users, jobs, namespaces, storages, live_queries, tables, audit_logs]/
-│   ├── sql/executor/           # Handler-based executor
-│   │   ├── mod.rs              # Routing orchestrator
-│   │   └── handlers/           # DDL, DML, Query, Flush, etc.
-│   ├── jobs/                   # Job management
-│   │   ├── jobs_manager.rs     # UnifiedJobManager
-│   │   └── executors/          # 8 job executors
-│   ├── flush/                  # Flush operations
-│   └── providers/              # Additional table providers
-├── kalamdb-store/              # RocksDB storage layer
-├── kalamdb-commons/            # Shared models and utilities
-│   ├── system_tables.rs        # System table models (User, Job, etc.)
-│   ├── constants.rs            # System constants
-│   └── models/schemas/         # TableDefinition, ColumnDefinition, etc.
-├── kalamdb-sql/                # SQL parsing
-├── kalamdb-auth/               # Authentication/authorization
-└── kalamdb-api/                # REST API and WebSocket
-
-specs/010-core-architecture-v2/ # CURRENT: Arrow memoization, views
-```
+- kalamdb-api: HTTP/REST + WebSocket server surface, routes, UI asset serving.
+- kalamdb-auth: Authentication/authorization (bcrypt, JWT, RBAC, guards).
+- kalamdb-commons: Shared types, IDs, constants, utilities.
+- kalamdb-configs: Server configuration structs and loaders.
+- kalamdb-core: Core orchestration (DDL/DML handlers, jobs, live queries, schema registry).
+- kalamdb-filestore: Filesystem + object-store (S3/GCS/Azure/local) Parquet segment lifecycle.
+- kalamdb-observability: Metrics/telemetry helpers and system stats.
+- kalamdb-raft: Raft consensus, replication, and cluster coordination.
+- kalamdb-session: Session context + permission-aware table provider abstraction.
+- kalamdb-sharding: Shard models and routing logic.
+- kalamdb-sql: SQL parsing and query planning helpers.
+- kalamdb-store: RocksDB backend and storage abstractions; provides `EntityStore` and `IndexedEntityStore` (indexed store) with automatic secondary indexes.
+- kalamdb-streams: Stream storage and commit log utilities.
+- kalamdb-system: System tables + metadata providers (EntityStore/IndexedEntityStore-based).
+- kalamdb-tables: User/shared/stream table providers built on `EntityStore`/`IndexedEntityStore`.
 
 ## Code Style
 

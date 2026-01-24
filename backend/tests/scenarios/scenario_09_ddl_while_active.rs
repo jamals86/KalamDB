@@ -42,7 +42,9 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE data table");
 
-    let client = create_user_and_client(server, "ddl_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_ddl_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // =========================================================
     // Step 2: Insert initial data
@@ -205,7 +207,9 @@ async fn test_scenario_09_drop_column() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE data table");
 
-    let client = create_user_and_client(server, "drop_col_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_drop_col_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert data with old_column
     for i in 1..=5 {
@@ -284,7 +288,9 @@ async fn test_scenario_09_concurrent_reads_during_ddl() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE data table");
 
-    let client = create_user_and_client(server, "concurrent_ddl_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_concurrent_ddl_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert data
     for i in 1..=20 {
@@ -301,7 +307,7 @@ async fn test_scenario_09_concurrent_reads_during_ddl() -> anyhow::Result<()> {
     // Spawn concurrent readers
     let ns_clone = ns.clone();
     let server_base = server.base_url().to_string();
-    let token = server.create_jwt_token(&UserName::new("concurrent_ddl_user"));
+    let token = server.create_jwt_token(&UserName::new(&username));
 
     let reader_handle = tokio::spawn(async move {
         let client = kalam_link::KalamLinkClient::builder()

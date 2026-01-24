@@ -1,9 +1,12 @@
 #![allow(dead_code, unused_imports)]
+use kalamdb_configs::ServerConfig;
+use kalamdb_server::lifecycle::RunningTestHttpServer;
 use rand::{distr::Alphanumeric, Rng};
 use reqwest::Client;
 use serde_json::json;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::process::Command;
 use std::process::{Child, Stdio};
 use std::sync::mpsc as std_mpsc;
@@ -26,6 +29,15 @@ static SERVER_URL: OnceLock<String> = OnceLock::new();
 static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
 static TEST_CONTEXT: OnceLock<TestContext> = OnceLock::new();
 static LAST_LEADER_URL: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+static AUTO_TEST_SERVER: OnceLock<Mutex<Option<AutoTestServer>>> = OnceLock::new();
+static AUTO_TEST_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
+struct AutoTestServer {
+    base_url: String,
+    storage_dir: PathBuf,
+    _temp_dir: TempDir,
+    _running: RunningTestHttpServer,
+}
 
 #[derive(Debug, Clone)]
 pub struct TestContext {
@@ -35,6 +47,84 @@ pub struct TestContext {
     pub is_cluster: bool,
     pub cluster_urls: Vec<String>,
     pub cluster_urls_raw: Vec<String>,
+}
+
+fn has_explicit_server_target() -> bool {
+    parse_test_arg("--url").is_some()
+        || parse_test_arg("--urls").is_some()
+        || std::env::var("KALAMDB_SERVER_URL").is_ok()
+        || std::env::var("KALAMDB_CLUSTER_URLS").is_ok()
+}
+
+fn should_auto_start_test_server() -> bool {
+    if has_explicit_server_target() {
+        return false;
+    }
+
+    std::env::var("KALAMDB_AUTO_START_TEST_SERVER")
+        .map(|value| {
+            let value = value.trim();
+            !(value.eq_ignore_ascii_case("0") || value.eq_ignore_ascii_case("false"))
+        })
+        .unwrap_or(true)
+}
+
+fn url_reachable(url: &str) -> bool {
+    let host_port = url
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split('/')
+        .next()
+        .unwrap_or("127.0.0.1:8080");
+    host_port_reachable(host_port)
+}
+
+fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
+    let server_mutex = AUTO_TEST_SERVER.get_or_init(|| Mutex::new(None));
+    let mut guard = server_mutex.lock().ok()?;
+
+    if guard.is_none() {
+        let runtime = AUTO_TEST_RUNTIME.get_or_init(|| {
+            Runtime::new().expect("Failed to create auto test server runtime")
+        });
+        match runtime.block_on(start_local_test_server()) {
+            Ok(server) => {
+                *guard = Some(server);
+            }
+            Err(err) => {
+                eprintln!("Failed to auto-start test server: {}", err);
+                return None;
+            }
+        }
+    }
+
+    guard
+        .as_ref()
+        .map(|server| (server.base_url.clone(), server.storage_dir.clone()))
+}
+
+async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error::Error>> {
+    let temp_dir = TempDir::new()?;
+    let data_path = temp_dir.path().to_path_buf();
+
+    let mut config = ServerConfig::default();
+    config.server.host = "127.0.0.1".to_string();
+    config.server.port = 0;
+    config.server.ui_path = None;
+    config.storage.data_path = data_path.to_string_lossy().into_owned();
+    config.rate_limit.max_queries_per_sec = 100000;
+    config.rate_limit.max_messages_per_sec = 10000;
+
+    let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
+    let running =
+        kalamdb_server::lifecycle::run_for_tests(&config, components, app_context).await?;
+
+    Ok(AutoTestServer {
+        base_url: running.base_url.clone(),
+        storage_dir: data_path,
+        _temp_dir: temp_dir,
+        _running: running,
+    })
 }
 
 fn parse_test_arg(name: &str) -> Option<String> {
@@ -230,9 +320,20 @@ fn reorder_cluster_urls_by_leader(
 
 pub fn test_context() -> &'static TestContext {
     TEST_CONTEXT.get_or_init(|| {
-        let server_url = parse_test_arg("--url")
+        let mut server_url = parse_test_arg("--url")
             .or_else(|| std::env::var("KALAMDB_SERVER_URL").ok())
             .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
+        let mut auto_started = false;
+
+        if should_auto_start_test_server() && !url_reachable(&server_url) {
+            if let Some((auto_url, storage_dir)) = ensure_auto_test_server() {
+                std::env::set_var("KALAMDB_SERVER_URL", &auto_url);
+                std::env::set_var("KALAMDB_ROOT_PASSWORD", "");
+                std::env::set_var("KALAMDB_STORAGE_DIR", storage_dir.to_string_lossy().to_string());
+                server_url = auto_url;
+                auto_started = true;
+            }
+        }
 
         let username = parse_test_arg("--user")
             .or_else(|| std::env::var("KALAMDB_USER").ok())
@@ -258,21 +359,27 @@ pub fn test_context() -> &'static TestContext {
                     .collect()
             });
 
-        let healthy_cluster_nodes: Vec<String> = cluster_urls
-            .iter()
-            .filter(|url| {
-                let host_port = url
-                    .trim_start_matches("http://")
-                    .trim_start_matches("https://")
-                    .split('/')
-                    .next()
-                    .unwrap_or("127.0.0.1:8081");
-                host_port_reachable(host_port)
-            })
-            .cloned()
-            .collect();
+        let healthy_cluster_nodes: Vec<String> = if auto_started {
+            Vec::new()
+        } else {
+            cluster_urls
+                .iter()
+                .filter(|url| {
+                    let host_port = url
+                        .trim_start_matches("http://")
+                        .trim_start_matches("https://")
+                        .split('/')
+                        .next()
+                        .unwrap_or("127.0.0.1:8081");
+                    host_port_reachable(host_port)
+                })
+                .cloned()
+                .collect()
+        };
 
-        let (is_cluster, mut cluster_urls) = if let Some(explicit_urls) = parse_test_urls() {
+        let (is_cluster, mut cluster_urls) = if auto_started {
+            (false, vec![server_url.clone()])
+        } else if let Some(explicit_urls) = parse_test_urls() {
             (explicit_urls.len() > 1, explicit_urls)
         } else if !healthy_cluster_nodes.is_empty() {
             (true, healthy_cluster_nodes)

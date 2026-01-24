@@ -100,8 +100,11 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
     // =========================================================
     // Step 3: Multiple users subscribe to the document
     // =========================================================
-    let user1_client = create_user_and_client(server, "collab_user1", &Role::User).await?;
-    let user2_client = create_user_and_client(server, "collab_user2", &Role::User).await?;
+    // Create users with unique names to avoid parallel test interference
+    let user1_name = format!("{}_collab_user1", ns);
+    let user2_name = format!("{}_collab_user2", ns);
+    let user1_client = create_user_and_client(server, &user1_name, &Role::User).await?;
+    let user2_client = create_user_and_client(server, &user2_name, &Role::User).await?;
 
     // Both users subscribe to document changes
     let doc_sql = format!("SELECT * FROM {}.documents WHERE id = 1", ns);

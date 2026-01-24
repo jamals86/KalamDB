@@ -98,8 +98,11 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
     // =========================================================
     // Step 4: Insert user data
     // =========================================================
-    let user1_client = create_user_and_client(server, "dash_user1", &Role::User).await?;
-    let user2_client = create_user_and_client(server, "dash_user2", &Role::User).await?;
+    // Create users with unique names to avoid parallel test interference
+    let user1_name = format!("{}_dash_user1", ns);
+    let user2_name = format!("{}_dash_user2", ns);
+    let user1_client = create_user_and_client(server, &user1_name, &Role::User).await?;
+    let user2_client = create_user_and_client(server, &user2_name, &Role::User).await?;
 
     // User 1: Pro plan activities
     for i in 1..=5 {
@@ -264,8 +267,9 @@ async fn test_scenario_05_rbac_restrictions() -> anyhow::Result<()> {
         .await?;
     assert!(resp.success(), "Admin should write to shared table");
 
-    // Regular user can read
-    let user_client = create_user_and_client(server, "regular_user", &Role::User).await?;
+    // Regular user can read with unique name to avoid parallel test interference
+    let username = format!("{}_regular_user", ns);
+    let user_client = create_user_and_client(server, &username, &Role::User).await?;
     let resp = user_client
         .execute_query(&format!("SELECT * FROM {}.system_config", ns), None, None)
         .await?;
@@ -299,7 +303,9 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE events table");
 
-    let client = create_user_and_client(server, "schema_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_schema_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert initial data
     for i in 1..=5 {

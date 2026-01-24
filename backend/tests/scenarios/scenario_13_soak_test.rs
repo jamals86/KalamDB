@@ -351,7 +351,9 @@ async fn test_scenario_13_schema_evolution_under_load() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE products table");
 
-    let client = create_user_and_client(server, "schema_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_schema_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert initial data
     for i in 1..=50 {

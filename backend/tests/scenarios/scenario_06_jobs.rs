@@ -41,8 +41,8 @@ async fn test_scenario_06_jobs_lifecycle() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE data table");
 
-    ensure_user_exists(server, "jobs_user", "test123", &Role::User).await?;
-    let client = server.link_client("jobs_user");
+    let username = format!("{}_jobs_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert data to trigger flush eligibility
     for i in 1..=20 {
@@ -151,8 +151,8 @@ async fn test_scenario_06_job_idempotency() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE data table");
 
-    ensure_user_exists(server, "idem_user", "test123", &Role::User).await?;
-    let client = server.link_client("idem_user");
+    let username = format!("{}_idem_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert data
     for i in 1..=10 {
@@ -241,8 +241,8 @@ async fn test_scenario_06_job_status_transitions() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE data table");
 
-    ensure_user_exists(server, "trans_user", "test123", &Role::User).await?;
-    let client = server.link_client("trans_user");
+    let username = format!("{}_trans_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert enough data to trigger a flush job
     for i in 1..=50 {

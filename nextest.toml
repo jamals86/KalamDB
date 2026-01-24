@@ -5,3 +5,11 @@
 [[profile.default.overrides]]
 filter = 'package(kalam-cli)'
 test-threads = 1
+
+[[profile.default.overrides]]
+filter = 'package(kalam-link)'
+test-threads = 1
+
+[[profile.default.overrides]]
+filter = 'package(kalamdb-server)'
+test-threads = 1

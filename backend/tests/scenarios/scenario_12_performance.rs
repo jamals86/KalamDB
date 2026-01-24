@@ -39,7 +39,9 @@ async fn test_scenario_12_insert_performance() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE metrics table");
 
-    let client = create_user_and_client(server, "perf_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_perf_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // =========================================================
     // Measure insert time per batch
@@ -123,7 +125,9 @@ async fn test_scenario_12_query_time_growth() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE readings table");
 
-    let client = create_user_and_client(server, "query_perf_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_query_perf_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert rows in batches and measure query time after each batch
     let batch_sizes = [100, 200, 300, 400, 500];
@@ -215,7 +219,9 @@ async fn test_scenario_12_subscription_snapshot_timing() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE documents table");
 
-    let client = create_user_and_client(server, "sub_perf_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_sub_perf_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert varying amounts of data and measure subscription snapshot time
     let data_sizes = [50, 100, 200, 500];
@@ -305,7 +311,9 @@ async fn test_scenario_12_memory_baseline() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE large_data table");
 
-    let client = create_user_and_client(server, "memory_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_memory_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert data in batches (larger payloads)
     let payload = "X".repeat(1000); // 1KB per row

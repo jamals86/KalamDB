@@ -65,7 +65,9 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
     // =========================================================
     // Step 4: Insert data to both tables
     // =========================================================
-    let client = create_user_and_client(server, "storage_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_storage_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert to hot_data
     for i in 1..=100 {
@@ -175,8 +177,9 @@ async fn test_scenario_11_storage_constraints() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE constrained table");
 
-    // Insert data
-    let client = create_user_and_client(server, "constraint_user", &Role::User).await?;
+    // Insert data with unique user to avoid parallel test interference
+    let username = format!("{}_constraint_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
     for i in 1..=50 {
         let resp = client
             .execute_query(
@@ -258,9 +261,11 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE STREAM table");
 
-    // Get clients - use create_user_and_client to get proper user_id mapping
-    let user1_client = create_user_and_client(server, "storage_user1", &Role::User).await?;
-    let user2_client = create_user_and_client(server, "storage_user2", &Role::User).await?;
+    // Get clients with unique names to avoid parallel test interference
+    let user1_name = format!("{}_storage_user1", ns);
+    let user2_name = format!("{}_storage_user2", ns);
+    let user1_client = create_user_and_client(server, &user1_name, &Role::User).await?;
+    let user2_client = create_user_and_client(server, &user2_name, &Role::User).await?;
     let admin_client = server.link_client("root");
 
     // Insert USER data (per-user isolation)

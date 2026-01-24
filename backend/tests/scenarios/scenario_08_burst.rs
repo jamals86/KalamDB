@@ -43,7 +43,9 @@ async fn test_scenario_08_burst_writes() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE events table");
 
-    let client = create_user_and_client(server, "burst_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_burst_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // =========================================================
     // Step 2: Start subscription
@@ -152,8 +154,8 @@ async fn test_scenario_08_burst_writes() -> anyhow::Result<()> {
     // =========================================================
     // Step 5: Verify final counts
     // =========================================================
-    let client = server.link_client("burst_user");
-    let resp = client
+    let final_client = client.clone();
+    let resp = final_client
         .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.events", ns), None, None)
         .await?;
     let final_count: i64 = resp.get_i64("cnt").unwrap_or(0);
@@ -200,7 +202,9 @@ async fn test_scenario_08_sustained_load() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE events table");
 
-    let client = create_user_and_client(server, "sustained_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_sustained_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Start subscription
     let sql = format!("SELECT * FROM {}.events ORDER BY id", ns);
@@ -210,7 +214,7 @@ async fn test_scenario_08_sustained_load() -> anyhow::Result<()> {
     let _ = drain_initial_data(&mut subscription, Duration::from_secs(2)).await?;
 
     // Sustained writes: 50 writes over 5 seconds (10 per second)
-    let client2 = server.link_client("sustained_user");
+    let client2 = client.clone();
     let ns_for_writes = ns.clone();
     let write_handle = tokio::spawn(async move {
         for i in 0..50 {
@@ -291,7 +295,9 @@ async fn test_scenario_08_subscription_reconnect() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE events table");
 
-    let client = create_user_and_client(server, "reconnect_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_reconnect_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert initial data
     for i in 1..=5 {

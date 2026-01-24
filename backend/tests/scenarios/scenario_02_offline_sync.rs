@@ -67,7 +67,8 @@ async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
     // =========================================================
     let user_count = 10;
     let items_per_user = 50; // Reduced from 1200 for faster testing
-    let user_prefix = unique_table("user");
+    // Use namespace prefix for unique user names to avoid parallel test interference
+    let user_prefix = format!("{}_user", ns);
 
     for user_idx in 0..user_count {
         let username = format!("{}_{}", user_prefix, user_idx);
@@ -314,7 +315,8 @@ async fn test_scenario_02_changes_during_snapshot() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE items table");
 
-    let client = create_user_and_client(server, "concurrent_user", &Role::User).await?;
+    let username = format!("{}_concurrent_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert initial items
     for i in 1..=20 {
@@ -333,7 +335,7 @@ async fn test_scenario_02_changes_during_snapshot() -> anyhow::Result<()> {
     let mut subscription = client.subscribe(&sql).await?;
 
     // Immediately start inserting more items (simulating concurrent writes)
-    let client_clone = server.link_client("concurrent_user");
+    let client_clone = client.clone();
     let ns_clone = ns.clone();
     let writer_handle = tokio::spawn(async move {
         for i in 21..=25 {
