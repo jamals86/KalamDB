@@ -15,36 +15,23 @@
 //! cargo test --test test_user_table_subscriptions -- --nocapture
 //! ```
 
-use base64::Engine;
 use kalam_link::auth::AuthProvider;
+use kalam_link::subscription::SubscriptionManager;
+use kalam_link::models::{BatchStatus, ResponseStatus};
 use kalam_link::{ChangeEvent, KalamLinkClient, QueryResponse, SubscriptionConfig};
 use std::time::Duration;
+use std::time::Instant;
 use tokio::time::{sleep, timeout};
 
-/// Test configuration
-const SERVER_URL: &str = "http://localhost:8080";
-const TEST_TIMEOUT: Duration = Duration::from_secs(15);
+mod common;
 
-/// Helper to check if server is running
-async fn is_server_running() -> bool {
-    let credentials = base64::engine::general_purpose::STANDARD.encode("root:");
-    match reqwest::Client::new()
-        .post(format!("{}/v1/api/sql", SERVER_URL))
-        .header("Authorization", format!("Basic {}", credentials))
-        .json(&serde_json::json!({ "sql": "SELECT 1" }))
-        .timeout(Duration::from_secs(2))
-        .send()
-        .await
-    {
-        Ok(resp) => resp.status().is_success(),
-        Err(_) => false,
-    }
-}
+/// Test configuration
+const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Helper to create a test client
 fn create_test_client() -> Result<KalamLinkClient, kalam_link::KalamLinkError> {
     KalamLinkClient::builder()
-        .base_url(SERVER_URL)
+        .base_url(common::server_url())
         .timeout(Duration::from_secs(30))
         .auth(AuthProvider::system_user_auth("".to_string()))
         .build()
@@ -53,7 +40,34 @@ fn create_test_client() -> Result<KalamLinkClient, kalam_link::KalamLinkError> {
 /// Helper to execute SQL via HTTP
 async fn execute_sql(sql: &str) -> Result<QueryResponse, Box<dyn std::error::Error + Send + Sync>> {
     let client = create_test_client()?;
-    Ok(client.execute_query(sql, None, None).await?)
+    Ok(client.execute_query(sql, None, None, None).await?)
+}
+
+async fn execute_sql_checked(
+    sql: &str,
+) -> Result<QueryResponse, Box<dyn std::error::Error + Send + Sync>> {
+    let response = execute_sql(sql).await?;
+    if response.status != ResponseStatus::Success {
+        return Err(format!("SQL failed: {:?}", response.error).into());
+    }
+    Ok(response)
+}
+
+/// Wait until a newly created table is visible for queries
+async fn wait_for_table_ready(
+    table: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    for _ in 0..20 {
+        if execute_sql_checked(&format!("SELECT 1 FROM {} LIMIT 1", table))
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+
+    Err(format!("Table not ready: {}", table).into())
 }
 
 /// Generate a unique table name
@@ -66,7 +80,15 @@ fn generate_table_name() -> String {
         .unwrap()
         .as_nanos();
     let counter = COUNTER.fetch_add(1, Ordering::SeqCst);
-    format!("messages_{}_{}", timestamp, counter)
+    let pid = std::process::id();
+    format!("messages_{}_{}_{}", timestamp, pid, counter)
+}
+
+/// Generate a unique row id for tests
+fn generate_row_id() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static ROW_ID: AtomicU64 = AtomicU64::new(1);
+    ROW_ID.fetch_add(1, Ordering::SeqCst)
 }
 
 /// Setup test namespace and USER table for subscription tests
@@ -75,17 +97,38 @@ async fn setup_user_table() -> Result<String, Box<dyn std::error::Error + Send +
     let full_table = format!("sub_test.{}", table_name);
 
     // Create namespace if needed
-    execute_sql("CREATE NAMESPACE IF NOT EXISTS sub_test").await.ok();
+    execute_sql_checked("CREATE NAMESPACE IF NOT EXISTS sub_test").await?;
     sleep(Duration::from_millis(50)).await;
 
     // Create USER TABLE (not STREAM TABLE) - supports all DML operations
     // USER tables require a PRIMARY KEY column
-    execute_sql(&format!(
+    let create_sql = format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, type VARCHAR, content VARCHAR) WITH (TYPE = 'USER')",
         full_table
-    ))
-    .await?;
-    sleep(Duration::from_millis(50)).await;
+    );
+    let mut created = false;
+    for _ in 0..3 {
+        match execute_sql_checked(&create_sql).await {
+            Ok(_) => {
+                created = true;
+                break;
+            }
+            Err(e) => {
+                if e.to_string().contains("Already exists") {
+                    let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", full_table)).await;
+                    sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    if !created {
+        return Err("Failed to create test table".into());
+    }
+
+    wait_for_table_ready(&full_table).await?;
 
     Ok(full_table)
 }
@@ -95,26 +138,69 @@ async fn cleanup_table(table_name: &str) {
     let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", table_name)).await;
 }
 
-/// Drain initial messages (ACK, InitialData) from subscription
-async fn drain_initial_messages(subscription: &mut kalam_link::subscription::SubscriptionManager) {
-    // Wait for ACK and any initial data
-    for _ in 0..3 {
-        match timeout(Duration::from_millis(100), subscription.next()).await {
-            Ok(Some(Ok(event))) => {
-                match event {
-                    ChangeEvent::Ack { .. } | ChangeEvent::InitialDataBatch { .. } => {
-                        // Expected initial messages, continue draining
-                        continue;
-                    },
-                    _ => {
-                        // Unexpected message during drain, stop
-                        break;
-                    },
-                }
-            },
-            _ => break,
+/// Insert a row with retry (guards against duplicate PK or transient errors)
+async fn insert_row_with_retry(
+    table: &str,
+    row_type: &str,
+    content: &str,
+) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+    let mut last_err: Option<Box<dyn std::error::Error + Send + Sync>> = None;
+
+    for _ in 0..6 {
+        let row_id = generate_row_id();
+        let sql = format!(
+            "INSERT INTO {} (id, type, content) VALUES ({}, '{}', '{}')",
+            table, row_id, row_type, content
+        );
+
+        match execute_sql_checked(&sql).await {
+            Ok(_) => return Ok(row_id),
+            Err(e) => {
+                last_err = Some(e);
+                let _ = wait_for_table_ready(table).await;
+                sleep(Duration::from_millis(100)).await;
+            }
         }
     }
+
+    Err(last_err.unwrap_or_else(|| "Insert failed".into()))
+}
+
+/// Wait until a subscription is fully ready for live updates
+async fn wait_for_subscription_ready(
+    subscription: &mut SubscriptionManager,
+    overall_timeout: Duration,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let deadline = Instant::now() + overall_timeout;
+    while Instant::now() < deadline {
+        match timeout(Duration::from_secs(3), subscription.next()).await {
+            Ok(Some(Ok(event))) => match event {
+                ChangeEvent::Ack { batch_control, .. } => {
+                    if batch_control.status == BatchStatus::Ready {
+                        return Ok(());
+                    }
+                },
+                ChangeEvent::InitialDataBatch { batch_control, .. } => {
+                    if batch_control.status == BatchStatus::Ready {
+                        return Ok(());
+                    }
+                },
+                ChangeEvent::Error {
+                    code,
+                    message,
+                    ..
+                } => {
+                    return Err(format!("Subscription error {}: {}", code, message).into());
+                },
+                _ => continue,
+            },
+            Ok(Some(Err(e))) => return Err(e.into()),
+            Ok(None) => return Err("Subscription closed while waiting for ready".into()),
+            Err(_) => continue,
+        }
+    }
+
+    Err("Timeout waiting for subscription ready".into())
 }
 
 /// Helper to extract string value from row field (handles {"Utf8": "value"} format)
@@ -124,6 +210,46 @@ fn extract_string_value(value: &serde_json::Value) -> Option<String> {
         .as_str()
         .map(|s| s.to_string())
         .or_else(|| value.get("Utf8").and_then(|v| v.as_str()).map(|s| s.to_string()))
+}
+
+fn row_matches_type(row: &serde_json::Value, expected: &str) -> bool {
+    if let Some(type_obj) = row.get("type") {
+        if let Some(type_str) = extract_string_value(type_obj) {
+            return type_str == expected;
+        }
+    }
+
+    row.to_string().contains(expected)
+}
+
+async fn wait_for_insert_with_type(
+    subscription: &mut SubscriptionManager,
+    expected_type: &str,
+    overall_timeout: Duration,
+) -> Option<ChangeEvent> {
+    let deadline = Instant::now() + overall_timeout;
+    while Instant::now() < deadline {
+        match timeout(Duration::from_secs(3), subscription.next()).await {
+            Ok(Some(Ok(event))) => match &event {
+                ChangeEvent::Insert { rows, .. } => {
+                    if rows.iter().any(|row| row_matches_type(row, expected_type)) {
+                        return Some(event);
+                    }
+                }
+                ChangeEvent::Ack { .. } | ChangeEvent::InitialDataBatch { .. } => {
+                    continue;
+                }
+                _ => continue,
+            },
+            Ok(Some(Err(e))) => {
+                eprintln!("❌ Subscription error while waiting for insert: {}", e);
+            }
+            Ok(None) => break,
+            Err(_) => continue,
+        }
+    }
+
+    None
 }
 
 /// Test: Multiple filtered subscriptions on a USER table
@@ -138,8 +264,11 @@ fn extract_string_value(value: &serde_json::Value) -> Option<String> {
 /// 7. Inserts another row and verifies the unsubscribed query doesn't receive it
 #[tokio::test]
 async fn test_multiple_filtered_subscriptions() {
-    if !is_server_running().await {
-        eprintln!("⚠️  Server not running at {}. Skipping test.", SERVER_URL);
+    if !common::is_server_running().await {
+        eprintln!(
+            "⚠️  Server not running at {}. Skipping test.",
+            common::server_url()
+        );
         return;
     }
 
@@ -207,46 +336,58 @@ async fn test_multiple_filtered_subscriptions() {
         typing_sub.subscription_id()
     );
 
-    // Drain initial messages from both subscriptions
-    drain_initial_messages(&mut thinking_sub).await;
-    drain_initial_messages(&mut typing_sub).await;
+    // Wait for both subscriptions to be fully ready before inserting rows
+    wait_for_subscription_ready(&mut thinking_sub, Duration::from_secs(10))
+        .await
+        .expect("thinking subscription not ready");
+    wait_for_subscription_ready(&mut typing_sub, Duration::from_secs(10))
+        .await
+        .expect("typing subscription not ready");
 
-    println!("✅ Drained initial messages from both subscriptions");
+    println!("✅ Both subscriptions are ready");
 
     // === Step 2: Insert rows from another task ===
     let table_clone = table.clone();
     let insert_handle = tokio::spawn(async move {
         sleep(Duration::from_millis(50)).await;
 
-        // Insert a 'typing' row (id=1)
-        let typing_result = execute_sql(&format!(
-            "INSERT INTO {} (id, type, content) VALUES (1, 'typing', 'user is typing...')",
-            table_clone
-        ))
+        // Insert a 'typing' row
+        let typing_result = insert_row_with_retry(
+            &table_clone,
+            "typing",
+            "user is typing...",
+        )
         .await;
 
-        if let Err(e) = typing_result {
-            eprintln!("❌ Failed to insert 'typing' row: {}", e);
-            return Err(e);
-        }
-        println!("✅ Inserted row with type='typing'");
+        let typing_id = match typing_result {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("❌ Failed to insert 'typing' row: {}", e);
+                return Err(e);
+            },
+        };
+        println!("✅ Inserted row with type='typing' (id={})", typing_id);
 
-        sleep(Duration::from_millis(20)).await;
+        sleep(Duration::from_millis(100)).await;
 
-        // Insert a 'thinking' row (id=2)
-        let thinking_result = execute_sql(&format!(
-            "INSERT INTO {} (id, type, content) VALUES (2, 'thinking', 'AI is thinking...')",
-            table_clone
-        ))
+        // Insert a 'thinking' row
+        let thinking_result = insert_row_with_retry(
+            &table_clone,
+            "thinking",
+            "AI is thinking...",
+        )
         .await;
 
-        if let Err(e) = thinking_result {
-            eprintln!("❌ Failed to insert 'thinking' row: {}", e);
-            return Err(e);
-        }
-        println!("✅ Inserted row with type='thinking'");
+        let thinking_id = match thinking_result {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("❌ Failed to insert 'thinking' row: {}", e);
+                return Err(e);
+            },
+        };
+        println!("✅ Inserted row with type='thinking' (id={})", thinking_id);
 
-        Ok(())
+        Ok((typing_id, thinking_id))
     });
 
     // === Step 3: Wait for changes on both subscriptions ===
@@ -255,86 +396,25 @@ async fn test_multiple_filtered_subscriptions() {
 
     // Collect events from 'thinking' subscription
     println!("🔄 Waiting for changes on 'thinking' subscription...");
-    for _ in 0..5 {
-        match timeout(Duration::from_secs(3), thinking_sub.next()).await {
-            Ok(Some(Ok(event))) => {
-                match &event {
-                    ChangeEvent::Insert {
-                        subscription_id,
-                        rows,
-                    } => {
-                        println!(
-                            "📥 'thinking' sub received Insert: subscription_id={}, rows={}",
-                            subscription_id,
-                            rows.len()
-                        );
-                        thinking_changes.push(event);
-                        break;
-                    },
-                    ChangeEvent::Ack { .. } | ChangeEvent::InitialDataBatch { .. } => {
-                        // Late initial message, skip
-                        continue;
-                    },
-                    other => {
-                        println!("📥 'thinking' sub received unexpected: {:?}", other);
-                    },
-                }
-            },
-            Ok(Some(Err(e))) => {
-                eprintln!("❌ Error on 'thinking' subscription: {}", e);
-                break;
-            },
-            Ok(None) => {
-                eprintln!("❌ 'thinking' subscription closed unexpectedly");
-                break;
-            },
-            Err(_) => {
-                // Timeout, try again
-                continue;
-            },
-        }
+    if let Some(event) =
+        wait_for_insert_with_type(&mut thinking_sub, "thinking", Duration::from_secs(20)).await
+    {
+        thinking_changes.push(event);
     }
 
     // Collect events from 'typing' subscription
     println!("🔄 Waiting for changes on 'typing' subscription...");
-    for _ in 0..5 {
-        match timeout(Duration::from_secs(3), typing_sub.next()).await {
-            Ok(Some(Ok(event))) => match &event {
-                ChangeEvent::Insert {
-                    subscription_id,
-                    rows,
-                } => {
-                    println!(
-                        "📥 'typing' sub received Insert: subscription_id={}, rows={}",
-                        subscription_id,
-                        rows.len()
-                    );
-                    typing_changes.push(event);
-                    break;
-                },
-                ChangeEvent::Ack { .. } | ChangeEvent::InitialDataBatch { .. } => {
-                    continue;
-                },
-                other => {
-                    println!("📥 'typing' sub received unexpected: {:?}", other);
-                },
-            },
-            Ok(Some(Err(e))) => {
-                eprintln!("❌ Error on 'typing' subscription: {}", e);
-                break;
-            },
-            Ok(None) => {
-                eprintln!("❌ 'typing' subscription closed unexpectedly");
-                break;
-            },
-            Err(_) => {
-                continue;
-            },
-        }
+    if let Some(event) =
+        wait_for_insert_with_type(&mut typing_sub, "typing", Duration::from_secs(20)).await
+    {
+        typing_changes.push(event);
     }
 
     // Wait for insert task to complete
-    let _ = insert_handle.await;
+    let (_typing_id, thinking_id) = insert_handle
+        .await
+        .expect("Insert task failed")
+        .expect("Insert task returned error");
 
     // === Step 4: Verify each subscription received correct changes ===
     println!("\n=== Verification: Filtered Changes ===");
@@ -421,12 +501,13 @@ async fn test_multiple_filtered_subscriptions() {
     println!("\n🔄 Step 5: Testing UPDATE event...");
 
     let table_clone_update = table.clone();
+    let thinking_id_update = thinking_id;
     let update_handle = tokio::spawn(async move {
         sleep(Duration::from_millis(50)).await;
-        // Update the 'thinking' row (id=2) to change its content
-        let result = execute_sql(&format!(
-            "UPDATE {} SET content = 'AI finished thinking!' WHERE id = 2",
-            table_clone_update
+        // Update the 'thinking' row to change its content
+        let result = execute_sql_checked(&format!(
+            "UPDATE {} SET content = 'AI finished thinking!' WHERE id = {}",
+            table_clone_update, thinking_id_update
         ))
         .await;
 
@@ -434,7 +515,7 @@ async fn test_multiple_filtered_subscriptions() {
             eprintln!("❌ Failed to update row: {}", e);
             return Err(e);
         }
-        println!("✅ Updated row id=2 (type='thinking')");
+        println!("✅ Updated row id={} (type='thinking')", thinking_id_update);
         Ok(())
     });
 
@@ -442,7 +523,8 @@ async fn test_multiple_filtered_subscriptions() {
     println!("🔄 Waiting for UPDATE event on 'thinking' subscription...");
     let mut received_update = false;
 
-    for _ in 0..5 {
+    let update_deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < update_deadline {
         match timeout(Duration::from_secs(3), thinking_sub.next()).await {
             Ok(Some(Ok(event))) => {
                 match &event {
@@ -521,11 +603,11 @@ async fn test_multiple_filtered_subscriptions() {
     let table_clone2 = table.clone();
     let insert_handle2 = tokio::spawn(async move {
         sleep(Duration::from_millis(50)).await;
-        // id=3 since we already inserted id=1 (typing) and id=2 (thinking)
-        let result = execute_sql(&format!(
-            "INSERT INTO {} (id, type, content) VALUES (3, 'typing', 'more typing - should not reach thinking sub')",
-            table_clone2
-        ))
+        let result = insert_row_with_retry(
+            &table_clone2,
+            "typing",
+            "more typing - should not reach thinking sub",
+        )
         .await;
 
         if let Err(e) = result {
@@ -600,7 +682,7 @@ async fn test_multiple_filtered_subscriptions() {
 /// Simpler test focused specifically on unsubscribe behavior
 #[tokio::test]
 async fn test_unsubscribe_stops_changes() {
-    if !is_server_running().await {
+    if !common::is_server_running().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
@@ -634,22 +716,21 @@ async fn test_unsubscribe_stops_changes() {
 
     println!("✅ Created subscription: {}", subscription.subscription_id());
 
-    // Drain initial messages
-    drain_initial_messages(&mut subscription).await;
+    // Wait for subscription to be ready before inserting rows
+    wait_for_subscription_ready(&mut subscription, Duration::from_secs(10))
+        .await
+        .expect("unsubscribe subscription not ready");
 
-    // Insert a row to verify subscription is working (id=1)
-    execute_sql(&format!(
-        "INSERT INTO {} (id, type, content) VALUES (1, 'test', 'first insert')",
-        table
-    ))
-    .await
-    .expect("Failed to insert first row");
+    // Insert a row to verify subscription is working
+    insert_row_with_retry(&table, "test", "first insert")
+        .await
+        .expect("Failed to insert first row");
 
     // Wait for the change
-    let received_first = matches!(
-        timeout(Duration::from_secs(3), subscription.next()).await,
-        Ok(Some(Ok(ChangeEvent::Insert { .. })))
-    );
+    let received_first =
+        wait_for_insert_with_type(&mut subscription, "test", Duration::from_secs(20))
+            .await
+            .is_some();
 
     assert!(received_first, "Should receive first insert before unsubscribe");
     println!("✅ Received first insert notification");
@@ -658,13 +739,10 @@ async fn test_unsubscribe_stops_changes() {
     subscription.close().await.expect("Failed to close subscription");
     println!("✅ Unsubscribed");
 
-    // Insert another row (id=2)
-    execute_sql(&format!(
-        "INSERT INTO {} (id, type, content) VALUES (2, 'test', 'second insert after unsubscribe')",
-        table
-    ))
-    .await
-    .expect("Failed to insert second row");
+    // Insert another row after unsubscribe
+    insert_row_with_retry(&table, "test", "second insert after unsubscribe")
+        .await
+        .expect("Failed to insert second row");
 
     // The subscription is closed, so we can't check it anymore
     // This test mainly verifies that close() works without errors

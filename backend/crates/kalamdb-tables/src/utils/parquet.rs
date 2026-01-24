@@ -77,7 +77,6 @@ pub(crate) fn scan_parquet_files_as_batch(
                 use_degraded_mode = true;
                 let uid = user_id.cloned();
                 let scope_for_spawn = scope_label.clone();
-                let manifest_table_type = table_type;
                 let table_id_for_spawn = table_id.clone();
                 let manifest_service_clone = core.manifest_service.clone();
                 tokio::spawn(async move {
@@ -88,7 +87,6 @@ pub(crate) fn scan_parquet_files_as_batch(
                     );
                     match manifest_service_clone.rebuild_manifest(
                         &table_id_for_spawn,
-                        manifest_table_type,
                         uid.as_ref(),
                     ) {
                         Ok(_) => {

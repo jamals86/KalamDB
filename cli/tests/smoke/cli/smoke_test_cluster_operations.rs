@@ -51,7 +51,7 @@ fn query_count_on_url(base_url: &str, sql: &str) -> i64 {
                 )
                 .build()
                 .expect("Failed to build cluster client");
-            client.execute_query(&sql, None, None).await
+            client.execute_query(&sql, None, None, None).await
         })
         .map(|response| {
             let result = response.results.get(0).expect("Missing query result for count");

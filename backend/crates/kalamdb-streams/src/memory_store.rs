@@ -74,16 +74,9 @@ impl MemoryStreamLogStore {
             .data
             .write()
             .map_err(|e| StreamLogError::Io(format!("Failed to acquire write lock: {}", e)))?;
-
-        let keys_to_remove: Vec<RowKey> =
-            data.keys().filter(|(_, ts, _)| *ts < before_time).cloned().collect();
-
-        let count = keys_to_remove.len();
-        for key in keys_to_remove {
-            data.remove(&key);
-        }
-
-        Ok(count)
+        let before_len = data.len();
+        data.retain(|(_, ts, _), _| *ts >= before_time);
+        Ok(before_len - data.len())
     }
 
     /// Check if there are any logs before a given timestamp.
@@ -103,9 +96,16 @@ impl MemoryStreamLogStore {
             .read()
             .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
 
-        let users: HashSet<String> = data.keys().map(|(user_id, _, _)| user_id.clone()).collect();
-
-        Ok(users.into_iter().map(UserId::new).collect())
+        let mut users: Vec<UserId> = Vec::new();
+        let mut last_user: Option<&str> = None;
+        for (user_id, _, _) in data.keys() {
+            let current = user_id.as_str();
+            if last_user != Some(current) {
+                users.push(UserId::from(current));
+                last_user = Some(current);
+            }
+        }
+        Ok(users)
     }
 
     /// Clear all data from the store.
@@ -150,6 +150,12 @@ impl MemoryStreamLogStore {
         (user_id, ts, seq_bytes)
     }
 
+    fn seq_from_key(seq_bytes: &[u8]) -> i64 {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(seq_bytes);
+        i64::from_le_bytes(buf)
+    }
+
     fn read_range_internal(
         &self,
         user_id: &UserId,
@@ -162,13 +168,12 @@ impl MemoryStreamLogStore {
             .read()
             .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
 
-        let user_str = user_id.as_str().to_string();
         let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
-        let mut deleted: HashSet<Vec<u8>> = HashSet::new();
+        let mut deleted: HashSet<i64> = HashSet::new();
 
         // Iterate in order to process puts and deletes correctly
         for ((u, ts, seq_bytes), record) in data.iter() {
-            if u != &user_str {
+            if u != user_id.as_str() {
                 continue;
             }
             if *ts < start_time || *ts > end_time {
@@ -177,7 +182,8 @@ impl MemoryStreamLogStore {
 
             match record {
                 StreamLogRecord::Put { row_id, row } => {
-                    if deleted.contains(seq_bytes) {
+                    let seq = Self::seq_from_key(seq_bytes);
+                    if deleted.contains(&seq) {
                         continue;
                     }
                     results.push((row_id.clone(), row.clone()));
@@ -186,11 +192,10 @@ impl MemoryStreamLogStore {
                     }
                 },
                 StreamLogRecord::Delete { row_id: _ } => {
-                    deleted.insert(seq_bytes.clone());
+                    let seq = Self::seq_from_key(seq_bytes);
+                    deleted.insert(seq);
                     // Remove from results if already added
-                    results.retain(|(existing_id, _)| {
-                        existing_id.seq().as_i64().to_le_bytes().to_vec() != *seq_bytes
-                    });
+                    results.retain(|(existing_id, _)| existing_id.seq().as_i64() != seq);
                 },
             }
         }
@@ -208,19 +213,19 @@ impl MemoryStreamLogStore {
             .read()
             .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
 
-        let user_str = user_id.as_str().to_string();
         let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
-        let mut deleted: HashSet<Vec<u8>> = HashSet::new();
+        let mut deleted: HashSet<i64> = HashSet::new();
 
         // Iterate in reverse order (newest first)
         for ((u, _ts, seq_bytes), record) in data.iter().rev() {
-            if u != &user_str {
+            if u != user_id.as_str() {
                 continue;
             }
 
             match record {
                 StreamLogRecord::Put { row_id, row } => {
-                    if deleted.contains(seq_bytes) {
+                    let seq = Self::seq_from_key(seq_bytes);
+                    if deleted.contains(&seq) {
                         continue;
                     }
                     results.push((row_id.clone(), row.clone()));
@@ -229,7 +234,8 @@ impl MemoryStreamLogStore {
                     }
                 },
                 StreamLogRecord::Delete { row_id: _ } => {
-                    deleted.insert(seq_bytes.clone());
+                    let seq = Self::seq_from_key(seq_bytes);
+                    deleted.insert(seq);
                 },
             }
         }
@@ -291,14 +297,11 @@ impl StreamLogStore for MemoryStreamLogStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::time_bucket::StreamTimeBucket;
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::ids::SeqId;
     use kalamdb_commons::models::rows::Row;
     use kalamdb_commons::models::{NamespaceId, TableName};
-    use kalamdb_sharding::ShardRouter;
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
 
     fn build_row(user_id: &UserId, seq: SeqId) -> StreamTableRow {
         let values: BTreeMap<String, ScalarValue> = BTreeMap::new();

@@ -1,6 +1,6 @@
 // Authenticated user context for request handling
 
-use kalamdb_commons::{models::ConnectionInfo, Role, UserId};
+use kalamdb_commons::{models::{ConnectionInfo, UserId, UserName}, Role};
 
 /// Authenticated user context for a request.
 ///
@@ -11,7 +11,7 @@ pub struct AuthenticatedUser {
     /// User's unique identifier
     pub user_id: UserId,
     /// Username
-    pub username: String,
+    pub username: UserName,
     /// User's role (User, Service, Dba, System)
     pub role: Role,
     /// Email address (if available)
@@ -34,7 +34,7 @@ impl AuthenticatedUser {
     /// A new AuthenticatedUser instance
     pub fn new(
         user_id: UserId,
-        username: String,
+        username: UserName,
         role: Role,
         email: Option<String>,
         connection_info: ConnectionInfo,
@@ -106,7 +106,7 @@ mod tests {
 
         AuthenticatedUser::new(
             UserId::new("user_123"),
-            "testuser".to_string(),
+            UserName::new("testuser"),
             role,
             Some("test@example.com".to_string()),
             ConnectionInfo::new(addr),

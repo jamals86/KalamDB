@@ -13,7 +13,7 @@ async fn execute_query_with_retry(
 ) -> Result<QueryResponse, String> {
     let max_attempts = 5;
     for attempt in 0..max_attempts {
-        match client.execute_query(sql, None, None).await {
+        match client.execute_query(sql, None, None, None).await {
             Ok(response) => {
                 if response.success() {
                     return Ok(response);

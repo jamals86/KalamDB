@@ -210,6 +210,7 @@ impl UserTableProvider {
         filter: Option<&Expr>,
         limit: Option<usize>,
         keep_deleted: bool,
+        fallback_user_id: Option<&UserId>,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
         let table_id = self.core.table_id();
         base::warn_if_unfiltered_scan(table_id, filter, limit, self.core.table_type());
@@ -232,6 +233,10 @@ impl UserTableProvider {
 
         if let Ok(scopes) = self.core.manifest_service.get_manifest_user_ids(table_id) {
             user_ids.extend(scopes);
+        }
+
+        if let Some(user_id) = fallback_user_id {
+            user_ids.insert(user_id.clone());
         }
 
         let mut cold_rows = Vec::new();
@@ -832,7 +837,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let keep_deleted = filter.map(base::filter_uses_deleted_column).unwrap_or(false);
 
         let kvs = if allow_all_users {
-            self.scan_all_users_with_version_resolution(filter, limit, keep_deleted)?
+            self.scan_all_users_with_version_resolution(filter, limit, keep_deleted, Some(user_id))?
         } else {
             self.scan_with_version_resolution_to_kvs(
                 user_id,

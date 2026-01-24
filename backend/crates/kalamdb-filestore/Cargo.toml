@@ -53,6 +53,12 @@ parquet = { workspace = true }
 # Bytes type for in-memory buffers
 bytes = { workspace = true }
 
+# SHA-256 hashing for file integrity
+sha2 = { workspace = true }
+
+# Hex encoding for hash output
+hex = { workspace = true }
+
 # Concurrent hash map for storage registry cache
 dashmap = { workspace = true }
 

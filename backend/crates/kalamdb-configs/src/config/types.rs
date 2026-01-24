@@ -39,6 +39,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub security: SecuritySettings,
     #[serde(default)]
+    pub files: FileUploadSettings,
+    #[serde(default)]
     pub cluster: Option<super::cluster::ClusterConfig>,
 }
 
@@ -150,6 +152,45 @@ impl Default for SecuritySettings {
             max_ws_message_size: default_max_ws_message_size(),
             strict_ws_origin_check: false,
             max_request_body_size: default_max_request_body_size(),
+        }
+    }
+}
+
+/// File upload settings for FILE datatype
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileUploadSettings {
+    /// Maximum file size in bytes (default: 25MB)
+    #[serde(default = "default_file_max_size_bytes")]
+    pub max_size_bytes: usize,
+
+    /// Maximum number of files per upload request (default: 20)
+    #[serde(default = "default_file_max_files_per_request")]
+    pub max_files_per_request: usize,
+
+    /// Maximum number of files per subfolder before rotation (default: 5000)
+    #[serde(default = "default_file_max_files_per_folder")]
+    pub max_files_per_folder: u32,
+
+    /// Staging directory for temp file uploads (default: "./data/tmp")
+    #[serde(default = "default_file_staging_path")]
+    pub staging_path: String,
+
+    /// Allowed MIME types for file uploads.
+    /// Empty list = allow all types.
+    /// Supports wildcards like "image/*" for all image types.
+    /// Example: ["image/*", "application/pdf", "text/plain"]
+    #[serde(default = "default_file_allowed_mime_types")]
+    pub allowed_mime_types: Vec<String>,
+}
+
+impl Default for FileUploadSettings {
+    fn default() -> Self {
+        Self {
+            max_size_bytes: default_file_max_size_bytes(),
+            max_files_per_request: default_file_max_files_per_request(),
+            max_files_per_folder: default_file_max_files_per_folder(),
+            staging_path: default_file_staging_path(),
+            allowed_mime_types: default_file_allowed_mime_types(),
         }
     }
 }
@@ -892,6 +933,7 @@ impl Default for ServerConfig {
             jobs: JobsSettings::default(),
             execution: ExecutionSettings::default(),
             security: SecuritySettings::default(),
+            files: FileUploadSettings::default(),
             cluster: None, // Standalone mode by default
         }
     }

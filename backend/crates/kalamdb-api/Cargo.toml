@@ -17,6 +17,8 @@ kalamdb-raft = { path = "../kalamdb-raft" }
 kalamdb-sql = { path = "../kalamdb-sql" }
 kalamdb-auth = { path = "../kalamdb-auth" }
 kalamdb-system = { path = "../kalamdb-system" }
+kalamdb-filestore = { path = "../kalamdb-filestore" }
+kalamdb-session = { path = "../kalamdb-session" }
 
 # Apache Arrow
 arrow = { workspace = true }
@@ -25,10 +27,15 @@ arrow = { workspace = true }
 actix-web = { workspace = true }
 actix-ws = { workspace = true }
 actix-files = { workspace = true }
+actix-multipart = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+
+# Bytes
+bytes = { workspace = true }
 
 # UUID generation
 uuid = { workspace = true }

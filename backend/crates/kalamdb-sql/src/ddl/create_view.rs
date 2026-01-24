@@ -4,10 +4,10 @@
 //! route CREATE VIEW requests through a dedicated handler.
 
 use crate::ddl::DdlResult;
+use crate::parser::utils::parse_sql_statements;
 use kalamdb_commons::models::{NamespaceId, TableName};
 use sqlparser::ast::{ObjectName, Statement};
 use sqlparser::dialect::GenericDialect;
-use sqlparser::parser::Parser;
 
 /// Typed representation of a CREATE VIEW statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +32,7 @@ impl CreateViewStatement {
     /// Parse a CREATE VIEW statement using sqlparser's Generic dialect.
     pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
         let dialect = GenericDialect {};
-        let mut statements = Parser::parse_sql(&dialect, sql)
+        let mut statements = parse_sql_statements(sql, &dialect)
             .map_err(|e| format!("Failed to parse CREATE VIEW statement: {}", e))?;
 
         if statements.is_empty() {

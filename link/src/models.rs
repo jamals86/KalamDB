@@ -1,3 +1,5 @@
+#![cfg(any())]
+//! Deprecated: models are now in link/src/models/.
 //! Data models for kalam-link client library.
 //!
 //! Defines request and response structures for query execution and

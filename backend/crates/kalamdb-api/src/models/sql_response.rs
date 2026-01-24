@@ -39,6 +39,20 @@ pub enum ErrorCode {
     LeaderNotAvailable,
     /// Internal error
     InternalError,
+    /// Invalid input data
+    InvalidInput,
+    /// File too large
+    FileTooLarge,
+    /// Too many files in request
+    TooManyFiles,
+    /// Missing required file
+    MissingFile,
+    /// Extra file not referenced in SQL
+    ExtraFile,
+    /// File not found
+    FileNotFound,
+    /// Invalid MIME type
+    InvalidMimeType,
 }
 
 impl ErrorCode {
@@ -66,6 +80,13 @@ impl ErrorCode {
             ErrorCode::ClusterUnavailable => "CLUSTER_UNAVAILABLE",
             ErrorCode::LeaderNotAvailable => "LEADER_NOT_AVAILABLE",
             ErrorCode::InternalError => "INTERNAL_ERROR",
+            ErrorCode::InvalidInput => "INVALID_INPUT",
+            ErrorCode::FileTooLarge => "FILE_TOO_LARGE",
+            ErrorCode::TooManyFiles => "TOO_MANY_FILES",
+            ErrorCode::MissingFile => "MISSING_FILE",
+            ErrorCode::ExtraFile => "EXTRA_FILE",
+            ErrorCode::FileNotFound => "FILE_NOT_FOUND",
+            ErrorCode::InvalidMimeType => "INVALID_MIME_TYPE",
         }
     }
 }
@@ -92,6 +113,13 @@ impl From<&str> for ErrorCode {
             "PERMISSION_DENIED" => ErrorCode::PermissionDenied,
             "CLUSTER_UNAVAILABLE" => ErrorCode::ClusterUnavailable,
             "LEADER_NOT_AVAILABLE" => ErrorCode::LeaderNotAvailable,
+            "INVALID_INPUT" => ErrorCode::InvalidInput,
+            "FILE_TOO_LARGE" => ErrorCode::FileTooLarge,
+            "TOO_MANY_FILES" => ErrorCode::TooManyFiles,
+            "MISSING_FILE" => ErrorCode::MissingFile,
+            "EXTRA_FILE" => ErrorCode::ExtraFile,
+            "FILE_NOT_FOUND" => ErrorCode::FileNotFound,
+            "INVALID_MIME_TYPE" => ErrorCode::InvalidMimeType,
             _ => ErrorCode::InternalError,
         }
     }

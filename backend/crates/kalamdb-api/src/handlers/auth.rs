@@ -133,8 +133,7 @@ pub async fn login_handler(
     }
 
     // Load full user record for response fields
-    let username_typed =
-        kalamdb_commons::models::UserName::from(auth_result.user.username.as_str());
+    let username_typed = auth_result.user.username.clone();
     let user = match user_repo.get_user_by_username(&username_typed).await {
         Ok(user) => user,
         Err(e) => {
@@ -272,8 +271,7 @@ pub async fn refresh_handler(
     };
 
     // Verify user still exists and is active by username (we don't have find_by_id)
-    let username_typed =
-        kalamdb_commons::models::UserName::from(auth_result.user.username.as_str());
+    let username_typed = auth_result.user.username.clone();
     let user = match user_repo.get_user_by_username(&username_typed).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {
@@ -394,8 +392,7 @@ pub async fn me_handler(
     };
 
     // Get current user info
-    let username_typed =
-        kalamdb_commons::models::UserName::from(auth_result.user.username.as_str());
+    let username_typed = auth_result.user.username.clone();
     let user = match user_repo.get_user_by_username(&username_typed).await {
         Ok(user) if user.deleted_at.is_none() => user,
         _ => {

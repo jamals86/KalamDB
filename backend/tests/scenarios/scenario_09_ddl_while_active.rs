@@ -42,7 +42,9 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE data table");
 
-    let client = create_user_and_client(server, "ddl_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_ddl_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // =========================================================
     // Step 2: Insert initial data
@@ -56,7 +58,7 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
                     i,
                     i,
                     i * 10
-                ),
+                ), None,
                 None,
                 None,
             )
@@ -94,7 +96,7 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.data (id, name, value, description) VALUES (100, 'new_item', 1000, 'has description')",
                             ns
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -106,7 +108,7 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
             // Verify old rows still readable
             let resp = client
                 .execute_query(
-                    &format!("SELECT id, name, value FROM {}.data WHERE id <= 10 ORDER BY id", ns),
+                    &format!("SELECT id, name, value FROM {}.data WHERE id <= 10 ORDER BY id", ns), None,
                     None,
                     None,
                 )
@@ -116,7 +118,7 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
 
             // Verify new row readable
             let resp = client
-                .execute_query(&format!("SELECT * FROM {}.data WHERE id = 100", ns), None, None)
+                .execute_query(&format!("SELECT * FROM {}.data WHERE id = 100", ns), None, None, None)
                 .await?;
             assert!(resp.success(), "New row should be readable");
             assert_eq!(resp.rows().len(), 1, "Should have 1 new row");
@@ -170,7 +172,7 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
     // Step 7: Verify data integrity regardless of schema change result
     // =========================================================
     let resp = client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.data", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.data", ns), None, None, None)
         .await?;
     let count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert!(count >= 10, "Should have at least 10 rows");
@@ -205,7 +207,9 @@ async fn test_scenario_09_drop_column() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE data table");
 
-    let client = create_user_and_client(server, "drop_col_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_drop_col_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert data with old_column
     for i in 1..=5 {
@@ -214,7 +218,7 @@ async fn test_scenario_09_drop_column() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.data (id, name, old_column, value) VALUES ({}, 'item_{}', 'old_value_{}', {})",
                             ns, i, i, i, i * 10
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -233,7 +237,7 @@ async fn test_scenario_09_drop_column() -> anyhow::Result<()> {
         // Verify remaining columns work
         let resp = client
             .execute_query(
-                &format!("SELECT id, name, value FROM {}.data ORDER BY id", ns),
+                &format!("SELECT id, name, value FROM {}.data ORDER BY id", ns), None,
                 None,
                 None,
             )
@@ -247,7 +251,7 @@ async fn test_scenario_09_drop_column() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.data (id, name, old_column, value) VALUES (100, 'new', 'should_fail', 100)",
                             ns
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -284,13 +288,15 @@ async fn test_scenario_09_concurrent_reads_during_ddl() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE data table");
 
-    let client = create_user_and_client(server, "concurrent_ddl_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_concurrent_ddl_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert data
     for i in 1..=20 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.data (id, name) VALUES ({}, 'item_{}')", ns, i, i),
+                &format!("INSERT INTO {}.data (id, name) VALUES ({}, 'item_{}')", ns, i, i), None,
                 None,
                 None,
             )
@@ -301,7 +307,7 @@ async fn test_scenario_09_concurrent_reads_during_ddl() -> anyhow::Result<()> {
     // Spawn concurrent readers
     let ns_clone = ns.clone();
     let server_base = server.base_url().to_string();
-    let token = server.create_jwt_token(&UserName::new("concurrent_ddl_user"));
+    let token = server.create_jwt_token(&UserName::new(&username));
 
     let reader_handle = tokio::spawn(async move {
         let client = kalam_link::KalamLinkClient::builder()
@@ -313,7 +319,7 @@ async fn test_scenario_09_concurrent_reads_during_ddl() -> anyhow::Result<()> {
         for _ in 0..10 {
             let resp = client
                 .execute_query(
-                    &format!("SELECT * FROM {}.data ORDER BY id LIMIT 10", ns_clone),
+                    &format!("SELECT * FROM {}.data ORDER BY id LIMIT 10", ns_clone), None,
                     None,
                     None,
                 )

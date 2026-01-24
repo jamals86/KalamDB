@@ -65,10 +65,10 @@ pub async fn assert_user_isolation(
 
     // Query as user A
     let sql = format!("SELECT * FROM {}.{}", ns, table);
-    let resp_a = client_a.execute_query(&sql, None, None).await?;
+    let resp_a = client_a.execute_query(&sql, None, None, None).await?;
 
     // Query as user B
-    let resp_b = client_b.execute_query(&sql, None, None).await?;
+    let resp_b = client_b.execute_query(&sql, None, None, None).await?;
 
     // Extract user_id values from each response
     let get_user_ids = |resp: &kalam_link::models::QueryResponse| -> HashSet<String> {

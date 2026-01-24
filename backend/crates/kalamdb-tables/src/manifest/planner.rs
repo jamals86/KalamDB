@@ -219,13 +219,12 @@ impl ManifestAccessPlanner {
         old_schema_version: u32,
         current_schema: &SchemaRef,
         table_id: &TableId,
-        schema_registry: &dyn SchemaRegistryTrait<Error = KalamDbError>,
+        _schema_registry: &dyn SchemaRegistryTrait<Error = KalamDbError>,
     ) -> Result<RecordBatch, KalamDbError> {
-        // Get cached arrow schema for the historical version (uses version cache)
-        let old_schema = schema_registry.get_arrow_schema_for_version(table_id, old_schema_version)?;
+        let batch_schema = batch.schema();
 
         // If schemas are identical, no projection needed
-        if old_schema.fields() == current_schema.fields() {
+        if batch_schema.fields() == current_schema.fields() {
             return Ok(batch);
         }
 
@@ -240,12 +239,12 @@ impl ManifestAccessPlanner {
 
         for current_field in current_schema.fields() {
             // Check if field exists in old schema
-            if let Ok(old_col_index) = old_schema.index_of(current_field.name()) {
+            if let Ok(old_col_index) = batch_schema.index_of(current_field.name()) {
                 // Column existed in old schema - extract it
                 let old_column = batch.column(old_col_index).clone();
 
                 // Check if data types match
-                let old_field = old_schema.field(old_col_index);
+                let old_field = batch_schema.field(old_col_index);
                 if old_field.data_type() == current_field.data_type() {
                     // Types match - use as-is
                     projected_columns.push(old_column);
@@ -305,8 +304,8 @@ impl ManifestAccessPlanner {
         let mut selected_paths: Vec<String> = Vec::new();
 
         for segment in &manifest.segments {
-            // Skip tombstoned segments
-            if segment.tombstone {
+            // Skip non-readable segments (in_progress or tombstoned)
+            if !segment.is_readable() {
                 continue;
             }
 

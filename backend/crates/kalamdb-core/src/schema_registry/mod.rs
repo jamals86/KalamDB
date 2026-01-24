@@ -15,7 +15,7 @@ pub use error::RegistryError;
 pub use kalamdb_commons::helpers::string_interner::SystemColumns;
 
 pub use projection::{project_batch, schemas_compatible};
-pub use registry::SchemaRegistry;
+pub use registry::{SchemaRegistry, TableEntry};
 pub use registry::TablesSchemaRegistryAdapter;
 pub use kalamdb_system::SystemColumnsService;
 

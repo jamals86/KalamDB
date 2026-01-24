@@ -95,9 +95,10 @@
 //! let running_jobs = store.scan_by_index(0, Some(&[JobStatus::Running as u8]), Some(10))?;
 //! ```
 
-use crate::entity_store::{EntityStore, KSerializable};
+use crate::entity_store::{EntityIterator, EntityStore, KSerializable};
 use crate::storage_trait::{Operation, Partition, Result, StorageBackend, StorageError};
 use kalamdb_commons::StorageKey;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[cfg(feature = "datafusion")]
@@ -187,6 +188,10 @@ where
         self.filter_to_prefix(filter).is_some()
     }
 }
+
+pub type IndexRawIterator<'a> = Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>)>> + Send + 'a>;
+pub type IndexKeyIterator<'a, K> = Box<dyn Iterator<Item = Result<K>> + Send + 'a>;
+pub type IndexRawTypedIterator<'a, K> = Box<dyn Iterator<Item = Result<(Vec<u8>, K)>> + Send + 'a>;
 
 // ============================================================================
 // IndexedEntityStore
@@ -624,6 +629,50 @@ where
         Ok(results)
     }
 
+    /// Scans an index by prefix and returns matching entities as an iterator.
+    ///
+    /// This avoids loading all results into memory at once.
+    pub fn scan_by_index_iter(
+        &self,
+        index_idx: usize,
+        prefix: Option<&[u8]>,
+        limit: Option<usize>,
+    ) -> Result<EntityIterator<'_, K, V>> {
+        let index_partition = self
+            .index_partitions
+            .get(index_idx)
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
+            .clone();
+        let mut iter = self.backend.scan(&index_partition, prefix, None, limit)?;
+        let mut remaining = limit.unwrap_or(usize::MAX);
+
+        let mapped = std::iter::from_fn(move || {
+            if remaining == 0 {
+                return None;
+            }
+
+            loop {
+                let next = iter.next()?;
+                let (_index_key, primary_key_bytes) = next;
+                let primary_key = match K::from_storage_key(&primary_key_bytes) {
+                    Ok(key) => key,
+                    Err(e) => return Some(Err(StorageError::SerializationError(e))),
+                };
+
+                match self.get(&primary_key) {
+                    Ok(Some(entity)) => {
+                        remaining -= 1;
+                        return Some(Ok((primary_key, entity)));
+                    }
+                    Ok(None) => continue,
+                    Err(e) => return Some(Err(e)),
+                }
+            }
+        });
+
+        Ok(Box::new(mapped))
+    }
+
     /// Scans an index and returns only the primary keys (no entity fetch).
     ///
     /// More efficient when you only need the keys.
@@ -697,8 +746,6 @@ where
         common_prefix: &[u8],
         prefixes: &[Vec<u8>],
     ) -> Result<std::collections::HashSet<Vec<u8>>> {
-        use std::collections::HashSet;
-
         if prefixes.is_empty() {
             return Ok(HashSet::new());
         }
@@ -712,15 +759,44 @@ where
         // Scan all entries with the common prefix (e.g., all PKs for this user)
         let iter = self.backend.scan(&index_partition, Some(common_prefix), None, None)?;
 
-        // Build set of all existing index keys
-        let existing_keys: HashSet<Vec<u8>> = iter.map(|(k, _v)| k).collect();
-
-        // Check which of the requested prefixes exist
-        // Note: We check if any existing key starts with each prefix
-        let mut found = HashSet::with_capacity(prefixes.len());
+        let mut prefixes_by_len: HashMap<usize, HashSet<&[u8]>> = HashMap::new();
         for prefix in prefixes {
-            if existing_keys.iter().any(|k| k.starts_with(prefix)) {
-                found.insert(prefix.clone());
+            prefixes_by_len
+                .entry(prefix.len())
+                .or_default()
+                .insert(prefix.as_slice());
+        }
+        let mut lengths: Vec<usize> = prefixes_by_len.keys().copied().collect();
+        lengths.sort_unstable();
+
+        let mut remaining: usize = prefixes_by_len.values().map(|set| set.len()).sum();
+        if remaining == 0 {
+            return Ok(HashSet::new());
+        }
+
+        // Check which of the requested prefixes exist without collecting all keys
+        // We need to store owned Vec<u8> since keys are temporary
+        let mut found: HashSet<Vec<u8>> = HashSet::with_capacity(remaining);
+
+        'outer: for (key, _value) in iter {
+            for len in &lengths {
+                if key.len() < *len {
+                    break;
+                }
+
+                let prefix_slice = &key[..*len];
+                if let Some(prefix_set) = prefixes_by_len.get(len) {
+                    if prefix_set.contains(prefix_slice) {
+                        let prefix_owned = prefix_slice.to_vec();
+                        if found.insert(prefix_owned) {
+                            remaining -= 1;
+
+                            if remaining == 0 {
+                                break 'outer;
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -737,6 +813,25 @@ where
         start_key: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let iter = self.scan_index_raw_iter(index_idx, prefix, start_key, limit)?;
+        let mut results = Vec::new();
+        for item in iter {
+            results.push(item?);
+        }
+
+        Ok(results)
+    }
+
+    /// Scans an index returning raw (index_key, primary_key) pairs as an iterator.
+    ///
+    /// Useful for large scans without loading all results into memory.
+    pub fn scan_index_raw_iter(
+        &self,
+        index_idx: usize,
+        prefix: Option<&[u8]>,
+        start_key: Option<&[u8]>,
+        limit: Option<usize>,
+    ) -> Result<IndexRawIterator<'_>> {
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -744,7 +839,50 @@ where
             .clone();
         let iter = self.backend.scan(&index_partition, prefix, start_key, limit)?;
 
-        Ok(iter.collect())
+        Ok(Box::new(iter.map(Ok)))
+    }
+
+    /// Scans an index returning (index_key, primary_key) pairs with typed primary key.
+    pub fn scan_index_raw_typed_iter(
+        &self,
+        index_idx: usize,
+        prefix: Option<&[u8]>,
+        start_key: Option<&[u8]>,
+        limit: Option<usize>,
+    ) -> Result<IndexRawTypedIterator<'_, K>> {
+        let iter = self.scan_index_raw_iter(index_idx, prefix, start_key, limit)?;
+
+        let mapped = iter.map(|res| {
+            let (index_key, primary_key_bytes) = res?;
+            let primary_key = K::from_storage_key(&primary_key_bytes)
+                .map_err(StorageError::SerializationError)?;
+            Ok((index_key, primary_key))
+        });
+
+        Ok(Box::new(mapped))
+    }
+
+    /// Scans an index and returns only the primary keys as an iterator.
+    ///
+    /// More efficient for large scans since it avoids collecting into memory.
+    pub fn scan_index_keys_iter(
+        &self,
+        index_idx: usize,
+        prefix: Option<&[u8]>,
+        limit: Option<usize>,
+    ) -> Result<IndexKeyIterator<'_, K>> {
+        let index_partition = self
+            .index_partitions
+            .get(index_idx)
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
+            .clone();
+        let iter = self.backend.scan(&index_partition, prefix, None, limit)?;
+
+        let mapped = iter.map(|(_index_key, primary_key_bytes)| {
+            K::from_storage_key(&primary_key_bytes).map_err(StorageError::SerializationError)
+        });
+
+        Ok(Box::new(mapped))
     }
 }
 

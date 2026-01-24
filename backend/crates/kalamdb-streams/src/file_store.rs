@@ -298,14 +298,15 @@ impl FileStreamLogStore {
         entries.sort_by_key(|(window_start, _)| *window_start);
 
         let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
-        let mut deleted: HashSet<StreamTableRowId> = HashSet::new();
+        let mut deleted: HashSet<i64> = HashSet::new();
 
         for (_window_start, path) in entries {
             let records = Self::read_records(&path)?;
             for record in records {
                 match record {
                     StreamLogRecord::Put { row_id, row } => {
-                        if deleted.contains(&row_id) {
+                        let seq = row_id.seq().as_i64();
+                        if deleted.contains(&seq) {
                             continue;
                         }
                         results.push((row_id, row));
@@ -314,8 +315,9 @@ impl FileStreamLogStore {
                         }
                     },
                     StreamLogRecord::Delete { row_id } => {
-                        deleted.insert(row_id.clone());
-                        results.retain(|(existing_id, _)| existing_id != &row_id);
+                        let seq = row_id.seq().as_i64();
+                        deleted.insert(seq);
+                        results.retain(|(existing_id, _)| existing_id.seq().as_i64() != seq);
                     },
                 }
             }
@@ -337,14 +339,15 @@ impl FileStreamLogStore {
         entries.sort_by(|a, b| b.0.cmp(&a.0));
 
         let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
-        let mut deleted: HashSet<StreamTableRowId> = HashSet::new();
+        let mut deleted: HashSet<i64> = HashSet::new();
 
         for (_window_start, path) in entries {
             let records = Self::read_records(&path)?;
             for record in records.into_iter().rev() {
                 match record {
                     StreamLogRecord::Put { row_id, row } => {
-                        if deleted.contains(&row_id) {
+                        let seq = row_id.seq().as_i64();
+                        if deleted.contains(&seq) {
                             continue;
                         }
                         results.push((row_id, row));
@@ -353,7 +356,7 @@ impl FileStreamLogStore {
                         }
                     },
                     StreamLogRecord::Delete { row_id } => {
-                        deleted.insert(row_id);
+                        deleted.insert(row_id.seq().as_i64());
                     },
                 }
             }

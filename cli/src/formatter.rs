@@ -446,9 +446,7 @@ impl OutputFormatter {
             },
             _ => {
                 let ms = self.parse_i64(value).map(|raw| match unit {
-                    TimestampUnit::Milliseconds => raw,
                     TimestampUnit::Microseconds => raw / 1000,
-                    TimestampUnit::Nanoseconds => raw / 1_000_000,
                     TimestampUnit::Auto => {
                         if raw.abs() >= 100_000_000_000_000 {
                             raw / 1000
@@ -487,9 +485,7 @@ impl OutputFormatter {
 }
 
 enum TimestampUnit {
-    Milliseconds,
     Microseconds,
-    Nanoseconds,
     Auto,
 }
 

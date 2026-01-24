@@ -52,8 +52,8 @@ use bincode::serde::{decode_from_slice, encode_to_vec};
 use kalamdb_commons::{
     schemas::TableDefinition,
     system::{
-        AuditLogEntry, Job, JobNode, LiveQuery, ManifestCacheEntry, Namespace,
-        Storage as SystemStorage, User,
+        AuditLogEntry, Job, JobNode, LiveQuery, ManifestCacheEntry,
+        Namespace, Storage as SystemStorage, User,
     },
     next_storage_key_bytes, StorageKey, UserId,
 };
@@ -68,7 +68,7 @@ pub enum ScanDirection {
     Newer,
 }
 
-pub type EntityIterator<K, V> = Box<dyn Iterator<Item = Result<(K, V)>> + Send>;
+pub type EntityIterator<'a, K, V> = Box<dyn Iterator<Item = Result<(K, V)>> + Send + 'a>;
 
 /// Trait for typed entity storage with type-safe keys and automatic serialization.
 ///
@@ -182,7 +182,7 @@ where
         start_key: Option<&K>,
         direction: ScanDirection,
         limit: usize,
-    ) -> Result<EntityIterator<K, V>> {
+    ) -> Result<EntityIterator<'_, K, V>> {
         if limit == 0 {
             return Ok(Box::new(Vec::<Result<(K, V)>>::new().into_iter()));
         }
@@ -238,13 +238,11 @@ where
     }
 
     /// Returns a lazy iterator over all entities in the partition.
-    ///
-    /// Note: Currently collects results to avoid lifetime issues with the underlying storage iterator.
     fn scan_iterator(
         &self,
         prefix: Option<&K>,
         start_key: Option<&K>,
-    ) -> Result<EntityIterator<K, V>> {
+    ) -> Result<EntityIterator<'_, K, V>> {
         let partition = self.partition();
         let prefix_bytes = prefix.map(|k| k.storage_key());
         let start_key_bytes = start_key.map(|k| k.storage_key());
@@ -256,15 +254,14 @@ where
             None,
         )?;
 
-        // Collect results to avoid lifetime issues
-        let mut results = Vec::new();
-        for (key_bytes, value_bytes) in iter {
-            let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
+        let mapped = iter.map(|(key_bytes, value_bytes)| {
+            let key = K::from_storage_key(&key_bytes)
+                .map_err(StorageError::SerializationError)?;
             let value = V::decode(&value_bytes)?;
-            results.push(Ok((key, value)));
-        }
+            Ok((key, value))
+        });
 
-        Ok(Box::new(results.into_iter()))
+        Ok(Box::new(mapped))
     }
 
     /// Serializes an entity to bytes.

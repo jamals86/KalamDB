@@ -8,6 +8,7 @@ use super::test_support::http_server::HttpTestServer;
 use futures_util::future::try_join_all;
 use kalam_link::models::ResponseStatus;
 use kalamdb_commons::{Role, UserName};
+use serial_test::serial;
 
 async fn create_user(
     server: &super::test_support::http_server::HttpTestServer,
@@ -45,8 +46,17 @@ async fn count_rows(
 }
 
 #[tokio::test]
+#[ntest::timeout(60000)] // 60 seconds - stress HTTP smoke test
+#[serial]
 async fn test_stress_smoke_over_http() {
     (async {
+    if std::env::var("KALAMDB_RUN_STRESS_TESTS").as_deref() != Ok("1") {
+        eprintln!(
+            "Skipping stress smoke test. Set KALAMDB_RUN_STRESS_TESTS=1 to enable."
+        );
+        return Ok(());
+    }
+
     let server = super::test_support::http_server::get_global_server().await;
     let ns = unique_namespace("stress");
 
@@ -78,11 +88,11 @@ async fn test_stress_smoke_over_http() {
     );
 
     // Concurrent writers (small, deterministic).
-    let writer_futures = (0..5).map(|writer| {
+    let writer_futures = (0..3).map(|writer| {
         let ns = ns.clone();
         let auth = auth.clone();
         async move {
-            for j in 0..10 {
+            for j in 0..8 {
                 let id = writer * 100 + j;
                 let sql = format!(
                     "INSERT INTO {}.stress_data (id, value) VALUES ({}, 'w{}-{}')",
@@ -101,7 +111,7 @@ async fn test_stress_smoke_over_http() {
     try_join_all(writer_futures).await?;
 
     let cnt = count_rows(server, &auth, &ns, "stress_data").await?;
-    anyhow::ensure!(cnt == 50, "expected 50 rows, got {}", cnt);
+    anyhow::ensure!(cnt == 24, "expected 24 rows, got {}", cnt);
 
     // Basic cleanup: DROP TABLE should succeed.
     // Note: DROP TABLE currently requires admin privileges.

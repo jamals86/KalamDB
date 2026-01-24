@@ -5,10 +5,10 @@ use crate::error::KalamDbError;
 use crate::jobs::executors::flush::FlushParams;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use kalamdb_commons::models::{TableId, TableName};
 use kalamdb_commons::{JobId, JobType};
 use kalamdb_sql::ddl::FlushAllTablesStatement;
 use std::sync::Arc;
+use tokio::task::JoinSet;
 
 /// Handler for STORAGE FLUSH ALL
 pub struct FlushAllTablesHandler {
@@ -29,39 +29,87 @@ impl TypedStatementHandler<FlushAllTablesStatement> for FlushAllTablesHandler {
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // Scan namespace for all tables (system + user/shared/stream are all listed in system.tables)
-        let tables_provider = self.app_context.system_tables().tables();
-        let all_defs = tables_provider.list_tables()?;
-        let ns = statement.namespace.clone();
-        let target_tables: Vec<(TableName, kalamdb_commons::schemas::TableType)> = all_defs
-            .into_iter()
-            .filter(|d| d.namespace_id == ns)
-            .map(|d| (d.table_name.clone(), d.table_type))
-            .collect();
+        // Query manifest pending write index to find tables with unflushed data
+        let manifest_service = self.app_context.manifest_service();
+        let pending_iter = manifest_service
+            .pending_manifest_ids_iter()
+            .map_err(|e| KalamDbError::Other(format!("Pending manifest scan failed: {}", e)))?;
 
-        if target_tables.is_empty() {
+        // Filter by namespace if needed
+        let ns = statement.namespace.clone();
+        let mut any_pending = false;
+        let mut join_set = JoinSet::new();
+        let mut job_ids: Vec<String> = Vec::new();
+        let mut in_flight = 0usize;
+        const MAX_IN_FLIGHT: usize = 16;
+
+        for manifest_id in pending_iter {
+            let manifest_id = manifest_id
+                .map_err(|e| KalamDbError::Other(format!("Pending manifest read failed: {}", e)))?;
+
+            if manifest_id.table_id().namespace_id() != &ns {
+                continue;
+            }
+
+            any_pending = true;
+            let app_context = self.app_context.clone();
+            let table_id = manifest_id.table_id().clone();
+
+            join_set.spawn(async move {
+                let tables_provider = app_context.system_tables().tables();
+                let table_def = match tables_provider.get_table_by_id(&table_id)? {
+                    Some(def) => def,
+                    None => return Ok::<Option<JobId>, KalamDbError>(None),
+                };
+
+                let params = FlushParams {
+                    table_id: table_id.clone(),
+                    table_type: table_def.table_type,
+                    flush_threshold: None,
+                };
+
+                let idempotency_key = format!(
+                    "flush-{}-{}",
+                    table_id.namespace_id().as_str(),
+                    table_id.table_name().as_str()
+                );
+
+                let job_id: JobId = app_context
+                    .job_manager()
+                    .create_job_typed(JobType::Flush, params, Some(idempotency_key), None)
+                    .await?;
+
+                Ok(Some(job_id))
+            });
+
+            in_flight += 1;
+            if in_flight >= MAX_IN_FLIGHT {
+                if let Some(result) = join_set.join_next().await {
+                    let job_id = result
+                        .map_err(|e| KalamDbError::Other(format!("Flush job task failed: {}", e)))??;
+                    if let Some(job_id) = job_id {
+                        job_ids.push(job_id.as_str().to_string());
+                    }
+                    in_flight -= 1;
+                }
+            }
+        }
+
+        if !any_pending {
             return Ok(ExecutionResult::Success {
                 message: format!(
-                    "Storage flush skipped: no tables found in namespace '{}'",
+                    "Storage flush skipped: no pending writes in namespace '{}'",
                     ns.as_str()
                 ),
             });
         }
 
-        let job_manager = self.app_context.job_manager();
-        let mut job_ids: Vec<String> = Vec::new();
-        for (table_name, table_type) in &target_tables {
-            let table_id = TableId::new(ns.clone(), table_name.clone());
-            let params = FlushParams {
-                table_id: table_id.clone(),
-                table_type: *table_type,
-                flush_threshold: None,
-            };
-            let idempotency_key = format!("flush-{}-{}", ns.as_str(), table_name.as_str());
-            let job_id: JobId = job_manager
-                .create_job_typed(JobType::Flush, params, Some(idempotency_key), None)
-                .await?;
-            job_ids.push(job_id.as_str().to_string());
+        while let Some(result) = join_set.join_next().await {
+            let job_id = result
+                .map_err(|e| KalamDbError::Other(format!("Flush job task failed: {}", e)))??;
+            if let Some(job_id) = job_id {
+                job_ids.push(job_id.as_str().to_string());
+            }
         }
 
         Ok(ExecutionResult::Success {

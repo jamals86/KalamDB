@@ -6,8 +6,8 @@
 use sqlparser::ast::{
     Expr, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
 };
+use crate::parser::utils::parse_sql_statements;
 use sqlparser::dialect::GenericDialect;
-use sqlparser::parser::Parser;
 
 /// Error type for query parsing
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ impl QueryParser {
     /// SQL injection attacks in live query subscriptions.
     pub fn extract_table_name(query: &str) -> Result<String, QueryParseError> {
         let dialect = GenericDialect {};
-        let statements = Parser::parse_sql(&dialect, query).map_err(|e| {
+        let statements = parse_sql_statements(query, &dialect).map_err(|e| {
             QueryParseError::ParseError(format!("Failed to parse SQL: {}", e))
         })?;
 
@@ -116,7 +116,7 @@ impl QueryParser {
     /// Uses sqlparser-rs to safely parse and extract the clause.
     pub fn extract_where_clause(query: &str) -> Result<Option<String>, QueryParseError> {
         let dialect = GenericDialect {};
-        let statements = Parser::parse_sql(&dialect, query).map_err(|e| {
+        let statements = parse_sql_statements(query, &dialect).map_err(|e| {
             QueryParseError::ParseError(format!("Failed to parse SQL: {}", e))
         })?;
 
@@ -147,7 +147,7 @@ impl QueryParser {
     /// Returns None for SELECT * queries.
     pub fn extract_projections(query: &str) -> Result<Option<Vec<String>>, QueryParseError> {
         let dialect = GenericDialect {};
-        let statements = Parser::parse_sql(&dialect, query).map_err(|e| {
+        let statements = parse_sql_statements(query, &dialect).map_err(|e| {
             QueryParseError::ParseError(format!("Failed to parse SQL: {}", e))
         })?;
 
@@ -232,7 +232,7 @@ impl QueryParser {
 
         // Wrap in a dummy SELECT to parse the expression
         let dummy_query = format!("SELECT * FROM dummy WHERE {}", expr_str);
-        let statements = Parser::parse_sql(&dialect, &dummy_query).map_err(|e| {
+        let statements = parse_sql_statements(&dummy_query, &dialect).map_err(|e| {
             QueryParseError::ParseError(format!("Failed to parse expression: {}", e))
         })?;
 

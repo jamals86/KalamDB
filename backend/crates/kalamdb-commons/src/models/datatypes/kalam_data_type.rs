@@ -25,6 +25,7 @@ use std::fmt;
 /// - UUID = 0x0E (128-bit universally unique identifier)
 /// - DECIMAL = 0x0F (fixed-point decimal with precision and scale)
 /// - SMALLINT = 0x10 (16-bit signed integer)
+/// - FILE = 0x11 (file reference - stored as JSON FileRef object)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum KalamDataType {
     /// Boolean type (0x01)
@@ -79,6 +80,11 @@ pub enum KalamDataType {
     /// 16-bit signed integer (0x10)
     /// Range: -32,768 to 32,767
     SmallInt,
+
+    /// File reference (0x11)
+    /// Stored as a JSON FileRef object containing file metadata
+    /// (id, subfolder, name, size, mime, sha256)
+    File,
 }
 
 impl KalamDataType {
@@ -101,6 +107,7 @@ impl KalamDataType {
             KalamDataType::Uuid => 0x0E,
             KalamDataType::Decimal { .. } => 0x0F,
             KalamDataType::SmallInt => 0x10,
+            KalamDataType::File => 0x11,
         }
     }
 
@@ -123,6 +130,7 @@ impl KalamDataType {
             0x0E => Ok(KalamDataType::Uuid),
             0x0F => Err("DECIMAL type requires precision and scale parameters".to_string()),
             0x10 => Ok(KalamDataType::SmallInt),
+            0x11 => Ok(KalamDataType::File),
             _ => Err(format!("Unknown type tag: 0x{:02X}", tag)),
         }
     }
@@ -171,6 +179,7 @@ impl KalamDataType {
                 format!("DECIMAL({}, {})", precision, scale)
             },
             KalamDataType::SmallInt => "SMALLINT".to_string(),
+            KalamDataType::File => "FILE".to_string(),
         }
     }
 }
@@ -210,6 +219,7 @@ mod tests {
             0x0F
         );
         assert_eq!(KalamDataType::SmallInt.tag(), 0x10);
+        assert_eq!(KalamDataType::File.tag(), 0x11);
     }
 
     #[test]
@@ -218,6 +228,7 @@ mod tests {
         assert_eq!(KalamDataType::from_tag(0x06).unwrap(), KalamDataType::Text);
         assert_eq!(KalamDataType::from_tag(0x0E).unwrap(), KalamDataType::Uuid);
         assert_eq!(KalamDataType::from_tag(0x10).unwrap(), KalamDataType::SmallInt);
+        assert_eq!(KalamDataType::from_tag(0x11).unwrap(), KalamDataType::File);
         assert!(KalamDataType::from_tag(0xFF).is_err());
         // DECIMAL and EMBEDDING require parameters
         assert!(KalamDataType::from_tag(0x0D).is_err());

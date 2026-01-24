@@ -88,7 +88,7 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.feature_flags (flag_name, enabled, description) VALUES ('{}', {}, 'Flag: {}')",
                             global, flag, enabled, flag
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -99,22 +99,16 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
     // =========================================================
     // Step 4: Tenant A inserts their data
     // =========================================================
-    create_test_users(
-        server,
-        &[
-            ("tenant_a_user", &Role::User),
-            ("tenant_b_user", &Role::User),
-        ],
-    )
-    .await?;
-    let tenant_a_client = server.link_client("tenant_a_user");
+    let tenant_a_user = format!("{}_tenant_a_user", tenant_a);
+    let tenant_b_user = format!("{}_tenant_b_user", tenant_b);
+    let tenant_a_client = create_user_and_client(server, &tenant_a_user, &Role::User).await?;
     for i in 1..=5 {
         let resp = tenant_a_client
                     .execute_query(
                         &format!(
                             "INSERT INTO {}.orders (id, customer_name, amount) VALUES ({}, 'A Customer {}', {})",
                             tenant_a, i, i, (i as f64) * 100.0
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -125,14 +119,14 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
     // =========================================================
     // Step 5: Tenant B inserts their data
     // =========================================================
-    let tenant_b_client = server.link_client("tenant_b_user");
+    let tenant_b_client = create_user_and_client(server, &tenant_b_user, &Role::User).await?;
     for i in 101..=105 {
         let resp = tenant_b_client
                     .execute_query(
                         &format!(
                             "INSERT INTO {}.orders (id, customer_name, amount) VALUES ({}, 'B Customer {}', {})",
                             tenant_b, i, i, (i as f64) * 50.0
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -144,7 +138,7 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
     // Step 6: Verify tenant isolation (A cannot see B's data)
     // =========================================================
     let resp = tenant_a_client
-        .execute_query(&format!("SELECT * FROM {}.orders", tenant_a), None, None)
+        .execute_query(&format!("SELECT * FROM {}.orders", tenant_a), None, None, None)
         .await?;
     assert!(resp.success(), "Tenant A query own orders");
     assert_eq!(resp.rows_as_maps().len(), 5, "Tenant A should see 5 orders");
@@ -160,7 +154,7 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
     }
 
     let resp = tenant_b_client
-        .execute_query(&format!("SELECT * FROM {}.orders", tenant_b), None, None)
+        .execute_query(&format!("SELECT * FROM {}.orders", tenant_b), None, None, None)
         .await?;
     assert!(resp.success(), "Tenant B query own orders");
     assert_eq!(resp.rows_as_maps().len(), 5, "Tenant B should see 5 orders");
@@ -180,7 +174,7 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
     // =========================================================
     let resp = tenant_a_client
         .execute_query(
-            &format!("SELECT * FROM {}.feature_flags ORDER BY flag_name", global),
+            &format!("SELECT * FROM {}.feature_flags ORDER BY flag_name", global), None,
             None,
             None,
         )
@@ -190,7 +184,7 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
 
     let resp = tenant_b_client
         .execute_query(
-            &format!("SELECT * FROM {}.feature_flags ORDER BY flag_name", global),
+            &format!("SELECT * FROM {}.feature_flags ORDER BY flag_name", global), None,
             None,
             None,
         )
@@ -204,7 +198,7 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
     // Note: This depends on RBAC implementation
     // Tenant A trying to access tenant_b.orders might be blocked
     let resp = tenant_a_client
-        .execute_query(&format!("SELECT * FROM {}.orders", tenant_b), None, None)
+        .execute_query(&format!("SELECT * FROM {}.orders", tenant_b), None, None, None)
         .await?;
     // This might succeed (seeing 0 rows due to USER table isolation)
     // or fail (access denied)
@@ -262,9 +256,10 @@ async fn test_scenario_10_subscription_namespace_isolation() -> anyhow::Result<(
         .await?;
     assert_success(&resp, "CREATE ns_b.events");
 
-    create_test_users(server, &[("user_a", &Role::User), ("user_b", &Role::User)]).await?;
-    let client_a = server.link_client("user_a");
-    let client_b = server.link_client("user_b");
+    let user_a = format!("{}_user_a", ns_a);
+    let user_b = format!("{}_user_b", ns_b);
+    let client_a = create_user_and_client(server, &user_a, &Role::User).await?;
+    let client_b = create_user_and_client(server, &user_b, &Role::User).await?;
 
     // Subscribe to ns_a.events
     let mut sub_a = client_a
@@ -283,7 +278,7 @@ async fn test_scenario_10_subscription_namespace_isolation() -> anyhow::Result<(
     // Insert to ns_a
     let resp = client_a
         .execute_query(
-            &format!("INSERT INTO {}.events (id, data) VALUES (1, 'event_a')", ns_a),
+            &format!("INSERT INTO {}.events (id, data) VALUES (1, 'event_a')", ns_a), None,
             None,
             None,
         )
@@ -293,7 +288,7 @@ async fn test_scenario_10_subscription_namespace_isolation() -> anyhow::Result<(
     // Insert to ns_b
     let resp = client_b
         .execute_query(
-            &format!("INSERT INTO {}.events (id, data) VALUES (1, 'event_b')", ns_b),
+            &format!("INSERT INTO {}.events (id, data) VALUES (1, 'event_b')", ns_b), None,
             None,
             None,
         )
@@ -354,21 +349,15 @@ async fn test_scenario_10_same_table_name_different_namespaces() -> anyhow::Resu
         .await?;
     assert_success(&resp, "CREATE ns2.users");
 
-    create_test_users(
-        server,
-        &[
-            ("same_name_user1", &Role::User),
-            ("same_name_user2", &Role::User),
-        ],
-    )
-    .await?;
-    let client1 = server.link_client("same_name_user1");
-    let client2 = server.link_client("same_name_user2");
+    let user1 = format!("{}_same_name_user1", ns1);
+    let user2 = format!("{}_same_name_user2", ns2);
+    let client1 = create_user_and_client(server, &user1, &Role::User).await?;
+    let client2 = create_user_and_client(server, &user2, &Role::User).await?;
 
     // Insert different data
     let resp = client1
         .execute_query(
-            &format!("INSERT INTO {}.users (id, name) VALUES (1, 'NS1 User')", ns1),
+            &format!("INSERT INTO {}.users (id, name) VALUES (1, 'NS1 User')", ns1), None,
             None,
             None,
         )
@@ -377,7 +366,7 @@ async fn test_scenario_10_same_table_name_different_namespaces() -> anyhow::Resu
 
     let resp = client2
         .execute_query(
-            &format!("INSERT INTO {}.users (id, name) VALUES (1, 'NS2 User')", ns2),
+            &format!("INSERT INTO {}.users (id, name) VALUES (1, 'NS2 User')", ns2), None,
             None,
             None,
         )
@@ -386,13 +375,13 @@ async fn test_scenario_10_same_table_name_different_namespaces() -> anyhow::Resu
 
     // Verify isolation
     let resp = client1
-        .execute_query(&format!("SELECT name FROM {}.users WHERE id = 1", ns1), None, None)
+        .execute_query(&format!("SELECT name FROM {}.users WHERE id = 1", ns1), None, None, None)
         .await?;
     let name1 = resp.get_string("name").unwrap_or_default();
     assert_eq!(name1, "NS1 User", "ns1.users should have NS1 User");
 
     let resp = client2
-        .execute_query(&format!("SELECT name FROM {}.users WHERE id = 1", ns2), None, None)
+        .execute_query(&format!("SELECT name FROM {}.users WHERE id = 1", ns2), None, None, None)
         .await?;
     let name2 = resp.get_string("name").unwrap_or_default();
     assert_eq!(name2, "NS2 User", "ns2.users should have NS2 User");

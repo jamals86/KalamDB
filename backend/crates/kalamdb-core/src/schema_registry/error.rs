@@ -1,6 +1,7 @@
 //! Error types for kalamdb-registry
 
 use std::fmt;
+use kalamdb_commons::models::StorageId;
 
 /// Registry-specific errors
 #[derive(Debug, Clone)]
@@ -9,7 +10,7 @@ pub enum RegistryError {
     TableNotFound { namespace: String, table: String },
 
     /// Storage not found
-    StorageNotFound { storage_id: String },
+    StorageNotFound { storage_id: StorageId },
 
     /// Schema conversion error
     SchemaConversion { message: String },

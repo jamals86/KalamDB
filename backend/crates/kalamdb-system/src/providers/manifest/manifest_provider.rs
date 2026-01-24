@@ -3,13 +3,13 @@
 //! This module provides a DataFusion TableProvider implementation for the system.manifest table.
 //! Exposes manifest cache entries as a queryable system table.
 
-use super::{new_manifest_store, ManifestStore, ManifestTableSchema};
+use super::{create_manifest_indexes, ManifestTableSchema};
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::base::SimpleSystemTableScan;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
-use kalamdb_commons::ManifestId;
+use kalamdb_commons::{ManifestId, StorageKey, TableId};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
@@ -18,16 +18,16 @@ use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::types::ManifestCacheEntry;
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_store::entity_store::EntityStore;
-use kalamdb_store::StorageBackend;
+use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
 use std::sync::{Arc, RwLock};
 
 /// Callback type for checking if a cache key is in hot memory
 pub type InMemoryChecker = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
-/// System.manifest table provider using EntityStore architecture
+/// System.manifest table provider using IndexedEntityStore architecture
 pub struct ManifestTableProvider {
-    store: ManifestStore,
+    store: IndexedEntityStore<ManifestId, ManifestCacheEntry>,
     /// Optional callback to check if a cache key is in hot memory (injected from kalamdb-core)
     in_memory_checker: RwLock<Option<InMemoryChecker>>,
 }
@@ -39,7 +39,7 @@ impl std::fmt::Debug for ManifestTableProvider {
 }
 
 impl ManifestTableProvider {
-    /// Create a new manifest table provider
+    /// Create a new manifest table provider with indexes
     ///
     /// # Arguments
     /// * `backend` - Storage backend (RocksDB or mock)
@@ -47,8 +47,14 @@ impl ManifestTableProvider {
     /// # Returns
     /// A new ManifestTableProvider instance
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
+        let store = IndexedEntityStore::new(
+            backend,
+            crate::SystemTable::Manifest.column_family_name().expect("Manifest is a table"),
+            create_manifest_indexes(),
+        );
+
         Self {
-            store: new_manifest_store(backend),
+            store,
             in_memory_checker: RwLock::new(None),
         }
     }
@@ -63,8 +69,8 @@ impl ManifestTableProvider {
         }
     }
 
-    /// Access the underlying ManifestStore
-    pub fn store(&self) -> &ManifestStore {
+    /// Access the underlying store for direct operations
+    pub fn store(&self) -> &IndexedEntityStore<ManifestId, ManifestCacheEntry> {
         &self.store
     }
 
@@ -84,26 +90,26 @@ impl ManifestTableProvider {
     ///
     /// Uses schema-driven array building for optimal performance and correctness.
     pub fn scan_to_record_batch(&self) -> Result<RecordBatch, SystemError> {
-        // Use typed scan which properly deserializes ManifestId keys via StorageKey trait
-        let entries: Vec<(ManifestId, ManifestCacheEntry)> = self
+        let iter = self
             .store
-            .scan_all_typed(Some(100000), None, None)
+            .scan_iterator(None, None)
             .map_err(|e| SystemError::Storage(e.to_string()))?;
 
         // Extract data into vectors
-        let mut cache_keys = Vec::with_capacity(entries.len());
-        let mut namespace_ids = Vec::with_capacity(entries.len());
-        let mut table_names = Vec::with_capacity(entries.len());
-        let mut scopes = Vec::with_capacity(entries.len());
-        let mut etags = Vec::with_capacity(entries.len());
-        let mut last_refreshed_vals = Vec::with_capacity(entries.len());
-        let mut last_accessed_vals = Vec::with_capacity(entries.len());
-        let mut in_memory_vals = Vec::with_capacity(entries.len());
-        let mut sync_states = Vec::with_capacity(entries.len());
-        let mut manifest_jsons = Vec::with_capacity(entries.len());
+        let mut cache_keys = Vec::new();
+        let mut namespace_ids = Vec::new();
+        let mut table_names = Vec::new();
+        let mut scopes = Vec::new();
+        let mut etags = Vec::new();
+        let mut last_refreshed_vals = Vec::new();
+        let mut last_accessed_vals = Vec::new();
+        let mut in_memory_vals = Vec::new();
+        let mut sync_states = Vec::new();
+        let mut manifest_jsons = Vec::new();
 
         // Build arrays by iterating entries once
-        for (manifest_id, entry) in entries {
+        for entry in iter {
+            let (manifest_id, entry) = entry.map_err(|e| SystemError::Storage(e.to_string()))?;
             let cache_key_str = manifest_id.as_str();
             let is_hot = self.is_in_memory(&cache_key_str);
 
@@ -138,6 +144,67 @@ impl ManifestTableProvider {
             .add_string_column_owned(manifest_jsons);
 
         builder.build().into_arrow_error("Failed to create RecordBatch")
+    }
+
+    /// Iterator over pending manifest IDs (from the pending-write index).
+    pub fn pending_manifest_ids_iter(
+        &self,
+        prefix: Option<&[u8]>,
+        limit: Option<usize>,
+    ) -> Result<Box<dyn Iterator<Item = Result<ManifestId, SystemError>> + Send + '_>, SystemError> {
+        let iter = self
+            .store
+            .scan_index_keys_iter(0, prefix, limit)
+            .map_err(|e| SystemError::Storage(e.to_string()))?;
+
+        let mapped = iter.map(|res| res.map_err(|e| SystemError::Storage(e.to_string())));
+        Ok(Box::new(mapped))
+    }
+
+    /// Return all pending manifest IDs (collected).
+    pub fn pending_manifest_ids(&self) -> Result<Vec<ManifestId>, SystemError> {
+        let iter = self.pending_manifest_ids_iter(None, None)?;
+        let mut results = Vec::new();
+        for item in iter {
+            results.push(item?);
+        }
+
+        Ok(results)
+    }
+
+    /// Return pending manifest IDs for a specific table.
+    pub fn pending_manifest_ids_for_table(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Vec<ManifestId>, SystemError> {
+        let prefix_bytes = ManifestId::table_prefix(table_id);
+        let iter = self.pending_manifest_ids_iter(Some(&prefix_bytes), None)?;
+        let mut results = Vec::new();
+        for item in iter {
+            results.push(item?);
+        }
+
+        Ok(results)
+    }
+
+    /// Check if a specific manifest is pending (by key).
+    pub fn pending_exists(&self, manifest_id: &ManifestId) -> Result<bool, SystemError> {
+        let prefix_bytes = manifest_id.storage_key();
+        self.store
+            .exists_by_index(0, &prefix_bytes)
+            .map_err(|e| SystemError::Storage(e.to_string()))
+    }
+
+    /// Count pending manifests via index scan.
+    pub fn pending_count(&self) -> Result<usize, SystemError> {
+        let iter = self.pending_manifest_ids_iter(None, None)?;
+        let mut count = 0usize;
+        for item in iter {
+            item?;
+            count += 1;
+        }
+
+        Ok(count)
     }
 }
 

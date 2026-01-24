@@ -1,9 +1,12 @@
 #![allow(dead_code, unused_imports)]
+use kalamdb_configs::ServerConfig;
+use kalamdb_server::lifecycle::RunningTestHttpServer;
 use rand::{distr::Alphanumeric, Rng};
 use reqwest::Client;
 use serde_json::json;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::process::Command;
 use std::process::{Child, Stdio};
 use std::sync::mpsc as std_mpsc;
@@ -26,6 +29,15 @@ static SERVER_URL: OnceLock<String> = OnceLock::new();
 static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
 static TEST_CONTEXT: OnceLock<TestContext> = OnceLock::new();
 static LAST_LEADER_URL: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+static AUTO_TEST_SERVER: OnceLock<Mutex<Option<AutoTestServer>>> = OnceLock::new();
+static AUTO_TEST_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
+struct AutoTestServer {
+    base_url: String,
+    storage_dir: PathBuf,
+    _temp_dir: TempDir,
+    _running: RunningTestHttpServer,
+}
 
 #[derive(Debug, Clone)]
 pub struct TestContext {
@@ -35,6 +47,117 @@ pub struct TestContext {
     pub is_cluster: bool,
     pub cluster_urls: Vec<String>,
     pub cluster_urls_raw: Vec<String>,
+}
+
+fn has_explicit_server_target() -> bool {
+    parse_test_arg("--url").is_some()
+        || parse_test_arg("--urls").is_some()
+        || std::env::var("KALAMDB_SERVER_URL").is_ok()
+        || std::env::var("KALAMDB_CLUSTER_URLS").is_ok()
+}
+
+fn should_auto_start_test_server() -> bool {
+    if has_explicit_server_target() {
+        return false;
+    }
+
+    std::env::var("KALAMDB_AUTO_START_TEST_SERVER")
+        .map(|value| {
+            let value = value.trim();
+            !(value.eq_ignore_ascii_case("0") || value.eq_ignore_ascii_case("false"))
+        })
+        .unwrap_or(true)
+}
+
+fn url_reachable(url: &str) -> bool {
+    let host_port = url
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split('/')
+        .next()
+        .unwrap_or("127.0.0.1:8080");
+    host_port_reachable(host_port)
+}
+
+fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
+    let server_mutex = AUTO_TEST_SERVER.get_or_init(|| Mutex::new(None));
+    let mut guard = server_mutex.lock().ok()?;
+
+    if guard.is_none() {
+        let runtime = AUTO_TEST_RUNTIME.get_or_init(|| {
+            Runtime::new().expect("Failed to create auto test server runtime")
+        });
+        match runtime.block_on(start_local_test_server()) {
+            Ok(server) => {
+                *guard = Some(server);
+            }
+            Err(err) => {
+                eprintln!("Failed to auto-start test server: {}", err);
+                return None;
+            }
+        }
+    }
+
+    guard
+        .as_ref()
+        .map(|server| (server.base_url.clone(), server.storage_dir.clone()))
+}
+
+/// Force a local auto-started test server and return its base URL.
+///
+/// This bypasses any externally running server to ensure tests use the
+/// in-process server with the current code version.
+pub fn force_auto_test_server_url() -> String {
+    ensure_auto_test_server()
+        .map(|(url, _)| url)
+        .unwrap_or_else(|| server_url().to_string())
+}
+
+/// Async variant of forcing a local auto-started test server.
+pub async fn force_auto_test_server_url_async() -> String {
+    let server_mutex = AUTO_TEST_SERVER.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = server_mutex.lock() {
+        if guard.is_none() {
+            match start_local_test_server().await {
+                Ok(server) => {
+                    *guard = Some(server);
+                }
+                Err(err) => {
+                    eprintln!("Failed to auto-start test server: {}", err);
+                }
+            }
+        }
+
+        if let Some(server) = guard.as_ref() {
+            return server.base_url.clone();
+        }
+    }
+
+    server_url().to_string()
+}
+
+async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error::Error>> {
+    let temp_dir = TempDir::new()?;
+    let data_path = temp_dir.path().to_path_buf();
+
+    let mut config = ServerConfig::default();
+    config.server.host = "127.0.0.1".to_string();
+    config.server.port = 0;
+    config.server.ui_path = None;
+    config.storage.data_path = data_path.to_string_lossy().into_owned();
+    config.rate_limit.max_queries_per_sec = 100000;
+    config.rate_limit.max_messages_per_sec = 10000;
+
+    let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
+    let running =
+        kalamdb_server::lifecycle::run_for_tests(&config, components, app_context).await?;
+
+    Ok(AutoTestServer {
+        base_url: running.base_url.clone(),
+        storage_dir: data_path,
+        _temp_dir: temp_dir,
+        _running: running,
+    })
 }
 
 fn parse_test_arg(name: &str) -> Option<String> {
@@ -230,9 +353,20 @@ fn reorder_cluster_urls_by_leader(
 
 pub fn test_context() -> &'static TestContext {
     TEST_CONTEXT.get_or_init(|| {
-        let server_url = parse_test_arg("--url")
+        let mut server_url = parse_test_arg("--url")
             .or_else(|| std::env::var("KALAMDB_SERVER_URL").ok())
             .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
+        let mut auto_started = false;
+
+        if should_auto_start_test_server() && !url_reachable(&server_url) {
+            if let Some((auto_url, storage_dir)) = ensure_auto_test_server() {
+                std::env::set_var("KALAMDB_SERVER_URL", &auto_url);
+                std::env::set_var("KALAMDB_ROOT_PASSWORD", "");
+                std::env::set_var("KALAMDB_STORAGE_DIR", storage_dir.to_string_lossy().to_string());
+                server_url = auto_url;
+                auto_started = true;
+            }
+        }
 
         let username = parse_test_arg("--user")
             .or_else(|| std::env::var("KALAMDB_USER").ok())
@@ -258,21 +392,27 @@ pub fn test_context() -> &'static TestContext {
                     .collect()
             });
 
-        let healthy_cluster_nodes: Vec<String> = cluster_urls
-            .iter()
-            .filter(|url| {
-                let host_port = url
-                    .trim_start_matches("http://")
-                    .trim_start_matches("https://")
-                    .split('/')
-                    .next()
-                    .unwrap_or("127.0.0.1:8081");
-                host_port_reachable(host_port)
-            })
-            .cloned()
-            .collect();
+        let healthy_cluster_nodes: Vec<String> = if auto_started {
+            Vec::new()
+        } else {
+            cluster_urls
+                .iter()
+                .filter(|url| {
+                    let host_port = url
+                        .trim_start_matches("http://")
+                        .trim_start_matches("https://")
+                        .split('/')
+                        .next()
+                        .unwrap_or("127.0.0.1:8081");
+                    host_port_reachable(host_port)
+                })
+                .cloned()
+                .collect()
+        };
 
-        let (is_cluster, mut cluster_urls) = if let Some(explicit_urls) = parse_test_urls() {
+        let (is_cluster, mut cluster_urls) = if auto_started {
+            (false, vec![server_url.clone()])
+        } else if let Some(explicit_urls) = parse_test_urls() {
             (explicit_urls.len() > 1, explicit_urls)
         } else if !healthy_cluster_nodes.is_empty() {
             (true, healthy_cluster_nodes)
@@ -645,7 +785,8 @@ fn is_transient_missing_relation(sql: &str, message: &str) -> bool {
     }
 
     let lower_sql = sql.trim_start().to_ascii_lowercase();
-    lower_sql.starts_with("insert ")
+    lower_sql.starts_with("select ")
+        || lower_sql.starts_with("insert ")
         || lower_sql.starts_with("update ")
         || lower_sql.starts_with("delete ")
         || lower_sql.starts_with("storage flush")
@@ -1256,7 +1397,7 @@ fn execute_sql_via_cli_as_with_args(
 
     eprintln!("[TEST_CLI] Executing as {}: \"{}\"", username, sql_preview.replace('\n', " "));
 
-    let max_attempts = if is_cluster_mode() { 10 } else { 1 };
+    let max_attempts = if is_cluster_mode() { 10 } else { 5 };
     let mut last_err: Option<String> = None;
 
     for attempt in 0..max_attempts {
@@ -1317,9 +1458,7 @@ fn execute_sql_via_cli_as_with_args(
                             if is_flush_sql(sql) && is_idempotent_conflict(&err_msg) {
                                 return Ok(stdout);
                             }
-                            if is_cluster_mode()
-                                && is_retryable_cluster_error_for_sql(sql, &err_msg)
-                            {
+                            if is_retryable_cluster_error_for_sql(sql, &err_msg) {
                                 last_err = Some(err_msg);
                                 if idx + 1 < urls.len() {
                                     continue;
@@ -1353,7 +1492,7 @@ fn execute_sql_via_cli_as_with_args(
                             }
                             return Ok(stdout);
                         }
-                        if is_cluster_mode() && is_retryable_cluster_error_for_sql(sql, &err_msg) {
+                        if is_retryable_cluster_error_for_sql(sql, &err_msg) {
                             last_err = Some(err_msg);
                             if idx + 1 < urls.len() {
                                 continue;
@@ -1371,7 +1510,7 @@ fn execute_sql_via_cli_as_with_args(
                     let wait_duration = wait_start.elapsed();
                     eprintln!("[TEST_CLI] TIMEOUT after {:?}", wait_duration);
                     let err_msg = format!("CLI command timed out after {:?}", timeout_duration);
-                    if is_cluster_mode() && is_retryable_cluster_error_for_sql(sql, &err_msg) {
+                    if is_retryable_cluster_error_for_sql(sql, &err_msg) {
                         last_err = Some(err_msg);
                         if idx + 1 < urls.len() {
                             continue;
@@ -1719,7 +1858,7 @@ pub fn execute_sql_via_client_as_with_args(
                             .build(),
                     )
                     .build()?;
-                let response = client.execute_query(sql, None, None).await?;
+                let response = client.execute_query(sql, None, None, None).await?;
                 Ok(response)
             }
 
@@ -1736,7 +1875,7 @@ pub fn execute_sql_via_client_as_with_args(
                         let response = if is_root && leader_url.as_ref() == Some(url) {
                             let client = get_shared_root_client();
                             client
-                                .execute_query(&sql, None, None)
+                                .execute_query(&sql, None, None, None)
                                 .await
                                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
                         } else {
@@ -1792,30 +1931,35 @@ pub fn execute_sql_via_client_as_with_args(
                 return Err(last_err.unwrap_or_else(|| "All cluster nodes failed".into()));
             }
 
-            if is_root {
-                // Reuse shared root client to avoid creating new TCP connections
-                let client = get_shared_root_client();
-                let response = client.execute_query(&sql, None, None).await?;
-                if !response.success() {
-                    let err_msg = query_response_error_message(&response);
-                    if is_flush_sql(&sql) && is_idempotent_conflict(&err_msg) {
-                        return Ok(response);
-                    }
-                    return Err(err_msg.into());
+            let max_attempts = if is_cluster_mode() { 1 } else { 5 };
+            for attempt in 0..max_attempts {
+                let response = if is_root {
+                    // Reuse shared root client to avoid creating new TCP connections
+                    let client = get_shared_root_client();
+                    client.execute_query(&sql, None, None, None).await?
+                } else {
+                    execute_once(&base_url, &username_owned, &password_owned, &sql).await?
+                };
+
+                if response.success() {
+                    return Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response);
                 }
-                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response)
-            } else {
-                let response =
-                    execute_once(&base_url, &username_owned, &password_owned, &sql).await?;
-                if !response.success() {
-                    let err_msg = query_response_error_message(&response);
-                    if is_flush_sql(&sql) && is_idempotent_conflict(&err_msg) {
-                        return Ok(response);
-                    }
-                    return Err(err_msg.into());
+
+                let err_msg = query_response_error_message(&response);
+                if is_flush_sql(&sql) && is_idempotent_conflict(&err_msg) {
+                    return Ok(response);
                 }
-                Ok(response)
+
+                if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
+                    let delay_ms = 200 + attempt * 200;
+                    tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
+                    continue;
+                }
+
+                return Err(err_msg.into());
             }
+
+            Err("Query failed after retries".into())
         }
         .await;
 
@@ -3066,7 +3210,7 @@ pub fn execute_sql_on_node(
             .build()?;
 
         let sql = sql.to_string();
-        let response = rt.block_on(async { client.execute_query(&sql, None, None).await })?;
+        let response = rt.block_on(async { client.execute_query(&sql, None, None, None).await })?;
 
         // Format response similar to execute_sql_via_client_as
         let mut output = String::new();

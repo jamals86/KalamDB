@@ -255,7 +255,7 @@ pub enum StoragePartition {
     /// Legacy system columns metadata (kept for compatibility) TODO: Remove
     SystemColumns,
     /// User table flush counters
-    UserTableCounters,
+    UserTableCounters, //TODO: Remove it not needed anymore
     /// Username index for system.users (unique index)
     SystemUsersUsernameIdx,
     /// Role index for system.users (non-unique index)
@@ -264,6 +264,8 @@ pub enum StoragePartition {
     SystemUsersDeletedAtIdx,
     /// Manifest cache for query optimization (Phase 4 - US6)
     ManifestCache,
+    /// PendingWrite index for system.manifest (non-unique index)
+    ManifestPendingWriteIdx,
     /// Status + CreatedAt index for system.jobs (non-unique index)
     SystemJobsStatusIdx,
     /// Idempotency key index for system.jobs (unique-ish)
@@ -283,6 +285,7 @@ impl StoragePartition {
             StoragePartition::SystemUsersRoleIdx => "system_users_role_idx",
             StoragePartition::SystemUsersDeletedAtIdx => "system_users_deleted_at_idx",
             StoragePartition::ManifestCache => "manifest_cache",
+            StoragePartition::ManifestPendingWriteIdx => "manifest_pending_write_idx",
             StoragePartition::SystemJobsStatusIdx => "system_jobs_status_idx",
             StoragePartition::SystemJobsIdempotencyIdx => "system_jobs_idempotency_idx",
             StoragePartition::SystemLiveQueriesTableIdx => "system_live_queries_table_idx",
@@ -314,6 +317,8 @@ impl StoragePartition {
             Lazy::new(|| Partition::new(StoragePartition::SystemJobsIdempotencyIdx.name()));
         static LIVE_QUERIES_TABLE_IDX: Lazy<Partition> =
             Lazy::new(|| Partition::new(StoragePartition::SystemLiveQueriesTableIdx.name()));
+        static MANIFEST_PENDING_WRITE_IDX: Lazy<Partition> =
+            Lazy::new(|| Partition::new(StoragePartition::ManifestPendingWriteIdx.name()));
 
         match self {
             StoragePartition::InformationSchemaTables => &INFO,
@@ -326,6 +331,7 @@ impl StoragePartition {
             StoragePartition::SystemJobsStatusIdx => &JOBS_STATUS_IDX,
             StoragePartition::SystemJobsIdempotencyIdx => &JOBS_IDEMPOTENCY_IDX,
             StoragePartition::SystemLiveQueriesTableIdx => &LIVE_QUERIES_TABLE_IDX,
+            StoragePartition::ManifestPendingWriteIdx => &MANIFEST_PENDING_WRITE_IDX,
         }
     }
 }

@@ -74,6 +74,7 @@ use crate::security::password;
 use crate::services::login_tracker::LoginTracker;
 use kalamdb_commons::models::ConnectionInfo;
 use kalamdb_commons::{AuthType, Role};
+use kalamdb_commons::models::UserName;
 use log::debug;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
@@ -389,7 +390,7 @@ async fn authenticate_username_password(
 
     Ok(AuthenticatedUser::new(
         user.id,
-        user.username.as_str().to_string(),
+        user.username.clone(),
         user.role,
         user.email,
         connection_info.clone(),
@@ -431,7 +432,7 @@ async fn authenticate_bearer(
         .ok_or_else(|| AuthError::MissingClaim("username".to_string()))?;
 
     // Look up user
-    let username_typed = kalamdb_commons::models::UserName::from(username.as_str());
+    let username_typed = UserName::from(username.as_str());
     let user = repo.get_user_by_username(&username_typed).await?;
 
     if user.deleted_at.is_some() {
@@ -462,7 +463,7 @@ async fn authenticate_bearer(
 
     Ok(AuthenticatedUser::new(
         user.id.clone(),
-        user.username.as_str().to_string(),
+        user.username.clone(),
         role,
         user.email.clone(),
         connection_info.clone(),

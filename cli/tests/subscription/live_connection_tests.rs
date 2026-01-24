@@ -564,7 +564,7 @@ fn test_live_http2_query_execution() {
     // Run the async test in a blocking context
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create runtime");
     let result = runtime
-        .block_on(async { client.execute_query("SELECT 1 as test_value", None, None).await });
+        .block_on(async { client.execute_query("SELECT 1 as test_value", None, None, None).await });
 
     // The query should succeed
     assert!(result.is_ok(), "Query execution should succeed: {:?}", result.err());

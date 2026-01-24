@@ -3,7 +3,7 @@
 //! Flushes user table data from RocksDB to Parquet files, grouping by UserId.
 //! Each user's data is written to a separate Parquet file for RLS isolation.
 
-use super::base::{FlushJobResult, FlushMetadata, TableFlush};
+use super::base::{config, helpers, FlushDedupStats, FlushJobResult, FlushMetadata, TableFlush};
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
@@ -19,6 +19,7 @@ use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::StorageKey;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::UserTableIndexedStore;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// User table flush job
@@ -115,7 +116,7 @@ impl UserTableFlushJob {
         let batch = self.rows_to_record_batch(rows)?;
 
         // Resolve storage path for this user
-        let user_id_typed = UserId::new(user_id.to_string());
+        let user_id_typed = UserId::from(user_id);
         let cached = self.unified_cache.get(&self.table_id).ok_or_else(|| {
             KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id))
         })?;
@@ -140,7 +141,6 @@ impl UserTableFlushJob {
         }
 
         // Generate batch filename using manifest
-        let user_id_typed = kalamdb_commons::models::UserId::from(user_id);
         let batch_number = self
             .manifest_helper
             .get_next_batch_number(&self.table_id, Some(&user_id_typed))?;
@@ -203,10 +203,7 @@ impl UserTableFlushJob {
         let schema_version = self.get_schema_version();
         self.manifest_helper.update_manifest_after_flush(
             &self.table_id,
-            kalamdb_commons::models::schemas::TableType::User,
             Some(&user_id_typed),
-            Some(&cached),
-            batch_number,
             batch_filename.clone(),
             &std::path::PathBuf::from(&destination_path),
             &batch,
@@ -259,9 +256,6 @@ impl TableFlush for UserTableFlushJob {
             self.table_id,
             self.store.partition()
         );
-
-        use super::base::{config, helpers, FlushDedupStats};
-        use std::collections::HashMap;
 
         // Get primary key field name from schema
         let pk_field = helpers::extract_pk_field_name(&self.schema);
@@ -422,20 +416,20 @@ impl TableFlush for UserTableFlushJob {
                 error_messages.push(format!("Failed to delete flushed rows: {}", e));
             }
             
-            // // Force manifest cache refresh for all affected users to ensure subsequent
-            // // reads immediately see the new Parquet files (fixes race condition in tests)
-            // log::debug!("📊 [FLUSH CLEANUP] Invalidating manifest cache to ensure visibility");
-            // let manifest_service = self.app_context.manifest_service();
-            // for user_id in rows_by_user.keys() {
-            //     let user_id_typed = kalamdb_commons::models::UserId::from(user_id.as_str());
-            //     if let Err(e) = manifest_service.invalidate(&self.table_id, Some(&user_id_typed)) {
-            //         log::warn!(
-            //             "Failed to invalidate manifest cache for user {}: {}",
-            //             user_id,
-            //             e
-            //         );
-            //     }
-            // }
+            // Force manifest cache refresh for all affected users to ensure subsequent
+            // reads immediately see the new Parquet files (fixes race conditions under load).
+            log::debug!("📊 [FLUSH CLEANUP] Invalidating manifest cache to ensure visibility");
+            let manifest_service = self.app_context.manifest_service();
+            for user_id in rows_by_user.keys() {
+                let user_id_typed = UserId::from(user_id.as_str());
+                if let Err(e) = manifest_service.invalidate(&self.table_id, Some(&user_id_typed)) {
+                    log::warn!(
+                        "Failed to invalidate manifest cache for user {}: {}",
+                        user_id,
+                        e
+                    );
+                }
+            }
         }
 
         // If any user flush failed, treat entire job as failed

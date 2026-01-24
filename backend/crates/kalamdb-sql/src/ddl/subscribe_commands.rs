@@ -54,9 +54,9 @@
 use super::DdlResult;
 use kalamdb_commons::websocket::SubscriptionOptions;
 use kalamdb_commons::{NamespaceId, TableName};
+use crate::parser::utils::parse_sql_statements;
 use sqlparser::ast::{ObjectName, ObjectNamePart, SetExpr, Statement, TableFactor};
 use sqlparser::dialect::{GenericDialect, PostgreSqlDialect};
-use sqlparser::parser::Parser;
 
 /// SUBSCRIBE TO statement for live query subscriptions.
 ///
@@ -131,7 +131,7 @@ impl SubscribeStatement {
 
         // Parse the SELECT statement using sqlparser
         let dialect = PostgreSqlDialect {};
-        let mut ast = match Parser::parse_sql(&dialect, &select_sql) {
+        let mut ast = match parse_sql_statements(&select_sql, &dialect) {
             Ok(ast) => ast,
             Err(e) => return Err(format!("Failed to parse SUBSCRIBE TO as SELECT: {}", e)),
         };

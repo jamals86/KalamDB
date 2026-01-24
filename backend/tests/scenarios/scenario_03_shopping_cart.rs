@@ -94,7 +94,8 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
     // Pre-create all users and their clients
     let mut clients = Vec::new();
     for user_idx in 0..user_count {
-        let username = format!("shopper_{}", user_idx);
+        // Use namespace prefix for unique usernames to avoid parallel test interference
+        let username = format!("{}_shopper_{}", ns, user_idx);
         let client = create_user_and_client(server, &username, &Role::User).await?;
         clients.push((user_idx, client));
     }
@@ -114,7 +115,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
                                 &format!(
                                     "INSERT INTO {}.carts (id, name) VALUES ({}, 'Cart for user {}')",
                                     ns, cart_id, user_idx
-                                ),
+                                ), None,
                                 None,
                                 None,
                             )
@@ -131,7 +132,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
                                     &format!(
                                         "INSERT INTO {}.cart_items (id, cart_id, product_name, quantity, price) VALUES ({}, {}, 'Product {}', {}, {})",
                                         ns, item_id, cart_id, i, (i % 5) + 1, (i as f64) * 9.99
-                                    ),
+                                    ), None,
                                     None,
                                     None,
                                 )
@@ -149,7 +150,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
                                     &format!(
                                         "UPDATE {}.cart_items SET quantity = quantity + 1 WHERE id = {}",
                                         ns, item_id
-                                    ),
+                                    ), None,
                                     None,
                                     None,
                                 )
@@ -164,7 +165,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
                             let item_id = user_idx * 10000 + i;
                             let resp = client
                                 .execute_query(
-                                    &format!("DELETE FROM {}.cart_items WHERE id = {}", ns, item_id),
+                                    &format!("DELETE FROM {}.cart_items WHERE id = {}", ns, item_id), None,
                                     None,
                                     None,
                                 )
@@ -180,7 +181,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
                                 &format!(
                                     "SELECT COUNT(*) as cnt FROM {}.cart_items WHERE cart_id = {}",
                                     ns, cart_id
-                                ),
+                                ), None,
                                 None,
                                 None,
                             )
@@ -221,12 +222,15 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
     // =========================================================
     // Step 3: Verify isolation (user 0 cannot see user 1's data)
     // =========================================================
-    create_test_users(server, &[("shopper_0", &Role::User), ("shopper_1", &Role::User)]).await?;
-    let u0_client = server.link_client("shopper_0");
-    let u1_client = server.link_client("shopper_1");
+    let user0 = format!("{}_shopper_0", ns);
+    let user1 = format!("{}_shopper_1", ns);
+    ensure_user_exists(server, &user0, "test123", &Role::User).await?;
+    ensure_user_exists(server, &user1, "test123", &Role::User).await?;
+    let u0_client = server.link_client(&user0);
+    let u1_client = server.link_client(&user1);
 
     let resp = u0_client
-        .execute_query(&format!("SELECT * FROM {}.cart_items", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.cart_items", ns), None, None, None)
         .await?;
     let u0_items: Vec<i64> = resp
         .rows_as_maps()
@@ -235,7 +239,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
         .collect();
 
     let resp = u1_client
-        .execute_query(&format!("SELECT * FROM {}.cart_items", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.cart_items", ns), None, None, None)
         .await?;
     let u1_items: Vec<i64> = resp
         .rows_as_maps()
@@ -286,7 +290,7 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.cart_items (id, cart_id, product_name, quantity) VALUES ({}, 1, 'Cart1 Product {}', 1)",
                             ns, i, i
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -300,7 +304,7 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.cart_items (id, cart_id, product_name, quantity) VALUES ({}, 2, 'Cart2 Product {}', 1)",
                             ns, i, i
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -317,13 +321,13 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
     assert_eq!(initial, 5, "Should see 5 items from cart 1");
 
     // Insert to cart 2 (should NOT appear in subscription)
-    let client2 = server.link_client("sub_user");
+    let client2 = client.clone();
     let resp = client2
                 .execute_query(
                     &format!(
                         "INSERT INTO {}.cart_items (id, cart_id, product_name, quantity) VALUES (11, 2, 'Cart2 New', 1)",
                         ns
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -336,7 +340,7 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.cart_items (id, cart_id, product_name, quantity) VALUES (12, 1, 'Cart1 New', 1)",
                         ns
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -377,10 +381,10 @@ async fn test_scenario_03_partial_flush() -> anyhow::Result<()> {
     assert_success(&resp, "CREATE cart_items table");
 
     // Insert data for two users
-    create_test_users(server, &[("flush_user1", &Role::User), ("flush_user2", &Role::User)])
-        .await?;
-    let u1_client = server.link_client("flush_user1");
-    let u2_client = server.link_client("flush_user2");
+    let user1 = format!("{}_flush_user1", ns);
+    let user2 = format!("{}_flush_user2", ns);
+    let u1_client = create_user_and_client(server, &user1, &Role::User).await?;
+    let u2_client = create_user_and_client(server, &user2, &Role::User).await?;
 
     for i in 1..=20 {
         let resp = u1_client
@@ -388,7 +392,7 @@ async fn test_scenario_03_partial_flush() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.cart_items (id, cart_id, product_name) VALUES ({}, 1, 'U1 Product {}')",
                             ns, i, i
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -402,7 +406,7 @@ async fn test_scenario_03_partial_flush() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.cart_items (id, cart_id, product_name) VALUES ({}, 2, 'U2 Product {}')",
                             ns, i, i
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -429,13 +433,13 @@ async fn test_scenario_03_partial_flush() -> anyhow::Result<()> {
 
     // Verify both users can still query correctly
     let resp = u1_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.cart_items", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.cart_items", ns), None, None, None)
         .await?;
     let u1_count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert_eq!(u1_count, 20, "u1 should see 20 items post-flush");
 
     let resp = u2_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.cart_items", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.cart_items", ns), None, None, None)
         .await?;
     let u2_count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert_eq!(u2_count, 20, "u2 should see 20 items post-flush");

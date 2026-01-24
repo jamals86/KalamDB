@@ -1,3 +1,5 @@
+#![cfg(any())]
+// Deprecated: WASM bindings are now in link/src/wasm/.
 // WASM bindings for KalamDB client (T041-T053, T063C-T063O)
 // Provides JavaScript/TypeScript interface for browser and Node.js usage
 // Supports automatic reconnection with seq_id resumption

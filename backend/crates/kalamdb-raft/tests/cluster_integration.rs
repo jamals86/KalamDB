@@ -8,6 +8,7 @@
 //! - Partition tolerance
 //! - All Raft groups coverage (meta + user shards + shared)
 
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -17,7 +18,6 @@ use kalamdb_commons::models::rows::Row;
 use serde_json;
 
 use chrono::Utc;
-use parking_lot::RwLock;
 use tokio::time::sleep;
 
 use async_trait::async_trait;
@@ -29,7 +29,6 @@ use kalamdb_commons::JobStatus;
 use kalamdb_commons::TableId;
 use kalamdb_raft::{
     commands::{MetaCommand, SharedDataCommand, UserDataCommand},
-    executor::RaftExecutor,
     manager::{PeerNode, RaftManager, RaftManagerConfig},
     GroupId,
 };
@@ -47,66 +46,11 @@ fn make_test_row() -> Row {
     Row::new(BTreeMap::new())
 }
 
-/// Simulated network with controllable partitions
-#[derive(Default)]
-struct TestNetwork {
-    /// Nodes that are partitioned from each other
-    /// Key: node_id, Value: set of node_ids that this node CANNOT reach
-    partitions: RwLock<HashMap<u64, HashSet<u64>>>,
-}
-
-impl TestNetwork {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    /// Partition node A from node B (bidirectional)
-    fn partition(&self, node_a: u64, node_b: u64) {
-        let mut partitions = self.partitions.write();
-        partitions.entry(node_a).or_default().insert(node_b);
-        partitions.entry(node_b).or_default().insert(node_a);
-    }
-
-    /// Heal partition between node A and node B (bidirectional)
-    fn heal(&self, node_a: u64, node_b: u64) {
-        let mut partitions = self.partitions.write();
-        if let Some(set) = partitions.get_mut(&node_a) {
-            set.remove(&node_b);
-        }
-        if let Some(set) = partitions.get_mut(&node_b) {
-            set.remove(&node_a);
-        }
-    }
-
-    /// Isolate a node from all others
-    fn isolate(&self, node_id: u64, all_nodes: &[u64]) {
-        for &other in all_nodes {
-            if other != node_id {
-                self.partition(node_id, other);
-            }
-        }
-    }
-
-    /// Heal all partitions
-    fn heal_all(&self) {
-        let mut partitions = self.partitions.write();
-        partitions.clear();
-    }
-
-    /// Check if node A can reach node B
-    fn can_reach(&self, from: u64, to: u64) -> bool {
-        let partitions = self.partitions.read();
-        partitions.get(&from).map_or(true, |set| !set.contains(&to))
-    }
-}
-
 /// A test node in the cluster
 struct TestNode {
     node_id: u64,
     manager: Arc<RaftManager>,
-    executor: RaftExecutor,
     rpc_port: u16,
-    api_port: u16,
 }
 
 impl TestNode {
@@ -124,14 +68,11 @@ impl TestNode {
         };
 
         let manager = Arc::new(RaftManager::new(config));
-        let executor = RaftExecutor::new(manager.clone());
 
         Self {
             node_id,
             manager,
-            executor,
             rpc_port,
-            api_port,
         }
     }
 
@@ -161,8 +102,6 @@ impl TestNode {
 /// A test cluster with multiple nodes
 struct TestCluster {
     nodes: Vec<TestNode>,
-    base_rpc_port: u16,
-    base_api_port: u16,
     user_shards: u32,
 }
 
@@ -319,12 +258,7 @@ impl TestCluster {
             ));
         }
 
-        Self {
-            nodes,
-            base_rpc_port,
-            base_api_port,
-            user_shards,
-        }
+        Self { nodes, user_shards }
     }
 
     /// Start all nodes
@@ -394,10 +328,6 @@ impl TestCluster {
     }
 
     /// Get node by ID
-    fn get_node(&self, node_id: u64) -> Option<&TestNode> {
-        self.nodes.iter().find(|n| n.node_id == node_id)
-    }
-
     /// Count nodes that are leaders for a specific group
     fn count_leaders(&self, group: GroupId) -> usize {
         self.nodes.iter().filter(|n| n.is_leader(group)).count()

@@ -7,10 +7,23 @@ use crate::schema_registry::cached_table_data::CachedTableData;
 use dashmap::DashMap;
 use datafusion::datasource::TableProvider;
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::models::schemas::{TableDefinition, TableType};
+use kalamdb_commons::TableAccess;
+use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{StorageId, TableId, TableVersionId};
+use kalamdb_commons::schemas::{TableOptions, TableType};
 use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::sync::{Arc, OnceLock};
+
+/// Lightweight table info for file operations
+#[derive(Debug, Clone)]
+pub struct TableEntry {
+    /// Storage ID for the table
+    pub storage_id: StorageId,
+    /// Table type (User or Shared)
+    pub table_type: TableType,
+    //TODO: Add access permissions info?
+    pub access_level: Option<TableAccess>,
+}
 
 /// Unified schema cache for table metadata, schemas, and providers
 ///
@@ -111,6 +124,26 @@ impl SchemaRegistry {
     /// Get cached table data for a table (latest version)
     pub fn get(&self, table_id: &TableId) -> Option<Arc<CachedTableData>> {
         self.table_cache.get(table_id).map(|entry| entry.value().clone())
+    }
+
+    /// Get table entry info for file operations.
+    ///
+    /// Returns a lightweight struct with storage_id and table_type
+    /// needed for file upload/download operations.
+    pub fn get_table_entry(&self, table_id: &TableId) -> Option<TableEntry> {
+        self.table_cache.get(table_id).map(|entry| {
+            let cached = entry.value();
+            TableEntry {
+                storage_id: cached.storage_id.clone(),
+                table_type: cached.table.table_type.into(),
+                access_level: match &cached.table.table_options {
+                    TableOptions::Shared(opts) => {
+                        Some(opts.access_level.clone().unwrap_or(TableAccess::Private))
+                    }
+                    TableOptions::User(_) | TableOptions::System(_) | TableOptions::Stream(_) => None,
+                },
+            }
+        })
     }
 
     /// Register a new or updated table definition (CREATE/ALTER)

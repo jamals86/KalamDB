@@ -85,7 +85,7 @@ async fn execute_query_with_leader_retry(
     query: &str,
 ) -> Result<kalam_link::QueryResponse, String> {
     let client = create_ws_client(base_url);
-    match client.execute_query(query, None, None).await {
+    match client.execute_query(query, None, None, None).await {
         Ok(response) => {
             if !response.success() {
                 let err = response_error_message(&response);
@@ -94,7 +94,7 @@ async fn execute_query_with_leader_retry(
                     if let Some(leader) = leader_url() {
                         if leader != base_url {
                             let leader_client = create_ws_client(&leader);
-                            return leader_client.execute_query(query, None, None).await
+                            return leader_client.execute_query(query, None, None, None).await
                                 .map_err(|e| e.to_string());
                         }
                     }
@@ -152,7 +152,7 @@ async fn execute_query_with_retry(
 ) -> Result<(), String> {
     let mut last_err: Option<String> = None;
     for attempt in 0..max_attempts {
-        match client.execute_query(sql, None, None).await {
+        match client.execute_query(sql, None, None, None).await {
             Ok(response) => {
                 if response.success() {
                     return Ok(());
@@ -226,6 +226,7 @@ fn cluster_test_subscription_leader_to_leader() {
         client
             .execute_query(
                 &format!("INSERT INTO {} (id, value) VALUES (1, '{}')", full, insert_value),
+                None,
                 None,
                 None,
             )
@@ -414,6 +415,7 @@ fn cluster_test_subscription_multi_node_identical() {
                         "INSERT INTO {} (id, value) VALUES ({}, '{}_{}')",
                         full, i, insert_value, i
                     ),
+                    None,
                     None,
                     None,
                 )

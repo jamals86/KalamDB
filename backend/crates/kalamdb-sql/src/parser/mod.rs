@@ -26,3 +26,4 @@ pub mod utils;
 pub use extensions::*;
 pub use query_parser::*;
 pub use system::*;
+pub use utils::extract_dml_table_id;

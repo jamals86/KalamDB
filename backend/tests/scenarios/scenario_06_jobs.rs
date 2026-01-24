@@ -41,14 +41,14 @@ async fn test_scenario_06_jobs_lifecycle() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE data table");
 
-    ensure_user_exists(server, "jobs_user", "test123", &Role::User).await?;
-    let client = server.link_client("jobs_user");
+    let username = format!("{}_jobs_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert data to trigger flush eligibility
     for i in 1..=20 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value_{}')", ns, i, i),
+                &format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value_{}')", ns, i, i), None,
                 None,
                 None,
             )
@@ -103,14 +103,14 @@ async fn test_scenario_06_jobs_lifecycle() -> anyhow::Result<()> {
     // Step 5: Verify data integrity post-flush
     // =========================================================
     let resp = client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.data", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.data", ns), None, None, None)
         .await?;
     let count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert_eq!(count, 20, "Should have 20 rows after flush");
 
     // Verify no duplicates
     let resp = client
-        .execute_query(&format!("SELECT id FROM {}.data ORDER BY id", ns), None, None)
+        .execute_query(&format!("SELECT id FROM {}.data ORDER BY id", ns), None, None, None)
         .await?;
     let ids: Vec<i64> = resp
         .rows_as_maps()
@@ -151,14 +151,14 @@ async fn test_scenario_06_job_idempotency() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE data table");
 
-    ensure_user_exists(server, "idem_user", "test123", &Role::User).await?;
-    let client = server.link_client("idem_user");
+    let username = format!("{}_idem_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert data
     for i in 1..=10 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value_{}')", ns, i, i),
+                &format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value_{}')", ns, i, i), None,
                 None,
                 None,
             )
@@ -179,7 +179,7 @@ async fn test_scenario_06_job_idempotency() -> anyhow::Result<()> {
 
     // Verify data count hasn't doubled
     let resp = client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.data", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.data", ns), None, None, None)
         .await?;
     let count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert_eq!(count, 10, "Should still have exactly 10 rows after multiple flushes");
@@ -241,14 +241,14 @@ async fn test_scenario_06_job_status_transitions() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE data table");
 
-    ensure_user_exists(server, "trans_user", "test123", &Role::User).await?;
-    let client = server.link_client("trans_user");
+    let username = format!("{}_trans_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert enough data to trigger a flush job
     for i in 1..=50 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value_{}')", ns, i, i),
+                &format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value_{}')", ns, i, i), None,
                 None,
                 None,
             )

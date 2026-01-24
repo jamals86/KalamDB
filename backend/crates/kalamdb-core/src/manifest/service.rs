@@ -9,7 +9,7 @@
 
 use crate::schema_registry::SchemaRegistry;
 use kalamdb_commons::ids::SeqId;
-use kalamdb_commons::models::types::{Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
+use kalamdb_commons::models::types::{FileSubfolderState, Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
 use kalamdb_commons::{ManifestId, TableId, UserId};
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_filestore::StorageRegistry;
@@ -124,51 +124,15 @@ impl ManifestService {
     pub fn count(&self) -> Result<usize, StorageError> {
         self.provider.store().count_all()
     }
-
-    /// Return all cached entries with their storage keys.
-    pub fn get_all(&self) -> Result<Vec<(String, ManifestCacheEntry)>, StorageError> {
-        let entries = self.provider.store().scan_all_typed(Some(MAX_MANIFEST_SCAN_LIMIT), None, None)?;
-        let results: Vec<(String, ManifestCacheEntry)> = entries
-            .into_iter()
-            .map(|(key, entry)| (key.to_string(), entry))
-            .collect();
-        Ok(results)
-    }
-
-    /// Clear all cached entries.
-    pub fn clear(&self) -> Result<(), StorageError> {
-        let keys = self.provider.store().scan_keys_typed(None, None, MAX_MANIFEST_SCAN_LIMIT)?;
-        if !keys.is_empty() {
-            self.provider.store().delete_batch(&keys)?;
-        }
-        Ok(())
-    }
-
-    /// Return shared/user counts and total weighted capacity for monitoring.
-    pub fn cache_stats(&self) -> Result<(usize, usize, usize), StorageError> {
-        let mut shared_count = 0usize;
-        let mut user_count = 0usize;
-        let entries = self.provider.store().scan_all_typed(Some(MAX_MANIFEST_SCAN_LIMIT), None, None)?;
-        
-        for (_, entry) in entries {
-            if entry.manifest.user_id.is_some() {
-                user_count += 1;
-            } else {
-                shared_count += 1;
-            }
-        }
-        
-        let weight_factor = self.config.user_table_weight_factor as usize;
-        let total_weight = shared_count + (user_count * weight_factor);
-        Ok((shared_count, user_count, total_weight))
-    }
-
+    
     /// Compute max weighted capacity based on configuration.
     pub fn max_weighted_capacity(&self) -> usize {
         self.config.max_entries * self.config.user_table_weight_factor as usize
     }
 
     /// Update manifest cache after successful flush.
+    /// 
+    /// Sets sync_state to InSync. Index automatically updated by IndexedEntityStore.
     pub fn update_after_flush(
         &self,
         table_id: &TableId,
@@ -176,6 +140,7 @@ impl ManifestService {
         manifest: &Manifest,
         etag: Option<String>,
     ) -> Result<(), StorageError> {
+        // Index automatically updated by IndexedEntityStore when state changes
         self.upsert_cache_entry(table_id, user_id, manifest, etag, SyncState::InSync)
     }
 
@@ -191,7 +156,7 @@ impl ManifestService {
             user_id,
             manifest,
             None,
-            SyncState::PendingWrite,
+            SyncState::InSync,
         )
     }
 
@@ -203,9 +168,12 @@ impl ManifestService {
     ) -> Result<(), StorageError> {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
-        if let Some(mut entry) = self.provider.store().get(&rocksdb_key)? {
-            entry.mark_stale();
-            self.provider.store().put(&rocksdb_key, &entry)?;
+        if let Some(old_entry) = self.provider.store().get(&rocksdb_key)? {
+            let mut new_entry = old_entry.clone();
+            new_entry.mark_stale();
+            self.provider
+                .store()
+                .update_with_old(&rocksdb_key, Some(&old_entry), &new_entry)?;
         }
 
         Ok(())
@@ -220,9 +188,12 @@ impl ManifestService {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
         match self.provider.store().get(&rocksdb_key) {
-            Ok(Some(mut entry)) => {
-                entry.mark_error();
-                self.provider.store().put(&rocksdb_key, &entry)?;
+            Ok(Some(old_entry)) => {
+                let mut new_entry = old_entry.clone();
+                new_entry.mark_error();
+                self.provider
+                    .store()
+                    .update_with_old(&rocksdb_key, Some(&old_entry), &new_entry)?;
             }
             Ok(None) => {}
             Err(StorageError::SerializationError(err)) => {
@@ -248,9 +219,12 @@ impl ManifestService {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
         match self.provider.store().get(&rocksdb_key) {
-            Ok(Some(mut entry)) => {
-                entry.mark_syncing();
-                self.provider.store().put(&rocksdb_key, &entry)?;
+            Ok(Some(old_entry)) => {
+                let mut new_entry = old_entry.clone();
+                new_entry.mark_syncing();
+                self.provider
+                    .store()
+                    .update_with_old(&rocksdb_key, Some(&old_entry), &new_entry)?;
             }
             Ok(None) => {}
             Err(StorageError::SerializationError(err)) => {
@@ -272,6 +246,8 @@ impl ManifestService {
     /// This should be called after any write operation (INSERT, UPDATE, DELETE) to indicate
     /// that the RocksDB hot store has data that needs to be flushed to Parquet cold storage.
     /// The sync_state will transition from InSync to PendingWrite.
+    /// 
+    /// Index automatically updated by IndexedEntityStore for O(1) flush job discovery.
     pub fn mark_pending_write(
         &self,
         table_id: &TableId,
@@ -280,9 +256,15 @@ impl ManifestService {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
         match self.provider.store().get(&rocksdb_key) {
-            Ok(Some(mut entry)) => {
-                entry.mark_pending_write();
-                self.provider.store().put(&rocksdb_key, &entry)?;
+            Ok(Some(old_entry)) => {
+                let mut new_entry = old_entry.clone();
+                new_entry.mark_pending_write();
+                self.provider
+                    .store()
+                    .update_with_old(&rocksdb_key, Some(&old_entry), &new_entry)?;
+                
+                // Index automatically updated by IndexedEntityStore
+                
                 debug!(
                     "Marked manifest entry as pending_write: table={}, user={:?}",
                     table_id,
@@ -340,9 +322,12 @@ impl ManifestService {
 
     /// Invalidate all cache entries for a table (all users + shared).
     pub fn invalidate_table(&self, table_id: &TableId) -> Result<usize, StorageError> {
-        // Create a prefix key for this table (all versions/users)
-        let prefix_key = ManifestId::new(table_id.clone(), None);
-        let keys = self.provider.store().scan_keys_typed(Some(&prefix_key), None, MAX_MANIFEST_SCAN_LIMIT)?;
+        // Use table prefix to include ALL scopes (shared + all users)
+        let prefix = ManifestId::table_prefix(table_id);
+        let keys = self
+            .provider
+            .store()
+            .scan_keys_with_raw_prefix(&prefix, None, MAX_MANIFEST_SCAN_LIMIT)?;
         let invalidated = keys.len();
         
         if !keys.is_empty() {
@@ -407,13 +392,60 @@ impl ManifestService {
         &self.config
     }
 
+    // ========== Pending Write Index Operations ==========
+
+    /// Iterator over all manifests with pending writes.
+    ///
+    /// Uses the pending-write index (index 0) for O(1) discovery.
+    pub fn pending_manifest_ids_iter(
+        &self,
+    ) -> Result<Box<dyn Iterator<Item = Result<ManifestId, StorageError>> + Send + '_>, StorageError> {
+        let iter = self
+            .provider
+            .pending_manifest_ids_iter(None, None)
+            .map_err(|e| StorageError::Other(e.to_string()))?;
+
+        let mapped = iter.map(|res| res.map_err(|e| StorageError::Other(e.to_string())));
+        Ok(Box::new(mapped))
+    }
+
+    /// Get all manifests with pending writes.
+    ///
+    /// Uses the pending-write index (index 0) for O(1) discovery.
+    pub fn get_pending_manifests(&self) -> Result<Vec<ManifestId>, StorageError> {
+        self.provider
+            .pending_manifest_ids()
+            .map_err(|e| StorageError::Other(e.to_string()))
+    }
+
+    /// Get pending manifests for a specific table.
+    pub fn get_pending_for_table(&self, table_id: &TableId) -> Result<Vec<ManifestId>, StorageError> {
+        self.provider
+            .pending_manifest_ids_for_table(table_id)
+            .map_err(|e| StorageError::Other(e.to_string()))
+    }
+
+    /// Check if a manifest has pending writes.
+    pub fn has_pending_writes(&self, table_id: &TableId, user_id: Option<&UserId>) -> Result<bool, StorageError> {
+        let manifest_id = ManifestId::new(table_id.clone(), user_id.cloned());
+        self.provider
+            .pending_exists(&manifest_id)
+            .map_err(|e| StorageError::Other(e.to_string()))
+    }
+
+    /// Get count of pending manifests.
+    pub fn pending_count(&self) -> Result<usize, StorageError> {
+        self.provider
+            .pending_count()
+            .map_err(|e| StorageError::Other(e.to_string()))
+    }
+
     // ========== Cold Storage Operations (formerly ManifestService) ==========
 
     /// Create an in-memory manifest for a table scope.
     pub fn create_manifest(
         &self,
         table_id: &TableId,
-        _table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
     ) -> Manifest {
         Manifest::new(table_id.clone(), user_id.cloned())
@@ -423,7 +455,6 @@ impl ManifestService {
     pub fn ensure_manifest_initialized(
         &self,
         table_id: &TableId,
-        table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
     ) -> Result<Manifest, StorageError> {
         // 1. Check Hot Store (Cache)
@@ -443,7 +474,7 @@ impl ManifestService {
         }
 
         // 3. Create New (In-Memory only)
-        let manifest = self.create_manifest(table_id, table_type, user_id);
+        let manifest = self.create_manifest(table_id, user_id);
         Ok(manifest)
     }
 
@@ -451,12 +482,11 @@ impl ManifestService {
     pub fn update_manifest(
         &self,
         table_id: &TableId,
-        table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
         segment: SegmentMetadata,
     ) -> Result<Manifest, StorageError> {
         // Ensure manifest is loaded/initialized
-        let mut manifest = self.ensure_manifest_initialized(table_id, table_type, user_id)?;
+        let mut manifest = self.ensure_manifest_initialized(table_id, user_id)?;
 
         // Add segment
         manifest.add_segment(segment);
@@ -540,7 +570,6 @@ impl ManifestService {
     pub fn rebuild_manifest(
         &self,
         table_id: &TableId,
-        _table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
     ) -> Result<Manifest, StorageError> {
         let schema_registry = self.get_schema_registry();
@@ -701,9 +730,52 @@ impl ManifestService {
 
         let entry = ManifestCacheEntry::new(manifest.clone(), etag, now, sync_state);
 
-        self.provider.store().put(&rocksdb_key, &entry)?;
+        let store = self.provider.store();
+        let existing = store.get(&rocksdb_key)?;
+        match existing {
+            Some(old_entry) => {
+                store.update_with_old(&rocksdb_key, Some(&old_entry), &entry)?;
+            }
+            None => {
+                store.insert(&rocksdb_key, &entry)?;
+            }
+        }
 
         Ok(())
+    }
+
+    // ========== File Subfolder State Methods ==========
+
+    /// Get the file subfolder state for a shared table (user_id = None).
+    /// Returns None if files are not enabled for this table.
+    pub fn get_file_subfolder_state(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Option<FileSubfolderState>, StorageError> {
+        let entry = self.get_or_load(table_id, None)?;
+        match entry {
+            Some(cache_entry) => Ok(cache_entry.manifest.files.clone()),
+            None => Ok(None),
+        }
+    }
+
+    /// Update the file subfolder state for a shared table.
+    /// This is used when files are uploaded and the subfolder needs rotation.
+    pub fn update_file_subfolder_state(
+        &self,
+        table_id: &TableId,
+        state: FileSubfolderState,
+    ) -> Result<(), StorageError> {
+        let entry = self.get_or_load(table_id, None)?;
+        let mut manifest = match entry {
+            Some(cache_entry) => cache_entry.manifest.clone(),
+            None => {
+                // Create a minimal manifest for files tracking
+                Manifest::new(table_id.clone(), None)
+            }
+        };
+        manifest.files = Some(state);
+        self.upsert_cache_entry(table_id, None, &manifest, None, SyncState::PendingWrite)
     }
 
     // Private helper methods removed - now using StorageCached operations directly
@@ -733,10 +805,9 @@ impl ManifestServiceTrait for ManifestService {
     fn rebuild_manifest(
         &self,
         table_id: &TableId,
-        table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
     ) -> Result<Manifest, StorageError> {
-        self.rebuild_manifest(table_id, table_type, user_id)
+        self.rebuild_manifest(table_id, user_id)
     }
 
     fn mark_pending_write(
@@ -750,10 +821,9 @@ impl ManifestServiceTrait for ManifestService {
     fn ensure_manifest_initialized(
         &self,
         table_id: &TableId,
-        table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
     ) -> Result<Manifest, StorageError> {
-        self.ensure_manifest_initialized(table_id, table_type, user_id)
+        self.ensure_manifest_initialized(table_id, user_id)
     }
 
     fn stage_before_flush(
@@ -773,7 +843,6 @@ impl ManifestServiceTrait for ManifestService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::models::schemas::TableType;
     use kalamdb_commons::{NamespaceId, TableName};
     use kalamdb_store::StorageBackend;
     use kalamdb_store::test_utils::InMemoryBackend;
@@ -803,7 +872,7 @@ mod tests {
         let service = create_test_service();
         let table_id = build_table_id("ns1", "products");
 
-        let manifest = service.create_manifest(&table_id, TableType::Shared, None);
+        let manifest = service.create_manifest(&table_id, None);
 
         assert_eq!(manifest.table_id, table_id);
         assert_eq!(manifest.user_id, None);
@@ -909,6 +978,67 @@ mod tests {
         let cached_after =
             service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap().unwrap();
         assert_eq!(cached_after.sync_state, SyncState::Syncing);
+    }
+
+    #[test]
+    fn test_pending_write_index_integration() {
+        let service = create_test_service();
+        let table_id = build_table_id("ns1", "tbl1");
+        let user_id = UserId::from("u_123");
+        let manifest = create_test_manifest(&table_id, Some(&user_id));
+
+        // Stage manifest first (creates entry in cache)
+        service.stage_before_flush(&table_id, Some(&user_id), &manifest).unwrap();
+
+        // Initially, pending index should be empty
+        assert_eq!(service.pending_count().unwrap(), 0);
+        assert!(!service.has_pending_writes(&table_id, Some(&user_id)).unwrap());
+
+        // Mark as pending write
+        service.mark_pending_write(&table_id, Some(&user_id)).unwrap();
+
+        // Now should be in pending index
+        assert_eq!(service.pending_count().unwrap(), 1);
+        assert!(service.has_pending_writes(&table_id, Some(&user_id)).unwrap());
+
+        // Get all pending - should return our entry
+        let pending = service.get_pending_manifests().unwrap();
+        assert_eq!(pending.len(), 1);
+
+        // After flush, pending should be removed
+        service.update_after_flush(&table_id, Some(&user_id), &manifest, None).unwrap();
+        assert_eq!(service.pending_count().unwrap(), 0);
+        assert!(!service.has_pending_writes(&table_id, Some(&user_id)).unwrap());
+    }
+
+    #[test]
+    fn test_get_pending_for_table() {
+        let service = create_test_service();
+        let table_id = build_table_id("ns1", "user_table");
+        let user1 = UserId::from("user1");
+        let user2 = UserId::from("user2");
+        let other_table = build_table_id("ns1", "other_table");
+
+        // Stage manifests for multiple users
+        let manifest1 = create_test_manifest(&table_id, Some(&user1));
+        let manifest2 = create_test_manifest(&table_id, Some(&user2));
+        let other_manifest = create_test_manifest(&other_table, None);
+
+        service.stage_before_flush(&table_id, Some(&user1), &manifest1).unwrap();
+        service.stage_before_flush(&table_id, Some(&user2), &manifest2).unwrap();
+        service.stage_before_flush(&other_table, None, &other_manifest).unwrap();
+
+        // Mark all as pending
+        service.mark_pending_write(&table_id, Some(&user1)).unwrap();
+        service.mark_pending_write(&table_id, Some(&user2)).unwrap();
+        service.mark_pending_write(&other_table, None).unwrap();
+
+        // Get pending for specific table
+        let pending = service.get_pending_for_table(&table_id).unwrap();
+        assert_eq!(pending.len(), 2);
+
+        // Total should be 3
+        assert_eq!(service.pending_count().unwrap(), 3);
     }
 
     // #[test]

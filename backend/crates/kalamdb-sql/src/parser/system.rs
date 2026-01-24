@@ -4,9 +4,9 @@
 
 use anyhow::{anyhow, Result};
 pub use kalamdb_system::SystemTable;
+use crate::parser::utils::parse_sql_statements;
 use sqlparser::ast::Statement;
 use sqlparser::dialect::PostgreSqlDialect;
-use sqlparser::parser::Parser;
 
 /// SQL statement types supported for system tables
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ impl SqlParser {
 
     /// Parse a SQL statement
     pub fn parse(&self, sql: &str) -> Result<SystemStatement> {
-        let statements = Parser::parse_sql(&self.dialect, sql)?;
+        let statements = parse_sql_statements(sql, &self.dialect)?;
 
         if statements.is_empty() {
             return Err(anyhow!("No SQL statement found"));

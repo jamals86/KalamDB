@@ -127,7 +127,6 @@ pub async fn get_cluster_server() -> &'static ClusterTestServer {
 ///
 /// Uses the real `kalamdb_server::lifecycle::bootstrap()` and `run_for_tests()` wiring.
 pub struct HttpTestServer {
-    _temp_dir: tempfile::TempDir,
     // Cross-process lock to avoid running multiple near-production servers concurrently.
     // Some subsystems (notably Raft/bootstrap) are not safe to initialize concurrently
     // across integration test binaries.
@@ -145,6 +144,8 @@ pub struct HttpTestServer {
     user_password_cache: std::sync::Mutex<HashMap<String, String>>,
     running: kalamdb_server::lifecycle::RunningTestHttpServer,
     skip_raft_leader_check: bool,
+    // Keep temp dir last so it is dropped after server resources.
+    _temp_dir: tempfile::TempDir,
 }
 
 fn acquire_global_http_test_server_lock() -> Result<Option<std::fs::File>> {
@@ -567,7 +568,7 @@ impl HttpTestServer {
 
         let resp = match client
             .execute_query(
-                sql,
+                sql, None,
                 if params.is_empty() {
                     None
                 } else {

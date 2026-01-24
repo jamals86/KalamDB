@@ -5,7 +5,6 @@
 
 use super::ManifestService;
 use crate::error::KalamDbError;
-use crate::schema_registry::cached_table_data::CachedTableData;
 use datafusion::arrow::array::*;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -148,7 +147,6 @@ impl FlushManifestHelper {
     ///
     /// # Arguments
     /// * `table_id` - TableId (namespace + table name)
-    /// * `table_type` - Table type (Shared or User)
     /// * `user_id` - User ID for user tables, None for shared tables
     /// * `batch_number` - Batch number
     /// * `batch_filename` - Batch filename
@@ -164,10 +162,7 @@ impl FlushManifestHelper {
     pub fn update_manifest_after_flush(
         &self,
         table_id: &TableId,
-        table_type: kalamdb_commons::models::schemas::TableType,
         user_id: Option<&UserId>,
-        _cached: Option<&Arc<CachedTableData>>,
-        _batch_number: u64,
         batch_filename: String,
         file_path: &Path,
         batch: &RecordBatch,
@@ -206,7 +201,7 @@ impl FlushManifestHelper {
         // Update manifest (Hot Store update)
         let updated_manifest = self
             .manifest_service
-            .update_manifest(table_id, table_type, user_id, segment)
+            .update_manifest(table_id, user_id, segment)
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to update manifest for {} (user_id={:?}): {}",

@@ -58,6 +58,7 @@ pub use ddl::{
     JobCommand, ShowManifestStatement, ShowStoragesStatement, SubscribeStatement,
     SubscriptionOptions,
 };
+pub use parser::extract_dml_table_id;
 pub use ddl_parent::DdlAst;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};

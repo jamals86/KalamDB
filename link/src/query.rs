@@ -7,6 +7,7 @@ use crate::{
     models::{QueryRequest, QueryResponse},
 };
 use log::{debug, warn};
+use reqwest::multipart::{Form, Part};
 use std::time::Instant;
 
 /// Handles SQL query execution via HTTP.
@@ -95,9 +96,60 @@ impl QueryExecutor {
     pub async fn execute(
         &self,
         sql: &str,
+        files: Option<Vec<(String, String, Vec<u8>, Option<String>)>>,
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<String>,
     ) -> Result<QueryResponse> {
+        let has_files = files.as_ref().map(|f| !f.is_empty()).unwrap_or(false);
+
+        if has_files {
+            let mut form = Form::new().text("sql", sql.to_string());
+
+            if let Some(p) = &params {
+                form = form.text("params", serde_json::to_string(p)?);
+            }
+
+            if let Some(ns) = &namespace_id {
+                form = form.text("namespace_id", ns.clone());
+            }
+
+            if let Some(files) = files {
+                for (placeholder_name, filename, data, mime_type) in files {
+                    let part = Part::bytes(data)
+                        .file_name(filename)
+                        .mime_str(mime_type.as_deref().unwrap_or("application/octet-stream"))
+                        .map_err(|e| {
+                            KalamLinkError::ConfigurationError(format!(
+                                "Invalid MIME type: {}",
+                                e
+                            ))
+                        })?;
+
+                    let field_name = format!("file:{}", placeholder_name);
+                    form = form.part(field_name, part);
+                }
+            }
+
+            let mut req_builder = self.http_client.post(&self.sql_url).multipart(form);
+            req_builder = self.auth.apply_to_request(req_builder)?;
+
+            let attempt_start = Instant::now();
+            debug!(
+                "[LINK_HTTP] Sending multipart POST to {}",
+                self.sql_url
+            );
+
+            let response = req_builder.send().await?;
+            let http_duration_ms = attempt_start.elapsed().as_millis();
+            debug!(
+                "[LINK_HTTP] Response received: status={} duration_ms={}",
+                response.status(),
+                http_duration_ms
+            );
+
+            return Self::handle_response(response, sql).await;
+        }
+
         let request = QueryRequest {
             sql: sql.to_string(),
             params,
@@ -141,68 +193,24 @@ impl QueryExecutor {
             match req_builder.send().await {
                 Ok(response) => {
                     let http_duration_ms = attempt_start.elapsed().as_millis();
-                    let status = response.status();
                     debug!(
                         "[LINK_HTTP] Response received: status={} duration_ms={}",
-                        status, http_duration_ms
+                        response.status(),
+                        http_duration_ms
                     );
 
-                    if status.is_success() {
-                        let parse_start = Instant::now();
-                        let mut query_response: QueryResponse = response.json().await?;
-                        let parse_duration_ms = parse_start.elapsed().as_millis();
+                    let result = Self::handle_response(response, sql).await;
 
-                        // Enforce stable column ordering where applicable
-                        normalize_query_response(sql, &mut query_response);
-
+                    if result.is_ok() {
                         let total_duration_ms = overall_start.elapsed().as_millis();
                         debug!(
-                            "[LINK_QUERY] Success: http_ms={} parse_ms={} total_ms={}",
-                            http_duration_ms, parse_duration_ms, total_duration_ms
+                            "[LINK_QUERY] Success: http_ms={} total_ms={}",
+                            http_duration_ms,
+                            total_duration_ms
                         );
-
-                        return Ok(query_response);
-                    } else {
-                        let error_text =
-                            response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-
-                        // SECURITY: Authentication/Authorization errors (4xx) must return an error,
-                        // not Ok with error status. This prevents CLI from exiting with success code
-                        // when auth fails, which could mask security issues in scripts/automation.
-                        if status.is_client_error() {
-                            // 401 Unauthorized, 403 Forbidden - always return error
-                            let status_code = status.as_u16();
-                            warn!(
-                                "[LINK_HTTP] Authentication/client error: status={} message=\"{}\" duration_ms={}",
-                                status, error_text, http_duration_ms
-                            );
-                            return Err(KalamLinkError::ServerError {
-                                status_code,
-                                message: error_text,
-                            });
-                        }
-
-                        // For 5xx errors, prefer returning a structured QueryResponse if available,
-                        // so SQL execution errors can be distinguished from transport errors.
-                        if let Ok(mut json_response) =
-                            serde_json::from_str::<QueryResponse>(&error_text)
-                        {
-                            normalize_query_response(sql, &mut json_response);
-                            return Ok(json_response);
-                        }
-
-                        let error_message = error_text;
-
-                        warn!(
-                            "[LINK_HTTP] Server error: status={} message=\"{}\" duration_ms={}",
-                            status, error_message, http_duration_ms
-                        );
-
-                        return Err(KalamLinkError::ServerError {
-                            status_code: status.as_u16(),
-                            message: error_message,
-                        });
                     }
+
+                    return result;
                 },
                 Err(e) if retry_safe_sql && retries < max_retries && Self::is_retriable(&e) => {
                     let http_duration_ms = attempt_start.elapsed().as_millis();
@@ -234,5 +242,61 @@ impl QueryExecutor {
 
     fn is_retriable(err: &reqwest::Error) -> bool {
         err.is_timeout() || err.is_connect()
+    }
+
+    async fn handle_response(
+        response: reqwest::Response,
+        sql: &str,
+    ) -> Result<QueryResponse> {
+        let status = response.status();
+
+        if status.is_success() {
+            let parse_start = Instant::now();
+            let mut query_response: QueryResponse = response.json().await?;
+            let parse_duration_ms = parse_start.elapsed().as_millis();
+
+            // Enforce stable column ordering where applicable
+            normalize_query_response(sql, &mut query_response);
+
+            debug!("[LINK_QUERY] Parsed response in {}ms", parse_duration_ms);
+            return Ok(query_response);
+        }
+
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
+
+        // SECURITY: Authentication/Authorization errors (4xx) must return an error,
+        // not Ok with error status. This prevents CLI from exiting with success code
+        // when auth fails, which could mask security issues in scripts/automation.
+        if status.is_client_error() {
+            let status_code = status.as_u16();
+            warn!(
+                "[LINK_HTTP] Authentication/client error: status={} message=\"{}\"",
+                status, error_text
+            );
+            return Err(KalamLinkError::ServerError {
+                status_code,
+                message: error_text,
+            });
+        }
+
+        // For 5xx errors, prefer returning a structured QueryResponse if available,
+        // so SQL execution errors can be distinguished from transport errors.
+        if let Ok(mut json_response) = serde_json::from_str::<QueryResponse>(&error_text) {
+            normalize_query_response(sql, &mut json_response);
+            return Ok(json_response);
+        }
+
+        warn!(
+            "[LINK_HTTP] Server error: status={} message=\"{}\"",
+            status, error_text
+        );
+
+        Err(KalamLinkError::ServerError {
+            status_code: status.as_u16(),
+            message: error_text,
+        })
     }
 }

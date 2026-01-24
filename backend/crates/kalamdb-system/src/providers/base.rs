@@ -120,35 +120,65 @@ where
         let schema = self.arrow_schema();
         let store = self.store();
 
-        // Prefer secondary index scans when possible
-        let pairs: Vec<(K, V)> = if let Some((index_idx, index_prefix)) =
-            store.find_best_index_for_filters(filters)
-        {
+        // Prefer secondary index scans when possible (iterator-based to avoid large allocations)
+        let mut pairs: Vec<(K, V)> = Vec::new();
+        if let Some((index_idx, index_prefix)) = store.find_best_index_for_filters(filters) {
             log::trace!(
                 "[{}] Using secondary index {} for filters: {:?}",
                 self.table_name(),
                 index_idx,
                 filters
             );
-            store.scan_by_index(index_idx, Some(&index_prefix), limit).map_err(|e| {
-                DataFusionError::Execution(format!(
-                    "Failed to scan {} by index: {}",
-                    self.table_name(),
-                    e
-                ))
-            })?
+            let iter = store
+                .scan_by_index_iter(index_idx, Some(&index_prefix), limit)
+                .map_err(|e| {
+                    DataFusionError::Execution(format!(
+                        "Failed to scan {} by index: {}",
+                        self.table_name(),
+                        e
+                    ))
+                })?;
+
+            let effective_limit = limit.unwrap_or(100_000);
+            for result in iter {
+                let (key, value) = result.map_err(|e| {
+                    DataFusionError::Execution(format!(
+                        "Failed to scan {} by index: {}",
+                        self.table_name(),
+                        e
+                    ))
+                })?;
+                pairs.push((key, value));
+                if pairs.len() >= effective_limit {
+                    break;
+                }
+            }
         } else {
             log::trace!(
                 "[{}] Full table scan (no index match) for filters: {:?}",
                 self.table_name(),
                 filters
             );
-            store
-                .scan_all_typed(limit, prefix.as_ref(), start_key.as_ref())
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to scan {}: {}", self.table_name(), e))
-                })?
-        };
+            let iter = store.scan_iterator(prefix.as_ref(), start_key.as_ref()).map_err(|e| {
+                DataFusionError::Execution(format!("Failed to create iterator for {}: {}", self.table_name(), e))
+            })?;
+
+            let effective_limit = limit.unwrap_or(100_000);
+            for result in iter {
+                match result {
+                    Ok((key, value)) => {
+                        pairs.push((key, value));
+                        if pairs.len() >= effective_limit {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Error during scan of {}: {}", self.table_name(), e);
+                        continue;
+                    }
+                }
+            }
+        }
 
         let batch = self.create_batch_from_pairs(pairs).map_err(|e| {
             DataFusionError::Execution(format!("Failed to build {} batch: {}", self.table_name(), e))

@@ -39,7 +39,9 @@ async fn test_scenario_12_insert_performance() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE metrics table");
 
-    let client = create_user_and_client(server, "perf_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_perf_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // =========================================================
     // Measure insert time per batch
@@ -58,7 +60,7 @@ async fn test_scenario_12_insert_performance() -> anyhow::Result<()> {
                             &format!(
                                 "INSERT INTO {}.metrics (id, timestamp, value, label) VALUES ({}, {}, {}, 'batch_{}')",
                                 ns, id_counter, id_counter * 1000, id_counter as f64 * 1.5, batch_size
-                            ),
+                            ), None,
                             None,
                             None,
                         )
@@ -90,7 +92,7 @@ async fn test_scenario_12_insert_performance() -> anyhow::Result<()> {
 
     // Verify total row count
     let resp = client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.metrics", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.metrics", ns), None, None, None)
         .await?;
     let total_count = resp.get_i64("cnt").unwrap_or(0);
     let expected_total: i64 = batch_sizes.iter().map(|&s| s as i64).sum();
@@ -123,7 +125,9 @@ async fn test_scenario_12_query_time_growth() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE readings table");
 
-    let client = create_user_and_client(server, "query_perf_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_query_perf_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert rows in batches and measure query time after each batch
     let batch_sizes = [100, 200, 300, 400, 500];
@@ -142,7 +146,7 @@ async fn test_scenario_12_query_time_growth() -> anyhow::Result<()> {
                         id_counter,
                         id_counter % 10,
                         id_counter as f64 * 0.5
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -153,7 +157,7 @@ async fn test_scenario_12_query_time_growth() -> anyhow::Result<()> {
         // Measure query time
         let query_start = Instant::now();
         let resp = client
-            .execute_query(&format!("SELECT * FROM {}.readings ORDER BY id", ns), None, None)
+            .execute_query(&format!("SELECT * FROM {}.readings ORDER BY id", ns), None, None, None)
             .await?;
         let query_duration = query_start.elapsed();
 
@@ -215,7 +219,9 @@ async fn test_scenario_12_subscription_snapshot_timing() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE documents table");
 
-    let client = create_user_and_client(server, "sub_perf_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_sub_perf_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert varying amounts of data and measure subscription snapshot time
     let data_sizes = [50, 100, 200, 500];
@@ -224,7 +230,7 @@ async fn test_scenario_12_subscription_snapshot_timing() -> anyhow::Result<()> {
     for &data_size in &data_sizes {
         // Clean and re-populate
         let _ = client
-            .execute_query(&format!("DELETE FROM {}.documents WHERE id > 0", ns), None, None)
+            .execute_query(&format!("DELETE FROM {}.documents WHERE id > 0", ns), None, None, None)
             .await;
 
         // Insert data
@@ -234,7 +240,7 @@ async fn test_scenario_12_subscription_snapshot_timing() -> anyhow::Result<()> {
                             &format!(
                                 "INSERT INTO {}.documents (id, title, content) VALUES ({}, 'Doc {}', 'Content for document number {}')",
                                 ns, i, i, i
-                            ),
+                            ), None,
                             None,
                             None,
                         )
@@ -305,7 +311,9 @@ async fn test_scenario_12_memory_baseline() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE large_data table");
 
-    let client = create_user_and_client(server, "memory_user", &Role::User).await?;
+    // Create client with unique name to avoid parallel test interference
+    let username = format!("{}_memory_user", ns);
+    let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Insert data in batches (larger payloads)
     let payload = "X".repeat(1000); // 1KB per row
@@ -317,7 +325,7 @@ async fn test_scenario_12_memory_baseline() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.large_data (id, payload) VALUES ({}, '{}')",
                     ns, i, payload
-                ),
+                ), None,
                 None,
                 None,
             )
@@ -327,7 +335,7 @@ async fn test_scenario_12_memory_baseline() -> anyhow::Result<()> {
 
     // Query data to verify
     let resp = client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.large_data", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.large_data", ns), None, None, None)
         .await?;
     let count = resp.get_i64("cnt").unwrap_or(0);
     assert_eq!(count, batch_count, "Should have {} rows", batch_count);
@@ -340,7 +348,7 @@ async fn test_scenario_12_memory_baseline() -> anyhow::Result<()> {
 
     // Query again after flush
     let resp = client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.large_data", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.large_data", ns), None, None, None)
         .await?;
     let count_after_flush = resp.get_i64("cnt").unwrap_or(0);
     assert_eq!(count_after_flush, batch_count, "Count should be same after flush");
