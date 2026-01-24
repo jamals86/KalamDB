@@ -82,7 +82,7 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
                         ns, row_num, device_id, temp, humidity, pressure, battery, is_charging, firmware, row_num
                     );
 
-            let resp = client.execute_query(&sql, None, None).await?;
+            let resp = client.execute_query(&sql, None, None, None).await?;
             if !resp.success() {
                 eprintln!("Insert failed for row {}: {:?}", row_num, resp);
             }
@@ -98,7 +98,7 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     // Step 3: Verify insert count
     // =========================================================
     let resp = client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.telemetry", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.telemetry", ns), None, None, None)
         .await?;
     let total_count: i64 = resp.get_i64("cnt").unwrap_or(0);
 
@@ -116,7 +116,7 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     // Device filter
     let resp = client
         .execute_query(
-            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE device_id = 'device_001'", ns),
+            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE device_id = 'device_001'", ns), None,
             None,
             None,
         )
@@ -127,7 +127,7 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     // Threshold filter (temperature > 40)
     let resp = client
         .execute_query(
-            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE temp > 40", ns),
+            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE temp > 40", ns), None,
             None,
             None,
         )
@@ -138,7 +138,7 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     // Battery threshold filter
     let resp = client
         .execute_query(
-            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE battery < 20", ns),
+            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE battery < 20", ns), None,
             None,
             None,
         )
@@ -168,7 +168,7 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     // Step 6: Verify queries still work post-flush
     // =========================================================
     let resp = client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.telemetry", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.telemetry", ns), None, None, None)
         .await?;
     let post_flush_count: i64 = resp.get_i64("cnt").unwrap_or(0);
 
@@ -177,7 +177,7 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     // Device filter should still work
     let resp = client
         .execute_query(
-            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE device_id = 'device_001'", ns),
+            &format!("SELECT COUNT(*) as cnt FROM {}.telemetry WHERE device_id = 'device_001'", ns), None,
             None,
             None,
         )
@@ -225,7 +225,7 @@ async fn test_scenario_04_anomaly_subscription() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.telemetry (id, device_id, temp, battery) VALUES ({}, 'device_1', 25.0, 80.0)",
                             ns, i
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -253,7 +253,7 @@ async fn test_scenario_04_anomaly_subscription() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.telemetry (id, device_id, temp, battery) VALUES (100, 'device_2', 75.0, 50.0)",
                         ns
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -266,7 +266,7 @@ async fn test_scenario_04_anomaly_subscription() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.telemetry (id, device_id, temp, battery) VALUES (101, 'device_3', 25.0, 5.0)",
                         ns
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -321,7 +321,7 @@ async fn test_scenario_04_wide_column_scan() -> anyhow::Result<()> {
                      VALUES ({}, 'device_{}', {}, {}, {}, {}, {}, 'v1.0.{}', 'payload_{}')",
                     ns, i, i % 10, 20.0 + (i % 30) as f64, 50.0, 1000.0, 80.0, i % 2 == 0, i, i
                 );
-        let resp = client.execute_query(&sql, None, None).await?;
+        let resp = client.execute_query(&sql, None, None, None).await?;
         if !resp.success() {
             eprintln!("Insert {} failed", i);
         }
@@ -330,7 +330,7 @@ async fn test_scenario_04_wide_column_scan() -> anyhow::Result<()> {
     // Full scan
     let start = std::time::Instant::now();
     let resp = client
-        .execute_query(&format!("SELECT * FROM {}.telemetry ORDER BY id LIMIT 100", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.telemetry ORDER BY id LIMIT 100", ns), None, None, None)
         .await?;
     let scan_time = start.elapsed();
 
@@ -342,7 +342,7 @@ async fn test_scenario_04_wide_column_scan() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     let resp = client
         .execute_query(
-            &format!("SELECT device_id, temp, battery FROM {}.telemetry ORDER BY id LIMIT 100", ns),
+            &format!("SELECT device_id, temp, battery FROM {}.telemetry ORDER BY id LIMIT 100", ns), None,
             None,
             None,
         )

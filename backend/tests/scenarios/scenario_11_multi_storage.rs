@@ -76,7 +76,7 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.hot_data (id, value) VALUES ({}, 'hot_value_{}')",
                     ns, i, i
-                ),
+                ), None,
                 None,
                 None,
             )
@@ -91,7 +91,7 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.cold_data (id, archive_value) VALUES ({}, 'cold_value_{}')",
                     ns, i, i
-                ),
+                ), None,
                 None,
                 None,
             )
@@ -115,7 +115,7 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
     // Step 6: Verify data is queryable after flush
     // =========================================================
     let resp = client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.hot_data", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.hot_data", ns), None, None, None)
         .await?;
     assert!(resp.success(), "Query hot_data count");
     let hot_count = resp
@@ -127,7 +127,7 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
     assert_eq!(hot_count, 100, "hot_data should have 100 rows after flush");
 
     let resp = client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.cold_data", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.cold_data", ns), None, None, None)
         .await?;
     assert!(resp.success(), "Query cold_data count");
     let cold_count = resp
@@ -183,7 +183,7 @@ async fn test_scenario_11_storage_constraints() -> anyhow::Result<()> {
     for i in 1..=50 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.constrained (id, data) VALUES ({}, 'data_{}')", ns, i, i),
+                &format!("INSERT INTO {}.constrained (id, data) VALUES ({}, 'data_{}')", ns, i, i), None,
                 None,
                 None,
             )
@@ -199,7 +199,7 @@ async fn test_scenario_11_storage_constraints() -> anyhow::Result<()> {
 
     // Verify data persisted correctly
     let resp = client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.constrained", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.constrained", ns), None, None, None)
         .await?;
     assert!(resp.success(), "Query count");
     let count = resp
@@ -275,7 +275,7 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.user_table (id, data) VALUES ({}, 'user1_data_{}')",
                     ns, i, i
-                ),
+                ), None,
                 None,
                 None,
             )
@@ -292,7 +292,7 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.user_table (id, data) VALUES ({}, 'user2_data_{}')",
                     ns, i, i
-                ),
+                ), None,
                 None,
                 None,
             )
@@ -307,7 +307,7 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.shared_table (id, config) VALUES ({}, 'config_{}')",
                     ns, i, i
-                ),
+                ), None,
                 None,
                 None,
             )
@@ -322,7 +322,7 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.stream_table (id, event) VALUES ({}, 'event_{}')",
                     ns, i, i
-                ),
+                ), None,
                 None,
                 None,
             )
@@ -339,7 +339,7 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
 
     // Verify USER table isolation: user1 sees only their rows
     let resp = user1_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.user_table", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.user_table", ns), None, None, None)
         .await?;
     let user1_count = resp
         .rows_as_maps()
@@ -351,7 +351,7 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
 
     // Verify USER table isolation: user2 sees only their rows
     let resp = user2_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.user_table", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.user_table", ns), None, None, None)
         .await?;
     let user2_count = resp
         .rows_as_maps()
@@ -363,7 +363,7 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
 
     // Verify SHARED table visible to all
     let resp = user1_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.shared_table", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.shared_table", ns), None, None, None)
         .await?;
     let shared_count = resp
         .rows_as_maps()

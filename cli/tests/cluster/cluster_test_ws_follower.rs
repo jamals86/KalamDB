@@ -120,7 +120,7 @@ async fn execute_query_with_retry(
 ) -> Result<(), String> {
     let mut last_err: Option<String> = None;
     for attempt in 0..max_attempts {
-        match client.execute_query(sql, None, None).await {
+        match client.execute_query(sql, None, None, None).await {
             Ok(response) => {
                 if response.success() {
                     return Ok(());

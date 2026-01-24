@@ -7,7 +7,6 @@ use crate::sql::executor::helpers::guards::block_system_namespace_modification;
 // Note: table_registration moved to unified applier commands
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::constants::SystemColumnNames;
-use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
@@ -262,7 +261,7 @@ fn apply_alter_operation(
                     column_name
                 )));
             }
-            let kalam_type = map_string_type(data_type)?;
+            let kalam_type = data_type.clone();
             let default = default_value
                 .as_ref()
                 .map(|v| ColumnDefault::literal(serde_json::Value::String(v.clone())))
@@ -284,10 +283,13 @@ fn apply_alter_operation(
             log::debug!(
                 "✓ Added column {} (type: {}, nullable: {})",
                 column_name,
-                data_type,
+                data_type.sql_name(),
                 nullable
             );
-            Ok((format!("ADD COLUMN {} {}", column_name, data_type), true))
+            Ok((
+                format!("ADD COLUMN {} {}", column_name, data_type.sql_name()),
+                true,
+            ))
         },
         ColumnOperation::Drop { column_name } => {
             // Block dropping system columns
@@ -350,7 +352,7 @@ fn apply_alter_operation(
                 })?;
 
             // Track if anything actually changes
-            let new_type = map_string_type(new_data_type)?;
+            let new_type = new_data_type.clone();
             let type_changed = col.data_type != new_type;
             let nullable_changed = nullable.is_some_and(|n| col.is_nullable != n);
             let changed = type_changed || nullable_changed;
@@ -363,15 +365,26 @@ fn apply_alter_operation(
             }
 
             if changed {
-                log::debug!("✓ Modified column {} (new type: {})", column_name, new_data_type);
+                log::debug!(
+                    "✓ Modified column {} (new type: {})",
+                    column_name,
+                    new_data_type.sql_name()
+                );
             } else {
                 log::debug!(
                     "⊙ No changes to column {} (already type: {})",
                     column_name,
-                    new_data_type
+                    new_data_type.sql_name()
                 );
             }
-            Ok((format!("MODIFY COLUMN {} {}", column_name, new_data_type), changed))
+            Ok((
+                format!(
+                    "MODIFY COLUMN {} {}",
+                    column_name,
+                    new_data_type.sql_name()
+                ),
+                changed,
+            ))
         },
         ColumnOperation::Rename {
             old_column_name,
@@ -454,29 +467,6 @@ fn apply_alter_operation(
     }
 }
 
-/// Map simplified SQL type strings to KalamDataType
-fn map_string_type(dt: &str) -> Result<KalamDataType, KalamDbError> {
-    let upper = dt.to_uppercase();
-    use KalamDataType as K;
-    let t = match upper.as_str() {
-        "INT" | "INT32" => K::Int,
-        "BIGINT" | "INT64" => K::BigInt,
-        "TEXT" | "STRING" | "UTF8" => K::Text,
-        "BOOL" | "BOOLEAN" => K::Boolean,
-        "TIMESTAMP" => K::Timestamp,
-        "UUID" => K::Uuid,
-        "FLOAT" | "FLOAT32" => K::Float,
-        "DOUBLE" | "FLOAT64" => K::Double,
-        other => {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "Unsupported data type '{}' for ALTER TABLE",
-                other
-            )))
-        },
-    };
-    Ok(t)
-}
-
 /// Get a summary string for the operation for logging
 fn get_operation_summary(op: &ColumnOperation) -> String {
     match op {
@@ -484,13 +474,17 @@ fn get_operation_summary(op: &ColumnOperation) -> String {
             column_name,
             data_type,
             ..
-        } => format!("ADD COLUMN {} {}", column_name, data_type),
+        } => format!("ADD COLUMN {} {}", column_name, data_type.sql_name()),
         ColumnOperation::Drop { column_name } => format!("DROP COLUMN {}", column_name),
         ColumnOperation::Modify {
             column_name,
             new_data_type,
             ..
-        } => format!("MODIFY COLUMN {} {}", column_name, new_data_type),
+        } => format!(
+            "MODIFY COLUMN {} {}",
+            column_name,
+            new_data_type.sql_name()
+        ),
         ColumnOperation::Rename {
             old_column_name,
             new_column_name,

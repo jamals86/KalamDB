@@ -115,7 +115,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
                                 &format!(
                                     "INSERT INTO {}.carts (id, name) VALUES ({}, 'Cart for user {}')",
                                     ns, cart_id, user_idx
-                                ),
+                                ), None,
                                 None,
                                 None,
                             )
@@ -132,7 +132,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
                                     &format!(
                                         "INSERT INTO {}.cart_items (id, cart_id, product_name, quantity, price) VALUES ({}, {}, 'Product {}', {}, {})",
                                         ns, item_id, cart_id, i, (i % 5) + 1, (i as f64) * 9.99
-                                    ),
+                                    ), None,
                                     None,
                                     None,
                                 )
@@ -150,7 +150,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
                                     &format!(
                                         "UPDATE {}.cart_items SET quantity = quantity + 1 WHERE id = {}",
                                         ns, item_id
-                                    ),
+                                    ), None,
                                     None,
                                     None,
                                 )
@@ -165,7 +165,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
                             let item_id = user_idx * 10000 + i;
                             let resp = client
                                 .execute_query(
-                                    &format!("DELETE FROM {}.cart_items WHERE id = {}", ns, item_id),
+                                    &format!("DELETE FROM {}.cart_items WHERE id = {}", ns, item_id), None,
                                     None,
                                     None,
                                 )
@@ -181,7 +181,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
                                 &format!(
                                     "SELECT COUNT(*) as cnt FROM {}.cart_items WHERE cart_id = {}",
                                     ns, cart_id
-                                ),
+                                ), None,
                                 None,
                                 None,
                             )
@@ -230,7 +230,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
     let u1_client = server.link_client(&user1);
 
     let resp = u0_client
-        .execute_query(&format!("SELECT * FROM {}.cart_items", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.cart_items", ns), None, None, None)
         .await?;
     let u0_items: Vec<i64> = resp
         .rows_as_maps()
@@ -239,7 +239,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
         .collect();
 
     let resp = u1_client
-        .execute_query(&format!("SELECT * FROM {}.cart_items", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.cart_items", ns), None, None, None)
         .await?;
     let u1_items: Vec<i64> = resp
         .rows_as_maps()
@@ -290,7 +290,7 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.cart_items (id, cart_id, product_name, quantity) VALUES ({}, 1, 'Cart1 Product {}', 1)",
                             ns, i, i
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -304,7 +304,7 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.cart_items (id, cart_id, product_name, quantity) VALUES ({}, 2, 'Cart2 Product {}', 1)",
                             ns, i, i
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -327,7 +327,7 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.cart_items (id, cart_id, product_name, quantity) VALUES (11, 2, 'Cart2 New', 1)",
                         ns
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -340,7 +340,7 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.cart_items (id, cart_id, product_name, quantity) VALUES (12, 1, 'Cart1 New', 1)",
                         ns
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -392,7 +392,7 @@ async fn test_scenario_03_partial_flush() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.cart_items (id, cart_id, product_name) VALUES ({}, 1, 'U1 Product {}')",
                             ns, i, i
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -406,7 +406,7 @@ async fn test_scenario_03_partial_flush() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.cart_items (id, cart_id, product_name) VALUES ({}, 2, 'U2 Product {}')",
                             ns, i, i
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -433,13 +433,13 @@ async fn test_scenario_03_partial_flush() -> anyhow::Result<()> {
 
     // Verify both users can still query correctly
     let resp = u1_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.cart_items", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.cart_items", ns), None, None, None)
         .await?;
     let u1_count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert_eq!(u1_count, 20, "u1 should see 20 items post-flush");
 
     let resp = u2_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.cart_items", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.cart_items", ns), None, None, None)
         .await?;
     let u2_count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert_eq!(u2_count, 20, "u2 should see 20 items post-flush");

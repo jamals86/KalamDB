@@ -6,7 +6,10 @@
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
-    models::{BatchStatus, ChangeEvent, ServerMessage, SubscriptionConfig, SubscriptionOptions},
+    models::{
+        BatchStatus, ChangeEvent, ClientMessage, ServerMessage, SubscriptionConfig,
+        SubscriptionOptions, WsAuthCredentials,
+    },
     timeouts::KalamLinkTimeouts,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -124,8 +127,6 @@ async fn send_auth_and_wait(
     auth: &AuthProvider,
     auth_timeout: Duration,
 ) -> Result<()> {
-    use crate::models::{ClientMessage, WsAuthCredentials};
-
     // Convert auth provider to WsAuthCredentials
     let credentials = match auth {
         AuthProvider::BasicAuth(username, password) => WsAuthCredentials::Basic {

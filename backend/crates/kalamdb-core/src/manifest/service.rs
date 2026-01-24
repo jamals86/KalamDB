@@ -9,7 +9,7 @@
 
 use crate::schema_registry::SchemaRegistry;
 use kalamdb_commons::ids::SeqId;
-use kalamdb_commons::models::types::{Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
+use kalamdb_commons::models::types::{FileSubfolderState, Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
 use kalamdb_commons::{ManifestId, TableId, UserId};
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_filestore::StorageRegistry;
@@ -742,6 +742,40 @@ impl ManifestService {
         }
 
         Ok(())
+    }
+
+    // ========== File Subfolder State Methods ==========
+
+    /// Get the file subfolder state for a shared table (user_id = None).
+    /// Returns None if files are not enabled for this table.
+    pub fn get_file_subfolder_state(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Option<FileSubfolderState>, StorageError> {
+        let entry = self.get_or_load(table_id, None)?;
+        match entry {
+            Some(cache_entry) => Ok(cache_entry.manifest.files.clone()),
+            None => Ok(None),
+        }
+    }
+
+    /// Update the file subfolder state for a shared table.
+    /// This is used when files are uploaded and the subfolder needs rotation.
+    pub fn update_file_subfolder_state(
+        &self,
+        table_id: &TableId,
+        state: FileSubfolderState,
+    ) -> Result<(), StorageError> {
+        let entry = self.get_or_load(table_id, None)?;
+        let mut manifest = match entry {
+            Some(cache_entry) => cache_entry.manifest.clone(),
+            None => {
+                // Create a minimal manifest for files tracking
+                Manifest::new(table_id.clone(), None)
+            }
+        };
+        manifest.files = Some(state);
+        self.upsert_cache_entry(table_id, None, &manifest, None, SyncState::PendingWrite)
     }
 
     // Private helper methods removed - now using StorageCached operations directly

@@ -34,7 +34,7 @@ use tokio::sync::Mutex;
 ///     .timeout(std::time::Duration::from_secs(30))
 ///     .build()?;
 ///
-/// let response = client.execute_query("SELECT 1", None, None).await?;
+/// let response = client.execute_query("SELECT 1", None, None, None).await?;
 /// println!("Result: {:?}", response);
 /// # Ok(())
 /// # }
@@ -55,10 +55,11 @@ impl KalamLinkClient {
         KalamLinkClientBuilder::new()
     }
 
-    /// Execute a SQL query with optional parameters and namespace context
+    /// Execute a SQL query with optional files, parameters, and namespace context
     ///
     /// # Arguments
     /// * `sql` - The SQL query string
+    /// * `files` - Optional file uploads for FILE("name") placeholders
     /// * `params` - Optional query parameters for $1, $2, ... placeholders
     /// * `namespace_id` - Optional namespace for unqualified table names
     ///
@@ -67,26 +68,82 @@ impl KalamLinkClient {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = kalam_link::KalamLinkClient::builder().base_url("http://localhost:3000").build()?;
     /// // Simple query
-    /// let result = client.execute_query("SELECT * FROM users", None, None).await?;
+    /// let result = client.execute_query("SELECT * FROM users", None, None, None).await?;
     ///
     /// // Query with parameters
     /// let params = vec![serde_json::json!(42)];
-    /// let result = client.execute_query("SELECT * FROM users WHERE id = $1", Some(params), None).await?;
+    /// let result = client.execute_query("SELECT * FROM users WHERE id = $1", None, Some(params), None).await?;
     ///
     /// // Query in specific namespace
-    /// let result = client.execute_query("SELECT * FROM messages", None, Some("chat")).await?;
+    /// let result = client.execute_query("SELECT * FROM messages", None, None, Some("chat")).await?;
     /// # Ok(())
     /// # }
     /// ```
     pub async fn execute_query(
         &self,
         sql: &str,
+        files: Option<Vec<(&str, &str, Vec<u8>, Option<&str>)>>,
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<&str>,
     ) -> Result<QueryResponse> {
+        let files_owned = files.map(|items| {
+            items
+                .into_iter()
+                .map(|(placeholder, filename, data, mime)| {
+                    (
+                        placeholder.to_string(),
+                        filename.to_string(),
+                        data,
+                        mime.map(|m| m.to_string()),
+                    )
+                })
+                .collect()
+        });
+
         self.query_executor
-            .execute(sql, params, namespace_id.map(|s| s.to_string()))
+            .execute(sql, files_owned, params, namespace_id.map(|s| s.to_string()))
             .await
+    }
+
+    /// Execute a SQL query with file uploads (FILE datatype support).
+    ///
+    /// This method allows inserting/updating rows that contain FILE columns.
+    /// Use FILE("name") placeholders in SQL that reference uploaded files.
+    ///
+    /// # Arguments
+    /// * `sql` - SQL statement containing FILE("name") placeholders
+    /// * `files` - Vector of (placeholder_name, filename, data, optional_mime_type)
+    /// * `params` - Optional query parameters for $1, $2, ... placeholders  
+    /// * `namespace_id` - Optional namespace for unqualified table names
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = kalam_link::KalamLinkClient::builder().base_url("http://localhost:3000").build()?;
+    /// use std::fs;
+    ///
+    /// // Read file from disk
+    /// let avatar_data = fs::read("avatar.png")?;
+    ///
+    /// // Insert with file
+    /// let result = client.execute_with_files(
+    ///     "INSERT INTO users (name, avatar) VALUES ($1, FILE(\"avatar\"))",
+    ///     vec![("avatar", "avatar.png", avatar_data, Some("image/png"))],
+    ///     Some(vec![serde_json::json!("Alice")]),
+    ///     None
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "tokio-runtime")]
+    pub async fn execute_with_files(
+        &self,
+        sql: &str,
+        files: Vec<(&str, &str, Vec<u8>, Option<&str>)>,
+        params: Option<Vec<serde_json::Value>>,
+        namespace_id: Option<&str>,
+    ) -> Result<QueryResponse> {
+        self.execute_query(sql, Some(files), params, namespace_id).await
     }
 
     /// Subscribe to real-time changes

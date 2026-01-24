@@ -1,5 +1,6 @@
 use crate::classifier::types::{SqlStatement, SqlStatementKind, StatementClassificationError};
 use crate::ddl::*;
+use crate::parser::utils::{collect_non_whitespace_tokens, parse_sql_statements, tokens_to_words};
 use kalamdb_commons::models::{NamespaceId, UserId};
 use kalamdb_commons::Role;
 use kalamdb_session::is_admin_role;
@@ -97,71 +98,24 @@ impl SqlStatement {
         default_namespace: &NamespaceId,
         role: Role,
     ) -> Result<Self, StatementClassificationError> {
-        // Use sqlparser's tokenizer to get the first keyword (skips comments automatically)
+        // Use sqlparser's parser lookahead to tokenize without full parsing
         let dialect = sqlparser::dialect::GenericDialect {};
-        let mut tokenizer = sqlparser::tokenizer::Tokenizer::new(&dialect, sql);
-        let tokens = tokenizer.tokenize().ok();
-        let mut fallback_words: Option<Vec<String>> = None;
-        let tokens = match tokens {
-            Some(tokens) => tokens,
-            None => {
-                let mut sql_upper = sql.trim().to_string();
-                sql_upper.make_ascii_uppercase();
-                let words: Vec<String> =
-                    sql_upper.split_whitespace().map(|s| s.to_string()).collect();
-                if words.is_empty() {
-                    return Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown));
-                }
-                fallback_words = Some(words);
-                Vec::new()
-            },
+        let tokens = collect_non_whitespace_tokens(sql, &dialect).unwrap_or_default();
+
+        // Build words list from tokens for pattern matching
+        let mut words: Vec<String> = if !tokens.is_empty() {
+            tokens_to_words(&tokens)
+        } else {
+            Vec::new()
         };
 
-        // Get first non-whitespace, non-comment token
-        let first_keyword_upper = if !tokens.is_empty() {
-            tokens
-                .iter()
-                .find_map(|tok| match tok {
-                    sqlparser::tokenizer::Token::Word(w) => Some(w.value.to_ascii_uppercase()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| {
-                    if fallback_words.is_none() {
-                        let mut sql_upper = sql.trim().to_string();
-                        sql_upper.make_ascii_uppercase();
-                        fallback_words =
-                            Some(sql_upper.split_whitespace().map(|s| s.to_string()).collect());
-                    }
-                    fallback_words
-                        .as_ref()
-                        .and_then(|words| words.first().cloned())
-                        .unwrap_or_default()
-                })
-        } else {
-            if fallback_words.is_none() {
-                let mut sql_upper = sql.trim().to_string();
-                sql_upper.make_ascii_uppercase();
-                fallback_words =
-                    Some(sql_upper.split_whitespace().map(|s| s.to_string()).collect());
-            }
-            fallback_words
-                .as_ref()
-                .and_then(|words| words.first().cloned())
-                .unwrap_or_default()
-        };
+        if words.is_empty() {
+            let mut sql_upper = sql.trim().to_string();
+            sql_upper.make_ascii_uppercase();
+            words = sql_upper.split_whitespace().map(|s| s.to_string()).collect();
+        }
 
-        // Build words list from non-comment tokens for pattern matching
-        let words: Vec<String> = if !tokens.is_empty() {
-            tokens
-                .iter()
-                .filter_map(|tok| match tok {
-                    sqlparser::tokenizer::Token::Word(w) => Some(w.value.to_ascii_uppercase()),
-                    _ => None,
-                })
-                .collect()
-        } else {
-            fallback_words.take().unwrap_or_default()
-        };
+        let first_keyword_upper = words.first().cloned().unwrap_or_default();
         let word_refs: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
 
         if word_refs.is_empty() {
@@ -703,7 +657,7 @@ impl SqlStatement {
             // Unknown
             _ => {
                 let dialect = sqlparser::dialect::PostgreSqlDialect {};
-                match sqlparser::parser::Parser::parse_sql(&dialect, sql) {
+                match parse_sql_statements(sql, &dialect) {
                     Ok(statements) => {
                         if let Some(statement) = statements.first() {
                             Err(StatementClassificationError::InvalidSql {

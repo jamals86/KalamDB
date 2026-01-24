@@ -28,7 +28,7 @@
 //!
 //!     // Execute a query
 //!     let response = client
-//!         .execute_query("SELECT * FROM users LIMIT 10", None, None)
+//!         .execute_query("SELECT * FROM users LIMIT 10", None, None, None)
 //!         .await?;
 //!     println!("Results: {:?}", response.results);
 //!
@@ -100,6 +100,7 @@
 pub mod compression;
 pub mod error;
 pub mod live;
+#[path = "models/mod.rs"]
 pub mod models;
 #[cfg(feature = "tokio-runtime")]
 mod normalize;
@@ -122,6 +123,7 @@ pub mod subscription;
 
 // WASM bindings module (T041)
 #[cfg(feature = "wasm")]
+#[path = "wasm/mod.rs"]
 pub mod wasm;
 
 // Re-export main types for convenience

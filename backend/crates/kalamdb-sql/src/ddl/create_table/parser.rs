@@ -1,12 +1,15 @@
 use super::types::CreateTableStatement;
+use crate::compatibility::map_sql_type_to_kalam;
+use crate::parser::utils::{format_span, parse_sql_statements};
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use kalamdb_commons::models::datatypes::ToArrowType;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableAccess, TableName};
 use kalamdb_commons::schemas::policy::FlushPolicy;
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use sqlparser::ast::{
-    ColumnOption, CreateTable, DataType as SqlDataType, Statement, TableConstraint,
+    ColumnOption, CreateTable, DataType as SqlDataType, ObjectNamePart, Statement, TableConstraint,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -33,7 +36,7 @@ impl CreateTableStatement {
         // Use PostgreSqlDialect because GenericDialect has issues with TEXT/STRING PRIMARY KEY
         // in sqlparser 0.59.0. PostgreSqlDialect properly handles TEXT as a data type.
         let dialect = sqlparser::dialect::PostgreSqlDialect {};
-        let mut statements = sqlparser::parser::Parser::parse_sql(&dialect, &normalized_sql)
+        let mut statements = parse_sql_statements(&normalized_sql, &dialect)
             .map_err(|e| e.to_string())?;
         if statements.len() != 1 {
             return Err("Expected exactly one statement".to_string());
@@ -66,15 +69,33 @@ impl CreateTableStatement {
 
                 // Validate names
                 if !RE_ALPHANUMERIC.is_match(namespace_id.as_str()) {
+                    let span = name.0.get(0).and_then(|part| match part {
+                        ObjectNamePart::Identifier(ident) => Some(ident.span),
+                        _ => None,
+                    });
+                    let location = span.map(format_span);
                     return Err(format!(
-                        "Invalid namespace name '{}'. Only alphanumeric characters and underscores are allowed.",
-                        namespace_id
+                        "Invalid namespace name '{}'. Only alphanumeric characters and underscores are allowed{}.",
+                        namespace_id,
+                        location
+                            .as_deref()
+                            .map(|s| format!(" ({})", s))
+                            .unwrap_or_default()
                     ));
                 }
                 if !RE_ALPHANUMERIC.is_match(table_name.as_str()) {
+                    let span = name.0.last().and_then(|part| match part {
+                        ObjectNamePart::Identifier(ident) => Some(ident.span),
+                        _ => None,
+                    });
+                    let location = span.map(format_span);
                     return Err(format!(
-                        "Invalid table name '{}'. Only alphanumeric characters and underscores are allowed.",
-                        table_name
+                        "Invalid table name '{}'. Only alphanumeric characters and underscores are allowed{}.",
+                        table_name,
+                        location
+                            .as_deref()
+                            .map(|s| format!(" ({})", s))
+                            .unwrap_or_default()
                     ));
                 }
 
@@ -268,7 +289,11 @@ impl CreateTableStatement {
                         ));
                     }
 
-                    let (data_type, is_nullable) = convert_sql_type_to_arrow(&col.data_type)?;
+                    let kalam_type = map_sql_type_to_kalam(&col.data_type)?;
+                    let data_type = kalam_type
+                        .to_arrow_type()
+                        .map_err(|e| format!("Unsupported SQL data type: {}", e))?;
+                    let is_nullable = true;
 
                     // Check column options (PRIMARY KEY, DEFAULT, NOT NULL)
                     let mut col_is_nullable = is_nullable; // Default from type mapping

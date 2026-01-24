@@ -3,6 +3,130 @@
 //! This module provides shared parsing helpers to avoid code duplication across
 //! custom parsers (CREATE STORAGE, STORAGE FLUSH, KILL JOB, etc.).
 
+use kalamdb_commons::TableId;
+use sqlparser::ast::{ObjectNamePart, Statement, TableFactor, TableObject};
+use sqlparser::dialect::GenericDialect;
+use sqlparser::dialect::Dialect;
+use sqlparser::parser::{Parser, ParserError, ParserOptions};
+use sqlparser::tokenizer::{Span, Token};
+
+const DEFAULT_SQL_RECURSION_LIMIT: usize = 512;
+
+/// Default sqlparser options used across KalamDB
+pub fn parser_options() -> ParserOptions {
+    ParserOptions::new().with_trailing_commas(true)
+}
+
+/// Parse SQL into statements using KalamDB defaults (options + recursion limit)
+pub fn parse_sql_statements(
+    sql: &str,
+    dialect: &dyn Dialect,
+) -> Result<Vec<Statement>, ParserError> {
+    Parser::new(dialect)
+        .with_options(parser_options())
+        .with_recursion_limit(DEFAULT_SQL_RECURSION_LIMIT)
+        .try_with_sql(sql)?
+        .parse_statements()
+}
+
+/// Extract the target table for INSERT/UPDATE DML statements.
+///
+/// Returns None if parsing fails or the statement is not INSERT/UPDATE.
+pub fn extract_dml_table_id(sql: &str, default_namespace: &str) -> Option<TableId> {
+    let dialect = GenericDialect {};
+    let statements = parse_sql_statements(sql, &dialect).ok()?;
+    if statements.is_empty() {
+        return None;
+    }
+
+    match &statements[0] {
+        Statement::Insert(insert) => {
+            let table_parts: Vec<String> = match &insert.table {
+                TableObject::TableName(obj_name) => obj_name
+                    .0
+                    .iter()
+                    .filter_map(|part| match part {
+                        ObjectNamePart::Identifier(ident) => Some(ident.value.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => return None,
+            };
+
+            match table_parts.len() {
+                1 => Some(TableId::from_strings(default_namespace, &table_parts[0])),
+                2 => Some(TableId::from_strings(&table_parts[0], &table_parts[1])),
+                _ => None,
+            }
+        }
+        Statement::Update { table, .. } => match &table.relation {
+            TableFactor::Table { name, .. } => {
+                let parts: Vec<String> = name
+                    .0
+                    .iter()
+                    .filter_map(|part| match part {
+                        ObjectNamePart::Identifier(ident) => Some(ident.value.clone()),
+                        _ => None,
+                    })
+                    .collect();
+
+                match parts.len() {
+                    1 => Some(TableId::from_strings(default_namespace, &parts[0])),
+                    2 => Some(TableId::from_strings(&parts[0], &parts[1])),
+                    _ => None,
+                }
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Collect non-whitespace tokens using sqlparser's parser lookahead.
+///
+/// This avoids ad-hoc string splitting and provides consistent tokenization
+/// across the codebase.
+pub fn collect_non_whitespace_tokens(
+    sql: &str,
+    dialect: &dyn Dialect,
+) -> Result<Vec<Token>, ParserError> {
+    let parser = Parser::new(dialect)
+        .with_options(parser_options())
+        .with_recursion_limit(DEFAULT_SQL_RECURSION_LIMIT)
+        .try_with_sql(sql)?;
+
+    let mut tokens = Vec::new();
+    let mut idx = 0;
+    loop {
+        let token_with_span = parser.peek_nth_token_ref(idx);
+        let token = token_with_span.token.clone();
+        if matches!(token, Token::EOF) {
+            break;
+        }
+        tokens.push(token);
+        idx += 1;
+    }
+
+    Ok(tokens)
+}
+
+/// Extract uppercased keyword-ish tokens (WORD + NUMBER) for command classification.
+pub fn tokens_to_words(tokens: &[Token]) -> Vec<String> {
+    tokens
+        .iter()
+        .filter_map(|tok| match tok {
+            Token::Word(word) => Some(word.value.to_ascii_uppercase()),
+            Token::Number(value, _) => Some(value.to_ascii_uppercase()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Format a source span for user-facing error messages.
+pub fn format_span(span: Span) -> String {
+    format!("line {}, col {}", span.start.line, span.start.column)
+}
+
 /// Normalize SQL by removing extra whitespace and semicolons
 ///
 /// Converts multiple spaces, tabs, newlines into single spaces and removes trailing semicolons.
@@ -16,11 +140,14 @@
 /// assert_eq!(normalize_sql(sql), "CREATE STORAGE s3_prod");
 /// ```
 pub fn normalize_sql(sql: &str) -> String {
-    sql.trim()
-        .trim_end_matches(';')
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    let mut normalized = String::new();
+    for part in sql.trim().trim_end_matches(';').split_whitespace() {
+        if !normalized.is_empty() {
+            normalized.push(' ');
+        }
+        normalized.push_str(part);
+    }
+    normalized
 }
 
 /// Extract a quoted string value after a keyword
@@ -149,11 +276,13 @@ pub fn extract_identifier(sql: &str, skip_tokens: usize) -> Result<String, Strin
 /// - Table reference is not qualified (missing namespace)
 /// - Invalid format
 pub fn extract_qualified_table(table_ref: &str) -> Result<(String, String), String> {
-    let parts: Vec<&str> = table_ref.split('.').collect();
-    if parts.len() != 2 {
+    let (namespace, table) = table_ref
+        .split_once('.')
+        .ok_or_else(|| "Table name must be qualified as exactly namespace.table_name".to_string())?;
+    if table.contains('.') {
         return Err("Table name must be qualified as exactly namespace.table_name".to_string());
     }
-    Ok((parts[0].to_string(), parts[1].to_string()))
+    Ok((namespace.to_string(), table.to_string()))
 }
 
 /// Find whole-word match in a string (case-insensitive)
@@ -185,6 +314,7 @@ fn find_whole_word(haystack: &str, needle: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlparser::dialect::GenericDialect;
 
     #[test]
     fn test_normalize_sql() {
@@ -203,6 +333,22 @@ mod tests {
         // Missing quote
         let bad_sql = "NAME value";
         assert!(extract_quoted_keyword_value(bad_sql, "NAME").is_err());
+    }
+
+    #[test]
+    fn test_parse_sql_statements_with_trailing_commas() {
+        let dialect = GenericDialect {};
+        let sql = "SELECT a, b, FROM table_1";
+        let statements = parse_sql_statements(sql, &dialect).unwrap();
+        assert_eq!(statements.len(), 1);
+    }
+
+    #[test]
+    fn test_collect_tokens_and_words() {
+        let dialect = GenericDialect {};
+        let tokens = collect_non_whitespace_tokens("USE NAMESPACE demo", &dialect).unwrap();
+        let words = tokens_to_words(&tokens);
+        assert!(words.starts_with(&["USE".to_string(), "NAMESPACE".to_string()]));
     }
 
     #[test]

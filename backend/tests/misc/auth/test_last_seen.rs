@@ -10,7 +10,7 @@
 use super::test_support::TestServer;
 use base64::{engine::general_purpose, Engine as _};
 use kalamdb_auth::{authenticate, AuthRequest};
-use kalamdb_commons::{models::ConnectionInfo, Role};
+use kalamdb_commons::{models::{ConnectionInfo, UserName}, Role};
 
 fn basic_auth_header(username: &str, password: &str) -> String {
     let credentials = format!("{}:{}", username, password);
@@ -37,7 +37,7 @@ async fn test_authentication_returns_user() {
     assert!(result.is_ok(), "Authentication should succeed");
 
     let auth_result = result.unwrap();
-    assert_eq!(auth_result.user.username, username);
+    assert_eq!(auth_result.user.username, UserName::from(username));
     assert_eq!(auth_result.user.role, Role::User);
 }
 

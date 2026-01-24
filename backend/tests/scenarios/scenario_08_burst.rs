@@ -80,7 +80,7 @@ async fn test_scenario_08_burst_writes() -> anyhow::Result<()> {
                                     &format!(
                                         "INSERT INTO {}.events (id, event_type, payload) VALUES ({}, 'burst', 'data_{}')",
                                         ns, id, id
-                                    ),
+                                    ), None,
                                     None,
                                     None,
                                 )
@@ -156,7 +156,7 @@ async fn test_scenario_08_burst_writes() -> anyhow::Result<()> {
     // =========================================================
     let final_client = client.clone();
     let resp = final_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.events", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.events", ns), None, None, None)
         .await?;
     let final_count: i64 = resp.get_i64("cnt").unwrap_or(0);
 
@@ -225,7 +225,7 @@ async fn test_scenario_08_sustained_load() -> anyhow::Result<()> {
                         ns_for_writes,
                         i,
                         i * 10
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -303,7 +303,7 @@ async fn test_scenario_08_subscription_reconnect() -> anyhow::Result<()> {
     for i in 1..=5 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.events (id, value) VALUES ({}, 'initial_{}')", ns, i, i),
+                &format!("INSERT INTO {}.events (id, value) VALUES ({}, 'initial_{}')", ns, i, i), None,
                 None,
                 None,
             )
@@ -325,7 +325,7 @@ async fn test_scenario_08_subscription_reconnect() -> anyhow::Result<()> {
     for i in 6..=10 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.events (id, value) VALUES ({}, 'new_{}')", ns, i, i),
+                &format!("INSERT INTO {}.events (id, value) VALUES ({}, 'new_{}')", ns, i, i), None,
                 None,
                 None,
             )

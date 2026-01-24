@@ -98,6 +98,7 @@
 use crate::entity_store::{EntityIterator, EntityStore, KSerializable};
 use crate::storage_trait::{Operation, Partition, Result, StorageBackend, StorageError};
 use kalamdb_commons::StorageKey;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[cfg(feature = "datafusion")]
@@ -745,8 +746,6 @@ where
         common_prefix: &[u8],
         prefixes: &[Vec<u8>],
     ) -> Result<std::collections::HashSet<Vec<u8>>> {
-        use std::collections::HashSet;
-
         if prefixes.is_empty() {
             return Ok(HashSet::new());
         }
@@ -760,22 +759,42 @@ where
         // Scan all entries with the common prefix (e.g., all PKs for this user)
         let iter = self.backend.scan(&index_partition, Some(common_prefix), None, None)?;
 
+        let mut prefixes_by_len: HashMap<usize, HashSet<&[u8]>> = HashMap::new();
+        for prefix in prefixes {
+            prefixes_by_len
+                .entry(prefix.len())
+                .or_default()
+                .insert(prefix.as_slice());
+        }
+        let mut lengths: Vec<usize> = prefixes_by_len.keys().copied().collect();
+        lengths.sort_unstable();
+
+        let mut remaining: usize = prefixes_by_len.values().map(|set| set.len()).sum();
+        if remaining == 0 {
+            return Ok(HashSet::new());
+        }
+
         // Check which of the requested prefixes exist without collecting all keys
-        let mut found = HashSet::with_capacity(prefixes.len());
-        let mut remaining = prefixes.len();
+        // We need to store owned Vec<u8> since keys are temporary
+        let mut found: HashSet<Vec<u8>> = HashSet::with_capacity(remaining);
 
         'outer: for (key, _value) in iter {
-            for prefix in prefixes {
-                if found.contains(prefix) {
-                    continue;
+            for len in &lengths {
+                if key.len() < *len {
+                    break;
                 }
 
-                if key.starts_with(prefix) {
-                    found.insert(prefix.clone());
-                    remaining -= 1;
+                let prefix_slice = &key[..*len];
+                if let Some(prefix_set) = prefixes_by_len.get(len) {
+                    if prefix_set.contains(prefix_slice) {
+                        let prefix_owned = prefix_slice.to_vec();
+                        if found.insert(prefix_owned) {
+                            remaining -= 1;
 
-                    if remaining == 0 {
-                        break 'outer;
+                            if remaining == 0 {
+                                break 'outer;
+                            }
+                        }
                     }
                 }
             }

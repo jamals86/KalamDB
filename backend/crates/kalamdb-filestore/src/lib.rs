@@ -25,6 +25,7 @@
 
 mod core;
 pub mod error;
+pub mod files;
 pub mod manifest;
 pub mod parquet;
 pub mod paths;
@@ -40,6 +41,7 @@ mod tests;
 
 // Re-export commonly used types
 pub use error::{FilestoreError, Result};
+pub use files::{FileStorageService, StagedFile, StagingManager};
 pub use manifest_ops::{manifest_exists, read_manifest_json, write_manifest_json};
 pub use parquet_reader_ops::{
     parse_parquet_from_bytes, parse_parquet_schema_from_bytes,

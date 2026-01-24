@@ -8,6 +8,7 @@ mod test_support;
 
 // Include test modules organized by category
 mod cluster;
+mod files;
 mod flush;
 mod manifest;
 mod observability;

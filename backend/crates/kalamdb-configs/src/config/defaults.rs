@@ -366,3 +366,24 @@ pub fn default_max_ws_message_size() -> usize {
 pub fn default_max_request_body_size() -> usize {
     10 * 1024 * 1024 // 10MB
 }
+
+// File upload defaults
+pub fn default_file_max_size_bytes() -> usize {
+    25 * 1024 * 1024 // 25MB
+}
+
+pub fn default_file_max_files_per_request() -> usize {
+    20
+}
+
+pub fn default_file_max_files_per_folder() -> u32 {
+    5000
+}
+
+pub fn default_file_staging_path() -> String {
+    "./data/tmp".to_string()
+}
+
+pub fn default_file_allowed_mime_types() -> Vec<String> {
+    vec![] // Empty = allow all
+}

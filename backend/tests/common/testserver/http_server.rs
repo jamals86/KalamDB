@@ -568,7 +568,7 @@ impl HttpTestServer {
 
         let resp = match client
             .execute_query(
-                sql,
+                sql, None,
                 if params.is_empty() {
                     None
                 } else {

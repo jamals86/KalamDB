@@ -10,7 +10,7 @@
 //! flow that is used by both HTTP and WebSocket handlers.
 
 use super::test_support::{auth_helper, TestServer};
-use kalamdb_commons::{models::ConnectionInfo, Role};
+use kalamdb_commons::{models::{ConnectionInfo, UserName}, Role};
 use std::sync::Arc;
 
 /// Test successful Basic Auth with valid credentials
@@ -53,7 +53,7 @@ async fn test_basic_auth_success() {
         result.as_ref().err()
     );
     let auth_result = result.unwrap();
-    assert_eq!(auth_result.user.username, username);
+    assert_eq!(auth_result.user.username, UserName::from(username));
     assert_eq!(auth_result.user.role, Role::User);
 
     println!("✓ Basic Auth test passed - User authenticated successfully");

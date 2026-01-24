@@ -103,6 +103,39 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
         .map(|server| (server.base_url.clone(), server.storage_dir.clone()))
 }
 
+/// Force a local auto-started test server and return its base URL.
+///
+/// This bypasses any externally running server to ensure tests use the
+/// in-process server with the current code version.
+pub fn force_auto_test_server_url() -> String {
+    ensure_auto_test_server()
+        .map(|(url, _)| url)
+        .unwrap_or_else(|| server_url().to_string())
+}
+
+/// Async variant of forcing a local auto-started test server.
+pub async fn force_auto_test_server_url_async() -> String {
+    let server_mutex = AUTO_TEST_SERVER.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = server_mutex.lock() {
+        if guard.is_none() {
+            match start_local_test_server().await {
+                Ok(server) => {
+                    *guard = Some(server);
+                }
+                Err(err) => {
+                    eprintln!("Failed to auto-start test server: {}", err);
+                }
+            }
+        }
+
+        if let Some(server) = guard.as_ref() {
+            return server.base_url.clone();
+        }
+    }
+
+    server_url().to_string()
+}
+
 async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let data_path = temp_dir.path().to_path_buf();
@@ -1825,7 +1858,7 @@ pub fn execute_sql_via_client_as_with_args(
                             .build(),
                     )
                     .build()?;
-                let response = client.execute_query(sql, None, None).await?;
+                let response = client.execute_query(sql, None, None, None).await?;
                 Ok(response)
             }
 
@@ -1842,7 +1875,7 @@ pub fn execute_sql_via_client_as_with_args(
                         let response = if is_root && leader_url.as_ref() == Some(url) {
                             let client = get_shared_root_client();
                             client
-                                .execute_query(&sql, None, None)
+                                .execute_query(&sql, None, None, None)
                                 .await
                                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
                         } else {
@@ -1903,7 +1936,7 @@ pub fn execute_sql_via_client_as_with_args(
                 let response = if is_root {
                     // Reuse shared root client to avoid creating new TCP connections
                     let client = get_shared_root_client();
-                    client.execute_query(&sql, None, None).await?
+                    client.execute_query(&sql, None, None, None).await?
                 } else {
                     execute_once(&base_url, &username_owned, &password_owned, &sql).await?
                 };
@@ -3177,7 +3210,7 @@ pub fn execute_sql_on_node(
             .build()?;
 
         let sql = sql.to_string();
-        let response = rt.block_on(async { client.execute_query(&sql, None, None).await })?;
+        let response = rt.block_on(async { client.execute_query(&sql, None, None, None).await })?;
 
         // Format response similar to execute_sql_via_client_as
         let mut output = String::new();

@@ -17,6 +17,7 @@ use std::collections::HashMap;
 
 use crate::ids::SeqId;
 use crate::models::rows::StoredScalarValue;
+use crate::models::types::file_ref::FileSubfolderState;
 use crate::models::TableId;
 use crate::UserId;
 
@@ -426,6 +427,11 @@ pub struct Manifest {
     /// Last batch/segment index (used to generate next batch filename: batch-{N}.parquet)
     /// This is automatically updated when add_segment() is called.
     pub last_sequence_number: u64,
+
+    /// File subfolder tracking for FILE columns.
+    /// Only present if the table has FILE columns.
+    /// Tracks current subfolder and file count for rotation.
+    pub files: Option<FileSubfolderState>,
 }
 
 impl Manifest {
@@ -439,7 +445,46 @@ impl Manifest {
             updated_at: now,
             segments: Vec::new(),
             last_sequence_number: 0,
+            files: None,
         }
+    }
+
+    /// Create a manifest for a table with FILE columns
+    pub fn new_with_files(table_id: TableId, user_id: Option<UserId>) -> Self {
+        let now = chrono::Utc::now().timestamp();
+        Self {
+            table_id,
+            user_id,
+            version: 1,
+            created_at: now,
+            updated_at: now,
+            segments: Vec::new(),
+            last_sequence_number: 0,
+            files: Some(FileSubfolderState::new()),
+        }
+    }
+
+    /// Enable file tracking for this manifest
+    pub fn enable_files(&mut self) {
+        if self.files.is_none() {
+            self.files = Some(FileSubfolderState::new());
+        }
+    }
+
+    /// Allocate a file subfolder for a new file upload.
+    /// Returns the subfolder name (e.g., "f0001").
+    /// Panics if files are not enabled.
+    pub fn allocate_file_subfolder(&mut self, max_files_per_folder: u32) -> String {
+        let state = self.files.as_mut().expect("File tracking not enabled for this manifest");
+        let subfolder = state.allocate_file(max_files_per_folder);
+        self.updated_at = chrono::Utc::now().timestamp();
+        self.version += 1;
+        subfolder
+    }
+
+    /// Get current file subfolder name without allocating
+    pub fn current_file_subfolder(&self) -> Option<String> {
+        self.files.as_ref().map(|s| s.subfolder_name())
     }
     // ...existing code...
 

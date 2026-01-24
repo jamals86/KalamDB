@@ -385,7 +385,7 @@ impl CLISession {
         };
 
         // Execute the query
-        let result = self.client.execute_query(sql, None, None).await;
+        let result = self.client.execute_query(sql, None, None, None).await;
 
         // Cancel the loading indicator and finish spinner if it was shown
         if let Some(task) = show_loading {
@@ -897,13 +897,13 @@ impl CLISession {
             pb.enable_steady_tick(Duration::from_millis(80));
             let resp = self
                 .client
-                .execute_query("SELECT name FROM system.namespaces ORDER BY name", None, None)
+                .execute_query("SELECT name FROM system.namespaces ORDER BY name", None, None, None)
                 .await;
             pb.finish_and_clear();
             resp
         } else {
             self.client
-                .execute_query("SELECT name FROM system.namespaces ORDER BY name", None, None)
+                .execute_query("SELECT name FROM system.namespaces ORDER BY name", None, None, None)
                 .await
         };
 
@@ -935,13 +935,13 @@ impl CLISession {
             pb.enable_steady_tick(Duration::from_millis(80));
             let resp = self
                 .client
-                .execute_query("SELECT table_name, namespace_id FROM system.tables", None, None)
+                .execute_query("SELECT table_name, namespace_id FROM system.tables", None, None, None)
                 .await?;
             pb.finish_and_clear();
             resp
         } else {
             self.client
-                .execute_query("SELECT table_name, namespace_id FROM system.tables", None, None)
+                .execute_query("SELECT table_name, namespace_id FROM system.tables", None, None, None)
                 .await?
         };
 
@@ -973,6 +973,7 @@ impl CLISession {
             .client
             .execute_query(
                 "SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('system', 'information_schema') ORDER BY table_schema, table_name",
+                None,
                 None,
                 None,
             )
@@ -1051,6 +1052,7 @@ impl CLISession {
                     "SELECT table_name, column_name FROM information_schema.columns ORDER BY table_name, ordinal_position",
                     None,
                     None,
+                    None,
                 )
                 .await;
             pb.finish_and_clear();
@@ -1059,6 +1061,7 @@ impl CLISession {
             self.client
                 .execute_query(
                     "SELECT table_name, column_name FROM information_schema.columns ORDER BY table_name, ordinal_position",
+                    None,
                     None,
                     None,
                 )
@@ -1829,6 +1832,7 @@ impl CLISession {
             .client
             .execute_query(
                 "SELECT cluster_id, node_id, role, status, api_addr, is_self, is_leader FROM system.cluster",
+                None,
                 None,
                 None,
             )

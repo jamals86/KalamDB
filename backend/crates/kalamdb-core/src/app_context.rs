@@ -96,6 +96,9 @@ pub struct AppContext {
     // ===== Manifest Service (unified: hot cache + RocksDB + cold storage) =====
     manifest_service: Arc<crate::manifest::ManifestService>,
 
+    // ===== File Storage Service (for FILE datatype) =====
+    file_storage_service: Arc<kalamdb_filestore::FileStorageService>,
+
     // ===== Unified Applier (single execution path for all commands) =====
     applier: OnceCell<Arc<dyn UnifiedApplier>>,
 
@@ -323,6 +326,16 @@ impl AppContext {
             manifest_service_obj.set_storage_registry(storage_registry.clone());
             let manifest_service = Arc::new(manifest_service_obj);
 
+            // Create file storage service (for FILE datatype uploads)
+            let file_storage_service = Arc::new(kalamdb_filestore::FileStorageService::new(
+                Arc::clone(&storage_registry),
+                &config.files.staging_path,
+                config.files.max_files_per_folder,
+                config.files.max_size_bytes,
+                config.files.max_files_per_request,
+                config.files.allowed_mime_types.clone(),
+            ));
+
             // Create command executor (Phase 20 - Unified Raft Executor)
             // ALWAYS use RaftExecutor - same code path for standalone and cluster
             // In standalone mode: single-node Raft cluster (no peers, instant leader election)
@@ -396,6 +409,7 @@ impl AppContext {
                 system_columns_service,
                 slow_query_logger,
                 manifest_service,
+                file_storage_service,
                 sql_executor: OnceCell::new(),
                 server_start_time: Instant::now(),
             });
@@ -638,6 +652,16 @@ impl AppContext {
             storage_registry.clone(),
         ));
 
+        // Create file storage service for tests
+        let file_storage_service = Arc::new(kalamdb_filestore::FileStorageService::new(
+            Arc::clone(&storage_registry),
+            "/tmp/kalamdb-test/staging",
+            1000,
+            1024 * 1024 * 100,
+            10,
+            vec!["*/*".to_string()],
+        ));
+
         // Create RaftExecutor with single-node config for tests
         // This uses the same code path as production (unified Raft mode)
         let raft_config = kalamdb_raft::manager::RaftManagerConfig::for_single_node(
@@ -666,6 +690,7 @@ impl AppContext {
             system_columns_service,
             slow_query_logger,
             manifest_service,
+            file_storage_service,
             sql_executor: OnceCell::new(),
             server_start_time: Instant::now(),
         });
@@ -898,6 +923,16 @@ impl AppContext {
     /// - Cold storage access for manifest.json files
     pub fn manifest_service(&self) -> Arc<crate::manifest::ManifestService> {
         self.manifest_service.clone()
+    }
+
+    /// Access the FileStorageService for FILE datatype operations.
+    ///
+    /// Returns an Arc reference to the FileStorageService that provides:
+    /// - File staging and finalization
+    /// - File download and deletion
+    /// - Storage routing per table via StorageRegistry
+    pub fn file_storage_service(&self) -> Arc<kalamdb_filestore::FileStorageService> {
+        self.file_storage_service.clone()
     }
 
     /// Register the shared SqlExecutor (called once during bootstrap)

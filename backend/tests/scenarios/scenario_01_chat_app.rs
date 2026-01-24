@@ -119,7 +119,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
             "INSERT INTO {}.conversations (id, title) VALUES ({}, 'Conv {}')",
             ns, conv_id, conv_id
         );
-        let resp = u1_client.execute_query(&sql, None, None).await?;
+        let resp = u1_client.execute_query(&sql, None, None, None).await?;
         assert!(resp.success(), "u1 insert conversation {}", conv_id);
     }
 
@@ -130,13 +130,13 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
                     "INSERT INTO {}.messages (id, conversation_id, role_id, content) VALUES ({}, {}, '{}', 'Message {} from u1')",
                     ns, i, conv_id, role, i
                 );
-        let resp = u1_client.execute_query(&sql, None, None).await?;
+        let resp = u1_client.execute_query(&sql, None, None, None).await?;
         assert!(resp.success(), "u1 insert message {}", i);
     }
 
     // u2: 1 conversation, 20 messages
     let sql = format!("INSERT INTO {}.conversations (id, title) VALUES (100, 'U2 Conv')", ns);
-    let resp = u2_client.execute_query(&sql, None, None).await?;
+    let resp = u2_client.execute_query(&sql, None, None, None).await?;
     assert!(resp.success(), "u2 insert conversation");
 
     for i in 101..=120 {
@@ -144,7 +144,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
                     "INSERT INTO {}.messages (id, conversation_id, role_id, content) VALUES ({}, 100, 'user', 'Message {} from u2')",
                     ns, i, i
                 );
-        let resp = u2_client.execute_query(&sql, None, None).await?;
+        let resp = u2_client.execute_query(&sql, None, None, None).await?;
         assert!(resp.success(), "u2 insert message {}", i);
     }
 
@@ -152,13 +152,13 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     // Step 5: Verify USER isolation
     // =========================================================
     let resp = u1_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.messages", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.messages", ns), None, None, None)
         .await?;
     let u1_count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert_eq!(u1_count, 50, "u1 should see 50 messages");
 
     let resp = u2_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.messages", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.messages", ns), None, None, None)
         .await?;
     let u2_count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert_eq!(u2_count, 20, "u2 should see 20 messages");
@@ -184,7 +184,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     // Update a message
     let resp = u1_client
         .execute_query(
-            &format!("UPDATE {}.messages SET content = 'Updated message 1' WHERE id = 1", ns),
+            &format!("UPDATE {}.messages SET content = 'Updated message 1' WHERE id = 1", ns), None,
             None,
             None,
         )
@@ -193,7 +193,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
 
     // Soft delete a message
     let resp = u1_client
-        .execute_query(&format!("DELETE FROM {}.messages WHERE id = 2", ns), None, None)
+        .execute_query(&format!("DELETE FROM {}.messages WHERE id = 2", ns), None, None, None)
         .await?;
     assert!(resp.success(), "Delete message");
 
@@ -224,7 +224,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
                         "INSERT INTO {}.messages (id, conversation_id, role_id, content) VALUES ({}, 1, 'user', 'New message during flush {}')",
                         ns, i, i
                     );
-            let resp = u1_client.execute_query(&sql, None, None).await?;
+            let resp = u1_client.execute_query(&sql, None, None, None).await?;
             if resp.success() {
                 break;
             }
@@ -248,7 +248,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     let mut post_flush_count: i64 = 0;
     loop {
         let resp = u1_client
-            .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.messages", ns), None, None)
+            .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.messages", ns), None, None, None)
             .await?;
         post_flush_count = resp.get_i64("cnt").unwrap_or(0);
         if post_flush_count >= 54 || Instant::now() >= deadline {
@@ -275,7 +275,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     // Step 10: Verify no duplicates
     // =========================================================
     let resp = u1_client
-        .execute_query(&format!("SELECT id FROM {}.messages ORDER BY id", ns), None, None)
+        .execute_query(&format!("SELECT id FROM {}.messages ORDER BY id", ns), None, None, None)
         .await?;
     let ids: Vec<i64> = resp
         .rows_as_maps()
@@ -294,7 +294,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     // Step 11: Verify deleted row exclusion
     // =========================================================
     let resp = u1_client
-        .execute_query(&format!("SELECT id FROM {}.messages WHERE id = 2", ns), None, None)
+        .execute_query(&format!("SELECT id FROM {}.messages WHERE id = 2", ns), None, None, None)
         .await?;
     assert!(resp.rows().is_empty(), "Deleted row should not appear in default query");
 
@@ -338,7 +338,7 @@ async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
             &format!(
                 "INSERT INTO {}.messages (id, role_id, content) VALUES (1, 'user', 'Hello')",
                 ns
-            ),
+            ), None,
             None,
             None,
         )
@@ -353,7 +353,7 @@ async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
     // Insert as service (this goes to service's own partition by default)
     let _resp = service_client
                 .execute_query(
-                    &format!("INSERT INTO {}.messages (id, role_id, content) VALUES (2, 'assistant', 'AI Response')", ns),
+                    &format!("INSERT INTO {}.messages (id, role_id, content) VALUES (2, 'assistant', 'AI Response')", ns), None,
                     None,
                     None,
                 )
@@ -362,7 +362,7 @@ async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
 
     // Verify u1 can see their own message
     let resp = u1_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.messages", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.messages", ns), None, None, None)
         .await?;
     let u1_count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert!(u1_count >= 1, "u1 should see at least their own message");

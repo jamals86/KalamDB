@@ -3,11 +3,14 @@
 //! This module provides HTTP handlers for executing SQL statements via the REST API.
 //! Authentication is handled automatically by the `AuthSession` extractor.
 
-use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
+use actix_multipart::Multipart;
+use actix_web::{post, web, Either, FromRequest, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSession;
 use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
-use kalamdb_commons::models::{NamespaceId, Role};
-use kalamdb_commons::schemas::SchemaField;
+use kalamdb_commons::models::ids::StorageId;
+use kalamdb_commons::models::types::{FileRef, FileSubfolderState};
+use kalamdb_commons::models::{NamespaceId, Role, TableId, UserId};
+use kalamdb_commons::schemas::{SchemaField, TableType};
 use kalamdb_core::providers::arrow_json_conversion::{
     json_value_to_scalar_strict, record_batch_to_json_arrays,
 };
@@ -16,16 +19,28 @@ use kalamdb_core::sql::executor::{ExecutorMetadataAlias, ScalarValue, SqlExecuto
 use kalamdb_core::sql::ExecutionResult;
 use kalamdb_raft::GroupId;
 use reqwest::Client;
+use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use super::file_utils::{
+    extract_file_placeholders, extract_table_from_sql, parse_sql_payload,
+    stage_and_finalize_files, substitute_file_placeholders,
+};
 use crate::models::{ErrorCode, QueryRequest, QueryResult, SqlResponse};
 use crate::limiter::RateLimiter;
 
 /// POST /v1/api/sql - Execute SQL statement(s)
 ///
-/// Accepts a JSON payload with a `sql` field containing one or more SQL statements.
+/// Accepts either JSON or multipart/form-data payloads.
+///
+/// - JSON: `sql` plus optional `params` and `namespace_id`.
+/// - Multipart: `sql`, optional `params` (JSON array), optional `namespace_id`,
+///   and file parts named `file:<placeholder>` for FILE("name") placeholders.
+///
 /// Multiple statements can be separated by semicolons and will be executed sequentially.
+/// File uploads require a single SQL statement.
 ///
 /// # Authentication
 /// Requires authentication via Authorization header.
@@ -56,7 +71,7 @@ use crate::limiter::RateLimiter;
 pub async fn execute_sql_v1(
     session: AuthSession,
     http_req: HttpRequest,
-    req: web::Json<QueryRequest>,
+    payload: web::Payload,
     app_context: web::Data<Arc<kalamdb_core::app_context::AppContext>>,
     sql_executor: web::Data<Arc<SqlExecutor>>,
     rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
@@ -83,12 +98,83 @@ pub async fn execute_sql_v1(
         }
     }
 
-    let default_namespace = NamespaceId::new(req.namespace_id.as_deref().unwrap_or("default"));
+    let content_type = http_req
+        .headers()
+        .get(actix_web::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let is_multipart = content_type.to_ascii_lowercase().starts_with("multipart/form-data");
 
-    if let Some(response) =
-        forward_sql_if_follower(&http_req, &req, app_context.get_ref(), &default_namespace).await
-    {
-        return response;
+    let mut payload = payload.into_inner();
+
+    let parsed_payload = if is_multipart {
+        let multipart = Multipart::new(http_req.headers(), payload);
+        match parse_sql_payload(Either::Right(multipart), &app_context.config().files).await {
+            Ok(p) => p,
+            Err(e) => {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return HttpResponse::BadRequest().json(SqlResponse::error(e.code, &e.message, took));
+            }
+        }
+    } else {
+        let json = match web::Json::<QueryRequest>::from_request(&http_req, &mut payload).await {
+            Ok(j) => j,
+            Err(e) => {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return HttpResponse::BadRequest().json(SqlResponse::error(
+                    ErrorCode::InvalidInput,
+                    &format!("Invalid JSON payload: {}", e),
+                    took,
+                ));
+            }
+        };
+        match parse_sql_payload(Either::Left(json), &app_context.config().files).await {
+            Ok(p) => p,
+            Err(e) => {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return HttpResponse::BadRequest().json(SqlResponse::error(e.code, &e.message, took));
+            }
+        }
+    };
+
+    let sql = parsed_payload.sql;
+    let params_json = parsed_payload.params;
+    let namespace_id = parsed_payload.namespace_id;
+    let mut files = parsed_payload.files;
+    let is_multipart = parsed_payload.is_multipart;
+
+    let default_namespace = NamespaceId::new(namespace_id.as_deref().unwrap_or("default"));
+
+    let files_present = files.as_ref().map(|f| !f.is_empty()).unwrap_or(false);
+    if files_present {
+        let executor = app_context.executor();
+        if !executor.is_leader(GroupId::Meta).await {
+            let took = start_time.elapsed().as_secs_f64() * 1000.0;
+            return HttpResponse::ServiceUnavailable().json(SqlResponse::error(
+                ErrorCode::NotLeader,
+                "File uploads must be sent to the current leader",
+                took,
+            ));
+        }
+    }
+
+    let req_for_forward = QueryRequest {
+        sql: sql.clone(),
+        params: params_json.clone(),
+        namespace_id: namespace_id.clone(),
+    };
+
+    if !files_present {
+        if let Some(response) = forward_sql_if_follower(
+            &http_req,
+            &req_for_forward,
+            app_context.get_ref(),
+            &default_namespace,
+        )
+        .await
+        {
+            return response;
+        }
     }
 
     // Extract request_id for ExecutionContext
@@ -99,29 +185,173 @@ pub async fn execute_sql_v1(
         .map(|s| s.to_string());
 
     // Parse parameters if provided
-    let params = match &req.params {
-        Some(json_params) => {
-            let mut scalar_params = Vec::new();
-            for (idx, json_val) in json_params.iter().enumerate() {
-                match json_value_to_scalar_strict(json_val) {
-                    Ok(scalar) => scalar_params.push(scalar),
-                    Err(err) => {
-                        let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                        return HttpResponse::BadRequest().json(SqlResponse::error(
-                            ErrorCode::InvalidParameter,
-                            &format!("Parameter ${} invalid: {}", idx + 1, err),
-                            took,
-                        ));
-                    },
-                }
-            }
-            scalar_params
-        },
-        None => Vec::new(),
+    let params = match parse_scalar_params(&params_json) {
+        Ok(p) => p,
+        Err(err) => {
+            let took = start_time.elapsed().as_secs_f64() * 1000.0;
+            return HttpResponse::BadRequest().json(SqlResponse::error(
+                ErrorCode::InvalidParameter,
+                &err,
+                took,
+            ));
+        }
     };
 
+    // Handle FILE uploads (multipart only)
+    let required_files = extract_file_placeholders(&sql);
+    if !required_files.is_empty() || files_present {
+        if !is_multipart {
+            let took = start_time.elapsed().as_secs_f64() * 1000.0;
+            return HttpResponse::BadRequest().json(SqlResponse::error(
+                ErrorCode::InvalidInput,
+                "FILE placeholders require multipart/form-data",
+                took,
+            ));
+        }
+
+        let statements = match kalamdb_sql::split_statements(&sql) {
+            Ok(stmts) => stmts,
+            Err(err) => {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return HttpResponse::BadRequest().json(SqlResponse::error(
+                    ErrorCode::BatchParseError,
+                    &format!("Failed to parse SQL batch: {}", err),
+                    took,
+                ));
+            }
+        };
+
+        if statements.len() != 1 {
+            let took = start_time.elapsed().as_secs_f64() * 1000.0;
+            return HttpResponse::BadRequest().json(SqlResponse::error(
+                ErrorCode::InvalidInput,
+                "File uploads require a single SQL statement",
+                took,
+            ));
+        }
+
+        let mut files_map = files.take().unwrap_or_default();
+        if !required_files.is_empty() {
+            files_map = files_map
+                .into_iter()
+                .filter(|(key, _)| required_files.contains(key))
+                .collect();
+        }
+
+        let table_id = match extract_table_from_sql(&sql, default_namespace.as_str()) {
+            Some(tid) => tid,
+            None => {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return HttpResponse::BadRequest().json(SqlResponse::error(
+                    ErrorCode::InvalidInput,
+                    "Could not determine target table from SQL. Use fully qualified table name (namespace.table).",
+                    took,
+                ));
+            }
+        };
+
+        let schema_registry = app_context.schema_registry();
+        let table_entry = match schema_registry.get_table_entry(&table_id) {
+            Some(entry) => entry,
+            None => {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return HttpResponse::BadRequest().json(SqlResponse::error(
+                    ErrorCode::TableNotFound,
+                    &format!("Table '{}' not found", table_id),
+                    took,
+                ));
+            }
+        };
+
+        let storage_id = table_entry.storage_id.clone();
+        let table_type = table_entry.table_type;
+
+        let user_id = match table_type {
+            TableType::User => Some(session.user.user_id.clone()),
+            TableType::Shared => None,
+            TableType::Stream | TableType::System => {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return HttpResponse::BadRequest().json(SqlResponse::error(
+                    ErrorCode::InvalidInput,
+                    "File uploads are not supported for stream or system tables",
+                    took,
+                ));
+            }
+        };
+
+        let manifest_service = app_context.manifest_service();
+        let mut subfolder_state = match manifest_service.get_file_subfolder_state(&table_id) {
+            Ok(Some(state)) => state,
+            Ok(None) => FileSubfolderState::new(),
+            Err(e) => {
+                log::warn!("Failed to get subfolder state for {}: {}", table_id, e);
+                FileSubfolderState::new()
+            }
+        };
+
+        let file_service = app_context.file_storage_service();
+        let file_refs = if files_map.is_empty() {
+            HashMap::new()
+        } else {
+            match stage_and_finalize_files(
+                file_service.as_ref(),
+                &files_map,
+                &storage_id,
+                table_type,
+                &table_id,
+                user_id.as_ref(),
+                &mut subfolder_state,
+                None,
+            ) {
+                Ok(refs) => refs,
+                Err(e) => {
+                    let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                    return HttpResponse::InternalServerError().json(SqlResponse::error(
+                        e.code,
+                        &e.message,
+                        took,
+                    ));
+                }
+            }
+        };
+
+        let modified_sql = substitute_file_placeholders(&sql, &file_refs);
+
+        return match execute_single_statement(
+            &modified_sql,
+            app_context.get_ref(),
+            sql_executor.get_ref(),
+            &session,
+            request_id.as_deref(),
+            None,
+            params,
+            namespace_id.clone(),
+        )
+        .await
+        {
+            Ok(result) => {
+                if let Err(e) = manifest_service.update_file_subfolder_state(&table_id, subfolder_state) {
+                    log::warn!("Failed to update subfolder state for {}: {}", table_id, e);
+                }
+
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                HttpResponse::Ok().json(SqlResponse::success(vec![result], took))
+            }
+            Err(err) => {
+                cleanup_files(&file_refs, &storage_id, table_type, &table_id, user_id.as_ref(), app_context.get_ref());
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                HttpResponse::BadRequest().json(SqlResponse::error_with_details(
+                    ErrorCode::SqlExecutionError,
+                    &format!("Statement 1 failed: {}", err),
+                    &modified_sql,
+                    took,
+                ))
+            }
+        };
+    }
+
     // Parse SQL statements
-    let statements = match kalamdb_sql::split_statements(&req.sql) {
+    let statements = match kalamdb_sql::split_statements(&sql) {
         Ok(stmts) => stmts,
         Err(err) => {
             let took = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -229,7 +459,7 @@ pub async fn execute_sql_v1(
                     if let Some(response) = handle_not_leader_error(
                         kalamdb_err,
                         &http_req,
-                        &req,
+                        &req_for_forward,
                         app_context.get_ref(),
                         start_time,
                     ).await {
@@ -492,6 +722,41 @@ async fn handle_not_leader_error(
                 &format!("Failed to forward request to leader: {}", err),
                 took,
             )))
+        }
+    }
+}
+
+fn parse_scalar_params(params_json: &Option<Vec<JsonValue>>) -> Result<Vec<ScalarValue>, String> {
+    match params_json {
+        Some(json_params) => {
+            let mut scalar_params = Vec::new();
+            for (idx, json_val) in json_params.iter().enumerate() {
+                let scalar = json_value_to_scalar_strict(json_val)
+                    .map_err(|err| format!("Parameter ${} invalid: {}", idx + 1, err))?;
+                scalar_params.push(scalar);
+            }
+            Ok(scalar_params)
+        }
+        None => Ok(Vec::new()),
+    }
+}
+
+fn cleanup_files(
+    file_refs: &HashMap<String, FileRef>,
+    storage_id: &StorageId,
+    table_type: TableType,
+    table_id: &TableId,
+    user_id: Option<&UserId>,
+    app_context: &kalamdb_core::app_context::AppContext,
+) {
+    let file_service = app_context.file_storage_service();
+    for file_ref in file_refs.values() {
+        if let Err(err) = file_service.delete_file(file_ref, storage_id, table_type, table_id, user_id) {
+            log::warn!(
+                "Failed to cleanup file {} after SQL error: {}",
+                file_ref.id,
+                err
+            );
         }
     }
 }

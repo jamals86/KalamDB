@@ -52,8 +52,8 @@ use bincode::serde::{decode_from_slice, encode_to_vec};
 use kalamdb_commons::{
     schemas::TableDefinition,
     system::{
-        AuditLogEntry, Job, JobNode, LiveQuery, ManifestCacheEntry, Namespace,
-        Storage as SystemStorage, User,
+        AuditLogEntry, Job, JobNode, LiveQuery, ManifestCacheEntry,
+        Namespace, Storage as SystemStorage, User,
     },
     next_storage_key_bytes, StorageKey, UserId,
 };

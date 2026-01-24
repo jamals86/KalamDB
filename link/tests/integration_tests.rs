@@ -71,19 +71,19 @@ async fn setup_namespace(ns: &str) {
     let client = create_client().unwrap();
     // First drop the namespace to ensure clean state
     let _ = client
-        .execute_query(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns), None, None)
+        .execute_query(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns), None, None, None)
         .await;
     // Wait for drop to complete (cleanup is async)
     sleep(Duration::from_millis(50)).await;
     // Create the namespace
-    let _ = client.execute_query(&format!("CREATE NAMESPACE {}", ns), None, None).await;
+    let _ = client.execute_query(&format!("CREATE NAMESPACE {}", ns), None, None, None).await;
     sleep(Duration::from_millis(20)).await;
 }
 
 async fn cleanup_namespace(ns: &str) {
     let client = create_client().unwrap();
     let _ = client
-        .execute_query(&format!("DROP NAMESPACE {} CASCADE", ns), None, None)
+        .execute_query(&format!("DROP NAMESPACE {} CASCADE", ns), None, None, None)
         .await;
 }
 
@@ -142,7 +142,7 @@ async fn test_execute_simple_query() {
     let _permit = acquire_test_permit().await;
 
     let client = create_client().unwrap();
-    let result = client.execute_query("SELECT 1 as num", None, None).await;
+    let result = client.execute_query("SELECT 1 as num", None, None, None).await;
 
     assert!(result.is_ok(), "Simple query should succeed");
     let response = result.unwrap();
@@ -173,6 +173,7 @@ async fn test_execute_query_with_results() {
             ),
             None,
             None,
+            None,
         )
         .await
         .ok();
@@ -182,12 +183,13 @@ async fn test_execute_query_with_results() {
             &format!("INSERT INTO {}.items (id, name) VALUES (1, 'test')", ns),
             None,
             None,
+            None,
         )
         .await
         .ok();
 
     // Query
-    let result = client.execute_query(&format!("SELECT * FROM {}.items", ns), None, None).await;
+    let result = client.execute_query(&format!("SELECT * FROM {}.items", ns), None, None, None).await;
 
     assert!(result.is_ok());
     let response = result.unwrap();
@@ -211,7 +213,7 @@ async fn test_execute_query_error_handling() {
     let _permit = acquire_test_permit().await;
 
     let client = create_client().unwrap();
-    let result = client.execute_query("INVALID SQL", None, None).await;
+    let result = client.execute_query("INVALID SQL", None, None, None).await;
 
     // Should either return Err or success with error status
     if let Ok(response) = result {
@@ -288,6 +290,7 @@ async fn test_subscription_basic() {
             ),
             None,
             None,
+            None,
         )
         .await
         .ok();
@@ -335,6 +338,7 @@ async fn test_subscription_with_custom_config() {
                 "CREATE TABLE {}.data (id INT PRIMARY KEY, val VARCHAR) WITH (TYPE = 'USER')",
                 ns
             ),
+            None,
             None,
             None,
         )
@@ -456,12 +460,12 @@ async fn test_create_namespace() {
 
     // Cleanup first
     let _ = client
-        .execute_query(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns), None, None)
+        .execute_query(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns), None, None, None)
         .await;
     sleep(Duration::from_millis(20)).await;
 
     // Create
-    let result = client.execute_query(&format!("CREATE NAMESPACE {}", ns), None, None).await;
+    let result = client.execute_query(&format!("CREATE NAMESPACE {}", ns), None, None, None).await;
     assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
 
     // Cleanup
@@ -490,12 +494,13 @@ async fn test_create_and_drop_table() {
             ),
             None,
             None,
+            None,
         )
         .await;
     assert!(create.is_ok(), "CREATE TABLE should succeed");
 
     // Drop table
-    let drop = client.execute_query(&format!("DROP TABLE {}.test", ns), None, None).await;
+    let drop = client.execute_query(&format!("DROP TABLE {}.test", ns), None, None, None).await;
     assert!(drop.is_ok(), "DROP TABLE should succeed");
 
     cleanup_namespace(&ns).await;
@@ -523,6 +528,7 @@ async fn test_insert_and_select() {
             ),
             None,
             None,
+            None,
         )
         .await
         .ok();
@@ -533,13 +539,14 @@ async fn test_insert_and_select() {
             &format!("INSERT INTO {}.data (id, value) VALUES (1, 'test')", ns),
             None,
             None,
+            None,
         )
         .await;
     assert!(insert.is_ok(), "INSERT should succeed");
 
     // Select
     let select = client
-        .execute_query(&format!("SELECT * FROM {}.data WHERE id = 1", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.data WHERE id = 1", ns), None, None, None)
         .await;
     assert!(select.is_ok(), "SELECT should succeed");
 
@@ -574,6 +581,7 @@ async fn test_update_operation() {
             ),
             None,
             None,
+            None,
         )
         .await
         .ok();
@@ -582,13 +590,14 @@ async fn test_update_operation() {
             &format!("INSERT INTO {}.items (id, status) VALUES (1, 'old')", ns),
             None,
             None,
+            None,
         )
         .await
         .ok();
 
     // Update
     let update = client
-        .execute_query(&format!("UPDATE {}.items SET status = 'new' WHERE id = 1", ns), None, None)
+        .execute_query(&format!("UPDATE {}.items SET status = 'new' WHERE id = 1", ns), None, None, None)
         .await;
     assert!(update.is_ok(), "UPDATE should succeed");
 
@@ -619,6 +628,7 @@ async fn test_delete_operation() {
             ),
             None,
             None,
+            None,
         )
         .await;
     assert!(create_result.is_ok(), "CREATE TABLE should succeed: {:?}", create_result.err());
@@ -631,13 +641,14 @@ async fn test_delete_operation() {
             &format!("INSERT INTO {} (id, data) VALUES (1, 'delete_me')", full_table),
             None,
             None,
+            None,
         )
         .await;
     assert!(insert_result.is_ok(), "INSERT should succeed: {:?}", insert_result.err());
 
     // Verify row exists before delete
     let select_result = client
-        .execute_query(&format!("SELECT * FROM {} WHERE id = 1", full_table), None, None)
+        .execute_query(&format!("SELECT * FROM {} WHERE id = 1", full_table), None, None, None)
         .await;
     assert!(select_result.is_ok(), "SELECT should succeed: {:?}", select_result.err());
 
@@ -648,7 +659,7 @@ async fn test_delete_operation() {
 
     // Delete
     let delete = client
-        .execute_query(&format!("DELETE FROM {} WHERE id = 1", full_table), None, None)
+        .execute_query(&format!("DELETE FROM {} WHERE id = 1", full_table), None, None, None)
         .await;
     assert!(delete.is_ok(), "DELETE should succeed: {:?}", delete.err());
 
@@ -669,7 +680,7 @@ async fn test_query_system_users() {
     let _permit = acquire_test_permit().await;
 
     let client = create_client().unwrap();
-    let result = client.execute_query("SELECT * FROM system.users", None, None).await;
+    let result = client.execute_query("SELECT * FROM system.users", None, None, None).await;
 
     assert!(result.is_ok(), "Should query system.users");
     let response = result.unwrap();
@@ -686,7 +697,7 @@ async fn test_query_system_namespaces() {
     let _permit = acquire_test_permit().await;
 
     let client = create_client().unwrap();
-    let result = client.execute_query("SELECT * FROM system.namespaces", None, None).await;
+    let result = client.execute_query("SELECT * FROM system.namespaces", None, None, None).await;
 
     assert!(result.is_ok(), "Should query system.namespaces");
 }
@@ -701,7 +712,7 @@ async fn test_query_system_tables() {
     let _permit = acquire_test_permit().await;
 
     let client = create_client().unwrap();
-    let result = client.execute_query("SELECT * FROM system.tables", None, None).await;
+    let result = client.execute_query("SELECT * FROM system.tables", None, None, None).await;
 
     assert!(result.is_ok(), "Should query system.tables");
 }
@@ -732,6 +743,7 @@ async fn test_where_clause_operators() {
             ),
             None,
             None,
+            None,
         )
         .await
         .ok();
@@ -742,6 +754,7 @@ async fn test_where_clause_operators() {
                 &format!("INSERT INTO {}.data (id, val) VALUES ({}, 'value{}')", ns, i, i),
                 None,
                 None,
+                None,
             )
             .await
             .ok();
@@ -749,13 +762,13 @@ async fn test_where_clause_operators() {
 
     // Test equality
     let eq = client
-        .execute_query(&format!("SELECT * FROM {}.data WHERE id = 3", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.data WHERE id = 3", ns), None, None, None)
         .await;
     assert!(eq.is_ok(), "Equality operator should work");
 
     // Test LIKE
     let like = client
-        .execute_query(&format!("SELECT * FROM {}.data WHERE val LIKE '%3%'", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.data WHERE val LIKE '%3%'", ns), None, None, None)
         .await;
     assert!(like.is_ok(), "LIKE operator should work");
 
@@ -781,20 +794,21 @@ async fn test_limit_clause() {
             &format!("CREATE TABLE {}.items (id INT PRIMARY KEY) WITH (TYPE = 'USER')", ns),
             None,
             None,
+            None,
         )
         .await
         .ok();
 
     for i in 1..=10 {
         client
-            .execute_query(&format!("INSERT INTO {}.items (id) VALUES ({})", ns, i), None, None)
+            .execute_query(&format!("INSERT INTO {}.items (id) VALUES ({})", ns, i), None, None, None)
             .await
             .ok();
     }
 
     // Test LIMIT
     let result = client
-        .execute_query(&format!("SELECT * FROM {}.items LIMIT 3", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.items LIMIT 3", ns), None, None, None)
         .await;
 
     assert!(result.is_ok(), "LIMIT should work");
@@ -825,6 +839,7 @@ async fn test_order_by_clause() {
             &format!("CREATE TABLE {}.data (val VARCHAR PRIMARY KEY) WITH (TYPE = 'USER')", ns),
             None,
             None,
+            None,
         )
         .await
         .ok();
@@ -834,13 +849,14 @@ async fn test_order_by_clause() {
             &format!("INSERT INTO {}.data (val) VALUES ('z'), ('a'), ('m')", ns),
             None,
             None,
+            None,
         )
         .await
         .ok();
 
     // Test ORDER BY
     let result = client
-        .execute_query(&format!("SELECT * FROM {}.data ORDER BY val ASC", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.data ORDER BY val ASC", ns), None, None, None)
         .await;
 
     assert!(result.is_ok(), "ORDER BY should work");
@@ -871,6 +887,7 @@ async fn test_concurrent_queries() {
             &format!("CREATE TABLE {}.data (id INT PRIMARY KEY) WITH (TYPE = 'USER')", ns),
             None,
             None,
+            None,
         )
         .await
         .ok();
@@ -882,7 +899,7 @@ async fn test_concurrent_queries() {
         let ns = ns.clone();
         let handle = tokio::spawn(async move {
             client_clone
-                .execute_query(&format!("INSERT INTO {}.data (id) VALUES ({})", ns, i), None, None)
+                .execute_query(&format!("INSERT INTO {}.data (id) VALUES ({})", ns, i), None, None, None)
                 .await
         });
         handles.push(handle);
@@ -917,7 +934,7 @@ async fn test_custom_timeout() {
         .unwrap();
 
     // This might timeout with very short duration, but shouldn't panic
-    let _ = client.execute_query("SELECT 1", None, None).await;
+    let _ = client.execute_query("SELECT 1", None, None, None).await;
 }
 
 #[tokio::test]
@@ -928,6 +945,6 @@ async fn test_connection_to_invalid_server() {
         .build()
         .unwrap();
 
-    let result = client.execute_query("SELECT 1", None, None).await;
+    let result = client.execute_query("SELECT 1", None, None, None).await;
     assert!(result.is_err(), "Connection to invalid server should fail");
 }

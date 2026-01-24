@@ -58,7 +58,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.plans (id, name, price, features) VALUES ({}, '{}', {}, 'features for {}')",
                             ns, id, name, price, name
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -111,7 +111,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.activity (id, plan_id, action) VALUES ({}, 2, 'action_{}')",
                     ns, i, i
-                ),
+                ), None,
                 None,
                 None,
             )
@@ -126,7 +126,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.activity (id, plan_id, action) VALUES ({}, 1, 'action_{}')",
                     ns, i, i
-                ),
+                ), None,
                 None,
                 None,
             )
@@ -138,13 +138,13 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
     // Step 5: Verify users can read shared plans
     // =========================================================
     let resp = user1_client
-        .execute_query(&format!("SELECT * FROM {}.plans ORDER BY id", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.plans ORDER BY id", ns), None, None, None)
         .await?;
     assert!(resp.success(), "User1 should read shared plans");
     assert_eq!(resp.rows().len(), 3, "Should see all 3 plans");
 
     let resp = user2_client
-        .execute_query(&format!("SELECT * FROM {}.plans ORDER BY id", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.plans ORDER BY id", ns), None, None, None)
         .await?;
     assert!(resp.success(), "User2 should read shared plans");
     assert_eq!(resp.rows().len(), 3, "Should see all 3 plans");
@@ -153,13 +153,13 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
     // Step 6: Verify user isolation on USER tables
     // =========================================================
     let resp = user1_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.activity", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.activity", ns), None, None, None)
         .await?;
     let u1_count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert_eq!(u1_count, 5, "User1 should see 5 activities");
 
     let resp = user2_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.activity", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.activity", ns), None, None, None)
         .await?;
     let u2_count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert_eq!(u2_count, 5, "User2 should see 5 activities");
@@ -169,7 +169,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
     // =========================================================
     let _ = user1_client
         .execute_query(
-            &format!("INSERT INTO {}.plans (id, name, price) VALUES (99, 'Hacker Plan', 0)", ns),
+            &format!("INSERT INTO {}.plans (id, name, price) VALUES (99, 'Hacker Plan', 0)", ns), None,
             None,
             None,
         )
@@ -178,7 +178,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
     // (depending on RBAC implementation - may succeed if shared tables are writable by all)
     // We just verify the table wasn't corrupted
     let resp = client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.plans", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.plans", ns), None, None, None)
         .await?;
     let plan_count: i64 = resp.get_i64("cnt").unwrap_or(0);
     // Should still be 3 (if user write was blocked) or 4 (if allowed)
@@ -198,7 +198,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.activity (id, plan_id, action, device_type) VALUES (1000, 2, 'mobile_action', 'mobile')",
                             ns
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -207,7 +207,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
         if resp.success() {
             // Verify old rows still readable
             let resp = user1_client
-                .execute_query(&format!("SELECT * FROM {}.activity WHERE id = 1", ns), None, None)
+                .execute_query(&format!("SELECT * FROM {}.activity WHERE id = 1", ns), None, None, None)
                 .await?;
             assert!(resp.success(), "Old rows should still be readable after schema change");
         }
@@ -223,7 +223,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
 
     // Verify data still correct post-flush
     let resp = user1_client
-        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.activity", ns), None, None)
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.activity", ns), None, None, None)
         .await?;
     let post_flush_count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert!(post_flush_count >= 5, "User1 should still see activities post-flush");
@@ -260,7 +260,7 @@ async fn test_scenario_05_rbac_restrictions() -> anyhow::Result<()> {
     let admin_client = server.link_client("root");
     let resp = admin_client
         .execute_query(
-            &format!("INSERT INTO {}.system_config (key, value) VALUES ('max_users', '1000')", ns),
+            &format!("INSERT INTO {}.system_config (key, value) VALUES ('max_users', '1000')", ns), None,
             None,
             None,
         )
@@ -271,7 +271,7 @@ async fn test_scenario_05_rbac_restrictions() -> anyhow::Result<()> {
     let username = format!("{}_regular_user", ns);
     let user_client = create_user_and_client(server, &username, &Role::User).await?;
     let resp = user_client
-        .execute_query(&format!("SELECT * FROM {}.system_config", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.system_config", ns), None, None, None)
         .await?;
     assert!(resp.success(), "User should read shared table");
     assert!(!resp.rows().is_empty(), "Should see config data");
@@ -314,7 +314,7 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
                 &format!(
                     "INSERT INTO {}.events (id, event_name) VALUES ({}, 'event_{}')",
                     ns, i, i
-                ),
+                ), None,
                 None,
                 None,
             )
@@ -324,7 +324,7 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
 
     // Verify initial data
     let resp = client
-        .execute_query(&format!("SELECT * FROM {}.events ORDER BY id", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.events ORDER BY id", ns), None, None, None)
         .await?;
     assert!(resp.success(), "Query initial data");
     assert_eq!(resp.rows().len(), 5, "Should have 5 events");
@@ -341,7 +341,7 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
                         &format!(
                             "INSERT INTO {}.events (id, event_name, metadata) VALUES (100, 'new_event', 'some metadata')",
                             ns
-                        ),
+                        ), None,
                         None,
                         None,
                     )
@@ -351,7 +351,7 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
         // Old data should still be readable
         let resp = client
             .execute_query(
-                &format!("SELECT id, event_name FROM {}.events WHERE id <= 5 ORDER BY id", ns),
+                &format!("SELECT id, event_name FROM {}.events WHERE id <= 5 ORDER BY id", ns), None,
                 None,
                 None,
             )

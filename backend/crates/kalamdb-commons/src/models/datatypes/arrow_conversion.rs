@@ -89,6 +89,10 @@ impl ToArrowType for KalamDataType {
                 ArrowDataType::Decimal128(*precision, *scale as i8)
             },
             KalamDataType::SmallInt => ArrowDataType::Int16,
+            KalamDataType::File => {
+                // FILE → Utf8 (stored as JSON string containing FileRef)
+                ArrowDataType::Utf8
+            },
         };
 
         Ok(arrow_type)

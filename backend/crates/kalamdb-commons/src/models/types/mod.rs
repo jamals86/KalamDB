@@ -49,6 +49,7 @@
 //! ```
 
 mod audit_log;
+mod file_ref;
 mod job;
 mod job_node;
 mod live_query;
@@ -60,6 +61,7 @@ mod user;
 mod user_table_counter;
 
 pub use audit_log::AuditLogEntry;
+pub use file_ref::{FileRef, FileSubfolderState};
 pub use job::{Job, JobFilter, JobOptions, JobSortField, SortOrder};
 pub use job_node::JobNode;
 pub use live_query::LiveQuery;

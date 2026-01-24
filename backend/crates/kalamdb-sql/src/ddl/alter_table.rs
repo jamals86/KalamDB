@@ -7,9 +7,11 @@
 //! - ALTER USER TABLE messages ADD COLUMN age INT
 //! - ALTER SHARED TABLE messages ADD COLUMN age INT
 
-use crate::ddl::create_table::parser::convert_sql_type_to_arrow;
 use crate::ddl::DdlResult;
+use crate::parser::utils::parse_sql_statements;
 
+use crate::compatibility::map_sql_type_to_kalam;
+use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::{NamespaceId, TableAccess, TableName};
 use once_cell::sync::Lazy;
 use regex::{Captures, Regex};
@@ -18,7 +20,6 @@ use sqlparser::ast::{
     ObjectName, SqlOption, Statement, Value,
 };
 use sqlparser::dialect::GenericDialect;
-use sqlparser::parser::Parser;
 
 /// Column alteration operation
 #[derive(Debug, Clone, PartialEq)]
@@ -26,7 +27,7 @@ pub enum ColumnOperation {
     /// Add a new column
     Add {
         column_name: String,
-        data_type: String, // TODO: consider using a KalamDataType enum
+        data_type: KalamDataType,
         nullable: bool,
         default_value: Option<String>,
     },
@@ -35,7 +36,7 @@ pub enum ColumnOperation {
     /// Modify an existing column's data type
     Modify {
         column_name: String,
-        new_data_type: String,
+        new_data_type: KalamDataType,
         nullable: Option<bool>,
     },
     /// Rename an existing column (metadata only)
@@ -72,7 +73,7 @@ impl AlterTableStatement {
         let normalized_sql = normalize_alter_sql(sql);
         let dialect = GenericDialect {};
         let mut statements =
-            Parser::parse_sql(&dialect, &normalized_sql).map_err(|e| e.to_string())?;
+            parse_sql_statements(&normalized_sql, &dialect).map_err(|e| e.to_string())?;
 
         if statements.len() != 1 {
             return Err("Expected exactly one ALTER TABLE statement".to_string());
@@ -179,9 +180,9 @@ fn convert_operation(operation: &AlterTableOperation) -> DdlResult<ColumnOperati
 }
 
 fn build_add_column_operation(column_def: &ColumnDef) -> DdlResult<ColumnOperation> {
-    let (_, default_nullable) = convert_sql_type_to_arrow(&column_def.data_type)?;
+    let default_nullable = true;
     let column_name = column_def.name.value.clone();
-    let data_type = column_def.data_type.to_string();
+    let data_type = map_sql_type_to_kalam(&column_def.data_type)?;
     let (nullable, default_value) = extract_column_options(&column_def.options, default_nullable);
 
     Ok(ColumnOperation::Add {
@@ -213,7 +214,7 @@ fn build_modify_column_operation(
     options: &[ColumnOption],
 ) -> DdlResult<ColumnOperation> {
     // Validate the requested type using the shared CREATE TABLE conversion logic.
-    let _ = convert_sql_type_to_arrow(data_type)?;
+    let new_data_type = map_sql_type_to_kalam(data_type)?;
     let mut nullable: Option<bool> = None;
     for option in options {
         match option {
@@ -225,7 +226,7 @@ fn build_modify_column_operation(
 
     Ok(ColumnOperation::Modify {
         column_name: column_name.value.clone(),
-        new_data_type: data_type.to_string(),
+        new_data_type,
         nullable,
     })
 }
@@ -340,7 +341,7 @@ mod tests {
                 default_value,
             } => {
                 assert_eq!(column_name, "age");
-                assert_eq!(data_type, "INT");
+                assert_eq!(data_type, KalamDataType::Int);
                 assert!(nullable);
                 assert_eq!(default_value, None);
             },
@@ -431,7 +432,7 @@ mod tests {
                 nullable,
             } => {
                 assert_eq!(column_name, "age");
-                assert_eq!(new_data_type, "BIGINT");
+                assert_eq!(new_data_type, KalamDataType::BigInt);
                 assert_eq!(nullable, None);
             },
             _ => panic!("Expected Modify operation"),

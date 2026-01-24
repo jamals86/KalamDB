@@ -66,6 +66,7 @@ export {
 } from './auth.js';
 
 import type { AuthCredentials } from './auth.js';
+import { buildAuthHeader } from './auth.js';
 
 // Re-export types from WASM bindings
 export type { KalamClient as WasmKalamClient } from './wasm/kalam_link.js';
@@ -708,6 +709,88 @@ export class KalamDBClient {
       resultStr = await this.wasmClient.query(sql);
     }
     return JSON.parse(resultStr) as QueryResponse;
+  }
+
+  /**
+   * Execute a SQL query with file uploads (FILE datatype support)
+   * 
+   * This method allows inserting/updating rows that contain FILE columns.
+   * Use FILE("name") placeholders in SQL that reference uploaded files.
+   * 
+   * @param sql - SQL statement containing FILE("name") placeholders
+   * @param files - Map of placeholder name to File or Blob objects
+   * @param params - Optional array of parameters for $1, $2, ... placeholders
+   * @returns Query response
+   * 
+   * @throws Error if upload fails
+   * 
+   * @example
+   * ```typescript
+   * // In browser with file input
+   * const fileInput = document.querySelector<HTMLInputElement>('#avatar-input');
+   * const avatarFile = fileInput?.files?.[0];
+   * 
+   * await client.queryWithFiles(
+   *   'INSERT INTO users (name, avatar) VALUES ($1, FILE("avatar"))',
+   *   { avatar: avatarFile },
+   *   ['Alice']
+   * );
+   * 
+   * // In Node.js with fs
+   * const fs = await import('fs/promises');
+   * const data = await fs.readFile('document.pdf');
+   * const blob = new Blob([data], { type: 'application/pdf' });
+   * 
+   * await client.queryWithFiles(
+   *   'INSERT INTO documents (title, file) VALUES ($1, FILE("doc"))',
+   *   { doc: blob },
+   *   ['My Document']
+   * );
+   * ```
+   */
+  async queryWithFiles(
+    sql: string,
+    files: Record<string, File | Blob>,
+    params?: any[]
+  ): Promise<QueryResponse> {
+    await this.initialize();
+    
+    // Build FormData for multipart request
+    const formData = new FormData();
+    formData.append('sql', sql);
+    
+    // Add params if present
+    if (params && params.length > 0) {
+      formData.append('params', JSON.stringify(params));
+    }
+    
+    // Add files with file: prefix
+    for (const [name, file] of Object.entries(files)) {
+      const filename = file instanceof File ? file.name : name;
+      formData.append(`file:${name}`, file, filename);
+    }
+    
+    // Build headers with auth
+    const headers: Record<string, string> = {};
+    const authHeader = buildAuthHeader(this.auth);
+    if (authHeader) {
+      headers['Authorization'] = authHeader;
+    }
+    
+    // Send multipart request
+    const response = await fetch(`${this.url}/v1/api/sql`, {
+      method: 'POST',
+      headers,
+      body: formData
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok && result.status !== 'success') {
+      throw new Error(result.error?.message || `Upload failed: ${response.status}`);
+    }
+    
+    return result as QueryResponse;
   }
 
   /**

@@ -1257,8 +1257,12 @@ in the cli we can add a new config which the user can choose not to return syste
 ✗ Server error (400): Statement 1 failed: Execution error: SQL error: ParserError("Expected: an SQL statement, found: table at Line: 1, Column: 9")
 and then make sure we have a test for it as well
 
+135) struct AuthenticatedUser
+    pub username: String, //TODO: Use UserName type?
 
-
+136) Check the downloading of file permissions:
+- User impersonation for file download
+- insert/update/delete as user for file operations with user impersonation
 
 
 Main Epics:

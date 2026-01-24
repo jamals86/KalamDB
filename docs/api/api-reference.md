@@ -16,7 +16,8 @@ All API endpoints are versioned with a `/v1` prefix to ensure backward compatibi
 **Endpoint Prefix**: `/v1`
 
 **Versioned Endpoints**:
-- `/v1/api/sql` - Execute SQL commands
+- `/v1/api/sql` - Execute SQL commands (JSON or multipart)
+- `/v1/files/{namespace}/{table}/{subfolder}/{file_id}` - Download files stored in FILE columns
 - `/v1/ws` - WebSocket for live query subscriptions
 - `/v1/api/healthcheck` - Server health status
 - `/v1/api/auth/login` - Admin UI login (cookie-based)
@@ -61,10 +62,10 @@ Execute a SQL command and receive results.
 #### Request
 
 **Headers**:
-- `Content-Type: application/json`
+- `Content-Type: application/json` or `multipart/form-data`
 - `Authorization: Basic <credentials>` or `Authorization: Bearer <token>` (required)
 
-**Body**:
+**Body (JSON)**:
 ```json
 {
   "sql": "SELECT * FROM app.messages LIMIT 10",
@@ -73,10 +74,37 @@ Execute a SQL command and receive results.
 }
 ```
 
+**Body (multipart)**:
+
+Fields:
+- `sql` (text) — SQL statement (single statement only)
+- `params` (optional text) — JSON array of positional params
+- `namespace_id` (optional text)
+- `file:<placeholder>` (file) — file parts mapped to `FILE("placeholder")`
+
+Example:
+```
+POST /v1/api/sql
+Content-Type: multipart/form-data; boundary=...
+
+--...
+Content-Disposition: form-data; name="sql"
+
+INSERT INTO app.documents (id, name, attachment)
+VALUES ('doc1', 'My Document', FILE("myfile.txt"));
+--...
+Content-Disposition: form-data; name="file:myfile.txt"; filename="test-attachment.txt"
+Content-Type: text/plain
+
+<file bytes>
+--...--
+```
+
 Notes:
 - `params` are positional and use `$1`, `$2`, … placeholders.
 - If `params` is provided, the request must contain exactly one SQL statement (parameterized multi-statement batches are rejected).
 - `namespace_id` is used to resolve unqualified table names.
+- Multipart uploads require **one** SQL statement and are only accepted on the leader node in cluster mode.
 
 #### Response
 
@@ -136,6 +164,34 @@ Notes:
   }
 }
 ```
+
+---
+
+### GET /v1/files/{namespace}/{table_name}/{subfolder}/{file_id}
+
+Download a file stored in a `FILE` column.
+
+**Headers**:
+- `Authorization: Basic <credentials>` or `Authorization: Bearer <token>` (required)
+
+**Path Parameters**:
+- `namespace` — Namespace name
+- `table_name` — Table name
+- `subfolder` — FileRef.sub (e.g., `f0001`)
+- `file_id` — Stored filename (server-generated)
+
+**Success (200 OK)**:
+- `Content-Type` inferred from file extension
+- `Content-Disposition: inline; filename="<file_id>"`
+- Body: file bytes
+
+**Error (401 Unauthorized)**: missing/invalid auth
+
+**Error (404 Not Found)**: file not found
+
+**Notes**:
+- The stored filename is derived from `FileRef`.
+- Stream/System tables do not support downloads.
 
 ---
 

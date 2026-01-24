@@ -90,7 +90,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.documents (id, title, content) VALUES (1, 'Shared Doc', 'Initial content')",
                         ns
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -129,7 +129,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
             &format!(
                 "UPDATE {}.documents SET content = 'Updated by user1', version = 2 WHERE id = 1",
                 ns
-            ),
+            ), None,
             None,
             None,
         )
@@ -142,7 +142,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
             &format!(
                 "UPDATE {}.documents SET content = 'Updated by user2', version = 3 WHERE id = 1",
                 ns
-            ),
+            ), None,
             None,
             None,
         )
@@ -162,7 +162,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.presence (id, doc_id, user_id, cursor_pos, status) VALUES (1, 1, 'collab_user1', 100, 'typing')",
                         ns
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -175,7 +175,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.presence (id, doc_id, user_id, cursor_pos, status) VALUES (2, 1, 'collab_user2', 50, 'viewing')",
                         ns
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -185,7 +185,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
     // Verify presence is visible immediately
     let resp = admin_client
         .execute_query(
-            &format!("SELECT COUNT(*) as cnt FROM {}.presence WHERE doc_id = 1", ns),
+            &format!("SELECT COUNT(*) as cnt FROM {}.presence WHERE doc_id = 1", ns), None,
             None,
             None,
         )
@@ -201,7 +201,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
     // Presence should be expired
     let resp = admin_client
         .execute_query(
-            &format!("SELECT COUNT(*) as cnt FROM {}.presence WHERE doc_id = 1", ns),
+            &format!("SELECT COUNT(*) as cnt FROM {}.presence WHERE doc_id = 1", ns), None,
             None,
             None,
         )
@@ -220,7 +220,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.user_edits (id, doc_id, edit_type, edit_data) VALUES (1, 1, 'insert', 'private data')",
                         ns
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -233,7 +233,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.user_edits (id, doc_id, edit_type, edit_data) VALUES (2, 1, 'delete', 'other private data')",
                         ns
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -242,7 +242,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
 
     // User 1 should only see their own edits
     let resp = user1_client
-        .execute_query(&format!("SELECT * FROM {}.user_edits", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.user_edits", ns), None, None, None)
         .await?;
     assert!(resp.success(), "User1 query edits");
     for row in resp.rows_as_maps() {
@@ -252,7 +252,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
 
     // User 2 should only see their own edits
     let resp = user2_client
-        .execute_query(&format!("SELECT * FROM {}.user_edits", ns), None, None)
+        .execute_query(&format!("SELECT * FROM {}.user_edits", ns), None, None, None)
         .await?;
     assert!(resp.success(), "User2 query edits");
     for row in resp.rows_as_maps() {
@@ -309,7 +309,7 @@ async fn test_scenario_07_presence_subscription() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.presence (id, doc_id, user_id, status) VALUES (1, 1, 'user1', 'active')",
                         ns
-                    ),
+                    ), None,
                     None,
                     None,
                 )
@@ -322,7 +322,7 @@ async fn test_scenario_07_presence_subscription() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.presence (id, doc_id, user_id, status) VALUES (2, 2, 'user2', 'active')",
                         ns
-                    ),
+                    ), None,
                     None,
                     None,
                 )

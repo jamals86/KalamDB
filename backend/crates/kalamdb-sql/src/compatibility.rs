@@ -5,13 +5,14 @@
 //! these conversions keeps the CREATE TABLE parsers in sync across crates.
 
 use arrow::datatypes::{DataType, IntervalUnit, TimeUnit};
+use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
 use sqlparser::ast::{DataType as SQLDataType, ObjectName};
+use sqlparser::ast::DataType::*;
+use std::string::String;
 
 /// Map a parsed `sqlparser` data type into an Arrow data type while accounting
 /// for PostgreSQL/MySQL aliases (e.g. `SERIAL`, `INT4`, `AUTO_INCREMENT`).
 pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String> {
-    use SQLDataType::*;
-
     let dtype = match sql_type {
         // Signed integers ----------------------------------------------------
         SmallInt(_) | Int2(_) => DataType::Int16,
@@ -50,9 +51,30 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String>
 
         // Temporal -----------------------------------------------------------
         Date => DataType::Date32,
-        Timestamp(_, _) | Datetime(_) => DataType::Timestamp(TimeUnit::Millisecond, None),
-        Time(_, _) => DataType::Time64(TimeUnit::Nanosecond),
+        Timestamp(precision, _) => {
+            let unit = match precision {
+                Some(p) if *p <= 3 => TimeUnit::Millisecond,
+                Some(p) if *p <= 6 => TimeUnit::Microsecond,
+                Some(_) => TimeUnit::Nanosecond,
+                None => TimeUnit::Microsecond,
+            };
+            DataType::Timestamp(unit, None)
+        },
+        Datetime(_) => DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+        Time(_, _) => DataType::Time64(TimeUnit::Microsecond),
         SQLDataType::Interval { .. } => DataType::Interval(IntervalUnit::MonthDayNano),
+
+        // UUID ---------------------------------------------------------------
+        SQLDataType::Uuid => DataType::FixedSizeBinary(16),
+
+        // Decimal ------------------------------------------------------------
+        Decimal(info) => match info {
+            sqlparser::ast::ExactNumberInfo::PrecisionAndScale(p, s) => {
+                DataType::Decimal128(*p as u8, *s as i8)
+            },
+            sqlparser::ast::ExactNumberInfo::Precision(p) => DataType::Decimal128(*p as u8, 0),
+            sqlparser::ast::ExactNumberInfo::None => DataType::Decimal128(38, 10),
+        },
 
         // Custom or dialect specific identifiers ----------------------------
         Custom(name, modifiers) => map_custom_type(name, modifiers)?,
@@ -69,6 +91,47 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String>
     Ok(dtype)
 }
 
+/// Map a parsed `sqlparser` data type into a KalamDataType via Arrow.
+pub fn map_sql_type_to_kalam(sql_type: &SQLDataType) -> Result<KalamDataType, String> {
+    match sql_type {
+        SQLDataType::JSON | SQLDataType::JSONB => Ok(KalamDataType::Json),
+        SQLDataType::Uuid => Ok(KalamDataType::Uuid),
+        // Handle FILE type directly to avoid going through Arrow Utf8 -> Text
+        SQLDataType::Custom(name, _) => {
+            let ident = name
+                .0
+                .iter()
+                .map(|id| id.to_string().to_lowercase())
+                .collect::<Vec<_>>()
+                .join(".");
+            if ident == "file" {
+                return Ok(KalamDataType::File);
+            }
+            // Fall through to standard Arrow conversion for other custom types
+            let arrow_type = map_sql_type_to_arrow(sql_type)?;
+            KalamDataType::from_arrow_type(&arrow_type).map_err(|e| e.to_string())
+        },
+        SQLDataType::Decimal(info) => {
+            let (precision, scale) = match info {
+                sqlparser::ast::ExactNumberInfo::PrecisionAndScale(p, s) => (*p as u8, *s as u8),
+                sqlparser::ast::ExactNumberInfo::Precision(p) => (*p as u8, 0),
+                sqlparser::ast::ExactNumberInfo::None => (38, 10),
+            };
+            KalamDataType::validate_decimal_params(precision, scale)
+                .map_err(|e| e.to_string())?;
+            Ok(KalamDataType::Decimal { precision, scale })
+        },
+        SQLDataType::Date => Ok(KalamDataType::Date),
+        SQLDataType::Time(_, _) => Ok(KalamDataType::Time),
+        SQLDataType::Timestamp(_, _) => Ok(KalamDataType::Timestamp),
+        SQLDataType::Datetime(_) => Ok(KalamDataType::DateTime),
+        _ => {
+            let arrow_type = map_sql_type_to_arrow(sql_type)?;
+            KalamDataType::from_arrow_type(&arrow_type).map_err(|e| e.to_string())
+        },
+    }
+}
+
 fn map_custom_type(name: &ObjectName, modifiers: &[String]) -> Result<DataType, String> {
     let ident = name
         .0
@@ -78,6 +141,8 @@ fn map_custom_type(name: &ObjectName, modifiers: &[String]) -> Result<DataType, 
         .join(".");
 
     let dtype = match ident.as_str() {
+        // KalamDB-specific: FILE -> Utf8 (stores FileRef as JSON string)
+        "file" => DataType::Utf8,
         // KalamDB-specific: EMBEDDING(dimension) -> FixedSizeList<Float32>
         "embedding" => {
             // Extract dimension from modifiers
@@ -182,6 +247,12 @@ mod tests {
                 _ => panic!("Expected FixedSizeList, got {:?}", result),
             }
         }
+    }
+
+    #[test]
+    fn maps_sql_type_to_kalam() {
+        let dtype = map_sql_type_to_kalam(&SQLDataType::Text).unwrap();
+        assert_eq!(dtype, KalamDataType::Text);
     }
 
     #[test]

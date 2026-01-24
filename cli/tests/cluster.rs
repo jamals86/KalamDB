@@ -117,7 +117,7 @@ mod cluster_common {
         let sql = sql.to_string();
 
         let response = cluster_runtime()
-            .block_on(async move { client.execute_query(&sql, None, None).await })
+            .block_on(async move { client.execute_query(&sql, None, None, None).await })
             .map_err(|e| e.to_string())?;
             
         if !response.success() {
@@ -299,7 +299,7 @@ mod cluster_common {
                 let client = create_cluster_client(&url);
                 let sql_value = sql.clone();
                 match cluster_runtime()
-                    .block_on(async move { client.execute_query(&sql_value, None, None).await })
+                    .block_on(async move { client.execute_query(&sql_value, None, None, None).await })
                 {
                     Ok(response) => {
                         if !response.success() {
@@ -357,7 +357,7 @@ mod cluster_common {
                 let client = create_cluster_client(&url);
                 let sql_value = sql.clone();
                 match cluster_runtime()
-                    .block_on(async move { client.execute_query(&sql_value, None, None).await })
+                    .block_on(async move { client.execute_query(&sql_value, None, None, None).await })
                 {
                     Ok(response) => {
                         if !response.success() {
@@ -424,7 +424,7 @@ mod cluster_common {
                 let client = create_cluster_client_with_auth(&url, username, password);
                 let sql_value = sql.clone();
                 match cluster_runtime()
-                    .block_on(async move { client.execute_query(&sql_value, None, None).await })
+                    .block_on(async move { client.execute_query(&sql_value, None, None, None).await })
                 {
                     Ok(response) => {
                         if !response.success() {
@@ -494,7 +494,7 @@ mod cluster_common {
                 let client = create_cluster_client_with_auth(&url, username, password);
                 let sql_value = sql.clone();
                 match cluster_runtime()
-                    .block_on(async move { client.execute_query(&sql_value, None, None).await })
+                    .block_on(async move { client.execute_query(&sql_value, None, None, None).await })
                 {
                     Ok(response) => {
                         if !response.success() {
@@ -576,7 +576,7 @@ mod cluster_common {
     pub fn is_node_healthy(base_url: &str) -> bool {
         let client = create_cluster_client(base_url);
         cluster_runtime()
-            .block_on(async move { client.execute_query("SELECT 1", None, None).await })
+            .block_on(async move { client.execute_query("SELECT 1", None, None, None).await })
             .map(|response| response.success())
             .unwrap_or(false)
     }

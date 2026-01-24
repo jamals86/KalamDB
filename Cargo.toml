@@ -49,7 +49,7 @@ tokio-stream = { version = "0.1", features = ["net"] }
 
 # HTTP client (with HTTP/2 support) - using rustls-tls for cross-compilation compatibility
 # Note: native-tls requires OpenSSL which is difficult to cross-compile for aarch64
-reqwest = { version = "0.13.1", default-features = false, features = ["json", "rustls", "http2"] }
+reqwest = { version = "0.13.1", default-features = false, features = ["json", "rustls", "http2", "multipart"] }
 
 # WebSocket
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
@@ -74,6 +74,7 @@ actix-ws = "0.3.1"
 actix-cors = "0.7"
 actix-rt = "2.10"
 actix-files = "0.6.9"
+actix-multipart = "0.7"
 
 # UUID generation
 uuid = { version = "1.19.0", features = ["v4", "v7", "serde"] }
@@ -143,6 +144,7 @@ object_store = { version = "0.12.4", features = ["aws", "gcp", "azure"] }
 parking_lot = "0.12"
 tokio-util = "0.7.18"
 hex = "0.4"
+sha2 = "0.10"
 storekey = "0.11"
 moka = { version = "0.12.12", features = ["future", "sync"] }
 ntest = "0.9.5"

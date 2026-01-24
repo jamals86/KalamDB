@@ -1,8 +1,8 @@
 # KalamDB SQL Syntax Reference
 
 **Version**: 0.1.3  
-**SQL Engine**: Apache DataFusion 51.0  
-**Last Updated**: December 2025
+**SQL Engine**: Apache DataFusion 40.0  
+**Last Updated**: January 2026
 
 ---
 
@@ -1426,6 +1426,7 @@ KalamDB supports all DataFusion data types:
 | `BINARY` / `BYTES` | Binary data | `X'DEADBEEF'` |
 | `JSON` | JSON data (stored as TEXT) | `'{"key": "value"}'` |
 | `EMBEDDING(dimension)` | Fixed-size vector for AI/ML | `EMBEDDING(384)`, `EMBEDDING(768)` |
+| `FILE` | File reference (stored as JSON string) | `FILE("avatar")` |
 
 **Notes**:
 - `TEXT` and `VARCHAR` are equivalent
@@ -1434,6 +1435,62 @@ KalamDB supports all DataFusion data types:
 - `DECIMAL(precision, scale)` - precision: 1-38 digits, scale ≤ precision
 - `UUID` stored as 16-byte FixedSizeBinary in Arrow/Parquet
 - `EMBEDDING(dimension)` - dimension: 1-8192 (common: 384, 768, 1536, 3072)
+- `FILE` columns store a `FileRef` JSON string (see [FILE Datatype](#file-datatype))
+
+### FILE Datatype
+
+**Description**: `FILE` stores a reference to an uploaded file. The column value is a JSON string representing a `FileRef`:
+
+```json
+{
+  "id": "<file_id>",
+  "sub": "f0001",
+  "name": "original_filename.txt",
+  "size": 12345,
+  "mime": "text/plain",
+  "sha256": "...",
+  "shard": 0
+}
+```
+
+**Create a table with FILE**:
+```sql
+CREATE TABLE app.documents (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  attachment FILE
+) WITH (TYPE = 'USER');
+```
+
+**Insert with FILE placeholder** (requires multipart):
+```sql
+INSERT INTO app.documents (id, name, attachment)
+VALUES ('doc1', 'My Document', FILE("myfile.txt"));
+```
+
+**How multipart mapping works**:
+- Use `/v1/api/sql` with `Content-Type: multipart/form-data`.
+- Include a `sql` field with the SQL statement.
+- Attach file parts named `file:<placeholder>` (e.g., `file:myfile.txt`).
+- Only **one** SQL statement is allowed in a multipart upload.
+
+**Selecting FILE**:
+```sql
+SELECT attachment FROM app.documents WHERE id = 'doc1';
+```
+The `attachment` value is a JSON string (the `FileRef`). Use it to build the download URL.
+
+**Download URL**:
+```
+GET /v1/files/{namespace}/{table_name}/{subfolder}/{stored_filename}
+```
+Where:
+- `subfolder` = `FileRef.sub`
+- `stored_filename` = server-stored filename derived from `FileRef` (see API reference for download details)
+
+**Notes**:
+- File uploads require leader node in cluster mode.
+- Stream/System tables do not support `FILE`.
 
 ### Modern Data Types (Added in v0.2.0)
 

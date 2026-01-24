@@ -31,6 +31,8 @@ mod smoke_test_batch_control;
 mod smoke_test_core_operations;
 #[path = "smoke/usecases/smoke_test_custom_functions.rs"]
 mod smoke_test_custom_functions;
+#[path = "smoke/usecases/smoke_test_file_datatype.rs"]
+mod smoke_test_file_datatype;
 #[path = "smoke/usecases/smoke_test_int64_precision.rs"]
 mod smoke_test_int64_precision;
 #[path = "smoke/usecases/smoke_test_schema_history.rs"]

@@ -85,7 +85,7 @@ async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
                         "INSERT INTO {}.items (id, kind, title, body, priority, device_id) VALUES ({}, '{}', 'Item {}', 'Body {}', {}, 'device_{}')",
                         ns, item_id, kind, i, i, i % 5, user_idx
                     );
-            let resp = client.execute_query(&sql, None, None).await?;
+            let resp = client.execute_query(&sql, None, None, None).await?;
             if !resp.success() {
                 // Log but continue - some inserts might fail due to concurrent access
                 eprintln!("Warning: Insert failed for user_{} item {}", user_idx, i);
@@ -236,7 +236,7 @@ async fn test_scenario_02_offline_drift_resume() -> anyhow::Result<()> {
     for i in 1..=10 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.items (id, title) VALUES ({}, 'Initial {}')", ns, i, i),
+                &format!("INSERT INTO {}.items (id, title) VALUES ({}, 'Initial {}')", ns, i, i), None,
                 None,
                 None,
             )
@@ -262,7 +262,7 @@ async fn test_scenario_02_offline_drift_resume() -> anyhow::Result<()> {
     for i in 11..=15 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.items (id, title) VALUES ({}, 'Drift {}')", ns, i, i),
+                &format!("INSERT INTO {}.items (id, title) VALUES ({}, 'Drift {}')", ns, i, i), None,
                 None,
                 None,
             )
@@ -273,7 +273,7 @@ async fn test_scenario_02_offline_drift_resume() -> anyhow::Result<()> {
     // Update an existing item
     let resp = client
         .execute_query(
-            &format!("UPDATE {}.items SET title = 'Updated Item 1' WHERE id = 1", ns),
+            &format!("UPDATE {}.items SET title = 'Updated Item 1' WHERE id = 1", ns), None,
             None,
             None,
         )
@@ -322,7 +322,7 @@ async fn test_scenario_02_changes_during_snapshot() -> anyhow::Result<()> {
     for i in 1..=20 {
         let resp = client
             .execute_query(
-                &format!("INSERT INTO {}.items (id, title) VALUES ({}, 'Item {}')", ns, i, i),
+                &format!("INSERT INTO {}.items (id, title) VALUES ({}, 'Item {}')", ns, i, i), None,
                 None,
                 None,
             )
@@ -344,7 +344,7 @@ async fn test_scenario_02_changes_during_snapshot() -> anyhow::Result<()> {
                     &format!(
                         "INSERT INTO {}.items (id, title) VALUES ({}, 'Concurrent {}')",
                         ns_clone, i, i
-                    ),
+                    ), None,
                     None,
                     None,
                 )
