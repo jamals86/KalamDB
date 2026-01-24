@@ -203,16 +203,18 @@ fn test_cli_load_config_file() {
     let config_path = temp_dir.path().join("kalam.toml");
     let (_creds_temp_dir, creds_path) = create_temp_credentials_path();
 
+    // Config file with valid settings (note: url is passed via CLI, not config)
     std::fs::write(
         &config_path,
-        format!(
-            r#"
+        r#"
 [server]
-url = "{}"
 timeout = 30
+http_version = "http2"
+
+[ui]
+format = "table"
+color = true
 "#,
-            server_url()
-        ),
     )
     .unwrap();
 
@@ -220,6 +222,8 @@ timeout = 30
     with_credentials_path(&mut cmd, &creds_path);
     cmd.arg("--config")
         .arg(config_path.to_str().unwrap())
+        .arg("-u")
+        .arg(server_url())
         .arg("--username")
         .arg("root")
         .arg("--password")
@@ -232,7 +236,9 @@ timeout = 30
     // Should successfully execute using config
     assert!(
         output.status.success() || String::from_utf8_lossy(&output.stdout).contains("test"),
-        "Should execute using config file"
+        "Should execute using config file\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 

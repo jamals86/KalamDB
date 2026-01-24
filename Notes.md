@@ -1269,7 +1269,7 @@ Main Epics:
 ------------
 1) Add observability using otel + jaeger + prometheus + grafana
 2) Make cluster more stable and reliable
-3) Add file storage FILE DataType
+3) Done - Add file storage FILE DataType
 4) Add embedding + vector search support
 5) Combine the models of kalamdb-link and kalamdb-commons into kalamdb-models crate and use it everywhere
 6) Service consumer - Subscription to shards

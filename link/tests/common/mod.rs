@@ -23,6 +23,13 @@ fn should_auto_start_test_server() -> bool {
         return false;
     }
 
+    // Don't auto-start if we're already inside a tokio runtime
+    // (this happens when tests run with #[tokio::test])
+    // because Runtime::block_on() cannot be called from within a runtime.
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return false;
+    }
+
     std::env::var("KALAMDB_AUTO_START_TEST_SERVER")
         .map(|value| {
             let value = value.trim();
