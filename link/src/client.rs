@@ -9,7 +9,7 @@ use crate::{
     models::{
         ConnectionOptions, HealthCheckResponse, HttpVersion, QueryResponse, SubscriptionConfig,
     },
-    query::QueryExecutor,
+    query::{QueryExecutor, UploadProgressCallback},
     subscription::SubscriptionManager,
     timeouts::KalamLinkTimeouts,
 };
@@ -86,6 +86,19 @@ impl KalamLinkClient {
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<&str>,
     ) -> Result<QueryResponse> {
+        self.execute_query_with_progress(sql, files, params, namespace_id, None)
+            .await
+    }
+
+    /// Execute a SQL query with optional files and a progress callback for uploads.
+    pub async fn execute_query_with_progress(
+        &self,
+        sql: &str,
+        files: Option<Vec<(&str, &str, Vec<u8>, Option<&str>)>>,
+        params: Option<Vec<serde_json::Value>>,
+        namespace_id: Option<&str>,
+        progress: Option<UploadProgressCallback>,
+    ) -> Result<QueryResponse> {
         let files_owned = files.map(|items| {
             items
                 .into_iter()
@@ -101,7 +114,13 @@ impl KalamLinkClient {
         });
 
         self.query_executor
-            .execute(sql, files_owned, params, namespace_id.map(|s| s.to_string()))
+            .execute_with_progress(
+                sql,
+                files_owned,
+                params,
+                namespace_id.map(|s| s.to_string()),
+                progress,
+            )
             .await
     }
 
@@ -144,6 +163,20 @@ impl KalamLinkClient {
         namespace_id: Option<&str>,
     ) -> Result<QueryResponse> {
         self.execute_query(sql, Some(files), params, namespace_id).await
+    }
+
+    /// Execute a SQL query with file uploads and a progress callback.
+    #[cfg(feature = "tokio-runtime")]
+    pub async fn execute_with_files_with_progress(
+        &self,
+        sql: &str,
+        files: Vec<(&str, &str, Vec<u8>, Option<&str>)>,
+        params: Option<Vec<serde_json::Value>>,
+        namespace_id: Option<&str>,
+        progress: Option<UploadProgressCallback>,
+    ) -> Result<QueryResponse> {
+        self.execute_query_with_progress(sql, Some(files), params, namespace_id, progress)
+            .await
     }
 
     /// Subscribe to real-time changes

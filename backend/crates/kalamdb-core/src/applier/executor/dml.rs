@@ -14,11 +14,16 @@ use std::sync::Arc;
 
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::UserId;
+use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::TableId;
 
 use crate::app_context::AppContext;
 use crate::applier::error::ApplierError;
-use crate::providers::base::BaseTableProvider;
+use crate::applier::executor::utils::fileref_util::{
+    collect_file_refs_from_row, collect_replaced_file_refs_for_update,
+    delete_file_refs_best_effort,
+};
+use crate::providers::base::{find_row_by_pk, BaseTableProvider};
 use crate::providers::{SharedTableProvider, StreamTableProvider, UserTableProvider};
 
 /// Executor for DML operations (Data Plane)
@@ -99,7 +104,40 @@ impl DmlExecutor {
             .ok_or_else(|| ApplierError::not_found("Table provider", table_id))?;
 
         if let Some(provider) = provider_arc.as_any().downcast_ref::<UserTableProvider>() {
-            self.update_user_provider(provider, user_id, pk_value, update_row.clone())
+            let prior_row = match find_row_by_pk(provider, Some(user_id), pk_value) {
+                Ok(Some((_key, row))) => Some(row.fields),
+                Ok(None) => None,
+                Err(err) => {
+                    log::warn!(
+                        "Failed to load row for update file cleanup in {} (pk={}): {}",
+                        table_id,
+                        pk_value,
+                        err
+                    );
+                    None
+                }
+            };
+
+            let replaced_refs = prior_row.as_ref().map_or_else(Vec::new, |row| {
+                collect_replaced_file_refs_for_update(
+                    self.app_context.as_ref(),
+                    table_id,
+                    row,
+                    update_row,
+                )
+            });
+
+            let updated = self.update_user_provider(provider, user_id, pk_value, update_row.clone())?;
+            if updated > 0 {
+                delete_file_refs_best_effort(
+                    self.app_context.as_ref(),
+                    table_id,
+                    TableType::User,
+                    Some(user_id),
+                    &replaced_refs,
+                );
+            }
+            Ok(updated)
         } else if let Some(provider) = provider_arc.as_any().downcast_ref::<StreamTableProvider>() {
             self.update_stream_provider(provider, user_id, pk_value, update_row.clone())
         } else {
@@ -133,11 +171,36 @@ impl DmlExecutor {
         if let Some(provider) = provider_arc.as_any().downcast_ref::<UserTableProvider>() {
             let mut deleted_count = 0;
             for pk_value in pk_values {
+                let file_refs = match find_row_by_pk(provider, Some(user_id), pk_value) {
+                    Ok(Some((_key, row))) => collect_file_refs_from_row(
+                        self.app_context.as_ref(),
+                        table_id,
+                        &row.fields,
+                    ),
+                    Ok(None) => Vec::new(),
+                    Err(err) => {
+                        log::warn!(
+                            "Failed to load row for file cleanup in {} (pk={}): {}",
+                            table_id,
+                            pk_value,
+                            err
+                        );
+                        Vec::new()
+                    }
+                };
+
                 if provider
                     .delete_by_id_field(user_id, pk_value)
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
                     deleted_count += 1;
+                    delete_file_refs_best_effort(
+                        self.app_context.as_ref(),
+                        table_id,
+                        TableType::User,
+                        Some(user_id),
+                        &file_refs,
+                    );
                 }
             }
             log::debug!("DmlExecutor: Deleted {} rows from {}", deleted_count, table_id);
@@ -220,9 +283,40 @@ impl DmlExecutor {
             let system_user = UserId::from("system");
             let update_row = updates[0].clone();
 
+            let prior_row = match find_row_by_pk(provider, None, pk_value) {
+                Ok(Some((_key, row))) => Some(row.fields),
+                Ok(None) => None,
+                Err(err) => {
+                    log::warn!(
+                        "Failed to load row for update file cleanup in {} (pk={}): {}",
+                        table_id,
+                        pk_value,
+                        err
+                    );
+                    None
+                }
+            };
+
+            let replaced_refs = prior_row.as_ref().map_or_else(Vec::new, |row| {
+                collect_replaced_file_refs_for_update(
+                    self.app_context.as_ref(),
+                    table_id,
+                    row,
+                    &update_row,
+                )
+            });
+
             provider
                 .update_by_id_field(&system_user, pk_value, update_row)
                 .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
+
+            delete_file_refs_best_effort(
+                self.app_context.as_ref(),
+                table_id,
+                TableType::Shared,
+                None,
+                &replaced_refs,
+            );
 
             log::debug!("DmlExecutor: Updated 1 shared row in {} (pk={})", table_id, pk_value);
             Ok(1)
@@ -258,11 +352,36 @@ impl DmlExecutor {
             let mut deleted_count = 0;
 
             for pk_value in pk_values {
+                let file_refs = match find_row_by_pk(provider, None, pk_value) {
+                    Ok(Some((_key, row))) => collect_file_refs_from_row(
+                        self.app_context.as_ref(),
+                        table_id,
+                        &row.fields,
+                    ),
+                    Ok(None) => Vec::new(),
+                    Err(err) => {
+                        log::warn!(
+                            "Failed to load row for file cleanup in {} (pk={}): {}",
+                            table_id,
+                            pk_value,
+                            err
+                        );
+                        Vec::new()
+                    }
+                };
+
                 if provider
                     .delete_by_id_field(&system_user, pk_value)
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
                     deleted_count += 1;
+                    delete_file_refs_best_effort(
+                        self.app_context.as_ref(),
+                        table_id,
+                        TableType::Shared,
+                        None,
+                        &file_refs,
+                    );
                 }
             }
 

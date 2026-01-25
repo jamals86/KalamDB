@@ -1264,6 +1264,9 @@ and then make sure we have a test for it as well
 - User impersonation for file download
 - insert/update/delete as user for file operations with user impersonation
 
+137) when i run: SELECT * FROM chat.uploads limit 5 i always get a different order of rows if no order by is specified will use the key ordering instead to have consistent results, then add test cases to check this with queriying number of times
+
+138) 
 
 Main Epics:
 ------------
@@ -1273,3 +1276,5 @@ Main Epics:
 4) Add embedding + vector search support
 5) Combine the models of kalamdb-link and kalamdb-commons into kalamdb-models crate and use it everywhere
 6) Service consumer - Subscription to shards
+7) Change the code to use FlatBuffers for: Raft/RocksDb storage
+

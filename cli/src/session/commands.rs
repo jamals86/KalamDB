@@ -182,6 +182,11 @@ impl CLISession {
                 )
                 .await?;
             },
+            Command::History => {
+                // Handled in run_interactive() where we have access to history
+                // This should not be reached
+                eprintln!("History command should be handled in interactive mode");
+            },
             Command::Unknown(cmd) => {
                 eprintln!("Unknown command: {}. Type \\help for help.", cmd);
             },
@@ -236,6 +241,7 @@ impl CLISession {
             ("\\quit, \\q", "Exit CLI"),
             ("\\info", "Session info"),
             ("\\format <type>", "table|json|csv"),
+            ("\\history, \\h", "Browse history"),
         ];
         let right = [
             ("\\dt", "List tables"),

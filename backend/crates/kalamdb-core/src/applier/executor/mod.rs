@@ -38,6 +38,7 @@ mod dml;
 mod namespace;
 mod storage;
 mod user;
+mod utils;
 
 use crate::app_context::AppContext;
 use std::sync::Arc;

@@ -8,12 +8,13 @@
 //! the CLI session lifetime.
 
 use crate::CLI_VERSION;
+use crate::history_menu::{HistoryMenu, HistoryMenuResult};
 use clap::ValueEnum;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
 use kalam_link::{
     AuthProvider, ConnectionOptions, KalamLinkClient, KalamLinkTimeouts, SubscriptionConfig,
-    SubscriptionOptions, TimestampFormatter,
+    SubscriptionOptions, TimestampFormatter, UploadProgress, UploadProgressCallback,
 };
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
@@ -24,7 +25,8 @@ use rustyline::validate::Validator;
 use rustyline::{Cmd, CompletionType, Config, EditMode, Editor, Helper, KeyEvent};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -99,7 +101,7 @@ impl Drop for TerminalRawModeGuard {
 
 use crate::{
     completer::{AutoCompleter, SQL_KEYWORDS, SQL_TYPES},
-    config::CLIConfiguration,
+    config::{expand_config_path, CLIConfiguration},
     error::{CLIError, Result},
     formatter::OutputFormatter,
     history::CommandHistory,
@@ -214,6 +216,14 @@ pub struct CLISession {
     /// Configured timeouts for operations
     #[allow(dead_code)] // Reserved for future use
     timeouts: KalamLinkTimeouts,
+}
+
+#[derive(Debug, Clone)]
+struct FileUploadPart {
+    placeholder: String,
+    filename: String,
+    data: Vec<u8>,
+    mime: Option<String>,
 }
 
 impl CLISession {
@@ -367,25 +377,77 @@ impl CLISession {
     pub async fn execute(&mut self, sql: &str) -> Result<()> {
         let start = Instant::now();
 
+        let (sql_to_send, mut upload_parts) = Self::extract_file_uploads(sql)?;
+
         // Increment query counter
         self.queries_executed += 1;
+
+        let upload_present = !upload_parts.is_empty();
 
         // Create a loading indicator with proper cleanup
         let spinner = Arc::new(Mutex::new(None::<ProgressBar>));
         let show_loading = if self.animations {
-            let spinner_clone = Arc::clone(&spinner);
-            let threshold = Duration::from_millis(self.loading_threshold_ms);
-            Some(tokio::spawn(async move {
-                tokio::time::sleep(threshold).await;
+            if upload_present {
                 let pb = Self::create_spinner();
-                *spinner_clone.lock().unwrap() = Some(pb);
-            }))
+                pb.set_message("Uploading files...");
+                *spinner.lock().unwrap() = Some(pb);
+                None
+            } else {
+                let spinner_clone = Arc::clone(&spinner);
+                let threshold = Duration::from_millis(self.loading_threshold_ms);
+                Some(tokio::spawn(async move {
+                    tokio::time::sleep(threshold).await;
+                    let pb = Self::create_spinner();
+                    *spinner_clone.lock().unwrap() = Some(pb);
+                }))
+            }
+        } else {
+            None
+        };
+
+        let upload_progress = if self.animations && upload_present {
+            let spinner_clone = Arc::clone(&spinner);
+            Some(Arc::new(move |progress: UploadProgress| {
+                if let Some(pb) = spinner_clone.lock().unwrap().as_ref() {
+                    let message = format!(
+                        "Uploading {}/{}: {:>3.0}% file '{}'",
+                        progress.file_index,
+                        progress.total_files,
+                        progress.percent,
+                        progress.file_name
+                    );
+                    pb.set_message(message);
+                }
+            }) as UploadProgressCallback)
         } else {
             None
         };
 
         // Execute the query
-        let result = self.client.execute_query(sql, None, None, None).await;
+        let result = if upload_parts.is_empty() {
+            self.client.execute_query(sql, None, None, None).await
+        } else {
+            let mut parts_for_send = Vec::with_capacity(upload_parts.len());
+            for part in upload_parts.iter_mut() {
+                let data = std::mem::take(&mut part.data);
+                parts_for_send.push((
+                    part.placeholder.as_str(),
+                    part.filename.as_str(),
+                    data,
+                    part.mime.as_deref(),
+                ));
+            }
+
+            self.client
+                .execute_query_with_progress(
+                    &sql_to_send,
+                    Some(parts_for_send),
+                    None,
+                    None,
+                    upload_progress,
+                )
+                .await
+        };
 
         // Cancel the loading indicator and finish spinner if it was shown
         if let Some(task) = show_loading {
@@ -437,6 +499,226 @@ impl CLISession {
                 Err(e.into())
             },
         }
+    }
+
+    fn extract_file_uploads(sql: &str) -> Result<(String, Vec<FileUploadPart>)> {
+        let mut modified_sql = String::with_capacity(sql.len());
+        let mut specs: Vec<(String, String, Option<String>)> = Vec::new();
+        let mut placeholder_counts: HashMap<String, usize> = HashMap::new();
+
+        let mut idx = 0;
+        while idx < sql.len() {
+            let ch = sql[idx..].chars().next().unwrap_or('\0');
+            if ch == '\'' || ch == '"' {
+                let (_literal, next_idx) = Self::parse_quoted_string(sql, idx)?;
+                modified_sql.push_str(&sql[idx..next_idx]);
+                idx = next_idx;
+                continue;
+            }
+
+            if Self::is_file_call_at(sql, idx) {
+                let (next_idx, path, mime) = Self::parse_file_call(sql, idx)?;
+                let placeholder = Self::build_placeholder(&path, &mut placeholder_counts);
+                modified_sql.push_str(&format!("FILE(\"{}\")", placeholder));
+                specs.push((placeholder, path, mime));
+                idx = next_idx;
+                continue;
+            }
+
+            modified_sql.push(ch);
+            idx += ch.len_utf8();
+        }
+
+        if specs.is_empty() {
+            return Ok((sql.to_string(), Vec::new()));
+        }
+
+        let mut uploads = Vec::with_capacity(specs.len());
+        for (placeholder, path, mime) in specs {
+            let expanded = expand_config_path(Path::new(&path));
+            if !expanded.exists() {
+                return Err(CLIError::FileError(format!(
+                    "File not found: {}",
+                    expanded.display()
+                )));
+            }
+
+            let data = fs::read(&expanded).map_err(|e| {
+                CLIError::FileError(format!(
+                    "Failed to read file {}: {}",
+                    expanded.display(),
+                    e
+                ))
+            })?;
+
+            let filename = expanded
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&placeholder)
+                .to_string();
+
+            uploads.push(FileUploadPart {
+                placeholder,
+                filename,
+                data,
+                mime,
+            });
+        }
+
+        Ok((modified_sql, uploads))
+    }
+
+    fn is_file_call_at(sql: &str, idx: usize) -> bool {
+        let bytes = sql.as_bytes();
+        let needle = b"file";
+        if idx + needle.len() > bytes.len() {
+            return false;
+        }
+
+        if bytes[idx..idx + needle.len()] != *needle {
+            return false;
+        }
+
+        if idx > 0 {
+            if let Some(prev) = sql[..idx].chars().last() {
+                if Self::is_ident_char(prev) {
+                    return false;
+                }
+            }
+        }
+
+        let mut j = idx + needle.len();
+        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+
+        j < bytes.len() && bytes[j] == b'('
+    }
+
+    fn parse_file_call(sql: &str, start: usize) -> Result<(usize, String, Option<String>)> {
+        let bytes = sql.as_bytes();
+        let mut idx = start + 4;
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+
+        if idx >= bytes.len() || bytes[idx] != b'(' {
+            return Err(CLIError::ParseError(
+                "Invalid file() syntax: expected '('".into(),
+            ));
+        }
+        idx += 1;
+
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+
+        let (path, mut idx) = Self::parse_quoted_string(sql, idx)?;
+
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+
+        let mut mime: Option<String> = None;
+        if idx < bytes.len() && bytes[idx] == b',' {
+            idx += 1;
+            while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+                idx += 1;
+            }
+
+            let (mime_value, next_idx) = Self::parse_quoted_string(sql, idx)?;
+            mime = Some(mime_value);
+            idx = next_idx;
+        }
+
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+
+        if idx >= bytes.len() || bytes[idx] != b')' {
+            return Err(CLIError::ParseError(
+                "Invalid file() syntax: expected ')'".into(),
+            ));
+        }
+
+        Ok((idx + 1, path, mime))
+    }
+
+    fn parse_quoted_string(sql: &str, start: usize) -> Result<(String, usize)> {
+        let bytes = sql.as_bytes();
+        if start >= bytes.len() {
+            return Err(CLIError::ParseError(
+                "Invalid file() syntax: expected string literal".into(),
+            ));
+        }
+
+        let quote = bytes[start];
+        if quote != b'\'' && quote != b'"' {
+            return Err(CLIError::ParseError(
+                "Invalid file() syntax: expected quoted string".into(),
+            ));
+        }
+
+        let mut out = String::new();
+        let mut idx = start + 1;
+        while idx < bytes.len() {
+            let b = bytes[idx];
+            if b == quote {
+                if idx + 1 < bytes.len() && bytes[idx + 1] == quote {
+                    out.push(quote as char);
+                    idx += 2;
+                    continue;
+                }
+                return Ok((out, idx + 1));
+            }
+
+            if b == b'\\' {
+                if idx + 1 >= bytes.len() {
+                    return Err(CLIError::ParseError(
+                        "Invalid file() syntax: unterminated escape".into(),
+                    ));
+                }
+                let next = bytes[idx + 1];
+                out.push(next as char);
+                idx += 2;
+                continue;
+            }
+
+            out.push(b as char);
+            idx += 1;
+        }
+
+        Err(CLIError::ParseError(
+            "Invalid file() syntax: unterminated string".into(),
+        ))
+    }
+
+    fn build_placeholder(path: &str, counts: &mut HashMap<String, usize>) -> String {
+        let filename = Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("file");
+
+        let mut base = filename
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || "-_.".contains(c) { c } else { '_' })
+            .collect::<String>();
+
+        if base.is_empty() {
+            base = "file".to_string();
+        }
+
+        let count = counts.entry(base.clone()).or_insert(0);
+        *count += 1;
+        if *count == 1 {
+            base
+        } else {
+            format!("{}_{}", base, count)
+        }
+    }
+
+    fn is_ident_char(ch: char) -> bool {
+        ch.is_ascii_alphanumeric() || ch == '_'
     }
 
     /// Extract subscription configuration from a SUBSCRIBE TO response
@@ -714,6 +996,14 @@ impl CLISession {
         let mut rl = Editor::<CLIHelper, DefaultHistory>::with_config(config)?;
         rl.set_helper(Some(helper));
         rl.bind_sequence(KeyEvent::from('\t'), Cmd::Complete);
+        
+        // Bind Up arrow to move to beginning then accept line (submits with current content)
+        // We'll detect empty submissions from up arrow
+        // Note: This works best on empty lines - if line has content, up arrow will submit it
+        rl.bind_sequence(
+            KeyEvent(rustyline::KeyCode::Up, rustyline::Modifiers::NONE),
+            Cmd::AcceptLine,
+        );
 
         let history_size = self.config.resolved_ui().history_size;
         let history = CommandHistory::new(history_size);
@@ -727,6 +1017,8 @@ impl CLISession {
 
         // Main REPL loop
         let mut accumulated_command = String::new();
+        let mut prefill_next = String::new(); // Track if we need to prefill from history
+        
         loop {
             // Use continuation prompt if we're accumulating a multi-line command
             let prompt = if accumulated_command.is_empty() {
@@ -735,12 +1027,43 @@ impl CLISession {
                 self.continuation_prompt()
             };
 
-            match rl.readline(&prompt) {
+            // If we have a prefill from history, use readline_with_initial
+            let readline_result = if !prefill_next.is_empty() {
+                let prefill = prefill_next.clone();
+                prefill_next.clear();
+                rl.readline_with_initial(&prompt, (&prefill, ""))
+            } else {
+                rl.readline(&prompt)
+            };
+
+            match readline_result {
                 Ok(line) => {
                     let line = line.trim();
-
-                    // Skip empty lines unless we're accumulating
+                    
+                    // Check if we got an empty line while not accumulating
+                    // This happens when user presses Up arrow on empty line (bound to AcceptLine)
                     if line.is_empty() && accumulated_command.is_empty() {
+                        // Show history menu instead of doing nothing
+                        let history_entries = history.load().unwrap_or_default();
+                        
+                        if !history_entries.is_empty() {
+                            // Show the interactive history menu
+                            let mut menu = HistoryMenu::new(history_entries, self.color);
+                            match menu.run("") {
+                                Ok(HistoryMenuResult::Selected(selected_cmd)) => {
+                                    // Prefill the readline with the selected command
+                                    // so user can edit it before executing
+                                    prefill_next = selected_cmd;
+                                    // Continue to show the prompt with command prefilled
+                                },
+                                Ok(HistoryMenuResult::Cancelled) | Ok(HistoryMenuResult::Continue) => {
+                                    // No action needed
+                                },
+                                Err(e) => {
+                                    eprintln!("{}", format!("History menu error: {}", e).red());
+                                },
+                            }
+                        }
                         continue;
                     }
 
@@ -769,8 +1092,12 @@ impl CLISession {
                     }
 
                     // Add complete command to history (preserving newlines)
-                    let _ = rl.add_history_entry(&final_command);
-                    let _ = history.append(&final_command);
+                    // Skip adding \history, \h, \quit, and \q commands to history
+                    let skip_history = matches!(final_command.as_str(), "\\history" | "\\h" | "\\quit" | "\\q");
+                    if !skip_history {
+                        let _ = rl.add_history_entry(&final_command);
+                        let _ = history.append(&final_command);
+                    }
 
                     // Parse and execute command
                     match self.parser.parse(&final_command) {
@@ -787,6 +1114,38 @@ impl CLISession {
                                     } else {
                                         println!("{}", "✓".green());
                                     }
+                                }
+                                continue;
+                            }
+
+                            // Handle history command specially - needs access to history entries
+                            if matches!(command, Command::History) {
+                                // Load history entries for the menu
+                                let history_entries = history.load().unwrap_or_default();
+                                
+                                if history_entries.is_empty() {
+                                    println!("{}", "No command history available".dimmed());
+                                    continue;
+                                }
+                                
+                                // Show the interactive history menu
+                                let mut menu = HistoryMenu::new(history_entries, self.color);
+                                match menu.run("") {
+                                    Ok(HistoryMenuResult::Selected(selected_cmd)) => {
+                                        // Put the selected command into the accumulated buffer
+                                        // so user can edit it before executing
+                                        accumulated_command = selected_cmd;
+                                        // Don't execute - let the user edit and press Enter
+                                    },
+                                    Ok(HistoryMenuResult::Cancelled) => {
+                                        // No message needed, just continue
+                                    },
+                                    Ok(HistoryMenuResult::Continue) => {
+                                        // No action needed
+                                    },
+                                    Err(e) => {
+                                        eprintln!("{}", format!("History menu error: {}", e).red());
+                                    },
                                 }
                                 continue;
                             }

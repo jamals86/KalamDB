@@ -1747,14 +1747,58 @@ export default function SqlStudio() {
                           >
                             {row.getVisibleCells().map((cell) => {
                               const value = cell.getValue();
-                              const displayValue =
-                                value === null ? (
-                                  <span className="text-muted-foreground italic">null</span>
-                                ) : typeof value === "object" ? (
-                                  JSON.stringify(value)
-                                ) : (
-                                  String(value)
+                              
+                              // Check if value is a FileRef object
+                              const isFileRef = value && 
+                                typeof value === 'object' &&
+                                'id' in value && 
+                                'sub' in value && 
+                                'name' in value && 
+                                'mime' in value &&
+                                'size' in value;
+                              
+                              let displayValue;
+                              if (value === null) {
+                                displayValue = <span className="text-muted-foreground italic">null</span>;
+                              } else if (isFileRef) {
+                                // Display FILE datatype with icon and download link
+                                const fileRef = value as { 
+                                  id: string; 
+                                  sub: string; 
+                                  name: string; 
+                                  mime: string; 
+                                  size: number;
+                                  sha256: string;
+                                };
+                                const getFileIcon = (mime: string): string => {
+                                  if (mime.startsWith('image/')) return '🖼️';
+                                  if (mime.startsWith('video/')) return '🎥';
+                                  if (mime.startsWith('audio/')) return '🎵';
+                                  if (mime.includes('pdf')) return '📕';
+                                  if (mime.includes('zip') || mime.includes('compressed')) return '📦';
+                                  if (mime.includes('text')) return '📝';
+                                  return '📄';
+                                };
+                                const formatSize = (bytes: number): string => {
+                                  if (bytes < 1024) return `${bytes} B`;
+                                  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+                                  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+                                  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+                                };
+                                displayValue = (
+                                  <div className="flex items-center gap-2">
+                                    <span>{getFileIcon(fileRef.mime)}</span>
+                                    <span className="font-medium text-blue-600" title={`${fileRef.mime} • ${formatSize(fileRef.size)} • ID: ${fileRef.id}`}>
+                                      {fileRef.name}
+                                    </span>
+                                  </div>
                                 );
+                              } else if (typeof value === "object") {
+                                displayValue = JSON.stringify(value);
+                              } else {
+                                displayValue = String(value);
+                              }
+                              
                               const isLongText = typeof value === "string" && value.length > 40;
                               const isSelected = selectedCell?.rowIndex === row.index && selectedCell?.columnId === cell.column.id;
 

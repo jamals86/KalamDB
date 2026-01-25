@@ -174,6 +174,8 @@ impl AutoCompleter {
             "\\q",
             "\\help",
             "\\?",
+            "\\history",
+            "\\h",
             "\\stats",
             "\\metrics",
             "\\flush",

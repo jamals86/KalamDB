@@ -3,7 +3,7 @@ use kalamdb_configs::ServerConfig;
 use kalamdb_server::lifecycle::RunningTestHttpServer;
 use rand::{distr::Alphanumeric, Rng};
 use reqwest::Client;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -1380,11 +1380,60 @@ pub fn execute_sql_via_cli_as(
     execute_sql_via_cli_as_with_args(username, password, sql, &[])
 }
 
+/// Helper to execute SQL via CLI with authentication on a specific URL
+pub fn execute_sql_via_cli_as_on_url(
+    username: &str,
+    password: &str,
+    sql: &str,
+    url: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_cli_as_with_args_and_urls(username, password, sql, &[], Some(vec![url.to_string()]))
+}
+
+/// Helper to execute SQL via CLI with authentication (JSON output)
+pub fn execute_sql_via_cli_as_json(
+    username: &str,
+    password: &str,
+    sql: &str,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let output = execute_sql_via_cli_as_with_args(username, password, sql, &["--json"])?;
+    let parsed: Value = serde_json::from_str(&output)?;
+    Ok(parsed)
+}
+
+/// Helper to execute SQL via CLI with authentication on a specific URL (JSON output)
+pub fn execute_sql_via_cli_as_json_on_url(
+    username: &str,
+    password: &str,
+    sql: &str,
+    url: &str,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let output = execute_sql_via_cli_as_with_args_and_urls(
+        username,
+        password,
+        sql,
+        &["--json"],
+        Some(vec![url.to_string()]),
+    )?;
+    let parsed: Value = serde_json::from_str(&output)?;
+    Ok(parsed)
+}
+
 fn execute_sql_via_cli_as_with_args(
     username: &str,
     password: &str,
     sql: &str,
     extra_args: &[&str],
+) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_cli_as_with_args_and_urls(username, password, sql, extra_args, None)
+}
+
+fn execute_sql_via_cli_as_with_args_and_urls(
+    username: &str,
+    password: &str,
+    sql: &str,
+    extra_args: &[&str],
+    urls_override: Option<Vec<String>>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     use std::time::Instant;
     use wait_timeout::ChildExt;
@@ -1401,7 +1450,9 @@ fn execute_sql_via_cli_as_with_args(
     let mut last_err: Option<String> = None;
 
     for attempt in 0..max_attempts {
-        let urls = if is_cluster_mode() {
+        let urls = if let Some(ref override_urls) = urls_override {
+            override_urls.clone()
+        } else if is_cluster_mode() {
             get_available_server_urls()
         } else {
             vec![server_url().to_string()]

@@ -194,6 +194,25 @@ kalam --instance prod \
 # Any SQL supported by the server works here.
 ```
 
+### File uploads in INSERT/UPDATE
+
+You can upload files directly from the CLI using the `file()` helper in `INSERT` or `UPDATE` statements.
+
+```bash
+KalamDB[cluster] root@0.0.0.0:8080 ❯ INSERT INTO chat.uploads (id, name, attachment)
+  VALUES ('doc2', 'CLI Doc', file('/Users/user/document1.pdf', 'text/plain'));
+Inserted 1 row(s)
+Query OK, 1 rows affected
+```
+
+```bash
+KalamDB[cluster] root@0.0.0.0:8080 ❯ UPDATE chat.uploads
+  SET attachment = file('/Users/user/document1.pdf', 'text/plain')
+  WHERE id = 'doc2';
+```
+
+Selecting the row returns file metadata in the column value.
+
 ---
 
 ## Smoke Tests
