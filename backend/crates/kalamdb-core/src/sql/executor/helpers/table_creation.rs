@@ -307,8 +307,12 @@ pub fn build_table_definition(
                 ))
             })?;
 
-            let kalam_type =
-                KalamDataType::from_arrow_type(field.data_type()).unwrap_or(KalamDataType::Text);
+            // First try to read KalamDataType from field metadata (preserves FILE, JSON, etc.)
+            // Fall back to Arrow type conversion if metadata not present
+            let kalam_type = kalamdb_commons::conversions::read_kalam_data_type_metadata(field)
+                .unwrap_or_else(|| {
+                    KalamDataType::from_arrow_type(field.data_type()).unwrap_or(KalamDataType::Text)
+                });
 
             let is_pk =
                 stmt.primary_key_column.as_ref().map(|pk| pk == field.name()).unwrap_or(false);

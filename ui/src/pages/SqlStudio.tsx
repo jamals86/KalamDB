@@ -5,28 +5,26 @@ import {
   Play,
   Plus,
   X,
-  Database,
   Table2,
-  Columns3,
   ChevronRight,
-  ChevronDown,
   ChevronLeft,
   ChevronsLeft,
   ChevronsRight,
   Clock,
   Trash2,
-  Search,
   ArrowUpDown,
-  RefreshCw,
-  Radio,
-  Users,
-  User,
   Info,
 } from "lucide-react";
 import { TableProperties } from "@/components/sql-studio/TableProperties";
 import { QueryResultsBar } from "@/components/sql-studio/QueryResultsBar";
 import { Button } from "@/components/ui/button";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable";
 import { Switch } from "@/components/ui/switch";
+import { CellDisplay } from "@/components/datatype-display";
 import {
   Tooltip,
   TooltipContent,
@@ -34,11 +32,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { executeSql, executeQuery as executeQueryApi, subscribe, type Unsubscribe } from "@/lib/kalam-client";
-import { getDataTypeColor } from '@/lib/config';
 import { useDataTypes } from '@/hooks/useDataTypes';
+import { extractTableContext } from "./studio/utils/sqlParser";
+import { Aside } from "./studio/aside/Aside";
 import {
   flexRender,
   getCoreRowModel,
@@ -78,6 +76,7 @@ interface QueryTab {
   query: string;
   results: Record<string, unknown>[] | null;
   columns: ColumnDef<Record<string, unknown>>[];
+  schema: { name: string; data_type: string; index: number }[] | null; // Schema with data types
   error: string | null;
   isLoading: boolean;
   isLive: boolean;
@@ -122,6 +121,7 @@ function loadPersistedState(): { tabs: QueryTab[]; activeTabId: string; tabCount
           query: t.query,
           results: null,
           columns: [],
+          schema: null,
           error: null,
           isLoading: false,
           isLive: t.isLive,
@@ -151,6 +151,7 @@ function loadPersistedState(): { tabs: QueryTab[]; activeTabId: string; tabCount
         query: "SELECT * FROM system.namespaces LIMIT 100",
         results: null,
         columns: [],
+        schema: null,
         error: null,
         isLoading: false,
         isLive: false,
@@ -382,6 +383,7 @@ export default function SqlStudio() {
       updateTab(activeTabId, {
         results,
         columns,
+        schema,
         isLoading: false,
         executionTime,
         rowCount,
@@ -410,6 +412,7 @@ export default function SqlStudio() {
         isLoading: false,
         results: null,
         columns: [],
+        schema: null,
         executionTime,
         rowCount: null,
         message: null,
@@ -736,6 +739,7 @@ export default function SqlStudio() {
       query: "",
       results: null,
       columns: [],
+      schema: null,
       error: null,
       isLoading: false,
       isLive: false,
@@ -1204,191 +1208,48 @@ export default function SqlStudio() {
     };
   }, [executeQuery]);
 
-  const renderSchemaTree = (nodes: SchemaNode[], path: string[] = []) => {
-    return nodes.map((node) => {
-      const currentPath = [...path, node.name];
-      const isExpanded = node.isExpanded;
-
-      return (
-        <div key={currentPath.join(".")} className="select-none">
-          <div
-            className={cn(
-              "flex items-center gap-1 px-2 py-1 hover:bg-muted/50 rounded cursor-pointer text-sm group",
-              node.type === "column" && "pl-8"
-            )}
-            onClick={() => {
-              if (node.type === "column") {
-                insertIntoQuery(node.name);
-              } else {
-                // Namespaces and tables should expand/collapse
-                toggleSchemaNode(currentPath);
-              }
-            }}
-            onDoubleClick={() => {
-              // Double-click on table opens properties panel
-              if (node.type === "table") {
-                handleShowTableProperties(path[path.length - 1] || "", node.name, node.children || []);
-              }
-            }}
-            onContextMenu={(e) => {
-              // Right-click on table shows context menu
-              if (node.type === "table") {
-                e.preventDefault();
-                e.stopPropagation();
-                setSchemaContextMenu({
-                  x: e.clientX,
-                  y: e.clientY,
-                  namespace: path[path.length - 1] || "",
-                  tableName: node.name,
-                  columns: node.children || [],
-                });
-              }
-            }}
-          >
-            {(node.children && node.children.length > 0) && (
-              <span className="w-4">
-                {isExpanded ? (
-                  <ChevronDown className="h-3 w-3" />
-                ) : (
-                  <ChevronRight className="h-3 w-3" />
-                )}
-              </span>
-            )}
-            {/* Show placeholder space for alignment when no children */}
-            {(!node.children || node.children.length === 0) && node.type !== "column" && (
-              <span className="w-4" />
-            )}
-            {node.type === "namespace" && (
-              <Database className="h-4 w-4 text-blue-500" />
-            )}
-            {node.type === "table" && node.tableType === "stream" && (
-              <span title="Stream Table">
-                <Radio className="h-4 w-4 text-purple-500" />
-              </span>
-            )}
-            {node.type === "table" && node.tableType === "shared" && (
-              <span title="Shared Table">
-                <Users className="h-4 w-4 text-cyan-500" />
-              </span>
-            )}
-            {node.type === "table" && node.tableType === "user" && (
-              <span title="User Table">
-                <User className="h-4 w-4 text-green-500" />
-              </span>
-            )}
-            {node.type === "table" && !node.tableType && (
-              <Table2 className="h-4 w-4 text-green-500" />
-            )}
-            {node.type === "column" && (
-              <Columns3 className="h-4 w-4 text-orange-500" />
-            )}
-            {node.isPrimaryKey && (
-              <span className="text-yellow-500 text-xs" title="Primary Key">🔑</span>
-            )}
-            <span className="truncate flex-1 min-w-0">{node.name}</span>
-            {node.type === "table" && (
-              <button
-                className="p-0.5 hover:bg-muted rounded opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleShowTableProperties(path[path.length - 1] || "", node.name, node.children || []);
-                }}
-                title="View table properties"
-              >
-                <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-              </button>
-            )}
-            {node.dataType && (
-              <span 
-                className={cn(
-                  "text-xs ml-auto flex items-center gap-1 shrink-0",
-                  getDataTypeColor(node.dataType)
-                )}
-                title={`${toSqlType(node.dataType)} (${node.dataType})`}
-              >
-                {toSqlType(node.dataType)}
-                {node.isNullable === false && <span className="text-red-400" title="NOT NULL">*</span>}
-              </span>
-            )}
-          </div>
-          {isExpanded && node.children && (
-            <div className="ml-4">{renderSchemaTree(node.children, currentPath)}</div>
-          )}
-        </div>
-      );
-    });
-  };
-
   return (
     <div className="h-[calc(100vh-4rem)] flex">
-      {/* Schema sidebar */}
-      <div className="w-56 border-r flex flex-col shrink-0">
-        <div className="p-2 border-b font-medium text-sm flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Database className="h-4 w-4" />
-            Schema Browser
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                // Open create table dialog
-                setSelectedTable({
-                  namespace: "default",
-                  tableName: "new_table",
-                  columns: [],
-                  isNewTable: true,
-                });
-                setShowTableProperties(true);
-              }}
-              className="h-6 w-6 p-0"
-              title="Create new table"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={loadSchema}
-              disabled={schemaLoading}
-              className="h-6 w-6 p-0"
-              title="Refresh schema"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", schemaLoading && "animate-spin")} />
-            </Button>
-          </div>
-        </div>
-        <div className="p-2 border-b">
-          <div className="relative">
-            <Search className="absolute left-2 top-2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Filter..."
-              value={schemaFilter}
-              onChange={(e) => setSchemaFilter(e.target.value)}
-              className="pl-8 h-8 text-sm"
-            />
-          </div>
-        </div>
-        <ScrollArea className="flex-1 p-2">
-          <div className="min-w-max">
-            {schemaLoading ? (
-              <div className="text-sm text-muted-foreground p-2">Loading schema...</div>
-            ) : filteredSchema.length === 0 ? (
-              <div className="text-sm text-muted-foreground p-2">
-                {schemaFilter ? "No matches found" : "No schemas found"}
-              </div>
-            ) : (
-              renderSchemaTree(filteredSchema)
-            )}
-          </div>
-        </ScrollArea>
-      </div>
+      <ResizablePanelGroup direction="horizontal">
+        {/* Schema sidebar - Resizable */}
+        <ResizablePanel defaultSize={20} minSize={15} maxSize={40}>
+          <Aside
+            schema={filteredSchema}
+            schemaFilter={schemaFilter}
+            schemaLoading={schemaLoading}
+            onFilterChange={setSchemaFilter}
+            onRefreshSchema={loadSchema}
+            onCreateTable={() => {
+              setSelectedTable({
+                namespace: "default",
+                tableName: "new_table",
+                columns: [],
+                isNewTable: true,
+              });
+              setShowTableProperties(true);
+            }}
+            onToggleNode={toggleSchemaNode}
+            onInsertText={insertIntoQuery}
+            onShowTableProperties={handleShowTableProperties}
+            onTableContextMenu={(e, namespace, tableName, columns) => {
+              setSchemaContextMenu({
+                x: e.clientX,
+                y: e.clientY,
+                namespace,
+                tableName,
+                columns,
+              });
+            }}
+          />
+        </ResizablePanel>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Header: Tabs + Run Button | Live Query + Actions */}
-        <div className="border-b flex items-center h-12 px-2 gap-2 shrink-0 bg-background">
+        <ResizableHandle withHandle />
+
+        {/* Main content */}
+        <ResizablePanel defaultSize={80}>
+          <div className="h-full flex flex-col">
+            {/* Header: Tabs + Run Button | Live Query + Actions */}
+            <div className="border-b flex items-center h-12 px-2 gap-2 shrink-0 bg-background">
           {/* Left side: Query Tabs + Run Button */}
           <div className="flex items-center gap-2">
             {/* Query Tabs */}
@@ -1521,31 +1382,36 @@ export default function SqlStudio() {
           </div>
         </div>
 
-        {/* Editor */}
-        <div className="h-32 shrink-0 border-b">
-          <Editor
-            height="100%"
-            defaultLanguage="sql"
-            theme="vs-dark"
-            value={activeTab?.query || ""}
-            onChange={(value) => updateTab(activeTabId, { query: value || "" })}
-            options={{
-              minimap: { enabled: false },
-              fontSize: 13,
-              lineNumbers: "on",
-              scrollBeyondLastLine: false,
-              automaticLayout: true,
-              tabSize: 2,
-              wordWrap: "on",
-              padding: { top: 8, bottom: 8 },
-              lineHeight: 20,
-            }}
-            onMount={handleEditorMount}
-          />
-        </div>
+        {/* Editor and Results - Resizable Vertical Split */}
+        <ResizablePanelGroup direction="vertical" className="flex-1">
+          {/* Editor Panel */}
+          <ResizablePanel defaultSize={20} minSize={10} maxSize={40}>
+            <Editor
+              height="100%"
+              defaultLanguage="sql"
+              theme="vs-dark"
+              value={activeTab?.query || ""}
+              onChange={(value) => updateTab(activeTabId, { query: value || "" })}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 13,
+                lineNumbers: "on",
+                scrollBeyondLastLine: false,
+                automaticLayout: true,
+                tabSize: 2,
+                wordWrap: "on",
+                padding: { top: 8, bottom: 8 },
+                lineHeight: 20,
+              }}
+              onMount={handleEditorMount}
+            />
+          </ResizablePanel>
 
-        {/* Results area */}
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <ResizableHandle withHandle />
+
+          {/* Results Panel */}
+          <ResizablePanel defaultSize={80}>
+            <div className="h-full flex flex-col overflow-hidden">
           {/* Query Results Status Bar - show for non-live queries with results */}
           {!activeTab?.isLive && (activeTab?.results !== null || activeTab?.error) && (
             <QueryResultsBar
@@ -1747,57 +1613,20 @@ export default function SqlStudio() {
                           >
                             {row.getVisibleCells().map((cell) => {
                               const value = cell.getValue();
+                              const columnName = cell.column.id;
                               
-                              // Check if value is a FileRef object
-                              const isFileRef = value && 
-                                typeof value === 'object' &&
-                                'id' in value && 
-                                'sub' in value && 
-                                'name' in value && 
-                                'mime' in value &&
-                                'size' in value;
+                              // Get column schema for datatype information
+                              const columnSchema = activeTab?.schema?.find(s => s.name === columnName);
                               
-                              let displayValue;
-                              if (value === null) {
-                                displayValue = <span className="text-muted-foreground italic">null</span>;
-                              } else if (isFileRef) {
-                                // Display FILE datatype with icon and download link
-                                const fileRef = value as { 
-                                  id: string; 
-                                  sub: string; 
-                                  name: string; 
-                                  mime: string; 
-                                  size: number;
-                                  sha256: string;
-                                };
-                                const getFileIcon = (mime: string): string => {
-                                  if (mime.startsWith('image/')) return '🖼️';
-                                  if (mime.startsWith('video/')) return '🎥';
-                                  if (mime.startsWith('audio/')) return '🎵';
-                                  if (mime.includes('pdf')) return '📕';
-                                  if (mime.includes('zip') || mime.includes('compressed')) return '📦';
-                                  if (mime.includes('text')) return '📝';
-                                  return '📄';
-                                };
-                                const formatSize = (bytes: number): string => {
-                                  if (bytes < 1024) return `${bytes} B`;
-                                  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-                                  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-                                  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-                                };
-                                displayValue = (
-                                  <div className="flex items-center gap-2">
-                                    <span>{getFileIcon(fileRef.mime)}</span>
-                                    <span className="font-medium text-blue-600" title={`${fileRef.mime} • ${formatSize(fileRef.size)} • ID: ${fileRef.id}`}>
-                                      {fileRef.name}
-                                    </span>
-                                  </div>
-                                );
-                              } else if (typeof value === "object") {
-                                displayValue = JSON.stringify(value);
-                              } else {
-                                displayValue = String(value);
-                              }
+                              // Extract data type (handle both string and object types)
+                              const dataType = typeof columnSchema?.data_type === 'string' 
+                                ? columnSchema.data_type 
+                                : typeof columnSchema?.data_type === 'object' 
+                                  ? Object.keys(columnSchema.data_type)[0]
+                                  : undefined;
+                              
+                              // Extract table context for FILE download URLs
+                              const tableContext = activeTab?.query ? extractTableContext(activeTab.query) : null;
                               
                               const isLongText = typeof value === "string" && value.length > 40;
                               const isSelected = selectedCell?.rowIndex === row.index && selectedCell?.columnId === cell.column.id;
@@ -1806,7 +1635,7 @@ export default function SqlStudio() {
                                 <td
                                   key={cell.id}
                                   className={cn(
-                                    "border border-border px-3 py-1.5 font-mono text-sm max-w-[300px] truncate cursor-pointer select-text",
+                                    "border border-border px-3 py-1.5 text-sm max-w-[300px] cursor-pointer select-text",
                                     isSelected && "ring-2 ring-blue-500 ring-inset bg-blue-50 dark:bg-blue-950/30"
                                   )}
                                   title={isLongText ? String(value) : undefined}
@@ -1820,7 +1649,12 @@ export default function SqlStudio() {
                                     }
                                   }}
                                 >
-                                  {displayValue}
+                                  <CellDisplay
+                                    value={value}
+                                    dataType={dataType}
+                                    namespace={tableContext?.namespace}
+                                    tableName={tableContext?.tableName}
+                                  />
                                 </td>
                               );
                             })}
@@ -1935,8 +1769,12 @@ export default function SqlStudio() {
               </div>
             </>
           )}
-        </div>
-      </div>
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
 
       {/* Query history sidebar */}
       {showHistory && (

@@ -50,6 +50,8 @@ pub enum SystemTable {
     ClusterGroups,
     /// system.datatypes - Supported data type mappings (computed on-demand)
     Datatypes,
+    /// system.describe - DESCRIBE TABLE functionality (computed on-demand)
+    Describe,
 }
 
 impl SystemTable {
@@ -73,6 +75,7 @@ impl SystemTable {
             SystemTable::Cluster => "cluster",
             SystemTable::ClusterGroups => "cluster_groups",
             SystemTable::Datatypes => "datatypes",
+            SystemTable::Describe => "describe",
         }
     }
 
@@ -91,6 +94,7 @@ impl SystemTable {
                 | SystemTable::Cluster
                 | SystemTable::ClusterGroups
                 | SystemTable::Datatypes
+                | SystemTable::Describe
         )
     }
 
@@ -114,7 +118,8 @@ impl SystemTable {
             | SystemTable::ServerLogs
             | SystemTable::Cluster
             | SystemTable::ClusterGroups
-            | SystemTable::Datatypes => None,
+            | SystemTable::Datatypes
+            | SystemTable::Describe => None,
         }
     }
 
@@ -142,6 +147,7 @@ impl SystemTable {
             "cluster" => Ok(SystemTable::Cluster),
             "cluster_groups" => Ok(SystemTable::ClusterGroups),
             "datatypes" => Ok(SystemTable::Datatypes),
+            "describe" => Ok(SystemTable::Describe),
             _ => Err(format!("Unknown system table or view: {}", name)),
         }
     }
@@ -171,6 +177,7 @@ impl SystemTable {
             SystemTable::Cluster,
             SystemTable::ClusterGroups,
             SystemTable::Datatypes,
+            SystemTable::Describe,
         ]
     }
 
@@ -195,6 +202,7 @@ impl SystemTable {
             SystemTable::Cluster,
             SystemTable::ClusterGroups,
             SystemTable::Datatypes,
+            SystemTable::Describe,
         ]
     }
 
@@ -241,7 +249,8 @@ impl SystemTable {
             | SystemTable::ServerLogs
             | SystemTable::Cluster
             | SystemTable::ClusterGroups
-            | SystemTable::Datatypes => None,
+            | SystemTable::Datatypes
+            | SystemTable::Describe => None,
         }
     }
 }

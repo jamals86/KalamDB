@@ -85,6 +85,8 @@ mod smoke_test_storage_templates;
 mod smoke_test_alter_with_data;
 #[path = "smoke/ddl/smoke_test_ddl_alter.rs"]
 mod smoke_test_ddl_alter;
+#[path = "smoke/ddl/smoke_test_datatype_preservation.rs"]
+mod smoke_test_datatype_preservation;
 
 // DML tests
 #[path = "smoke/dml/smoke_test_dml_extended.rs"]

@@ -146,6 +146,18 @@ async fn test_file_datatype_upload_and_download() {
     .await
     .expect("Query failed");
     
+    let schema = result["results"][0]["schema"]
+        .as_array()
+        .expect("No schema in query result");
+    let attachment_schema = schema
+        .iter()
+        .find(|col| col["name"] == "attachment")
+        .expect("attachment column missing in schema");
+    match &attachment_schema["data_type"] {
+        Value::String(s) => assert_eq!(s, "File", "Expected FILE data_type for attachment"),
+        other => panic!("Unexpected attachment data_type format: {:?}", other),
+    }
+
     let rows = result["results"][0]["rows"].as_array().expect("No rows");
     assert_eq!(rows.len(), 1, "Expected 1 row");
     

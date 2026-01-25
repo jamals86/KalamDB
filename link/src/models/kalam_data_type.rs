@@ -46,4 +46,6 @@ pub enum KalamDataType {
     Decimal { precision: u8, scale: u8 },
     /// 16-bit signed integer
     SmallInt,
+    /// As json representation
+    File
 }

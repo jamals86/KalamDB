@@ -2,14 +2,9 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::arrow::array::{ArrayRef, BooleanArray, RecordBatch, StringArray, UInt32Array};
-use kalamdb_commons::arrow_utils::{
-    field_boolean, field_uint32, field_utf8, schema,
-};
-use kalamdb_commons::models::schemas::TableDefinition;
+use crate::views::DescribeView;
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_sql::ddl::DescribeTableStatement;
 use std::sync::Arc;
@@ -48,7 +43,8 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
                 ))
             })?;
 
-        let batch = build_describe_batch(&def)?;
+        // Use the DescribeView to build the batch with extended columns
+        let batch = DescribeView::build_batch(&def)?;
         let row_count = batch.num_rows();
 
         // Log query operation
@@ -75,54 +71,6 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
     }
 }
 
-fn build_describe_batch(def: &TableDefinition) -> Result<RecordBatch, KalamDbError> {
-    let schema = schema(vec![
-        field_utf8("column_name", false),
-        field_uint32("ordinal_position", false),
-        field_utf8("data_type", false),
-        field_boolean("is_nullable", false),
-        field_boolean("is_primary_key", false),
-        field_utf8("column_default", true),
-        field_utf8("column_comment", true),
-    ]);
-
-    // Pre-allocate based on column count
-    let col_count = def.columns.len();
-    let mut names: Vec<String> = Vec::with_capacity(col_count);
-    let mut ordinals: Vec<u32> = Vec::with_capacity(col_count);
-    let mut types: Vec<String> = Vec::with_capacity(col_count);
-    let mut nulls: Vec<bool> = Vec::with_capacity(col_count);
-    let mut pks: Vec<bool> = Vec::with_capacity(col_count);
-    let mut defaults: Vec<Option<String>> = Vec::with_capacity(col_count);
-    let mut comments: Vec<Option<String>> = Vec::with_capacity(col_count);
-
-    for c in &def.columns {
-        names.push(c.column_name.clone());
-        ordinals.push(c.ordinal_position);
-        types.push(c.data_type.sql_name().to_string());
-        nulls.push(c.is_nullable);
-        pks.push(c.is_primary_key);
-        defaults.push(if c.default_value.is_none() {
-            None
-        } else {
-            Some(c.default_value.to_sql())
-        });
-        comments.push(c.column_comment.clone());
-    }
-
-    let batch = RecordBatch::try_new(
-        schema,
-        vec![
-            Arc::new(StringArray::from(names)) as ArrayRef,
-            Arc::new(UInt32Array::from(ordinals)) as ArrayRef,
-            Arc::new(StringArray::from(types)) as ArrayRef,
-            Arc::new(BooleanArray::from(nulls)) as ArrayRef,
-            Arc::new(BooleanArray::from(pks)) as ArrayRef,
-            Arc::new(StringArray::from(defaults)) as ArrayRef,
-            Arc::new(StringArray::from(comments)) as ArrayRef,
-        ],
-    )
-    .into_arrow_error()?;
-
-    Ok(batch)
-}
+// Note: build_describe_batch() has been moved to DescribeView::build_batch()
+// in backend/crates/kalamdb-core/src/views/describe.rs
+// This provides a centralized implementation with extended columns (column_id, schema_version)

@@ -1266,7 +1266,10 @@ and then make sure we have a test for it as well
 
 137) when i run: SELECT * FROM chat.uploads limit 5 i always get a different order of rows if no order by is specified will use the key ordering instead to have consistent results, then add test cases to check this with queriying number of times
 
-138) 
+138) Override the information_schema.columns to also return the KalamDatatype and schema version and other kalamdb specific things at the end, also the select * from information_schema.tables to add to it another column with tabletype
+
+
+
 
 Main Epics:
 ------------

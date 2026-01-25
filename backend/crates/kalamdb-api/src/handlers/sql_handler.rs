@@ -10,6 +10,7 @@ use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
 use kalamdb_commons::models::ids::StorageId;
 use kalamdb_commons::models::types::{FileRef, FileSubfolderState};
 use kalamdb_commons::models::{NamespaceId, Role, TableId, UserId};
+use kalamdb_commons::conversions::read_kalam_data_type_metadata;
 use kalamdb_commons::schemas::{SchemaField, TableType};
 use kalamdb_core::providers::arrow_json_conversion::{
     json_value_to_scalar_strict, record_batch_to_json_arrays,
@@ -869,10 +870,7 @@ fn record_batch_to_query_result(
         .map(|(index, field)| {
             // Convert Arrow DataType to KalamDataType
             // Use metadata if available for lossless round-trip, otherwise infer from Arrow type
-            let kalam_type = field
-                .metadata()
-                .get("kalam_data_type")
-                .and_then(|s| serde_json::from_str::<KalamDataType>(s).ok())
+            let kalam_type = read_kalam_data_type_metadata(field)
                 .or_else(|| KalamDataType::from_arrow_type(field.data_type()).ok())
                 .unwrap_or(KalamDataType::Text); // Fallback to Text for unsupported types
 

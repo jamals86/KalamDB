@@ -1,4 +1,5 @@
 use crate::common::*;
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::thread;
@@ -38,6 +39,34 @@ fn extract_first_row_from_cli_json(output: &str) -> Value {
     }
 
     Value::Object(row_map.into_iter().collect())
+}
+
+fn normalize_value(value: &Value) -> Value {
+    extract_arrow_value(value).unwrap_or_else(|| extract_typed_value(value))
+}
+
+fn value_as_i64(value: &Value, column: &str, raw_output: &str) -> i64 {
+    match value {
+        Value::Number(n) => n.as_i64().unwrap_or_else(|| {
+            panic!("Column '{column}' expected i64, got {value}. Raw: {raw_output}")
+        }),
+        Value::String(s) => s.parse::<i64>().unwrap_or_else(|_| {
+            panic!("Column '{column}' expected numeric string, got '{s}'. Raw: {raw_output}")
+        }),
+        _ => panic!("Column '{column}' expected number, got {value}. Raw: {raw_output}"),
+    }
+}
+
+fn value_as_f64(value: &Value, column: &str, raw_output: &str) -> f64 {
+    match value {
+        Value::Number(n) => n.as_f64().unwrap_or_else(|| {
+            panic!("Column '{column}' expected f64, got {value}. Raw: {raw_output}")
+        }),
+        Value::String(s) => s.parse::<f64>().unwrap_or_else(|_| {
+            panic!("Column '{column}' expected numeric string, got '{s}'. Raw: {raw_output}")
+        }),
+        _ => panic!("Column '{column}' expected number, got {value}. Raw: {raw_output}"),
+    }
 }
 
 fn assert_decimal_column_eq(row: &Value, column: &str, expected: f64, raw_output: &str) {
@@ -185,6 +214,72 @@ fn test_update_all_types_user_table() {
     .unwrap();
     assert!(output.contains("initial text"), "Initial data not found: {}", output);
     assert!(output.contains("123"), "Initial int not found");
+    let row = extract_first_row_from_cli_json(&output);
+
+    let col_bool = normalize_value(row.get("col_bool").expect("Missing col_bool"));
+    assert_eq!(col_bool.as_bool(), Some(true));
+
+    let col_int = normalize_value(row.get("col_int").expect("Missing col_int"));
+    assert_eq!(value_as_i64(&col_int, "col_int", &output), 123);
+
+    let col_bigint = normalize_value(row.get("col_bigint").expect("Missing col_bigint"));
+    assert_eq!(value_as_i64(&col_bigint, "col_bigint", &output), 1234567890);
+
+    let col_double = normalize_value(row.get("col_double").expect("Missing col_double"));
+    let double_val = value_as_f64(&col_double, "col_double", &output);
+    assert!((double_val - 123.45).abs() < 1e-9, "col_double mismatch: {double_val}");
+
+    let col_float = normalize_value(row.get("col_float").expect("Missing col_float"));
+    let float_val = value_as_f64(&col_float, "col_float", &output);
+    assert!((float_val - 12.34).abs() < 1e-4, "col_float mismatch: {float_val}");
+
+    let col_text = normalize_value(row.get("col_text").expect("Missing col_text"));
+    assert_eq!(col_text.as_str(), Some("initial text"));
+
+    let ts_expected = NaiveDateTime::parse_from_str("2023-01-01 10:00:00", "%Y-%m-%d %H:%M:%S")
+        .expect("Invalid timestamp literal")
+        .timestamp_micros();
+    let col_timestamp = normalize_value(row.get("col_timestamp").expect("Missing col_timestamp"));
+    assert_eq!(value_as_i64(&col_timestamp, "col_timestamp", &output), ts_expected);
+
+    let date_expected = NaiveDate::parse_from_str("2023-01-01", "%Y-%m-%d")
+        .expect("Invalid date literal")
+        .signed_duration_since(NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+        .num_days();
+    let col_date = normalize_value(row.get("col_date").expect("Missing col_date"));
+    assert_eq!(value_as_i64(&col_date, "col_date", &output), date_expected);
+
+    let dt_expected = NaiveDateTime::parse_from_str("2023-01-01 10:00:00", "%Y-%m-%d %H:%M:%S")
+        .expect("Invalid datetime literal")
+        .timestamp_micros();
+    let col_datetime = normalize_value(row.get("col_datetime").expect("Missing col_datetime"));
+    assert_eq!(value_as_i64(&col_datetime, "col_datetime", &output), dt_expected);
+
+    let time_expected = NaiveTime::parse_from_str("10:00:00", "%H:%M:%S")
+        .expect("Invalid time literal");
+    let time_micros = (time_expected.num_seconds_from_midnight() as i64) * 1_000_000
+        + (time_expected.nanosecond() as i64 / 1_000);
+    let col_time = normalize_value(row.get("col_time").expect("Missing col_time"));
+    assert_eq!(value_as_i64(&col_time, "col_time", &output), time_micros);
+
+    let col_json = normalize_value(row.get("col_json").expect("Missing col_json"));
+    match col_json {
+        Value::String(s) => {
+            let parsed: Value = serde_json::from_str(&s)
+                .unwrap_or_else(|_| panic!("Invalid JSON in col_json: {s}"));
+            assert_eq!(parsed["key"], "initial");
+        },
+        Value::Object(obj) => assert_eq!(obj.get("key"), Some(&Value::String("initial".into()))),
+        other => panic!("Unexpected JSON type for col_json: {other}"),
+    }
+
+    let col_uuid = normalize_value(row.get("col_uuid").expect("Missing col_uuid"));
+    assert_eq!(col_uuid.as_str(), Some("550e8400-e29b-41d4-a716-446655440000"));
+
+    let col_smallint = normalize_value(row.get("col_smallint").expect("Missing col_smallint"));
+    assert_eq!(value_as_i64(&col_smallint, "col_smallint", &output), 100);
+
+    assert_decimal_column_eq(&row, "col_decimal", 100.50, &output);
 
     // --- NEW SCENARIO: Flush initial data to cold storage before update ---
     println!("Flushing initial data to cold storage...");

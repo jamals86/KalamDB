@@ -3,13 +3,11 @@
 //! Provides unified caching and metadata management for table schemas.
 //! All schema-related functionality has been consolidated here from the former kalamdb-registry crate.
 
-pub mod arrow_schema;
 pub mod cached_table_data;
 pub mod error;
 pub mod projection;
 pub mod registry;
 
-pub use arrow_schema::ArrowSchemaWithOptions;
 pub use cached_table_data::CachedTableData;
 pub use error::RegistryError;
 pub use kalamdb_commons::helpers::string_interner::SystemColumns;

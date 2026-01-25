@@ -5,6 +5,7 @@
 //! Historical versions are stored as separate entries: `{tableId}<ver>{version:08}` -> TableDefinition
 //! The latest pointer `{tableId}<lat>` points to the current version.
 
+use crate::conversions::with_kalam_data_type_metadata;
 use crate::models::datatypes::{ArrowConversionError, ToArrowType};
 use crate::models::schemas::{ColumnDefinition, TableOptions, TableType};
 use crate::{NamespaceId, TableName};
@@ -32,9 +33,6 @@ pub struct TableDefinition {
     pub columns: Vec<ColumnDefinition>,
 
     /// Current schema version number (starts at 1, incremented on ALTER TABLE)
-    ///
-    /// **Phase 16**: Historical versions are stored separately using TableVersionId keys.
-    /// Use `TablesStore::get_version()` to fetch specific historical versions.
     pub schema_version: u32,
 
     /// Next available column_id for new columns
@@ -312,13 +310,7 @@ impl TableDefinition {
                 let mut field = Field::new(&col.column_name, arrow_type, col.is_nullable);
 
                 // Store KalamDataType in metadata for lossless round-trip conversion
-                let kalam_type_json = serde_json::to_string(&col.data_type)
-                    .unwrap_or_else(|_| "\"Text\"".to_string());
-                let metadata = std::collections::HashMap::from([(
-                    "kalam_data_type".to_string(),
-                    kalam_type_json,
-                )]);
-                field = field.with_metadata(metadata);
+                field = with_kalam_data_type_metadata(field, &col.data_type);
 
                 Ok(field)
             })
