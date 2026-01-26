@@ -249,7 +249,8 @@ impl CreateTableStatement {
                 // Check table constraints for PRIMARY KEY
                 for constraint in constraints {
                     match constraint {
-                        TableConstraint::PrimaryKey { columns, .. } => {
+                        TableConstraint::PrimaryKey(pk) => {
+                            let columns = &pk.columns;
                             if columns.len() != 1 {
                                 return Err(
                                     "Composite PRIMARY KEYs are not supported yet".to_string()
@@ -293,7 +294,7 @@ impl CreateTableStatement {
 
                     for option in col.options {
                         match &option.option {
-                            ColumnOption::Unique { is_primary, .. } if *is_primary => {
+                            ColumnOption::PrimaryKey(..) => {
                                 if primary_key_column.is_some() {
                                     return Err(
                                         "Multiple PRIMARY KEY definitions found".to_string()
@@ -302,7 +303,7 @@ impl CreateTableStatement {
                                 primary_key_column = Some(col_name.clone());
                                 col_is_nullable = false; // PKs cannot be null
                             },
-                            ColumnOption::Unique { .. } => {},
+                            ColumnOption::Unique(_) => {},
                             ColumnOption::NotNull => {
                                 col_is_nullable = false;
                             },

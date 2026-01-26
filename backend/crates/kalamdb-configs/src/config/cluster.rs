@@ -150,7 +150,7 @@ fn default_api_addr() -> String {
 }
 
 fn default_user_shards() -> u32 {
-    12
+    8 // Reduced from 12 for lower memory footprint (~5-8 MB savings)
 }
 
 fn default_shared_shards() -> u32 {

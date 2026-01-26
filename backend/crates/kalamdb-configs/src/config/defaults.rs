@@ -111,7 +111,7 @@ pub fn default_datafusion_max_partitions() -> usize {
 }
 
 pub fn default_datafusion_batch_size() -> usize {
-    8192
+    2048 // Reduced from 8192 for lower memory usage
 }
 
 // Flush defaults
@@ -329,17 +329,17 @@ pub fn default_websocket_heartbeat_interval() -> Option<u64> {
     Some(5)
 }
 
-// RocksDB defaults
+// RocksDB defaults (MEMORY OPTIMIZED)
 pub fn default_rocksdb_write_buffer_size() -> usize {
-    64 * 1024 * 1024 // 64MB
+    2 * 1024 * 1024 // 2MB (reduced from 64MB for lower memory footprint)
 }
 
 pub fn default_rocksdb_max_write_buffers() -> i32 {
-    3
+    2 // Reduced from 3 for lower memory usage
 }
 
 pub fn default_rocksdb_block_cache_size() -> usize {
-    256 * 1024 * 1024 // 256MB
+    4 * 1024 * 1024 // 4MB (reduced from 256MB, SHARED across all column families)
 }
 
 pub fn default_rocksdb_max_background_jobs() -> i32 {

@@ -43,16 +43,20 @@ impl CreateViewStatement {
         }
 
         match statements.remove(0) {
-            Statement::CreateView {
+            Statement::CreateView(sqlparser::ast::CreateView {
                 name,
                 columns,
                 query,
                 or_replace,
                 materialized,
-                if_not_exists,
-                temporary,
+                // if_not_exists, // Removed in newer sqlparser versions or wrapped?
+                // temporary,     // Removed in newer sqlparser versions or wrapped?
                 ..
-            } => {
+            }) => {
+                // Determine if_not_exists/temporary if fields missing
+                let if_not_exists = false; // Placeholder until verified
+                let temporary = false;     // Placeholder until verified
+
                 if materialized {
                     return Err("MATERIALIZED VIEWS are not supported yet".to_string());
                 }

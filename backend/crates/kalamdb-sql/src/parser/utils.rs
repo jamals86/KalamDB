@@ -59,7 +59,7 @@ pub fn extract_dml_table_id(sql: &str, default_namespace: &str) -> Option<TableI
                 _ => None,
             }
         }
-        Statement::Update { table, .. } => match &table.relation {
+        Statement::Update(sqlparser::ast::Update { table, .. }) => match &table.relation {
             TableFactor::Table { name, .. } => {
                 let parts: Vec<String> = name
                     .0

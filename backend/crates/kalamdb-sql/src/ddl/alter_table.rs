@@ -80,7 +80,7 @@ impl AlterTableStatement {
         }
 
         let statement = statements.remove(0);
-        let Statement::AlterTable { name, operations, .. } = statement else {
+        let Statement::AlterTable(sqlparser::ast::AlterTable { name, operations, .. }) = statement else {
             return Err("Expected ALTER TABLE statement".to_string());
         };
 

@@ -264,18 +264,21 @@ impl StorageSettings {
     }
 }
 
-/// RocksDB-specific settings
+/// RocksDB-specific settings (MEMORY OPTIMIZED DEFAULTS)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RocksDbSettings {
-    /// Write buffer size per column family in bytes (default: 64MB)
+    /// Write buffer size per column family in bytes (default: 2MB)
+    /// Reduced from 64MB for lower memory footprint
     #[serde(default = "default_rocksdb_write_buffer_size")]
     pub write_buffer_size: usize,
 
-    /// Maximum number of write buffers (default: 3)
+    /// Maximum number of write buffers (default: 2)
+    /// Reduced from 3 for lower memory usage
     #[serde(default = "default_rocksdb_max_write_buffers")]
     pub max_write_buffers: i32,
 
-    /// Block cache size for reads in bytes (default: 256MB)
+    /// Block cache size for reads in bytes (default: 4MB, SHARED across all CFs)
+    /// Reduced from 256MB. This cache is shared, so adding CFs doesn't multiply memory.
     #[serde(default = "default_rocksdb_block_cache_size")]
     pub block_cache_size: usize,
 

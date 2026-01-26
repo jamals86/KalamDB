@@ -48,7 +48,10 @@ impl RocksDbInit {
         // This is critical when there are many SST files
         db_opts.set_max_open_files(self.settings.max_open_files);
 
-        // Block cache: Shared across all CFs to control total memory
+        // Block cache: SHARED across all column families (memory efficient!)
+        // Adding more CFs does NOT increase cache memory proportionally.
+        // Example: 100 CFs with 4MB cache = still only 4MB total, not 400MB.
+        // This is a key optimization for multi-tenant databases with many tables.
         let cache = Cache::new_lru_cache(self.settings.block_cache_size);
         let mut block_opts = BlockBasedOptions::default();
         block_opts.set_block_cache(&cache);
