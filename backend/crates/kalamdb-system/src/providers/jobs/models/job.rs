@@ -2,9 +2,15 @@
 //!
 //! Represents a background job (flush, retention, cleanup, etc.).
 
-use crate::models::{
-    ids::{JobId, NamespaceId, NodeId},
-    JobStatus, JobType, TableName,
+use kalamdb_commons::{
+    datatypes::KalamDataType,
+    models::{
+        ids::{JobId, NamespaceId, NodeId},
+        schemas::{ColumnDefinition, ColumnDefault, TableDefinition, TableOptions, TableType},
+        JobStatus, JobType, TableName,
+    },
+    system_tables::SystemTable,
+    KSerializable,
 };
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
@@ -35,7 +41,7 @@ use serde::{Deserialize, Serialize};
 /// ## Example
 ///
 /// ```rust,ignore
-/// use kalamdb_commons::types::Job;
+/// use kalamdb_system::providers::jobs::models::Job;
 /// use kalamdb_commons::{JobType, JobStatus, JobId, NodeId};
 ///
 /// let job = Job {
@@ -208,6 +214,242 @@ impl Job {
             None => None,
         }
     }
+
+    /// Generate TableDefinition for system.jobs
+    pub fn definition() -> TableDefinition {
+        let columns = vec![
+            ColumnDefinition::new(
+                1,
+                "job_id",
+                1,
+                KalamDataType::Text,
+                false,
+                true,
+                false,
+                ColumnDefault::None,
+                Some("Unique job identifier".to_string()),
+            ),
+            ColumnDefinition::new(
+                2,
+                "job_type",
+                2,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Type of job (Flush, Compact, Cleanup, Backup, Restore)".to_string()),
+            ),
+            ColumnDefinition::new(
+                3,
+                "status",
+                3,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Job status (New, Queued, Running, Completed, Failed, Cancelled, Retrying)".to_string()),
+            ),
+            ColumnDefinition::new(
+                4,
+                "leader_status",
+                4,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Status of leader-only actions".to_string()),
+            ),
+            ColumnDefinition::new(
+                5,
+                "parameters",
+                5,
+                KalamDataType::Json,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("JSON object containing job parameters".to_string()),
+            ),
+            ColumnDefinition::new(
+                6,
+                "message",
+                6,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Result or error message".to_string()),
+            ),
+            ColumnDefinition::new(
+                7,
+                "exception_trace",
+                7,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Full stack trace on failures".to_string()),
+            ),
+            ColumnDefinition::new(
+                8,
+                "idempotency_key",
+                8,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Key for preventing duplicate jobs".to_string()),
+            ),
+            ColumnDefinition::new(
+                9,
+                "queue",
+                9,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Queue name for job routing".to_string()),
+            ),
+            ColumnDefinition::new(
+                10,
+                "priority",
+                10,
+                KalamDataType::Int,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Priority value (higher = more priority)".to_string()),
+            ),
+            ColumnDefinition::new(
+                11,
+                "retry_count",
+                11,
+                KalamDataType::SmallInt,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Number of retries attempted".to_string()),
+            ),
+            ColumnDefinition::new(
+                12,
+                "max_retries",
+                12,
+                KalamDataType::SmallInt,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Maximum retries allowed".to_string()),
+            ),
+            ColumnDefinition::new(
+                13,
+                "memory_used",
+                13,
+                KalamDataType::BigInt,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Memory usage in bytes".to_string()),
+            ),
+            ColumnDefinition::new(
+                14,
+                "cpu_used",
+                14,
+                KalamDataType::BigInt,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("CPU time in microseconds".to_string()),
+            ),
+            ColumnDefinition::new(
+                15,
+                "created_at",
+                15,
+                KalamDataType::Timestamp,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Unix timestamp in milliseconds when job was created".to_string()),
+            ),
+            ColumnDefinition::new(
+                16,
+                "updated_at",
+                16,
+                KalamDataType::Timestamp,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Unix timestamp in milliseconds when job was last updated".to_string()),
+            ),
+            ColumnDefinition::new(
+                17,
+                "started_at",
+                17,
+                KalamDataType::Timestamp,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Unix timestamp in milliseconds when job started".to_string()),
+            ),
+            ColumnDefinition::new(
+                18,
+                "finished_at",
+                18,
+                KalamDataType::Timestamp,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Unix timestamp in milliseconds when job completed".to_string()),
+            ),
+            ColumnDefinition::new(
+                19,
+                "node_id",
+                19,
+                KalamDataType::BigInt,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Node/server that owns this job".to_string()),
+            ),
+            ColumnDefinition::new(
+                20,
+                "leader_node_id",
+                20,
+                KalamDataType::BigInt,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Node that performed leader actions".to_string()),
+            ),
+        ];
+
+        TableDefinition::new(
+            NamespaceId::system(),
+            TableName::new(SystemTable::Jobs.table_name()),
+            TableType::System,
+            columns,
+            TableOptions::system(),
+            Some("Background jobs for maintenance and data management".to_string()),
+        )
+        .expect("Failed to create system.jobs table definition")
+    }
 }
 
 /// Options for job creation
@@ -287,6 +529,9 @@ impl Default for JobFilter {
         }
     }
 }
+
+// KSerializable implementation for EntityStore support
+impl KSerializable for Job {}
 
 #[cfg(test)]
 mod tests {

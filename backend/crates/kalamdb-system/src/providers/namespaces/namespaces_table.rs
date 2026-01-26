@@ -72,7 +72,7 @@ impl NamespacesTableSchema {
                 4,
                 "options",
                 4,
-                KalamDataType::Text,
+                KalamDataType::Json,
                 true,
                 false,
                 false,

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "backend/crates/kalamdb-macros",
     "backend/crates/kalamdb-commons",
     "backend/crates/kalamdb-configs",
     "backend/crates/kalamdb-filestore",
@@ -140,6 +141,9 @@ bytes = "1.11.0"
 http-body = "1.0.0"
 http-body-util = "0.1.2"
 cc = "1.2.54"
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full", "extra-traits"] }
 
 # Object storage abstraction (S3/GCS/Azure/local)
 # Kept as a workspace dependency so only kalamdb-filestore needs to opt-in.

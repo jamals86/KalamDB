@@ -1,7 +1,7 @@
 use super::types::JobsManager;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use kalamdb_commons::system::{Job, JobFilter};
+use kalamdb_system::providers::jobs::models::{Job, JobFilter};
 use kalamdb_commons::{JobId, JobStatus};
 
 impl JobsManager {

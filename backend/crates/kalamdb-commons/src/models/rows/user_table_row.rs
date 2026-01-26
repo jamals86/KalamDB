@@ -36,3 +36,6 @@ impl From<UserTableRow> for KTableRow {
         }
     }
 }
+
+// KSerializable implementation for EntityStore support
+impl crate::serialization::KSerializable for UserTableRow {}

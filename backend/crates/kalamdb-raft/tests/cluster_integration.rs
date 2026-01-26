@@ -23,10 +23,11 @@ use tokio::time::sleep;
 use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
-use kalamdb_commons::system::{Job, LiveQuery};
-use kalamdb_commons::types::LiveQueryStatus;
+use kalamdb_commons::system::JobNode;
+use kalamdb_system::providers::jobs::models::Job;
 use kalamdb_commons::JobStatus;
 use kalamdb_commons::TableId;
+use kalamdb_system::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
 use kalamdb_raft::{
     commands::{MetaCommand, SharedDataCommand, UserDataCommand},
     manager::{PeerNode, RaftManager, RaftManagerConfig},

@@ -2,7 +2,7 @@ use super::types::JobsManager;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use chrono::Utc;
-use kalamdb_commons::system::JobFilter;
+use kalamdb_system::providers::jobs::models::JobFilter;
 use kalamdb_commons::{JobId, JobStatus, JobType, NodeId};
 use kalamdb_raft::commands::MetaCommand;
 use kalamdb_raft::NodeStatus;

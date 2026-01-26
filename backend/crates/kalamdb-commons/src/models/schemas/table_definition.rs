@@ -824,3 +824,6 @@ mod tests {
         assert!(pk_columns.is_empty());
     }
 }
+
+// KSerializable implementation for EntityStore support
+impl crate::serialization::KSerializable for TableDefinition {}

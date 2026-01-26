@@ -64,3 +64,9 @@ pub use providers::{
     LiveQueriesTableProvider, ManifestTableProvider, NamespacesTableProvider,
     StoragesTableProvider, TablesTableProvider, UsersTableProvider,
 };
+
+// Re-export live query models for convenience
+pub use providers::live_queries::models::{LiveQuery, LiveQueryStatus};
+
+// Re-export job models for convenience
+pub use providers::jobs::models::{Job, JobFilter, JobOptions, JobSortField, SortOrder};

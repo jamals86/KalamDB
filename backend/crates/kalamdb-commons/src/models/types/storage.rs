@@ -40,3 +40,6 @@ impl Storage {
             .map_err(|e| StorageLocationConfigError::InvalidJson(e.to_string()))
     }
 }
+
+// KSerializable implementation for EntityStore support
+impl crate::serialization::KSerializable for Storage {}

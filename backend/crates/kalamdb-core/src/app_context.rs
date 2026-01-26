@@ -27,7 +27,7 @@ use kalamdb_filestore::StorageRegistry;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_store::StorageBackend;
-use kalamdb_system::{ClusterCoordinator, SystemTable, SystemTablesRegistry};
+use kalamdb_system::{ClusterCoordinator, Job, SystemTable, SystemTablesRegistry};
 use kalamdb_tables::{SharedTableStore, UserTableStore};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
@@ -961,7 +961,7 @@ impl AppContext {
     /// Convenience wrapper for system_tables().jobs().create_job()
     pub fn insert_job(
         &self,
-        job: &kalamdb_commons::system::Job,
+        job: &Job,
     ) -> Result<(), crate::error::KalamDbError> {
         self.system_tables
             .jobs()
@@ -975,7 +975,7 @@ impl AppContext {
     /// Convenience wrapper for system_tables().jobs().list_jobs()
     pub fn scan_all_jobs(
         &self,
-    ) -> Result<Vec<kalamdb_commons::system::Job>, crate::error::KalamDbError> {
+    ) -> Result<Vec<Job>, crate::error::KalamDbError> {
         self.system_tables.jobs().list_jobs().into_kalamdb_error("Failed to scan jobs")
     }
 

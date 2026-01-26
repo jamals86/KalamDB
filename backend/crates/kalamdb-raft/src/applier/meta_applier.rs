@@ -14,7 +14,8 @@ use kalamdb_commons::models::schemas::{TableDefinition, TableType};
 use kalamdb_commons::models::{
     JobId, JobStatus, NamespaceId, NodeId, StorageId, TableId, UserId,
 };
-use kalamdb_commons::system::{Job, Storage};
+use kalamdb_commons::system::Storage;
+use kalamdb_system::providers::jobs::models::Job;
 use kalamdb_commons::types::User;
 
 use crate::RaftError;

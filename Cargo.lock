@@ -3444,6 +3444,7 @@ dependencies = [
  "dashmap",
  "datafusion",
  "hex",
+ "kalamdb-macros",
  "log",
  "num_cpus",
  "once_cell",
@@ -3548,6 +3549,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalamdb-macros"
+version = "0.2.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+]
+
+[[package]]
 name = "kalamdb-observability"
 version = "0.2.0"
 dependencies = [
@@ -3577,6 +3587,7 @@ dependencies = [
  "kalamdb-configs",
  "kalamdb-sharding",
  "kalamdb-store",
+ "kalamdb-system",
  "log",
  "openraft",
  "parking_lot",

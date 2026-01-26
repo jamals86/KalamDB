@@ -19,7 +19,7 @@
 
 use crate::StoragePartition;
 use kalamdb_commons::storage::Partition;
-use kalamdb_commons::system::LiveQuery;
+use crate::providers::live_queries::models::LiveQuery;
 use kalamdb_commons::{LiveQueryId, TableId};
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
@@ -98,7 +98,7 @@ mod tests {
             changes: 0,
             node_id: NodeId::new(1),
             subscription_id: "sub789".to_string(),
-            status: kalamdb_commons::types::LiveQueryStatus::Active,
+            status: LiveQueryStatus::Active,
             last_ping_at: 1000,
         };
         (live_id, lq)

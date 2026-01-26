@@ -4,7 +4,7 @@
 
 use crate::StoragePartition;
 use kalamdb_commons::storage::Partition;
-use kalamdb_commons::system::Job;
+use crate::providers::jobs::models::Job;
 use kalamdb_commons::{JobId, JobStatus};
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;

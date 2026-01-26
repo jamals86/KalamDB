@@ -48,10 +48,14 @@ pub mod errors;
 pub mod helpers;
 pub mod ids;
 pub mod models;
+pub mod serialization; // KSerializable trait for entity storage
 pub mod storage; // Storage backend abstraction (Partition, StorageError, etc.)
 pub mod storage_key; // StorageKey trait for type-safe key serialization
 pub mod system_tables; // System table enumeration (SystemTable, StoragePartition)
 pub mod websocket;
+
+// Allow procedural macros to refer to this crate by name.
+extern crate self as kalamdb_commons;
 
 // Re-export commonly used types at crate root
 pub use constants::{ANONYMOUS_USER_ID, MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES};
@@ -95,6 +99,7 @@ pub use models::{
     UserName,
 };
 pub use schemas::TableType;
+pub use serialization::KSerializable;
 pub use storage_key::{decode_key, encode_key, encode_prefix, next_storage_key_bytes, StorageKey};
 pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM_COLUMNS};
 pub use system_tables::{StoragePartition, SystemTable};

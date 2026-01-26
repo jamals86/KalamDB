@@ -1,7 +1,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::jobs::JobsManager;
-use kalamdb_commons::system::JobFilter;
+use kalamdb_system::providers::jobs::models::JobFilter;
 use kalamdb_commons::JobStatus;
 use std::sync::Arc;
 

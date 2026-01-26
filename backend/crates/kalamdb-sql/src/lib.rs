@@ -41,9 +41,10 @@ pub mod statement_classifier;
 pub mod validation;
 
 // Re-export system models from kalamdb-commons (single source of truth)
-pub use kalamdb_commons::system::{
-    AuditLogEntry, Job, LiveQuery, Namespace, Storage, User, UserTableCounter,
-};
+pub use kalamdb_commons::system::{AuditLogEntry, Namespace, Storage, User};
+// Job and LiveQuery are now in kalamdb-system
+pub use kalamdb_system::providers::jobs::models::{Job, JobFilter, JobOptions};
+pub use kalamdb_system::providers::live_queries::models::LiveQuery;
 
 pub use batch_execution::split_statements;
 pub use compatibility::{

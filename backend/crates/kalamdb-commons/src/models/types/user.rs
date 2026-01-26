@@ -234,3 +234,6 @@ mod tests {
         assert!(user.locked_until.is_none());
     }
 }
+
+// KSerializable implementation for EntityStore support
+impl crate::serialization::KSerializable for User {}

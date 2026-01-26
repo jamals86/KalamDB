@@ -1,16 +1,13 @@
-// File: backend/crates/kalamdb-commons/src/models/types/live_query_status.rs
+// File: backend/crates/kalamdb-system/src/providers/live_queries/models/live_query_status.rs
 
 use std::fmt;
 use std::str::FromStr;
 
 use bincode::{Decode, Encode};
-
-#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Status of a live query subscription
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode, Serialize, Deserialize)]
 pub enum LiveQueryStatus {
     /// Active and receiving updates
     Active,

@@ -8,8 +8,8 @@
 
 use chrono::{DateTime, Utc};
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, NodeId, UserId};
-use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::TableId;
+use kalamdb_system::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
 use serde::{Deserialize, Serialize};
 
 /// Commands for user data shards (32 shards by default)

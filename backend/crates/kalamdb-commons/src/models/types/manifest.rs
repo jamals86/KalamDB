@@ -172,6 +172,9 @@ impl ManifestCacheEntry {
     }
 }
 
+// KSerializable implementation for EntityStore support
+impl crate::serialization::KSerializable for ManifestCacheEntry {}
+
 /// Statistics for a single column in a segment.
 ///
 /// Min/max values use `StoredScalarValue` - the same bincode-compatible enum

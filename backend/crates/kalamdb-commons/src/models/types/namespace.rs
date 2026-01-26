@@ -111,3 +111,6 @@ mod tests {
         assert_eq!(namespace, deserialized);
     }
 }
+
+// KSerializable implementation for EntityStore support
+impl crate::serialization::KSerializable for Namespace {}

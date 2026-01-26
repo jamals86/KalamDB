@@ -22,3 +22,6 @@ impl JobNode {
         JobNodeId::new(&self.job_id, &self.node_id)
     }
 }
+
+// KSerializable implementation for EntityStore support
+impl crate::serialization::KSerializable for JobNode {}

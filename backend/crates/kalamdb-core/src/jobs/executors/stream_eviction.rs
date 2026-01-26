@@ -246,7 +246,7 @@ mod tests {
         ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
     };
     use kalamdb_commons::models::{TableId, TableName, UserId};
-    use kalamdb_commons::system::Job;
+    use kalamdb_system::providers::jobs::models::Job;
     use kalamdb_commons::{JobId, NamespaceId, NodeId};
     use kalamdb_tables::StreamTableStoreConfig;
     use serde_json::json;

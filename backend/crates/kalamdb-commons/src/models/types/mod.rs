@@ -5,10 +5,10 @@
 //!
 //! This module contains strongly-typed models for all system tables:
 //! - `User`: System users (authentication, authorization)
-//! - `Job`: Background jobs (flush, retention, cleanup)
+//! - `Job`: Background jobs (flush, retention, cleanup) - MOVED to kalamdb-system
 //! - `Namespace`: Database namespaces
 //! - `SystemTable`: Table metadata registry
-//! - `LiveQuery`: Active WebSocket subscriptions
+//! - `LiveQuery`: Active WebSocket subscriptions - MOVED to kalamdb-system
 //! - `InformationSchemaTable`: SQL standard table metadata
 //! - `UserTableCounter`: Per-user table flush tracking
 //!
@@ -25,8 +25,8 @@
 //! ## Example
 //!
 //! ```rust
-//! use kalamdb_commons::types::{User, Job, LiveQuery};
-//! use kalamdb_commons::{UserId, Role, AuthType, StorageMode, StorageId, JobType, JobStatus, NamespaceId, TableName};
+//! use kalamdb_commons::types::{User, Namespace, Storage};
+//! use kalamdb_commons::{UserId, Role, AuthType, StorageMode, StorageId, NamespaceId};
 //!
 //! let user = User {
 //!     id: UserId::new("u_123"),
@@ -50,24 +50,16 @@
 
 mod audit_log;
 mod file_ref;
-mod job;
 mod job_node;
-mod live_query;
-mod live_query_status;
 mod manifest;
 mod namespace;
 mod storage;
 mod user;
-mod user_table_counter;
 
 pub use audit_log::AuditLogEntry;
 pub use file_ref::{FileRef, FileSubfolderState};
-pub use job::{Job, JobFilter, JobOptions, JobSortField, SortOrder};
 pub use job_node::JobNode;
-pub use live_query::LiveQuery;
-pub use live_query_status::LiveQueryStatus;
 pub use manifest::{ColumnStats, Manifest, ManifestCacheEntry, SegmentMetadata, SegmentStatus, SyncState};
 pub use namespace::Namespace;
 pub use storage::Storage;
 pub use user::{User, DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS};
-pub use user_table_counter::UserTableCounter;

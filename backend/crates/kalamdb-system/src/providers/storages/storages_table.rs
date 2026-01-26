@@ -100,7 +100,7 @@ impl StoragesTableSchema {
                 6,
                 "credentials",
                 6,
-                KalamDataType::Text,
+                KalamDataType::Json,
                 true,
                 false,
                 false,

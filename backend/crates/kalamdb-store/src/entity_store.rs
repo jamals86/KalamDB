@@ -47,15 +47,15 @@
 //! ```
 
 use crate::storage_trait::{Partition, Result, StorageBackend, StorageError};
-use bincode::config::standard;
-use bincode::serde::{decode_from_slice, encode_to_vec};
 use kalamdb_commons::{
     schemas::TableDefinition,
     system::{
-        AuditLogEntry, Job, JobNode, LiveQuery, ManifestCacheEntry,
-        Namespace, Storage as SystemStorage, User,
+        AuditLogEntry, JobNode, ManifestCacheEntry, Namespace, Storage as SystemStorage, User,
     },
-    next_storage_key_bytes, StorageKey, UserId,
+    next_storage_key_bytes,
+    KSerializable,
+    StorageKey,
+    UserId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -103,54 +103,6 @@ pub type EntityIterator<'a, K, V> = Box<dyn Iterator<Item = Result<(K, V)>> + Se
 /// user_store.get(&user_id)   // ✓ Compiles
 /// user_store.get(&table_id)  // ✗ Compile error - wrong key type!
 /// ```
-/// Trait implemented by values that can be stored in an [`EntityStore`].
-///
-/// Types can override `encode`/`decode` for custom storage formats (e.g.,
-/// row envelopes vs. JSON). The default implementation uses bincode.
-pub trait KSerializable: Serialize + for<'de> Deserialize<'de> + Send + Sync {
-    fn encode(&self) -> Result<Vec<u8>> {
-        let config = standard();
-        encode_to_vec(self, config)
-            .map_err(|e| StorageError::SerializationError(format!("bincode encode failed: {}", e)))
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        let config = standard();
-        decode_from_slice(bytes, config)
-            .map(|(entity, _)| entity)
-            .map_err(|e| StorageError::SerializationError(format!("bincode decode failed: {}", e)))
-    }
-}
-
-impl KSerializable for String {}
-
-impl KSerializable for kalamdb_commons::models::rows::Row {}
-
-impl KSerializable for kalamdb_commons::models::rows::UserTableRow {}
-
-impl KSerializable for User {}
-
-impl KSerializable for Namespace {}
-
-impl KSerializable for SystemStorage {}
-
-impl KSerializable for TableDefinition {}
-
-impl KSerializable for ManifestCacheEntry {}
-
-impl KSerializable for AuditLogEntry {}
-
-impl KSerializable for Job {}
-
-impl KSerializable for JobNode {}
-
-impl KSerializable for LiveQuery {}
-
-impl KSerializable for UserId {}
-
 pub trait EntityStore<K, V>
 where
     K: StorageKey,
@@ -999,7 +951,7 @@ where
 }
 
 // Import Role and TableAccess for the trait
-use kalamdb_commons::models::{Role, TableAccess};
+use kalamdb_commons::models::{Role, TableAccess, UserTableRow};
 
 #[cfg(test)]
 mod tests {

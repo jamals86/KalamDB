@@ -24,3 +24,6 @@ pub struct AuditLogEntry {
     pub ip_address: Option<String>, // Connection source (if available)
     pub subject_user_id: Option<UserId>, // User being impersonated (AS USER operations)
 }
+
+// KSerializable implementation for EntityStore support
+impl crate::serialization::KSerializable for AuditLogEntry {}
