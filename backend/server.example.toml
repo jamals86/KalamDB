@@ -48,17 +48,23 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# Write buffer size per column family in bytes (default: 64MB)
-# Larger values improve write throughput but use more memory
-write_buffer_size = 67108864
+# Write buffer size per column family in bytes (default: 2MB)
+# MEMORY OPTIMIZATION: Reduced from 64MB for lower idle memory footprint
+# Formula: memory ≈ write_buffer_size × max_write_buffers × num_column_families
+# Lower values reduce memory with many column families
+write_buffer_size = 2097152
 
-# Maximum number of write buffers (default: 3)
+# Maximum number of write buffers (default: 2)
 # Allows writes to continue while buffers are being flushed
-max_write_buffers = 3
+# MEMORY OPTIMIZATION: Reduced from 3 to 2
+max_write_buffers = 2
 
-# Block cache size for reads in bytes (default: 256MB)
-# Larger values improve read performance for hot data
-block_cache_size = 268435456
+# Block cache size for reads in bytes (default: 4MB)
+# MEMORY OPTIMIZATION: Reduced from 256MB to 4MB
+# IMPORTANT: This cache is SHARED across ALL column families
+# Adding more column families does NOT increase memory proportionally
+# Example: 100 CFs × 4MB cache = still only 4MB total (not 400MB)
+block_cache_size = 4194304
 
 # Maximum number of background compaction/flush jobs (default: 4)
 max_background_jobs = 4
@@ -76,9 +82,10 @@ query_parallelism = 0
 # Higher values increase parallelism but use more resources
 max_partitions = 16
 
-# Batch size for record processing (default: 8192 rows)
-# Larger batches improve throughput but use more memory
-batch_size = 8192
+# Batch size for record processing (default: 2048 rows)
+# MEMORY OPTIMIZATION: Reduced from 8192 for lower memory usage
+# Lower batch size reduces memory pressure during query execution
+batch_size = 2048
 
 [flush]
 # Default row limit for flush policies (default: 10000 rows)
@@ -345,9 +352,11 @@ max_parameter_size_bytes = 524288
 # # API address for client HTTP requests (should match server.host:server.port)
 # api_addr = "http://192.168.1.10:8080"
 # 
-# # Number of user data shards (default: 32)
+# # Number of user data shards (default: 8)
+# # MEMORY OPTIMIZATION: Reduced from 32 (saves ~5-8 MB)
 # # Each shard is a separate Raft group for user table data
-# user_shards = 32
+# # Trade-off: Lower write parallelism (acceptable for dev/testing)
+# user_shards = 8
 # 
 # # Number of shared data shards (default: 1)
 # # Each shard is a separate Raft group for shared table data

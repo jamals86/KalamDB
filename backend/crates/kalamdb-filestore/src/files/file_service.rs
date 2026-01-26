@@ -9,7 +9,7 @@ use crate::registry::{StorageCached, StorageRegistry};
 use bytes::Bytes;
 use kalamdb_commons::ids::SnowflakeGenerator;
 use kalamdb_commons::models::ids::StorageId;
-use kalamdb_commons::models::types::{FileRef, FileSubfolderState};
+use kalamdb_system::{FileRef, FileSubfolderState};
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 use std::fs;

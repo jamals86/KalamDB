@@ -74,6 +74,9 @@ dirs = { workspace = true }
 # Terminal dimensions
 term_size = { workspace = true }
 
+# Terminal control for interactive menus
+crossterm = { workspace = true }
+
 # Date/time formatting
 chrono = { workspace = true }
 rand.workspace = true
@@ -95,5 +98,6 @@ futures-util = { workspace = true }
 regex = { workspace = true }
 ntest = { workspace = true }
 wait-timeout = { workspace = true }
+kalamdb-commons = { workspace = true }
 kalamdb-configs = { workspace = true }
 kalamdb-server = { workspace = true }

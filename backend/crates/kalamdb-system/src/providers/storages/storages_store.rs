@@ -4,7 +4,7 @@
 
 use crate::system_table_store::SystemTableStore;
 use crate::SystemTable;
-use kalamdb_commons::system::Storage;
+use crate::providers::storages::models::Storage;
 use kalamdb_commons::StorageId;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
@@ -26,6 +26,7 @@ pub fn new_storages_store(backend: Arc<dyn StorageBackend>) -> StoragesStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::StorageType;
     use crate::SystemTable;
     use kalamdb_commons::Role;
     use kalamdb_store::entity_store::EntityStore;
@@ -38,7 +39,6 @@ mod tests {
     }
 
     fn create_test_storage(storage_id: &str, name: &str) -> Storage {
-        use kalamdb_commons::models::StorageType;
         Storage {
             storage_id: StorageId::new(storage_id),
             storage_name: name.to_string(),

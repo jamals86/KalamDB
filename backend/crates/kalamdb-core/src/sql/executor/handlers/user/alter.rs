@@ -43,7 +43,7 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
         match statement.modification {
             UserModification::SetPassword(ref new_pw) => {
                 // Self-service allowed: user modifying own password
-                let is_self = context.user_id().as_str() == updated.id.as_str();
+                let is_self = context.user_id().as_str() == updated.user_id.as_str();
                 if !is_self && !context.is_admin() {
                     return Err(KalamDbError::Unauthorized(
                         "Only admins can change other users' passwords".to_string(),
@@ -76,7 +76,7 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                 updated.role = new_role;
             },
             UserModification::SetEmail(ref new_email) => {
-                let is_self = context.user_id().as_str() == updated.id.as_str();
+                let is_self = context.user_id().as_str() == updated.user_id.as_str();
                 if !is_self && !context.is_admin() {
                     return Err(KalamDbError::Unauthorized(
                         "Only admins can update other users' emails".to_string(),

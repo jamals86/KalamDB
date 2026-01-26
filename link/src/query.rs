@@ -4,11 +4,17 @@ use crate::normalize::normalize_query_response;
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
-    models::{QueryRequest, QueryResponse},
+    models::{QueryRequest, QueryResponse, UploadProgress},
 };
+use bytes::Bytes;
+use http_body::Frame;
+use http_body_util::StreamBody;
 use log::{debug, warn};
 use reqwest::multipart::{Form, Part};
-use std::time::Instant;
+use std::{
+    sync::Arc,
+    time::Instant,
+};
 
 /// Handles SQL query execution via HTTP.
 #[derive(Clone)]
@@ -17,6 +23,50 @@ pub struct QueryExecutor {
     http_client: reqwest::Client,
     auth: AuthProvider,
     max_retries: u32,
+}
+
+/// Progress callback for multipart file uploads.
+pub type UploadProgressCallback = Arc<dyn Fn(UploadProgress) + Send + Sync>;
+
+fn build_progress_stream(
+    data: Arc<Vec<u8>>,
+    file_name: Arc<str>,
+    file_index: usize,
+    total_files: usize,
+    progress_cb: UploadProgressCallback,
+) -> impl futures_util::Stream<Item = std::result::Result<Frame<Bytes>, std::io::Error>> + Send + 'static {
+    let chunk_size = 64 * 1024;
+    futures_util::stream::unfold(0usize, move |offset| {
+        let data = Arc::clone(&data);
+        let progress_cb = progress_cb.clone();
+        let file_name = Arc::clone(&file_name);
+        async move {
+            if offset >= data.len() {
+                return None;
+            }
+
+            let end = (offset + chunk_size).min(data.len());
+            let chunk = Bytes::copy_from_slice(&data[offset..end]);
+            let total_bytes = data.len() as u64;
+            let bytes_sent = end as u64;
+            let percent = if total_bytes == 0 {
+                100.0
+            } else {
+                (bytes_sent as f64 / total_bytes as f64) * 100.0
+            };
+
+            (progress_cb)(UploadProgress {
+                file_index,
+                total_files,
+                file_name: file_name.to_string(),
+                bytes_sent,
+                total_bytes,
+                percent,
+            });
+
+            Some((Ok(Frame::data(chunk)), end))
+        }
+    })
 }
 
 impl QueryExecutor {
@@ -100,6 +150,19 @@ impl QueryExecutor {
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<String>,
     ) -> Result<QueryResponse> {
+        self.execute_with_progress(sql, files, params, namespace_id, None)
+            .await
+    }
+
+    /// Execute a SQL query with optional parameters and namespace, with upload progress callback.
+    pub async fn execute_with_progress(
+        &self,
+        sql: &str,
+        files: Option<Vec<(String, String, Vec<u8>, Option<String>)>>,
+        params: Option<Vec<serde_json::Value>>,
+        namespace_id: Option<String>,
+        progress: Option<UploadProgressCallback>,
+    ) -> Result<QueryResponse> {
         let has_files = files.as_ref().map(|f| !f.is_empty()).unwrap_or(false);
 
         if has_files {
@@ -114,8 +177,33 @@ impl QueryExecutor {
             }
 
             if let Some(files) = files {
-                for (placeholder_name, filename, data, mime_type) in files {
-                    let part = Part::bytes(data)
+                let total_files = files.len();
+                for (index, (placeholder_name, filename, data, mime_type)) in
+                    files.into_iter().enumerate()
+                {
+                    let total_bytes = data.len() as u64;
+                    let field_name = format!("file:{}", placeholder_name);
+
+                    let part = if let Some(progress_cb) = progress.clone() {
+                        let data = Arc::new(data);
+                        let file_name = Arc::<str>::from(filename.clone());
+                        let file_index = index + 1;
+
+                        let stream = build_progress_stream(
+                            Arc::clone(&data),
+                            Arc::clone(&file_name),
+                            file_index,
+                            total_files,
+                            progress_cb,
+                        );
+
+                        let body = reqwest::Body::wrap(StreamBody::new(stream));
+                        Part::stream_with_length(body, total_bytes)
+                    } else {
+                        Part::bytes(data)
+                    };
+
+                    let part = part
                         .file_name(filename)
                         .mime_str(mime_type.as_deref().unwrap_or("application/octet-stream"))
                         .map_err(|e| {
@@ -125,7 +213,6 @@ impl QueryExecutor {
                             ))
                         })?;
 
-                    let field_name = format!("file:{}", placeholder_name);
                     form = form.part(field_name, part);
                 }
             }
@@ -298,5 +385,45 @@ impl QueryExecutor {
             status_code: status.as_u16(),
             message: error_text,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_progress_stream, UploadProgress, UploadProgressCallback};
+    use futures_util::StreamExt;
+    use std::sync::{Arc, Mutex};
+
+    #[tokio::test]
+    async fn progress_stream_reports_completion() {
+        let data = Arc::new(vec![1u8; 128 * 1024]);
+        let file_name = Arc::<str>::from("example.txt");
+        let last_progress = Arc::new(Mutex::new(None::<UploadProgress>));
+
+        let last_progress_clone = Arc::clone(&last_progress);
+        let progress_cb: UploadProgressCallback = Arc::new(move |progress| {
+            *last_progress_clone.lock().unwrap() = Some(progress);
+        });
+
+        let stream = build_progress_stream(
+            Arc::clone(&data),
+            Arc::clone(&file_name),
+            2,
+            3,
+            progress_cb,
+        );
+
+        futures_util::pin_mut!(stream);
+        while let Some(frame) = stream.next().await {
+            frame.unwrap();
+        }
+
+        let progress = last_progress.lock().unwrap().clone().expect("no progress reported");
+        assert_eq!(progress.file_index, 2);
+        assert_eq!(progress.total_files, 3);
+        assert_eq!(progress.file_name, "example.txt");
+        assert_eq!(progress.total_bytes, data.len() as u64);
+        assert_eq!(progress.bytes_sent, data.len() as u64);
+        assert!((progress.percent - 100.0).abs() < f64::EPSILON);
     }
 }

@@ -37,7 +37,7 @@ export function useLiveQueries() {
       let sql = `
         SELECT live_id, connection_id, subscription_id, namespace_id, 
                table_name, user_id, query, options, status, 
-               created_at, last_update, changes, node
+               created_at, last_update, changes, node_id
         FROM system.live_queries
       `;
       
@@ -83,7 +83,7 @@ export function useLiveQueries() {
         created_at: Number(row.created_at ?? 0),
         last_update: Number(row.last_update ?? 0),
         changes: Number(row.changes ?? 0),
-        node: String(row.node ?? ''),
+        node: String(row.node_id ?? ''),
       }));
       
       setLiveQueries(queryList);

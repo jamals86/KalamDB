@@ -2,7 +2,7 @@
 
 use super::test_support::consolidated_helpers::unique_namespace;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::types::Manifest;
+use kalamdb_system::Manifest;
 use tokio::time::{sleep, Duration, Instant};
 
 fn find_manifest_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {

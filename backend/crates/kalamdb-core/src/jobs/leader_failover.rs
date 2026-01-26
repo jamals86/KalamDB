@@ -23,8 +23,8 @@
 
 use chrono::Utc;
 use kalamdb_commons::models::{JobId, NodeId};
-use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobStatus, JobType};
+use kalamdb_system::providers::jobs::models::Job;
+use kalamdb_system::{JobStatus, JobType};
 use std::collections::HashSet;
 use std::sync::Arc;
 

@@ -353,3 +353,6 @@ impl Ord for Row {
         Ordering::Equal
     }
 }
+
+// KSerializable implementation for EntityStore support
+impl crate::serialization::KSerializable for Row {}

@@ -13,7 +13,7 @@ use crate::sql::executor::helpers::guards::block_system_namespace_modification;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::JobType;
+use kalamdb_system::JobType;
 use kalamdb_sql::ddl::DropTableStatement;
 use std::sync::Arc;
 
@@ -420,8 +420,8 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
 
         // Cancel any active flush jobs for this table before dropping
         let job_manager = self.app_context.job_manager();
-        let flush_filter = kalamdb_commons::system::JobFilter {
-            job_type: Some(kalamdb_commons::JobType::Flush),
+        let flush_filter = kalamdb_system::JobFilter {
+            job_type: Some(kalamdb_system::JobType::Flush),
             status: None, // Check all non-completed statuses
             idempotency_key: None,
             limit: None,
@@ -449,9 +449,9 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             // Only cancel jobs that are not already completed/failed/cancelled
             if matches!(
                 job.status,
-                kalamdb_commons::JobStatus::New
-                    | kalamdb_commons::JobStatus::Queued
-                    | kalamdb_commons::JobStatus::Running
+                kalamdb_system::JobStatus::New
+                    | kalamdb_system::JobStatus::Queued
+                    | kalamdb_system::JobStatus::Running
             ) {
                 match job_manager.cancel_job(&job.job_id).await {
                     Ok(_) => {

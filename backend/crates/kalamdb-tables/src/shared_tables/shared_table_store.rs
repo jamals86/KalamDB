@@ -19,9 +19,8 @@ use crate::common::{ensure_partition, new_indexed_store_with_pk, partition_name}
 use kalamdb_commons::ids::{SeqId, SharedTableRowId};
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::storage::Partition;
-use kalamdb_commons::TableId;
-use kalamdb_store::entity_store::{EntityStore, KSerializable};
-use kalamdb_store::{IndexedEntityStore, StorageBackend};
+use kalamdb_commons::{KSerializable, TableId};
+use kalamdb_store::{EntityStore, IndexedEntityStore, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

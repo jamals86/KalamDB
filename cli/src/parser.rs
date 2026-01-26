@@ -49,6 +49,8 @@ pub enum Command {
     Info,
     /// Show system statistics (from system.stats)
     Stats,
+    /// Open interactive history menu
+    History,
     Unknown(String),
 }
 
@@ -229,6 +231,7 @@ impl CommandParser {
             },
             "\\delete-credentials" => Ok(Command::DeleteCredentials),
             "\\info" | "\\session" => Ok(Command::Info),
+            "\\history" | "\\h" => Ok(Command::History),
             _ => Ok(Command::Unknown(command.to_string())),
         }
     }
@@ -284,6 +287,13 @@ mod tests {
         let parser = CommandParser::new();
         assert_eq!(parser.parse("\\stats").unwrap(), Command::Stats);
         assert_eq!(parser.parse("\\metrics").unwrap(), Command::Stats);
+    }
+
+    #[test]
+    fn test_parse_history() {
+        let parser = CommandParser::new();
+        assert_eq!(parser.parse("\\history").unwrap(), Command::History);
+        assert_eq!(parser.parse("\\h").unwrap(), Command::History);
     }
 
     #[test]

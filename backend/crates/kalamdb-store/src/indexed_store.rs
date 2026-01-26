@@ -51,7 +51,8 @@
 //!
 //! ```rust,ignore
 //! use kalamdb_store::{IndexedEntityStore, IndexDefinition};
-//! use kalamdb_commons::{JobId, Job, JobStatus};
+//! use kalamdb_commons::JobId;
+//! use kalamdb_system::{Job, JobStatus};
 //!
 //! // Define an index
 //! struct JobStatusIndex;
@@ -95,9 +96,9 @@
 //! let running_jobs = store.scan_by_index(0, Some(&[JobStatus::Running as u8]), Some(10))?;
 //! ```
 
-use crate::entity_store::{EntityIterator, EntityStore, KSerializable};
+use crate::entity_store::{EntityIterator, EntityStore};
 use crate::storage_trait::{Operation, Partition, Result, StorageBackend, StorageError};
-use kalamdb_commons::StorageKey;
+use kalamdb_commons::{KSerializable, StorageKey};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -1072,8 +1073,9 @@ pub fn extract_i64_equality(filter: &Expr) -> Option<(&str, i64)> {
 mod tests {
     use super::*;
     use crate::test_utils::InMemoryBackend;
-    use kalamdb_commons::system::Job;
-    use kalamdb_commons::{JobId, JobStatus, JobType, NodeId};
+    use kalamdb_system::providers::jobs::models::Job;
+    use kalamdb_commons::{JobId, NodeId};
+    use kalamdb_system::{JobStatus, JobType};
 
     // Test index: Jobs by status
     struct TestStatusIndex;

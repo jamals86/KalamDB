@@ -13,9 +13,10 @@ use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{JobId, NamespaceId, NodeId, StorageId, TableId, UserId};
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::system::{Job, JobNode, Storage};
-use kalamdb_commons::types::User;
-use kalamdb_commons::JobStatus;
+use kalamdb_system::{JobNode, Storage};
+use kalamdb_system::providers::jobs::models::Job;
+use kalamdb_system::User;
+use kalamdb_system::JobStatus;
 use kalamdb_raft::applier::MetaApplier;
 use kalamdb_raft::RaftError;
 use std::sync::Arc;
@@ -168,7 +169,7 @@ impl MetaApplier for ProviderMetaApplier {
     // =========================================================================
 
     async fn create_user(&self, user: &User) -> Result<String, RaftError> {
-        log::info!("ProviderMetaApplier: Creating user {:?} ({})", user.id, user.username);
+        log::info!("ProviderMetaApplier: Creating user {:?} ({})", user.user_id, user.username);
 
         self.executor
             .user()
@@ -178,7 +179,7 @@ impl MetaApplier for ProviderMetaApplier {
     }
 
     async fn update_user(&self, user: &User) -> Result<String, RaftError> {
-        log::debug!("ProviderMetaApplier: Updating user {:?}", user.id);
+        log::debug!("ProviderMetaApplier: Updating user {:?}", user.user_id);
 
         self.executor
             .user()

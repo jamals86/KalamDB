@@ -288,7 +288,7 @@ async fn test_cache_invalidation_on_alter_table() {
         ColumnDefinition {
             column_name: "id".to_string(),
             ordinal_position: 1,
-            data_type: kalamdb_commons::models::types::KalamDataType::Int,
+            data_type: kalamdb_commons::datatypes::KalamDataType::Int,
             is_nullable: false,
             is_primary_key: true,
             is_partition_key: false,
@@ -298,7 +298,7 @@ async fn test_cache_invalidation_on_alter_table() {
         ColumnDefinition {
             column_name: "name".to_string(),
             ordinal_position: 2,
-            data_type: kalamdb_commons::models::types::KalamDataType::Text,
+            data_type: kalamdb_commons::datatypes::KalamDataType::Text,
             is_nullable: true,
             is_primary_key: false,
             is_partition_key: false,
@@ -335,7 +335,7 @@ async fn test_cache_invalidation_on_alter_table() {
         ColumnDefinition {
             column_name: "id".to_string(),
             ordinal_position: 1,
-            data_type: kalamdb_commons::models::types::KalamDataType::Int,
+            data_type: kalamdb_commons::datatypes::KalamDataType::Int,
             is_nullable: false,
             is_primary_key: true,
             is_partition_key: false,
@@ -345,7 +345,7 @@ async fn test_cache_invalidation_on_alter_table() {
         ColumnDefinition {
             column_name: "name".to_string(),
             ordinal_position: 2,
-            data_type: kalamdb_commons::models::types::KalamDataType::Text,
+            data_type: kalamdb_commons::datatypes::KalamDataType::Text,
             is_nullable: true,
             is_primary_key: false,
             is_partition_key: false,
@@ -355,7 +355,7 @@ async fn test_cache_invalidation_on_alter_table() {
         ColumnDefinition {
             column_name: "email".to_string(),
             ordinal_position: 3,
-            data_type: kalamdb_commons::models::types::KalamDataType::Text,
+            data_type: kalamdb_commons::datatypes::KalamDataType::Text,
             is_nullable: true,
             is_primary_key: false,
             is_partition_key: false,

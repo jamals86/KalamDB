@@ -11,6 +11,7 @@ description = "Raft consensus layer for KalamDB multi-node clustering"
 # Workspace dependencies
 kalamdb-commons = { path = "../kalamdb-commons" }
 kalamdb-configs = { path = "../kalamdb-configs" }
+kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-sharding = { path = "../kalamdb-sharding" }
 

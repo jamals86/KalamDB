@@ -19,7 +19,7 @@
 
 use crate::StoragePartition;
 use kalamdb_commons::storage::Partition;
-use kalamdb_commons::system::LiveQuery;
+use crate::providers::live_queries::models::LiveQuery;
 use kalamdb_commons::{LiveQueryId, TableId};
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
@@ -78,6 +78,8 @@ pub fn table_id_index_prefix(table_id: &TableId) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use crate::LiveQueryStatus;
+
     use super::*;
     use kalamdb_commons::models::ConnectionId;
     use kalamdb_commons::{NamespaceId, NodeId, TableName, UserId};
@@ -98,7 +100,7 @@ mod tests {
             changes: 0,
             node_id: NodeId::new(1),
             subscription_id: "sub789".to_string(),
-            status: kalamdb_commons::types::LiveQueryStatus::Active,
+            status: LiveQueryStatus::Active,
             last_ping_at: 1000,
         };
         (live_id, lq)

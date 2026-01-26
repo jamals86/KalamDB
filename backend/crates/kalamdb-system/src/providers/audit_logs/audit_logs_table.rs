@@ -5,11 +5,9 @@
 //! - Arrow schema: Derived from TableDefinition, memoized via OnceLock
 
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::datatypes::KalamDataType;
-use kalamdb_commons::schemas::{
-    ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
-};
-use kalamdb_commons::{NamespaceId, SystemTable, TableName};
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_commons::SystemTable;
+use crate::providers::audit_logs::models::AuditLogEntry;
 use std::sync::OnceLock;
 
 /// System audit_log table schema definition
@@ -36,107 +34,9 @@ impl AuditLogsTableSchema {
     /// - target TEXT NOT NULL
     /// - details TEXT (nullable)
     /// - ip_address TEXT (nullable)
+    /// - subject_user_id TEXT (nullable)
     pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "audit_id",
-                1,
-                KalamDataType::Text,
-                false,
-                true,
-                false,
-                ColumnDefault::None,
-                Some("Audit log entry identifier".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "timestamp",
-                2,
-                KalamDataType::Timestamp,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Event timestamp".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "actor_user_id",
-                3,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("User ID who performed the action".to_string()),
-            ),
-            ColumnDefinition::new(
-                4,
-                "actor_username",
-                4,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Username who performed the action".to_string()),
-            ),
-            ColumnDefinition::new(
-                5,
-                "action",
-                5,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Action performed (CREATE, UPDATE, DELETE, LOGIN, etc.)".to_string()),
-            ),
-            ColumnDefinition::new(
-                6,
-                "target",
-                6,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Target of the action (table name, user ID, etc.)".to_string()),
-            ),
-            ColumnDefinition::new(
-                7,
-                "details",
-                7,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Additional details about the action (JSON)".to_string()),
-            ),
-            ColumnDefinition::new(
-                8,
-                "ip_address",
-                8,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("IP address of the client".to_string()),
-            ),
-        ];
-
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::AuditLog.table_name()),
-            TableType::System,
-            columns,
-            TableOptions::system(),
-            Some("System audit log for security and compliance tracking".to_string()),
-        )
-        .expect("Failed to create system.audit_log table definition")
+        AuditLogEntry::definition()
     }
 
     /// Get the cached Arrow schema for the system.audit_log table
@@ -176,7 +76,7 @@ mod tests {
     #[test]
     fn test_audit_logs_table_schema() {
         let schema = AuditLogsTableSchema::schema();
-        assert_eq!(schema.fields().len(), 8);
+        assert_eq!(schema.fields().len(), 9);
         assert_eq!(schema.field(0).name(), "audit_id");
         assert_eq!(schema.field(1).name(), "timestamp");
         assert_eq!(schema.field(2).name(), "actor_user_id");
@@ -185,6 +85,7 @@ mod tests {
         assert_eq!(schema.field(5).name(), "target");
         assert_eq!(schema.field(6).name(), "details");
         assert_eq!(schema.field(7).name(), "ip_address");
+        assert_eq!(schema.field(8).name(), "subject_user_id");
     }
 
     #[test]
@@ -219,6 +120,7 @@ mod tests {
         let schema = AuditLogsTableSchema::schema();
         assert!(schema.field(6).is_nullable()); // details
         assert!(schema.field(7).is_nullable()); // ip_address
+        assert!(schema.field(8).is_nullable()); // subject_user_id
     }
 
     #[test]
@@ -235,6 +137,6 @@ mod tests {
         let def = AuditLogsTableSchema::definition();
         assert_eq!(def.namespace_id.as_str(), "system");
         assert_eq!(def.table_name.as_str(), "audit_log");
-        assert_eq!(def.columns.len(), 8);
+        assert_eq!(def.columns.len(), 9);
     }
 }

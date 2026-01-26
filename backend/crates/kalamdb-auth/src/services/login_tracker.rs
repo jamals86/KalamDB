@@ -5,8 +5,8 @@
 
 use crate::errors::error::{AuthError, AuthResult};
 use crate::repository::user_repo::UserRepository;
-use kalamdb_commons::system::User;
-use kalamdb_commons::types::{DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS};
+use kalamdb_system::User;
+use kalamdb_system::{DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS};
 use log::{info, warn};
 use std::sync::Arc;
 
@@ -152,7 +152,7 @@ mod tests {
 
         let tracker = LoginTracker::new();
         let user = User {
-            id: UserId::new("u_123"),
+            user_id: UserId::new("u_123"),
             username: "alice".into(),
             password_hash: "$2b$12$hash".to_string(),
             role: Role::User,
@@ -179,7 +179,7 @@ mod tests {
 
         let tracker = LoginTracker::new();
         let user = User {
-            id: UserId::new("u_123"),
+            user_id: UserId::new("u_123"),
             username: "alice".into(),
             password_hash: "$2b$12$hash".to_string(),
             role: Role::User,
@@ -213,7 +213,7 @@ mod tests {
         let tracker = LoginTracker::with_config(config);
 
         let user = User {
-            id: UserId::new("u_123"),
+            user_id: UserId::new("u_123"),
             username: "alice".into(),
             password_hash: "$2b$12$hash".to_string(),
             role: Role::User,

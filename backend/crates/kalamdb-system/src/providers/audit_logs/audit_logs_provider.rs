@@ -15,7 +15,7 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::AuditLogId;
-use kalamdb_commons::system::AuditLogEntry;
+use crate::providers::audit_logs::models::AuditLogEntry;
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
@@ -105,6 +105,7 @@ impl AuditLogsTableProvider {
         let mut targets = Vec::with_capacity(entries.len());
         let mut details_list = Vec::with_capacity(entries.len());
         let mut ip_addresses = Vec::with_capacity(entries.len());
+        let mut subject_user_ids = Vec::with_capacity(entries.len());
 
         for (_key, entry) in entries {
             audit_ids.push(Some(entry.audit_id.as_str().to_string()));
@@ -115,6 +116,7 @@ impl AuditLogsTableProvider {
             targets.push(Some(entry.target));
             details_list.push(entry.details);
             ip_addresses.push(entry.ip_address);
+            subject_user_ids.push(entry.subject_user_id.map(|id| id.as_str().to_string()));
         }
 
         // Build batch using RecordBatchBuilder
@@ -127,7 +129,8 @@ impl AuditLogsTableProvider {
             .add_string_column_owned(actions)
             .add_string_column_owned(targets)
             .add_string_column_owned(details_list)
-            .add_string_column_owned(ip_addresses);
+            .add_string_column_owned(ip_addresses)
+            .add_string_column_owned(subject_user_ids);
 
         let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
 
@@ -289,7 +292,7 @@ mod tests {
         // Scan all
         let batch = provider.scan_all_entries().unwrap();
         assert_eq!(batch.num_rows(), 5);
-        assert_eq!(batch.num_columns(), 8);
+        assert_eq!(batch.num_columns(), 9);
     }
 
     #[test]
@@ -331,7 +334,7 @@ mod tests {
 
         // Scan with all columns
         let batch = provider.scan_all_entries().unwrap();
-        assert_eq!(batch.num_columns(), 8);
+        assert_eq!(batch.num_columns(), 9);
 
         // Verify schema matches
         assert_eq!(batch.schema(), provider.schema());
@@ -407,7 +410,7 @@ mod tests {
 
         // Test SystemTableProviderExt trait methods
         //assert_eq!(provider.table_name(), "audit_log");
-        assert_eq!(provider.schema_ref().fields().len(), 8);
+        assert_eq!(provider.schema_ref().fields().len(), 9);
 
         // Test load_batch
         provider

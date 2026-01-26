@@ -42,7 +42,7 @@ impl TypedStatementHandler<DropUserStatement> for DropUserHandler {
         // Delegate to unified applier (handles standalone vs cluster internally)
         self.app_context
             .applier()
-            .delete_user(user.id.clone())
+            .delete_user(user.user_id.clone())
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("DROP USER failed: {}", e)))?;
 

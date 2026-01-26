@@ -138,7 +138,7 @@ pub use live::LiveConnection;
 pub use models::{
     parse_i64, ChangeEvent, ConnectionOptions, ErrorDetail, HealthCheckResponse, HttpVersion,
     KalamDataType, LoginRequest, LoginResponse, LoginUserInfo, QueryRequest, QueryResponse,
-    QueryResult, SchemaField, SubscriptionConfig, SubscriptionOptions,
+    QueryResult, SchemaField, SubscriptionConfig, SubscriptionOptions, UploadProgress,
 };
 pub use seq_id::SeqId;
 pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};
@@ -148,6 +148,8 @@ pub use timestamp::{
 
 #[cfg(feature = "tokio-runtime")]
 pub use query::QueryExecutor;
+#[cfg(feature = "tokio-runtime")]
+pub use query::UploadProgressCallback;
 #[cfg(feature = "tokio-runtime")]
 pub use subscription::SubscriptionManager;
 

@@ -22,7 +22,14 @@
 //!
 //! ```rust,ignore
 //! use kalamdb_store::{EntityStore, StorageBackend};
-//! use kalamdb_commons::{StorageKey, UserId, User};
+//! use kalamdb_commons::{StorageKey, UserId};
+//! use serde::{Deserialize, Serialize};
+//!
+//! #[derive(Serialize, Deserialize)]
+//! struct User {
+//!     user_id: UserId,
+//!     name: String,
+//! }
 //! use std::sync::Arc;
 //!
 //! struct UserStore {
@@ -41,23 +48,13 @@
 //!
 //! // Type-safe usage:
 //! let user_id = UserId::new("u1");
-//! let user = User { id: user_id.clone(), name: "Alice".into(), ... };
+//! let user = User { user_id: user_id.clone(), name: "Alice".into(), ... };
 //! store.put(&user_id, &user).unwrap();
 //! let retrieved = store.get(&user_id).unwrap().unwrap();
 //! ```
 
 use crate::storage_trait::{Partition, Result, StorageBackend, StorageError};
-use bincode::config::standard;
-use bincode::serde::{decode_from_slice, encode_to_vec};
-use kalamdb_commons::{
-    schemas::TableDefinition,
-    system::{
-        AuditLogEntry, Job, JobNode, LiveQuery, ManifestCacheEntry,
-        Namespace, Storage as SystemStorage, User,
-    },
-    next_storage_key_bytes, StorageKey, UserId,
-};
-use serde::{Deserialize, Serialize};
+use kalamdb_commons::{next_storage_key_bytes, KSerializable, StorageKey};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -103,54 +100,6 @@ pub type EntityIterator<'a, K, V> = Box<dyn Iterator<Item = Result<(K, V)>> + Se
 /// user_store.get(&user_id)   // ✓ Compiles
 /// user_store.get(&table_id)  // ✗ Compile error - wrong key type!
 /// ```
-/// Trait implemented by values that can be stored in an [`EntityStore`].
-///
-/// Types can override `encode`/`decode` for custom storage formats (e.g.,
-/// row envelopes vs. JSON). The default implementation uses bincode.
-pub trait KSerializable: Serialize + for<'de> Deserialize<'de> + Send + Sync {
-    fn encode(&self) -> Result<Vec<u8>> {
-        let config = standard();
-        encode_to_vec(self, config)
-            .map_err(|e| StorageError::SerializationError(format!("bincode encode failed: {}", e)))
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        let config = standard();
-        decode_from_slice(bytes, config)
-            .map(|(entity, _)| entity)
-            .map_err(|e| StorageError::SerializationError(format!("bincode decode failed: {}", e)))
-    }
-}
-
-impl KSerializable for String {}
-
-impl KSerializable for kalamdb_commons::models::rows::Row {}
-
-impl KSerializable for kalamdb_commons::models::rows::UserTableRow {}
-
-impl KSerializable for User {}
-
-impl KSerializable for Namespace {}
-
-impl KSerializable for SystemStorage {}
-
-impl KSerializable for TableDefinition {}
-
-impl KSerializable for ManifestCacheEntry {}
-
-impl KSerializable for AuditLogEntry {}
-
-impl KSerializable for Job {}
-
-impl KSerializable for JobNode {}
-
-impl KSerializable for LiveQuery {}
-
-impl KSerializable for UserId {}
-
 pub trait EntityStore<K, V>
 where
     K: StorageKey,
@@ -286,7 +235,7 @@ where
     ///
     /// ```rust,ignore
     /// let user_id = UserId::new("u1");
-    /// let user = User { id: user_id.clone(), ... };
+    /// let user = User { user_id: user_id.clone(), ... };
     /// store.put(&user_id, &user)?;
     /// ```
     fn put(&self, key: &K, entity: &V) -> Result<()> {

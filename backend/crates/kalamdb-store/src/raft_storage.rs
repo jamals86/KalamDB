@@ -40,8 +40,8 @@
 //! store.save_vote(&vote)?;
 //! ```
 
-use crate::entity_store::KSerializable;
 use crate::storage_trait::{Operation, Partition, Result, StorageBackend};
+use kalamdb_commons::KSerializable;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

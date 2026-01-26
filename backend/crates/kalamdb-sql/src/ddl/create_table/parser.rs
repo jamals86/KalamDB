@@ -1,7 +1,8 @@
 use super::types::CreateTableStatement;
 use crate::compatibility::map_sql_type_to_kalam;
 use crate::parser::utils::{format_span, parse_sql_statements};
-use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use arrow::datatypes::{Field, Schema};
+use kalamdb_commons::conversions::with_kalam_data_type_metadata;
 use kalamdb_commons::models::datatypes::ToArrowType;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableAccess, TableName};
 use kalamdb_commons::schemas::policy::FlushPolicy;
@@ -9,7 +10,7 @@ use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use sqlparser::ast::{
-    ColumnOption, CreateTable, DataType as SqlDataType, ObjectNamePart, Statement, TableConstraint,
+    ColumnOption, CreateTable, ObjectNamePart, Statement, TableConstraint,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -122,17 +123,9 @@ impl CreateTableStatement {
 
                         match key_str.as_str() {
                             "TYPE" => {
-                                let requested_type = match value_str.to_uppercase().as_str() {
-                                    "USER" => TableType::User,
-                                    "SHARED" => TableType::Shared,
-                                    "STREAM" => TableType::Stream,
-                                    _ => {
-                                        return Err(format!(
-                                        "Invalid table TYPE '{}'. Supported: USER, SHARED, STREAM",
-                                        value_str
-                                    ))
-                                    },
-                                };
+                                let requested_type = TableType::from_str_opt(&value_str).ok_or_else(|| {
+                                    format!("Invalid TYPE option '{}'. Supported: USER, SHARED, STREAM", value_str)
+                                })?;
 
                                 if let Some(ref legacy_type) = legacy_table_type {
                                     if requested_type != *legacy_type {
@@ -256,7 +249,8 @@ impl CreateTableStatement {
                 // Check table constraints for PRIMARY KEY
                 for constraint in constraints {
                     match constraint {
-                        TableConstraint::PrimaryKey { columns, .. } => {
+                        TableConstraint::PrimaryKey(pk) => {
+                            let columns = &pk.columns;
                             if columns.len() != 1 {
                                 return Err(
                                     "Composite PRIMARY KEYs are not supported yet".to_string()
@@ -300,7 +294,7 @@ impl CreateTableStatement {
 
                     for option in col.options {
                         match &option.option {
-                            ColumnOption::Unique { is_primary, .. } if *is_primary => {
+                            ColumnOption::PrimaryKey(..) => {
                                 if primary_key_column.is_some() {
                                     return Err(
                                         "Multiple PRIMARY KEY definitions found".to_string()
@@ -309,7 +303,7 @@ impl CreateTableStatement {
                                 primary_key_column = Some(col_name.clone());
                                 col_is_nullable = false; // PKs cannot be null
                             },
-                            ColumnOption::Unique { .. } => {},
+                            ColumnOption::Unique(_) => {},
                             ColumnOption::NotNull => {
                                 col_is_nullable = false;
                             },
@@ -339,7 +333,11 @@ impl CreateTableStatement {
                         }
                     }
 
-                    arrow_fields.push(Field::new(&col_name, data_type, col_is_nullable));
+                    // Create the field and attach KalamDataType metadata for types
+                    // that aren't recoverable from Arrow (like FILE, JSON)
+                    let field = Field::new(&col_name, data_type, col_is_nullable);
+                    let field = with_kalam_data_type_metadata(field, &kalam_type);
+                    arrow_fields.push(field);
                 }
 
                 if arrow_fields.is_empty() {
@@ -397,12 +395,14 @@ fn normalize_create_table_sql(sql: &str) -> (String, Option<TableType>) {
 
     if let Some(caps) = LEGACY_CREATE_PREFIX_RE.captures(sql_ref) {
         let requested_type = caps[1].to_ascii_uppercase();
-        let table_type = match requested_type.as_str() {
-            "USER" => TableType::User,
-            "SHARED" => TableType::Shared,
-            "STREAM" => TableType::Stream,
-            _ => TableType::User,
-        };
+        let table_type = TableType::from_str_opt(&requested_type).unwrap_or(TableType::User);
+
+        // let table_type = match requested_type.as_str() {
+        //     "USER" => TableType::User,
+        //     "SHARED" => TableType::Shared,
+        //     "STREAM" => TableType::Stream,
+        //     _ => TableType::User,
+        // };
         let normalized = LEGACY_CREATE_PREFIX_RE.replace(sql_ref, "CREATE TABLE ").into_owned();
         (normalized, Some(table_type))
     } else {
@@ -471,54 +471,7 @@ fn expr_to_column_default(expr: &sqlparser::ast::Expr) -> ColumnDefault {
     }
 }
 
-pub(crate) fn convert_sql_type_to_arrow(
-    sql_type: &SqlDataType,
-) -> Result<(DataType, bool), String> {
-    match sql_type {
-        SqlDataType::Boolean => Ok((DataType::Boolean, true)),
-        SqlDataType::TinyInt(_) => Ok((DataType::Int8, true)),
-        SqlDataType::SmallInt(_) => Ok((DataType::Int16, true)),
-        SqlDataType::Int(_) | SqlDataType::Integer(_) => Ok((DataType::Int32, true)),
-        SqlDataType::BigInt(_) => Ok((DataType::Int64, true)),
-        SqlDataType::Float(_) => Ok((DataType::Float32, true)),
-        SqlDataType::Double(_) | SqlDataType::Real => Ok((DataType::Float64, true)),
-        SqlDataType::Text
-        | SqlDataType::String(_)
-        | SqlDataType::Varchar(_)
-        | SqlDataType::Char(_) => Ok((DataType::Utf8, true)),
-        SqlDataType::Timestamp(precision, _) => {
-            // Default to Microsecond precision if not specified
-            // Note: DataFusion often prefers Nanosecond, but we use Microsecond for compatibility
-            let unit = match precision {
-                Some(p) if *p <= 3 => TimeUnit::Millisecond,
-                Some(p) if *p <= 6 => TimeUnit::Microsecond,
-                Some(_) => TimeUnit::Nanosecond,
-                None => TimeUnit::Microsecond,
-            };
-            Ok((DataType::Timestamp(unit, None), true))
-        },
-        SqlDataType::Datetime(_) => {
-            Ok((DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())), true))
-        },
-        SqlDataType::Date => Ok((DataType::Date32, true)),
-        SqlDataType::Time(_, _) => Ok((DataType::Time64(TimeUnit::Microsecond), true)),
-        SqlDataType::Binary(_) | SqlDataType::Blob(_) | SqlDataType::Bytea => {
-            Ok((DataType::Binary, true))
-        },
-        SqlDataType::Uuid => Ok((DataType::FixedSizeBinary(16), true)),
-        SqlDataType::JSON => Ok((DataType::Utf8, true)),
-        SqlDataType::Decimal(info) => match info {
-            sqlparser::ast::ExactNumberInfo::PrecisionAndScale(p, s) => {
-                Ok((DataType::Decimal128(*p as u8, *s as i8), true))
-            },
-            sqlparser::ast::ExactNumberInfo::Precision(p) => {
-                Ok((DataType::Decimal128(*p as u8, 0), true))
-            },
-            sqlparser::ast::ExactNumberInfo::None => Ok((DataType::Decimal128(38, 10), true)),
-        },
-        _ => Err(format!("Unsupported SQL data type: {:?}", sql_type)),
-    }
-}
+
 
 #[cfg(test)]
 mod tests {

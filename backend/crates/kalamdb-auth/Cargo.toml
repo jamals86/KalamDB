@@ -33,6 +33,7 @@ kalamdb-commons = { path = "../kalamdb-commons" }
 kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-sql = { path = "../kalamdb-sql" }
+kalamdb-system = { path = "../kalamdb-system" }
 
 # Serialization
 serde = { workspace = true }

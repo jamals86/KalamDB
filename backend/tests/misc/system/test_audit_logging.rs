@@ -10,8 +10,8 @@ async fn create_system_user(server: &TestServer, username: &str) -> UserId {
     let user_id = UserId::new(username);
     let now = chrono::Utc::now().timestamp_millis();
 
-    let user = kalamdb_commons::system::User {
-        id: user_id.clone(),
+    let user = kalamdb_system::User {
+        user_id: user_id.clone(),
         username: UserName::new(username),
         password_hash: "hashed".to_string(),
         role: Role::System,
@@ -35,10 +35,10 @@ async fn create_system_user(server: &TestServer, username: &str) -> UserId {
 }
 
 fn find_audit_entry<'a>(
-    entries: &'a [kalamdb_commons::system::AuditLogEntry],
+    entries: &'a [kalamdb_system::AuditLogEntry],
     action: &str,
     target: &str,
-) -> &'a kalamdb_commons::system::AuditLogEntry {
+) -> &'a kalamdb_system::AuditLogEntry {
     entries
         .iter()
         .find(|entry| entry.action == action && entry.target == target)

@@ -6,7 +6,7 @@
 use crate::core::paths::parse_remote_url;
 use crate::error::{FilestoreError, Result};
 use kalamdb_commons::models::{StorageLocationConfig, StorageLocationConfigError};
-use kalamdb_commons::system::Storage;
+use kalamdb_system::Storage;
 use object_store::aws::AmazonS3Builder;
 use object_store::azure::MicrosoftAzureBuilder;
 use object_store::gcp::GoogleCloudStorageBuilder;
@@ -186,7 +186,7 @@ mod tests {
     fn test_build_object_store_filesystem() {
         use kalamdb_commons::models::ids::StorageId;
         use kalamdb_commons::models::storage::StorageType;
-        use kalamdb_commons::models::types::Storage;
+        use kalamdb_system::Storage;
         use std::env;
 
         let temp_dir = env::temp_dir().join("kalamdb_test_build_store");

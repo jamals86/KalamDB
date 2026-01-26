@@ -6,14 +6,14 @@
 //!
 //! ## System Table Models
 //!
-//! The `types` submodule contains the SINGLE SOURCE OF TRUTH for all system table models.
-//! Import from `kalamdb_commons::types::*` to use these models.
+//! System table models live in `kalamdb-system`.
+//! Import from `kalamdb_system::*` to use these models.
 //!
 //! ## Examples
 //!
 //! ```rust
 //! use kalamdb_commons::models::{UserId, NamespaceId, TableName};
-//! use kalamdb_commons::types::{User, Job, LiveQuery};
+//! use kalamdb_system::{User, Job, LiveQuery};
 //!
 //! let user_id = UserId::new("user_123");
 //! let namespace_id = NamespaceId::new("default");
@@ -32,50 +32,35 @@ pub mod datatypes; // Unified data type system (KalamDataType)
 pub mod ids; // Type-safe identifier wrappers
 pub mod schemas; // Table and column schema definitions
 pub mod storage; // Storage backend configuration types
-pub mod types; // System table models (User, Job, Namespace, etc.)
 
 // Standalone type modules (not IDs, not system tables)
-mod audit_log_key;
 mod auth_type;
 mod connection;
-mod job_status;
-mod job_type;
 mod read_context;
+mod role;
+mod user_name;
 
 // Row types only available with full feature (datafusion dependency)
 #[cfg(feature = "full")]
 pub mod rows;
 
-mod role;
-mod table_access;
-mod table_name;
-mod user_name;
-
 // Re-export all types from submodules for convenience
-pub use audit_log_key::AuditLogKey;
 pub use auth_type::AuthType;
 pub use ids::*;
-pub use job_status::JobStatus;
-pub use job_type::JobType;
 pub use read_context::ReadContext;
+pub use role::Role;
+pub use schemas::{TableAccess, TableName};
+pub use user_name::UserName;
 
 #[cfg(feature = "full")]
 pub use rows::{KTableRow, StreamTableRow, UserTableRow};
-
-pub use role::Role;
 
 pub use connection::ConnectionInfo;
 pub use storage::{
     AzureStorageConfig, GcsStorageConfig, LocalStorageConfig, S3StorageConfig, StorageConfig,
     StorageLocationConfig, StorageLocationConfigError, StorageMode, StorageType,
 };
-pub use table_access::TableAccess;
-pub use table_name::TableName;
-pub use user_name::UserName;
 
-// Legacy compatibility: re-export system types as `system` module
-// This allows existing code using `kalamdb_commons::system::User` to continue working
-pub use types as system;
 
 #[cfg(test)]
 mod tests {

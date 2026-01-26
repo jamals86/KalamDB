@@ -22,11 +22,12 @@ use tokio::time::sleep;
 
 use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableType;
-use kalamdb_commons::models::{JobId, JobType, NamespaceId, NodeId, StorageId, TableName, UserId};
-use kalamdb_commons::system::{Job, LiveQuery};
-use kalamdb_commons::types::LiveQueryStatus;
-use kalamdb_commons::JobStatus;
+use kalamdb_commons::models::{JobId, NamespaceId, NodeId, StorageId, TableName, UserId};
+use kalamdb_system::JobNode;
+use kalamdb_system::providers::jobs::models::Job;
+use kalamdb_system::{JobStatus, JobType};
 use kalamdb_commons::TableId;
+use kalamdb_system::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
 use kalamdb_raft::{
     commands::{MetaCommand, SharedDataCommand, UserDataCommand},
     manager::{PeerNode, RaftManager, RaftManagerConfig},
@@ -727,7 +728,7 @@ async fn test_meta_group_operations() {
 
     // Test RegisterStorage
     let storage_id = StorageId::new("storage1".to_string());
-    let storage = kalamdb_commons::system::Storage {
+    let storage = kalamdb_system::Storage {
         storage_id: storage_id.clone(),
         storage_name: "test_storage".to_string(),
         description: None,
@@ -787,7 +788,7 @@ async fn test_meta_group_operations() {
     // Test UpdateJobStatus
     let cmd = MetaCommand::UpdateJobStatus {
         job_id: JobId::from("j1"),
-        status: kalamdb_commons::JobStatus::Completed,
+        status: kalamdb_system::JobStatus::Completed,
         updated_at: Utc::now(),
     };
     let result = leader.manager.propose_meta(cmd).await;

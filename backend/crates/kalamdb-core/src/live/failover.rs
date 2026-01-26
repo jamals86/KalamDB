@@ -21,8 +21,7 @@
 
 use chrono::Utc;
 use kalamdb_commons::models::{LiveQueryId, NodeId};
-use kalamdb_commons::system::LiveQuery;
-use kalamdb_commons::types::LiveQueryStatus;
+use kalamdb_system::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
 use std::collections::HashSet;
 use std::sync::Arc;
 

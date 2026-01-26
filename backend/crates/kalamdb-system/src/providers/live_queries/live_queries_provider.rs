@@ -15,8 +15,7 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::ConnectionId;
-use kalamdb_commons::system::LiveQuery;
-use kalamdb_commons::types::LiveQueryStatus;
+use crate::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::{LiveQueryId, NodeId, TableId, UserId};
 use kalamdb_store::entity_store::EntityStore;
@@ -526,7 +525,7 @@ mod tests {
             user_id: UserId::new(user_id),
             query: "SELECT * FROM test".to_string(),
             options: Some("{}".to_string()),
-            status: kalamdb_commons::types::LiveQueryStatus::Active,
+            status: crate::LiveQueryStatus::Active,
             created_at: 1000,
             last_update: 1000,
             last_ping_at: 1000,

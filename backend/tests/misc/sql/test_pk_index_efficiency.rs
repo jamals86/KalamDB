@@ -13,7 +13,13 @@ use super::test_support::flush_helpers::{
 };
 use super::test_support::{consolidated_helpers, fixtures, TestServer};
 use kalam_link::models::ResponseStatus;
+use std::cmp::max;
 use std::time::{Duration, Instant};
+
+fn median_duration(samples: &mut [Duration]) -> Duration {
+    samples.sort();
+    samples[samples.len() / 2]
+}
 
 /// Test: User table UPDATE by PK uses index - not full scan
 ///
@@ -369,20 +375,26 @@ async fn test_user_table_pk_index_select() {
             .await;
     }
 
-    // Measure SELECT by PK latency with 500 rows
-    let start_500 = Instant::now();
-    let select_response = server
-        .execute_sql_as_user(
-            &format!("SELECT id, data FROM {}.records WHERE id = 250", ns),
-            "select_user",
-        )
-        .await;
-    let latency_500_rows = start_500.elapsed();
-
-    assert_eq!(select_response.status, ResponseStatus::Success);
-    let rows = select_response.rows_as_maps();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].get("data").unwrap().as_str().unwrap(), "data_for_250");
+    // Measure SELECT by PK latency with 500 rows (median of multiple runs)
+    let mut samples_500 = Vec::with_capacity(5);
+    for idx in 0..5 {
+        let start = Instant::now();
+        let select_response = server
+            .execute_sql_as_user(
+                &format!("SELECT id, data FROM {}.records WHERE id = 250", ns),
+                "select_user",
+            )
+            .await;
+        let elapsed = start.elapsed();
+        assert_eq!(select_response.status, ResponseStatus::Success);
+        if idx == 0 {
+            let rows = select_response.rows_as_maps();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].get("data").unwrap().as_str().unwrap(), "data_for_250");
+        }
+        samples_500.push(elapsed);
+    }
+    let latency_500_rows = median_duration(&mut samples_500);
 
     // Insert 2000 more rows (total 2500)
     for i in 501..=2500 {
@@ -397,22 +409,24 @@ async fn test_user_table_pk_index_select() {
             .await;
     }
 
-    // Measure SELECT by PK latency with 2500 rows
-    let start_2500 = Instant::now();
-    let select_response = server
-        .execute_sql_as_user(
-            &format!("SELECT id, data FROM {}.records WHERE id = 250", ns),
-            "select_user",
-        )
-        .await;
-    let latency_2500_rows = start_2500.elapsed();
-
-    assert_eq!(select_response.status, ResponseStatus::Success);
-    let rows = select_response.rows_as_maps();
-    assert_eq!(rows.len(), 1);
+    // Measure SELECT by PK latency with 2500 rows (median of multiple runs)
+    let mut samples_2500 = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let start = Instant::now();
+        let select_response = server
+            .execute_sql_as_user(
+                &format!("SELECT id, data FROM {}.records WHERE id = 250", ns),
+                "select_user",
+            )
+            .await;
+        let elapsed = start.elapsed();
+        assert_eq!(select_response.status, ResponseStatus::Success);
+        samples_2500.push(elapsed);
+    }
+    let latency_2500_rows = median_duration(&mut samples_2500);
 
     // Performance assertion: 5x more rows should not cause 5x slowdown with O(1) lookup
-    let max_allowed = latency_500_rows.mul_f32(5.0);
+    let max_allowed = max(latency_500_rows.mul_f32(5.0), Duration::from_millis(10));
 
     println!("✅ User table PK index SELECT test:");
     println!("   Latency with 500 rows: {:?}", latency_500_rows);

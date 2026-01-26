@@ -108,10 +108,11 @@
 //! - `kalamdb_core::schema_cache` - Cached type lookups
 //! - `link/sdks/typescript` - Client SDK type definitions
 
-pub mod arrow_conversion;
 pub mod kalam_data_type;
 pub mod wire_format;
 
-pub use arrow_conversion::{ArrowConversionError, FromArrowType, ToArrowType};
 pub use kalam_data_type::KalamDataType;
 pub use wire_format::{WireFormat, WireFormatError};
+
+// Re-export arrow_conversion from conversions module
+pub use crate::conversions::arrow_conversion::{ArrowConversionError, FromArrowType, ToArrowType};

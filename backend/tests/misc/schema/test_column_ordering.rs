@@ -240,6 +240,9 @@ async fn test_system_tables_have_correct_column_ordering() {
         "updated_at",
         "last_seen",
         "deleted_at",
+        "failed_login_attempts",
+        "locked_until",
+        "last_login_at",
     ];
 
     // Verify Arrow schema matches expected column order

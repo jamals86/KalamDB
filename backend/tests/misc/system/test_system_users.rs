@@ -18,7 +18,7 @@ use actix_web::{test, web, App};
 use kalamdb_api::repositories::CoreUsersRepo;
 use kalamdb_auth::UserRepository;
 use kalamdb_commons::models::UserName;
-use kalamdb_commons::system::User;
+use kalamdb_system::User;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -41,7 +41,7 @@ async fn create_system_user(
     };
 
     let user = User {
-        id: UserId::new(format!("sys_{}", username)),
+        user_id: UserId::new(format!("sys_{}", username)),
         username: UserName::new(username),
         password_hash,
         role: Role::System,

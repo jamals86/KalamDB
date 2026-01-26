@@ -37,6 +37,7 @@ pub mod macros;
 pub mod error;
 pub mod initialization;
 pub mod impls;
+pub mod models; // Re-export models for external usage
 pub mod providers;
 pub mod registry;
 pub mod services;
@@ -51,7 +52,7 @@ pub use registry::SystemTablesRegistry;
 pub use services::SystemColumnsService;
 pub use system_table_trait::SystemTableProviderExt;
 // Re-export SystemTable and StoragePartition from kalamdb_commons for consistent usage
-pub use kalamdb_commons::{StoragePartition, SystemTable};
+pub use kalamdb_commons::{schemas, NamespaceId, StoragePartition, SystemTable, TableName};
 
 // Re-export session types for convenience
 pub use kalamdb_session::{
@@ -64,3 +65,25 @@ pub use providers::{
     LiveQueriesTableProvider, ManifestTableProvider, NamespacesTableProvider,
     StoragesTableProvider, TablesTableProvider, UsersTableProvider,
 };
+
+// Re-export live query models for convenience
+pub use providers::live_queries::models::{LiveQuery, LiveQueryStatus};
+
+// Re-export job models for convenience
+pub use providers::jobs::models::{
+    Job, JobFilter, JobOptions, JobSortField, JobStatus, JobType, SortOrder,
+};
+
+// Re-export other system table models for convenience
+pub use providers::audit_logs::models::AuditLogEntry;
+pub use providers::job_nodes::models::JobNode;
+pub use providers::manifest::models::{
+    ColumnStats, FileRef, FileSubfolderState, Manifest, ManifestCacheEntry, SegmentMetadata,
+    SegmentStatus, SyncState,
+};
+pub use providers::namespaces::models::Namespace;
+pub use providers::storages::models::{Storage, StorageType};
+pub use providers::users::models::{User, DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS};
+
+// Re-export from kalamdb-commons for convenience
+pub use kalamdb_commons::models::{AuthType, Role, UserName};

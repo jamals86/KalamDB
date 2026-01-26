@@ -1,7 +1,9 @@
-import { X, Table2, Pencil, Trash2, Copy, Plus } from "lucide-react";
+import { X, Table2, Pencil, Trash2, Copy, Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useEffect } from "react";
+import { useDescribeTable } from "@/hooks/useDescribeTable";
 
 interface ColumnInfo {
   name: string;
@@ -48,9 +50,21 @@ export function TableProperties({
   onCreateTable,
   toSqlType,
 }: TablePropertiesProps) {
+  const { columns: describeColumns, isLoading, describeTable } = useDescribeTable();
+
+  // Load DESCRIBE TABLE data when table is selected
+  useEffect(() => {
+    if (!isNewTable && tableName && namespace) {
+      describeTable(namespace, tableName).catch(console.error);
+    }
+  }, [tableName, namespace, isNewTable, describeTable]);
+
   if (!tableName && !isNewTable) return null;
 
   const fullPath = namespace && tableName ? `${namespace}.${tableName}` : tableName || "New Table";
+
+  // Use DESCRIBE data if available, otherwise fall back to schema columns
+  const displayColumns = describeColumns.length > 0 ? describeColumns : null;
 
   return (
     <div className="w-72 border-l flex flex-col shrink-0 bg-background h-full">
@@ -86,56 +100,128 @@ export function TableProperties({
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         <div className="p-4 pb-2 shrink-0 flex items-center justify-between">
           <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Columns ({columns.length})
+            Columns ({displayColumns?.length || columns.length})
           </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onAddColumn}
-            className="h-6 px-2 text-xs gap-1"
-            title="Add column"
-          >
-            <Plus className="h-3 w-3" />
-            Add
-          </Button>
+          <div className="flex items-center gap-1">
+            {!isNewTable && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => tableName && namespace && describeTable(namespace, tableName)}
+                disabled={isLoading}
+                className="h-6 w-6 p-0"
+                title="Refresh"
+              >
+                <RefreshCw className={`h-3 w-3 ${isLoading ? 'animate-spin' : ''}`} />
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onAddColumn}
+              className="h-6 px-2 text-xs gap-1"
+              title="Add column"
+            >
+              <Plus className="h-3 w-3" />
+              Add
+            </Button>
+          </div>
         </div>
         <ScrollArea className="flex-1 px-4">
-          <div className="space-y-1.5 pb-4">
-            {columns.length === 0 ? (
-              <div className="text-sm text-muted-foreground py-4 text-center">
-                No columns defined
-              </div>
-            ) : (
-              columns.map((col) => (
-                <div
-                  key={col.name}
-                  className="flex items-center justify-between p-2 rounded bg-muted/50 hover:bg-muted/80 group"
-                >
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    {col.isPrimaryKey && (
-                      <span className="text-yellow-500 text-xs shrink-0" title="Primary Key">🔑</span>
-                    )}
-                    <span className="text-sm font-medium truncate">{col.name}</span>
-                    {col.isNullable === false && (
-                      <span className="text-red-400 text-xs shrink-0" title="NOT NULL">*</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <Badge variant="secondary" className="text-xs font-mono">
-                      {toSqlType(col.dataType)}
-                    </Badge>
-                    <button
-                      className="p-1 hover:bg-background rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => onEditColumn?.(col.name)}
-                      title="Edit column"
+          {displayColumns ? (
+            // Show full DESCRIBE TABLE data in a table format
+            <div className="pb-4">
+              <table className="w-full text-xs border-collapse">
+                <thead className="sticky top-0 bg-background">
+                  <tr className="border-b">
+                    <th className="text-left py-2 pr-2 font-semibold text-muted-foreground">#</th>
+                    <th className="text-left py-2 pr-2 font-semibold text-muted-foreground">Column</th>
+                    <th className="text-left py-2 pr-2 font-semibold text-muted-foreground">Type</th>
+                    <th className="text-center py-2 px-1 font-semibold text-muted-foreground" title="Nullable">N</th>
+                    <th className="text-center py-2 px-1 font-semibold text-muted-foreground" title="Primary Key">PK</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {describeColumns.map((col) => (
+                    <tr 
+                      key={col.column_name} 
+                      className="border-b hover:bg-muted/50 group"
                     >
-                      <Pencil className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                    </button>
-                  </div>
+                      <td className="py-2 pr-2 text-muted-foreground">{col.ordinal_position}</td>
+                      <td className="py-2 pr-2">
+                        <div className="flex flex-col">
+                          <span className="font-medium">{col.column_name}</span>
+                          {col.column_comment && (
+                            <span className="text-muted-foreground text-xs italic mt-0.5">{col.column_comment}</span>
+                          )}
+                          {col.column_default && (
+                            <span className="text-muted-foreground text-xs mt-0.5">
+                              default: <code className="bg-muted px-1 rounded">{col.column_default}</code>
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-2 pr-2">
+                        <Badge variant="secondary" className="text-xs font-mono">
+                          {col.data_type}
+                        </Badge>
+                      </td>
+                      <td className="py-2 px-1 text-center">
+                        {col.is_nullable ? (
+                          <span className="text-green-500" title="NULL">✓</span>
+                        ) : (
+                          <span className="text-red-500" title="NOT NULL">✗</span>
+                        )}
+                      </td>
+                      <td className="py-2 px-1 text-center">
+                        {col.is_primary_key && (
+                          <span className="text-yellow-500" title="Primary Key">🔑</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            // Fallback to simple column list
+            <div className="space-y-1.5 pb-4">
+              {columns.length === 0 ? (
+                <div className="text-sm text-muted-foreground py-4 text-center">
+                  No columns defined
                 </div>
-              ))
-            )}
-          </div>
+              ) : (
+                columns.map((col) => (
+                  <div
+                    key={col.name}
+                    className="flex items-center justify-between p-2 rounded bg-muted/50 hover:bg-muted/80 group"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      {col.isPrimaryKey && (
+                        <span className="text-yellow-500 text-xs shrink-0" title="Primary Key">🔑</span>
+                      )}
+                      <span className="text-sm font-medium truncate">{col.name}</span>
+                      {col.isNullable === false && (
+                        <span className="text-red-400 text-xs shrink-0" title="NOT NULL">*</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Badge variant="secondary" className="text-xs font-mono">
+                        {toSqlType(col.dataType)}
+                      </Badge>
+                      <button
+                        className="p-1 hover:bg-background rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => onEditColumn?.(col.name)}
+                        title="Edit column"
+                      >
+                        <Pencil className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </ScrollArea>
       </div>
 

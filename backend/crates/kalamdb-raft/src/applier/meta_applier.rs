@@ -11,11 +11,11 @@
 
 use async_trait::async_trait;
 use kalamdb_commons::models::schemas::{TableDefinition, TableType};
-use kalamdb_commons::models::{
-    JobId, JobStatus, NamespaceId, NodeId, StorageId, TableId, UserId,
-};
-use kalamdb_commons::system::{Job, Storage};
-use kalamdb_commons::types::User;
+use kalamdb_commons::models::{JobId, NamespaceId, NodeId, StorageId, TableId, UserId};
+use kalamdb_system::Storage;
+use kalamdb_system::JobStatus;
+use kalamdb_system::providers::jobs::models::Job;
+use kalamdb_system::User;
 
 use crate::RaftError;
 
@@ -313,7 +313,8 @@ impl MetaApplier for NoOpMetaApplier {
 mod tests {
     use super::*;
     use kalamdb_commons::models::{AuthType, NamespaceId, StorageMode, TableName, UserName};
-    use kalamdb_commons::{JobType, Role};
+    use kalamdb_commons::Role;
+    use kalamdb_system::JobType;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -513,7 +514,7 @@ mod tests {
     async fn test_user_operations() {
         let applier = MockMetaApplier::new();
         let user = User {
-            id: UserId::from("user_123"),
+            user_id: UserId::from("user_123"),
             username: UserName::new("testuser"),
             password_hash: "$2b$12$hash".to_string(),
             role: Role::User,
@@ -533,9 +534,9 @@ mod tests {
 
         applier.create_user(&user).await.unwrap();
         applier.update_user(&user).await.unwrap();
-        applier.record_login(&user.id, 2000).await.unwrap();
-        applier.set_user_locked(&user.id, Some(3000), 2000).await.unwrap();
-        applier.delete_user(&user.id, 4000).await.unwrap();
+        applier.record_login(&user.user_id, 2000).await.unwrap();
+        applier.set_user_locked(&user.user_id, Some(3000), 2000).await.unwrap();
+        applier.delete_user(&user.user_id, 4000).await.unwrap();
 
         assert_eq!(applier.get_counts(), (0, 0, 5, 0, 0));
     }
@@ -614,7 +615,7 @@ mod tests {
         ).expect("Failed to create table definition");
         let user_id = UserId::from("user");
         let user = User {
-            id: user_id.clone(),
+            user_id: user_id.clone(),
             username: UserName::new("test"),
             password_hash: "$2b$12$hash".to_string(),
             role: Role::User,
@@ -760,7 +761,7 @@ mod tests {
         ).expect("Failed to create table definition");
         let user_id = UserId::from("u1");
         let user = User {
-            id: user_id.clone(),
+            user_id: user_id.clone(),
             username: UserName::new("test"),
             password_hash: "$2b$12$hash".to_string(),
             role: Role::User,

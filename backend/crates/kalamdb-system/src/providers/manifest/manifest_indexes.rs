@@ -4,7 +4,7 @@
 
 use crate::StoragePartition;
 use kalamdb_commons::storage::Partition;
-use kalamdb_commons::types::{ManifestCacheEntry, SyncState};
+use crate::providers::manifest::{ManifestCacheEntry, SyncState};
 use kalamdb_commons::{ManifestId, StorageKey};
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
@@ -54,7 +54,7 @@ pub fn create_manifest_indexes() -> Vec<Arc<dyn IndexDefinition<ManifestId, Mani
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::types::{Manifest, SyncState};
+    use crate::providers::manifest::{Manifest, SyncState};
     use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
 
     fn create_test_entry(table_id: TableId, user_id: Option<UserId>, sync_state: SyncState) -> ManifestCacheEntry {

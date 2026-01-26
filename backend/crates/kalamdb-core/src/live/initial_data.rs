@@ -593,7 +593,7 @@ mod tests {
         .expect("create table def");
 
         // Insert into cache directly (bypassing persistence which might not be mocked)
-        schema_registry.put(table_def);
+        let _ = schema_registry.put(table_def);
 
         // Create a mock provider with the store
         let tables_schema_registry = Arc::new(TablesSchemaRegistryAdapter::new(

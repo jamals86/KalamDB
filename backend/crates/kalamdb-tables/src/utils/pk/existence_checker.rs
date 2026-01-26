@@ -6,7 +6,7 @@ use kalamdb_commons::models::schemas::ColumnDefault;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::types::Manifest;
+use kalamdb_system::Manifest;
 use kalamdb_commons::UserId;
 use std::sync::Arc;
 

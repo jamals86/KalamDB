@@ -28,7 +28,7 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::system::User;
+use crate::providers::users::models::User;
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_commons::UserId;
 use kalamdb_store::entity_store::EntityStore;
@@ -107,7 +107,9 @@ impl UsersTableProvider {
         }
 
         // Insert user - indexes are managed automatically
-        self.store.insert(&user.id, &user).into_system_error("insert user error")
+        self.store
+            .insert(&user.user_id, &user)
+            .into_system_error("insert user error")
     }
 
     /// Update an existing user.
@@ -122,9 +124,12 @@ impl UsersTableProvider {
     /// Result indicating success or failure
     pub fn update_user(&self, user: User) -> Result<(), SystemError> {
         // Check if user exists
-        let existing = self.store.get(&user.id)?;
+        let existing = self.store.get(&user.user_id)?;
         if existing.is_none() {
-            return Err(SystemError::NotFound(format!("User not found: {}", user.id)));
+            return Err(SystemError::NotFound(format!(
+                "User not found: {}",
+                user.user_id
+            )));
         }
 
         let existing_user = existing.unwrap();
@@ -146,7 +151,7 @@ impl UsersTableProvider {
                 .scan_by_index(username_index_idx, Some(username_key.as_bytes()), Some(1))
                 .into_system_error("scan_by_index error")?;
 
-            if !conflicts.is_empty() && conflicts[0].0 != user.id {
+            if !conflicts.is_empty() && conflicts[0].0 != user.user_id {
                 return Err(SystemError::AlreadyExists(format!(
                     "User with username '{}' already exists",
                     user.username.as_str()
@@ -156,7 +161,7 @@ impl UsersTableProvider {
 
         // Use update_with_old for efficiency (we already have old entity)
         self.store
-            .update_with_old(&user.id, Some(&existing_user), &user)
+            .update_with_old(&user.user_id, Some(&existing_user), &user)
             .into_system_error("update user error")
     }
 
@@ -238,9 +243,12 @@ impl UsersTableProvider {
         let mut updated_ats = Vec::with_capacity(users.len());
         let mut last_seens = Vec::with_capacity(users.len());
         let mut deleted_ats = Vec::with_capacity(users.len());
+        let mut failed_attempts = Vec::with_capacity(users.len());
+        let mut locked_untils = Vec::with_capacity(users.len());
+        let mut last_login_ats = Vec::with_capacity(users.len());
 
         for (_key, user) in users {
-            user_ids.push(Some(user.id.as_str().to_string()));
+            user_ids.push(Some(user.user_id.as_str().to_string()));
             usernames.push(Some(user.username.as_str().to_string()));
             password_hashes.push(Some(user.password_hash));
             roles.push(Some(user.role.as_str().to_string()));
@@ -253,6 +261,9 @@ impl UsersTableProvider {
             updated_ats.push(Some(user.updated_at));
             last_seens.push(user.last_seen);
             deleted_ats.push(user.deleted_at);
+            failed_attempts.push(Some(user.failed_login_attempts));
+            locked_untils.push(user.locked_until);
+            last_login_ats.push(user.last_login_at);
         }
 
         // Build batch using RecordBatchBuilder
@@ -270,7 +281,10 @@ impl UsersTableProvider {
             .add_timestamp_micros_column(created_ats)
             .add_timestamp_micros_column(updated_ats)
             .add_timestamp_micros_column(last_seens)
-            .add_timestamp_micros_column(deleted_ats);
+            .add_timestamp_micros_column(deleted_ats)
+            .add_int32_column(failed_attempts)
+            .add_timestamp_micros_column(locked_untils)
+            .add_timestamp_micros_column(last_login_ats);
 
         let batch = builder.build().into_arrow_error("Failed to create RecordBatch")?;
 
@@ -372,7 +386,7 @@ mod tests {
 
     fn create_test_user(id: &str, username: &str) -> User {
         User {
-            id: UserId::new(id),
+            user_id: UserId::new(id),
             username: UserName::new(username),
             password_hash: "hashed_password".to_string(),
             role: Role::User,
@@ -418,7 +432,7 @@ mod tests {
         let retrieved = provider.get_user_by_username("alice").unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.id, UserId::new("user1"));
+        assert_eq!(retrieved.user_id, UserId::new("user1"));
     }
 
     #[test]
@@ -461,7 +475,7 @@ mod tests {
         // Verify new username works
         let new_lookup = provider.get_user_by_username("bob").unwrap();
         assert!(new_lookup.is_some());
-        assert_eq!(new_lookup.unwrap().id, UserId::new("user1"));
+        assert_eq!(new_lookup.unwrap().user_id, UserId::new("user1"));
     }
 
     #[test]
@@ -490,14 +504,14 @@ mod tests {
         // Scan all
         let batch = provider.scan_all_users().unwrap();
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 13);
+        assert_eq!(batch.num_columns(), 16);
     }
 
     #[test]
     fn test_table_provider_schema() {
         let provider = create_test_provider();
         let schema = provider.schema();
-        assert_eq!(schema.fields().len(), 13);
+        assert_eq!(schema.fields().len(), 16);
         assert_eq!(schema.field(0).name(), "user_id");
         assert_eq!(schema.field(1).name(), "username");
     }

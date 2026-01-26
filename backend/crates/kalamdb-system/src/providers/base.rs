@@ -17,8 +17,7 @@ use datafusion::common::DataFusionError;
 use datafusion::datasource::{MemTable, TableProvider};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::StorageKey;
-use kalamdb_store::entity_store::KSerializable;
+use kalamdb_commons::{KSerializable, StorageKey};
 use kalamdb_store::{EntityStore, IndexedEntityStore};
 
 use crate::error::SystemError;

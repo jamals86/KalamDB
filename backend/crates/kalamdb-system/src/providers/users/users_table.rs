@@ -5,11 +5,9 @@
 //! - Arrow schema: Derived from TableDefinition, memoized via OnceLock
 
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::datatypes::KalamDataType;
-use kalamdb_commons::schemas::{
-    ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
-};
-use kalamdb_commons::{NamespaceId, SystemTable, TableName};
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_commons::SystemTable;
+use crate::providers::users::models::User;
 use std::sync::OnceLock;
 
 /// System users table schema definition
@@ -41,162 +39,11 @@ impl UsersTableSchema {
     /// - updated_at TIMESTAMP NOT NULL
     /// - last_seen TIMESTAMP (nullable)
     /// - deleted_at TIMESTAMP (nullable)
+    /// - failed_login_attempts INT NOT NULL
+    /// - locked_until TIMESTAMP (nullable)
+    /// - last_login_at TIMESTAMP (nullable)
     pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "user_id",
-                1,
-                KalamDataType::Text,
-                false,
-                true,
-                false,
-                ColumnDefault::None,
-                Some("User identifier (UUID)".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "username",
-                2,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Unique username for authentication".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "password_hash",
-                3,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("bcrypt password hash".to_string()),
-            ),
-            ColumnDefinition::new(
-                4,
-                "role",
-                4,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("User role: user, service, dba, system".to_string()),
-            ),
-            ColumnDefinition::new(
-                5,
-                "email",
-                5,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("User email address".to_string()),
-            ),
-            ColumnDefinition::new(
-                6,
-                "auth_type",
-                6,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Authentication type: Password, OAuth, ApiKey".to_string()),
-            ),
-            ColumnDefinition::new(
-                7,
-                "auth_data",
-                7,
-                KalamDataType::Json,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Authentication data (JSON for OAuth provider/subject)".to_string()),
-            ),
-            ColumnDefinition::new(
-                8,
-                "storage_mode",
-                8,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Preferred storage partitioning mode".to_string()),
-            ),
-            ColumnDefinition::new(
-                9,
-                "storage_id",
-                9,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Optional preferred storage configuration ID".to_string()),
-            ),
-            ColumnDefinition::new(
-                10,
-                "created_at",
-                10,
-                KalamDataType::Timestamp,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Account creation timestamp".to_string()),
-            ),
-            ColumnDefinition::new(
-                11,
-                "updated_at",
-                11,
-                KalamDataType::Timestamp,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last account update timestamp".to_string()),
-            ),
-            ColumnDefinition::new(
-                12,
-                "last_seen",
-                12,
-                KalamDataType::Timestamp,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last authentication timestamp".to_string()),
-            ),
-            ColumnDefinition::new(
-                13,
-                "deleted_at",
-                13,
-                KalamDataType::Timestamp,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Soft delete timestamp".to_string()),
-            ),
-        ];
-
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::Users.table_name()),
-            TableType::System,
-            columns,
-            TableOptions::system(),
-            Some("System users for authentication and authorization".to_string()),
-        )
-        .expect("Failed to create system.users table definition")
+        User::definition()
     }
 
     /// Get the cached Arrow schema for the system.users table
@@ -238,7 +85,7 @@ mod tests {
     fn test_users_table_schema() {
         let schema = UsersTableSchema::schema();
         // Schema built from TableDefinition, verify field count and names are correct
-        assert_eq!(schema.fields().len(), 13);
+        assert_eq!(schema.fields().len(), 16);
 
         // Verify fields exist (order guaranteed by TableDefinition's ordinal_position)
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();

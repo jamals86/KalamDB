@@ -8,8 +8,8 @@
 
 use chrono::{DateTime, Utc};
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, NodeId, UserId};
-use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::TableId;
+use kalamdb_system::providers::live_queries::models::LiveQuery;
 use serde::{Deserialize, Serialize};
 
 /// Commands for user data shards (32 shards by default)
@@ -215,7 +215,7 @@ impl UserDataCommand {
 mod tests {
     use super::*;
     use kalamdb_commons::models::{NamespaceId, TableName};
-    use kalamdb_commons::types::LiveQueryStatus;
+    use kalamdb_system::LiveQueryStatus;
 
     #[test]
     fn test_user_data_command_watermark_get_set() {

@@ -40,7 +40,7 @@
 //!
 //! ```rust,ignore
 //! use kalamdb_commons::schemas::{TableDefinition, ColumnDefinition, TableType, TableOptions};
-//! use kalamdb_commons::types::KalamDataType;
+//! use kalamdb_commons::datatypes::KalamDataType;
 //!
 //! // Define a table schema
 //! let table_def = TableDefinition {
@@ -79,7 +79,7 @@
 //!
 //! # Related Modules
 //!
-//! - `kalamdb_commons::types` - Unified type system (KalamDataType)
+//! - `kalamdb_commons::datatypes` - Unified type system (KalamDataType)
 //! - `kalamdb_core::schema_cache` - Lock-free caching layer
 //! - `kalamdb_sql::ddl` - SQL DDL statement handling
 //! - `kalamdb_store::entities` - RocksDB storage implementation
@@ -89,7 +89,9 @@ pub mod column_definition;
 pub mod policy;
 pub mod schema_field;
 pub mod schema_version;
+pub mod table_access;
 pub mod table_definition;
+pub mod table_name;
 pub mod table_options;
 pub mod table_type;
 
@@ -97,7 +99,9 @@ pub use column_default::ColumnDefault;
 pub use column_definition::ColumnDefinition;
 pub use schema_field::SchemaField;
 pub use schema_version::SchemaVersion;
+pub use table_access::TableAccess;
 pub use table_definition::TableDefinition;
+pub use table_name::TableName;
 pub use table_options::{
     SharedTableOptions, StreamTableOptions, SystemTableOptions, TableOptions, UserTableOptions,
 };

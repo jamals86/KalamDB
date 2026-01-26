@@ -6,7 +6,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::logical_expr::Expr;
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::UserId;
-use kalamdb_commons::types::Manifest;
+use kalamdb_system::Manifest;
 use kalamdb_commons::TableId;
 
 /// Shared helper for loading Parquet batches via ManifestAccessPlanner.

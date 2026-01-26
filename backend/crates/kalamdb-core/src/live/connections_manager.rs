@@ -426,7 +426,7 @@ impl ConnectionsManager {
         let shutdown_token = CancellationToken::new();
 
         let registry = Arc::new(Self {
-            connections: DashMap::with_capacity(1024),
+            connections: DashMap::new(),
             user_table_subscriptions: DashMap::new(),
             empty_subscriptions: Arc::new(DashMap::new()),
             live_id_to_connection: DashMap::new(),

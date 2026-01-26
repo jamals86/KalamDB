@@ -243,7 +243,7 @@ impl MetaStateMachine {
             // User Operations
             // =================================================================
             MetaCommand::CreateUser { user } => {
-                log::debug!("MetaStateMachine: CreateUser {:?} ({})", user.id, user.username);
+                log::debug!("MetaStateMachine: CreateUser {:?} ({})", user.user_id, user.username);
 
                 let message = if let Some(ref a) = applier {
                     a.create_user(&user).await?
@@ -251,12 +251,12 @@ impl MetaStateMachine {
                     String::new()
                 };
 
-                let user_id = user.id.clone();
+                let user_id = user.user_id.clone();
                 Ok(MetaResponse::UserCreated { user_id, message })
             },
 
             MetaCommand::UpdateUser { user } => {
-                log::debug!("MetaStateMachine: UpdateUser {:?}", user.id);
+                log::debug!("MetaStateMachine: UpdateUser {:?}", user.user_id);
 
                 if let Some(ref a) = applier {
                     a.update_user(&user).await?;

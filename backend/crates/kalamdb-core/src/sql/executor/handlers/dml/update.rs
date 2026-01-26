@@ -350,12 +350,12 @@ impl UpdateHandler {
             .ok_or_else(|| KalamDbError::InvalidOperation("Empty UPDATE statement".into()))?;
 
         let (ns, tbl, assigns, where_pair) = match stmt {
-            SqlStatementAst::Update {
+            SqlStatementAst::Update(sqlparser::ast::Update {
                 table,
                 assignments,
                 selection,
                 ..
-            } => {
+            }) => {
 
                 let (ns, tbl) = match table.relation {
                     TableFactor::Table { name, .. } => {

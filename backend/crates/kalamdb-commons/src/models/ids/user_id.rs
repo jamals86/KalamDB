@@ -232,3 +232,6 @@ mod tests {
         assert!(result.is_err());
     }
 }
+
+// KSerializable implementation for EntityStore support
+impl crate::serialization::KSerializable for UserId {}

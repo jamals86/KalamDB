@@ -11,7 +11,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::types::Manifest;
+use kalamdb_system::Manifest;
 use kalamdb_commons::TableId;
 use kalamdb_filestore::StorageCached;
 use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
@@ -328,7 +328,7 @@ impl ManifestAccessPlanner {
     /// Check if a PK value could be within the min/max range of column stats
     ///
     /// Supports string and numeric comparisons.
-    fn pk_value_in_range(pk_value: &str, stats: &kalamdb_commons::types::ColumnStats) -> bool {
+    fn pk_value_in_range(pk_value: &str, stats: &kalamdb_system::ColumnStats) -> bool {
         // If no min/max stats, conservatively assume it could be in range
         if stats.min.is_none() || stats.max.is_none() {
             return true;

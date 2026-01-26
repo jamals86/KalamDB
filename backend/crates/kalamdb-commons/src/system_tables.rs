@@ -50,6 +50,8 @@ pub enum SystemTable {
     ClusterGroups,
     /// system.datatypes - Supported data type mappings (computed on-demand)
     Datatypes,
+    /// system.describe - DESCRIBE TABLE functionality (computed on-demand)
+    Describe,
 }
 
 impl SystemTable {
@@ -73,6 +75,7 @@ impl SystemTable {
             SystemTable::Cluster => "cluster",
             SystemTable::ClusterGroups => "cluster_groups",
             SystemTable::Datatypes => "datatypes",
+            SystemTable::Describe => "describe",
         }
     }
 
@@ -91,6 +94,7 @@ impl SystemTable {
                 | SystemTable::Cluster
                 | SystemTable::ClusterGroups
                 | SystemTable::Datatypes
+                | SystemTable::Describe
         )
     }
 
@@ -114,7 +118,8 @@ impl SystemTable {
             | SystemTable::ServerLogs
             | SystemTable::Cluster
             | SystemTable::ClusterGroups
-            | SystemTable::Datatypes => None,
+            | SystemTable::Datatypes
+            | SystemTable::Describe => None,
         }
     }
 
@@ -142,6 +147,7 @@ impl SystemTable {
             "cluster" => Ok(SystemTable::Cluster),
             "cluster_groups" => Ok(SystemTable::ClusterGroups),
             "datatypes" => Ok(SystemTable::Datatypes),
+            "describe" => Ok(SystemTable::Describe),
             _ => Err(format!("Unknown system table or view: {}", name)),
         }
     }
@@ -171,6 +177,7 @@ impl SystemTable {
             SystemTable::Cluster,
             SystemTable::ClusterGroups,
             SystemTable::Datatypes,
+            SystemTable::Describe,
         ]
     }
 
@@ -195,6 +202,7 @@ impl SystemTable {
             SystemTable::Cluster,
             SystemTable::ClusterGroups,
             SystemTable::Datatypes,
+            SystemTable::Describe,
         ]
     }
 
@@ -241,7 +249,8 @@ impl SystemTable {
             | SystemTable::ServerLogs
             | SystemTable::Cluster
             | SystemTable::ClusterGroups
-            | SystemTable::Datatypes => None,
+            | SystemTable::Datatypes
+            | SystemTable::Describe => None,
         }
     }
 }
@@ -424,7 +433,7 @@ mod tests {
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 16); // 10 tables + 6 views
+        assert_eq!(all.len(), 17); // 10 tables + 7 views
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
         assert!(all.contains(&SystemTable::AuditLog));
@@ -443,7 +452,7 @@ mod tests {
     #[test]
     fn test_all_views() {
         let views = SystemTable::all_views();
-        assert_eq!(views.len(), 6);
+        assert_eq!(views.len(), 7);
         assert!(views.iter().all(|v| v.is_view()));
     }
 

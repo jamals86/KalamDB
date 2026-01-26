@@ -42,7 +42,7 @@ async fn test_e2e_auth_flow() {
 
     // Create namespace (as DBA user)
     let create_ns_sql = format!("CREATE NAMESPACE {}", namespace);
-    let response = server.execute_sql_as_user(&create_ns_sql, user.id.as_str()).await;
+    let response = server.execute_sql_as_user(&create_ns_sql, user.user_id.as_str()).await;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
@@ -55,7 +55,7 @@ async fn test_e2e_auth_flow() {
     // Shared tables require a PRIMARY KEY column of BIGINT or STRING
     let create_table_sql =
         format!("CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT)", namespace, table_name);
-    let response = server.execute_sql_as_user(&create_table_sql, user.id.as_str()).await;
+    let response = server.execute_sql_as_user(&create_table_sql, user.user_id.as_str()).await;
     if response.status != ResponseStatus::Success {
         eprintln!("❌ CREATE TABLE failed: {:?}", response.error);
     }
@@ -72,11 +72,11 @@ async fn test_e2e_auth_flow() {
         "INSERT INTO {}.{} (id, name) VALUES (1, 'Alice'), (2, 'Bob')",
         namespace, table_name
     );
-    let response = server.execute_sql_as_user(&insert_sql, user.id.as_str()).await;
+    let response = server.execute_sql_as_user(&insert_sql, user.user_id.as_str()).await;
     if response.status != ResponseStatus::Success {
         eprintln!("❌ INSERT failed: {:?}", response.error);
         eprintln!("   SQL: {}", insert_sql);
-        eprintln!("   User ID: {}", user.id.as_str());
+        eprintln!("   User ID: {}", user.user_id.as_str());
     }
     assert_eq!(
         response.status,
@@ -88,7 +88,7 @@ async fn test_e2e_auth_flow() {
 
     // Query data
     let select_sql = format!("SELECT * FROM {}.{}", namespace, table_name);
-    let response = server.execute_sql_as_user(&select_sql, user.id.as_str()).await;
+    let response = server.execute_sql_as_user(&select_sql, user.user_id.as_str()).await;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
@@ -102,7 +102,7 @@ async fn test_e2e_auth_flow() {
     println!("🗑️  Phase 3: Testing user soft deletion");
 
     // Soft delete the user via SQL (DROP USER performs soft delete)
-    let delete_user_sql = format!("DROP USER '{}'", user.id.as_str());
+    let delete_user_sql = format!("DROP USER '{}'", user.user_id.as_str());
     let response = server.execute_sql_as_user(&delete_user_sql, "system").await;
     assert_eq!(
         response.status,
@@ -110,11 +110,11 @@ async fn test_e2e_auth_flow() {
         "Failed to soft delete user: {:?}",
         response.error
     );
-    println!("✅ User '{}' soft deleted", user.id.as_str());
+    println!("✅ User '{}' soft deleted", user.user_id.as_str());
 
     // Verify authentication fails for deleted user
     let post_delete_sql = "SELECT 1".to_string();
-    let response = server.execute_sql_as_user(&post_delete_sql, user.id.as_str()).await;
+    let response = server.execute_sql_as_user(&post_delete_sql, user.user_id.as_str()).await;
 
     // HTTP layer should reject soft-deleted users
     assert_eq!(
@@ -156,7 +156,7 @@ async fn test_role_based_auth_e2e() {
 
     // Create user namespaces (system user creates these for them)
     for user in [&user_user, &service_user] {
-        let create_ns_sql = format!("CREATE NAMESPACE {}", user.id.as_str());
+        let create_ns_sql = format!("CREATE NAMESPACE {}", user.user_id.as_str());
         server.execute_sql(&create_ns_sql).await;
     }
     println!("✅ Created user namespaces");
@@ -165,7 +165,7 @@ async fn test_role_based_auth_e2e() {
 
     // Create namespace as DBA
     let create_ns_sql = format!("CREATE NAMESPACE {}", namespace);
-    let response = server.execute_sql_as_user(&create_ns_sql, dba_user.id.as_str()).await;
+    let response = server.execute_sql_as_user(&create_ns_sql, dba_user.user_id.as_str()).await;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
@@ -174,7 +174,7 @@ async fn test_role_based_auth_e2e() {
     println!("✅ DBA user created namespace");
 
     // Regular user tries to create namespace (should fail)
-    let response = server.execute_sql_as_user(&create_ns_sql, user_user.id.as_str()).await;
+    let response = server.execute_sql_as_user(&create_ns_sql, user_user.user_id.as_str()).await;
     assert_eq!(
         response.status,
         ResponseStatus::Error,
@@ -183,7 +183,7 @@ async fn test_role_based_auth_e2e() {
     println!("✅ Regular user correctly denied namespace creation");
 
     // Service user tries to create namespace (should fail)
-    let response = server.execute_sql_as_user(&create_ns_sql, service_user.id.as_str()).await;
+    let response = server.execute_sql_as_user(&create_ns_sql, service_user.user_id.as_str()).await;
     assert_eq!(
         response.status,
         ResponseStatus::Error,
@@ -194,7 +194,7 @@ async fn test_role_based_auth_e2e() {
     // Create table as DBA
     // Ensure PRIMARY KEY for shared table creation
     let create_table_sql = format!("CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY)", namespace);
-    let response = server.execute_sql_as_user(&create_table_sql, dba_user.id.as_str()).await;
+    let response = server.execute_sql_as_user(&create_table_sql, dba_user.user_id.as_str()).await;
     assert_eq!(response.status, ResponseStatus::Success, "DBA should be able to create table");
     println!("✅ DBA user created table");
 
@@ -202,13 +202,13 @@ async fn test_role_based_auth_e2e() {
     // For user tables, TableType must be USER
     let user_table_sql = format!(
         "CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY) WITH (TYPE = 'USER')",
-        user_user.id.as_str()
+        user_user.user_id.as_str()
     );
-    let response = server.execute_sql_as_user(&user_table_sql, user_user.id.as_str()).await;
+    let response = server.execute_sql_as_user(&user_table_sql, user_user.user_id.as_str()).await;
     if response.status != ResponseStatus::Success {
         eprintln!("❌ CREATE TABLE (user table) failed: {:?}", response.error);
         eprintln!("   SQL: {}", user_table_sql);
-        eprintln!("   User ID: {}", user_user.id.as_str());
+        eprintln!("   User ID: {}", user_user.user_id.as_str());
     }
     assert_eq!(
         response.status,
@@ -219,8 +219,8 @@ async fn test_role_based_auth_e2e() {
 
     // Service user creates user table (should succeed)
     let service_table_sql =
-        format!("CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY)", service_user.id.as_str());
-    let response = server.execute_sql_as_user(&service_table_sql, service_user.id.as_str()).await;
+        format!("CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY)", service_user.user_id.as_str());
+    let response = server.execute_sql_as_user(&service_table_sql, service_user.user_id.as_str()).await;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
@@ -230,7 +230,7 @@ async fn test_role_based_auth_e2e() {
 
     // Cleanup
     server
-        .execute_sql_as_user(&format!("DROP NAMESPACE {} CASCADE", namespace), dba_user.id.as_str())
+        .execute_sql_as_user(&format!("DROP NAMESPACE {} CASCADE", namespace), dba_user.user_id.as_str())
         .await;
     server.execute_sql("DROP USER regular_user").await;
     server.execute_sql("DROP USER service_user").await;
@@ -254,13 +254,13 @@ async fn test_password_security_e2e() {
     // Create user
     let user = auth_helper::create_test_user(&server, username, old_password, Role::User).await;
     println!("✅ User created with initial password");
-    println!("   User ID: {}", user.id.as_str());
+    println!("   User ID: {}", user.user_id.as_str());
     println!("   Username: {}", user.username.as_str());
 
     // Verify user exists by querying system.users
     let query_sql = format!(
         "SELECT user_id, username, role FROM system.users WHERE user_id = '{}'",
-        user.id.as_str()
+        user.user_id.as_str()
     );
     let response = server.execute_sql_as_user(&query_sql, "system").await;
     if response.status == ResponseStatus::Success {
@@ -272,7 +272,7 @@ async fn test_password_security_e2e() {
     // Change password via SQL (use system user for ALTER USER command)
     // Syntax: ALTER USER 'user_id' SET PASSWORD 'new_password'
     let change_password_sql =
-        format!("ALTER USER '{}' SET PASSWORD '{}'", user.id.as_str(), new_password);
+        format!("ALTER USER '{}' SET PASSWORD '{}'", user.user_id.as_str(), new_password);
     let response = server.execute_sql_as_user(&change_password_sql, "system").await;
     if response.status != ResponseStatus::Success {
         eprintln!("❌ ALTER USER failed: {:?}", response.error);
@@ -283,14 +283,14 @@ async fn test_password_security_e2e() {
 
     // Verify old password no longer works
     let test_sql = "SELECT 1".to_string();
-    let _response = server.execute_sql_as_user(&test_sql, user.id.as_str()).await;
+    let _response = server.execute_sql_as_user(&test_sql, user.user_id.as_str()).await;
     // Note: This test may need adjustment based on how password changes are implemented
     // For now, just verify the SQL executed without error
     println!("✅ Password change operation completed");
 
     // Cleanup (use system user for DROP USER command)
     server
-        .execute_sql_as_user(&format!("DROP USER {}", user.id.as_str()), "system")
+        .execute_sql_as_user(&format!("DROP USER {}", user.user_id.as_str()), "system")
         .await;
 
     println!("🎉 Password Security E2E Test Completed!");

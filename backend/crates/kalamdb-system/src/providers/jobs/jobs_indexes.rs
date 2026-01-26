@@ -2,10 +2,11 @@
 //!
 //! This module defines secondary indexes for the system.jobs table.
 
+use crate::providers::jobs::models::Job;
 use crate::StoragePartition;
+use crate::JobStatus;
 use kalamdb_commons::storage::Partition;
-use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobId, JobStatus};
+use kalamdb_commons::JobId;
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
 
@@ -124,7 +125,8 @@ pub fn create_jobs_indexes() -> Vec<Arc<dyn IndexDefinition<JobId, Job>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{JobType, NodeId};
+    use crate::JobType;
+    use kalamdb_commons::NodeId;
 
     fn create_test_job(id: &str, status: JobStatus) -> Job {
         let now = chrono::Utc::now().timestamp_millis();

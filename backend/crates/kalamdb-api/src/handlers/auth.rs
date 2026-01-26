@@ -145,7 +145,7 @@ pub async fn login_handler(
 
     // Generate JWT access token
     let (token, _claims) = match create_and_sign_token(
-        &user.id,
+        &user.user_id,
         &user.username,
         &user.role,
         user.email.as_deref(),
@@ -163,7 +163,7 @@ pub async fn login_handler(
     // Generate refresh token (7 days by default, or 7x access token expiry)
     let refresh_expiry_hours = config.jwt_expiry_hours * 7;
     let (refresh_token, _refresh_claims) = match create_and_sign_token(
-        &user.id,
+        &user.user_id,
         &user.username,
         &user.role,
         user.email.as_deref(),
@@ -199,7 +199,7 @@ pub async fn login_handler(
 
     HttpResponse::Ok().cookie(cookie).json(LoginResponse {
         user: UserInfo {
-            id: user.id.to_string(),
+            id: user.user_id.to_string(),
             username: user.username.as_str().to_string(),
             role: user.role.to_string(),
             email: user.email,
@@ -282,7 +282,7 @@ pub async fn refresh_handler(
 
     // Generate new access token
     let (new_token, _new_claims) = match create_and_sign_token(
-        &user.id,
+        &user.user_id,
         &user.username,
         &user.role,
         user.email.as_deref(),
@@ -300,7 +300,7 @@ pub async fn refresh_handler(
     // Generate new refresh token (7 days by default, or 7x access token expiry)
     let refresh_expiry_hours = config.jwt_expiry_hours * 7;
     let (new_refresh_token, _refresh_claims) = match create_and_sign_token(
-        &user.id,
+        &user.user_id,
         &user.username,
         &user.role,
         user.email.as_deref(),
@@ -336,7 +336,7 @@ pub async fn refresh_handler(
 
     HttpResponse::Ok().cookie(cookie).json(LoginResponse {
         user: UserInfo {
-            id: user.id.to_string(),
+            id: user.user_id.to_string(),
             username: user.username.to_string(),
             role: user.role.to_string(),
             email: user.email,
@@ -410,7 +410,7 @@ pub async fn me_handler(
         .to_rfc3339();
 
     HttpResponse::Ok().json(UserInfo {
-        id: user.id.to_string(),
+        id: user.user_id.to_string(),
         username: user.username.to_string(),
         role: user.role.to_string(),
         email: user.email,

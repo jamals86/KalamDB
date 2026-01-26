@@ -6,7 +6,7 @@ use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_auth::security::password::{validate_password_with_policy, PasswordPolicy};
-use kalamdb_commons::types::User;
+use kalamdb_system::User;
 use kalamdb_commons::{AuthType, UserId};
 use kalamdb_sql::ddl::CreateUserStatement;
 use std::sync::Arc;
@@ -96,7 +96,7 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
 
         let now = chrono::Utc::now().timestamp_millis();
         let user = User {
-            id: UserId::new(format!("u_{}", uuid::Uuid::new_v4().simple())),
+            user_id: UserId::new(format!("u_{}", uuid::Uuid::new_v4().simple())),
             username: statement.username.clone().into(),
             password_hash,
             role: statement.role,

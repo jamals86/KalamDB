@@ -162,8 +162,8 @@ impl TestServer {
         } else {
             let password_hash =
                 bcrypt::hash("test123", bcrypt::DEFAULT_COST).unwrap_or_else(|_| String::new());
-            let user = kalamdb_commons::system::User {
-                id: user_id_obj.clone(),
+            let user = kalamdb_system::User {
+                user_id: user_id_obj.clone(),
                 username: user_id.into(),
                 password_hash,
                 role: Role::User,
@@ -224,8 +224,8 @@ impl TestServer {
             return user_id;
         }
 
-        let user = kalamdb_commons::system::User {
-            id: user_id.clone(),
+        let user = kalamdb_system::User {
+            user_id: user_id.clone(),
             username: username.into(),
             password_hash,
             role,

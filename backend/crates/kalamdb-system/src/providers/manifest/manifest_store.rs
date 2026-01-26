@@ -5,7 +5,7 @@
 
 use crate::system_table_store::SystemTableStore;
 use crate::SystemTable;
-use kalamdb_commons::types::ManifestCacheEntry;
+use crate::providers::manifest::ManifestCacheEntry;
 use kalamdb_commons::ManifestId;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ pub fn new_manifest_store(backend: Arc<dyn StorageBackend>) -> ManifestStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::types::{Manifest, SyncState};
+    use crate::providers::manifest::{Manifest, SyncState};
     use kalamdb_commons::{NamespaceId, TableId, TableName};
     use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;

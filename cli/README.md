@@ -8,7 +8,7 @@ Interactive command-line client for KalamDB - a real-time database with WebSocke
 - 📊 **Multiple Output Formats** - Table, JSON, and CSV output modes
 - 🔄 **Live Query Subscriptions** - Real-time data updates via WebSocket
 - 🎨 **Syntax Highlighting** - Beautiful colored SQL syntax
-- 📝 **Command History** - Persistent history with arrow key navigation
+- 📝 **Command History** - Persistent history with arrow key navigation and interactive menu
 - ⚡ **Auto-completion** - TAB completion for SQL keywords, tables, and columns
 - 🔐 **Authentication** - JWT tokens, username/password, and stored credentials
 - 📁 **Batch Execution** - Run SQL scripts from files
@@ -370,9 +370,18 @@ Refresh table/column cache:
 
 ### Command History
 
-- **↑/↓** arrows: Navigate command history
+- **↑** arrow (on empty line): Opens interactive history dropdown menu
+  - Oldest commands at top, newest at bottom
+  - Selection starts at bottom (newest command)
+  - **↑** to navigate to older commands (up), **↓** to newer commands (down)
+  - **Enter** to select, **Esc** to cancel
+  - Type to filter history entries in real-time
+  - Selected command appears in your prompt ready to edit
+  - Multi-line commands show first 2 lines for easy identification
+- **`\history`** or **`\h`**: Alternative way to open the history menu
 - History stored in `~/.kalam/history`
 - Persistent across sessions
+- `\history`, `\h`, `\quit`, and `\q` commands are not saved to history
 
 ### Progress Indicators
 

@@ -2,12 +2,13 @@
 
 use kalam_link::models::ResponseStatus as LinkResponseStatus;
 use kalamdb_api::models::{ResponseStatus as ApiResponseStatus, SqlResponse};
-use kalamdb_commons::models::types::FileRef;
+use kalamdb_system::FileRef;
 use kalamdb_commons::{Role, UserId, UserName};
 use reqwest::multipart;
 use serde_json::Value as JsonValue;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+use super::test_support::http_server::start_http_test_server;
 
 fn unique_suffix() -> String {
     Uuid::new_v4().simple().to_string()
@@ -215,125 +216,138 @@ async fn test_file_download_permissions_user_table() -> anyhow::Result<()> {
 #[tokio::test]
 #[ntest::timeout(60000)]
 async fn test_insert_with_files_permission_denied() -> anyhow::Result<()> {
-    let server = super::test_support::http_server::get_global_server().await;
-    let namespace = format!("test_files_{}", unique_suffix());
-    let table_name = format!("shared_files_{}", unique_suffix());
+    let server = start_http_test_server().await?;
+    let result = async {
+        let namespace = format!("test_files_{}", unique_suffix());
+        let table_name = format!("shared_files_{}", unique_suffix());
 
-    let resp = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .await?;
-    assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE NAMESPACE failed");
+        let resp = server
+            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+            .await?;
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE NAMESPACE failed");
 
-    let create_table_sql = format!(
-        "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, doc FILE) WITH (TYPE='SHARED')",
-        namespace, table_name
-    );
-    let resp = server.execute_sql(&create_table_sql).await?;
-    assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE TABLE failed");
+        let create_table_sql = format!(
+            "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, doc FILE) WITH (TYPE='SHARED')",
+            namespace, table_name
+        );
+        let resp = server.execute_sql(&create_table_sql).await?;
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE TABLE failed");
 
-    let bob_id = server.ensure_user_exists("bob", "test123", &Role::User).await?;
-    let bob_auth = bearer_header(
-        server,
-        &UserId::new(bob_id),
-        &UserName::new("bob"),
-        &Role::User,
-    );
+        let bob_id = server.ensure_user_exists("bob", "test123", &Role::User).await?;
+        let bob_auth = bearer_header(
+            &server,
+            &UserId::new(bob_id),
+            &UserName::new("bob"),
+            &Role::User,
+        );
 
-    let insert_sql = format!(
-        "INSERT INTO {}.{} (id, doc) VALUES (1, FILE(\"doc\"))",
-        namespace, table_name
-    );
+        let insert_sql = format!(
+            "INSERT INTO {}.{} (id, doc) VALUES (1, FILE(\"doc\"))",
+            namespace, table_name
+        );
 
-    let upload = execute_sql_multipart(
-        server,
-        &bob_auth,
-        &insert_sql,
-        vec![("doc", "unauthorized.txt", b"nope", "text/plain")],
-    )
-    .await?;
-
-    assert_eq!(upload.status, ApiResponseStatus::Error);
-    let error_message = upload
-        .error
-        .as_ref()
-        .map(|err| err.message.to_lowercase())
-        .unwrap_or_default();
-    assert!(
-        error_message.contains("access") || error_message.contains("permission"),
-        "Expected permission denial, got: {}",
-        error_message
-    );
-
-    let table_path = table_path_shared(&server.storage_root(), &namespace, &table_name);
-    let leaked = find_files_in_subfolders(&table_path, "f");
-    assert!(
-        leaked.is_empty(),
-        "Unauthorized insert should not leave files behind: {:?}",
-        leaked
-    );
-
-    let _ = server
-        .execute_sql(&format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name))
+        let upload = execute_sql_multipart(
+            &server,
+            &bob_auth,
+            &insert_sql,
+            vec![("doc", "unauthorized.txt", b"nope", "text/plain")],
+        )
         .await?;
 
-    Ok(())
+        assert_eq!(upload.status, ApiResponseStatus::Error);
+        let error_message = upload
+            .error
+            .as_ref()
+            .map(|err| err.message.to_lowercase())
+            .unwrap_or_default();
+        assert!(
+            error_message.contains("access") || error_message.contains("permission"),
+            "Expected permission denial, got: {}",
+            error_message
+        );
+
+        let table_path = table_path_shared(&server.storage_root(), &namespace, &table_name);
+        let leaked = find_files_in_subfolders(&table_path, "f");
+        assert!(
+            leaked.is_empty(),
+            "Unauthorized insert should not leave files behind: {:?}",
+            leaked
+        );
+
+        let _ = server
+            .execute_sql(&format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name))
+            .await?;
+
+        Ok(())
+    }
+    .await;
+
+    server.shutdown().await;
+    result
 }
 
 #[tokio::test]
 #[ntest::timeout(60000)]
 async fn test_failed_insert_cleans_up_files() -> anyhow::Result<()> {
-    let server = super::test_support::http_server::get_global_server().await;
-    let namespace = format!("test_files_{}", unique_suffix());
-    let table_name = format!("cleanup_files_{}", unique_suffix());
+    let server = start_http_test_server().await?;
+    let result = async {
+        let namespace = format!("test_files_{}", unique_suffix());
+        let table_name = format!("cleanup_files_{}", unique_suffix());
 
-    let resp = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .await?;
-    assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE NAMESPACE failed");
+        let resp = server
+            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+            .await?;
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE NAMESPACE failed");
 
-    let create_table_sql = format!(
-        "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT NOT NULL, doc FILE) WITH (TYPE='USER')",
-        namespace, table_name
-    );
-    let resp = server.execute_sql(&create_table_sql).await?;
-    assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE TABLE failed");
+        let create_table_sql = format!(
+            "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT NOT NULL, doc FILE) WITH (TYPE='USER')",
+            namespace, table_name
+        );
+        let resp = server.execute_sql(&create_table_sql).await?;
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE TABLE failed");
 
-    let alice_id = server.ensure_user_exists("alice", "test123", &Role::User).await?;
-    let alice_auth = bearer_header(
-        server,
-        &UserId::new(alice_id.clone()),
-        &UserName::new("alice"),
-        &Role::User,
-    );
+        let alice_id = server.ensure_user_exists("alice", "test123", &Role::User).await?;
+        let alice_auth = bearer_header(
+            &server,
+            &UserId::new(alice_id.clone()),
+            &UserName::new("alice"),
+            &Role::User,
+        );
 
-    let insert_sql = format!(
-        "INSERT INTO {}.{} (id, name, doc) VALUES (1, NULL, FILE(\"doc\"))",
-        namespace, table_name
-    );
+        let insert_sql = format!(
+            "INSERT INTO {}.{} (id, name, doc) VALUES (1, NULL, FILE(\"doc\"))",
+            namespace, table_name
+        );
 
-    let upload = execute_sql_multipart(
-        server,
-        &alice_auth,
-        &insert_sql,
-        vec![("doc", "cleanup.txt", b"cleanup", "text/plain")],
-    )
-    .await?;
-
-    assert_eq!(upload.status, ApiResponseStatus::Error);
-
-    let table_path = table_path_for_user(&server.storage_root(), &namespace, &table_name, &alice_id);
-    let leaked = find_files_in_subfolders(&table_path, "f");
-    assert!(
-        leaked.is_empty(),
-        "Failed insert should cleanup staged files: {:?}",
-        leaked
-    );
-
-    let _ = server
-        .execute_sql(&format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name))
+        let upload = execute_sql_multipart(
+            &server,
+            &alice_auth,
+            &insert_sql,
+            vec![("doc", "cleanup.txt", b"cleanup", "text/plain")],
+        )
         .await?;
 
-    Ok(())
+        assert_eq!(upload.status, ApiResponseStatus::Error);
+
+        let table_path =
+            table_path_for_user(&server.storage_root(), &namespace, &table_name, &alice_id);
+        let leaked = find_files_in_subfolders(&table_path, "f");
+        assert!(
+            leaked.is_empty(),
+            "Failed insert should cleanup staged files: {:?}",
+            leaked
+        );
+
+        let _ = server
+            .execute_sql(&format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name))
+            .await?;
+
+        Ok(())
+    }
+    .await;
+
+    server.shutdown().await;
+    result
 }
 
 #[tokio::test]

@@ -15,7 +15,9 @@
 pub mod audit_logs_provider;
 pub mod audit_logs_store;
 pub mod audit_logs_table;
+pub mod models;
 
+pub use models::AuditLogEntry;
 pub use audit_logs_provider::AuditLogsTableProvider;
 pub use audit_logs_store::{new_audit_logs_store, AuditLogsStore};
 pub use audit_logs_table::AuditLogsTableSchema;

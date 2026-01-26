@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use kalamdb_commons::models::NamespaceId;
-use kalamdb_commons::system::Namespace;
+use kalamdb_system::Namespace;
 
 use crate::app_context::AppContext;
 use crate::applier::ApplierError;

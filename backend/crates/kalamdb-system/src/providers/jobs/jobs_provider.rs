@@ -31,15 +31,15 @@ use datafusion::logical_expr::Expr;
 use datafusion::logical_expr::TableProviderFilterPushDown;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::RecordBatchBuilder;
-use kalamdb_commons::{
-    system::{Job, JobFilter, JobSortField, SortOrder},
-    JobId, JobStatus,
-};
+use kalamdb_commons::JobId;
 use kalamdb_commons::SystemTable;
+use crate::JobStatus;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::any::Any;
 use std::sync::Arc;
+
+use super::models::{Job, JobFilter, JobSortField, SortOrder};
 
 /// Type alias for the indexed jobs store
 pub type JobsStore = IndexedEntityStore<JobId, Job>;
@@ -736,7 +736,8 @@ impl SystemTableProviderExt for JobsTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{JobStatus, JobType, NodeId};
+    use crate::{JobStatus, JobType};
+    use kalamdb_commons::NodeId;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> JobsTableProvider {

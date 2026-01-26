@@ -9,7 +9,7 @@
 
 use crate::schema_registry::SchemaRegistry;
 use kalamdb_commons::ids::SeqId;
-use kalamdb_commons::models::types::{FileSubfolderState, Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
+use kalamdb_system::{FileSubfolderState, Manifest, ManifestCacheEntry, SegmentMetadata, SyncState};
 use kalamdb_commons::{ManifestId, TableId, UserId};
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_filestore::StorageRegistry;

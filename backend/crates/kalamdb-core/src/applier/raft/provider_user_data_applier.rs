@@ -12,8 +12,8 @@ use crate::app_context::AppContext;
 use crate::applier::executor::CommandExecutorImpl;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{ConnectionId, LiveQueryId, NodeId, UserId};
-use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::TableId;
+use kalamdb_system::providers::live_queries::models::LiveQuery;
 use kalamdb_raft::{RaftError, UserDataApplier};
 
 /// UserDataApplier implementation using Unified Command Executor

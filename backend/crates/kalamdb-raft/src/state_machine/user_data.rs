@@ -566,9 +566,8 @@ impl KalamStateMachine for UserDataStateMachine {
 mod tests {
     use super::*;
     use kalamdb_commons::models::{ConnectionId, LiveQueryId, NamespaceId, NodeId, TableName};
-    use kalamdb_commons::system::LiveQuery;
-    use kalamdb_commons::types::LiveQueryStatus;
     use kalamdb_commons::{TableId, UserId};
+    use kalamdb_system::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
 
     #[tokio::test]
     async fn test_user_data_state_machine_insert() {

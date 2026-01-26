@@ -13,7 +13,7 @@
 
 use super::live_queries_indexes::create_live_queries_indexes;
 use crate::SystemTable;
-use kalamdb_commons::system::LiveQuery;
+use crate::providers::live_queries::models::LiveQuery;
 use kalamdb_commons::LiveQueryId;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use std::sync::Arc;
@@ -75,7 +75,7 @@ mod tests {
             changes: 0,
             node_id: NodeId::new(1),
             subscription_id: subscription_id.to_string(),
-            status: kalamdb_commons::types::LiveQueryStatus::Active,
+            status: crate::LiveQueryStatus::Active,
             last_ping_at: 1000,
         }
     }

@@ -33,7 +33,8 @@ use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use crate::manifest::flush::{SharedTableFlushJob, TableFlush, UserTableFlushJob};
 use async_trait::async_trait;
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::{JobType, TableId};
+use kalamdb_commons::TableId;
+use kalamdb_system::JobType;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

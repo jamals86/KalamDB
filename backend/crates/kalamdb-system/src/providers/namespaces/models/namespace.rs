@@ -1,0 +1,168 @@
+//! Namespace entity for system.namespaces table.
+
+use bincode::{Decode, Encode};
+use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::models::ids::NamespaceId;
+use kalamdb_commons::KSerializable;
+use kalamdb_macros::table;
+use serde::{Deserialize, Serialize};
+
+/// Namespace entity for system.namespaces table.
+///
+/// Represents a database namespace for data isolation.
+///
+/// ## Fields
+/// - `namespace_id`: Unique namespace identifier
+/// - `name`: Namespace name (e.g., "default", "production")
+/// - `created_at`: Unix timestamp in milliseconds when namespace was created
+/// - `options`: Optional JSON configuration
+/// - `table_count`: Number of tables in this namespace
+///
+/// ## Serialization
+/// - **RocksDB**: Bincode (compact binary format)
+/// - **API**: JSON via Serde
+///
+/// ## Example
+///
+/// ```rust
+/// use kalamdb_system::Namespace;
+/// use kalamdb_commons::NamespaceId;
+///
+/// let namespace = Namespace {
+///     namespace_id: NamespaceId::new("default"),
+///     name: "default".to_string(),
+///     created_at: 1730000000000,
+///     options: Some("{}".to_string()),
+///     table_count: 0,
+/// };
+/// ```
+/// Namespace struct with fields ordered for optimal memory alignment.
+/// 8-byte aligned fields first (i64, String types), then smaller types.
+#[table(
+    name = "namespaces",
+    comment = "Database namespaces for multi-tenancy"
+)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
+pub struct Namespace {
+    #[column(
+        id = 3,
+        ordinal = 3,
+        data_type(KalamDataType::Timestamp),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Namespace creation timestamp"
+    )]
+    pub created_at: i64, // Unix timestamp in milliseconds
+    #[column(
+        id = 1,
+        ordinal = 1,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = true,
+        default = "None",
+        comment = "Namespace identifier"
+    )]
+    pub namespace_id: NamespaceId,
+    #[column(
+        id = 2,
+        ordinal = 2,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Namespace name"
+    )]
+    pub name: String,
+    #[column(
+        id = 4,
+        ordinal = 4,
+        data_type(KalamDataType::Json),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Namespace configuration options (JSON)"
+    )]
+    pub options: Option<String>, // JSON configuration
+    #[column(
+        id = 5,
+        ordinal = 5,
+        data_type(KalamDataType::Int),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Number of tables in this namespace"
+    )]
+    pub table_count: i32,        //TODO: Remove this field and calculate on the fly
+}
+
+impl Namespace {
+    /// Create a new namespace with default values
+    ///
+    /// # Arguments
+    /// * `name` - Namespace identifier
+    ///
+    /// # Example
+    /// ```
+    /// use kalamdb_system::Namespace;
+    ///
+    /// let namespace = Namespace::new("app");
+    /// assert_eq!(namespace.name, "app");
+    /// assert_eq!(namespace.table_count, 0);
+    /// ```
+    pub fn new(name: impl Into<String>) -> Self {
+        let name_str = name.into();
+        Self {
+            namespace_id: NamespaceId::new(&name_str),
+            name: name_str,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            options: Some("{}".to_string()),
+            table_count: 0,
+        }
+    }
+
+    /// Check if this namespace can be deleted (has no tables)
+    #[inline]
+    pub fn can_delete(&self) -> bool {
+        self.table_count == 0
+    }
+
+    /// Increment the table count
+    #[inline]
+    pub fn increment_table_count(&mut self) {
+        self.table_count += 1;
+    }
+
+    /// Decrement the table count
+    #[inline]
+    pub fn decrement_table_count(&mut self) {
+        if self.table_count > 0 {
+            self.table_count -= 1;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_namespace_serialization() {
+        let namespace = Namespace {
+            namespace_id: NamespaceId::new("default"),
+            name: "default".to_string(),
+            created_at: 1730000000000,
+            options: Some("{}".to_string()),
+            table_count: 0,
+        };
+
+        // Test bincode serialization
+        let config = bincode::config::standard();
+        let bytes = bincode::encode_to_vec(&namespace, config).unwrap();
+        let (deserialized, _): (Namespace, _) = bincode::decode_from_slice(&bytes, config).unwrap();
+        assert_eq!(namespace, deserialized);
+    }
+}
+
+// KSerializable implementation for EntityStore support
+impl KSerializable for Namespace {}

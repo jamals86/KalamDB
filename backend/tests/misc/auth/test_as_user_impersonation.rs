@@ -21,8 +21,8 @@ async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId 
     }
 
     let now = chrono::Utc::now().timestamp_millis();
-    let user = kalamdb_commons::system::User {
-        id: user_id.clone(),
+    let user = kalamdb_system::User {
+        user_id: user_id.clone(),
         username: UserName::new(username),
         password_hash: "".to_string(),
         role,

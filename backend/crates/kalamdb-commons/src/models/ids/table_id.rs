@@ -6,7 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
 use super::namespace_id::NamespaceId;
-use crate::models::table_name::TableName;
+use crate::models::schemas::TableName;
 use crate::storage_key::{decode_key, encode_key, encode_prefix};
 use crate::StorageKey;
 
