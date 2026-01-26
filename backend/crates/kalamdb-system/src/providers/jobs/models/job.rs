@@ -7,11 +7,12 @@ use kalamdb_commons::{
     models::{
         ids::{JobId, NamespaceId, NodeId},
         schemas::{ColumnDefinition, ColumnDefault, TableDefinition, TableOptions, TableType},
-        JobStatus, JobType, TableName,
+        TableName,
     },
     system_tables::SystemTable,
     KSerializable,
 };
+use super::{JobStatus, JobType};
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
@@ -42,7 +43,8 @@ use serde::{Deserialize, Serialize};
 ///
 /// ```rust,ignore
 /// use kalamdb_system::providers::jobs::models::Job;
-/// use kalamdb_commons::{JobType, JobStatus, JobId, NodeId};
+/// use kalamdb_system::{JobStatus, JobType};
+/// use kalamdb_commons::{JobId, NodeId};
 ///
 /// let job = Job {
 ///     job_id: JobId::new("job_123456"),

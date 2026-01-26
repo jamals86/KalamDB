@@ -3,7 +3,7 @@
 //! This module provides the `KSerializable` trait which standardizes how
 //! entities are serialized/deserialized for storage in RocksDB.
 
-use bincode::{config::standard, decode_from_slice, encode_to_vec, Decode, Encode};
+use bincode::config::standard;
 use serde::{Deserialize, Serialize};
 
 use crate::storage::StorageError;

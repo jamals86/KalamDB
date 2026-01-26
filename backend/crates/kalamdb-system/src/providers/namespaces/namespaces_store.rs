@@ -4,7 +4,7 @@
 
 use crate::system_table_store::SystemTableStore;
 use crate::SystemTable;
-use kalamdb_commons::system::Namespace;
+use crate::providers::namespaces::models::Namespace;
 use kalamdb_commons::NamespaceId;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;

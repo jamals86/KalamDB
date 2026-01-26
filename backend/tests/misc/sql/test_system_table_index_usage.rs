@@ -18,9 +18,9 @@ use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
 use kalam_link::parse_i64;
 use kalamdb_commons::models::{ConnectionId, UserName};
-use kalamdb_commons::system::{Job, LiveQuery, User};
+use kalamdb_system::{Job, JobStatus, JobType, LiveQuery, User};
 use kalamdb_commons::{
-    AuthType, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, NodeId, Role, StorageId,
+    AuthType, JobId, LiveQueryId, NamespaceId, NodeId, Role, StorageId,
     StorageMode, TableName, UserId,
 };
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -51,7 +51,7 @@ async fn test_system_users_username_index() {
     for i in 1..=50 {
         let now = chrono::Utc::now().timestamp_millis();
         let user = User {
-            id: UserId::new(&format!("{}_{}", id_prefix, i)),
+            user_id: UserId::new(&format!("{}_{}", id_prefix, i)),
             username: UserName::new(&format!("{}_{}", user_prefix, i)),
             password_hash: password_hash.clone(),
             role: Role::User,
@@ -330,7 +330,7 @@ async fn test_system_live_queries_basic() {
             user_id: UserId::new("test_user"),
             query: format!("SELECT * FROM table{}", i % 3),
             options: Some("{}".to_string()),
-            status: kalamdb_commons::types::LiveQueryStatus::Active,
+            status: kalamdb_system::LiveQueryStatus::Active,
             created_at: now,
             last_update: now,
             last_ping_at: now,
@@ -408,7 +408,7 @@ async fn test_index_performance_scaling() {
     for i in 1..=50 {
         let now = chrono::Utc::now().timestamp_millis();
         let user = User {
-            id: UserId::new(&format!("{}_{}", user_prefix, i)),
+            user_id: UserId::new(&format!("{}_{}", user_prefix, i)),
             username: UserName::new(&format!("{}_{}", username_prefix, i)),
             password_hash: password_hash.clone(),
             role: Role::User,
@@ -463,7 +463,7 @@ async fn test_index_performance_scaling() {
     for i in 51..=250 {
         let now = chrono::Utc::now().timestamp_millis();
         let user = User {
-            id: UserId::new(&format!("{}_{}", user_prefix, i)),
+            user_id: UserId::new(&format!("{}_{}", user_prefix, i)),
             username: UserName::new(&format!("{}_{}", username_prefix, i)),
             password_hash: password_hash.clone(),
             role: Role::User,

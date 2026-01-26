@@ -27,7 +27,8 @@ use crate::sql::executor::handlers::table::drop::{
 use async_trait::async_trait;
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::{JobType, TableId};
+use kalamdb_commons::TableId;
+use kalamdb_system::JobType;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

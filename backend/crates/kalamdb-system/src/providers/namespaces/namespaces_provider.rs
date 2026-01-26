@@ -14,7 +14,7 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::system::Namespace;
+use crate::providers::namespaces::models::Namespace;
 use kalamdb_commons::NamespaceId;
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};

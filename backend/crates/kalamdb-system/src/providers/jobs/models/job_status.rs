@@ -1,13 +1,11 @@
 use std::fmt;
 use std::str::FromStr;
 
-#[cfg(feature = "serde")]
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 /// Enum representing job execution status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode, Serialize, Deserialize)]
 pub enum JobStatus {
     New,
     Queued,
@@ -50,6 +48,7 @@ impl JobStatus {
 
 impl FromStr for JobStatus {
     type Err = String;
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         JobStatus::from_str_opt(s).ok_or_else(|| format!("Invalid JobStatus: {}", s))
     }

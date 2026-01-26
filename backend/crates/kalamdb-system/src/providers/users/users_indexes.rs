@@ -4,7 +4,7 @@
 
 use crate::StoragePartition;
 use kalamdb_commons::storage::Partition;
-use kalamdb_commons::system::User;
+use crate::providers::users::models::User;
 use kalamdb_commons::UserId;
 use kalamdb_store::IndexDefinition;
 use std::sync::Arc;
@@ -88,7 +88,7 @@ impl IndexDefinition<UserId, User> for UserRoleIndex {
     }
 
     fn extract_key(&self, _primary_key: &UserId, user: &User) -> Option<Vec<u8>> {
-        let key = format!("{}:{}", user.role.as_str(), user.id.as_str());
+        let key = format!("{}:{}", user.role.as_str(), user.user_id.as_str());
         Some(key.into_bytes())
     }
 
@@ -117,7 +117,7 @@ mod tests {
 
     fn create_test_user(id: &str, username: &str, role: Role) -> User {
         User {
-            id: UserId::new(id),
+            user_id: UserId::new(id),
             username: UserName::new(username),
             password_hash: "hashed_password".to_string(),
             role,
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn test_username_index_key_format() {
         let user = create_test_user("user1", "Alice", Role::User);
-        let user_id = user.id.clone();
+        let user_id = user.user_id.clone();
 
         let index = UserUsernameIndex;
         let key = index.extract_key(&user_id, &user).unwrap();
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn test_role_index_key_format() {
         let user = create_test_user("user1", "alice", Role::Dba);
-        let user_id = user.id.clone();
+        let user_id = user.user_id.clone();
 
         let index = UserRoleIndex;
         let key = index.extract_key(&user_id, &user).unwrap();

@@ -22,7 +22,7 @@ async fn setup_executor(
 }
 
 async fn create_admin_user(app_context: &Arc<AppContext>) -> UserId {
-    use kalamdb_commons::types::User;
+    use kalamdb_system::User;
     let user_id = UserId::new("complexity_admin");
     let now = chrono::Utc::now().timestamp_millis();
 
@@ -30,11 +30,11 @@ async fn create_admin_user(app_context: &Arc<AppContext>) -> UserId {
     if let Ok(Some(existing)) =
         app_context.system_tables().users().get_user_by_username("complexity_admin")
     {
-        return existing.id;
+        return existing.user_id;
     }
 
     let user = User {
-        id: user_id.clone(),
+        user_id: user_id.clone(),
         username: UserName::new("complexity_admin"),
         password_hash: "hashed".to_string(),
         role: Role::System,

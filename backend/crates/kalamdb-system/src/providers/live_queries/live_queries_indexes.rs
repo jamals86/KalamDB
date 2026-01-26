@@ -78,6 +78,8 @@ pub fn table_id_index_prefix(table_id: &TableId) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use crate::LiveQueryStatus;
+
     use super::*;
     use kalamdb_commons::models::ConnectionId;
     use kalamdb_commons::{NamespaceId, NodeId, TableName, UserId};

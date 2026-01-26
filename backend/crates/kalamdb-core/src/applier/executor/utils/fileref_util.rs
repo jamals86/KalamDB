@@ -1,7 +1,7 @@
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::rows::Row;
-use kalamdb_commons::models::types::FileRef;
+use kalamdb_system::FileRef;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::TableId;

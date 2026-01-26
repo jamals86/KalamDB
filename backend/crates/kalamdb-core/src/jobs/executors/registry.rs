@@ -16,7 +16,8 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::SerdeJsonResultExt;
 use async_trait::async_trait;
-use kalamdb_commons::models::{system::Job, JobType};
+use kalamdb_system::JobType;
+use kalamdb_system::Job;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -468,7 +469,8 @@ mod tests {
     use super::*;
     use crate::jobs::executors::JobParams;
     use crate::test_helpers::test_app_context_simple;
-    use kalamdb_commons::models::{JobId, JobStatus, NodeId};
+    use kalamdb_commons::models::{JobId, NodeId};
+    use kalamdb_system::JobStatus;
     use serde::{Deserialize, Serialize};
 
     #[derive(Clone, Serialize, Deserialize)]

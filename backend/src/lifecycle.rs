@@ -192,7 +192,7 @@ pub async fn bootstrap(
     if storage_count == 0 {
         info!("No storages found, creating default 'local' storage");
         let now = chrono::Utc::now().timestamp_millis();
-        let default_storage = kalamdb_commons::system::Storage {
+        let default_storage = kalamdb_system::Storage {
             storage_id: StorageId::from("local"),
             storage_name: "Local Filesystem".to_string(),
             description: Some("Default local filesystem storage".to_string()),
@@ -391,7 +391,7 @@ pub async fn bootstrap_isolated(
     let existing_storages = storages_provider.scan_all_storages()?;
     if existing_storages.num_rows() == 0 {
         let now = chrono::Utc::now().timestamp_millis();
-        let default_storage = kalamdb_commons::system::Storage {
+        let default_storage = kalamdb_system::Storage {
             storage_id: StorageId::from("local"),
             storage_name: "Local Filesystem".to_string(),
             description: Some("Default local filesystem storage".to_string()),
@@ -633,8 +633,8 @@ pub async fn run(
 
             loop {
                 // Check for Running jobs
-                let filter = kalamdb_commons::system::JobFilter {
-                    status: Some(kalamdb_commons::JobStatus::Running),
+                let filter = kalamdb_system::JobFilter {
+                    status: Some(kalamdb_system::JobStatus::Running),
                     ..Default::default()
                 };
 
@@ -834,7 +834,7 @@ async fn create_default_system_user(
     users_provider: Arc<kalamdb_system::UsersTableProvider>,
 ) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
-    use kalamdb_commons::system::User;
+    use kalamdb_system::User;
 
     // Check if root user already exists
     let existing_user = users_provider.get_user_by_username(AuthConstants::DEFAULT_SYSTEM_USERNAME);
@@ -882,7 +882,7 @@ async fn create_default_system_user(
             };
 
             let user = User {
-                id: user_id,
+                user_id: user_id,
                 username: username.clone().into(),
                 password_hash,
                 role,

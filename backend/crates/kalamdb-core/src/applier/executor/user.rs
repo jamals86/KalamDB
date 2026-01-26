@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use kalamdb_commons::models::UserId;
-use kalamdb_commons::types::User;
+use kalamdb_system::User;
 
 use crate::app_context::AppContext;
 use crate::applier::ApplierError;
@@ -22,7 +22,7 @@ impl UserExecutor {
 
     /// Execute CREATE USER
     pub async fn create_user(&self, user: &User) -> Result<String, ApplierError> {
-        log::debug!("CommandExecutorImpl: Creating user {}", user.id);
+        log::debug!("CommandExecutorImpl: Creating user {}", user.user_id);
 
         self.app_context
             .system_tables()
@@ -30,12 +30,12 @@ impl UserExecutor {
             .create_user(user.clone())
             .map_err(|e| ApplierError::Execution(format!("Failed to create user: {}", e)))?;
 
-        Ok(format!("User {} created successfully", user.id))
+        Ok(format!("User {} created successfully", user.user_id))
     }
 
     /// Execute ALTER USER (update)
     pub async fn update_user(&self, user: &User) -> Result<String, ApplierError> {
-        log::debug!("CommandExecutorImpl: Updating user {}", user.id);
+        log::debug!("CommandExecutorImpl: Updating user {}", user.user_id);
 
         self.app_context
             .system_tables()
@@ -43,7 +43,7 @@ impl UserExecutor {
             .update_user(user.clone())
             .map_err(|e| ApplierError::Execution(format!("Failed to update user: {}", e)))?;
 
-        Ok(format!("User {} updated successfully", user.id))
+        Ok(format!("User {} updated successfully", user.user_id))
     }
 
     /// Execute DROP USER (soft delete)

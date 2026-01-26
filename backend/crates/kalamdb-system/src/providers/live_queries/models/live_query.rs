@@ -1,17 +1,15 @@
 //! Live query subscription entity for system.live_queries table.
 
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    models::ids::{LiveQueryId, NamespaceId, UserId},
-    models::NodeId,
-    models::schemas::{ColumnDefinition, ColumnDefault, TableDefinition, TableOptions, TableType},
-    system_tables::SystemTable,
-    KSerializable, TableName,
+use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::models::{
+    ids::{LiveQueryId, NamespaceId, UserId},
+    NodeId, TableName,
 };
-use bincode::{Decode, Encode};
-use serde::{Deserialize, Serialize};
-
+use kalamdb_commons::KSerializable;
 use super::LiveQueryStatus;
+use bincode::{Decode, Encode};
+use kalamdb_macros::table;
+use serde::{Deserialize, Serialize};
 
 /// Live query subscription entity for system.live_queries.
 ///
@@ -41,9 +39,10 @@ use super::LiveQueryStatus;
 ///
 /// ## Example
 ///
-/// ```rust,ignore
+/// ```rust
 /// use kalamdb_commons::models::ids::{ConnectionId, LiveQueryId, NamespaceId, UserId};
-/// use kalamdb_system::providers::live_queries::models::{LiveQuery, LiveQueryStatus};
+/// use kalamdb_system::LiveQuery;
+/// use kalamdb_system::LiveQueryStatus;
 /// use kalamdb_commons::{NodeId, TableName};
 ///
 /// let user_id = UserId::new("u_123");
@@ -68,202 +67,157 @@ use super::LiveQueryStatus;
 /// ```
 /// LiveQuery struct with fields ordered for optimal memory alignment.
 /// 8-byte aligned fields first, then smaller types.
+#[table(
+    name = "live_queries",
+    comment = "Active WebSocket live query subscriptions"
+)]
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct LiveQuery {
     // 8-byte aligned fields first (i64, String/pointer types)
+    #[column(
+        id = 10,
+        ordinal = 10,
+        data_type(KalamDataType::Timestamp),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Live query creation timestamp"
+    )]
     pub created_at: i64,   // Unix timestamp in milliseconds
+    #[column(
+        id = 11,
+        ordinal = 11,
+        data_type(KalamDataType::Timestamp),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Last update sent to client"
+    )]
     pub last_update: i64,  // Unix timestamp in milliseconds
+    #[column(
+        id = 14,
+        ordinal = 14,
+        data_type(KalamDataType::Timestamp),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Last ping timestamp for stale detection"
+    )]
     pub last_ping_at: i64, // Unix timestamp in milliseconds (for heartbeat/failover)
+    #[column(
+        id = 12,
+        ordinal = 12,
+        data_type(KalamDataType::BigInt),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Number of changes pushed to client"
+    )]
     pub changes: i64,
+    #[column(
+        id = 1,
+        ordinal = 1,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = true,
+        default = "None",
+        comment = "Live query identifier (format: {user_id}-{conn_id}-{table}-{subscription_id})"
+    )]
     pub live_id: LiveQueryId, // Format: {user_id}-{unique_conn_id}-{table_name}-{subscription_id}
+    #[column(
+        id = 2,
+        ordinal = 2,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "WebSocket connection identifier"
+    )]
     pub connection_id: String,
+    #[column(
+        id = 3,
+        ordinal = 3,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Client-provided subscription identifier"
+    )]
     pub subscription_id: String,
     //TODO: Use TableId type INSTEAD OF BOTH table_name AND namespace_id
+    #[column(
+        id = 4,
+        ordinal = 4,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Namespace containing the table"
+    )]
     pub namespace_id: NamespaceId,
+    #[column(
+        id = 5,
+        ordinal = 5,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Table being queried"
+    )]
     pub table_name: TableName,
+    #[column(
+        id = 6,
+        ordinal = 6,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "User who created the live query"
+    )]
     pub user_id: UserId,
+    #[column(
+        id = 7,
+        ordinal = 7,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "SQL query for real-time subscription"
+    )]
     pub query: String,
+    #[column(
+        id = 8,
+        ordinal = 8,
+        data_type(KalamDataType::Json),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Query options (JSON)"
+    )]
     pub options: Option<String>, // TODO: Switch to: JSON
     /// Node identifier that holds this subscription's WebSocket connection
     #[bincode(with_serde)]
+    #[column(
+        id = 13,
+        ordinal = 13,
+        data_type(KalamDataType::BigInt),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Server node ID handling this live query"
+    )]
     pub node_id: NodeId,
     // Enum (typically 1-4 bytes depending on variant count)
+    #[column(
+        id = 9,
+        ordinal = 9,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Current status (active, paused, etc.)"
+    )]
     pub status: LiveQueryStatus, // Active, Paused, Completed, Error
-}
-
-// KSerializable implementation for EntityStore support
-impl KSerializable for LiveQuery {}
-
-impl LiveQuery {
-    /// Generate TableDefinition for system.live_queries
-    pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "live_id",
-                1,
-                KalamDataType::Text,
-                false,
-                true,
-                false,
-                ColumnDefault::None,
-                Some("Unique live query ID (format: {user_id}-{conn_id}-{table_name}-{subscription_id})".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "connection_id",
-                2,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("WebSocket connection identifier".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "subscription_id",
-                3,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Client-provided subscription identifier".to_string()),
-            ),
-            ColumnDefinition::new(
-                4,
-                "namespace_id",
-                4,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Namespace ID".to_string()),
-            ),
-            ColumnDefinition::new(
-                5,
-                "table_name",
-                5,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Table being queried".to_string()),
-            ),
-            ColumnDefinition::new(
-                6,
-                "user_id",
-                6,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("User who created the subscription".to_string()),
-            ),
-            ColumnDefinition::new(
-                7,
-                "query",
-                7,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("SQL query text".to_string()),
-            ),
-            ColumnDefinition::new(
-                8,
-                "options",
-                8,
-                KalamDataType::Json,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Optional JSON configuration".to_string()),
-            ),
-            ColumnDefinition::new(
-                9,
-                "status",
-                9,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Current status (Active, Paused, Completed, Error)".to_string()),
-            ),
-            ColumnDefinition::new(
-                10,
-                "created_at",
-                10,
-                KalamDataType::Timestamp,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Unix timestamp in milliseconds when subscription was created".to_string()),
-            ),
-            ColumnDefinition::new(
-                11,
-                "last_update",
-                11,
-                KalamDataType::Timestamp,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Unix timestamp in milliseconds of last update notification".to_string()),
-            ),
-            ColumnDefinition::new(
-                12,
-                "last_ping_at",
-                12,
-                KalamDataType::Timestamp,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Unix timestamp in milliseconds of last heartbeat/ping".to_string()),
-            ),
-            ColumnDefinition::new(
-                13,
-                "changes",
-                13,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Number of changes sent".to_string()),
-            ),
-            ColumnDefinition::new(
-                14,
-                "node_id",
-                14,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Node/server handling this subscription".to_string()),
-            ),
-        ];
-
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::LiveQueries.table_name()),
-            TableType::System,
-            columns,
-            TableOptions::system(),
-            Some("Active live query subscriptions (WebSocket connections)".to_string()),
-        )
-        .expect("Failed to create system.live_queries table definition")
-    }
 }
 
 #[cfg(test)]
@@ -296,3 +250,6 @@ mod tests {
         assert_eq!(live_query, deserialized);
     }
 }
+
+// KSerializable implementation for EntityStore support
+impl KSerializable for LiveQuery {}

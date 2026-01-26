@@ -8,7 +8,7 @@ use crate::error::{FilestoreError, Result};
 use crate::registry::storage_cached::StorageCached;
 use dashmap::DashMap;
 use kalamdb_commons::models::StorageId;
-use kalamdb_commons::system::Storage;
+use kalamdb_system::Storage;
 use kalamdb_system::StoragesTableProvider;
 use std::sync::Arc;
 

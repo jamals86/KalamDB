@@ -1,0 +1,110 @@
+    Checking kalamdb-commons v0.2.0 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-commons)
+error[E0432]: unresolved import `crate::storage_key`
+ --> backend/crates/kalamdb-commons/src/ids/row_id.rs:9:12
+  |
+9 | use crate::storage_key::{decode_key, encode_key, encode_prefix};
+  |            ^^^^^^^^^^^ could not find `storage_key` in the crate root
+
+error[E0432]: unresolved import `crate::storage_key`
+ --> backend/crates/kalamdb-commons/src/models/ids/job_node_id.rs:9:12
+  |
+9 | use crate::storage_key::{decode_key, encode_key, encode_prefix};
+  |            ^^^^^^^^^^^ could not find `storage_key` in the crate root
+
+error[E0432]: unresolved import `crate::storage_key`
+ --> backend/crates/kalamdb-commons/src/models/ids/manifest_id.rs:8:12
+  |
+8 | use crate::storage_key::{decode_key, encode_key, encode_prefix};
+  |            ^^^^^^^^^^^ could not find `storage_key` in the crate root
+
+error[E0432]: unresolved import `crate::storage_key`
+  --> backend/crates/kalamdb-commons/src/models/ids/table_id.rs:10:12
+   |
+10 | use crate::storage_key::{decode_key, encode_key, encode_prefix};
+   |            ^^^^^^^^^^^ could not find `storage_key` in the crate root
+
+error[E0432]: unresolved import `crate::storage_key`
+  --> backend/crates/kalamdb-commons/src/models/ids/table_version_id.rs:15:12
+   |
+15 | use crate::storage_key::{decode_key, encode_key, encode_prefix};
+   |            ^^^^^^^^^^^ could not find `storage_key` in the crate root
+
+error[E0432]: unresolved import `crate::storage_key`
+ --> backend/crates/kalamdb-commons/src/models/ids/user_row_id.rs:8:12
+  |
+8 | use crate::storage_key::{decode_key, encode_key, encode_prefix};
+  |            ^^^^^^^^^^^ could not find `storage_key` in the crate root
+
+error[E0432]: unresolved import `crate::storage`
+   --> backend/crates/kalamdb-commons/src/system_tables.rs:220:20
+    |
+220 |         use crate::storage::Partition;
+    |                    ^^^^^^^
+    |                    |
+    |                    unresolved import
+    |                    help: a similar path exists: `openraft::storage`
+
+error[E0432]: unresolved import `crate::storage`
+   --> backend/crates/kalamdb-commons/src/system_tables.rs:306:20
+    |
+306 |         use crate::storage::Partition;
+    |                    ^^^^^^^
+    |                    |
+    |                    unresolved import
+    |                    help: a similar path exists: `openraft::storage`
+
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `kalamdb_system`
+  --> backend/crates/kalamdb-commons/src/lib.rs:95:9
+   |
+95 | pub use kalamdb_system::models::users::{AuthType, Role, UserName};
+   |         ^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `kalamdb_system`
+   |
+   = help: if you wanted to use a crate named `kalamdb_system`, use `cargo add kalamdb_system` to add it to your `Cargo.toml`
+
+error[E0432]: unresolved import `kalamdb_store`
+  --> backend/crates/kalamdb-commons/src/lib.rs:92:9
+   |
+92 | pub use kalamdb_store::{KSerializable, StorageKey, decode_key, encode_key, encode_prefix, next_storage_key_bytes};
+   |         ^^^^^^^^^^^^^ use of unresolved module or unlinked crate `kalamdb_store`
+   |
+   = help: if you wanted to use a crate named `kalamdb_store`, use `cargo add kalamdb_store` to add it to your `Cargo.toml`
+
+error[E0432]: unresolved import `crate::models::table_name`
+ --> backend/crates/kalamdb-commons/src/models/ids/table_id.rs:9:20
+  |
+9 | use crate::models::table_name::TableName;
+  |                    ^^^^^^^^^^ could not find `table_name` in `models`
+
+error[E0433]: failed to resolve: could not find `serialization` in the crate root
+   --> backend/crates/kalamdb-commons/src/models/ids/user_id.rs:237:13
+    |
+237 | impl crate::serialization::KSerializable for UserId {}
+    |             ^^^^^^^^^^^^^ could not find `serialization` in the crate root
+
+error[E0433]: failed to resolve: could not find `serialization` in the crate root
+   --> backend/crates/kalamdb-commons/src/models/schemas/table_definition.rs:829:13
+    |
+829 | impl crate::serialization::KSerializable for TableDefinition {}
+    |             ^^^^^^^^^^^^^ could not find `serialization` in the crate root
+
+error[E0433]: failed to resolve: could not find `serialization` in the crate root
+   --> backend/crates/kalamdb-commons/src/models/rows/row.rs:358:13
+    |
+358 | impl crate::serialization::KSerializable for Row {}
+    |             ^^^^^^^^^^^^^ could not find `serialization` in the crate root
+
+error[E0433]: failed to resolve: could not find `serialization` in the crate root
+  --> backend/crates/kalamdb-commons/src/models/rows/user_table_row.rs:41:13
+   |
+41 | impl crate::serialization::KSerializable for UserTableRow {}
+   |             ^^^^^^^^^^^^^ could not find `serialization` in the crate root
+
+error[E0433]: failed to resolve: unresolved import
+   --> backend/crates/kalamdb-commons/src/system_tables.rs:219:55
+    |
+219 |     pub fn partition(&self) -> Option<&'static crate::storage::Partition> {
+    |                                                       ^^^^^^^
+    |                                                       |
+    |                                                       unresolved import
+    |                                                       help: a similar path exists: `openraft::storage`
+

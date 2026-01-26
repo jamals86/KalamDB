@@ -2,7 +2,8 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::jobs::JobsManager;
 use kalamdb_commons::models::{schemas::TableOptions, TableId};
-use kalamdb_commons::{JobType, TableType};
+use kalamdb_commons::TableType;
+use kalamdb_system::JobType;
 use std::sync::Arc;
 
 /// Scheduler for stream table eviction jobs

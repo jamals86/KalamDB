@@ -8,7 +8,7 @@ use actix_web::{post, web, Either, FromRequest, HttpRequest, HttpResponse, Respo
 use kalamdb_auth::AuthSession;
 use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
 use kalamdb_commons::models::ids::StorageId;
-use kalamdb_commons::models::types::{FileRef, FileSubfolderState};
+use kalamdb_system::{FileRef, FileSubfolderState};
 use kalamdb_commons::models::{NamespaceId, Role, TableId, UserId};
 use kalamdb_commons::conversions::read_kalam_data_type_metadata;
 use kalamdb_commons::schemas::{SchemaField, TableType};

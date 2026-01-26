@@ -23,7 +23,8 @@ use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use async_trait::async_trait;
 use kalamdb_commons::constants::ColumnFamilyNames;
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::{JobType, TableId};
+use kalamdb_commons::TableId;
+use kalamdb_system::JobType;
 use kalamdb_store::storage_trait::{Partition, StorageBackendAsync};
 use serde::{Deserialize, Serialize};
 

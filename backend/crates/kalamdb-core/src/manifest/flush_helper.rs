@@ -11,7 +11,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::arrow_utils::compute_min_max;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
-use kalamdb_commons::types::{ColumnStats, Manifest, SegmentMetadata};
+use kalamdb_system::{ColumnStats, Manifest, SegmentMetadata};
 use kalamdb_commons::{TableId, UserId};
 use std::collections::HashMap;
 use std::path::Path;

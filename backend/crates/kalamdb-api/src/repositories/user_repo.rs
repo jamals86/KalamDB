@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use kalamdb_auth::{AuthError, AuthResult, UserRepository};
 use kalamdb_commons::models::UserName;
-use kalamdb_commons::system::User;
+use kalamdb_system::User;
 use kalamdb_system::UsersTableProvider;
 use moka::sync::Cache;
 

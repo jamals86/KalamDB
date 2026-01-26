@@ -10,8 +10,8 @@ use std::sync::Arc;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::schemas::{TableDefinition, TableType};
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
-use kalamdb_commons::system::Storage;
-use kalamdb_commons::types::User;
+use kalamdb_system::Storage;
+use kalamdb_system::User;
 use kalamdb_raft::{
     DataResponse, GroupId, MetaCommand, RaftExecutor, SharedDataCommand, UserDataCommand,
 };

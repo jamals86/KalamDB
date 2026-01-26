@@ -23,7 +23,7 @@ use crate::error::KalamDbError;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use async_trait::async_trait;
 use kalamdb_commons::models::UserId;
-use kalamdb_commons::JobType;
+use kalamdb_system::JobType;
 use serde::{Deserialize, Serialize};
 
 /// Typed parameters for user cleanup operations

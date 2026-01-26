@@ -11,10 +11,11 @@
 
 use chrono::{DateTime, Utc};
 use kalamdb_commons::models::schemas::{TableDefinition, TableType};
-use kalamdb_commons::models::{JobId, JobStatus, NamespaceId, NodeId, StorageId, UserId};
-use kalamdb_commons::system::Storage;
+use kalamdb_commons::models::{JobId, NamespaceId, NodeId, StorageId, UserId};
+use kalamdb_system::Storage;
+use kalamdb_system::JobStatus;
 use kalamdb_system::providers::jobs::models::Job;
-use kalamdb_commons::types::User;
+use kalamdb_system::User;
 use kalamdb_commons::TableId;
 use serde::{Deserialize, Serialize};
 
@@ -293,7 +294,7 @@ mod tests {
 
     fn test_user() -> User {
         User {
-            id: UserId::from("test_user"),
+            user_id: UserId::from("test_user"),
             username: UserName::from("testuser"),
             password_hash: "hash".to_string(),
             email: None,

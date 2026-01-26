@@ -51,7 +51,8 @@
 //!
 //! ```rust,ignore
 //! use kalamdb_store::{IndexedEntityStore, IndexDefinition};
-//! use kalamdb_commons::{JobId, Job, JobStatus};
+//! use kalamdb_commons::JobId;
+//! use kalamdb_system::{Job, JobStatus};
 //!
 //! // Define an index
 //! struct JobStatusIndex;
@@ -1073,7 +1074,8 @@ mod tests {
     use super::*;
     use crate::test_utils::InMemoryBackend;
     use kalamdb_system::providers::jobs::models::Job;
-    use kalamdb_commons::{JobId, JobStatus, JobType, NodeId};
+    use kalamdb_commons::{JobId, NodeId};
+    use kalamdb_system::{JobStatus, JobType};
 
     // Test index: Jobs by status
     struct TestStatusIndex;

@@ -525,7 +525,7 @@ mod tests {
             user_id: UserId::new(user_id),
             query: "SELECT * FROM test".to_string(),
             options: Some("{}".to_string()),
-            status: kalamdb_commons::types::LiveQueryStatus::Active,
+            status: crate::LiveQueryStatus::Active,
             created_at: 1000,
             last_update: 1000,
             last_ping_at: 1000,

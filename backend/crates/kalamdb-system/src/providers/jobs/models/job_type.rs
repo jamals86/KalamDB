@@ -1,13 +1,11 @@
 use std::fmt;
 use std::str::FromStr;
 
-#[cfg(feature = "serde")]
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 /// Enum representing job types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode, Serialize, Deserialize)]
 pub enum JobType {
     Flush,
     Compact,
@@ -134,13 +132,13 @@ impl JobType {
     ///
     /// Returns true for jobs that ONLY have leader actions and NO local work.
     pub fn is_leader_only(&self) -> bool {
-        // If the job has leader actions but NO local work, it's leader-only
         self.has_leader_actions() && !self.has_local_work()
     }
 }
 
 impl FromStr for JobType {
     type Err = String;
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         JobType::from_str_opt(s).ok_or_else(|| format!("Invalid JobType: {}", s))
     }

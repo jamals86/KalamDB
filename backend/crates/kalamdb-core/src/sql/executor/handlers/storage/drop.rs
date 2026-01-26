@@ -150,7 +150,7 @@ mod tests {
 
         // Create a test storage
         let storage_id = format!("test_drop_{}", chrono::Utc::now().timestamp_millis());
-        let storage = kalamdb_commons::system::Storage {
+        let storage = kalamdb_system::Storage {
             storage_id: StorageId::from(storage_id.as_str()),
             storage_name: "Test Drop".to_string(),
             description: None,

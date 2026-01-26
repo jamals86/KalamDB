@@ -8,10 +8,11 @@
 //! - T099: restore_from_rocksdb() after server restart
 //! - T100: SHOW MANIFEST returns all cached entries
 //! - T101: cache eviction and re-population
-use kalamdb_commons::{NamespaceId, TableId, TableName, UserId, types::{Manifest, SyncState}};
+use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_core::manifest::ManifestService;
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
+use kalamdb_system::{Manifest, SyncState};
 use kalamdb_system::providers::ManifestTableProvider;
 use std::sync::Arc;
 

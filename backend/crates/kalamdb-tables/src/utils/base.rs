@@ -76,7 +76,7 @@ use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
-use kalamdb_commons::types::Manifest;
+use kalamdb_system::Manifest;
 use kalamdb_commons::{StorageKey, TableId};
 use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::collections::{HashMap, HashSet};

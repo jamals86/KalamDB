@@ -22,7 +22,14 @@
 //!
 //! ```rust,ignore
 //! use kalamdb_store::{EntityStore, StorageBackend};
-//! use kalamdb_commons::{StorageKey, UserId, User};
+//! use kalamdb_commons::{StorageKey, UserId};
+//! use serde::{Deserialize, Serialize};
+//!
+//! #[derive(Serialize, Deserialize)]
+//! struct User {
+//!     user_id: UserId,
+//!     name: String,
+//! }
 //! use std::sync::Arc;
 //!
 //! struct UserStore {
@@ -41,23 +48,13 @@
 //!
 //! // Type-safe usage:
 //! let user_id = UserId::new("u1");
-//! let user = User { id: user_id.clone(), name: "Alice".into(), ... };
+//! let user = User { user_id: user_id.clone(), name: "Alice".into(), ... };
 //! store.put(&user_id, &user).unwrap();
 //! let retrieved = store.get(&user_id).unwrap().unwrap();
 //! ```
 
 use crate::storage_trait::{Partition, Result, StorageBackend, StorageError};
-use kalamdb_commons::{
-    schemas::TableDefinition,
-    system::{
-        AuditLogEntry, JobNode, ManifestCacheEntry, Namespace, Storage as SystemStorage, User,
-    },
-    next_storage_key_bytes,
-    KSerializable,
-    StorageKey,
-    UserId,
-};
-use serde::{Deserialize, Serialize};
+use kalamdb_commons::{next_storage_key_bytes, KSerializable, StorageKey};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -238,7 +235,7 @@ where
     ///
     /// ```rust,ignore
     /// let user_id = UserId::new("u1");
-    /// let user = User { id: user_id.clone(), ... };
+    /// let user = User { user_id: user_id.clone(), ... };
     /// store.put(&user_id, &user)?;
     /// ```
     fn put(&self, key: &K, entity: &V) -> Result<()> {
@@ -951,7 +948,7 @@ where
 }
 
 // Import Role and TableAccess for the trait
-use kalamdb_commons::models::{Role, TableAccess, UserTableRow};
+use kalamdb_commons::models::{Role, TableAccess};
 
 #[cfg(test)]
 mod tests {

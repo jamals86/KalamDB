@@ -201,7 +201,7 @@ impl StorageKey for TableVersionId {
 mod tests {
     use super::*;
     use crate::models::ids::NamespaceId;
-    use crate::models::table_name::TableName;
+    use crate::models::schemas::TableName;
 
     fn test_table_id() -> TableId {
         TableId::new(NamespaceId::new("default"), TableName::new("users"))

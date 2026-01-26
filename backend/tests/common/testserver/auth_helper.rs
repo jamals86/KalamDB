@@ -9,7 +9,7 @@
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use kalamdb_commons::types::User;
+use kalamdb_system::User;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_core::error::KalamDbError;
 use kalamdb_core::sql::executor::models::ExecutionContext;
@@ -109,7 +109,7 @@ pub async fn create_test_user(
 
     // Return user object for test verification
     User {
-        id: user_id,
+        user_id: user_id,
         username: username.into(),
         password_hash: String::new(), // Not needed for tests
         role,
@@ -235,7 +235,7 @@ pub async fn create_system_user(server: &super::TestServer, username: &str) -> U
     let now = chrono::Utc::now().timestamp_millis();
 
     let user = User {
-        id: UserId::new(format!("sys_{}", username)),
+        user_id: UserId::new(format!("sys_{}", username)),
         username: username.into(),
         password_hash: String::new(), // No password for system users (localhost-only)
         role: Role::System,

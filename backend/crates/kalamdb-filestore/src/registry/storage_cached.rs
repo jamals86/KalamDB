@@ -46,7 +46,7 @@ use futures_util::StreamExt;
 use kalamdb_commons::models::storage::StorageType;
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::system::Storage;
+use kalamdb_system::Storage;
 use object_store::{ObjectStore, path::Path as ObjectPath};
 use parking_lot::RwLock;
 use std::sync::Arc;

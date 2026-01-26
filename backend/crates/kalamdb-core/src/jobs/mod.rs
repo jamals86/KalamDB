@@ -15,7 +15,7 @@
 //! use kalamdb_store::test_utils::InMemoryBackend;
 //! use kalamdb_store::StorageBackend;
 //! use std::sync::Arc;
-//! use kalamdb_commons::JobType;
+//! use kalamdb_system::JobType;
 //!
 //! # fn example() {
 //! let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

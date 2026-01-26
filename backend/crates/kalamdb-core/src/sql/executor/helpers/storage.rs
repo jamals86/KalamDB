@@ -105,7 +105,7 @@ pub async fn execute_create_storage(
     };
 
     // Create storage record
-    let storage = kalamdb_commons::system::Storage {
+    let storage = kalamdb_system::Storage {
         storage_id: stmt.storage_id.clone(),
         storage_name: stmt.storage_name,
         description: stmt.description,

@@ -4,7 +4,8 @@ use crate::error_extensions::KalamDbResultExt;
 use crate::jobs::executors::JobParams;
 use chrono::Utc;
 use kalamdb_system::providers::jobs::models::{Job, JobOptions};
-use kalamdb_commons::{JobId, JobStatus, JobType};
+use kalamdb_commons::JobId;
+use kalamdb_system::{JobStatus, JobType};
 use kalamdb_raft::commands::MetaCommand;
 use log::Level;
 

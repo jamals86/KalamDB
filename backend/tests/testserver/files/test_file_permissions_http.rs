@@ -2,7 +2,7 @@
 
 use kalam_link::models::ResponseStatus as LinkResponseStatus;
 use kalamdb_api::models::{ResponseStatus as ApiResponseStatus, SqlResponse};
-use kalamdb_commons::models::types::FileRef;
+use kalamdb_system::FileRef;
 use kalamdb_commons::{Role, UserId, UserName};
 use reqwest::multipart;
 use serde_json::Value as JsonValue;

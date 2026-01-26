@@ -25,7 +25,8 @@ use crate::error::KalamDbError;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 use async_trait::async_trait;
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::{JobType, TableId};
+use kalamdb_commons::TableId;
+use kalamdb_system::JobType;
 use serde::{Deserialize, Serialize};
 
 /// Typed parameters for backup operations

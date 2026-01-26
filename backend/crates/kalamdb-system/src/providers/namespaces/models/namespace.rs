@@ -1,7 +1,10 @@
 //! Namespace entity for system.namespaces table.
 
-use crate::models::ids::NamespaceId;
 use bincode::{Decode, Encode};
+use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::models::ids::NamespaceId;
+use kalamdb_commons::KSerializable;
+use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
 /// Namespace entity for system.namespaces table.
@@ -22,7 +25,7 @@ use serde::{Deserialize, Serialize};
 /// ## Example
 ///
 /// ```rust
-/// use kalamdb_commons::types::Namespace;
+/// use kalamdb_system::Namespace;
 /// use kalamdb_commons::NamespaceId;
 ///
 /// let namespace = Namespace {
@@ -35,12 +38,61 @@ use serde::{Deserialize, Serialize};
 /// ```
 /// Namespace struct with fields ordered for optimal memory alignment.
 /// 8-byte aligned fields first (i64, String types), then smaller types.
+#[table(
+    name = "namespaces",
+    comment = "Database namespaces for multi-tenancy"
+)]
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct Namespace {
+    #[column(
+        id = 3,
+        ordinal = 3,
+        data_type(KalamDataType::Timestamp),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Namespace creation timestamp"
+    )]
     pub created_at: i64, // Unix timestamp in milliseconds
+    #[column(
+        id = 1,
+        ordinal = 1,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = true,
+        default = "None",
+        comment = "Namespace identifier"
+    )]
     pub namespace_id: NamespaceId,
+    #[column(
+        id = 2,
+        ordinal = 2,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Namespace name"
+    )]
     pub name: String,
+    #[column(
+        id = 4,
+        ordinal = 4,
+        data_type(KalamDataType::Json),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Namespace configuration options (JSON)"
+    )]
     pub options: Option<String>, // JSON configuration
+    #[column(
+        id = 5,
+        ordinal = 5,
+        data_type(KalamDataType::Int),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Number of tables in this namespace"
+    )]
     pub table_count: i32,        //TODO: Remove this field and calculate on the fly
 }
 
@@ -52,7 +104,7 @@ impl Namespace {
     ///
     /// # Example
     /// ```
-    /// use kalamdb_commons::types::Namespace;
+    /// use kalamdb_system::Namespace;
     ///
     /// let namespace = Namespace::new("app");
     /// assert_eq!(namespace.name, "app");
@@ -113,4 +165,4 @@ mod tests {
 }
 
 // KSerializable implementation for EntityStore support
-impl crate::serialization::KSerializable for Namespace {}
+impl KSerializable for Namespace {}

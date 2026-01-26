@@ -7,7 +7,7 @@ use crate::error::KalamDbError;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult};
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::NamespaceId;
-use kalamdb_commons::system::Namespace;
+use kalamdb_system::Namespace;
 use kalamdb_sql::ddl::{CreateNamespaceStatement, DropNamespaceStatement};
 use std::sync::Arc;
 

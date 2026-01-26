@@ -75,7 +75,7 @@ mod tests {
             changes: 0,
             node_id: NodeId::new(1),
             subscription_id: subscription_id.to_string(),
-            status: kalamdb_commons::types::LiveQueryStatus::Active,
+            status: crate::LiveQueryStatus::Active,
             last_ping_at: 1000,
         }
     }

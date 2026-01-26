@@ -7,7 +7,8 @@ use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::{TableId, TableName};
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::{JobId, JobType};
+use kalamdb_commons::JobId;
+use kalamdb_system::JobType;
 use kalamdb_sql::ddl::CompactAllTablesStatement;
 use std::sync::Arc;
 

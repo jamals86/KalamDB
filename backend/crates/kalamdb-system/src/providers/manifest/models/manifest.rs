@@ -15,11 +15,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::ids::SeqId;
-use crate::models::rows::StoredScalarValue;
-use crate::models::types::file_ref::FileSubfolderState;
-use crate::models::TableId;
-use crate::UserId;
+use super::FileSubfolderState;
+use kalamdb_commons::ids::SeqId;
+use kalamdb_commons::models::rows::StoredScalarValue;
+use kalamdb_commons::models::TableId;
+use kalamdb_commons::KSerializable;
+use kalamdb_commons::UserId;
 
 /// Synchronization state of a cached manifest entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -173,7 +174,7 @@ impl ManifestCacheEntry {
 }
 
 // KSerializable implementation for EntityStore support
-impl crate::serialization::KSerializable for ManifestCacheEntry {}
+impl KSerializable for ManifestCacheEntry {}
 
 /// Statistics for a single column in a segment.
 ///
@@ -529,7 +530,7 @@ impl Manifest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{NamespaceId, TableName};
+    use kalamdb_commons::{NamespaceId, TableName};
 
     #[test]
     fn test_manifest_cache_entry_bincode_roundtrip() {

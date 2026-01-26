@@ -14,7 +14,7 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::system::Storage;
+use crate::providers::storages::models::Storage;
 use kalamdb_commons::{RecordBatchBuilder, StorageId};
 use kalamdb_store::entity_store::{EntityStore, EntityStoreAsync};
 use kalamdb_store::StorageBackend;
@@ -299,6 +299,7 @@ impl SystemTableProviderExt for StoragesTableProvider {
 mod tests {
     use super::*;
     use kalamdb_store::test_utils::InMemoryBackend;
+    use crate::StorageType;
 
     fn create_test_provider() -> StoragesTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -306,7 +307,6 @@ mod tests {
     }
 
     fn create_test_storage(storage_id: &str, name: &str) -> Storage {
-        use kalamdb_commons::models::StorageType;
         Storage {
             storage_id: StorageId::new(storage_id),
             storage_name: name.to_string(),

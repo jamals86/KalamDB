@@ -15,7 +15,7 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::types::ManifestCacheEntry;
+use crate::providers::manifest::ManifestCacheEntry;
 use kalamdb_commons::RecordBatchBuilder;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::{IndexedEntityStore, StorageBackend};
@@ -265,7 +265,7 @@ impl SystemTableProviderExt for ManifestTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::types::{Manifest, ManifestCacheEntry, SyncState};
+    use crate::providers::manifest::{Manifest, ManifestCacheEntry, SyncState};
     use kalamdb_commons::{NamespaceId, TableId, TableName};
     use kalamdb_store::entity_store::EntityStore;
     use kalamdb_store::test_utils::InMemoryBackend;

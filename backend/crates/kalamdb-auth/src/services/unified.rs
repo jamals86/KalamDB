@@ -389,7 +389,7 @@ async fn authenticate_username_password(
     }
 
     Ok(AuthenticatedUser::new(
-        user.id,
+        user.user_id,
         user.username.clone(),
         user.role,
         user.email,
@@ -462,7 +462,7 @@ async fn authenticate_bearer(
     };
 
     Ok(AuthenticatedUser::new(
-        user.id.clone(),
+        user.user_id.clone(),
         user.username.clone(),
         role,
         user.email.clone(),

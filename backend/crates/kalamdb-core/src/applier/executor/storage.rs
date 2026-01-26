@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use kalamdb_commons::models::StorageId;
-use kalamdb_commons::system::Storage;
+use kalamdb_system::Storage;
 
 use crate::app_context::AppContext;
 use crate::applier::ApplierError;

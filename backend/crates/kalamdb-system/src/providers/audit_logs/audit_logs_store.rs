@@ -4,7 +4,7 @@
 
 use crate::SystemTable;
 use kalamdb_commons::models::AuditLogId;
-use kalamdb_commons::system::AuditLogEntry;
+use crate::providers::audit_logs::models::AuditLogEntry;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 

@@ -39,7 +39,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use kalamdb_commons::models::JobType;
+use kalamdb_system::JobType;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -213,7 +213,7 @@ impl<T: JobParams> JobContext<T> {
 /// ```rust,ignore
 /// use kalamdb_core::jobs::executors::{JobExecutor, JobParams, JobDecision, JobContext};
 /// use kalamdb_core::error::KalamDbError;
-/// use kalamdb_commons::models::JobType;
+/// use kalamdb_system::JobType;
 /// use async_trait::async_trait;
 /// use serde::{Serialize, Deserialize};
 ///

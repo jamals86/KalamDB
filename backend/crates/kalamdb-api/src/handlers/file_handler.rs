@@ -11,7 +11,7 @@ use kalamdb_auth::AuthSession;
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::TableAccess;
-use kalamdb_commons::types::FileRef;
+use kalamdb_system::FileRef;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_session::{can_access_shared_table, can_impersonate_user};
 use std::sync::Arc;

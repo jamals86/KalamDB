@@ -36,11 +36,12 @@
 //! let size = estimate_scalar_value_size(&value);
 //! ```
 
+pub mod arrow_conversion;
+pub mod arrow_json_conversion;
 pub mod scalar_bytes;
 pub mod scalar_numeric;
 pub mod scalar_size;
 pub mod scalar_string;
-pub mod arrow_json_conversion;
 pub mod schema_metadata;
 
 // Re-export commonly used functions at the module root for convenience

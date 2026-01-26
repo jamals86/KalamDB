@@ -29,7 +29,8 @@ use crate::providers::StreamTableProvider;
 use async_trait::async_trait;
 use kalamdb_commons::ids::{SeqId, SnowflakeGenerator};
 use kalamdb_commons::schemas::TableType;
-use kalamdb_commons::{JobType, TableId};
+use kalamdb_commons::TableId;
+use kalamdb_system::JobType;
 #[cfg(test)]
 use kalamdb_sharding::ShardRouter;
 #[cfg(test)]
@@ -258,7 +259,7 @@ mod tests {
         Job {
             job_id: JobId::new(id),
             job_type,
-            status: kalamdb_commons::JobStatus::Running,
+            status: kalamdb_system::JobStatus::Running,
             leader_status: None,
             parameters: None,
             message: None,

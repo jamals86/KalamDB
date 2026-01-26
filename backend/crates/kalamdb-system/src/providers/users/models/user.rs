@@ -2,9 +2,12 @@
 //!
 //! Represents a database user with authentication and authorization information.
 
-use crate::models::user_name::UserName;
-use crate::models::{ids::UserId, AuthType, Role, StorageId, StorageMode};
 use bincode::{Decode, Encode};
+use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::models::{ids::UserId, AuthType, Role, StorageId, StorageMode};
+use kalamdb_commons::UserName;
+use kalamdb_commons::KSerializable;
+use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 
 /// Default maximum failed login attempts before lockout
@@ -18,7 +21,7 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
 /// Represents a database user with authentication and authorization information.
 ///
 /// ## Fields
-/// - `id`: Unique user identifier (e.g., "u_123456")
+/// - `user_id`: Unique user identifier (e.g., "u_123456")
 /// - `username`: Unique username for authentication
 /// - `password_hash`: bcrypt hash of password (cost factor 12)
 /// - `role`: User role (User, Service, DBA, System)
@@ -42,11 +45,11 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
 /// ## Example
 ///
 /// ```rust
-/// use kalamdb_commons::types::User;
+/// use kalamdb_system::User;
 /// use kalamdb_commons::{UserId, Role, AuthType, StorageMode, StorageId, UserName};
 ///
 /// let user = User {
-///     id: UserId::new("u_123456"),
+///     user_id: UserId::new("u_123456"),
 ///     username: UserName::new("alice"),
 ///     password_hash: "$2b$12$...".to_string(),
 ///     role: Role::User,
@@ -67,28 +70,176 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
 /// User struct with fields ordered for optimal memory alignment.
 /// 8-byte aligned fields first, then 4-byte, then 1-byte types.
 /// This minimizes struct padding and improves cache efficiency.
+#[table(
+    name = "users",
+    comment = "System users for authentication and authorization"
+)]
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct User {
     // 8-byte aligned fields first (i64, Option<i64>, String/pointer types)
+    #[column(
+        id = 10,
+        ordinal = 10,
+        data_type(KalamDataType::Timestamp),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Account creation timestamp"
+    )]
     pub created_at: i64,
+    #[column(
+        id = 11,
+        ordinal = 11,
+        data_type(KalamDataType::Timestamp),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Last account update timestamp"
+    )]
     pub updated_at: i64,
     /// Unix timestamp in milliseconds when account lockout expires (None = not locked)
+    #[column(
+        id = 15,
+        ordinal = 15,
+        data_type(KalamDataType::Timestamp),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Account lockout expiry timestamp"
+    )]
     pub locked_until: Option<i64>,
     /// Unix timestamp in milliseconds of last successful login
+    #[column(
+        id = 16,
+        ordinal = 16,
+        data_type(KalamDataType::Timestamp),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Last successful login timestamp"
+    )]
     pub last_login_at: Option<i64>,
+    #[column(
+        id = 12,
+        ordinal = 12,
+        data_type(KalamDataType::Timestamp),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Last authentication timestamp"
+    )]
     pub last_seen: Option<i64>,
+    #[column(
+        id = 13,
+        ordinal = 13,
+        data_type(KalamDataType::Timestamp),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Soft delete timestamp"
+    )]
     pub deleted_at: Option<i64>,
-    pub id: UserId,
+    #[column(
+        id = 1,
+        ordinal = 1,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = true,
+        default = "None",
+        comment = "User identifier (UUID)"
+    )]
+    pub user_id: UserId,
+    #[column(
+        id = 2,
+        ordinal = 2,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Unique username for authentication"
+    )]
     pub username: UserName,
+    #[column(
+        id = 3,
+        ordinal = 3,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "bcrypt password hash"
+    )]
     pub password_hash: String,
+    #[column(
+        id = 5,
+        ordinal = 5,
+        data_type(KalamDataType::Text),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "User email address"
+    )]
     pub email: Option<String>,
+    #[column(
+        id = 7,
+        ordinal = 7,
+        data_type(KalamDataType::Json),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Authentication data (JSON for OAuth provider/subject)"
+    )]
     pub auth_data: Option<String>,
+    #[column(
+        id = 9,
+        ordinal = 9,
+        data_type(KalamDataType::Text),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Optional preferred storage configuration ID"
+    )]
     pub storage_id: Option<StorageId>,
     // 4-byte aligned fields (enums, i32)
     /// Number of consecutive failed login attempts (reset on successful login)
+    #[column(
+        id = 14,
+        ordinal = 14,
+        data_type(KalamDataType::Int),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Number of consecutive failed login attempts"
+    )]
     pub failed_login_attempts: i32,
+    #[column(
+        id = 4,
+        ordinal = 4,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "User role: user, service, dba, system"
+    )]
     pub role: Role,
+    #[column(
+        id = 6,
+        ordinal = 6,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Authentication type: Password, OAuth, ApiKey"
+    )]
     pub auth_type: AuthType,
+    #[column(
+        id = 8,
+        ordinal = 8,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Preferred storage partitioning mode"
+    )]
     pub storage_mode: StorageMode,
 }
 
@@ -144,7 +295,7 @@ mod tests {
 
     fn create_test_user() -> User {
         User {
-            id: UserId::new("u_123"),
+            user_id: UserId::new("u_123"),
             username: "alice".into(),
             password_hash: "$2b$12$hash".to_string(),
             role: Role::User,
@@ -236,4 +387,4 @@ mod tests {
 }
 
 // KSerializable implementation for EntityStore support
-impl crate::serialization::KSerializable for User {}
+impl KSerializable for User {}

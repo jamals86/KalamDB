@@ -11,7 +11,7 @@ use actix_web::{web, Either};
 use bytes::{Bytes, BytesMut};
 use futures_util::StreamExt;
 use kalamdb_commons::models::ids::StorageId;
-use kalamdb_commons::models::types::{FileRef, FileSubfolderState};
+use kalamdb_system::{FileRef, FileSubfolderState};
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_configs::FileUploadSettings;

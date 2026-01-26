@@ -114,7 +114,7 @@ mod tests {
     use super::*;
     use crate::test_helpers::{create_test_session_simple, test_app_context_simple};
     use kalamdb_commons::models::UserId;
-    use kalamdb_commons::system::Storage;
+    use kalamdb_system::Storage;
     use kalamdb_commons::{Role, StorageId};
     use std::sync::Arc;
 
