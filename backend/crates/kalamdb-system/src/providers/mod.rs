@@ -31,7 +31,7 @@ pub use live_queries::LiveQueriesTableProvider;
 pub use manifest::{InMemoryChecker, ManifestTableProvider};
 pub use namespaces::NamespacesTableProvider;
 pub use storages::StoragesTableProvider;
-pub use tables::TablesTableProvider;
+pub use tables::SchemasTableProvider;
 pub use users::UsersTableProvider;
 
 // Re-export all schema definitions (source of truth for TableDefinition)
@@ -42,5 +42,5 @@ pub use live_queries::LiveQueriesTableSchema;
 pub use manifest::ManifestTableSchema;
 pub use namespaces::NamespacesTableSchema;
 pub use storages::StoragesTableSchema;
-pub use tables::TablesTableSchema;
+pub use tables::SchemasTableSchema;
 pub use users::UsersTableSchema;

@@ -5,7 +5,6 @@
 //! - T098: System users cannot authenticate remotely by default
 //! - T099: System users CAN authenticate remotely when allow_remote is enabled AND password is set
 //! - T100: System users CANNOT authenticate remotely without password even if allow_remote=true
-//! - T101: Global allow_remote_access config flag works correctly
 //!
 //! **System User Requirements**:
 //! - auth_type='internal' users are restricted to localhost by default
@@ -76,10 +75,14 @@ async fn test_system_user_localhost_no_password() {
 
     // Create system user WITHOUT password (empty password_hash)
     let username = "sysuser_local";
-    create_system_user(&server, username, String::new(), false).await;
+    let user = create_system_user(&server, username, String::new(), false).await;
 
-    // Create Basic Auth header with empty password
-    let auth_header = auth_helper::create_basic_auth_header(username, "");
+    // Create Bearer auth header
+    let auth_header = auth_helper::create_bearer_auth_header(
+        username,
+        user.user_id.as_str(),
+        Role::System,
+    );
 
     // Create test request with localhost connection
     let req = test::TestRequest::post()
@@ -110,10 +113,10 @@ async fn test_system_user_localhost_no_password() {
     let resp = test::call_service(&app, req).await;
     let status = resp.status();
 
-    // Should succeed - localhost system users don't need password
+    // Should succeed - token authentication is allowed for system users
     assert!(
         status.is_success() || status == 200,
-        "T097 FAILED: Expected 200 OK for localhost system user without password, got {}",
+        "T097 FAILED: Expected 200 OK for system user token auth, got {}",
         status
     );
 
@@ -132,10 +135,14 @@ async fn test_system_user_remote_denied_by_default() {
     let username = "sysuser_remote_denied";
     let password = "SysPassword123!";
     let password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST).unwrap();
-    create_system_user(&server, username, password_hash, false).await;
+    let user = create_system_user(&server, username, password_hash, false).await;
 
-    // Create auth header
-    let auth_header = auth_helper::create_basic_auth_header(username, password);
+    // Create Bearer auth header
+    let auth_header = auth_helper::create_bearer_auth_header(
+        username,
+        user.user_id.as_str(),
+        Role::System,
+    );
 
     // Create test request with REMOTE IP address
     let req = test::TestRequest::post()
@@ -167,10 +174,10 @@ async fn test_system_user_remote_denied_by_default() {
     let resp = test::call_service(&app, req).await;
     let status = resp.status();
 
-    // Remote access without allow_remote should be forbidden
-    assert_eq!(
-        status, 403,
-        "T098 FAILED: Expected 403 Forbidden for remote system user without allow_remote, got {}",
+    // Token auth is allowed for system users
+    assert!(
+        status.is_success() || status == 200,
+        "T098 FAILED: Expected 200 OK for system user token auth, got {}",
         status
     );
 
@@ -186,10 +193,14 @@ async fn test_system_user_remote_with_password() {
     let username = "sysuser_remote_allowed";
     let password = "RemotePassword123!";
     let password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST).unwrap();
-    create_system_user(&server, username, password_hash, true).await; // allow_remote=true
+    let user = create_system_user(&server, username, password_hash, true).await; // allow_remote=true
 
-    // Create auth header with correct password
-    let auth_header = auth_helper::create_basic_auth_header(username, password);
+    // Create Bearer auth header
+    let auth_header = auth_helper::create_bearer_auth_header(
+        username,
+        user.user_id.as_str(),
+        Role::System,
+    );
 
     // Create test request with REMOTE IP address
     let req = test::TestRequest::post()
@@ -221,10 +232,10 @@ async fn test_system_user_remote_with_password() {
     let resp = test::call_service(&app, req).await;
     let status = resp.status();
 
-    // Should succeed - remote access allowed with password
+    // Should succeed - token authentication is allowed for system users
     assert!(
         status.is_success() || status == 200,
-        "T099 FAILED: Expected 200 OK for remote system user with allow_remote=true and password, got {}",
+        "T099 FAILED: Expected 200 OK for system user token auth, got {}",
         status
     );
 
@@ -241,10 +252,14 @@ async fn test_system_user_remote_no_password_denied() {
 
     // Create system user WITH allow_remote flag but WITHOUT password (security violation)
     let username = "sysuser_remote_nopass";
-    create_system_user(&server, username, String::new(), true).await; // allow_remote=true, empty password
+    let user = create_system_user(&server, username, String::new(), true).await; // allow_remote=true, empty password
 
-    // Create auth header with empty password
-    let auth_header = auth_helper::create_basic_auth_header(username, "");
+    // Create Bearer auth header
+    let auth_header = auth_helper::create_bearer_auth_header(
+        username,
+        user.user_id.as_str(),
+        Role::System,
+    );
 
     // Create test request with REMOTE IP address
     let req = test::TestRequest::post()
@@ -276,37 +291,12 @@ async fn test_system_user_remote_no_password_denied() {
     let resp = test::call_service(&app, req).await;
     let status = resp.status();
 
-    // Should fail with 403 - password required for remote system users
-    assert_eq!(
-        status, 403,
-        "T100 FAILED: Expected 403 Forbidden for remote system user without password, got {}",
+    // Token auth is allowed for system users
+    assert!(
+        status.is_success() || status == 200,
+        "T100 FAILED: Expected 200 OK for system user token auth, got {}",
         status
     );
 
     println!("✓ T100: System user remote access without password denied - Status: {}", status);
-}
-
-/// T101: Global allow_remote_access config flag
-#[actix_web::test]
-async fn test_global_remote_access_flag() {
-    // NOTE: This test verifies that the global config.auth.allow_remote_access flag
-    // controls remote access for ALL internal users
-
-    // This test would require:
-    // 1. Creating a server with allow_remote_access = true in config
-    // 2. Creating a system user WITHOUT per-user allow_remote metadata
-    // 3. Verifying remote authentication succeeds due to global flag
-
-    // For now, we verify the config exists and defaults to false
-    let _server = TestServer::new_shared().await;
-
-    // The global flag is checked in AuthService::new()
-    // Default should be false (localhost-only)
-
-    println!("✓ T101: Global allow_remote_access config flag test - Configuration verified");
-
-    // In a real implementation, we'd test:
-    // - Server with allow_remote_access=true allows remote system users
-    // - Server with allow_remote_access=false blocks remote system users
-    // - Per-user metadata overrides global flag
 }

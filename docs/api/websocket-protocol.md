@@ -27,11 +27,6 @@ KalamDB provides real-time data streaming via WebSocket connections. Clients can
 WebSocket connections are established unauthenticated, then the client must send an
 `authenticate` message immediately after connecting.
 
-**Basic auth**:
-```json
-{"type": "authenticate", "method": "basic", "username": "alice", "password": "secret"}
-```
-
 **JWT auth**:
 ```json
 {"type": "authenticate", "method": "jwt", "token": "<JWT_TOKEN>"}

@@ -2,13 +2,13 @@ import { Plus, RefreshCw, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-interface AsideHeaderProps {
+interface SidebarHeaderProps {
   onCreateTable: () => void;
   onRefresh: () => void;
   isLoading: boolean;
 }
 
-export function AsideHeader({ onCreateTable, onRefresh, isLoading }: AsideHeaderProps) {
+export function SidebarHeader({ onCreateTable, onRefresh, isLoading }: SidebarHeaderProps) {
   return (
     <div className="p-2 border-b font-medium text-sm flex items-center justify-between">
       <div className="flex items-center gap-2">

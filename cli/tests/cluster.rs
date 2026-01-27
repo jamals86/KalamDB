@@ -50,7 +50,7 @@ mod cluster_common {
         let password = root_password().to_string();
         KalamLinkClient::builder()
             .base_url(base_url)
-            .auth(AuthProvider::basic_auth("root".to_string(), password))
+            .auth(auth_provider_for_user_on_url(base_url, "root", &password))
             .timeouts(
                 KalamLinkTimeouts::builder()
                     .connection_timeout_secs(5)
@@ -73,7 +73,7 @@ mod cluster_common {
     ) -> KalamLinkClient {
         KalamLinkClient::builder()
             .base_url(base_url)
-            .auth(AuthProvider::basic_auth(username.to_string(), password.to_string()))
+            .auth(auth_provider_for_user_on_url(base_url, username, password))
             .timeouts(
                 KalamLinkTimeouts::builder()
                     .connection_timeout_secs(5)
@@ -614,7 +614,7 @@ mod cluster_common {
     pub fn wait_for_table_on_all_nodes(namespace: &str, table_name: &str, timeout_ms: u64) -> bool {
         let urls = cluster_urls();
         let query = format!(
-            "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+            "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
             namespace, table_name
         );
 

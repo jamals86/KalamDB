@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { executeSql } from '../lib/kalam-client';
+import { useMemo } from 'react';
+import { useGetSettingsQuery } from '../store/apiSlice';
 
 export interface Setting {
   name: string;
@@ -9,34 +9,12 @@ export interface Setting {
 }
 
 export function useSettings() {
-  const [settings, setSettings] = useState<Setting[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { data, isLoading, error, refetch } = useGetSettingsQuery();
 
-  const fetchSettings = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      // Try to query settings from system.settings if it exists
-      // Otherwise, return some default configuration info
-      const rows = await executeSql(`
-        SELECT name, value, description, category
-        FROM system.settings
-        ORDER BY category, name
-      `);
-      
-      const settingsList = rows.map((row) => ({
-        name: String(row.name ?? ''),
-        value: String(row.value ?? ''),
-        description: String(row.description ?? ''),
-        category: String(row.category ?? ''),
-      }));
-      
-      setSettings(settingsList);
-      return settingsList;
-    } catch {
-      // If system.settings doesn't exist, provide basic info
-      const defaultSettings: Setting[] = [
+  const settings = useMemo(() => {
+    if (!data || data.length === 0) {
+      // If system.settings doesn't exist or is empty, provide basic info
+      return [
         {
           name: 'server.version',
           value: '0.1.0',
@@ -61,15 +39,18 @@ export function useSettings() {
           description: 'JWT token expiry in seconds',
           category: 'Authentication',
         },
-      ];
-      setSettings(defaultSettings);
-      return defaultSettings;
-    } finally {
-      setIsLoading(false);
+      ] as Setting[];
     }
-  }, []);
+    
+    return data.map((row) => ({
+      name: String(row.name ?? ''),
+      value: String(row.value ?? ''),
+      description: String(row.description ?? ''),
+      category: String(row.category ?? ''),
+    })) as Setting[];
+  }, [data]);
 
-  const groupedSettings = useCallback(() => {
+  const groupedSettings = useMemo(() => {
     const groups: Record<string, Setting[]> = {};
     settings.forEach(setting => {
       if (!groups[setting.category]) {
@@ -82,9 +63,9 @@ export function useSettings() {
 
   return {
     settings,
-    groupedSettings: groupedSettings(),
+    groupedSettings,
     isLoading,
-    error,
-    fetchSettings,
+    error: error ? (error as any).error : null,
+    fetchSettings: refetch,
   };
 }

@@ -1,17 +1,17 @@
-//! System.tables table module (system_tables in RocksDB)
+//! System.schemas table module (system_schemas in RocksDB)
 //!
 //! Phase 16: Consolidated single store using TableVersionId keys.
 //! Stores both latest table definitions and version history in one partition.
 //!
-//! This module contains all components for the system.tables table:
+//! This module contains all components for the system.schemas table:
 //! - Table schema definition with OnceLock caching
 //! - SystemTableStore wrapper with versioning support
 //! - TableProvider for DataFusion integration
 
-pub mod tables_provider;
-pub mod tables_store;
-pub mod tables_table;
+pub mod schemas_provider;
+pub mod schemas_store;
+pub mod schemas_table;
 
-pub use tables_provider::TablesTableProvider;
-pub use tables_store::{new_tables_store, TablesStore};
-pub use tables_table::TablesTableSchema;
+pub use schemas_provider::SchemasTableProvider;
+pub use schemas_store::{new_schemas_store, SchemasStore};
+pub use schemas_table::SchemasTableSchema;

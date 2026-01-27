@@ -321,7 +321,7 @@ pub async fn create_stream_table(
 /// * `table_name` - Table name
 pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) -> QueryResponse {
     let lookup_sql = format!(
-        "SELECT table_type FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        "SELECT table_type FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table_name
     );
     let lookup_response = server.execute_sql(&lookup_sql).await;

@@ -143,11 +143,11 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
     // =========================================================
     let resp = server
         .execute_sql(&format!(
-            "SELECT table_name, table_type FROM system.tables WHERE namespace_id = '{}'",
+            "SELECT table_name, table_type FROM system.schemas WHERE namespace_id = '{}'",
             ns
         ))
         .await?;
-    assert_success(&resp, "Query system.tables");
+    assert_success(&resp, "Query system.schemas");
     assert_eq!(get_rows(&resp).len(), 2, "Should have 2 tables");
 
     // Cleanup

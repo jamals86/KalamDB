@@ -207,7 +207,7 @@ fn cluster_test_final_metadata_consistency() {
     // Verify table counts per namespace
     for ns in &namespaces {
         let tbl_query =
-            format!("SELECT count(*) as count FROM system.tables WHERE namespace_id = '{}'", ns);
+            format!("SELECT count(*) as count FROM system.schemas WHERE namespace_id = '{}'", ns);
 
         let mut table_counts: Vec<i64> = Vec::new();
         for url in &urls {

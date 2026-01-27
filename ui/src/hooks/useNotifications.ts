@@ -35,7 +35,7 @@ export function useNotifications(refreshInterval = 3000) {
       // Fetch recent audit logs (last 10)
       const auditSql = `
         SELECT audit_id, timestamp, actor_user_id, actor_username, action, target, details, ip_address
-        FROM system.audit_logs
+        FROM system.audit_log
         ORDER BY timestamp DESC
         LIMIT 10
       `;

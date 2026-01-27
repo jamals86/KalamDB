@@ -1,7 +1,7 @@
 //! Performance benchmarks for authentication endpoints
 //!
 //! This module provides performance testing for authentication operations:
-//! - Basic Auth authentication latency
+//! - Bearer token authentication latency
 //! - JWT authentication latency
 //! - Cache hit/miss performance
 //! - Concurrent authentication load testing
@@ -17,7 +17,7 @@ use actix_web::{test, web, App};
 use kalamdb_commons::{models::ConnectionInfo, Role};
 use std::time::{Duration, Instant};
 
-/// Performance benchmark for Basic Auth authentication
+/// Performance benchmark for Bearer token authentication
 ///
 /// Note: This test creates fresh app instances for each request to avoid actix-web
 /// test framework RefCell borrow conflicts. However, there's still a known issue
@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 /// Consider running this test in isolation or with --test-threads=1
 #[actix_web::test]
 #[ignore = "Known actix-web test framework limitation with connection_info()"]
-async fn benchmark_basic_auth_performance() {
+async fn benchmark_bearer_auth_performance() {
     let server = TestServer::new_shared().await;
 
     // Create test user
@@ -34,7 +34,7 @@ async fn benchmark_basic_auth_performance() {
     auth_helper::create_test_user(&server, username, password, Role::User).await;
 
     // Create auth header
-    let auth_header = auth_helper::create_basic_auth_header(username, password);
+    let auth_header = auth_helper::create_bearer_auth_header(username, username, Role::User);
 
     // Benchmark: Reduced to 10 requests to avoid actix-web test framework limitations
     // Creating fresh app instances for each request ensures no RefCell conflicts
@@ -80,7 +80,7 @@ async fn benchmark_basic_auth_performance() {
     let p95 = percentile(&latencies, 95.0);
     let p99 = percentile(&latencies, 99.0);
 
-    println!("Basic Auth Performance Results:");
+    println!("Bearer Auth Performance Results:");
     println!("  Sample size: {} requests", latencies.len());
     println!("  p50 latency: {:.2}ms", p50.as_millis());
     println!("  p95 latency: {:.2}ms", p95.as_millis());
@@ -188,7 +188,7 @@ async fn test_auth_cache_effectiveness() {
     auth_helper::create_test_user(&server, username, password, Role::User).await;
 
     // Create auth header
-    let auth_header = auth_helper::create_basic_auth_header(username, password);
+    let auth_header = auth_helper::create_bearer_auth_header(username, username, Role::User);
 
     // First request (cache miss) - use fresh app
     let app = test::init_service(
@@ -272,8 +272,6 @@ async fn test_auth_cache_effectiveness() {
 /// Test concurrent authentication load
 #[tokio::test]
 async fn test_concurrent_auth_load() {
-    use base64::engine::general_purpose;
-    use base64::Engine;
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
     use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
     use std::sync::Arc;
@@ -308,11 +306,10 @@ async fn test_concurrent_auth_load() {
 
             // Pick a user based on index
             let user_idx = i % users_clone.len();
-            let (username, password) = &users_clone[user_idx];
+            let (username, _password) = &users_clone[user_idx];
 
-            let credentials =
-                general_purpose::STANDARD.encode(format!("{}:{}", username, password));
-            let auth_header = format!("Basic {}", credentials);
+            let auth_header =
+                auth_helper::create_bearer_auth_header(username, username, Role::User);
             let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
             let auth_request = AuthRequest::Header(auth_header);
 

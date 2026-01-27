@@ -251,7 +251,7 @@ fn smoke_test_timing_join_query() {
     ))
     .expect("create users table");
     let users_table_check = format!(
-        "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table1
     );
     wait_for_query_contains_with(
@@ -269,7 +269,7 @@ fn smoke_test_timing_join_query() {
     ))
     .expect("create orders table");
     let orders_table_check = format!(
-        "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table2
     );
     wait_for_query_contains_with(

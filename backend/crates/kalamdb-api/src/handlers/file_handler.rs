@@ -20,7 +20,7 @@ use crate::models::{ErrorCode, SqlResponse};
 
 /// GET /v1/files/{namespace}/{table_name}/{subfolder}/{file_id} - Download a file
 ///
-/// Requires JWT authorization and table access permissions.
+/// Requires Bearer token (JWT) authorization and table access permissions.
 /// For user tables, downloads from current user's table unless ?user_id is specified.
 #[get("/files/{namespace}/{table_name}/{subfolder}/{file_id}")]
 pub async fn download_file(

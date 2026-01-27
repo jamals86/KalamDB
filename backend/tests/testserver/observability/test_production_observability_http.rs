@@ -1,9 +1,9 @@
 //! Production-readiness observability checks over the real HTTP SQL API.
 
-use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
-use super::test_support::http_server::HttpTestServer;
+use super::test_support::auth_helper::create_user_auth_header;
+use super::test_support::consolidated_helpers::{unique_namespace, unique_table};
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{Role, UserName};
+use kalamdb_commons::Role;
 use tokio::time::{sleep, Duration, Instant};
 
 #[tokio::test]
@@ -11,7 +11,7 @@ use tokio::time::{sleep, Duration, Instant};
 async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
 
-    // system.tables reflects created tables
+    // system.schemas reflects created tables
     let ns_tables = unique_namespace("app_systab");
     let resp = server
         .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns_tables))
@@ -28,7 +28,7 @@ async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result
 
     let resp = server
             .execute_sql(&format!(
-                "SELECT namespace_id, table_name, table_type FROM system.tables WHERE namespace_id = '{}' AND table_name = 'messages' AND is_latest = true",
+                "SELECT namespace_id, table_name, table_type FROM system.schemas WHERE namespace_id = '{}' AND table_name = 'messages' AND is_latest = true",
                 ns_tables
             ))
             .await?;
@@ -54,9 +54,7 @@ async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result
 
     let username = unique_table("user1");
     let password = "UserPass123!";
-    let _ = ensure_user_exists(server, &username, password, &Role::User).await?;
-
-    let user_auth = HttpTestServer::basic_auth_header(&UserName::new(&username), password);
+    let user_auth = create_user_auth_header(server, &username, password, &Role::User).await?;
 
     let resp = server
         .execute_sql_with_auth(
@@ -103,7 +101,7 @@ async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result
     for table in [
         "system.users",
         "system.namespaces",
-        "system.tables",
+        "system.schemas",
         "system.storages",
         "system.jobs",
         "system.live_queries",

@@ -5,18 +5,13 @@
 //! - Parameter validation (max 50 params, 512KB each)
 //! - Params not allowed with multi-statement batches
 
-use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
+use super::test_support::auth_helper::create_user_auth_header;
+use super::test_support::consolidated_helpers::{unique_namespace, unique_table};
 use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{Role, UserName};
+use kalamdb_commons::Role;
 use serde_json::json;
 use tokio::time::{sleep, Duration, Instant};
-
-async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
-    let password = "UserPass123!";
-    let _ = ensure_user_exists(server, username, password, &Role::Dba).await?;
-    Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
-}
 
 async fn count_rows(
     server: &HttpTestServer,
@@ -57,7 +52,9 @@ async fn test_parameterized_dml_over_http() {
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE NAMESPACE failed");
 
-    let auth = create_user(server, &unique_table("user_params")).await?;
+    let auth =
+        create_user_auth_header(server, &unique_table("user_params"), "UserPass123!", &Role::Dba)
+            .await?;
 
     let resp = server
         .execute_sql(&format!(
@@ -74,7 +71,7 @@ async fn test_parameterized_dml_over_http() {
         loop {
             let probe = server
                 .execute_sql(&format!(
-                    "SELECT COUNT(*) AS cnt FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+                    "SELECT COUNT(*) AS cnt FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
                     ns, table
                 ))
                 .await;
@@ -101,7 +98,7 @@ async fn test_parameterized_dml_over_http() {
             if Instant::now() >= deadline {
                 let listing = server
                     .execute_sql(&format!(
-                        "SELECT namespace_id, table_name FROM system.tables WHERE table_name = '{}'",
+                        "SELECT namespace_id, table_name FROM system.schemas WHERE table_name = '{}'",
                         table
                     ))
                     .await
@@ -110,7 +107,7 @@ async fn test_parameterized_dml_over_http() {
                     .unwrap_or_default();
 
                 anyhow::bail!(
-                    "Table {}.{} not visible in system.tables after CREATE TABLE (last_probe={:?}, listing={:?})",
+                    "Table {}.{} not visible in system.schemas after CREATE TABLE (last_probe={:?}, listing={:?})",
                     ns,
                     table,
                     probe

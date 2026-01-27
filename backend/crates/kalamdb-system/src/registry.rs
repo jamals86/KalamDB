@@ -10,7 +10,7 @@ use super::providers::{
     AuditLogsTableProvider, AuditLogsTableSchema, JobNodesTableProvider, JobNodesTableSchema,
     JobsTableProvider, JobsTableSchema, LiveQueriesTableProvider, LiveQueriesTableSchema,
     ManifestTableProvider, ManifestTableSchema, NamespacesTableProvider, NamespacesTableSchema,
-    StoragesTableProvider, StoragesTableSchema, TablesTableProvider, TablesTableSchema,
+    StoragesTableProvider, StoragesTableSchema, SchemasTableProvider, SchemasTableSchema,
     UsersTableProvider, UsersTableSchema,
 };
 // SchemaRegistry will be passed as Arc parameter from kalamdb-core
@@ -40,7 +40,7 @@ pub struct SystemTablesRegistry {
     namespaces: Arc<NamespacesTableProvider>,
     storages: Arc<StoragesTableProvider>,
     live_queries: Arc<LiveQueriesTableProvider>,
-    tables: Arc<TablesTableProvider>,
+    schemas: Arc<SchemasTableProvider>,
     audit_logs: Arc<AuditLogsTableProvider>,
     // ===== Manifest cache table =====
     manifest: Arc<ManifestTableProvider>,
@@ -51,6 +51,8 @@ pub struct SystemTablesRegistry {
     server_logs: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
     cluster: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
     cluster_groups: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    tables: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    columns: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
 
     // Cached persisted system table definitions
     system_definitions: OnceCell<HashMap<TableId, Arc<TableDefinition>>>,
@@ -87,7 +89,7 @@ impl SystemTablesRegistry {
             namespaces: Arc::new(NamespacesTableProvider::new(storage_backend.clone())),
             storages: Arc::new(StoragesTableProvider::new(storage_backend.clone())),
             live_queries: Arc::new(LiveQueriesTableProvider::new(storage_backend.clone())),
-            tables: Arc::new(TablesTableProvider::new(storage_backend.clone())),
+            schemas: Arc::new(SchemasTableProvider::new(storage_backend.clone())),
             audit_logs: Arc::new(AuditLogsTableProvider::new(storage_backend.clone())),
 
             // Manifest cache provider
@@ -99,6 +101,8 @@ impl SystemTablesRegistry {
             server_logs: RwLock::new(None), // Will be wired by kalamdb-core (dev only)
             cluster: RwLock::new(None),     // Initialized via set_cluster_provider()
             cluster_groups: RwLock::new(None), // Initialized via set_cluster_groups_provider()
+            tables: RwLock::new(None),      // Initialized via set_tables_view_provider()
+            columns: RwLock::new(None),     // Initialized via set_columns_view_provider()
 
             system_definitions: OnceCell::new(),
             system_schemas: OnceCell::new(),
@@ -110,7 +114,7 @@ impl SystemTablesRegistry {
             let defs: Vec<(SystemTable, TableDefinition)> = vec![
                 (SystemTable::Users, UsersTableSchema::definition()),
                 (SystemTable::Namespaces, NamespacesTableSchema::definition()),
-                (SystemTable::Tables, TablesTableSchema::definition()),
+                (SystemTable::Schemas, SchemasTableSchema::definition()),
                 (SystemTable::Storages, StoragesTableSchema::definition()),
                 (SystemTable::LiveQueries, LiveQueriesTableSchema::definition()),
                 (SystemTable::Jobs, JobsTableSchema::definition()),
@@ -138,7 +142,7 @@ impl SystemTablesRegistry {
             vec![
                 (SystemTable::Users, UsersTableSchema::schema()),
                 (SystemTable::Namespaces, NamespacesTableSchema::schema()),
-                (SystemTable::Tables, TablesTableSchema::schema()),
+                (SystemTable::Schemas, SchemasTableSchema::schema()),
                 (SystemTable::Storages, StoragesTableSchema::schema()),
                 (SystemTable::LiveQueries, LiveQueriesTableSchema::schema()),
                 (SystemTable::Jobs, JobsTableSchema::schema()),
@@ -188,9 +192,9 @@ impl SystemTablesRegistry {
         self.live_queries.clone()
     }
 
-    /// Get the system.tables provider
-    pub fn tables(&self) -> Arc<TablesTableProvider> {
-        self.tables.clone()
+    /// Get the system.schemas provider
+    pub fn tables(&self) -> Arc<SchemasTableProvider> {
+        self.schemas.clone()
     }
 
     /// Get the system.audit_logs provider
@@ -258,6 +262,28 @@ impl SystemTablesRegistry {
         *self.cluster_groups.write() = Some(provider);
     }
 
+    /// Get the system.tables view provider (virtual table showing table metadata)
+    pub fn tables_view(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
+        self.tables.read().clone()
+    }
+
+    /// Set the system.tables view provider (called from kalamdb-core)
+    pub fn set_tables_view_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
+        log::debug!("SystemTablesRegistry: Setting tables view provider");
+        *self.tables.write() = Some(provider);
+    }
+
+    /// Get the system.columns view provider (virtual table showing column metadata)
+    pub fn columns_view(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
+        self.columns.read().clone()
+    }
+
+    /// Set the system.columns view provider (called from kalamdb-core)
+    pub fn set_columns_view_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
+        log::debug!("SystemTablesRegistry: Setting columns view provider");
+        *self.columns.write() = Some(provider);
+    }
+
     // ===== Convenience Methods =====
 
     /// Get all system.* providers as a vector for bulk registration
@@ -301,8 +327,8 @@ impl SystemTablesRegistry {
                 ),
             ),
             (
-                SystemTable::Tables,
-                wrap(SystemTable::Tables, self.tables.clone() as Arc<dyn TableProvider>),
+                SystemTable::Schemas,
+                wrap(SystemTable::Schemas, self.schemas.clone() as Arc<dyn TableProvider>),
             ),
             (
                 SystemTable::AuditLog,
@@ -351,6 +377,22 @@ impl SystemTablesRegistry {
             providers.push((
                 SystemTable::ClusterGroups,
                 wrap(SystemTable::ClusterGroups, cluster_groups as Arc<dyn TableProvider>),
+            ));
+        }
+
+        // Add tables view if initialized (virtual view from kalamdb-core)
+        if let Some(tables) = self.tables.read().clone() {
+            providers.push((
+                SystemTable::Tables,
+                wrap(SystemTable::Tables, tables as Arc<dyn TableProvider>),
+            ));
+        }
+
+        // Add columns view if initialized (virtual view from kalamdb-core)
+        if let Some(columns) = self.columns.read().clone() {
+            providers.push((
+                SystemTable::Columns,
+                wrap(SystemTable::Columns, columns as Arc<dyn TableProvider>),
             ));
         }
 

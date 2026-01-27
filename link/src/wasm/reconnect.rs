@@ -20,6 +20,12 @@ pub(crate) async fn reconnect_internal_with_auth(
     auth: WasmAuthProvider,
     ws_ref: Rc<RefCell<Option<WebSocket>>>,
 ) -> Result<(), JsValue> {
+    if matches!(auth, WasmAuthProvider::Basic { .. }) {
+        return Err(JsValue::from_str(
+            "WebSocket authentication requires a JWT token. Use KalamClientWithJwt or login first.",
+        ));
+    }
+
     let ws_url = url.replace("http://", "ws://").replace("https://", "wss://");
     let ws_url = format!("{}/v1/ws", ws_url);
 

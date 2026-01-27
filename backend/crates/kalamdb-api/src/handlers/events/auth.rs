@@ -3,8 +3,8 @@
 //! Handles the Authenticate message for WebSocket connections.
 //! Uses the unified authentication module from kalamdb-auth.
 //!
-//! All authentication methods (Basic, JWT, future methods) are handled
-//! through the unified kalamdb-auth crate for centralized auth logic.
+//! Only JWT token authentication is accepted for WebSocket connections.
+//! This keeps username/password auth limited to the login endpoint.
 
 use actix_ws::Session;
 use kalamdb_auth::{authenticate, extract_username_for_audit, AuthRequest, UserRepository};
@@ -27,9 +27,8 @@ use super::{send_auth_error, send_json};
 /// Delegates to the unified authentication module in kalamdb-auth.
 ///
 /// Supports:
-/// - Basic (username/password)
 /// - JWT token
-/// - Future auth methods (API keys, OAuth, etc.)
+/// - Future token-based auth methods (API keys, OAuth, etc.)
 pub async fn handle_authenticate(
     connection_state: &SharedConnectionState,
     client_ip: &ConnectionInfo,
@@ -39,8 +38,10 @@ pub async fn handle_authenticate(
     app_context: &Arc<AppContext>,
     user_repo: &Arc<dyn UserRepository>,
 ) -> Result<(), String> {
-    // Convert WsAuthCredentials to AuthRequest using From impl
-    let auth_request: AuthRequest = credentials.into();
+    // Only accept JWT tokens for WebSocket authentication
+    let auth_request = match credentials {
+        WsAuthCredentials::Jwt { token } => AuthRequest::Jwt { token },
+    };
 
     authenticate_with_request(
         connection_state,

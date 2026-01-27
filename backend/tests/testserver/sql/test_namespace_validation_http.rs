@@ -1,9 +1,9 @@
 //! Namespace validation tests over the real HTTP SQL API.
 
-use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
-use super::test_support::http_server::HttpTestServer;
+use super::test_support::auth_helper::create_user_auth_header;
+use super::test_support::consolidated_helpers::{unique_namespace, unique_table};
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{Role, UserName};
+use kalamdb_commons::Role;
 use tokio::time::Duration;
 
 #[tokio::test]
@@ -69,9 +69,7 @@ async fn test_namespace_validation_over_http() -> anyhow::Result<()> {
         let workspace_ns = unique_namespace("workspace");
         let user = unique_table("user123");
         let password = "UserPass123!";
-        let _ = ensure_user_exists(server, &user, password, &Role::User).await?;
-
-        let auth = HttpTestServer::basic_auth_header(&UserName::new(&user), password);
+        let auth = create_user_auth_header(server, &user, password, &Role::User).await?;
 
         let sql = format!(
             r#"CREATE TABLE {}.notes (

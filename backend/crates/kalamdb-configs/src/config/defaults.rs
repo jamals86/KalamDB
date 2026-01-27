@@ -243,11 +243,6 @@ pub fn default_rate_limit_cache_ttl_seconds() -> u64 {
     600 // 10 minutes TTL for rate limit cache entries
 }
 
-// Authentication defaults (T105 - Phase 7, User Story 5)
-pub fn default_auth_allow_remote_access() -> bool {
-    false // System users localhost-only by default for security
-}
-
 /// Default JWT secret - MUST be overridden in production.
 ///
 /// # Security

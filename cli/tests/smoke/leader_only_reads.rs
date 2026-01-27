@@ -198,7 +198,7 @@ fn smoke_test_system_table_reads() {
     // System tables should always be readable
     let tables_to_test = [
         "SELECT * FROM system.namespaces LIMIT 5",
-        "SELECT * FROM system.tables LIMIT 5",
+        "SELECT * FROM system.schemas LIMIT 5",
         "SELECT * FROM system.users LIMIT 5",
         "SELECT * FROM system.stats LIMIT 5",
     ];

@@ -134,6 +134,21 @@ impl CommandHistory {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Move selected command to end and remove all older occurrences
+    /// This ensures the most recent selection is at the end without duplicates
+    pub fn deduplicate_and_move_to_end(&self, command: &str) -> Result<()> {
+        let mut history = self.load()?;
+        
+        // Remove all occurrences of this command
+        history.retain(|entry| entry != command);
+        
+        // Add it at the end
+        history.push(command.to_string());
+        
+        self.save(&history)?;
+        Ok(())
+    }
 }
 
 fn parse_history_entries(contents: &str) -> Vec<String> {
@@ -255,5 +270,46 @@ mod tests {
         let loaded = history.load().unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0], special_cmd);
+    }
+
+    #[test]
+    fn test_deduplicate_and_move_to_end() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history");
+        let history = CommandHistory::with_path(&path, 100);
+
+        // Create history with duplicates
+        history.append("SELECT 1").unwrap();
+        history.append("SELECT 2").unwrap();
+        history.append("SELECT 1").unwrap(); // Duplicate
+        history.append("SELECT 3").unwrap();
+        history.append("SELECT 1").unwrap(); // Another duplicate
+
+        // Select "SELECT 1" - should remove all older occurrences and move to end
+        history.deduplicate_and_move_to_end("SELECT 1").unwrap();
+
+        let loaded = history.load().unwrap();
+        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded[0], "SELECT 2");
+        assert_eq!(loaded[1], "SELECT 3");
+        assert_eq!(loaded[2], "SELECT 1"); // Moved to end, no duplicates
+    }
+
+    #[test]
+    fn test_deduplicate_nonexistent_command() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history");
+        let history = CommandHistory::with_path(&path, 100);
+
+        // Create history
+        history.append("SELECT 1").unwrap();
+        history.append("SELECT 2").unwrap();
+
+        // Try to deduplicate a command that doesn't exist - should just add it
+        history.deduplicate_and_move_to_end("SELECT 3").unwrap();
+
+        let loaded = history.load().unwrap();
+        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded[2], "SELECT 3");
     }
 }

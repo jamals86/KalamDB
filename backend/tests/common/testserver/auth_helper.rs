@@ -3,17 +3,19 @@
 //!
 //! This module provides utilities for testing authentication flows:
 //! - Creating test users with passwords
-//! - Authenticating with HTTP Basic Auth
+//! - Authenticating with Bearer tokens
 //! - Generating test JWT tokens
 //! - Validating authentication responses
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use kalamdb_system::User;
-use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
+use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId, UserName};
 use kalamdb_core::error::KalamDbError;
 use kalamdb_core::sql::executor::models::ExecutionContext;
 use serde::{Deserialize, Serialize};
+
+use super::consolidated_helpers::ensure_user_exists;
+use super::http_server::HttpTestServer;
 
 /// Create a test user with password authentication
 ///
@@ -128,7 +130,7 @@ pub async fn create_test_user(
     }
 }
 
-/// Create HTTP Basic Auth header value
+/// Create Bearer auth header value
 ///
 /// # Arguments
 ///
@@ -137,21 +139,30 @@ pub async fn create_test_user(
 ///
 /// # Returns
 ///
-/// Authorization header value in format "Basic <base64(username:password)>"
+/// Authorization header value in format "Bearer <jwt>"
 ///
 /// # Example
 ///
 /// ```no_run
-/// let auth_header = create_basic_auth_header("alice", "SecurePass123!");
-/// assert!(auth_header.starts_with("Basic "));
+/// let auth_header = create_bearer_auth_header("alice", "user_id", Role::User);
+/// assert!(auth_header.starts_with("Bearer "));
 /// ```
-pub fn create_basic_auth_header(username: &str, password: &str) -> String {
-    let credentials = format!("{}:{}", username, password);
-    let encoded = BASE64.encode(credentials.as_bytes());
-    format!("Basic {}", encoded)
+pub fn create_bearer_auth_header(username: &str, user_id: &str, role: Role) -> String {
+    let secret = kalamdb_configs::defaults::default_auth_jwt_secret();
+    let email = format!("{}@example.com", username);
+    let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
+        &UserId::new(user_id),
+        &UserName::new(username),
+        &role,
+        Some(email.as_str()),
+        Some(1),
+        &secret,
+    )
+    .expect("Failed to create JWT token for test user");
+    format!("Bearer {}", token)
 }
 
-/// Authenticate with HTTP Basic Auth and verify response
+/// Authenticate with Bearer token and verify response
 ///
 /// Helper function for integration tests that need to authenticate requests.
 ///
@@ -167,11 +178,11 @@ pub fn create_basic_auth_header(username: &str, password: &str) -> String {
 /// # Example
 ///
 /// ```no_run
-/// let (auth_header, should_succeed) = authenticate_basic("alice", "SecurePass123!");
+/// let (auth_header, should_succeed) = authenticate_bearer("alice", "user_id", Role::User);
 /// // Use auth_header in HTTP request
 /// ```
-pub fn authenticate_basic(username: &str, password: &str) -> (String, bool) {
-    let auth_header = create_basic_auth_header(username, password);
+pub fn authenticate_bearer(username: &str, user_id: &str, role: Role) -> (String, bool) {
+    let auth_header = create_bearer_auth_header(username, user_id, role);
     // For now, assume authentication should succeed
     // Tests will verify actual success/failure based on user existence and credentials
     (auth_header, true)
@@ -263,25 +274,46 @@ pub async fn create_system_user(server: &super::TestServer, username: &str) -> U
     user
 }
 
+/// Create a user (if needed) and return a cached Bearer auth header.
+///
+/// This is the shared helper for tests that need per-user auth headers.
+pub async fn create_user_auth_header(
+    server: &HttpTestServer,
+    username: &str,
+    password: &str,
+    role: &Role,
+) -> anyhow::Result<String> {
+    let _ = ensure_user_exists(server, username, password, role).await?;
+    server.bearer_auth_header(&UserName::new(username))
+}
+
+/// Create a user (if needed) and return both the Bearer auth header and user_id.
+pub async fn create_user_auth_header_with_id(
+    server: &HttpTestServer,
+    username: &str,
+    password: &str,
+    role: &Role,
+) -> anyhow::Result<(String, String)> {
+    let user_id = ensure_user_exists(server, username, password, role).await?;
+    let auth = server.bearer_auth_header(&UserName::new(username))?;
+    Ok((auth, user_id))
+}
+
+/// Create a user with a default password and return a cached Bearer auth header.
+pub async fn create_user_auth_header_default(
+    server: &HttpTestServer,
+    username: &str,
+) -> anyhow::Result<String> {
+    create_user_auth_header(server, username, "UserPass123!", &Role::User).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_create_basic_auth_header() {
-        let header = create_basic_auth_header("alice", "password123");
-        assert!(header.starts_with("Basic "));
-
-        // Decode and verify
-        let encoded = header.strip_prefix("Basic ").unwrap();
-        let decoded = String::from_utf8(BASE64.decode(encoded).unwrap()).unwrap();
-        assert_eq!(decoded, "alice:password123");
-    }
-
-    #[test]
-    fn test_authenticate_basic() {
-        let (auth_header, should_succeed) = authenticate_basic("bob", "SecurePass!");
-        assert!(auth_header.starts_with("Basic "));
-        assert!(should_succeed); // Default assumption
+    fn test_create_bearer_auth_header() {
+        let header = create_bearer_auth_header("alice", "user_alice", Role::User);
+        assert!(header.starts_with("Bearer "));
     }
 }

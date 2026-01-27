@@ -20,8 +20,8 @@ pub enum SystemTable {
     Users,
     /// system.namespaces - Database namespaces (persisted)
     Namespaces,
-    /// system.tables - User and shared tables metadata (persisted)
-    Tables,
+    /// system.schemas - All table schemas and their histories (persisted)
+    Schemas,
     /// system.table_schemas - Table schema versions (persisted)
     TableSchemas,
     /// system.storages - Storage configurations (persisted)
@@ -52,6 +52,10 @@ pub enum SystemTable {
     Datatypes,
     /// system.describe - DESCRIBE TABLE functionality (computed on-demand)
     Describe,
+    /// system.tables - Table metadata view (computed from system.schemas)
+    Tables,
+    /// system.columns - Column metadata view (computed from system.schemas)
+    Columns,
 }
 
 impl SystemTable {
@@ -60,7 +64,7 @@ impl SystemTable {
         match self {
             SystemTable::Users => "users",
             SystemTable::Namespaces => "namespaces",
-            SystemTable::Tables => "tables",
+            SystemTable::Schemas => "schemas",
             SystemTable::TableSchemas => "table_schemas",
             SystemTable::Storages => "storages",
             SystemTable::LiveQueries => "live_queries",
@@ -76,6 +80,8 @@ impl SystemTable {
             SystemTable::ClusterGroups => "cluster_groups",
             SystemTable::Datatypes => "datatypes",
             SystemTable::Describe => "describe",
+            SystemTable::Tables => "tables",
+            SystemTable::Columns => "columns",
         }
     }
 
@@ -95,6 +101,8 @@ impl SystemTable {
                 | SystemTable::ClusterGroups
                 | SystemTable::Datatypes
                 | SystemTable::Describe
+                | SystemTable::Tables
+                | SystemTable::Columns
         )
     }
 
@@ -104,7 +112,7 @@ impl SystemTable {
         match self {
             SystemTable::Users => Some("system_users"),
             SystemTable::Namespaces => Some("system_namespaces"),
-            SystemTable::Tables => Some("system_tables"),
+            SystemTable::Schemas => Some("system_schemas"),
             SystemTable::TableSchemas => Some("system_table_schemas"),
             SystemTable::Storages => Some("system_storages"),
             SystemTable::LiveQueries => Some("system_live_queries"),
@@ -119,7 +127,9 @@ impl SystemTable {
             | SystemTable::Cluster
             | SystemTable::ClusterGroups
             | SystemTable::Datatypes
-            | SystemTable::Describe => None,
+            | SystemTable::Describe
+            | SystemTable::Tables
+            | SystemTable::Columns => None,
         }
     }
 
@@ -132,7 +142,7 @@ impl SystemTable {
             // Tables
             "users" | "system_users" => Ok(SystemTable::Users),
             "namespaces" | "system_namespaces" => Ok(SystemTable::Namespaces),
-            "tables" | "system_tables" => Ok(SystemTable::Tables),
+            "schemas" | "system_schemas" => Ok(SystemTable::Schemas),
             "table_schemas" | "system_table_schemas" => Ok(SystemTable::TableSchemas),
             "storages" | "system_storages" => Ok(SystemTable::Storages),
             "live_queries" | "system_live_queries" => Ok(SystemTable::LiveQueries),
@@ -148,6 +158,8 @@ impl SystemTable {
             "cluster_groups" => Ok(SystemTable::ClusterGroups),
             "datatypes" => Ok(SystemTable::Datatypes),
             "describe" => Ok(SystemTable::Describe),
+            "tables" | "system_tables" => Ok(SystemTable::Tables),
+            "columns" | "system_columns" => Ok(SystemTable::Columns),
             _ => Err(format!("Unknown system table or view: {}", name)),
         }
     }
@@ -157,7 +169,7 @@ impl SystemTable {
         &[
             SystemTable::Users,
             SystemTable::Namespaces,
-            SystemTable::Tables,
+            SystemTable::Schemas,
             SystemTable::TableSchemas,
             SystemTable::Storages,
             SystemTable::LiveQueries,
@@ -178,6 +190,8 @@ impl SystemTable {
             SystemTable::ClusterGroups,
             SystemTable::Datatypes,
             SystemTable::Describe,
+            SystemTable::Tables,
+            SystemTable::Columns,
         ]
     }
 
@@ -187,7 +201,7 @@ impl SystemTable {
             // Tables
             SystemTable::Users,
             SystemTable::Namespaces,
-            SystemTable::Tables,
+            SystemTable::Schemas,
             SystemTable::TableSchemas,
             SystemTable::Storages,
             SystemTable::LiveQueries,
@@ -203,6 +217,8 @@ impl SystemTable {
             SystemTable::ClusterGroups,
             SystemTable::Datatypes,
             SystemTable::Describe,
+            SystemTable::Tables,
+            SystemTable::Columns,
         ]
     }
 
@@ -222,7 +238,7 @@ impl SystemTable {
 
         static USERS: Lazy<Partition> = Lazy::new(|| Partition::new("system_users"));
         static NAMESPACES: Lazy<Partition> = Lazy::new(|| Partition::new("system_namespaces"));
-        static TABLES: Lazy<Partition> = Lazy::new(|| Partition::new("system_tables"));
+        static SCHEMAS: Lazy<Partition> = Lazy::new(|| Partition::new("system_schemas"));
         static TABLE_SCHEMAS: Lazy<Partition> =
             Lazy::new(|| Partition::new("system_table_schemas"));
         static STORAGES: Lazy<Partition> = Lazy::new(|| Partition::new("system_storages"));
@@ -235,7 +251,7 @@ impl SystemTable {
         match self {
             SystemTable::Users => Some(&USERS),
             SystemTable::Namespaces => Some(&NAMESPACES),
-            SystemTable::Tables => Some(&TABLES),
+            SystemTable::Schemas => Some(&SCHEMAS),
             SystemTable::TableSchemas => Some(&TABLE_SCHEMAS),
             SystemTable::Storages => Some(&STORAGES),
             SystemTable::LiveQueries => Some(&LIVE_QUERIES),
@@ -250,7 +266,9 @@ impl SystemTable {
             | SystemTable::Cluster
             | SystemTable::ClusterGroups
             | SystemTable::Datatypes
-            | SystemTable::Describe => None,
+            | SystemTable::Describe
+            | SystemTable::Tables
+            | SystemTable::Columns => None,
         }
     }
 }

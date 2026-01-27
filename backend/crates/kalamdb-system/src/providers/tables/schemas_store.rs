@@ -1,4 +1,4 @@
-//! Tables table store implementation
+//! Schemas table store implementation
 //!
 //! Phase 16: Consolidated store using TableVersionId keys.
 //! Stores all table versions in a single partition with dual-key pattern:
@@ -18,23 +18,23 @@ use kalamdb_store::entity_store::EntityStore;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
-/// Type alias for the tables table store
+/// Type alias for the schemas table store
 /// Uses TableVersionId as key to support both latest and versioned lookups
-pub type TablesStore = SystemTableStore<TableVersionId, TableDefinition>;
+pub type SchemasStore = SystemTableStore<TableVersionId, TableDefinition>;
 
-/// Helper function to create a new tables table store
+/// Helper function to create a new schemas table store
 ///
 /// # Arguments
 /// * `backend` - Storage backend (RocksDB or mock)
 ///
 /// # Returns
-/// A new SystemTableStore instance configured for the tables table
-pub fn new_tables_store(backend: Arc<dyn StorageBackend>) -> TablesStore {
-    SystemTableStore::new(backend, SystemTable::Tables)
+/// A new SystemTableStore instance configured for the schemas table
+pub fn new_schemas_store(backend: Arc<dyn StorageBackend>) -> SchemasStore {
+    SystemTableStore::new(backend, SystemTable::Schemas)
 }
 
-/// Helper methods for TablesStore specific operations
-impl TablesStore {
+/// Helper methods for SchemasStore specific operations
+impl SchemasStore {
     /// Get the latest version of a table definition
     pub fn get_latest(
         &self,
@@ -73,7 +73,7 @@ impl TablesStore {
         // Store the versioned entry
         let version_key = TableVersionId::versioned(table_id.clone(), version);
         log::debug!(
-            "[TablesStore::put_version] table_id={}, version={}, version_key={:?}",
+            "[SchemasStore::put_version] table_id={}, version={}, version_key={:?}",
             table_id,
             version,
             String::from_utf8_lossy(&version_key.as_storage_key())
@@ -83,7 +83,7 @@ impl TablesStore {
         // Update the latest pointer
         let latest_key = TableVersionId::latest(table_id.clone());
         log::debug!(
-            "[TablesStore::put_version] table_id={}, latest_key={:?}",
+            "[SchemasStore::put_version] table_id={}, latest_key={:?}",
             table_id,
             String::from_utf8_lossy(&latest_key.as_storage_key())
         );
@@ -97,19 +97,19 @@ impl TablesStore {
     pub fn debug_dump_keys_for_table(&self, table_id: &TableId) {
         let prefix_key = TableVersionId::latest(table_id.clone());
         log::debug!(
-            "[TablesStore::debug_dump] Partition: {}",
+            "[SchemasStore::debug_dump] Partition: {}",
             self.partition()
         );
         match self.scan_keys_typed(Some(&prefix_key), None, 1000) {
             Ok(keys) => {
-                log::debug!("[TablesStore::debug_dump] Keys for table_id={}:", table_id);
+                log::debug!("[SchemasStore::debug_dump] Keys for table_id={}:", table_id);
                 for key in &keys {
                     log::debug!("  Key: {:?}", key);
                 }
-                log::debug!("[TablesStore::debug_dump] Total keys found: {}", keys.len());
+                log::debug!("[SchemasStore::debug_dump] Total keys found: {}", keys.len());
             }
             Err(e) => {
-                log::debug!("[TablesStore::debug_dump] Error scanning: {:?}", e);
+                log::debug!("[SchemasStore::debug_dump] Error scanning: {:?}", e);
             }
         }
     }
@@ -247,9 +247,9 @@ mod tests {
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_store::CrossUserTableStore;
 
-    fn create_test_store() -> TablesStore {
+    fn create_test_store() -> SchemasStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        new_tables_store(backend)
+        new_schemas_store(backend)
     }
 
     fn create_test_table(

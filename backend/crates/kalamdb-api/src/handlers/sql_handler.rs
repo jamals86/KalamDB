@@ -2,6 +2,10 @@
 //!
 //! This module provides HTTP handlers for executing SQL statements via the REST API.
 //! Authentication is handled automatically by the `AuthSession` extractor.
+//! 
+//! **Security Note**: This endpoint only accepts Bearer token authentication.
+//! Basic auth (username/password) is not supported for SQL execution to encourage
+//! secure token-based authentication patterns.
 
 use actix_multipart::Multipart;
 use actix_web::{post, web, Either, FromRequest, HttpRequest, HttpResponse, Responder};
@@ -44,7 +48,8 @@ use crate::limiter::RateLimiter;
 /// File uploads require a single SQL statement.
 ///
 /// # Authentication
-/// Requires authentication via Authorization header.
+/// Requires authentication via Authorization header with Bearer token.
+/// Basic auth is not supported for this endpoint - use tokens only.
 /// Authentication is handled automatically by the `AuthSession` extractor.
 ///
 /// # Example Request
@@ -79,9 +84,8 @@ pub async fn execute_sql_v1(
 ) -> impl Responder {
     let start_time = Instant::now();
 
-    // NOTE: Audit logging for password-based auth has been moved to the AuthSession extractor
-    // (logs once on first authentication, not on every query). This improves query performance
-    // by ~10-20% for high-frequency insert workloads.
+    // NOTE: This endpoint only accepts Bearer token authentication.
+    // Password-based (Basic) auth is rejected by AuthSession for security.
 
     // Rate limiting: Check if user can execute query
     if let Some(ref limiter) = rate_limiter {

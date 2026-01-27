@@ -6,7 +6,7 @@
 //! - UsersTableProvider: System users and authentication
 //! - JobsTableProvider: Background job status and history
 //! - NamespacesTableProvider: Database namespace catalog
-//! - TablesTableProvider: Table metadata and schema registry
+//! - SchemasTableProvider: Table metadata and schema registry
 //! - StoragesTableProvider: Storage backend configuration
 //! - LiveQueriesTableProvider: Active live query subscriptions
 //! - AuditLogsTableProvider: System audit log entries
@@ -63,7 +63,7 @@ pub use kalamdb_session::{
 pub use providers::{
     AuditLogsTableProvider, InMemoryChecker, JobNodesTableProvider, JobsTableProvider,
     LiveQueriesTableProvider, ManifestTableProvider, NamespacesTableProvider,
-    StoragesTableProvider, TablesTableProvider, UsersTableProvider,
+    StoragesTableProvider, SchemasTableProvider, UsersTableProvider,
 };
 
 // Re-export live query models for convenience

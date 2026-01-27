@@ -8,7 +8,7 @@
 //! ## Version History
 //!
 //! - **v1 (2025-01-15)**: Initial schema with 7 system tables:
-//!   - system.users, system.namespaces, system.tables, system.storages
+//!   - system.users, system.namespaces, system.schemas, system.storages
 //!   - system.live_queries, system.jobs, system.audit_logs
 //!
 //! ## Usage

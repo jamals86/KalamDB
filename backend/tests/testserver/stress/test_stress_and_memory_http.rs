@@ -3,21 +3,11 @@
 //! These are intentionally short (seconds, not minutes) and run through the real
 //! HTTP surface to cover business logic without flaking CI.
 
-use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
-use super::test_support::http_server::HttpTestServer;
+use super::test_support::auth_helper::create_user_auth_header_default;
+use super::test_support::consolidated_helpers::{unique_namespace, unique_table};
 use futures_util::future::try_join_all;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{Role, UserName};
 use serial_test::serial;
-
-async fn create_user(
-    server: &super::test_support::http_server::HttpTestServer,
-    user: &str,
-) -> anyhow::Result<String> {
-    let password = "UserPass123!";
-    let _ = ensure_user_exists(server, user, password, &Role::User).await?;
-    Ok(HttpTestServer::basic_auth_header(&UserName::new(user), password))
-}
 
 async fn count_rows(
     server: &super::test_support::http_server::HttpTestServer,
@@ -70,7 +60,7 @@ async fn test_stress_smoke_over_http() {
     );
 
     let user = unique_table("stress_user");
-    let auth = create_user(server, &user).await?;
+    let auth = create_user_auth_header_default(server, &user).await?;
 
     let resp = server
         .execute_sql_with_auth(

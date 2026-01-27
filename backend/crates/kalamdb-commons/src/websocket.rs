@@ -181,15 +181,11 @@ pub enum WebSocketMessage {
 ///
 /// # Supported Methods
 ///
-/// - `Basic` - Username/password authentication
 /// - `Jwt` - JWT token (Bearer) authentication
 ///
 /// # JSON Wire Format
 ///
 /// ```json
-/// // Basic Auth
-/// {"type": "authenticate", "method": "basic", "username": "alice", "password": "secret"}
-///
 /// // JWT Auth  
 /// {"type": "authenticate", "method": "jwt", "token": "eyJhbGciOiJIUzI1NiIs..."}
 /// ```
@@ -203,8 +199,6 @@ pub enum WebSocketMessage {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "method", rename_all = "snake_case")]
 pub enum WsAuthCredentials {
-    /// Username and password authentication
-    Basic { username: String, password: String },
     /// JWT token authentication
     Jwt { token: String },
     // Future auth methods can be added here:
@@ -222,9 +216,9 @@ pub enum ClientMessage {
     /// Server must receive this within 3 seconds or connection will be closed.
     /// Server responds with AuthSuccess or AuthError.
     ///
-    /// Supports multiple authentication methods via the `credentials` field.
+    /// Supports token-based authentication via the `credentials` field.
     Authenticate {
-        /// Authentication credentials (basic, jwt, or future methods)
+        /// Authentication credentials (jwt or future token-based methods)
         #[serde(flatten)]
         credentials: WsAuthCredentials,
     },

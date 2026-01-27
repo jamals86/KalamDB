@@ -5,8 +5,8 @@ use crate::models::{ClientMessage, WsAuthCredentials};
 /// Authentication provider for WASM clients
 ///
 /// Supports three authentication modes:
-/// - Basic: HTTP Basic Auth with username/password
-/// - Jwt: Bearer token authentication with JWT
+/// - Basic: HTTP Basic Auth with username/password (HTTP only)
+/// - Jwt: Bearer token authentication with JWT (required for WebSocket)
 /// - None: No authentication (localhost bypass)
 #[derive(Clone)]
 pub(crate) enum WasmAuthProvider {
@@ -35,12 +35,7 @@ impl WasmAuthProvider {
     /// Get the WebSocket authentication message using unified WsAuthCredentials
     pub(crate) fn to_ws_auth_message(&self) -> Option<ClientMessage> {
         match self {
-            WasmAuthProvider::Basic { username, password } => Some(ClientMessage::Authenticate {
-                credentials: WsAuthCredentials::Basic {
-                    username: username.clone(),
-                    password: password.clone(),
-                },
-            }),
+            WasmAuthProvider::Basic { .. } => None,
             WasmAuthProvider::Jwt { token } => Some(ClientMessage::Authenticate {
                 credentials: WsAuthCredentials::Jwt {
                     token: token.clone(),

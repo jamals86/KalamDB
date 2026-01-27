@@ -275,11 +275,11 @@ fn smoke_cli_system_tables() {
         execute_sql_as_root_via_client("SELECT namespace_id, name FROM system.namespaces LIMIT 5");
     assert!(result.is_ok(), "system.namespaces should be queryable: {:?}", result);
 
-    // Test system.tables
+    // Test system.schemas
     let result = execute_sql_as_root_via_client(
-        "SELECT namespace_id, table_name, table_type FROM system.tables LIMIT 5",
+        "SELECT namespace_id, table_name, table_type FROM system.schemas LIMIT 5",
     );
-    assert!(result.is_ok(), "system.tables should be queryable: {:?}", result);
+    assert!(result.is_ok(), "system.schemas should be queryable: {:?}", result);
 
     // Test system.jobs
     let result =

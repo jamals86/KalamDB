@@ -1,16 +1,9 @@
 //! System tables smoke coverage over the real HTTP SQL API.
 
-use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
+use super::test_support::auth_helper::create_user_auth_header_default;
+use super::test_support::consolidated_helpers::{unique_namespace, unique_table};
 use super::test_support::flush::flush_table_and_wait;
-use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{Role, UserName};
-
-async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
-    let password = "UserPass123!";
-    let _ = ensure_user_exists(server, username, password, &Role::User).await?;
-    Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
-}
 
 #[tokio::test]
 async fn test_system_tables_queryable_over_http() -> anyhow::Result<()> {
@@ -23,7 +16,7 @@ async fn test_system_tables_queryable_over_http() -> anyhow::Result<()> {
     anyhow::ensure!(resp.status == ResponseStatus::Success);
 
     let user = unique_table("sys_user");
-    let auth = create_user(server, &user).await?;
+    let auth = create_user_auth_header_default(server, &user).await?;
 
     let resp = server
                 .execute_sql_with_auth(
@@ -69,10 +62,10 @@ async fn test_system_tables_queryable_over_http() -> anyhow::Result<()> {
     anyhow::ensure!(resp.status == ResponseStatus::Success);
     anyhow::ensure!(!resp.rows_as_maps().is_empty());
 
-    // system.tables
+    // system.schemas
     let resp = server
                 .execute_sql(&format!(
-                    "SELECT table_name, table_type FROM system.tables WHERE namespace_id = '{}' ORDER BY table_name",
+                    "SELECT table_name, table_type FROM system.schemas WHERE namespace_id = '{}' ORDER BY table_name",
                     ns
                 ))
                 .await?;

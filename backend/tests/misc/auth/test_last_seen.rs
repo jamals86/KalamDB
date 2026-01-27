@@ -4,18 +4,26 @@
 //! The stateless authenticate() function returns authentication results without
 //! side effects. last_seen updates would need to be handled at the handler level.
 //!
-//! These tests verify basic authentication behavior and are placeholders for
+//! These tests verify token authentication behavior and are placeholders for
 //! future last_seen implementation at the HTTP/WebSocket handler level.
 
 use super::test_support::TestServer;
-use base64::{engine::general_purpose, Engine as _};
 use kalamdb_auth::{authenticate, AuthRequest};
-use kalamdb_commons::{models::{ConnectionInfo, UserName}, Role};
+use kalamdb_commons::{models::{ConnectionInfo, UserId, UserName}, Role};
 
-fn basic_auth_header(username: &str, password: &str) -> String {
-    let credentials = format!("{}:{}", username, password);
-    let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
-    format!("Basic {}", encoded)
+fn bearer_auth_header(username: &str, user_id: &str, role: Role) -> String {
+    let secret = kalamdb_configs::defaults::default_auth_jwt_secret();
+    let email = format!("{}@example.com", username);
+    let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
+        &UserId::new(user_id),
+        &UserName::new(username),
+        &role,
+        Some(email.as_str()),
+        Some(1),
+        &secret,
+    )
+    .expect("Failed to create JWT token");
+    format!("Bearer {}", token)
 }
 
 #[tokio::test]
@@ -29,7 +37,7 @@ async fn test_authentication_returns_user() {
     // Create user
     server.create_user(username, password, Role::User).await;
 
-    let auth_header = basic_auth_header(username, password);
+    let auth_header = bearer_auth_header(username, username, Role::User);
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
     let auth_request = AuthRequest::Header(auth_header);
 
@@ -52,7 +60,7 @@ async fn test_multiple_authentications_succeed() {
     // Create user
     server.create_user(username, password, Role::User).await;
 
-    let auth_header = basic_auth_header(username, password);
+    let auth_header = bearer_auth_header(username, username, Role::User);
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
     // First authentication

@@ -14,4 +14,7 @@ pub trait UserRepository: Send + Sync {
 
     /// Update a full user record. Implementations may persist only changed fields.
     async fn update_user(&self, user: &User) -> AuthResult<()>;
+
+    /// Create a new user.
+    async fn create_user(&self, user: User) -> AuthResult<()>;
 }

@@ -22,6 +22,8 @@ use serde_json::json;
 /// - POST /v1/api/auth/refresh - Refresh auth token
 /// - POST /v1/api/auth/logout - Logout and clear cookie
 /// - GET /v1/api/auth/me - Get current user info
+/// - POST /v1/api/auth/setup - Initial server setup (localhost only, requires no password on root)
+/// - GET /v1/api/auth/status - Check server setup status (localhost only)
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg
         // Root-level health check endpoint (no version prefix)
@@ -45,7 +47,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                                 .route("/login", web::post().to(handlers::login_handler))
                                 .route("/refresh", web::post().to(handlers::refresh_handler))
                                 .route("/logout", web::post().to(handlers::logout_handler))
-                                .route("/me", web::get().to(handlers::me_handler)),
+                                .route("/me", web::get().to(handlers::me_handler))
+                                .route("/setup", web::post().to(handlers::server_setup_handler))
+                                .route("/status", web::get().to(handlers::setup_status_handler)),
                         ),
                 )
                 // File download endpoint (outside of /api scope for shorter URLs)

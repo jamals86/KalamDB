@@ -64,11 +64,7 @@ fn resolve_ws_url(base_url: &str, override_url: Option<&str>) -> String {
 
 fn build_request_url(ws_url: &str, auth: &AuthProvider) -> String {
     match auth {
-        AuthProvider::BasicAuth(_username, _password) => {
-            // For HTTP Basic Auth, we'll send via Authorization header instead of query params
-            // This is more secure than exposing credentials in the URL
-            ws_url.to_string()
-        },
+        AuthProvider::BasicAuth(_username, _password) => ws_url.to_string(),
         AuthProvider::JwtToken(token) => append_query(ws_url, "token", token),
         AuthProvider::None => ws_url.to_string(),
     }
@@ -86,21 +82,11 @@ fn apply_ws_auth_headers(
     request: &mut tokio_tungstenite::tungstenite::http::Request<()>,
     auth: &AuthProvider,
 ) -> Result<()> {
-    use base64::{engine::general_purpose, Engine as _};
-
     match auth {
-        AuthProvider::BasicAuth(username, password) => {
-            // Encode username:password as base64 (RFC 7617)
-            let credentials = format!("{}:{}", username, password);
-            let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
-            let value = format!("Basic {}", encoded);
-            let header_value = HeaderValue::from_str(&value).map_err(|e| {
-                KalamLinkError::ConfigurationError(format!(
-                    "Invalid Basic Auth header value: {}",
-                    e
-                ))
-            })?;
-            request.headers_mut().insert(AUTHORIZATION, header_value);
+        AuthProvider::BasicAuth(_, _) => {
+            return Err(KalamLinkError::AuthenticationError(
+                "WebSocket authentication requires a JWT token. Use AuthProvider::jwt_token or login first.".to_string(),
+            ));
         },
         AuthProvider::JwtToken(token) => {
             let value = format!("Bearer {}", token);
@@ -129,9 +115,10 @@ async fn send_auth_and_wait(
 ) -> Result<()> {
     // Convert auth provider to WsAuthCredentials
     let credentials = match auth {
-        AuthProvider::BasicAuth(username, password) => WsAuthCredentials::Basic {
-            username: username.clone(),
-            password: password.clone(),
+        AuthProvider::BasicAuth(_, _) => {
+            return Err(KalamLinkError::AuthenticationError(
+                "WebSocket authentication requires a JWT token. Use AuthProvider::jwt_token or login first.".to_string(),
+            ));
         },
         AuthProvider::JwtToken(token) => WsAuthCredentials::Jwt {
             token: token.clone(),

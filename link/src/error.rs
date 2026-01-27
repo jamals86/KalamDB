@@ -38,6 +38,10 @@ pub enum KalamLinkError {
     /// Authentication failures (invalid token, expired credentials)
     AuthenticationError(String),
 
+    /// Server requires initial setup (root password not configured)
+    /// The CLI should prompt the user to complete server setup
+    SetupRequired(String),
+
     /// Server returned an error response
     ServerError {
         /// HTTP status code
@@ -73,6 +77,7 @@ impl fmt::Display for KalamLinkError {
         match self {
             Self::NetworkError(msg) => write!(f, "Network error: {}", msg),
             Self::AuthenticationError(msg) => write!(f, "Authentication failed: {}", msg),
+            Self::SetupRequired(msg) => write!(f, "Server setup required: {}", msg),
             Self::ServerError {
                 status_code,
                 message,

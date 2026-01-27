@@ -10,7 +10,10 @@ pub mod file_utils;
 pub mod sql_handler;
 pub mod ws_handler;
 
-pub use auth::{login_handler, logout_handler, me_handler, refresh_handler};
+pub use auth::{
+    login_handler, logout_handler, me_handler, refresh_handler, server_setup_handler,
+    setup_status_handler,
+};
 pub use cluster_handler::cluster_health_handler;
 pub use file_handler::download_file;
 pub use sql_handler::*;

@@ -3,11 +3,12 @@
 use kalam_link::models::ResponseStatus as LinkResponseStatus;
 use kalamdb_api::models::{ResponseStatus as ApiResponseStatus, SqlResponse};
 use kalamdb_system::FileRef;
-use kalamdb_commons::{Role, UserId, UserName};
+use kalamdb_commons::{Role, UserName};
 use reqwest::multipart;
 use serde_json::Value as JsonValue;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+use super::test_support::auth_helper::create_user_auth_header_with_id;
 use super::test_support::http_server::start_http_test_server;
 
 fn unique_suffix() -> String {
@@ -105,16 +106,6 @@ async fn execute_sql_multipart(
     Ok(response.json::<SqlResponse>().await?)
 }
 
-fn bearer_header(
-    server: &super::test_support::http_server::HttpTestServer,
-    user_id: &UserId,
-    username: &UserName,
-    role: &Role,
-) -> String {
-    let token = server.create_jwt_token_with_id(user_id, username, role);
-    format!("Bearer {}", token)
-}
-
 #[tokio::test]
 #[ntest::timeout(60000)]
 async fn test_file_download_permissions_user_table() -> anyhow::Result<()> {
@@ -134,27 +125,11 @@ async fn test_file_download_permissions_user_table() -> anyhow::Result<()> {
     let resp = server.execute_sql(&create_table_sql).await?;
     assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE TABLE failed");
 
-    let alice_id = server.ensure_user_exists("alice", "test123", &Role::User).await?;
-    let bob_id = server.ensure_user_exists("bob", "test123", &Role::User).await?;
-
-    let alice_auth = bearer_header(
-        server,
-        &UserId::new(alice_id.clone()),
-        &UserName::new("alice"),
-        &Role::User,
-    );
-    let bob_auth = bearer_header(
-        server,
-        &UserId::new(bob_id),
-        &UserName::new("bob"),
-        &Role::User,
-    );
-    let root_auth = bearer_header(
-        server,
-        &UserId::new("1"),
-        &UserName::new("root"),
-        &Role::System,
-    );
+    let (alice_auth, alice_id) =
+        create_user_auth_header_with_id(server, "alice", "test123", &Role::User).await?;
+    let (bob_auth, _bob_id) =
+        create_user_auth_header_with_id(server, "bob", "test123", &Role::User).await?;
+    let root_auth = server.bearer_auth_header(&UserName::new("root"))?;
 
     let insert_sql = format!(
         "INSERT INTO {}.{} (id, name, doc) VALUES (1, 'Alice', FILE(\"doc\"))",
@@ -233,13 +208,8 @@ async fn test_insert_with_files_permission_denied() -> anyhow::Result<()> {
         let resp = server.execute_sql(&create_table_sql).await?;
         assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE TABLE failed");
 
-        let bob_id = server.ensure_user_exists("bob", "test123", &Role::User).await?;
-        let bob_auth = bearer_header(
-            &server,
-            &UserId::new(bob_id),
-            &UserName::new("bob"),
-            &Role::User,
-        );
+        let (bob_auth, _bob_id) =
+            create_user_auth_header_with_id(&server, "bob", "test123", &Role::User).await?;
 
         let insert_sql = format!(
             "INSERT INTO {}.{} (id, doc) VALUES (1, FILE(\"doc\"))",
@@ -306,13 +276,8 @@ async fn test_failed_insert_cleans_up_files() -> anyhow::Result<()> {
         let resp = server.execute_sql(&create_table_sql).await?;
         assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE TABLE failed");
 
-        let alice_id = server.ensure_user_exists("alice", "test123", &Role::User).await?;
-        let alice_auth = bearer_header(
-            &server,
-            &UserId::new(alice_id.clone()),
-            &UserName::new("alice"),
-            &Role::User,
-        );
+        let (alice_auth, alice_id) =
+            create_user_auth_header_with_id(&server, "alice", "test123", &Role::User).await?;
 
         let insert_sql = format!(
             "INSERT INTO {}.{} (id, name, doc) VALUES (1, NULL, FILE(\"doc\"))",
@@ -369,41 +334,15 @@ async fn test_user_file_access_matrix() -> anyhow::Result<()> {
     let resp = server.execute_sql(&create_table_sql).await?;
     assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE TABLE failed");
 
-    let usera_id = server.ensure_user_exists("usera", "test123", &Role::User).await?;
-    let userb_id = server.ensure_user_exists("userb", "test123", &Role::User).await?;
-    let service_id = server.ensure_user_exists("svc", "test123", &Role::Service).await?;
-    let dba_id = server.ensure_user_exists("dba", "test123", &Role::Dba).await?;
-
-    let usera_auth = bearer_header(
-        server,
-        &UserId::new(usera_id.clone()),
-        &UserName::new("usera"),
-        &Role::User,
-    );
-    let userb_auth = bearer_header(
-        server,
-        &UserId::new(userb_id.clone()),
-        &UserName::new("userb"),
-        &Role::User,
-    );
-    let service_auth = bearer_header(
-        server,
-        &UserId::new(service_id),
-        &UserName::new("svc"),
-        &Role::Service,
-    );
-    let dba_auth = bearer_header(
-        server,
-        &UserId::new(dba_id),
-        &UserName::new("dba"),
-        &Role::Dba,
-    );
-    let root_auth = bearer_header(
-        server,
-        &UserId::new("1"),
-        &UserName::new("root"),
-        &Role::System,
-    );
+    let (usera_auth, usera_id) =
+        create_user_auth_header_with_id(server, "usera", "test123", &Role::User).await?;
+    let (userb_auth, userb_id) =
+        create_user_auth_header_with_id(server, "userb", "test123", &Role::User).await?;
+    let (service_auth, _service_id) =
+        create_user_auth_header_with_id(server, "svc", "test123", &Role::Service).await?;
+    let (dba_auth, _dba_id) =
+        create_user_auth_header_with_id(server, "dba", "test123", &Role::Dba).await?;
+    let root_auth = server.bearer_auth_header(&UserName::new("root"))?;
 
     let insert_sql = format!(
         "INSERT INTO {}.{} (id, name, doc) VALUES (1, 'A', FILE(\"doc\"))",

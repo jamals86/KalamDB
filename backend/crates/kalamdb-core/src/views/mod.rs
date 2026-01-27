@@ -1,17 +1,23 @@
 pub mod cluster;
 pub mod cluster_groups;
+pub mod columns_view;
 pub mod datatypes;
 pub mod describe;
+pub mod lazy_system_schema;
 pub mod server_logs;
 pub mod settings;
 pub mod stats;
+pub mod tables_view;
 pub mod view_base;
 
 pub use cluster::*;
 pub use cluster_groups::*;
+pub use columns_view::*;
 pub use datatypes::*;
 pub use describe::*;
+pub use lazy_system_schema::*;
 pub use server_logs::*;
 pub use settings::*;
 pub use stats::*;
+pub use tables_view::*;
 pub use view_base::*;

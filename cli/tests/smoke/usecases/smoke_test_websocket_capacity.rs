@@ -1,7 +1,6 @@
 // Smoke test to stress WebSocket connection capacity and ensure HTTP API stays responsive
 
 use crate::common::*;
-use base64::{engine::general_purpose::STANDARD, Engine};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -56,7 +55,9 @@ fn smoke_test_websocket_capacity() {
     let subscription_prefix_for_cleanup = subscription_prefix.clone();
 
     runtime.block_on(async move {
-        let auth_header = build_basic_auth_header(AUTH_USERNAME, root_password());
+        let token = get_access_token(AUTH_USERNAME, root_password())
+            .await
+            .unwrap_or_else(|e| panic!("Failed to get access token: {}", e));
         
         // We need to keep connections alive while running SQL queries
         // The server sends ping frames every 5s, and we need to respond with pong
@@ -73,7 +74,7 @@ fn smoke_test_websocket_capacity() {
                 CONNECTION_TIMEOUT,
                 open_authenticated_connection(
                     idx,
-                    &auth_header,
+                    &token,
                     &table_for_rt,
                     &subscription_id,
                 ),
@@ -211,7 +212,7 @@ type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 async fn open_authenticated_connection(
     idx: usize,
-    auth_header: &str,
+    token: &str,
     table_name: &str,
     subscription_id: &str,
 ) -> WsStream {
@@ -222,6 +223,7 @@ async fn open_authenticated_connection(
         .unwrap_or_else(|e| panic!("Invalid WebSocket URL ({}): {}", ws_url, e));
     {
         let headers = request.headers_mut();
+        let auth_header = format!("Bearer {}", token);
         headers.insert(
             AUTHORIZATION,
             HeaderValue::from_str(auth_header)
@@ -236,9 +238,8 @@ async fn open_authenticated_connection(
 
     let auth_payload = json!({
         "type": "authenticate",
-        "method": "basic",
-        "username": AUTH_USERNAME,
-        "password": root_password(),
+        "method": "jwt",
+        "token": token,
     });
 
     stream

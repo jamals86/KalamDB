@@ -11,8 +11,7 @@
 
 use crate::common::*;
 use kalam_link::{
-    AuthProvider, ConnectionOptions, HttpVersion, KalamLinkClient, KalamLinkTimeouts,
-    SubscriptionOptions,
+    ConnectionOptions, HttpVersion, KalamLinkClient, KalamLinkTimeouts, SubscriptionOptions,
 };
 use std::time::Duration;
 
@@ -555,7 +554,7 @@ fn test_live_http2_query_execution() {
     let base_url = leader_or_server_url();
     let client = KalamLinkClient::builder()
         .base_url(&base_url)
-        .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
+        .auth(auth_provider_for_user_on_url(&base_url, "root", root_password()))
         .http_version(HttpVersion::Auto) // Auto-negotiate, falls back to HTTP/1.1
         .timeouts(KalamLinkTimeouts::fast())
         .build()

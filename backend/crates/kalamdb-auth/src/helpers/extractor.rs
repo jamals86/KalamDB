@@ -28,7 +28,7 @@
 //! #[post("/sql")]
 //! async fn sql_handler(session: AuthSession) -> impl Responder {
 //!     // Access user via session.user
-//!     // Access auth method via session.method (Basic, Bearer, Direct)
+//!     // Access auth method via session.method (Bearer)
 //!     // Access connection info via session.connection_info
 //! }
 //!
@@ -153,7 +153,7 @@ impl From<AuthError> for AuthExtractError {
 
 /// Full authentication session with user, method, and connection info.
 ///
-/// Use this when you need access to the authentication method (Basic, Bearer, Direct)
+/// Use this when you need access to the authentication method (Bearer)
 /// for audit logging or when you need the connection info.
 ///
 /// # Example
@@ -162,11 +162,6 @@ impl From<AuthError> for AuthExtractError {
 /// async fn handler(session: AuthSession) -> impl Responder {
 ///     // Access the authenticated user
 ///     let user = &session.user;
-///     
-///     // Check auth method for audit logging
-///     if session.is_password_auth() {
-///         // Log password-based authentication
-///     }
 ///     
 ///     // Access connection info
 ///     let ip = &session.connection_info.remote_addr;
@@ -180,14 +175,6 @@ pub struct AuthSession {
     pub method: AuthMethod,
     /// Connection information (IP address, localhost check)
     pub connection_info: ConnectionInfo,
-}
-
-impl AuthSession {
-    /// Check if authentication was password-based (Basic Auth or Direct credentials).
-    /// Useful for determining when to log authentication events.
-    pub fn is_password_auth(&self) -> bool {
-        matches!(self.method, AuthMethod::Basic | AuthMethod::Direct)
-    }
 }
 
 impl Deref for AuthSession {
@@ -241,12 +228,23 @@ impl FromRequest for AuthSession {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
                     return Err(AuthExtractError::new(
                         AuthError::MissingAuthorization(
-                            "Authorization header is required. Use 'Authorization: Basic <credentials>' or 'Authorization: Bearer <token>'".to_string(),
+                            "Authorization header is required. Use 'Authorization: Bearer <token>'".to_string(),
                         ),
                         took,
                     ));
                 },
             };
+
+            // Reject Basic auth for all extractors (password auth only via login endpoint)
+            if auth_header.trim_start().to_lowercase().starts_with("basic ") {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return Err(AuthExtractError::new(
+                    AuthError::InvalidCredentials(
+                        "This endpoint requires a Bearer token. Basic authentication is not supported.".to_string(),
+                    ),
+                    took,
+                ));
+            }
 
             // Extract client IP with security checks
             let connection_info = extract_client_ip_secure(&req);
@@ -255,11 +253,22 @@ impl FromRequest for AuthSession {
             let auth_request = AuthRequest::Header(auth_header);
 
             match authenticate(auth_request, &connection_info, &repo).await {
-                Ok(result) => Ok(AuthSession {
-                    user: result.user,
-                    method: result.method,
-                    connection_info,
-                }),
+                Ok(result) => {
+                    if !matches!(result.method, AuthMethod::Bearer) {
+                        let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                        return Err(AuthExtractError::new(
+                            AuthError::InvalidCredentials(
+                                "This endpoint requires a Bearer token.".to_string(),
+                            ),
+                            took,
+                        ));
+                    }
+                    Ok(AuthSession {
+                        user: result.user,
+                        method: result.method,
+                        connection_info,
+                    })
+                },
                 Err(e) => {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
                     Err(AuthExtractError::new(e, took))
@@ -329,12 +338,23 @@ impl FromRequest for AuthenticatedUser {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
                     return Err(AuthExtractError::new(
                         AuthError::MissingAuthorization(
-                            "Authorization header is required. Use 'Authorization: Basic <credentials>' or 'Authorization: Bearer <token>'".to_string(),
+                            "Authorization header is required. Use 'Authorization: Bearer <token>'".to_string(),
                         ),
                         took,
                     ));
                 },
             };
+
+            // Reject Basic auth for all extractors (password auth only via login endpoint)
+            if auth_header.trim_start().to_lowercase().starts_with("basic ") {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return Err(AuthExtractError::new(
+                    AuthError::InvalidCredentials(
+                        "This endpoint requires a Bearer token. Basic authentication is not supported.".to_string(),
+                    ),
+                    took,
+                ));
+            }
 
             // Extract client IP with security checks
             let connection_info = extract_client_ip_secure(&req);
@@ -435,6 +455,17 @@ impl FromRequest for OptionalAuth {
                 },
                 None => return Ok(OptionalAuth::anonymous()),
             };
+
+            // Reject Basic auth for all extractors (password auth only via login endpoint)
+            if auth_header.trim_start().to_lowercase().starts_with("basic ") {
+                return Err(AuthExtractError::new(
+                    AuthError::InvalidCredentials(
+                        "This endpoint requires a Bearer token. Basic authentication is not supported.".to_string(),
+                    ),
+                    0.0,
+                )
+                .into());
+            }
 
             // Extract client IP
             let connection_info = extract_client_ip_secure(&req);

@@ -1,30 +1,38 @@
 import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { QueryTab } from "../types";
 
-interface TabsProps {
-  tabs: QueryTab[];
-  activeTabId: string;
-  onTabClick: (tabId: string) => void;
-  onTabClose: (tabId: string, e: React.MouseEvent) => void;
-  onAddTab: () => void;
+interface QueryTab {
+  id: string;
+  name: string;
+  query: string;
+  subscriptionStatus?: 'idle' | 'connecting' | 'connected' | 'error';
+  isLive?: boolean;
 }
 
-export function Tabs({ tabs, activeTabId, onTabClick, onTabClose, onAddTab }: TabsProps) {
+interface TabBarProps {
+  tabs: QueryTab[];
+  activeTabId: string;
+  onTabChange: (tabId: string) => void;
+  onAddTab: () => void;
+  onCloseTab: (tabId: string, e?: React.MouseEvent) => void;
+}
+
+export function TabBar({ tabs, activeTabId, onTabChange, onAddTab, onCloseTab }: TabBarProps) {
   return (
     <div className="flex items-center gap-1">
       {tabs.map((tab) => (
         <div
           key={tab.id}
-          onClick={() => onTabClick(tab.id)}
+          onClick={() => onTabChange(tab.id)}
           className={cn(
-            "flex items-center gap-1 px-3 py-1.5 rounded cursor-pointer text-sm",
+            "flex items-center gap-1 px-3 py-1.5 rounded cursor-pointer text-sm transition-colors",
             activeTabId === tab.id
               ? "bg-muted font-medium"
               : "hover:bg-muted/50"
           )}
         >
+          {/* Green dot for live subscribed tabs */}
           {tab.subscriptionStatus === "connected" && (
             <span className="relative flex h-2 w-2 mr-1">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
@@ -34,8 +42,11 @@ export function Tabs({ tabs, activeTabId, onTabClick, onTabClose, onAddTab }: Ta
           {tab.name}
           {tabs.length > 1 && (
             <button
-              onClick={(e) => onTabClose(tab.id, e)}
-              className="ml-1 hover:bg-muted-foreground/20 rounded p-0.5"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCloseTab(tab.id, e);
+              }}
+              className="ml-1 hover:bg-muted-foreground/20 rounded p-0.5 transition-colors"
             >
               <X className="h-3 w-3" />
             </button>

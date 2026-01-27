@@ -1,10 +1,10 @@
 //! Manifest persistence behavior over the real HTTP SQL API.
 
-use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
+use super::test_support::auth_helper::create_user_auth_header;
+use super::test_support::consolidated_helpers::{unique_namespace, unique_table};
 use super::test_support::flush::flush_table_and_wait;
-use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{Role, UserName};
+use kalamdb_commons::Role;
 use tokio::time::{sleep, Duration, Instant};
 
 fn find_manifest_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -27,65 +27,6 @@ fn find_manifest_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     out
 }
 
-async fn wait_for_flush_job_completed(
-    server: &HttpTestServer,
-    ns: &str,
-    table: &str,
-) -> anyhow::Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        let resp = server
-            .execute_sql(
-                "SELECT job_type, status, parameters FROM system.jobs WHERE job_type = 'flush'",
-            )
-            .await?;
-
-        if resp.status == ResponseStatus::Success {
-            let rows = resp.rows_as_maps();
-            let matching: Vec<_> = rows
-                .iter()
-                .filter(|r| {
-                    r.get("parameters")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.contains(ns) && s.contains(table))
-                        .unwrap_or(false)
-                })
-                .collect();
-
-            let has_completed = matching.iter().any(|job| {
-                job.get("status")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s == "completed")
-                    .unwrap_or(false)
-            });
-
-            let has_active = matching.iter().any(|job| {
-                job.get("status")
-                    .and_then(|v| v.as_str())
-                    .map(|s| matches!(s, "new" | "running" | "retrying"))
-                    .unwrap_or(false)
-            });
-
-            let storage_root = server.storage_root();
-            let has_manifest = find_manifest_files(&storage_root).iter().any(|p| {
-                let s = p.to_string_lossy();
-                s.contains(ns)
-                    && s.contains(table)
-                    && p.components().any(|c| c.as_os_str().to_string_lossy().starts_with("u_"))
-            });
-
-            if (has_completed && !has_active) || has_manifest {
-                return Ok(());
-            }
-        }
-
-        if Instant::now() >= deadline {
-            anyhow::bail!("Timed out waiting for flush job to complete for {}.{}", ns, table);
-        }
-        sleep(Duration::from_millis(100)).await;
-    }
-}
-
 #[tokio::test]
 async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> {
     let _guard = super::test_support::http_server::acquire_test_lock().await;
@@ -97,9 +38,7 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
         let user = unique_table("user1");
         let password = "UserPass123!";
 
-        let _ = ensure_user_exists(server, &user, password, &Role::User).await?;
-
-        let user_auth = HttpTestServer::basic_auth_header(&UserName::new(&user), password);
+        let user_auth = create_user_auth_header(server, &user, password, &Role::User).await?;
 
         let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
         assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);
@@ -193,9 +132,7 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
         let user = unique_table("user2");
         let password = "UserPass123!";
 
-        let _ = ensure_user_exists(server, &user, password, &Role::User).await?;
-
-        let user_auth = HttpTestServer::basic_auth_header(&UserName::new(&user), password);
+        let user_auth = create_user_auth_header(server, &user, password, &Role::User).await?;
 
         let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
         assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);

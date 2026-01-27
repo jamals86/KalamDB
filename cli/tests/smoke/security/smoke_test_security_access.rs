@@ -46,7 +46,7 @@ fn subscribe_as_user(username: &str, password: &str, query: &str) -> Result<(), 
 
     let client = KalamLinkClient::builder()
         .base_url(&base_url)
-        .auth(AuthProvider::basic_auth(username.to_string(), password.to_string()))
+        .auth(auth_provider_for_user_on_url(&base_url, username, password))
         .timeouts(
             KalamLinkTimeouts::builder()
                 .connection_timeout_secs(5)
@@ -114,7 +114,7 @@ fn smoke_security_system_tables_blocked_in_batch() {
 
     let batch_queries = vec![
         "SELECT 1; SELECT * FROM system.users",
-        "SELECT 1; SELECT * FROM system.tables",
+        "SELECT 1; SELECT * FROM system.schemas",
         "SELECT 1; SELECT * FROM (SELECT * FROM system.users) AS u",
         "SELECT 1; SELECT u.username FROM system.users u JOIN (SELECT user_id FROM system.users) s ON u.user_id = s.user_id",
         "SELECT 1; SELECT * FROM system.users WHERE username IN (SELECT username FROM system.users)",

@@ -1,6 +1,6 @@
-//! System.tables table schema (system_tables in RocksDB)
+//! System.schemas table schema (system_schemas in RocksDB)
 //!
-//! This module defines the schema for the system.tables table.
+//! This module defines the schema for the system.schemas table.
 //! - TableDefinition: Source of truth for columns, types, comments
 //! - Arrow schema: Derived from TableDefinition, memoized via OnceLock
 
@@ -12,15 +12,15 @@ use kalamdb_commons::schemas::{
 use kalamdb_commons::{NamespaceId, SystemTable, TableName};
 use std::sync::OnceLock;
 
-/// System tables table schema definition
+/// System schemas table schema definition
 ///
 /// Provides typed access to the table definition and Arrow schema.
 /// Contains the full TableDefinition as the single source of truth.
 #[derive(Debug, Clone, Copy)]
-pub struct TablesTableSchema;
+pub struct SchemasTableSchema;
 
-impl TablesTableSchema {
-    /// Get the TableDefinition for system.tables
+impl SchemasTableSchema {
+    /// Get the TableDefinition for system.schemas
     ///
     /// This is the single source of truth for:
     /// - Column definitions (names, types, nullability)
@@ -202,35 +202,35 @@ impl TablesTableSchema {
 
         TableDefinition::new(
             NamespaceId::system(),
-            TableName::new(SystemTable::Tables.table_name()),
+            TableName::new(SystemTable::Schemas.table_name()),
             TableType::System,
             columns,
             TableOptions::system(),
-            Some("Registry of all tables in the database".to_string()),
+            Some("Registry of all table schemas and their histories in the database".to_string()),
         )
-        .expect("Failed to create system.tables table definition")
+        .expect("Failed to create system.schemas table definition")
     }
 
-    /// Get the cached Arrow schema for system.tables table
+    /// Get the cached Arrow schema for system.schemas table
     pub fn schema() -> SchemaRef {
         static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
         SCHEMA
             .get_or_init(|| {
                 Self::definition()
                     .to_arrow_schema()
-                    .expect("Failed to convert tables TableDefinition to Arrow schema")
+                    .expect("Failed to convert schemas TableDefinition to Arrow schema")
             })
             .clone()
     }
 
     /// Get the table name
     pub fn table_name() -> &'static str {
-        SystemTable::Tables.table_name()
+        SystemTable::Schemas.table_name()
     }
 
     /// Get the column family name in RocksDB
     pub fn column_family_name() -> &'static str {
-        SystemTable::Tables.column_family_name().expect("Tables is a table, not a view")
+        SystemTable::Schemas.column_family_name().expect("Schemas is a table, not a view")
     }
 
     /// Get the partition key for storage
@@ -245,8 +245,8 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn test_tables_table_schema() {
-        let schema = TablesTableSchema::schema();
+    fn test_schemas_table_schema() {
+        let schema = SchemasTableSchema::schema();
         // Schema built from TableDefinition, verify field count matches definition
         // Expecting 14 fields: table_id, table_name, namespace_id, table_type, created_at,
         // schema_version, columns, table_comment, updated_at, options, access_level, is_latest,
@@ -267,18 +267,18 @@ mod tests {
     }
 
     #[test]
-    fn test_tables_table_name() {
-        assert_eq!(TablesTableSchema::table_name(), "tables");
+    fn test_schemas_table_name() {
+        assert_eq!(SchemasTableSchema::table_name(), "schemas");
         assert_eq!(
-            TablesTableSchema::column_family_name(),
-            SystemTable::Tables.column_family_name().expect("Tables is a table, not a view")
+            SchemasTableSchema::column_family_name(),
+            SystemTable::Schemas.column_family_name().expect("Schemas is a table, not a view")
         );
     }
 
     #[test]
     fn test_schema_caching() {
-        let schema1 = TablesTableSchema::schema();
-        let schema2 = TablesTableSchema::schema();
+        let schema1 = SchemasTableSchema::schema();
+        let schema2 = SchemasTableSchema::schema();
         assert!(Arc::ptr_eq(&schema1, &schema2), "Schema should be cached");
     }
 }

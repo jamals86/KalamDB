@@ -111,7 +111,8 @@ pub fn server_url() -> &'static str {
             if should_auto_start_test_server() {
                 if let Some((url, storage_dir)) = ensure_auto_test_server() {
                     std::env::set_var("KALAMDB_SERVER_URL", &url);
-                    std::env::set_var("KALAMDB_ROOT_PASSWORD", "");
+                    // Use a test password instead of empty to bypass the server-setup flow
+                    std::env::set_var("KALAMDB_ROOT_PASSWORD", "test_password");
                     std::env::set_var("KALAMDB_STORAGE_DIR", storage_dir.to_string_lossy().to_string());
                     return url;
                 }
@@ -123,16 +124,14 @@ pub fn server_url() -> &'static str {
 }
 
 pub async fn is_server_running() -> bool {
-    let credentials = base64::engine::general_purpose::STANDARD.encode("root:");
+    // Use the status endpoint which doesn't require authentication
     match reqwest::Client::new()
-        .post(format!("{}/v1/api/sql", server_url()))
-        .header("Authorization", format!("Basic {}", credentials))
-        .json(&serde_json::json!({ "sql": "SELECT 1" }))
+        .get(format!("{}/v1/api/auth/status", server_url()))
         .timeout(Duration::from_secs(2))
         .send()
         .await
     {
-        Ok(resp) => resp.status().is_success(),
+        Ok(resp) => resp.status().is_success() || resp.status().as_u16() == 428,
         Err(_) => false,
     }
 }

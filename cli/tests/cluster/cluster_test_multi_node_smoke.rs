@@ -106,7 +106,7 @@ fn cluster_test_smoke_system_tables_any_node() {
 
     let urls = cluster_urls();
     let system_queries = vec![
-        ("system.tables", "SELECT count(*) as count FROM system.tables"),
+        ("system.schemas", "SELECT count(*) as count FROM system.schemas"),
         ("system.namespaces", "SELECT count(*) as count FROM system.namespaces"),
         ("system.users", "SELECT count(*) as count FROM system.users"),
         ("system.cluster", "SELECT node_id, is_leader FROM system.cluster"),
@@ -191,7 +191,7 @@ fn cluster_test_smoke_table_types_any_node() {
         let tables = vec!["user_tbl", "shared_tbl", "stream_tbl"];
         for table_name in &tables {
             let query = format!(
-                "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+                "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
                 namespace, table_name
             );
 

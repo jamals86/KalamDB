@@ -60,7 +60,7 @@ fn parse_cluster_nodes() -> (String, String) {
 fn create_ws_client(base_url: &str) -> KalamLinkClient {
     KalamLinkClient::builder()
         .base_url(base_url)
-        .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
+        .auth(auth_provider_for_user_on_url(base_url, "root", root_password()))
         .timeouts(
             KalamLinkTimeouts::builder()
                 .connection_timeout_secs(5)

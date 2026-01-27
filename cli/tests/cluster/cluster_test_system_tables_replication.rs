@@ -1,7 +1,7 @@
 //! Cluster System Tables Replication Tests
 //!
 //! Tests that verify system table data is properly replicated across all cluster nodes.
-//! System tables include: system.tables, system.users, system.namespaces, system.cluster, etc.
+//! System tables include: system.schemas, system.users, system.namespaces, system.cluster, etc.
 //!
 //! These tests ensure that:
 //! 1. System table metadata is identical across all nodes
@@ -28,14 +28,14 @@ fn extract_row_set(base_url: &str, sql: &str) -> Result<HashSet<String>, String>
     Ok(set)
 }
 
-/// Test: system.tables is identical across all nodes
+/// Test: system.schemas is identical across all nodes
 #[test]
 fn cluster_test_system_tables_replication() {
     if !require_cluster_running() {
         return;
     }
 
-    println!("\n=== TEST: system.tables Replication ===\n");
+    println!("\n=== TEST: system.schemas Replication ===\n");
 
     let urls = cluster_urls();
     let namespace = generate_unique_namespace("sys_tbl_repl");
@@ -80,9 +80,9 @@ fn cluster_test_system_tables_replication() {
     }
     println!("  ✓ All tables replicated to all nodes");
 
-    // Verify system.tables is identical on all nodes
+    // Verify system.schemas is identical on all nodes
     let query = format!(
-        "SELECT table_name, table_type FROM system.tables WHERE namespace_id = '{}' ORDER BY table_name",
+        "SELECT table_name, table_type FROM system.schemas WHERE namespace_id = '{}' ORDER BY table_name",
         namespace
     );
 
@@ -125,7 +125,7 @@ fn cluster_test_system_tables_replication() {
     // Cleanup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
 
-    println!("\n  ✅ system.tables is identical across all nodes\n");
+    println!("\n  ✅ system.schemas is identical across all nodes\n");
 }
 
 /// Test: system.namespaces is identical across all nodes
@@ -427,7 +427,7 @@ fn cluster_test_drop_replication() {
         let mut found = false;
         for _ in 0..10 {
             let query = format!(
-                "SELECT table_name FROM system.tables WHERE table_name = 'drop_test' AND namespace_id = '{}'",
+                "SELECT table_name FROM system.schemas WHERE table_name = 'drop_test' AND namespace_id = '{}'",
                 namespace
             );
             match execute_on_node(url, &query) {
@@ -454,7 +454,7 @@ fn cluster_test_drop_replication() {
         let mut gone = false;
         for _ in 0..10 {
             let query = format!(
-                "SELECT table_name FROM system.tables WHERE table_name = 'drop_test' AND namespace_id = '{}'",
+                "SELECT table_name FROM system.schemas WHERE table_name = 'drop_test' AND namespace_id = '{}'",
                 namespace
             );
             match execute_on_node(url, &query) {

@@ -120,10 +120,10 @@ fn cluster_test_flush_data_consistency() {
         println!("     Node {} matches baseline ✓", idx);
     }
 
-    // Step 7: Verify manifest exists (check system.tables for latest version)
+    // Step 7: Verify manifest exists (check system.schemas for latest version)
     println!("  8. Verifying flush metadata...");
     let metadata_sql = format!(
-        "SELECT table_name, schema_version FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        "SELECT table_name, schema_version FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table_name
     );
 

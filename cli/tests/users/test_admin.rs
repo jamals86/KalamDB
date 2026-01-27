@@ -15,7 +15,7 @@ use std::time::Duration;
 /// Test configuration constants
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// T041: Test list tables command (using SELECT from system.tables)
+/// T041: Test list tables command (using SELECT from system.schemas)
 #[test]
 fn test_cli_list_tables() {
     if !is_server_running() {
@@ -45,7 +45,7 @@ fn test_cli_list_tables() {
     std::thread::sleep(Duration::from_millis(50));
 
     // Query system tables
-    let query_sql = "SELECT table_name FROM system.tables WHERE namespace_id = 'test_cli'";
+    let query_sql = "SELECT table_name FROM system.schemas WHERE namespace_id = 'test_cli'";
     let result = execute_sql_as_root_via_cli(query_sql);
 
     // Should list tables

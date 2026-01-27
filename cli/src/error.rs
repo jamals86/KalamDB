@@ -39,6 +39,9 @@ pub enum CLIError {
 
     /// Subscription error
     SubscriptionError(String),
+
+    /// Server requires initial setup
+    SetupRequired(String),
 }
 
 // Allow dead code for error variants that will be used in future features
@@ -53,6 +56,7 @@ impl CLIError {
         match err {
             KalamLinkError::NetworkError(msg) => Self::clean_nested_message(msg),
             KalamLinkError::AuthenticationError(msg) => msg.clone(),
+            KalamLinkError::SetupRequired(msg) => msg.clone(),
             KalamLinkError::ConfigurationError(msg) => msg.clone(),
             KalamLinkError::TimeoutError(msg) => msg.clone(),
             KalamLinkError::QueryError(msg) => msg.clone(),
@@ -118,6 +122,7 @@ impl fmt::Display for CLIError {
             CLIError::HistoryError(msg) => write!(f, "History error: {}", msg),
             CLIError::FormatError(msg) => write!(f, "Format error: {}", msg),
             CLIError::SubscriptionError(msg) => write!(f, "Subscription error: {}", msg),
+            CLIError::SetupRequired(msg) => write!(f, "Server setup required: {}", msg),
         }
     }
 }

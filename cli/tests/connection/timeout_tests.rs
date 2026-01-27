@@ -28,7 +28,7 @@ async fn test_connection_timeout_unreachable_server() {
 
     let client = KalamLinkClient::builder()
         .base_url(unreachable_url)
-        .auth(AuthProvider::basic_auth("test".to_string(), "test".to_string()))
+        .auth(AuthProvider::none())
         .timeouts(timeouts)
         .build()
         .expect("Client build should succeed");
@@ -62,7 +62,7 @@ async fn test_fast_timeout_preset() {
 
     let client = KalamLinkClient::builder()
         .base_url(unreachable_url)
-        .auth(AuthProvider::basic_auth("test".to_string(), "test".to_string()))
+        .auth(AuthProvider::none())
         .timeouts(timeouts)
         .build()
         .expect("Client build should succeed");
@@ -90,7 +90,7 @@ async fn test_connection_refused() {
 
     let client = KalamLinkClient::builder()
         .base_url(wrong_port_url)
-        .auth(AuthProvider::basic_auth("test".to_string(), "test".to_string()))
+        .auth(AuthProvider::none())
         .timeouts(KalamLinkTimeouts::fast())
         .build()
         .expect("Client build should succeed");

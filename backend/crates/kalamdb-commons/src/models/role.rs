@@ -6,8 +6,11 @@ use serde::{Deserialize, Serialize};
 
 /// Enum representing user roles in KalamDB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize, bincode::Encode, bincode::Decode),
+    serde(rename_all = "lowercase")
+)]
 pub enum Role {
     User,
     Service,

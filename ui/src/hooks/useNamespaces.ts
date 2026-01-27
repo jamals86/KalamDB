@@ -54,18 +54,18 @@ export function useNamespaces() {
     setError(null);
     try {
       const rows = await executeSql(`
-        SELECT table_schema, table_name, table_type
-        FROM information_schema.tables
-        WHERE table_schema = '${namespace}'
+        SELECT namespace_id, table_name, table_type, created_at
+        FROM system.tables
+        WHERE namespace_id = '${namespace}'
         ORDER BY table_name
       `);
       
       const tableList = rows.map((row) => ({
-        namespace: String(row.table_schema ?? ''),
+        namespace: String(row.namespace_id ?? ''),
         table_name: String(row.table_name ?? ''),
         table_type: String(row.table_type ?? ''),
         row_count: 0,
-        created_at: new Date().toISOString(),
+        created_at: String(row.created_at ?? new Date().toISOString()),
       }));
       
       setTables(tableList);

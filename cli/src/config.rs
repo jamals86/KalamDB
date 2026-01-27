@@ -116,7 +116,7 @@ fn default_retries() -> u32 {
 }
 
 fn default_http_version() -> String {
-    "http2".to_string()
+    "auto".to_string()
 }
 
 fn default_auto_reconnect() -> bool {
@@ -341,8 +341,8 @@ mod tests {
     fn test_default_config() {
         let config = CLIConfiguration::default();
         assert!(config.server.is_some());
-        // HTTP/2 should be the default
-        assert_eq!(config.server.as_ref().unwrap().http_version, "http2");
+        // Auto should be the default (downgrade to HTTP/1.1 for plain HTTP)
+        assert_eq!(config.server.as_ref().unwrap().http_version, "auto");
         assert_eq!(config.server.as_ref().unwrap().timeout, 30);
     }
 
@@ -374,7 +374,7 @@ mod tests {
         let options = config.to_connection_options();
 
         // Verify defaults are applied
-        assert_eq!(options.http_version, kalam_link::HttpVersion::Http2);
+        assert_eq!(options.http_version, kalam_link::HttpVersion::Auto);
         assert!(options.auto_reconnect);
         assert_eq!(options.reconnect_delay_ms, 100);
         assert_eq!(options.max_reconnect_delay_ms, 30000);
@@ -439,7 +439,7 @@ mod tests {
         let config = CLIConfiguration::load(&config_path).unwrap();
 
         // Verify default values
-        assert_eq!(config.server.as_ref().unwrap().http_version, "http2");
+        assert_eq!(config.server.as_ref().unwrap().http_version, "auto");
         assert_eq!(config.server.as_ref().unwrap().timeout, 30);
 
         // Verify file was created

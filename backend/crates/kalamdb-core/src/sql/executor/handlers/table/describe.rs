@@ -5,7 +5,10 @@ use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::views::DescribeView;
+use kalamdb_commons::conversions::arrow_conversion::FromArrowType;
+use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{NamespaceId, TableId};
+use kalamdb_commons::schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType};
 use kalamdb_sql::ddl::DescribeTableStatement;
 use std::sync::Arc;
 
