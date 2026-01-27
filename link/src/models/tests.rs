@@ -266,22 +266,6 @@ fn test_subscription_request_with_default_options() {
 // ==================== ClientMessage Tests ====================
 
 #[test]
-fn test_client_message_authenticate_basic_serialization() {
-    let msg = ClientMessage::Authenticate {
-        credentials: WsAuthCredentials::Basic {
-            username: "alice".to_string(),
-            password: "secret123".to_string(),
-        },
-    };
-
-    let json = serde_json::to_string(&msg).unwrap();
-    assert!(json.contains("\"type\":\"authenticate\""));
-    assert!(json.contains("\"method\":\"basic\""));
-    assert!(json.contains("\"username\":\"alice\""));
-    assert!(json.contains("\"password\":\"secret123\""));
-}
-
-#[test]
 fn test_client_message_authenticate_jwt_serialization() {
     let msg = ClientMessage::Authenticate {
         credentials: WsAuthCredentials::Jwt {

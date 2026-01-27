@@ -295,6 +295,18 @@ impl KalamLinkClient {
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
             log::debug!("[LOGIN] Login failed: {}", error_text);
+            
+            // Check for setup_required error (HTTP 428 Precondition Required)
+            if status.as_u16() == 428 {
+                // Parse the error message for more details
+                let message = if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&error_text) {
+                    error_json.get("message").and_then(|m| m.as_str()).unwrap_or("Server requires initial setup").to_string()
+                } else {
+                    "Server requires initial setup".to_string()
+                };
+                return Err(KalamLinkError::SetupRequired(message));
+            }
+            
             return Err(KalamLinkError::AuthenticationError(format!(
                 "Login failed ({}): {}",
                 status, error_text
@@ -373,6 +385,130 @@ impl KalamLinkClient {
 
         Ok(login_response)
     }
+
+    /// Check if the server requires initial setup.
+    ///
+    /// Returns a SetupStatusResponse indicating whether setup is needed.
+    /// This endpoint only works from localhost connections.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use kalam_link::KalamLinkClient;
+    ///
+    /// # async fn example() -> kalam_link::Result<()> {
+    /// let client = KalamLinkClient::builder()
+    ///     .base_url("http://localhost:8080")
+    ///     .build()?;
+    ///
+    /// let status = client.check_setup_status().await?;
+    /// if status.needs_setup {
+    ///     println!("Server requires setup: {}", status.message);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn check_setup_status(&self) -> Result<crate::models::SetupStatusResponse> {
+        let url = format!("{}/v1/api/auth/status", self.base_url);
+        log::debug!("[SETUP] Checking setup status at url={}", url);
+
+        let start = std::time::Instant::now();
+        let response = self.http_client.get(&url).send().await?;
+
+        let status = response.status();
+        log::debug!(
+            "[SETUP] Status check response in {:?}, status={}",
+            start.elapsed(),
+            status
+        );
+
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(KalamLinkError::ServerError {
+                status_code: status.as_u16(),
+                message: error_text,
+            });
+        }
+
+        Ok(response.json::<crate::models::SetupStatusResponse>().await?)
+    }
+
+    /// Perform initial server setup.
+    ///
+    /// This sets the root password and creates a DBA user.
+    /// Only works from localhost when root has no password configured.
+    ///
+    /// # Arguments
+    /// * `request` - The setup request containing username, password, root_password, and optional email
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use kalam_link::{KalamLinkClient, ServerSetupRequest};
+    ///
+    /// # async fn example() -> kalam_link::Result<()> {
+    /// let client = KalamLinkClient::builder()
+    ///     .base_url("http://localhost:8080")
+    ///     .build()?;
+    ///
+    /// let request = ServerSetupRequest::new(
+    ///     "admin",
+    ///     "secure_password123",
+    ///     "root_password123",
+    ///     Some("admin@example.com".to_string()),
+    /// );
+    ///
+    /// let response = client.server_setup(request).await?;
+    /// println!("Setup complete: {}", response.message);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn server_setup(
+        &self,
+        request: crate::models::ServerSetupRequest,
+    ) -> Result<crate::models::ServerSetupResponse> {
+        let url = format!("{}/v1/api/auth/setup", self.base_url);
+        log::debug!("[SETUP] Performing server setup at url={}", url);
+
+        let start = std::time::Instant::now();
+        let response = self.http_client.post(&url).json(&request).send().await?;
+
+        let status = response.status();
+        log::debug!(
+            "[SETUP] Setup response in {:?}, status={}",
+            start.elapsed(),
+            status
+        );
+
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            
+            // Check for specific error types
+            if status.as_u16() == 409 {
+                return Err(KalamLinkError::ConfigurationError(
+                    "Server is already configured".to_string(),
+                ));
+            }
+            if status.as_u16() == 400 {
+                // Parse error for weak password or invalid username
+                if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&error_text) {
+                    if let Some(message) = error_json.get("message").and_then(|m| m.as_str()) {
+                        return Err(KalamLinkError::ConfigurationError(message.to_string()));
+                    }
+                }
+            }
+            
+            return Err(KalamLinkError::ServerError {
+                status_code: status.as_u16(),
+                message: error_text,
+            });
+        }
+
+        let setup_response = response.json::<crate::models::ServerSetupResponse>().await?;
+        log::info!("[SETUP] Server setup complete: {}", setup_response.message);
+
+        Ok(setup_response)
+    }
 }
 
 /// Builder for configuring [`KalamLinkClient`] instances.
@@ -417,7 +553,7 @@ impl KalamLinkClientBuilder {
 
     /// Set authentication provider directly
     ///
-    /// Allows setting any AuthProvider variant including BasicAuth.
+    /// Note: WebSocket subscriptions require JWT authentication. BasicAuth is for HTTP-only flows.
     ///
     /// # Example
     ///

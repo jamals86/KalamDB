@@ -13,6 +13,11 @@ pub enum AuthError {
     #[error("Invalid credentials: {0}")]
     InvalidCredentials(String),
 
+    /// Server requires initial setup (root password not configured)
+    /// This error is returned when the root user has no password and requires initial setup.
+    #[error("Server requires initial setup: {0}")]
+    SetupRequired(String),
+
     /// Account is locked due to too many failed login attempts
     #[error("Account locked until {0}. Too many failed login attempts.")]
     AccountLocked(String),

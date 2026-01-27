@@ -475,12 +475,6 @@ impl VirtualView for SettingsView {
                         "Minimum password length",
                         "auth"
                     ),
-                    (
-                        "auth.allow_remote_access",
-                        config.auth.allow_remote_access,
-                        "Allow remote access for system users",
-                        "auth"
-                    ),
                 ]
             );
 

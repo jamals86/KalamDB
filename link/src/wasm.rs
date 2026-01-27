@@ -163,12 +163,7 @@ impl WasmAuthProvider {
     /// Get the WebSocket authentication message using unified WsAuthCredentials
     fn to_ws_auth_message(&self) -> Option<ClientMessage> {
         match self {
-            WasmAuthProvider::Basic { username, password } => Some(ClientMessage::Authenticate {
-                credentials: WsAuthCredentials::Basic {
-                    username: username.clone(),
-                    password: password.clone(),
-                },
-            }),
+            WasmAuthProvider::Basic { .. } => None,
             WasmAuthProvider::Jwt { token } => Some(ClientMessage::Authenticate {
                 credentials: WsAuthCredentials::Jwt {
                     token: token.clone(),
@@ -182,8 +177,8 @@ impl WasmAuthProvider {
 /// WASM-compatible KalamDB client with auto-reconnection support
 ///
 /// Supports multiple authentication methods:
-/// - Basic Auth: `new KalamClient(url, username, password)`
-/// - JWT Token: `KalamClient.withJwt(url, token)`
+/// - Basic Auth: `new KalamClient(url, username, password)` (HTTP only)
+/// - JWT Token: `KalamClient.withJwt(url, token)` (required for WebSocket)
 /// - Anonymous: `KalamClient.anonymous(url)`
 ///
 /// # Example (JavaScript)
@@ -446,6 +441,13 @@ impl KalamClient {
     /// Promise that resolves when connection is established and authenticated
     pub async fn connect(&mut self) -> Result<(), JsValue> {
         use wasm_bindgen_futures::JsFuture;
+
+        // WebSocket requires JWT token authentication
+        if matches!(self.auth, WasmAuthProvider::Basic { .. }) {
+            return Err(JsValue::from_str(
+                "WebSocket authentication requires a JWT token. Use KalamClientWithJwt or login first.",
+            ));
+        }
 
         // Check if already connected - prevent duplicate connections
         if self.is_connected() {
@@ -1220,6 +1222,12 @@ async fn reconnect_internal_with_auth(
     auth: WasmAuthProvider,
     ws_ref: Rc<RefCell<Option<WebSocket>>>,
 ) -> Result<(), JsValue> {
+    if matches!(auth, WasmAuthProvider::Basic { .. }) {
+        return Err(JsValue::from_str(
+            "WebSocket authentication requires a JWT token. Use KalamClientWithJwt or login first.",
+        ));
+    }
+
     let ws_url = url.replace("http://", "ws://").replace("https://", "wss://");
     let ws_url = format!("{}/v1/ws", ws_url);
 

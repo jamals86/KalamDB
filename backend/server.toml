@@ -265,11 +265,6 @@ jwt_secret = "your-secret-key-at-least-32-chars-change-me-in-production"
 # Multiple issuers: ["https://accounts.google.com", "https://github.com", "https://kalamdb.io"]
 jwt_trusted_issuers = ""
 
-# Allow remote access for system users (default: false)
-# If true, system users can authenticate remotely (requires password)
-# If false, system users can only authenticate from localhost
-allow_remote_access = false
-
 [shutdown]
 # Timeout settings for graceful shutdown
 

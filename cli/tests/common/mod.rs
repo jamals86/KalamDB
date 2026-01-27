@@ -31,6 +31,8 @@ static TEST_CONTEXT: OnceLock<TestContext> = OnceLock::new();
 static LAST_LEADER_URL: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static AUTO_TEST_SERVER: OnceLock<Mutex<Option<AutoTestServer>>> = OnceLock::new();
 static AUTO_TEST_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+/// Token cache: maps "username:password" to access_token
+static TOKEN_CACHE: OnceLock<Mutex<std::collections::HashMap<String, String>>> = OnceLock::new();
 
 struct AutoTestServer {
     base_url: String,
@@ -361,7 +363,8 @@ pub fn test_context() -> &'static TestContext {
         if should_auto_start_test_server() && !url_reachable(&server_url) {
             if let Some((auto_url, storage_dir)) = ensure_auto_test_server() {
                 std::env::set_var("KALAMDB_SERVER_URL", &auto_url);
-                std::env::set_var("KALAMDB_ROOT_PASSWORD", "");
+                // Use a test password instead of empty to bypass the server-setup flow
+                std::env::set_var("KALAMDB_ROOT_PASSWORD", "test_password");
                 std::env::set_var("KALAMDB_STORAGE_DIR", storage_dir.to_string_lossy().to_string());
                 server_url = auto_url;
                 auto_started = true;
@@ -374,7 +377,8 @@ pub fn test_context() -> &'static TestContext {
 
         let password = parse_test_arg("--password")
             .or_else(|| std::env::var("KALAMDB_ROOT_PASSWORD").ok())
-            .unwrap_or_else(|| "".to_string());
+            // Default to test_password to match autostart server and bypass setup flow
+            .unwrap_or_else(|| "test_password".to_string());
 
         let cluster_default = "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
         let cluster_urls: Vec<String> = parse_test_urls()
@@ -523,19 +527,147 @@ pub fn root_password() -> &'static str {
         .as_str()
 }
 
+/// Get an access token for the given credentials.
+/// 
+/// Caches tokens to avoid repeated login calls.
+/// Uses the /v1/api/auth/login endpoint to obtain a Bearer token.
+/// 
+/// If server requires setup (HTTP 428), automatically completes setup
+/// with admin/kalamdb123 as the DBA user and kalamdb123 as root password.
+pub async fn get_access_token(
+    username: &str,
+    password: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let cache_key = format!("{}:{}", username, password);
+    
+    // Check cache first
+    {
+        let cache = TOKEN_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+        if let Ok(guard) = cache.lock() {
+            if let Some(token) = guard.get(&cache_key) {
+                return Ok(token.clone());
+            }
+        }
+    }
+    
+    // Login to get token
+    let client = Client::new();
+    let response = client
+        .post(format!("{}/v1/api/auth/login", server_url()))
+        .json(&json!({
+            "username": username,
+            "password": password
+        }))
+        .send()
+        .await?;
+    
+    // Check for setup required (HTTP 428)
+    if response.status() == reqwest::StatusCode::PRECONDITION_REQUIRED {
+        eprintln!("[TEST] Server requires setup - auto-completing with admin/kalamdb123");
+        
+        // Complete server setup
+        let setup_response = client
+            .post(format!("{}/v1/api/auth/setup", server_url()))
+            .json(&json!({
+                "username": "admin",
+                "password": "kalamdb123",
+                "root_password": "kalamdb123",
+                "email": null
+            }))
+            .send()
+            .await?;
+        
+        if !setup_response.status().is_success() {
+            let body = setup_response.text().await?;
+            return Err(format!("Failed to auto-complete server setup: {}", body).into());
+        }
+        
+        eprintln!("[TEST] Server setup completed - retrying login");
+        
+        // Retry login after setup
+        let retry_response = client
+            .post(format!("{}/v1/api/auth/login", server_url()))
+            .json(&json!({
+                "username": username,
+                "password": password
+            }))
+            .send()
+            .await?;
+        
+        let body = retry_response.text().await?;
+        let parsed: serde_json::Value = serde_json::from_str(&body)?;
+        
+        let token = parsed
+            .get("access_token")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| -> Box<dyn std::error::Error> {
+                let error_msg = parsed
+                    .get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("Login failed after setup");
+                format!("Failed to get access token after setup: {}", error_msg).into()
+            })?
+            .to_string();
+        
+        // Cache the token
+        {
+            let cache = TOKEN_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+            if let Ok(mut guard) = cache.lock() {
+                guard.insert(cache_key, token.clone());
+            }
+        }
+        
+        return Ok(token);
+    }
+    
+    let body = response.text().await?;
+    let parsed: serde_json::Value = serde_json::from_str(&body)?;
+    
+    // Extract access_token from response
+    let token = parsed
+        .get("access_token")
+        .and_then(|t| t.as_str())
+        .ok_or_else(|| -> Box<dyn std::error::Error> {
+            let error_msg = parsed
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("Login failed");
+            format!("Failed to get access token: {}", error_msg).into()
+        })?
+        .to_string();
+    
+    // Cache the token
+    {
+        let cache = TOKEN_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+        if let Ok(mut guard) = cache.lock() {
+            guard.insert(cache_key, token.clone());
+        }
+    }
+    
+    Ok(token)
+}
+
 /// Execute SQL over HTTP with explicit credentials.
+/// 
+/// First obtains a Bearer token via login, then executes SQL.
+/// The SQL endpoint only accepts Bearer token authentication.
 pub async fn execute_sql_via_http_as(
     username: &str,
     password: &str,
     sql: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    // Get access token first
+    let token = get_access_token(username, password).await?;
+    
     let client = Client::new();
     let mut last_parsed: Option<serde_json::Value> = None;
 
     for attempt in 0..5 {
         let response = client
             .post(format!("{}/v1/api/sql", server_url()))
-            .basic_auth(username, Some(password))
+            .header("Authorization", format!("Bearer {}", token))
             .json(&json!({ "sql": sql }))
             .send()
             .await?;

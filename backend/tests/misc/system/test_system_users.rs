@@ -5,7 +5,6 @@
 //! - T098: System users cannot authenticate remotely by default
 //! - T099: System users CAN authenticate remotely when allow_remote is enabled AND password is set
 //! - T100: System users CANNOT authenticate remotely without password even if allow_remote=true
-//! - T101: Global allow_remote_access config flag works correctly
 //!
 //! **System User Requirements**:
 //! - auth_type='internal' users are restricted to localhost by default
@@ -284,29 +283,4 @@ async fn test_system_user_remote_no_password_denied() {
     );
 
     println!("✓ T100: System user remote access without password denied - Status: {}", status);
-}
-
-/// T101: Global allow_remote_access config flag
-#[actix_web::test]
-async fn test_global_remote_access_flag() {
-    // NOTE: This test verifies that the global config.auth.allow_remote_access flag
-    // controls remote access for ALL internal users
-
-    // This test would require:
-    // 1. Creating a server with allow_remote_access = true in config
-    // 2. Creating a system user WITHOUT per-user allow_remote metadata
-    // 3. Verifying remote authentication succeeds due to global flag
-
-    // For now, we verify the config exists and defaults to false
-    let _server = TestServer::new_shared().await;
-
-    // The global flag is checked in AuthService::new()
-    // Default should be false (localhost-only)
-
-    println!("✓ T101: Global allow_remote_access config flag test - Configuration verified");
-
-    // In a real implementation, we'd test:
-    // - Server with allow_remote_access=true allows remote system users
-    // - Server with allow_remote_access=false blocks remote system users
-    // - Per-user metadata overrides global flag
 }

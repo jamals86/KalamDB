@@ -9,7 +9,7 @@
 //!                    ┌─────────────────────────────────────────────────────┐
 //!                    │              AuthRequest (Single Entry Point)        │
 //!                    │  - Header(String)      → HTTP Authorization header   │
-//!                    │  - Credentials{...}    → WebSocket Basic auth        │
+//!                    │  - Credentials{...}    → Login flow credentials      │
 //!                    │  - Jwt{token}          → WebSocket JWT auth          │
 //!                    └─────────────────────────────────────────────────────┘
 //!                                         │
@@ -129,7 +129,7 @@ pub enum AuthRequest {
     /// Automatically parsed to determine auth method
     Header(String),
 
-    /// Direct username/password (WebSocket authenticate message)
+    /// Direct username/password (login flow)
     /// Bypasses header parsing for structured JSON input
     Credentials { username: String, password: String },
 
@@ -155,9 +155,6 @@ impl From<kalamdb_commons::websocket::WsAuthCredentials> for AuthRequest {
     fn from(creds: kalamdb_commons::websocket::WsAuthCredentials) -> Self {
         use kalamdb_commons::websocket::WsAuthCredentials;
         match creds {
-            WsAuthCredentials::Basic { username, password } => {
-                AuthRequest::Credentials { username, password }
-            },
             WsAuthCredentials::Jwt { token } => AuthRequest::Jwt { token },
             // Future auth methods:
             // WsAuthCredentials::ApiKey { key } => AuthRequest::ApiKey { key },
@@ -179,7 +176,7 @@ pub struct AuthenticationResult {
 /// This function handles all authentication methods:
 /// - HTTP Basic Auth (from Authorization header)
 /// - JWT Bearer tokens (from Authorization header)
-/// - Direct username/password (from WebSocket messages)
+/// - Direct username/password (login flow)
 ///
 /// # Arguments
 /// * `request` - The authentication request (header or direct credentials)
@@ -217,11 +214,9 @@ async fn authenticate_header(
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticationResult> {
     if auth_header.starts_with("Basic ") {
-        let user = authenticate_basic(auth_header, connection_info, repo).await?;
-        Ok(AuthenticationResult {
-            user,
-            method: AuthMethod::Basic,
-        })
+        Err(AuthError::InvalidCredentials(
+            "Basic authentication is not supported. Use Bearer token or login endpoint.".to_string(),
+        ))
     } else if auth_header.starts_with("Bearer") {
         // Handle both "Bearer " and malformed "Bearer" without space
         let token = auth_header.strip_prefix("Bearer").unwrap_or("").trim();
@@ -274,12 +269,15 @@ async fn authenticate_basic(
 /// - Password verification
 /// - Remote access policies
 /// - Login tracking (failed attempts, successful logins)
+/// - Setup required check (root with no password)
 async fn authenticate_username_password(
     username: &str,
     password: &str,
     connection_info: &ConnectionInfo,
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticatedUser> {
+    use kalamdb_commons::constants::AuthConstants;
+
     if username.trim().is_empty() {
         return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
     }
@@ -308,25 +306,28 @@ async fn authenticate_username_password(
     let is_localhost = connection_info.is_localhost();
     let is_system_internal = user.role == Role::System && user.auth_type == AuthType::Internal;
 
-    // Parse allow_remote from auth_data
-    let allow_remote = user
-        .auth_data
-        .as_deref()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-        .and_then(|v| v.get("allow_remote").and_then(|b| b.as_bool()))
-        .unwrap_or(false);
+    // Check if root user has no password configured - require setup
+    // This applies even for localhost connections
+    if username == AuthConstants::DEFAULT_SYSTEM_USERNAME
+        && user.password_hash.is_empty()
+        && password.is_empty()
+    {
+        return Err(AuthError::SetupRequired(
+            "Server requires initial setup. Root password is not configured.".to_string(),
+        ));
+    }
 
     // Track whether authentication succeeded
     let mut auth_success = false;
 
     if is_system_internal {
         if is_localhost {
-            // Localhost system users: accept empty password OR valid password
-            let password_ok = user.password_hash.is_empty()
-                || (!password.is_empty()
-                    && password::verify_password(password, &user.password_hash)
-                        .await
-                        .unwrap_or(false));
+            // Localhost system users: require valid password (no more empty password bypass)
+            let password_ok = !password.is_empty()
+                && !user.password_hash.is_empty()
+                && password::verify_password(password, &user.password_hash)
+                    .await
+                    .unwrap_or(false);
 
             if password_ok {
                 auth_success = true;
@@ -341,11 +342,6 @@ async fn authenticate_username_password(
                     "System users with empty passwords cannot authenticate remotely. Set a password with: ALTER USER root SET PASSWORD '...'".to_string(),
                 ));
             }
-            if !allow_remote {
-                return Err(AuthError::RemoteAccessDenied(
-                    "Remote access is not allowed for this user".to_string(),
-                ));
-            }
             if !password.is_empty()
                 && password::verify_password(password, &user.password_hash).await.unwrap_or(false)
             {
@@ -356,15 +352,9 @@ async fn authenticate_username_password(
             }
         }
     } else {
-        // Regular users must have a password UNLESS empty password and localhost
-        // This handles edge cases where regular users might have empty passwords in test/dev environments
+        // Regular users must have a password
         if user.password_hash.is_empty() {
-            if is_localhost && password.is_empty() {
-                // Allow localhost users with empty password in development/test mode
-                auth_success = true;
-            } else {
-                return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
-            }
+            return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
         } else if !password.is_empty()
             && password::verify_password(password, &user.password_hash).await.unwrap_or(false)
         {
@@ -608,26 +598,6 @@ mod tests {
         let token = format!("{}.{}.{}", header, payload, signature);
         let request = AuthRequest::Header(format!("Bearer {}", token));
         assert_eq!(extract_username_for_audit(&request), "bearer_user");
-    }
-
-    #[cfg(feature = "websocket")]
-    #[test]
-    fn test_from_ws_auth_credentials_basic() {
-        use kalamdb_commons::websocket::WsAuthCredentials;
-
-        let ws_creds = WsAuthCredentials::Basic {
-            username: "testuser".to_string(),
-            password: "testpass".to_string(),
-        };
-
-        let auth_request: AuthRequest = ws_creds.into();
-        match auth_request {
-            AuthRequest::Credentials { username, password } => {
-                assert_eq!(username, "testuser");
-                assert_eq!(password, "testpass");
-            },
-            _ => panic!("Expected Credentials variant"),
-        }
     }
 
     #[cfg(feature = "websocket")]

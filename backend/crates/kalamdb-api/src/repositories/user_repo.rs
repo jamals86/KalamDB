@@ -76,6 +76,11 @@ impl UserRepository for CachedUsersRepo {
         // Perform the update
         self.inner.update_user(user).await
     }
+
+    async fn create_user(&self, user: User) -> AuthResult<()> {
+        // Perform the create
+        self.inner.create_user(user).await
+    }
 }
 
 /// Repository adapter backed by kalamdb-core's UsersTableProvider
@@ -108,6 +113,14 @@ impl UserRepository for CoreUsersRepo {
         let provider = self.provider.clone();
         let user = user.clone();
         tokio::task::spawn_blocking(move || provider.update_user(user))
+            .await
+            .map_err(|e| AuthError::DatabaseError(e.to_string()))?
+            .map_err(|e| AuthError::DatabaseError(e.to_string()))
+    }
+
+    async fn create_user(&self, user: User) -> AuthResult<()> {
+        let provider = self.provider.clone();
+        tokio::task::spawn_blocking(move || provider.create_user(user))
             .await
             .map_err(|e| AuthError::DatabaseError(e.to_string()))?
             .map_err(|e| AuthError::DatabaseError(e.to_string()))

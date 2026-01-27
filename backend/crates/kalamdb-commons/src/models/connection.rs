@@ -40,26 +40,6 @@ impl ConnectionInfo {
             None => false,
         }
     }
-
-    /// Check if remote access should be allowed for this connection.
-    ///
-    /// # Arguments
-    /// * `allow_remote_access` - Whether remote access is enabled globally
-    ///
-    /// # Returns
-    /// Check if remote access should be allowed for this connection.
-    ///
-    /// Access is always allowed for localhost connections.
-    /// For remote connections, access is allowed only if `allow_remote_access` is true.
-    ///
-    /// # Arguments
-    /// * `allow_remote_access` - Whether remote connections are permitted
-    ///
-    /// # Returns
-    /// True if access should be allowed, false otherwise
-    pub fn is_access_allowed(&self, allow_remote_access: bool) -> bool {
-        self.is_localhost() || allow_remote_access
-    }
 }
 
 #[cfg(test)]
@@ -106,19 +86,5 @@ mod tests {
     fn test_none_address() {
         let conn = ConnectionInfo::new(None);
         assert!(!conn.is_localhost());
-    }
-
-    #[test]
-    fn test_access_allowed_localhost() {
-        let conn = ConnectionInfo::new(Some("127.0.0.1".to_string()));
-        assert!(conn.is_access_allowed(false)); // Localhost always allowed
-        assert!(conn.is_access_allowed(true));
-    }
-
-    #[test]
-    fn test_access_denied_remote() {
-        let conn = ConnectionInfo::new(Some("192.168.1.100".to_string()));
-        assert!(!conn.is_access_allowed(false)); // Remote access disabled
-        assert!(conn.is_access_allowed(true)); // Remote access enabled
     }
 }
