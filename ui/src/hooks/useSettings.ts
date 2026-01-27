@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react';
+import { useMemo } from 'react';
 import { useGetSettingsQuery } from '../store/apiSlice';
 
 export interface Setting {

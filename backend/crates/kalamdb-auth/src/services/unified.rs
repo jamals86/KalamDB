@@ -249,6 +249,17 @@ async fn authenticate_credentials(
     })
 }
 
+/// Authenticate using Basic Auth header
+#[allow(dead_code)]
+async fn authenticate_basic(
+    auth_header: &str,
+    connection_info: &ConnectionInfo,
+    repo: &Arc<dyn UserRepository>,
+) -> AuthResult<AuthenticatedUser> {
+    let (username, password) = basic_auth::parse_basic_auth_header(auth_header)?;
+    authenticate_username_password(&username, &password, connection_info, repo).await
+}
+
 /// Core authentication logic for username/password
 ///
 /// This is the central authentication function that handles:

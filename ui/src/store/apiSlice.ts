@@ -1,5 +1,4 @@
-import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
-import { store } from "./index";
+import { createApi } from "@reduxjs/toolkit/query/react";
 import { executeSql } from "../lib/kalam-client";
 
 // Define a common base for SQL-based queries

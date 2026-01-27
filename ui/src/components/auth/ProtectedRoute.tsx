@@ -1,12 +1,13 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
+import { Button } from "@/components/ui/button";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
 }
 
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { isAuthenticated, isLoading, user } = useAuth();
+  const { isAuthenticated, isLoading, user, logout } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -30,6 +31,16 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
           <p className="mt-2 text-muted-foreground">
             Admin UI access requires dba or system role.
           </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Current role: <span className="font-mono">{user.role}</span>
+          </p>
+          <Button
+            onClick={() => logout()}
+            variant="outline"
+            className="mt-4"
+          >
+            Logout and Switch User
+          </Button>
         </div>
       </div>
     );
