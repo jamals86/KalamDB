@@ -1268,34 +1268,9 @@ and then make sure we have a test for it as well
 
 138) Override the information_schema.columns to also return the KalamDatatype and schema version and other kalamdb specific things at the end, also the select * from information_schema.tables to add to it another column with tabletype
 
-139) also these should go to the kalamdb-system/src/providers/*/models as well:
-backend/crates/kalamdb-commons/src/models/user_name.rs
-backend/crates/kalamdb-commons/src/models/table_name.rs
-backend/crates/kalamdb-commons/src/models/table_access.rs
-backend/crates/kalamdb-commons/src/models/storage/
-
-also these:
-backend/crates/kalamdb-commons/src/models/role.rs           to: kalamdb-system/src/providers/users/models
-backend/crates/kalamdb-commons/src/models/auth_type.rs      to: kalamdb-system/src/providers/users/models
-backend/crates/kalamdb-commons/src/models/user_name.rs      to: kalamdb-system/src/providers/users/models
-backend/crates/kalamdb-commons/src/models/table_access.rs   to: backend/crates/kalamdb-commons/src/models/schemas
-backend/crates/kalamdb-commons/src/models/table_name.rs     to: backend/crates/kalamdb-commons/src/models/schemas
-
-and:
-backend/crates/kalamdb-commons/src/storage.rs               to: kalamdb-store/src/models
-backend/crates/kalamdb-commons/src/storage_key.rs           to: kalamdb-store/src/models
-backend/crates/kalamdb-commons/src/serialization.rs         to: kalamdb-store/src/models
-
-also check if each one of those ids should be moved to kalamdb-system/src/providers/*/models as well:
-backend/crates/kalamdb-commons/src/models/ids/*
+139) Fior the cli if we click enter dont open the history menu again only execute enter
 
 
-also: backend/crates/kalamdb-commons/src/models/datatypes/arrow_conversion.rs to backend/crates/kalamdb-commons/src/conversions
-and check if it's duplicated in that folder
-
-backend/crates/kalamdb-system/src/providers/manifest/manifest_table.rs
-backend/crates/kalamdb-system/src/providers/tables/tables_table.rs
-still using the old definition instead of macro like the rest of system tables
 
 
 Main Epics:

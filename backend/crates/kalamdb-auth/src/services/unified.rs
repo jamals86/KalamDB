@@ -250,6 +250,7 @@ async fn authenticate_credentials(
 }
 
 /// Authenticate using Basic Auth header
+#[allow(dead_code)]
 async fn authenticate_basic(
     auth_header: &str,
     connection_info: &ConnectionInfo,

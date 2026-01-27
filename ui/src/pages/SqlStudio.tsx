@@ -17,10 +17,6 @@ import {
 } from "lucide-react";
 import { TableProperties } from "@/components/sql-studio/TableProperties";
 import { QueryResultsBar } from "@/components/sql-studio/QueryResultsBar";
-import { TabBar } from "@/components/sql-studio/TabBar";
-import { EditorPanel } from "@/components/sql-studio/EditorPanel";
-import { ResultsPanel } from "@/components/sql-studio/ResultsPanel";
-import { LiveQueryStatusBar } from "@/components/sql-studio/LiveQueryStatusBar";
 import { Button } from "@/components/ui/button";
 import {
   ResizablePanelGroup,
@@ -1214,46 +1210,42 @@ export default function SqlStudio() {
 
   return (
     <div className="h-[calc(100vh-4rem)] flex">
-      <ResizablePanelGroup orientation="horizontal">
-        {/* Schema sidebar - Resizable */}
-        <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
-          <Sidebar
-            schema={filteredSchema}
-            schemaFilter={schemaFilter}
-            schemaLoading={schemaLoading}
-            onFilterChange={setSchemaFilter}
-            onRefreshSchema={loadSchema}
-            onCreateTable={() => {
-              setSelectedTable({
-                namespace: "default",
-                tableName: "new_table",
-                columns: [],
-                isNewTable: true,
-              });
-              setShowTableProperties(true);
-            }}
-            onToggleNode={toggleSchemaNode}
-            onInsertText={insertIntoQuery}
-            onShowTableProperties={handleShowTableProperties}
-            onTableContextMenu={(e, namespace, tableName, columns) => {
-              setSchemaContextMenu({
-                x: e.clientX,
-                y: e.clientY,
-                namespace,
-                tableName,
-                columns,
-              });
-            }}
-          />
-        </ResizablePanel>
+      {/* Schema sidebar - Fixed width */}
+      <div className="w-64 border-r bg-muted/30 flex-shrink-0">
+        <Sidebar
+          schema={filteredSchema}
+          schemaFilter={schemaFilter}
+          schemaLoading={schemaLoading}
+          onFilterChange={setSchemaFilter}
+          onRefreshSchema={loadSchema}
+          onCreateTable={() => {
+            setSelectedTable({
+              namespace: "default",
+              tableName: "new_table",
+              columns: [],
+              isNewTable: true,
+            });
+            setShowTableProperties(true);
+          }}
+          onToggleNode={toggleSchemaNode}
+          onInsertText={insertIntoQuery}
+          onShowTableProperties={handleShowTableProperties}
+          onTableContextMenu={(e, namespace, tableName, columns) => {
+            setSchemaContextMenu({
+              x: e.clientX,
+              y: e.clientY,
+              namespace,
+              tableName,
+              columns,
+            });
+          }}
+        />
+      </div>
 
-        <ResizableHandle withHandle />
-
-        {/* Main content */}
-        <ResizablePanel defaultSize={75}>
-          <div className="h-full flex flex-col">
-            {/* Header: Tabs + Run Button | Live Query + Actions */}
-            <div className="border-b flex items-center h-12 px-2 gap-2 shrink-0 bg-background">
+      {/* Main content */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Header: Tabs + Run Button | Live Query + Actions */}
+        <div className="border-b flex items-center h-12 px-4 gap-2 shrink-0 bg-background">
           {/* Left side: Query Tabs + Run Button */}
           <div className="flex items-center gap-2">
             {/* Query Tabs */}
@@ -1263,15 +1255,15 @@ export default function SqlStudio() {
                   key={tab.id}
                   onClick={() => setActiveTabId(tab.id)}
                   className={cn(
-                    "flex items-center gap-1 px-3 py-1.5 rounded cursor-pointer text-sm",
+                    "flex items-center gap-2 px-4 py-2 cursor-pointer text-sm border-b-2 transition-colors",
                     activeTabId === tab.id
-                      ? "bg-muted font-medium"
-                      : "hover:bg-muted/50"
+                      ? "border-blue-600 text-foreground font-medium bg-muted/30"
+                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/20"
                   )}
                 >
                   {/* Green dot for live subscribed tabs */}
                   {tab.subscriptionStatus === "connected" && (
-                    <span className="relative flex h-2 w-2 mr-1">
+                    <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
                     </span>
@@ -1280,19 +1272,19 @@ export default function SqlStudio() {
                   {tabs.length > 1 && (
                     <button
                       onClick={(e) => closeTab(tab.id, e)}
-                      className="ml-1 hover:bg-muted-foreground/20 rounded p-0.5"
+                      className="ml-1 hover:bg-muted-foreground/20 rounded p-0.5 transition-colors"
                     >
                       <X className="h-3 w-3" />
                     </button>
                   )}
                 </div>
               ))}
-              <Button size="sm" variant="ghost" onClick={addTab} className="h-7 w-7 p-0">
+              <Button size="sm" variant="ghost" onClick={addTab} className="h-8 w-8 p-0 ml-2">
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
 
-            <div className="w-px h-6 bg-border" />
+            <div className="w-px h-6 bg-border mx-2" />
 
             {/* Run Button */}
             <Button
@@ -1300,7 +1292,7 @@ export default function SqlStudio() {
               onClick={activeTab?.isLive ? toggleLiveQuery : executeQuery}
               disabled={activeTab?.isLoading || !activeTab?.query?.trim() || activeTab?.subscriptionStatus === "connecting"}
               className={cn(
-                "gap-1.5 h-8",
+                "gap-2 h-9 px-4 font-medium",
                 activeTab?.isLive && activeTab?.subscriptionStatus === "connected"
                   ? "bg-red-600 hover:bg-red-700 text-white"
                   : "bg-blue-600 hover:bg-blue-700 text-white"
@@ -1554,15 +1546,16 @@ export default function SqlStudio() {
             // SELECT queries - always show table with headers (even if 0 rows)
             <>
               {/* Table with sheet-like cells */}
-              <div className="flex-1 overflow-auto">
-                <table className="w-full border-collapse text-sm">
-                  <thead className="sticky top-0 z-10">
-                    <tr className="bg-muted/80 backdrop-blur">
+              <div className="flex-1 overflow-auto bg-background">
+                <div className="overflow-x-auto w-full">
+                <table className="text-sm min-w-full">
+                  <thead className="sticky top-0 z-10 bg-muted/50">
+                    <tr className="border-b">
                       {table.getHeaderGroups().map((headerGroup) =>
                         headerGroup.headers.map((header) => (
                           <th
                             key={header.id}
-                            className="border border-border px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap"
+                            className="px-4 py-3 text-left font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap min-w-[150px] border-r border-border/40 last:border-r-0"
                           >
                             {header.isPlaceholder ? null : (
                               <button
@@ -1583,7 +1576,7 @@ export default function SqlStudio() {
                       <tr>
                         <td
                           colSpan={activeTab?.columns?.length || 1}
-                          className="border border-border px-3 py-8 text-center text-muted-foreground"
+                          className="px-4 py-12 text-center text-muted-foreground text-sm"
                         >
                           No results
                         </td>
@@ -1597,7 +1590,7 @@ export default function SqlStudio() {
                           <tr 
                             key={row.id} 
                             className={cn(
-                              "hover:bg-muted/30 transition-colors",
+                              "border-b border-border/40 hover:bg-muted/30 transition-colors",
                               isNewRow && "animate-pulse bg-green-50 dark:bg-green-950/30"
                             )}
                             onAnimationEnd={() => {
@@ -1639,7 +1632,7 @@ export default function SqlStudio() {
                                 <td
                                   key={cell.id}
                                   className={cn(
-                                    "border border-border px-3 py-1.5 text-sm max-w-[300px] cursor-pointer select-text",
+                                    "px-4 py-2.5 text-sm min-w-[150px] max-w-[500px] cursor-pointer select-text border-r border-border/30 last:border-r-0",
                                     isSelected && "ring-2 ring-blue-500 ring-inset bg-blue-50 dark:bg-blue-950/30"
                                   )}
                                   title={isLongText ? String(value) : undefined}
@@ -1668,6 +1661,7 @@ export default function SqlStudio() {
                     )}
                   </tbody>
                 </table>
+                </div>
               </div>
 
               {/* Sticky Pagination Footer */}
@@ -1773,12 +1767,10 @@ export default function SqlStudio() {
               </div>
             </>
           )}
-            </div>
+        </div>
           </ResizablePanel>
         </ResizablePanelGroup>
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+      </div>
 
       {/* Query history sidebar */}
       {showHistory && (
