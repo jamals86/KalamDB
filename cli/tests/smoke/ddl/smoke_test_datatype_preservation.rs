@@ -161,7 +161,7 @@ async fn test_all_kalam_datatypes_are_preserved() {
     let _ = execute_sql(&client, &base_url, &ctx.username, &ctx.password, &drop_ns_sql).await;
 }
 
-/// Test that system.tables also shows correct data types in the columns JSON
+/// Test that system.schemas also shows correct data types in the columns JSON
 #[tokio::test]
 async fn test_system_tables_shows_correct_datatypes() {
     let ctx = test_context();
@@ -186,20 +186,20 @@ async fn test_system_tables_shows_correct_datatypes() {
     );
     let _ = execute_sql(&client, &base_url, &ctx.username, &ctx.password, &create_sql).await;
 
-    // 3. Query system.tables to get the columns JSON
+    // 3. Query system.schemas to get the columns JSON
     let query_sql = format!(
-        "SELECT columns FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        "SELECT columns FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         ns, table
     );
     let result = execute_sql(&client, &base_url, &ctx.username, &ctx.password, &query_sql)
         .await
-        .expect("Query system.tables failed");
+        .expect("Query system.schemas failed");
 
     let rows = result["results"][0]["rows"]
         .as_array()
-        .expect("No rows in system.tables result");
+        .expect("No rows in system.schemas result");
     
-    assert!(!rows.is_empty(), "Table not found in system.tables");
+    assert!(!rows.is_empty(), "Table not found in system.schemas");
 
     // 4. Parse the columns JSON
     let columns_json_str = rows[0][0].as_str().expect("columns should be a string");
@@ -230,20 +230,20 @@ async fn test_system_tables_shows_correct_datatypes() {
         type_map.insert(name.to_string(), data_type_str);
     }
 
-    println!("system.tables column types: {:?}", type_map);
+    println!("system.schemas column types: {:?}", type_map);
 
     // 6. Verify specific types
     assert_eq!(
         type_map.get("data"),
         Some(&"Json".to_string()),
-        "Expected 'Json' for data column in system.tables, got {:?}",
+        "Expected 'Json' for data column in system.schemas, got {:?}",
         type_map.get("data")
     );
 
     assert_eq!(
         type_map.get("attachment"),
         Some(&"File".to_string()),
-        "Expected 'File' for attachment column in system.tables, got {:?}",
+        "Expected 'File' for attachment column in system.schemas, got {:?}",
         type_map.get("attachment")
     );
 
@@ -255,7 +255,7 @@ async fn test_system_tables_shows_correct_datatypes() {
         vector_type
     );
 
-    println!("✅ system.tables shows correct data types!");
+    println!("✅ system.schemas shows correct data types!");
 
     // 7. Cleanup
     let drop_sql = format!("DROP TABLE {}.{}", ns, table);

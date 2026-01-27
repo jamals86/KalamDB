@@ -464,14 +464,14 @@ fn assert_storage_registered(storage_id: &str, expected_base_dir: &str) {
 
 fn assert_table_storage(namespace: &str, table_name: &str, expected_storage_id: &str) {
     let sql = format!(
-        "SELECT table_name, namespace_id, options FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        "SELECT table_name, namespace_id, options FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table_name
     );
     let rows = query_rows(&sql);
     assert_eq!(
         rows.len(),
         1,
-        "Table {}.{} not found in system.tables: {}",
+        "Table {}.{} not found in system.schemas: {}",
         namespace,
         table_name,
         rows_as_debug_string(&rows)

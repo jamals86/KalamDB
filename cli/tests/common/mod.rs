@@ -1446,7 +1446,7 @@ fn wait_for_table_on_all_nodes(namespace: &str, table: &str, timeout: Duration) 
     }
     let urls = test_context().cluster_urls_raw.clone();
     let sql = format!(
-        "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table
     );
     let start = Instant::now();

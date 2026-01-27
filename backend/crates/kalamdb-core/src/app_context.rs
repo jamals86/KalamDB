@@ -13,10 +13,8 @@ use crate::live::ConnectionsManager;
 use crate::live_query::LiveQueryManager;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
-use crate::views::stats::{StatsTableProvider, StatsView};
 use crate::sql::executor::SqlExecutor;
-use crate::views::datatypes::{DatatypesTableProvider, DatatypesView};
-use crate::views::settings::{SettingsTableProvider, SettingsView};
+use crate::views::lazy_system_schema::LazySystemSchemaProvider;
 use async_trait::async_trait;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
@@ -27,7 +25,7 @@ use kalamdb_filestore::StorageRegistry;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_store::StorageBackend;
-use kalamdb_system::{ClusterCoordinator, Job, SystemTable, SystemTablesRegistry};
+use kalamdb_system::{ClusterCoordinator, Job, SystemTablesRegistry};
 use kalamdb_tables::{SharedTableStore, UserTableStore};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
@@ -220,20 +218,15 @@ impl AppContext {
             // Create schema cache (Phase 10 unified cache)
             let schema_registry = Arc::new(SchemaRegistry::new(10000));
 
-            // Create StatsTableProvider (callback will be set after AppContext is created)
-            let stats_view = Arc::new(StatsView::new());
-            let stats_provider = Arc::new(StatsTableProvider::new(Arc::clone(&stats_view)));
-            system_tables.set_stats_provider(stats_provider);
+            // Create lazy system schema provider (views created on first access)
+            let lazy_system_schema = Arc::new(LazySystemSchemaProvider::new(
+                Arc::clone(&system_tables),
+                Arc::clone(&config),
+                std::path::PathBuf::from(&config.logging.logs_path),
+            ));
 
-            // Inject SettingsTableProvider with config access (Phase 15)
-            let settings_view = Arc::new(SettingsView::with_config((*config).clone()));
-            let settings_provider = Arc::new(SettingsTableProvider::new(settings_view));
-            system_tables.set_settings_provider(settings_provider);
-
-            // Inject ServerLogsTableProvider with logs path (reads JSON log files - dev only)
-            let server_logs_provider =
-                crate::views::create_server_logs_provider(&config.logging.logs_path);
-            system_tables.set_server_logs_provider(Arc::new(server_logs_provider));
+            // Get stats_view reference for callback wiring later
+            let stats_view = lazy_system_schema.get_or_create_stats_view();
 
             // Register all system tables in DataFusion
             // Use config-driven DataFusion settings for parallelism
@@ -246,20 +239,17 @@ impl AppContext {
             // Wire up SchemaRegistry with base_session_context for automatic table registration
             schema_registry.set_base_session_context(Arc::clone(&base_session_context));
 
-            // Register system schema
+            // Register system schema with lazy loading
             // Use constant catalog name "kalam" - configured in DataFusionSessionFactory
-            let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
             let catalog = base_session_context
                     .catalog("kalam")
                     .expect("Catalog 'kalam' not found - ensure DataFusionSessionFactory is properly configured");
 
-            // Register the system schema with the catalog
+            // Register the lazy system schema provider with the catalog
+            // Views are created on first access, not eagerly at startup
             catalog
-                .register_schema("system", system_schema.clone())
+                .register_schema("system", Arc::clone(&lazy_system_schema) as Arc<dyn SchemaProvider>)
                 .expect("Failed to register system schema");
-
-            // Register all system tables and views in the system schema
-            Self::register_system_tables(&system_schema, &system_tables);
 
             // Register existing namespaces as DataFusion schemas
             // This ensures all namespaces persisted in RocksDB are available for SQL queries
@@ -373,22 +363,9 @@ impl AppContext {
             // data consistency across nodes, and each node notifies its own
             // live query subscribers locally when data is applied.
 
-            // Wire up ClusterTableProvider with the executor (cluster mode only)
-            let cluster_provider =
-                Arc::new(crate::views::create_cluster_provider(executor.clone()));
-            system_tables.set_cluster_provider(cluster_provider.clone());
-
-            // Wire up ClusterGroupsTableProvider with the executor (per-group view)
-            let cluster_groups_provider =
-                Arc::new(crate::views::create_cluster_groups_provider(executor.clone()));
-            system_tables.set_cluster_groups_provider(cluster_groups_provider.clone());
-
-            // Register cluster view with DataFusion system schema
-            // This must happen after executor is created since ClusterTableProvider needs it
-            Self::register_cluster_view(&system_schema, cluster_provider);
-
-            // Register cluster_groups view with DataFusion system schema
-            Self::register_cluster_groups_view(&system_schema, cluster_groups_provider);
+            // Wire the executor into the lazy system schema provider
+            // This enables cluster and cluster_groups views (created on first access)
+            lazy_system_schema.set_executor(Arc::clone(&executor));
 
             let app_ctx = Arc::new(AppContext {
                 node_id,
@@ -597,20 +574,6 @@ impl AppContext {
 
         // Create minimal schema registry
         let schema_registry = Arc::new(SchemaRegistry::new(100));
-
-        // Create StatsTableProvider (callback will be set after AppContext is created for tests)
-        let stats_provider = crate::views::stats::create_stats_provider();
-        system_tables.set_stats_provider(Arc::new(stats_provider));
-
-        // Inject SettingsTableProvider with default config for testing
-        let settings_view = Arc::new(SettingsView::with_config(ServerConfig::default()));
-        let settings_provider = Arc::new(SettingsTableProvider::new(settings_view));
-        system_tables.set_settings_provider(settings_provider);
-
-        // Inject ServerLogsTableProvider with temp path for testing
-        let server_logs_provider =
-            crate::views::create_server_logs_provider("/tmp/kalamdb-test/logs");
-        system_tables.set_server_logs_provider(Arc::new(server_logs_provider));
 
         // Create DataFusion session
         let session_factory = Arc::new(
@@ -1001,68 +964,6 @@ impl AppContext {
     pub fn log_runtime_metrics(&self) {
         let runtime = collect_runtime_metrics(self.server_start_time);
         log::info!("Runtime metrics: {}", runtime.to_log_string());
-    }
-
-    /// Register all system tables and views with the DataFusion schema provider
-    ///
-    /// This function encapsulates all system table registration logic:
-    /// - Persisted system tables (users, jobs, namespaces, storages, live_queries, tables, audit_logs, manifest)
-    /// - Virtual views (stats, settings, server_logs, datatypes)
-    ///
-    /// Note: The `cluster` view is registered separately because it requires the CommandExecutor
-    /// which is only available after Raft initialization.
-    ///
-    /// # Arguments
-    /// * `system_schema` - The DataFusion MemorySchemaProvider for the "system" schema
-    /// * `system_tables` - The SystemTablesRegistry containing all system table providers
-    pub fn register_system_tables(
-        system_schema: &Arc<datafusion::catalog::memory::MemorySchemaProvider>,
-        system_tables: &Arc<SystemTablesRegistry>,
-    ) {
-        // Collect all providers (tables + views) from the registry
-        let mut providers = system_tables.all_system_providers();
-
-        // Add system.datatypes virtual view (Arrow → KalamDB type mappings)
-        let datatypes_view = Arc::new(DatatypesView::new());
-        let datatypes_provider = Arc::new(DatatypesTableProvider::new(datatypes_view));
-        providers.push((SystemTable::Datatypes, datatypes_provider));
-
-        for (table, provider) in providers {
-            let name = table.table_name().to_string();
-            system_schema
-                .register_table(name.clone(), provider)
-                .unwrap_or_else(|e| panic!("Failed to register system.{}: {}", name, e));
-        }
-    }
-
-    /// Register the cluster view with the system schema
-    ///
-    /// This is called separately from `register_system_tables()` because the cluster view
-    /// requires the CommandExecutor which is only available after Raft initialization.
-    ///
-    /// # Arguments
-    /// * `system_schema` - The DataFusion MemorySchemaProvider for the "system" schema
-    /// * `cluster_provider` - The cluster view provider (created with CommandExecutor)
-    pub fn register_cluster_view(
-        system_schema: &Arc<datafusion::catalog::memory::MemorySchemaProvider>,
-        cluster_provider: Arc<dyn datafusion::datasource::TableProvider>,
-    ) {
-        system_schema
-            .register_table(SystemTable::Cluster.table_name().to_string(), cluster_provider)
-            .expect("Failed to register system.cluster");
-    }
-
-    /// Register the cluster_groups view with the system schema
-    pub fn register_cluster_groups_view(
-        system_schema: &Arc<datafusion::catalog::memory::MemorySchemaProvider>,
-        cluster_groups_provider: Arc<dyn datafusion::datasource::TableProvider>,
-    ) {
-        system_schema
-            .register_table(
-                SystemTable::ClusterGroups.table_name().to_string(),
-                cluster_groups_provider,
-            )
-            .expect("Failed to register system.cluster_groups");
     }
 }
 

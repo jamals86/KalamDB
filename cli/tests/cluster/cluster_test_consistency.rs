@@ -19,7 +19,7 @@ fn cluster_test_system_table_consistency() {
     assert!(urls.len() >= 3, "Expected at least 3 cluster URLs, got {}", urls.len());
 
     let queries = [
-        ("system.tables", "SELECT count(*) as count FROM system.tables"),
+        ("system.schemas", "SELECT count(*) as count FROM system.schemas"),
         ("system.users", "SELECT count(*) as count FROM system.users"),
         ("system.namespaces", "SELECT count(*) as count FROM system.namespaces"),
     ];
@@ -49,7 +49,7 @@ fn cluster_test_system_table_consistency() {
         }
 
         if !consistent {
-            if label == "system.tables" && !last_counts.is_empty() {
+            if label == "system.schemas" && !last_counts.is_empty() {
                 let min = last_counts.iter().map(|(_, count)| *count).min().unwrap_or(0);
                 let max = last_counts.iter().map(|(_, count)| *count).max().unwrap_or(0);
                 if max - min <= 5 {
@@ -153,7 +153,7 @@ fn cluster_test_table_replication() {
             let result = execute_on_node(
                 url,
                 &format!(
-                    "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+                    "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
                     namespace, name
                 ),
             )

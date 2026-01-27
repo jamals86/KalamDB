@@ -94,6 +94,11 @@ export function TreeItem({
             <User className="h-4 w-4 text-green-500" />
           </span>
         )}
+        {node.type === "table" && node.tableType === "system" && (
+          <span title="System Table">
+            <Database className="h-4 w-4 text-orange-500" />
+          </span>
+        )}
         {node.type === "table" && !node.tableType && (
           <Table2 className="h-4 w-4 text-green-500" />
         )}

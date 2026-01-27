@@ -38,7 +38,7 @@ export interface QueryTab {
 export interface SchemaNode {
   name: string;
   type: "namespace" | "table" | "column";
-  tableType?: "user" | "shared" | "stream"; // For table nodes
+  tableType?: "user" | "shared" | "stream" | "system"; // For table nodes
   dataType?: string;
   isNullable?: boolean;
   isPrimaryKey?: boolean;

@@ -614,7 +614,7 @@ mod cluster_common {
     pub fn wait_for_table_on_all_nodes(namespace: &str, table_name: &str, timeout_ms: u64) -> bool {
         let urls = cluster_urls();
         let query = format!(
-            "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+            "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
             namespace, table_name
         );
 

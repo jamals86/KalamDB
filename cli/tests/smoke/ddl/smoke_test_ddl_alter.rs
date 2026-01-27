@@ -269,7 +269,7 @@ fn smoke_test_alter_table_modify_column() {
 ///
 /// Verifies:
 /// - Can change ACCESS_LEVEL for shared tables
-/// - ACCESS_LEVEL appears in system.tables options
+/// - ACCESS_LEVEL appears in system.schemas options
 #[ntest::timeout(180000)]
 #[test]
 fn smoke_test_alter_shared_table_access_level() {
@@ -316,20 +316,20 @@ fn smoke_test_alter_shared_table_access_level() {
         Ok(_) => {
             println!("✅ Changed ACCESS_LEVEL to RESTRICTED");
 
-            // Verify in system.tables
+            // Verify in system.schemas
             let query_sql =
-                format!("SELECT options FROM system.tables WHERE table_name = '{}'", table);
+                format!("SELECT options FROM system.schemas WHERE table_name = '{}'", table);
             let output = execute_sql_as_root_via_client_json(&query_sql)
-                .expect("Failed to query system.tables");
+                .expect("Failed to query system.schemas");
 
             assert!(
                 output.contains("RESTRICTED")
                     || output.contains("restricted")
                     || output.contains("Restricted"),
-                "Expected ACCESS_LEVEL='RESTRICTED' in system.tables options"
+                "Expected ACCESS_LEVEL='RESTRICTED' in system.schemas options"
             );
 
-            println!("✅ Verified ACCESS_LEVEL updated in system.tables");
+            println!("✅ Verified ACCESS_LEVEL updated in system.schemas");
         },
         Err(e) => {
             println!("⚠️  SET TBLPROPERTIES not yet implemented: {}", e);

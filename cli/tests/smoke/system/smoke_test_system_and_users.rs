@@ -19,7 +19,7 @@ fn smoke_system_tables_and_user_lifecycle() {
         "SELECT * FROM system.jobs LIMIT 1",
         "SELECT * FROM system.users LIMIT 1",
         "SELECT * FROM system.live_queries LIMIT 1",
-        "SELECT * FROM system.tables LIMIT 1",
+        "SELECT * FROM system.schemas LIMIT 1",
         "SELECT * FROM system.namespaces LIMIT 1",
     ];
     for q in system_queries {

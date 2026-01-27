@@ -1268,7 +1268,7 @@ and then make sure we have a test for it as well
 
 138) Override the information_schema.columns to also return the KalamDatatype and schema version and other kalamdb specific things at the end, also the select * from information_schema.tables to add to it another column with tabletype
 
-139) Fior the cli if we click enter dont open the history menu again only execute enter
+139) For the cli if we click enter dont open the history menu again only execute enter
 
 140) Make system tables loading lazy loaded only when needed not all the time stays registered, this will reduce memory consumption, also the same for views this should be effective for all of system.* tables and views
 

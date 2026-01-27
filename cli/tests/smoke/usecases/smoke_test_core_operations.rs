@@ -41,7 +41,7 @@ fn test_system_tables_queryable() {
         "system.users",
         "system.namespaces",
         "system.live_queries",
-        "system.tables",
+        "system.schemas",
         "system.storages",
         // First release: no legacy data, direct query supported
         "system.jobs",

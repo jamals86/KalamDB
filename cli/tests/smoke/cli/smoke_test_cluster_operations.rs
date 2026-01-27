@@ -86,7 +86,7 @@ fn smoke_test_cluster_system_table_counts_consistent() {
     let urls = get_available_server_urls();
 
     let queries = [
-        ("system.tables", "SELECT count(*) as count FROM system.tables"),
+        ("system.schemas", "SELECT count(*) as count FROM system.schemas"),
         ("system.users", "SELECT count(*) as count FROM system.users"),
         ("system.namespaces", "SELECT count(*) as count FROM system.namespaces"),
     ];
@@ -237,12 +237,12 @@ fn smoke_test_cluster_table_type_consistency() {
     .expect("Failed to create stream table");
     println!("  ✓ STREAM table created");
 
-    // Verify all tables in system.tables
+    // Verify all tables in system.schemas
     let query = format!(
-        "SELECT table_name, table_type FROM system.tables WHERE namespace_id = '{}'",
+        "SELECT table_name, table_type FROM system.schemas WHERE namespace_id = '{}'",
         namespace
     );
-    let result = execute_sql_as_root_via_client(&query).expect("Failed to query system.tables");
+    let result = execute_sql_as_root_via_client(&query).expect("Failed to query system.schemas");
 
     // Verify each table and its type
     assert!(result.contains(user_table), "User table should exist");
@@ -746,7 +746,7 @@ fn smoke_test_cluster_storage_operations() {
 
     // Verify table references the storage
     let result = execute_sql_as_root_via_client(&format!(
-        "SELECT options FROM system.tables WHERE namespace_id = '{}' AND table_name = 'stored_data'",
+        "SELECT options FROM system.schemas WHERE namespace_id = '{}' AND table_name = 'stored_data'",
         namespace
     )).expect("Failed to query table options");
 

@@ -217,7 +217,7 @@ fn cluster_test_node_rejoin_system_metadata() {
     // Check tables exist
     let table_count = query_count_on_url(
         stopped_url,
-        &format!("SELECT count(*) FROM system.tables WHERE namespace_id = '{}'", namespace),
+        &format!("SELECT count(*) FROM system.schemas WHERE namespace_id = '{}'", namespace),
     );
     assert_eq!(table_count, 2, "Node3 should have 2 tables in namespace");
     println!("  ✓ Node3 has {} tables", table_count);

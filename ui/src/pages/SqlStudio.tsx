@@ -91,7 +91,7 @@ interface QueryTab {
 interface SchemaNode {
   name: string;
   type: "namespace" | "table" | "column";
-  tableType?: "user" | "shared" | "stream"; // For table nodes
+  tableType?: "user" | "shared" | "stream" | "system"; // For table nodes
   dataType?: string;
   isNullable?: boolean;
   isPrimaryKey?: boolean;
@@ -228,33 +228,53 @@ export default function SqlStudio() {
   const loadSchema = async () => {
     setSchemaLoading(true);
     try {
-      // Fetch all schema data in a single query using JOINs
+      // First, fetch all namespaces to ensure we display even empty ones
+      const allNamespaces = await executeSql(`
+        SELECT namespace_id
+        FROM system.namespaces
+        ORDER BY namespace_id
+      `);
+
+      // Build the schema tree - initialize with all namespaces first
+      const namespaceMap = new Map<string, SchemaNode>();
+      
+      // Create namespace nodes for all namespaces (even empty ones)
+      for (const ns of allNamespaces) {
+        const namespaceName = ns.namespace_id as string;
+        namespaceMap.set(namespaceName, {
+          name: namespaceName,
+          type: "namespace",
+          children: [],
+          isExpanded: namespaceName === "system",
+        });
+      }
+
+      // Now fetch tables and columns
       const allData = await executeSql(`
         SELECT 
-          t.table_schema,
+          t.namespace_id,
           t.table_name,
           t.table_type,
           c.column_name,
           c.data_type,
-          c.is_nullable,
-          c.ordinal_position
-        FROM information_schema.tables t
-        LEFT JOIN information_schema.columns c 
-          ON t.table_schema = c.table_schema AND t.table_name = c.table_name
-        ORDER BY t.table_schema, t.table_name, c.ordinal_position
+          c.nullable,
+          c.primary_key,
+          c.ordinal
+        FROM system.tables t
+        LEFT JOIN system.columns c 
+          ON t.namespace_id = c.namespace_id AND t.table_name = c.table_name
+        ORDER BY t.namespace_id, t.table_name, c.ordinal
       `);
 
-      // Build the schema tree from the flat results
-      const namespaceMap = new Map<string, SchemaNode>();
       const tableMap = new Map<string, SchemaNode>();
 
       for (const row of allData) {
-        const schemaName = row.table_schema as string;
+        const schemaName = row.namespace_id as string;
         const tableName = row.table_name as string;
-        const tableType = (row.table_type as string)?.toLowerCase() as "user" | "shared" | "stream" | undefined;
+        const tableType = (row.table_type as string)?.toLowerCase() as "user" | "shared" | "stream" | "system" | undefined;
         const tableKey = `${schemaName}.${tableName}`;
 
-        // Create or get namespace node
+        // Ensure namespace exists (should already exist from first query)
         if (!namespaceMap.has(schemaName)) {
           namespaceMap.set(schemaName, {
             name: schemaName,
@@ -283,8 +303,8 @@ export default function SqlStudio() {
             name: row.column_name as string,
             type: "column",
             dataType: row.data_type as string,
-            isNullable: row.is_nullable === "YES",
-            isPrimaryKey: row.ordinal_position === 0,
+            isNullable: row.nullable === true,
+            isPrimaryKey: row.primary_key === true,
           };
           tableMap.get(tableKey)!.children!.push(columnNode);
         }

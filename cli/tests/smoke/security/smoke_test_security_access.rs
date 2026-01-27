@@ -114,7 +114,7 @@ fn smoke_security_system_tables_blocked_in_batch() {
 
     let batch_queries = vec![
         "SELECT 1; SELECT * FROM system.users",
-        "SELECT 1; SELECT * FROM system.tables",
+        "SELECT 1; SELECT * FROM system.schemas",
         "SELECT 1; SELECT * FROM (SELECT * FROM system.users) AS u",
         "SELECT 1; SELECT u.username FROM system.users u JOIN (SELECT user_id FROM system.users) s ON u.user_id = s.user_id",
         "SELECT 1; SELECT * FROM system.users WHERE username IN (SELECT username FROM system.users)",

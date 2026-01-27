@@ -1,6 +1,6 @@
 //! Extended smoke tests for system tables
 //!
-//! Tests system.tables, system.live_queries, and system.stats tables
+//! Tests system.schemas, system.live_queries, and system.stats tables
 //! with focus on validating the `options` JSON column contains
 //! correct metadata for table types.
 //!
@@ -9,10 +9,10 @@
 use crate::common::*;
 use std::time::Duration;
 
-/// Test system.tables query and verify options JSON column
+/// Test system.schemas query and verify options JSON column
 ///
 /// Verifies:
-/// - system.tables contains created tables
+/// - system.schemas contains created tables
 /// - table_type column is correct (user, shared, stream)
 /// - options JSON contains TYPE, STORAGE_ID, FLUSH_POLICY
 /// - options JSON contains TTL_SECONDS for stream tables
@@ -29,7 +29,7 @@ fn smoke_test_system_tables_options_column() {
     let shared_table = generate_unique_table("shared_tbl");
     let stream_table = generate_unique_table("stream_tbl");
 
-    println!("🧪 Testing system.tables options column");
+    println!("🧪 Testing system.schemas options column");
 
     // Cleanup and setup
     let _ =
@@ -87,40 +87,40 @@ fn smoke_test_system_tables_options_column() {
 
     println!("✅ Created 3 tables (USER, SHARED, STREAM)");
 
-    // Query system.tables for our namespace
+    // Query system.schemas for our namespace
     let query_sql = format!(
-        "SELECT table_name, table_type, options FROM system.tables WHERE namespace_id = '{}' ORDER BY table_name",
+        "SELECT table_name, table_type, options FROM system.schemas WHERE namespace_id = '{}' ORDER BY table_name",
         namespace
     );
     let output =
-        execute_sql_as_root_via_client_json(&query_sql).expect("Failed to query system.tables");
+        execute_sql_as_root_via_client_json(&query_sql).expect("Failed to query system.schemas");
 
-    println!("system.tables output:\n{}", output);
+    println!("system.schemas output:\n{}", output);
 
     // Verify table names present
     assert!(
         output.contains(&user_table),
-        "Expected user table {} in system.tables",
+        "Expected user table {} in system.schemas",
         user_table
     );
     assert!(
         output.contains(&shared_table),
-        "Expected shared table {} in system.tables",
+        "Expected shared table {} in system.schemas",
         shared_table
     );
     assert!(
         output.contains(&stream_table),
-        "Expected stream table {} in system.tables",
+        "Expected stream table {} in system.schemas",
         stream_table
     );
 
     // Verify table_type column
     // Note: JSON output will have "table_type" field, but exact format depends on implementation
     // For smoke test, we just verify the column exists
-    assert!(output.contains("\"table_type\""), "Expected table_type column in system.tables");
+    assert!(output.contains("\"table_type\""), "Expected table_type column in system.schemas");
 
     // Verify options column exists
-    assert!(output.contains("\"options\""), "Expected options column in system.tables");
+    assert!(output.contains("\"options\""), "Expected options column in system.schemas");
 
     // Verify options JSON contains expected fields
     // For USER table: TYPE, STORAGE_ID, FLUSH_POLICY
@@ -149,7 +149,7 @@ fn smoke_test_system_tables_options_column() {
         "Expected ACCESS_LEVEL in options JSON for shared table"
     );
 
-    println!("✅ Verified system.tables options column contains metadata");
+    println!("✅ Verified system.schemas options column contains metadata");
 
     // TODO: Parse actual JSON and verify exact structure
     // This requires serde_json which is not in test dependencies yet
@@ -270,7 +270,7 @@ fn smoke_test_system_stats_meta_command() {
 /// Test \dt CLI meta-command (list tables)
 ///
 /// Verifies:
-/// - \dt lists tables from system.tables
+/// - \dt lists tables from system.schemas
 /// - Output contains table names
 #[ntest::timeout(180000)]
 #[test]
@@ -307,12 +307,12 @@ fn smoke_test_dt_meta_command() {
 
     println!("✅ Created 2 tables");
 
-    // Query system.tables directly (equivalent to \dt for our namespace)
+    // Query system.schemas directly (equivalent to \dt for our namespace)
     let query_sql = format!(
-        "SELECT table_name, table_type FROM system.tables WHERE namespace_id = '{}' ORDER BY table_name",
+        "SELECT table_name, table_type FROM system.schemas WHERE namespace_id = '{}' ORDER BY table_name",
         namespace
     );
-    let output = execute_sql_as_root_via_client(&query_sql).expect("Failed to query system.tables");
+    let output = execute_sql_as_root_via_client(&query_sql).expect("Failed to query system.schemas");
 
     println!("\\dt equivalent output:\n{}", output);
 
@@ -367,9 +367,9 @@ fn smoke_test_describe_table_meta_command() {
 
     println!("✅ Created table with multiple columns");
 
-    // Query system.tables for schema (equivalent to \d <table>)
+    // Query system.schemas for schema (equivalent to \d <table>)
     let query_sql = format!(
-        "SELECT table_name, table_type, options FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        "SELECT table_name, table_type, options FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table
     );
     let output = execute_sql_as_root_via_client(&query_sql).expect("Failed to describe table");

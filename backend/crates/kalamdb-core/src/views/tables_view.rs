@@ -12,7 +12,7 @@
 use super::view_base::VirtualView;
 use crate::schema_registry::RegistryError;
 use datafusion::arrow::array::{
-    ArrayRef, Int64Builder, StringBuilder, TimestampMillisecondBuilder,
+    ArrayRef, Int64Builder, StringBuilder, TimestampMicrosecondBuilder,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -191,8 +191,6 @@ impl VirtualView for TablesView {
     }
 
     fn compute_batch(&self) -> Result<RecordBatch, RegistryError> {
-        // TODO: Query system.schemas for latest table definitions
-        // For now, return empty batch
         let mut namespace_ids = StringBuilder::new();
         let mut table_names = StringBuilder::new();
         let mut table_types = StringBuilder::new();
@@ -200,8 +198,8 @@ impl VirtualView for TablesView {
         let mut versions = Int64Builder::new();
         let mut options_json = StringBuilder::new();
         let mut comments = StringBuilder::new();
-        let mut updated_ats = TimestampMillisecondBuilder::new();
-        let mut created_ats = TimestampMillisecondBuilder::new();
+        let mut updated_ats = TimestampMicrosecondBuilder::new();
+        let mut created_ats = TimestampMicrosecondBuilder::new();
 
         // Add system tables
         for def in self.system_registry.all_system_table_definitions_cached() {
@@ -223,8 +221,50 @@ impl VirtualView for TablesView {
                 comments.append_null();
             }
             
-            updated_ats.append_value(def.updated_at.timestamp_millis());
-            created_ats.append_value(def.created_at.timestamp_millis());
+            // Convert milliseconds to microseconds for Arrow Timestamp(Microsecond)
+            updated_ats.append_value(def.updated_at.timestamp_millis() * 1000);
+            created_ats.append_value(def.created_at.timestamp_millis() * 1000);
+        }
+
+        // Add user tables from system.schemas
+        let user_tables = self.system_registry.tables().list_tables()
+            .map_err(|e| RegistryError::Other(format!("Failed to list user tables: {}", e)))?;
+        
+        for def in user_tables {
+            namespace_ids.append_value(def.namespace_id.as_str());
+            table_names.append_value(def.table_name.as_str());
+            table_types.append_value(def.table_type.as_str());
+            
+            // Extract storage_id from table_options if available
+            let storage_id_opt = match &def.table_options {
+                TableOptions::User(opts) => Some(opts.storage_id.as_str()),
+                TableOptions::Shared(opts) => Some(opts.storage_id.as_str()),
+                TableOptions::Stream(_) | TableOptions::System(_) => None,
+            };
+            
+            if let Some(storage_id) = storage_id_opt {
+                storage_ids.append_value(storage_id);
+            } else {
+                storage_ids.append_null();
+            }
+            
+            versions.append_value(def.schema_version as i64);
+            
+            // Serialize options as JSON
+            match serde_json::to_string(&def.table_options) {
+                Ok(json) => options_json.append_value(json),
+                Err(_) => options_json.append_null(),
+            }
+            
+            if let Some(comment) = &def.table_comment {
+                comments.append_value(comment);
+            } else {
+                comments.append_null();
+            }
+            
+            // Convert milliseconds to microseconds for Arrow Timestamp(Microsecond)
+            updated_ats.append_value(def.updated_at.timestamp_millis() * 1000);
+            created_ats.append_value(def.created_at.timestamp_millis() * 1000);
         }
 
         RecordBatch::try_new(

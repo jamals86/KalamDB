@@ -1,7 +1,7 @@
-//! Smoke tests for schema history in system.tables
+//! Smoke tests for schema history in system.schemas
 //!
 //! Tests that ALTER TABLE operations create schema history entries:
-//! - Each ALTER TABLE should create a new version row in system.tables
+//! - Each ALTER TABLE should create a new version row in system.schemas
 //! - Old schemas are preserved to support reading historical data
 //! - is_latest flag correctly identifies the current schema version
 //!
@@ -11,12 +11,12 @@
 use crate::common::*;
 use std::time::Duration;
 
-/// Test that ALTER TABLE operations create schema history entries in system.tables
+/// Test that ALTER TABLE operations create schema history entries in system.schemas
 ///
 /// Verifies:
-/// - Creating a table creates one row in system.tables with schema_version = 1
+/// - Creating a table creates one row in system.schemas with schema_version = 1
 /// - Each ALTER TABLE ADD COLUMN increments schema_version
-/// - All versions are visible in SELECT * FROM system.tables
+/// - All versions are visible in SELECT * FROM system.schemas
 /// - is_latest = true only for the current version
 #[ntest::timeout(180000)]
 #[test]
@@ -30,7 +30,7 @@ fn smoke_test_schema_history_in_system_tables() {
     let table = generate_unique_table("versioned");
     let full_table = format!("{}.{}", namespace, table);
 
-    println!("🧪 Testing schema history in system.tables");
+    println!("🧪 Testing schema history in system.schemas");
 
     // Cleanup and setup
     let _ =
@@ -56,13 +56,13 @@ fn smoke_test_schema_history_in_system_tables() {
 
     println!("✅ Created table with initial schema (version 1)");
 
-    // Check system.tables - should have 1 row for this table
+    // Check system.schemas - should have 1 row for this table
     let query_v1 = format!(
-        "SELECT schema_version, is_latest FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}' ORDER BY schema_version",
+        "SELECT schema_version, is_latest FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}' ORDER BY schema_version",
         namespace, table
     );
     let output_v1 = execute_sql_as_root_via_client_json(&query_v1)
-        .expect("Failed to query system.tables after CREATE");
+        .expect("Failed to query system.schemas after CREATE");
 
     println!("After CREATE: {}", output_v1);
 
@@ -105,13 +105,13 @@ fn smoke_test_schema_history_in_system_tables() {
 
     println!("✅ Added column 'email' (should create version 2)");
 
-    // Check system.tables - should now have 2 rows
+    // Check system.schemas - should now have 2 rows
     let query_v2 = format!(
-        "SELECT schema_version, is_latest FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}' ORDER BY schema_version",
+        "SELECT schema_version, is_latest FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}' ORDER BY schema_version",
         namespace, table
     );
     let output_v2 = execute_sql_as_root_via_client_json(&query_v2)
-        .expect("Failed to query system.tables after ALTER 1");
+        .expect("Failed to query system.schemas after ALTER 1");
 
     println!("After ALTER 1: {}", output_v2);
 
@@ -148,11 +148,11 @@ fn smoke_test_schema_history_in_system_tables() {
     println!("✅ Added column 'age' (should create version 3)");
 
     let query_v3 = format!(
-        "SELECT schema_version, is_latest FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}' ORDER BY schema_version",
+        "SELECT schema_version, is_latest FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}' ORDER BY schema_version",
         namespace, table
     );
     let output_v3 = execute_sql_as_root_via_client_json(&query_v3)
-        .expect("Failed to query system.tables after ALTER 2");
+        .expect("Failed to query system.schemas after ALTER 2");
 
     println!("After ALTER 2: {}", output_v3);
 
@@ -181,11 +181,11 @@ fn smoke_test_schema_history_in_system_tables() {
     println!("✅ Added {} more columns", num_additional_alters);
 
     let query_final = format!(
-        "SELECT schema_version, is_latest FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}' ORDER BY schema_version",
+        "SELECT schema_version, is_latest FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}' ORDER BY schema_version",
         namespace, table
     );
     let output_final = execute_sql_as_root_via_client_json(&query_final)
-        .expect("Failed to query system.tables after multiple ALTERs");
+        .expect("Failed to query system.schemas after multiple ALTERs");
 
     println!("After all ALTERs: {}", output_final);
 
@@ -351,7 +351,7 @@ fn smoke_test_drop_table_removes_schema_history() {
 
     // Verify we have multiple versions
     let query_before = format!(
-        "SELECT COUNT(*) as cnt FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        "SELECT COUNT(*) as cnt FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table
     );
     let before_output = execute_sql_as_root_via_client_json(&query_before)
@@ -366,7 +366,7 @@ fn smoke_test_drop_table_removes_schema_history() {
 
     // Verify all versions removed
     let query_after = format!(
-        "SELECT COUNT(*) as cnt FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        "SELECT COUNT(*) as cnt FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table
     );
     let after_output = execute_sql_as_root_via_client_json(&query_after)
