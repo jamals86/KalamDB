@@ -648,12 +648,6 @@ pub struct RateLimitSettings {
 /// Authentication settings (T105 - Phase 7, User Story 5)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthSettings {
-    /// Allow remote (non-localhost) connections for system users (default: false)
-    /// When false, system users with auth_type='internal' can only authenticate from localhost
-    /// When true, system users can authenticate from any IP (requires password in metadata)
-    #[serde(default = "default_auth_allow_remote_access")]
-    pub allow_remote_access: bool,
-
     /// JWT secret for token validation (required for JWT auth)
     #[serde(default = "default_auth_jwt_secret")]
     pub jwt_secret: String,
@@ -773,7 +767,6 @@ impl Default for OAuthProviderConfig {
 impl Default for AuthSettings {
     fn default() -> Self {
         Self {
-            allow_remote_access: default_auth_allow_remote_access(),
             jwt_secret: default_auth_jwt_secret(),
             jwt_trusted_issuers: default_auth_jwt_trusted_issuers(),
             jwt_expiry_hours: default_auth_jwt_expiry_hours(),

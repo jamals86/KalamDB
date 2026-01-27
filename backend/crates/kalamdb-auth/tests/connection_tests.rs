@@ -69,25 +69,3 @@ fn test_remote_ipv6() {
     let conn = ConnectionInfo::new(Some("2001:0db8:85a3::8a2e:0370:7334".to_string()));
     assert!(!conn.is_localhost(), "Remote IPv6 should not be localhost");
 }
-
-#[test]
-fn test_access_allowed_localhost_always() {
-    let conn = ConnectionInfo::new(Some("127.0.0.1".to_string()));
-    assert!(
-        conn.is_access_allowed(false),
-        "Localhost should always be allowed even if remote access disabled"
-    );
-    assert!(conn.is_access_allowed(true), "Localhost should always be allowed");
-}
-
-#[test]
-fn test_access_denied_remote_when_disabled() {
-    let conn = ConnectionInfo::new(Some("192.168.1.100".to_string()));
-    assert!(!conn.is_access_allowed(false), "Remote access should be denied when disabled");
-}
-
-#[test]
-fn test_access_allowed_remote_when_enabled() {
-    let conn = ConnectionInfo::new(Some("192.168.1.100".to_string()));
-    assert!(conn.is_access_allowed(true), "Remote access should be allowed when enabled");
-}

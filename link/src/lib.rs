@@ -138,7 +138,8 @@ pub use live::LiveConnection;
 pub use models::{
     parse_i64, ChangeEvent, ConnectionOptions, ErrorDetail, HealthCheckResponse, HttpVersion,
     KalamDataType, LoginRequest, LoginResponse, LoginUserInfo, QueryRequest, QueryResponse,
-    QueryResult, SchemaField, SubscriptionConfig, SubscriptionOptions, UploadProgress,
+    QueryResult, SchemaField, ServerSetupRequest, ServerSetupResponse, SetupStatusResponse,
+    SetupUserInfo, SubscriptionConfig, SubscriptionOptions, UploadProgress,
 };
 pub use seq_id::SeqId;
 pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};

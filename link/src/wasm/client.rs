@@ -270,6 +270,12 @@ impl KalamClient {
     /// # Returns
     /// Promise that resolves when connection is established and authenticated
     pub async fn connect(&mut self) -> Result<(), JsValue> {
+        if matches!(self.auth, WasmAuthProvider::Basic { .. }) {
+            return Err(JsValue::from_str(
+                "WebSocket authentication requires a JWT token. Use KalamClientWithJwt or login first.",
+            ));
+        }
+
         // Check if already connected - prevent duplicate connections
         if self.is_connected() {
             console_log("KalamClient: Already connected, skipping reconnection");

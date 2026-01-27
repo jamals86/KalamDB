@@ -7,15 +7,11 @@ use serde::{Deserialize, Serialize};
 ///
 /// # Supported Methods
 ///
-/// - `Basic` - Username/password authentication
 /// - `Jwt` - JWT token (Bearer) authentication
 ///
 /// # JSON Wire Format
 ///
 /// ```json
-/// // Basic Auth
-/// {"type": "authenticate", "method": "basic", "username": "alice", "password": "secret"}
-///
 /// // JWT Auth
 /// {"type": "authenticate", "method": "jwt", "token": "eyJhbGciOiJIUzI1NiIs..."}
 /// ```
@@ -29,8 +25,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "method", rename_all = "snake_case")]
 pub enum WsAuthCredentials {
-    /// Username and password authentication
-    Basic { username: String, password: String },
     /// JWT token authentication
     Jwt { token: String },
     // Future auth methods can be added here:

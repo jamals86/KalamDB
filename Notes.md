@@ -1307,4 +1307,5 @@ Main Epics:
 5) Combine the models of kalamdb-link and kalamdb-commons into kalamdb-shared crate and use it everywhere
 6) Service consumer - Subscription to shards
 7) Change the code to use FlatBuffers for: Raft/RocksDb storage
+8) Add page for Server Initial Setup
 
