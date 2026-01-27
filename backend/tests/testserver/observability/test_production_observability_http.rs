@@ -1,9 +1,9 @@
 //! Production-readiness observability checks over the real HTTP SQL API.
 
-use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
-use super::test_support::http_server::HttpTestServer;
+use super::test_support::auth_helper::create_user_auth_header;
+use super::test_support::consolidated_helpers::{unique_namespace, unique_table};
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{Role, UserName};
+use kalamdb_commons::Role;
 use tokio::time::{sleep, Duration, Instant};
 
 #[tokio::test]
@@ -54,9 +54,7 @@ async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result
 
     let username = unique_table("user1");
     let password = "UserPass123!";
-    let _ = ensure_user_exists(server, &username, password, &Role::User).await?;
-
-    let user_auth = HttpTestServer::basic_auth_header(&UserName::new(&username), password);
+    let user_auth = create_user_auth_header(server, &username, password, &Role::User).await?;
 
     let resp = server
         .execute_sql_with_auth(

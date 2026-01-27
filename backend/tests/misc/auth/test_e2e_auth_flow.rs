@@ -2,7 +2,7 @@
 //!
 //! This test verifies the complete authentication flow:
 //! 1. Create a new user with password authentication
-//! 2. Authenticate the user via HTTP Basic Auth
+//! 2. Authenticate the user via Bearer token
 //! 3. Execute SQL queries as the authenticated user
 //! 4. Soft delete the user account
 //! 5. Verify authentication fails for deleted user

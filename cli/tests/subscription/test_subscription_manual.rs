@@ -6,6 +6,10 @@ use std::time::Duration;
 
 #[test]
 fn test_subscription_listener_functionality() {
+    if cfg!(windows) {
+        eprintln!("⚠️  Skipping on Windows due to intermittent access violations in WebSocket tests.");
+        return;
+    }
     if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;

@@ -1,15 +1,8 @@
 //! Quickstart end-to-end smoke over the real HTTP SQL API.
 
-use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
-use super::test_support::http_server::HttpTestServer;
+use super::test_support::auth_helper::create_user_auth_header_default;
+use super::test_support::consolidated_helpers::{unique_namespace, unique_table};
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{Role, UserName};
-
-async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
-    let password = "UserPass123!";
-    let _ = ensure_user_exists(server, username, password, &Role::User).await?;
-    Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
-}
 
 #[tokio::test]
 #[ntest::timeout(60000)] // 60 seconds - comprehensive quickstart test
@@ -17,7 +10,7 @@ async fn test_quickstart_workflow_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
     let ns = unique_namespace("qs");
     let user = unique_table("user_qs");
-    let auth = create_user(server, &user).await?;
+    let auth = create_user_auth_header_default(server, &user).await?;
 
     let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);

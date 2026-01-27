@@ -38,7 +38,7 @@ fn query_count_on_url(base_url: &str, sql: &str) -> i64 {
         .block_on(async move {
             let client = KalamLinkClient::builder()
                 .base_url(&base_url)
-                .auth(AuthProvider::basic_auth("root".to_string(), password))
+                .auth(auth_provider_for_user_on_url(&base_url, "root", &password))
                 .timeouts(
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)

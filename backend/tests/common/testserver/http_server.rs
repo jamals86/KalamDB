@@ -2,7 +2,6 @@
 
 use super::cluster::ClusterTestServer;
 use anyhow::{Context, Result};
-use base64::Engine;
 use kalam_link::models::{QueryResponse, ResponseStatus};
 use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
 use kalamdb_commons::{Role, UserId, UserName};
@@ -142,6 +141,8 @@ pub struct HttpTestServer {
     user_id_cache: std::sync::Mutex<HashMap<String, String>>,
     /// Cache of username -> password for basic auth test clients
     user_password_cache: std::sync::Mutex<HashMap<String, String>>,
+    /// Cache of username -> bearer token to avoid regenerating per request
+    user_token_cache: std::sync::Mutex<HashMap<String, String>>,
     running: kalamdb_server::lifecycle::RunningTestHttpServer,
     skip_raft_leader_check: bool,
     // Keep temp dir last so it is dropped after server resources.
@@ -186,20 +187,6 @@ impl HttpTestServer {
             return Ok(AuthProvider::none());
         }
 
-        if let Some(encoded) = auth_header.strip_prefix("Basic ") {
-            let decoded = base64::engine::general_purpose::STANDARD
-                .decode(encoded)
-                .context("Failed to decode Basic auth header")?;
-            let decoded = String::from_utf8(decoded)
-                .context("Basic auth decoded value was not valid UTF-8")?;
-
-            let (username, password) = decoded
-                .split_once(':')
-                .context("Basic auth decoded value missing ':' separator")?;
-
-            return Ok(AuthProvider::basic_auth(username.to_string(), password.to_string()));
-        }
-
         if let Some(token) = auth_header.strip_prefix("Bearer ") {
             return Ok(AuthProvider::jwt_token(token.to_string()));
         }
@@ -207,13 +194,23 @@ impl HttpTestServer {
         Err(anyhow::anyhow!("Unsupported Authorization header format: {}", auth_header))
     }
 
-    /// Build a Basic auth header value for localhost requests.
+    /// Build a Bearer auth header value for a user.
     ///
-    /// Example: `Authorization: Basic <base64(username:password)>`
-    pub fn basic_auth_header(username: &UserName, password: &str) -> String {
-        let raw = format!("{}:{}", username, password);
-        let b64 = base64::engine::general_purpose::STANDARD.encode(raw);
-        format!("Basic {}", b64)
+    /// Example: `Authorization: Bearer <jwt>`
+    pub fn bearer_auth_header(&self, username: &UserName) -> Result<String> {
+        if let Some(token) = self.get_cached_user_token(username.as_str()) {
+            return Ok(format!("Bearer {}", token));
+        }
+
+        let users = self.app_context().system_tables().users();
+        let user = users
+            .get_user_by_username(username.as_str())
+            .context("Failed to load user for bearer auth header")?
+            .ok_or_else(|| anyhow::anyhow!("User '{}' not found", username))?;
+
+        let token = self.create_jwt_token_with_id(&user.user_id, &user.username, &user.role);
+        self.cache_user_token(username.as_str(), &token);
+        Ok(format!("Bearer {}", token))
     }
 
     /// Returns the server's isolated data directory for this test instance.
@@ -305,6 +302,12 @@ impl HttpTestServer {
         cache.insert(username.to_string(), password.to_string());
     }
 
+    /// Register a bearer token in the cache for reuse.
+    pub fn cache_user_token(&self, username: &str, token: &str) {
+        let mut cache = self.user_token_cache.lock().expect("user_token_cache mutex poisoned");
+        cache.insert(username.to_string(), token.to_string());
+    }
+
     /// Get cached user_id for a username, if available
     pub fn get_cached_user_id(&self, username: &str) -> Option<String> {
         let cache = self.user_id_cache.lock().expect("user_id_cache mutex poisoned");
@@ -314,6 +317,12 @@ impl HttpTestServer {
     /// Get cached password for a username, if available
     pub fn get_cached_user_password(&self, username: &str) -> Option<String> {
         let cache = self.user_password_cache.lock().expect("user_password_cache mutex poisoned");
+        cache.get(username).cloned()
+    }
+
+    /// Get cached bearer token for a username, if available.
+    pub fn get_cached_user_token(&self, username: &str) -> Option<String> {
+        let cache = self.user_token_cache.lock().expect("user_token_cache mutex poisoned");
         cache.get(username).cloned()
     }
 
@@ -364,7 +373,7 @@ impl HttpTestServer {
         Ok(user_id)
     }
 
-    /// Returns a pre-configured KalamLinkClient authenticated as specified user using basic auth.
+    /// Returns a pre-configured KalamLinkClient authenticated as specified user using JWT.
     pub fn link_client_with_id(
         &self,
         _user_id: &str,
@@ -390,19 +399,19 @@ impl HttpTestServer {
                 .expect("Failed to build KalamLinkClient");
         }
 
-        // For localhost tests, use cached basic-auth password if available
-        let auth_username = username;
-        let auth_password = self.get_cached_user_password(username).unwrap_or_else(|| {
-            eprintln!(
-                "WARNING: link_client('{}') called without cached password. Falling back to test123.",
-                username
-            );
-            "test123".to_string()
-        });
+        // Use JWT for all non-root users
+        let users = self.app_context().system_tables().users();
+        let user = users
+            .get_user_by_username(username)
+            .expect("Failed to load user by username")
+            .unwrap_or_else(|| {
+                panic!("User '{}' not found for link_client_with_id", username)
+            });
+        let token = self.create_jwt_token_with_id(&user.user_id, &user.username, &user.role);
 
         KalamLinkClient::builder()
             .base_url(self.base_url())
-            .auth(AuthProvider::basic_auth(auth_username.to_string(), auth_password))
+            .auth(AuthProvider::jwt_token(token))
             .timeouts(
                 KalamLinkTimeouts::builder()
                     .connection_timeout_secs(5)
@@ -861,6 +870,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
         link_client_cache: Mutex::new(HashMap::new()),
         user_id_cache: std::sync::Mutex::new(HashMap::new()),
         user_password_cache: std::sync::Mutex::new(HashMap::new()),
+        user_token_cache: std::sync::Mutex::new(HashMap::new()),
         running,
         skip_raft_leader_check,
     };
@@ -916,6 +926,7 @@ pub async fn start_http_test_server_with_config(
         link_client_cache: Mutex::new(HashMap::new()),
         user_id_cache: std::sync::Mutex::new(HashMap::new()),
         user_password_cache: std::sync::Mutex::new(HashMap::new()),
+        user_token_cache: std::sync::Mutex::new(HashMap::new()),
         running,
         skip_raft_leader_check,
     };

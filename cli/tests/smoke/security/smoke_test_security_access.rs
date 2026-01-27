@@ -46,7 +46,7 @@ fn subscribe_as_user(username: &str, password: &str, query: &str) -> Result<(), 
 
     let client = KalamLinkClient::builder()
         .base_url(&base_url)
-        .auth(AuthProvider::basic_auth(username.to_string(), password.to_string()))
+        .auth(auth_provider_for_user_on_url(&base_url, username, password))
         .timeouts(
             KalamLinkTimeouts::builder()
                 .connection_timeout_secs(5)

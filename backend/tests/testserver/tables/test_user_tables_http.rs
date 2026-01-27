@@ -1,20 +1,14 @@
 //! User table lifecycle + isolation tests over the real HTTP SQL API.
 
-use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
+use super::test_support::auth_helper::create_user_auth_header_default;
+use super::test_support::consolidated_helpers::{unique_namespace, unique_table};
 use super::test_support::flush::{flush_table_and_wait, wait_for_parquet_files_for_user_table};
 use super::test_support::http_server::HttpTestServer;
 use super::test_support::jobs::{
     extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent,
 };
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{Role, UserName};
 use tokio::time::Duration;
-
-async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
-    let password = "UserPass123!";
-    let _ = ensure_user_exists(server, username, password, &Role::User).await?;
-    Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
-}
 
 async fn lookup_user_id(server: &HttpTestServer, username: &str) -> anyhow::Result<String> {
     let resp = server
@@ -49,8 +43,8 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() -> anyhow::Result<
 
     let user1 = unique_table("user1");
     let user2 = unique_table("user2");
-    let auth1 = create_user(server, &user1).await?;
-    let auth2 = create_user(server, &user2).await?;
+    let auth1 = create_user_auth_header_default(server, &user1).await?;
+    let auth2 = create_user_auth_header_default(server, &user2).await?;
     let user1_id = lookup_user_id(server, &user1).await?;
     let user2_id = lookup_user_id(server, &user2).await?;
 

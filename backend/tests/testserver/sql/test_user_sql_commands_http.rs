@@ -15,10 +15,7 @@ async fn test_user_sql_commands_over_http() {
         },
         |server| {
             Box::pin(async move {
-                let admin_auth = super::test_support::http_server::HttpTestServer::basic_auth_header(
-                    &UserName::new("root"),
-                    "",
-                );
+                let admin_auth = server.bearer_auth_header(&UserName::new("root"))?;
 
                 // CREATE USER with password
                 let sql = "CREATE USER 'alice' WITH PASSWORD 'SecurePass123!' ROLE developer EMAIL 'alice@example.com'";
@@ -65,11 +62,7 @@ async fn test_user_sql_commands_over_http() {
                     .execute_sql_with_auth(create_regular, &admin_auth)
                     .await?;
 
-                let regular_auth =
-                    super::test_support::http_server::HttpTestServer::basic_auth_header(
-                        &UserName::new("regular_user"),
-                        "Pass123!A",
-                    );
+                let regular_auth = server.bearer_auth_header(&UserName::new("regular_user"))?;
                 let sql = "CREATE USER 'charlie' WITH PASSWORD 'TestPass123!B' ROLE user";
                 let result = server.execute_sql_with_auth(sql, &regular_auth).await?;
                 assert_eq!(
