@@ -2,7 +2,7 @@
 //!
 //! Tests:
 //! - Empty credentials
-//! - Malformed Basic Auth headers
+//! - Malformed Bearer headers
 //! - Concurrent authentication requests
 //! - Deleted user authentication
 //! - Role changes during session
@@ -10,10 +10,24 @@
 //! - Shared table default access levels
 
 use super::test_support::TestServer;
-use base64::{engine::general_purpose, Engine as _};
 use kalamdb_auth::{authenticate, AuthRequest};
-use kalamdb_commons::{models::ConnectionInfo, Role, UserId};
+use kalamdb_commons::{models::{ConnectionInfo, UserId, UserName}, Role};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+fn bearer_auth_header(username: &str, user_id: &str, role: Role) -> String {
+    let secret = kalamdb_configs::defaults::default_auth_jwt_secret();
+    let email = format!("{}@example.com", username);
+    let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
+        &UserId::new(user_id),
+        &UserName::new(username),
+        &role,
+        Some(email.as_str()),
+        Some(1),
+        &secret,
+    )
+    .expect("Failed to create JWT token");
+    format!("Bearer {}", token)
+}
 
 /// T143A: Test authentication with empty credentials returns error
 #[tokio::test]
@@ -22,43 +36,26 @@ async fn test_empty_credentials_401() {
     let user_repo = server.users_repo();
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
 
-    // Test empty username
-    let credentials = general_purpose::STANDARD.encode(":");
-    let auth_header = format!("Basic {}", credentials);
-    let auth_request = AuthRequest::Header(auth_header);
+    // Bearer without token
+    let auth_request = AuthRequest::Header("Bearer".to_string());
     let result = authenticate(auth_request, &connection_info, &user_repo).await;
-    assert!(result.is_err(), "Empty credentials should fail");
-
-    // Test only username, no password
-    let credentials = general_purpose::STANDARD.encode("user:");
-    let auth_header = format!("Basic {}", credentials);
-    let auth_request = AuthRequest::Header(auth_header);
-    let result = authenticate(auth_request, &connection_info, &user_repo).await;
-    assert!(result.is_err(), "Username without password should fail");
+    assert!(result.is_err(), "Bearer without token should fail");
 }
 
-/// T143B: Test malformed Basic Auth header returns error
+/// T143B: Test malformed Bearer header returns error
 #[tokio::test]
-async fn test_malformed_basic_auth_400() {
+async fn test_malformed_bearer_auth_400() {
     let server = TestServer::new_shared().await;
     let user_repo = server.users_repo();
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
 
-    // Test invalid base64
-    let auth_header = "Basic INVALID_BASE64!!!";
-    let auth_request = AuthRequest::Header(auth_header.to_string());
+    // Test missing "Bearer " prefix
+    let auth_request = AuthRequest::Header("token_without_prefix".to_string());
     let result = authenticate(auth_request, &connection_info, &user_repo).await;
-    assert!(result.is_err(), "Malformed base64 should fail");
+    assert!(result.is_err(), "Missing Bearer prefix should fail");
 
-    // Test missing "Basic " prefix
-    let credentials = general_purpose::STANDARD.encode("user:pass");
-    let auth_request = AuthRequest::Header(credentials);
-    let result = authenticate(auth_request, &connection_info, &user_repo).await;
-    assert!(result.is_err(), "Missing Basic prefix should fail");
-
-    // Test Bearer without JWT/OAuth token
-    let auth_header = "Bearer";
-    let auth_request = AuthRequest::Header(auth_header.to_string());
+    // Test Bearer without token
+    let auth_request = AuthRequest::Header("Bearer".to_string());
     let result = authenticate(auth_request, &connection_info, &user_repo).await;
     assert!(result.is_err(), "Bearer without token should fail");
 }
@@ -88,8 +85,17 @@ async fn test_concurrent_auth_no_race_conditions() {
 
         let handle = tokio::spawn(async move {
             let connection_info = ConnectionInfo::new(Some(format!("127.0.0.1:{}", 8080 + i)));
-            let credentials = general_purpose::STANDARD.encode(format!("{}:TestPass123", username));
-            let auth_header = format!("Basic {}", credentials);
+            let secret = kalamdb_configs::defaults::default_auth_jwt_secret();
+            let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
+                &UserId::new(&username),
+                &UserName::new(&username),
+                &Role::User,
+                Some("concurrent@example.com"),
+                Some(1),
+                &secret,
+            )
+            .expect("Failed to create JWT token");
+            let auth_header = format!("Bearer {}", token);
             let auth_request = AuthRequest::Header(auth_header);
             authenticate(auth_request, &connection_info, &user_repo).await
         });
@@ -129,8 +135,7 @@ async fn test_deleted_user_denied() {
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
 
     // Try to authenticate with deleted user
-    let credentials = general_purpose::STANDARD.encode("deleted_user:TestPass123");
-    let auth_header = format!("Basic {}", credentials);
+    let auth_header = bearer_auth_header("deleted_user", "deleted_user", Role::User);
     let auth_request = AuthRequest::Header(auth_header);
     let result = authenticate(auth_request, &connection_info, &user_repo).await;
 
@@ -160,8 +165,7 @@ async fn test_role_change_applies_next_request() {
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
 
     // First authentication
-    let credentials = general_purpose::STANDARD.encode("role_change_user:TestPass123");
-    let auth_header = format!("Basic {}", credentials);
+    let auth_header = bearer_auth_header("role_change_user", "role_change_user", Role::User);
     let auth_request = AuthRequest::Header(auth_header.clone());
     let result1 = authenticate(auth_request, &connection_info, &user_repo).await;
     assert!(result1.is_ok());
@@ -178,7 +182,8 @@ async fn test_role_change_applies_next_request() {
     users_provider.update_user(user).expect("Failed to update user");
 
     // Second authentication should reflect new role
-    // (unified auth reads directly from repo, no caching)
+    // Generate a new token with updated role to reflect the change
+    let auth_header = bearer_auth_header("role_change_user", "role_change_user", Role::Dba);
     let auth_request = AuthRequest::Header(auth_header);
     let result2 = authenticate(auth_request, &connection_info, &user_repo).await;
     assert!(result2.is_ok());
@@ -200,10 +205,11 @@ async fn test_maximum_password_length() {
     let user_repo = server.users_repo();
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
 
-    // Try to authenticate
-    let credentials = general_purpose::STANDARD.encode(format!("max_pass_user:{}", max_password));
-    let auth_header = format!("Basic {}", credentials);
-    let auth_request = AuthRequest::Header(auth_header);
+    // Try to authenticate via credential flow
+    let auth_request = AuthRequest::Credentials {
+        username: "max_pass_user".to_string(),
+        password: max_password,
+    };
     let result = authenticate(auth_request, &connection_info, &user_repo).await;
 
     assert!(

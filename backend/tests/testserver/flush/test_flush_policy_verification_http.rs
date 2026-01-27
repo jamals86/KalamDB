@@ -6,23 +6,17 @@
 //! - tests/integration/flush/test_automatic_flushing_comprehensive.rs
 //! - tests/integration/flush/test_flush_operations.rs
 
-use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
+use super::test_support::auth_helper::create_user_auth_header_with_id;
+use super::test_support::consolidated_helpers::{unique_namespace, unique_table};
 use super::test_support::flush::{
     flush_table_and_wait, wait_for_parquet_files_for_table, wait_for_parquet_files_for_user_table,
 };
-use super::test_support::http_server::HttpTestServer;
 use super::test_support::jobs::{
     extract_cleanup_job_id, wait_for_job_completion, wait_for_path_absent,
 };
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{Role, UserName};
+use kalamdb_commons::Role;
 use tokio::time::Duration;
-
-async fn create_user(server: &HttpTestServer, username: &str) -> anyhow::Result<(String, String)> {
-    let password = "UserPass123!";
-    let user_id = ensure_user_exists(server, username, password, &Role::User).await?;
-    Ok((HttpTestServer::basic_auth_header(&UserName::new(username), password), user_id))
-}
 
 #[tokio::test]
 #[ntest::timeout(180000)] // 3 minutes max for comprehensive flush policy test
@@ -39,8 +33,10 @@ async fn test_flush_policy_and_parquet_output_over_http() {
 
     let user_a = unique_table("alice");
     let user_b = unique_table("bob");
-    let (auth_a, user_a_id) = create_user(server, &user_a).await?;
-    let (auth_b, user_b_id) = create_user(server, &user_b).await?;
+    let (auth_a, user_a_id) =
+        create_user_auth_header_with_id(server, &user_a, "UserPass123!", &Role::User).await?;
+    let (auth_b, user_b_id) =
+        create_user_auth_header_with_id(server, &user_b, "UserPass123!", &Role::User).await?;
 
             // -----------------------------------------------------------------
             // USER table: manual flush creates parquet + respects row threshold

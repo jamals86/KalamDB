@@ -64,7 +64,7 @@ fn get_leader_and_followers() -> (String, Vec<String>) {
 fn create_ws_client(base_url: &str) -> KalamLinkClient {
     KalamLinkClient::builder()
         .base_url(base_url)
-        .auth(AuthProvider::basic_auth("root".to_string(), root_password().to_string()))
+        .auth(auth_provider_for_user_on_url(base_url, "root", root_password()))
         .timeouts(
             KalamLinkTimeouts::builder()
                 .connection_timeout_secs(5)
@@ -617,7 +617,7 @@ fn cluster_test_subscription_user_table_any_node() {
         cluster_runtime().block_on(async {
             let client = KalamLinkClient::builder()
                 .base_url(url)
-                .auth(AuthProvider::basic_auth(test_user.clone(), "test_password_123".to_string()))
+                .auth(auth_provider_for_user_on_url(url, &test_user, "test_password_123"))
                 .timeouts(
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)

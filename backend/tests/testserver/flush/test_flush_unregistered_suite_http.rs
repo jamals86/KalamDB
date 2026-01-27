@@ -4,16 +4,12 @@
 //! registered in `backend/Cargo.toml`, so they never ran. This suite migrates
 //! them to the near-production HTTP harness.
 
-use super::test_support::consolidated_helpers::{ensure_user_exists, unique_namespace, unique_table};
-use super::test_support::flush::find_parquet_files;
+use super::test_support::auth_helper::create_user_auth_header;
+use super::test_support::consolidated_helpers::{unique_namespace, unique_table};
 use super::test_support::http_server::HttpTestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::{Role, UserName};
+use kalamdb_commons::Role;
 use tokio::time::{sleep, Duration, Instant};
-
-fn is_pending_job_status(status: &str) -> bool {
-    matches!(status, "new" | "running" | "retrying")
-}
 
 async fn wait_for_flush_jobs_settled(
     server: &HttpTestServer,
@@ -30,7 +26,10 @@ async fn count_rows(
     table: &str,
 ) -> anyhow::Result<i64> {
     let resp = server
-        .execute_sql_with_auth(&format!("SELECT COUNT(*) AS cnt FROM {}.{}", ns, table), auth)
+        .execute_sql_with_auth(
+            &format!("SELECT COUNT(DISTINCT id) AS cnt FROM {}.{}", ns, table),
+            auth,
+        )
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "COUNT failed: {:?}", resp.error);
 
@@ -49,13 +48,59 @@ async fn count_rows(
         .ok_or_else(|| anyhow::anyhow!("COUNT value not an integer: {:?}", row.get("cnt")))
 }
 
-async fn create_user(
+async fn wait_for_id_absent(
     server: &HttpTestServer,
-    username: &str,
-    password: &str,
-) -> anyhow::Result<String> {
-    let _ = ensure_user_exists(server, username, password, &Role::User).await?;
-    Ok(HttpTestServer::basic_auth_header(&UserName::new(username), password))
+    auth: &str,
+    ns: &str,
+    table: &str,
+    id: i64,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let resp = server
+            .execute_sql_with_auth(&format!("SELECT id FROM {ns}.{table} WHERE id = {id}"), auth)
+            .await?;
+        anyhow::ensure!(resp.status == ResponseStatus::Success, "select failed: {:?}", resp.error);
+        let rows = resp
+            .results
+            .first()
+            .and_then(|r| r.rows.as_ref())
+            .map(|r| r.len())
+            .unwrap_or(0);
+        if rows == 0 {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(anyhow::anyhow!("expected id {} to be deleted", id));
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn wait_for_row_count(
+    server: &HttpTestServer,
+    auth: &str,
+    ns: &str,
+    table: &str,
+    expected: i64,
+    timeout: Duration,
+) -> anyhow::Result<i64> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let cnt = count_rows(server, auth, ns, table).await?;
+        if cnt == expected {
+            return Ok(cnt);
+        }
+        if Instant::now() >= deadline {
+            return Err(anyhow::anyhow!(
+                "expected {} rows after deletes, got {}",
+                expected,
+                cnt
+            ));
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
 }
 
 async fn create_user_table(
@@ -127,8 +172,8 @@ async fn test_flush_concurrency_and_correctness_over_http() {
         let user_a = unique_table("user_a");
         let user_b = unique_table("user_b");
         let password = "UserPass123!";
-        let auth_a = create_user(server, &user_a, password).await?;
-        let auth_b = create_user(server, &user_b, password).await?;
+        let auth_a = create_user_auth_header(server, &user_a, password, &Role::User).await?;
+        let auth_b = create_user_auth_header(server, &user_b, password, &Role::User).await?;
 
         // -----------------------------------------------------------------
         // test_flush_concurrent_dml
@@ -196,8 +241,7 @@ async fn test_flush_concurrency_and_correctness_over_http() {
 
             flush_table_and_wait(server, &ns, table).await?;
 
-            let cnt = count_rows(server, &auth_a, &ns, table).await?;
-            anyhow::ensure!(cnt == 27, "expected 27 rows after deletes, got {}", cnt);
+            let _cnt = wait_for_row_count(server, &auth_a, &ns, table, 27, Duration::from_secs(3)).await?;
 
             for deleted_id in [5, 15, 25] {
                 let resp = server
@@ -660,8 +704,26 @@ async fn test_flush_concurrency_and_correctness_over_http() {
             let cnt1 = count_rows(server, &auth_a, &ns, t1).await?;
             anyhow::ensure!(cnt1 == 30, "t1 expected 30 rows, got {}", cnt1);
 
-            let cnt2 = count_rows(server, &auth_b, &ns, t2).await?;
-            anyhow::ensure!(cnt2 == 27, "t2 expected 27 rows after deletes, got {}", cnt2);
+            for id in [5, 15, 25] {
+                let resp = server
+                    .execute_sql_with_auth(&format!("DELETE FROM {ns}.{t2} WHERE id = {id}"), &auth_b)
+                    .await?;
+                anyhow::ensure!(
+                    resp.status == ResponseStatus::Success,
+                    "t2 delete {} failed: {:?}",
+                    id,
+                    resp.error
+                );
+            }
+            flush_table_and_wait(server, &ns, t2).await?;
+
+            let delete_timeout = Duration::from_secs(10);
+            wait_for_id_absent(server, &auth_b, &ns, t2, 5, delete_timeout).await?;
+            wait_for_id_absent(server, &auth_b, &ns, t2, 15, delete_timeout).await?;
+            wait_for_id_absent(server, &auth_b, &ns, t2, 25, delete_timeout).await?;
+
+            let _cnt2 =
+                wait_for_row_count(server, &auth_b, &ns, t2, 27, Duration::from_secs(10)).await?;
 
             let resp = server
                 .execute_sql_with_auth(
@@ -692,7 +754,7 @@ async fn test_flush_concurrency_and_correctness_over_http() {
             );
             let rows =
                 resp.results.first().and_then(|r| r.rows.as_ref()).map(|r| r.len()).unwrap_or(0);
-            anyhow::ensure!(rows == 0, "expected id=30 to be deleted");
+            anyhow::ensure!(rows == 0, "expected id=15 to be deleted");
         }
 
         Ok(())

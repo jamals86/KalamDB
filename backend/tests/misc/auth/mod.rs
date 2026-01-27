@@ -1,7 +1,7 @@
 //! Authentication and Authorization Tests
 //!
 //! Tests covering:
-//! - HTTP Basic Authentication
+//! - Bearer token authentication
 //! - JWT Authentication
 //! - OAuth 2.0 Integration (Google, GitHub, Azure AD)
 //! - Role-Based Access Control (RBAC)

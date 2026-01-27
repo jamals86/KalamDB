@@ -63,8 +63,6 @@ async fn test_oauth_google_success() {
 
 #[tokio::test]
 async fn test_oauth_user_password_rejected() {
-    use base64::{engine::general_purpose, Engine as _};
-
     let server = TestServer::new_shared().await;
     let admin_username = "test_admin";
     let admin_password = "AdminPass123!";
@@ -92,11 +90,11 @@ async fn test_oauth_user_password_rejected() {
 
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
 
-    // Create Basic Auth header
-    let credentials = format!("{}:{}", oauth_username, "somepassword");
-    let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
-    let auth_header = format!("Basic {}", encoded);
-    let auth_request = AuthRequest::Header(auth_header);
+    // Attempt credential auth (login flow)
+    let auth_request = AuthRequest::Credentials {
+        username: oauth_username.clone(),
+        password: "somepassword".to_string(),
+    };
 
     let result = authenticate(auth_request, &connection_info, &user_repo).await;
 

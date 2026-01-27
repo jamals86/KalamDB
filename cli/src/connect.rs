@@ -609,6 +609,14 @@ pub async fn create_session(
         (AuthProvider::None, None, false)
     };
 
+    let mut connection_options = config.to_connection_options();
+    if server_url.starts_with("http://") {
+        use kalam_link::HttpVersion;
+        if connection_options.http_version == HttpVersion::Http2 {
+            connection_options = connection_options.with_http_version(HttpVersion::Auto);
+        }
+    }
+
     CLISession::with_auth_and_instance(
         server_url,
         auth,
@@ -621,7 +629,7 @@ pub async fn create_session(
         !cli.no_spinner,
         Some(Duration::from_secs(cli.timeout)),
         Some(build_timeouts(cli)),
-        Some(config.to_connection_options()),
+        Some(connection_options),
         config.clone(),
         config_path,
         credentials_loaded,

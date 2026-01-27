@@ -1,8 +1,8 @@
-//! Integration tests for HTTP Basic Authentication
+//! Integration tests for Bearer token authentication
 //!
 //! These tests verify the unified authentication module works correctly:
-//! - Successful authentication with valid credentials
-//! - Rejection of invalid credentials
+//! - Successful authentication with valid token
+//! - Rejection of Basic auth headers
 //! - Rejection of missing Authorization header
 //! - Rejection of malformed Authorization header
 //!
@@ -11,11 +11,12 @@
 
 use super::test_support::{auth_helper, TestServer};
 use kalamdb_commons::{models::{ConnectionInfo, UserName}, Role};
+use base64::Engine as _;
 use std::sync::Arc;
 
-/// Test successful Basic Auth with valid credentials
+/// Test successful Bearer auth with valid token
 #[tokio::test]
-async fn test_basic_auth_success() {
+async fn test_bearer_auth_success() {
     let server = TestServer::new_shared().await;
 
     // Create test user with password
@@ -23,17 +24,23 @@ async fn test_basic_auth_success() {
     let password = "SecurePassword123!";
     auth_helper::create_test_user(&server, username, password, Role::User).await;
 
-    // Test authentication using unified auth module
-    use base64::engine::general_purpose;
-    use base64::Engine;
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
     use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
 
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
-    // Create Basic Auth header
-    let credentials = general_purpose::STANDARD.encode(format!("{}:{}", username, password));
-    let auth_header = format!("Basic {}", credentials);
+    // Create Bearer token header
+    let secret = kalamdb_configs::defaults::default_auth_jwt_secret();
+    let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
+        &kalamdb_commons::models::UserId::new(username),
+        &UserName::new(username),
+        &Role::User,
+        Some("alice@example.com"),
+        Some(1),
+        &secret,
+    )
+    .expect("Failed to create JWT token");
+    let auth_header = format!("Bearer {}", token);
     let auth_request = AuthRequest::Header(auth_header);
 
     // Create user repository adapter
@@ -56,12 +63,12 @@ async fn test_basic_auth_success() {
     assert_eq!(auth_result.user.username, UserName::from(username));
     assert_eq!(auth_result.user.role, Role::User);
 
-    println!("✓ Basic Auth test passed - User authenticated successfully");
+    println!("✓ Bearer auth test passed - User authenticated successfully");
 }
 
-/// Test authentication failure with invalid password
+/// Test authentication failure with Basic auth header
 #[tokio::test]
-async fn test_basic_auth_invalid_credentials() {
+async fn test_basic_auth_rejected() {
     let server = TestServer::new_shared().await;
 
     // Create test user
@@ -70,16 +77,14 @@ async fn test_basic_auth_invalid_credentials() {
     let wrong_password = "WrongPassword456!";
     auth_helper::create_test_user(&server, username, correct_password, Role::User).await;
 
-    // Test authentication with wrong password
-    use base64::engine::general_purpose;
-    use base64::Engine;
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
     use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
 
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
-    // Create Basic Auth header with WRONG password
-    let credentials = general_purpose::STANDARD.encode(format!("{}:{}", username, wrong_password));
+    // Create Basic Auth header (should be rejected)
+    let credentials = base64::engine::general_purpose::STANDARD
+        .encode(format!("{}:{}", username, wrong_password));
     let auth_header = format!("Basic {}", credentials);
     let auth_request = AuthRequest::Header(auth_header);
 
@@ -91,14 +96,14 @@ async fn test_basic_auth_invalid_credentials() {
     let result = authenticate(auth_request, &connection_info, &user_repo).await;
 
     // Verify failure
-    assert!(result.is_err(), "Authentication should fail with invalid password");
+    assert!(result.is_err(), "Basic auth should be rejected");
 
-    println!("✓ Invalid credentials correctly rejected");
+    println!("✓ Basic auth header correctly rejected");
 }
 
 /// Test authentication failure with missing Authorization header
 #[tokio::test]
-async fn test_basic_auth_missing_header() {
+async fn test_auth_missing_header() {
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
     use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
 
@@ -158,8 +163,6 @@ async fn test_basic_auth_malformed_header() {
 /// Test authentication with non-existent user
 #[tokio::test]
 async fn test_basic_auth_nonexistent_user() {
-    use base64::engine::general_purpose;
-    use base64::Engine;
     use kalamdb_api::repositories::user_repo::CoreUsersRepo;
     use kalamdb_auth::{authenticate, AuthRequest, UserRepository};
 
@@ -170,9 +173,18 @@ async fn test_basic_auth_nonexistent_user() {
     let user_repo: Arc<dyn UserRepository> =
         Arc::new(CoreUsersRepo::new(server.app_context.system_tables().users()));
 
-    // Create auth header for user that doesn't exist
-    let credentials = general_purpose::STANDARD.encode("nonexistent:password123");
-    let auth_header = format!("Basic {}", credentials);
+    // Create bearer token for user that doesn't exist
+    let secret = kalamdb_configs::defaults::default_auth_jwt_secret();
+    let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
+        &kalamdb_commons::models::UserId::new("nonexistent"),
+        &UserName::new("nonexistent"),
+        &Role::User,
+        Some("nonexistent@example.com"),
+        Some(1),
+        &secret,
+    )
+    .expect("Failed to create JWT token");
+    let auth_header = format!("Bearer {}", token);
     let auth_request = AuthRequest::Header(auth_header);
 
     let result = authenticate(auth_request, &connection_info, &user_repo).await;

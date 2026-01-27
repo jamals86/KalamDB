@@ -38,8 +38,8 @@ async fn test_storage_management_over_http() -> anyhow::Result<()> {
                 NAME 'Archive Storage'
                 DESCRIPTION 'Cold storage for tests'
                 PATH '{path}'
-                SHARED_TABLES_TEMPLATE '{path}/shared/{{namespace}}/{{tableName}}'
-                USER_TABLES_TEMPLATE '{path}/users/{{namespace}}/{{tableName}}/{{userId}}'
+                SHARED_TABLES_TEMPLATE 'shared/{{namespace}}/{{tableName}}'
+                USER_TABLES_TEMPLATE 'users/{{namespace}}/{{tableName}}/{{userId}}'
                 "#,
         path = base.display()
     );
@@ -88,8 +88,8 @@ async fn test_storage_management_over_http() -> anyhow::Result<()> {
                     TYPE filesystem
                     NAME 'Bad Templates'
                     PATH '{path}'
-                    SHARED_TABLES_TEMPLATE '{path}/shared/{{namespace}}/{{tableName}}'
-                    USER_TABLES_TEMPLATE '{path}/users/{{namespace}}/{{tableName}}'
+                    SHARED_TABLES_TEMPLATE 'shared/{{namespace}}/{{tableName}}'
+                    USER_TABLES_TEMPLATE 'users/{{namespace}}/{{tableName}}'
                     "#,
             path = bad_path.display()
         ))
