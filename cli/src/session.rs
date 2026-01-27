@@ -1042,6 +1042,7 @@ impl CLISession {
                     
                     // Check if we got an empty line while not accumulating
                     // This happens when user presses Up arrow on empty line (bound to AcceptLine)
+                    // DON'T open menu if user already has text - they want to navigate within text
                     if line.is_empty() && accumulated_command.is_empty() {
                         // Show history menu instead of doing nothing
                         let history_entries = history.load().unwrap_or_default();
@@ -1051,6 +1052,8 @@ impl CLISession {
                             let mut menu = HistoryMenu::new(history_entries, self.color);
                             match menu.run("") {
                                 Ok(HistoryMenuResult::Selected(selected_cmd)) => {
+                                    // Remove all older occurrences of this command
+                                    let _ = history.deduplicate_and_move_to_end(&selected_cmd);
                                     // Prefill the readline with the selected command
                                     // so user can edit it before executing
                                     prefill_next = selected_cmd;
@@ -1132,6 +1135,8 @@ impl CLISession {
                                 let mut menu = HistoryMenu::new(history_entries, self.color);
                                 match menu.run("") {
                                     Ok(HistoryMenuResult::Selected(selected_cmd)) => {
+                                        // Remove all older occurrences of this command
+                                        let _ = history.deduplicate_and_move_to_end(&selected_cmd);
                                         // Put the selected command into the accumulated buffer
                                         // so user can edit it before executing
                                         accumulated_command = selected_cmd;

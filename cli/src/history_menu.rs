@@ -85,6 +85,10 @@ impl HistoryMenu {
         self.query = current_input.to_string();
         self.update_filter();
 
+        // Hide cursor before showing menu to prevent selection issues
+        let mut stdout = io::stdout();
+        stdout.execute(cursor::Hide)?;
+
         // Enable raw mode for direct keyboard input
         terminal::enable_raw_mode()?;
         
@@ -92,6 +96,9 @@ impl HistoryMenu {
         
         // Restore terminal state
         terminal::disable_raw_mode()?;
+        
+        // Show cursor again
+        stdout.execute(cursor::Show)?;
         
         // Clear the menu from display
         self.clear_display()?;
