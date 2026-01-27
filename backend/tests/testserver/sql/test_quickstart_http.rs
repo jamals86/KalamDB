@@ -159,13 +159,13 @@ async fn test_quickstart_workflow_over_http() -> anyhow::Result<()> {
     {
         let resp = server
             .execute_sql(&format!(
-                "SELECT table_name FROM system.tables WHERE namespace_id='{}'",
+                "SELECT table_name FROM system.schemas WHERE namespace_id='{}'",
                 ns
             ))
             .await?;
-        eprintln!("system.tables response: {:?}", resp);
+        eprintln!("system.schemas response: {:?}", resp);
         if resp.status != ResponseStatus::Success {
-            eprintln!("system.tables query failed: {:?}", resp.error);
+            eprintln!("system.schemas query failed: {:?}", resp.error);
         }
         anyhow::ensure!(resp.status == ResponseStatus::Success);
         anyhow::ensure!(!resp.rows_as_maps().is_empty());

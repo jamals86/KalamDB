@@ -11,7 +11,7 @@ use tokio::time::{sleep, Duration, Instant};
 async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
 
-    // system.tables reflects created tables
+    // system.schemas reflects created tables
     let ns_tables = unique_namespace("app_systab");
     let resp = server
         .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns_tables))
@@ -28,7 +28,7 @@ async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result
 
     let resp = server
             .execute_sql(&format!(
-                "SELECT namespace_id, table_name, table_type FROM system.tables WHERE namespace_id = '{}' AND table_name = 'messages' AND is_latest = true",
+                "SELECT namespace_id, table_name, table_type FROM system.schemas WHERE namespace_id = '{}' AND table_name = 'messages' AND is_latest = true",
                 ns_tables
             ))
             .await?;
@@ -103,7 +103,7 @@ async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result
     for table in [
         "system.users",
         "system.namespaces",
-        "system.tables",
+        "system.schemas",
         "system.storages",
         "system.jobs",
         "system.live_queries",

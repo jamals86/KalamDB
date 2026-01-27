@@ -229,9 +229,9 @@ async fn test_shared_table_defaults_to_private() {
     );
 
     // Verify the table was created with default "private" access level
-    // Query system.tables to get the table metadata (requires admin privileges)
+    // Query system.schemas to get the table metadata (requires admin privileges)
     let query_table_sql = format!(
-        "SELECT access_level FROM system.tables WHERE table_id = '{}:default_access'",
+        "SELECT access_level FROM system.schemas WHERE table_id = '{}:default_access'",
         namespace
     );
     let query_result = server.execute_sql_as_user(&query_table_sql, admin_id_str).await;
@@ -239,7 +239,7 @@ async fn test_shared_table_defaults_to_private() {
     assert_eq!(
         query_result.status,
         ResponseStatus::Success,
-        "Failed to query system.tables: {:?}",
+        "Failed to query system.schemas: {:?}",
         query_result.error
     );
 
@@ -248,7 +248,7 @@ async fn test_shared_table_defaults_to_private() {
     let result = &query_result.results[0];
 
     let rows = result.rows_as_maps();
-    assert!(!rows.is_empty(), "Table should exist in system.tables");
+    assert!(!rows.is_empty(), "Table should exist in system.schemas");
 
     let row = &rows[0];
     let access_level = row

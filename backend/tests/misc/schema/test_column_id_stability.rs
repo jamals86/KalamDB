@@ -457,18 +457,18 @@ async fn test_full_lifecycle_with_alter_and_flush() {
     println!("✅ test_full_lifecycle_with_alter_and_flush passed");
 }
 
-/// Helper: Query system.tables to get table schema with column_ids (excludes system columns)
+/// Helper: Query system.schemas to get table schema with column_ids (excludes system columns)
 async fn get_table_schema(
     server: &TestServer,
     namespace: &str,
     table_name: &str,
 ) -> Vec<HashMap<String, Value>> {
     let query = format!(
-        "SELECT columns FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}' AND is_latest = true",
+        "SELECT columns FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}' AND is_latest = true",
         namespace, table_name
     );
 
-    // Use root user to access system.tables (user1 doesn't have permissions)
+    // Use root user to access system.schemas (user1 doesn't have permissions)
     let resp = server.execute_sql_as_user(&query, "root").await;
     assert_eq!(resp.status, ResponseStatus::Success, "Failed to query schema: {:?}", resp.error);
 

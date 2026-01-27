@@ -1,9 +1,9 @@
-//! System.tables table provider
+//! System.schemas table provider
 //!
 //! Phase 16: Consolidated provider using single store with TableVersionId keys.
 //! Exposes all table versions with is_latest flag for schema history queries.
 
-use super::{new_tables_store, TablesStore, TablesTableSchema};
+use super::{new_schemas_store, SchemasStore, SchemasTableSchema};
 use crate::error::{SystemError, SystemResultExt};
 use crate::providers::base::SimpleSystemTableScan;
 use crate::system_table_trait::SystemTableProviderExt;
@@ -22,27 +22,27 @@ use std::any::Any;
 use std::sync::Arc;
 
 /// System.tables table provider using consolidated store with versioning
-pub struct TablesTableProvider {
-    store: TablesStore,
+pub struct SchemasTableProvider {
+    store: SchemasStore,
 }
 
-impl std::fmt::Debug for TablesTableProvider {
+impl std::fmt::Debug for SchemasTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TablesTableProvider").finish()
+        f.debug_struct("SchemasTableProvider").finish()
     }
 }
 
-impl TablesTableProvider {
+impl SchemasTableProvider {
     /// Create a new tables table provider
     ///
     /// # Arguments
     /// * `backend` - Storage backend (RocksDB or mock)
     ///
     /// # Returns
-    /// A new TablesTableProvider instance
+    /// A new SchemasTableProvider instance
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         Self {
-            store: new_tables_store(backend),
+            store: new_schemas_store(backend),
         }
     }
 
@@ -310,7 +310,7 @@ impl TablesTableProvider {
         }
 
         // Build batch using RecordBatchBuilder
-        let mut builder = RecordBatchBuilder::new(TablesTableSchema::schema());
+        let mut builder = RecordBatchBuilder::new(SchemasTableSchema::schema());
         builder
             .add_string_column_owned(table_ids)
             .add_string_column_owned(table_names)
@@ -333,13 +333,13 @@ impl TablesTableProvider {
     }
 }
 
-impl SimpleSystemTableScan<TableId, TableDefinition> for TablesTableProvider {
+impl SimpleSystemTableScan<TableId, TableDefinition> for SchemasTableProvider {
     fn table_name(&self) -> &str {
-        TablesTableSchema::table_name()
+        SchemasTableSchema::table_name()
     }
 
     fn arrow_schema(&self) -> SchemaRef {
-        TablesTableSchema::schema()
+        SchemasTableSchema::schema()
     }
 
     fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
@@ -348,13 +348,13 @@ impl SimpleSystemTableScan<TableId, TableDefinition> for TablesTableProvider {
 }
 
 #[async_trait]
-impl TableProvider for TablesTableProvider {
+impl TableProvider for SchemasTableProvider {
     fn as_any(&self) -> &dyn Any {
         self
     }
 
     fn schema(&self) -> SchemaRef {
-        TablesTableSchema::schema()
+        SchemasTableSchema::schema()
     }
 
     fn table_type(&self) -> TableType {
@@ -373,13 +373,13 @@ impl TableProvider for TablesTableProvider {
     }
 }
 
-impl SystemTableProviderExt for TablesTableProvider {
+impl SystemTableProviderExt for SchemasTableProvider {
     fn table_name(&self) -> &str {
-        TablesTableSchema::table_name()
+        SchemasTableSchema::table_name()
     }
 
     fn schema_ref(&self) -> SchemaRef {
-        TablesTableSchema::schema()
+        SchemasTableSchema::schema()
     }
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {
@@ -397,9 +397,9 @@ mod tests {
     use kalamdb_commons::{NamespaceId, TableId, TableName};
     use kalamdb_store::test_utils::InMemoryBackend;
 
-    fn create_test_provider() -> TablesTableProvider {
+    fn create_test_provider() -> SchemasTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        TablesTableProvider::new(backend)
+        SchemasTableProvider::new(backend)
     }
 
     fn create_test_table(namespace: &str, table_name: &str) -> (TableId, TableDefinition) {

@@ -272,7 +272,7 @@ impl TestServer {
     /// Check if a table exists via system tables.
     pub async fn table_exists(&self, namespace: &str, table_name: &str) -> bool {
         let query = format!(
-            "SELECT table_name FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+            "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
             namespace, table_name
         );
         let resp = self.execute_sql(&query).await;

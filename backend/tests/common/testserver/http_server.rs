@@ -635,7 +635,7 @@ impl HttpTestServer {
         let probe = format!("SELECT 1 AS ok FROM {}.{} LIMIT 1", namespace_id, table_name);
         let mut last_error: Option<String> = None;
         let system_probe = format!(
-            "SELECT COUNT(*) AS cnt FROM system.tables WHERE namespace_id='{}' AND table_name='{}'",
+            "SELECT COUNT(*) AS cnt FROM system.schemas WHERE namespace_id='{}' AND table_name='{}'",
             namespace_id, table_name
         );
         let mut last_system_cnt: Option<u64> = None;
@@ -667,7 +667,7 @@ impl HttpTestServer {
                         ));
                     }
 
-                    // Check if the table definition is visible in system.tables yet.
+                    // Check if the table definition is visible in system.schemas yet.
                     if let Ok(sys_resp) = self
                         .execute_sql_raw_with_auth_and_params_no_wait(
                             &system_probe,
@@ -696,7 +696,7 @@ impl HttpTestServer {
 
             if Instant::now() >= deadline {
                 return Err(anyhow::anyhow!(
-                    "CREATE TABLE did not become queryable in time ({}.{}): last_error={:?} system.tables_cnt={:?}",
+                    "CREATE TABLE did not become queryable in time ({}.{}): last_error={:?} system.schemas_cnt={:?}",
                     namespace_id,
                     table_name,
                     last_error,

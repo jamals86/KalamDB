@@ -69,10 +69,10 @@ async fn test_system_tables_queryable_over_http() -> anyhow::Result<()> {
     anyhow::ensure!(resp.status == ResponseStatus::Success);
     anyhow::ensure!(!resp.rows_as_maps().is_empty());
 
-    // system.tables
+    // system.schemas
     let resp = server
                 .execute_sql(&format!(
-                    "SELECT table_name, table_type FROM system.tables WHERE namespace_id = '{}' ORDER BY table_name",
+                    "SELECT table_name, table_type FROM system.schemas WHERE namespace_id = '{}' ORDER BY table_name",
                     ns
                 ))
                 .await?;

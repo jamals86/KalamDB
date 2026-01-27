@@ -221,7 +221,7 @@ async fn test_system_tables_have_correct_column_ordering() {
     let server = TestServer::new_shared().await;
 
     // Test system.users table
-    // Note: System tables are not stored in system.tables, so we access the provider directly
+    // Note: System tables are not stored in system.schemas, so we access the provider directly
     let users_provider = server.app_context.system_tables().users();
     let arrow_schema = users_provider.schema();
 

@@ -1270,6 +1270,12 @@ and then make sure we have a test for it as well
 
 139) Fior the cli if we click enter dont open the history menu again only execute enter
 
+140) Make system tables loading lazy loaded only when needed not all the time stays registered, this will reduce memory consumption, also the same for views this should be effective for all of system.* tables and views
+
+
+
+
+
 
 
 

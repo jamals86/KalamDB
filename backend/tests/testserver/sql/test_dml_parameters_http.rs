@@ -74,7 +74,7 @@ async fn test_parameterized_dml_over_http() {
         loop {
             let probe = server
                 .execute_sql(&format!(
-                    "SELECT COUNT(*) AS cnt FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+                    "SELECT COUNT(*) AS cnt FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
                     ns, table
                 ))
                 .await;
@@ -101,7 +101,7 @@ async fn test_parameterized_dml_over_http() {
             if Instant::now() >= deadline {
                 let listing = server
                     .execute_sql(&format!(
-                        "SELECT namespace_id, table_name FROM system.tables WHERE table_name = '{}'",
+                        "SELECT namespace_id, table_name FROM system.schemas WHERE table_name = '{}'",
                         table
                     ))
                     .await
@@ -110,7 +110,7 @@ async fn test_parameterized_dml_over_http() {
                     .unwrap_or_default();
 
                 anyhow::bail!(
-                    "Table {}.{} not visible in system.tables after CREATE TABLE (last_probe={:?}, listing={:?})",
+                    "Table {}.{} not visible in system.schemas after CREATE TABLE (last_probe={:?}, listing={:?})",
                     ns,
                     table,
                     probe

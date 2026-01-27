@@ -13,7 +13,7 @@ async fn syntax_error_messages_are_clear() {
     let server = TestServer::new_shared().await;
 
     // Typo in SELECT
-    let resp = server.execute_sql("SELCT * FROM system.tables").await;
+    let resp = server.execute_sql("SELCT * FROM system.schemas").await;
     assert_eq!(resp.status, ResponseStatus::Error);
     assert!(resp.error.is_some());
 
