@@ -1,11 +1,11 @@
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { AsideHeader } from "./Header";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { SidebarHeader } from "./SidebarHeader";
 import { SchemaTree } from "./Tree";
 import type { SchemaNode } from "../types";
 
-interface AsideProps {
+interface SidebarProps {
   schema: SchemaNode[];
   schemaFilter: string;
   schemaLoading: boolean;
@@ -18,7 +18,7 @@ interface AsideProps {
   onTableContextMenu: (e: React.MouseEvent, namespace: string, tableName: string, columns: SchemaNode[]) => void;
 }
 
-export function Aside({
+export function Sidebar({
   schema,
   schemaFilter,
   schemaLoading,
@@ -29,10 +29,10 @@ export function Aside({
   onInsertText,
   onShowTableProperties,
   onTableContextMenu,
-}: AsideProps) {
+}: SidebarProps) {
   return (
-    <div className="w-56 border-r flex flex-col shrink-0">
-      <AsideHeader
+    <div className="h-full w-full min-w-0 border-r flex flex-col bg-background">
+      <SidebarHeader
         onCreateTable={onCreateTable}
         onRefresh={onRefreshSchema}
         isLoading={schemaLoading}
@@ -50,8 +50,8 @@ export function Aside({
         </div>
       </div>
 
-      <ScrollArea className="flex-1 p-2">
-        <div className="min-w-max">
+      <ScrollArea className="flex-1">
+        <div className="min-w-0 p-2">
           {schemaLoading ? (
             <div className="text-sm text-muted-foreground p-2">Loading schema...</div>
           ) : schema.length === 0 ? (
@@ -68,6 +68,7 @@ export function Aside({
             />
           )}
         </div>
+        <ScrollBar orientation="horizontal" />
       </ScrollArea>
     </div>
   );

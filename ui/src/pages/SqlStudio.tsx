@@ -17,6 +17,10 @@ import {
 } from "lucide-react";
 import { TableProperties } from "@/components/sql-studio/TableProperties";
 import { QueryResultsBar } from "@/components/sql-studio/QueryResultsBar";
+import { TabBar } from "@/components/sql-studio/TabBar";
+import { EditorPanel } from "@/components/sql-studio/EditorPanel";
+import { ResultsPanel } from "@/components/sql-studio/ResultsPanel";
+import { LiveQueryStatusBar } from "@/components/sql-studio/LiveQueryStatusBar";
 import { Button } from "@/components/ui/button";
 import {
   ResizablePanelGroup,
@@ -35,8 +39,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { executeSql, executeQuery as executeQueryApi, subscribe, type Unsubscribe } from "@/lib/kalam-client";
 import { useDataTypes } from '@/hooks/useDataTypes';
-import { extractTableContext } from "./studio/utils/sqlParser";
-import { Aside } from "./studio/aside/Aside";
+import { extractTableContext } from "@/components/sql-studio/utils/sqlParser";
+import { Sidebar } from "@/components/sql-studio/sidebar/Sidebar";
 import {
   flexRender,
   getCoreRowModel,
@@ -1210,10 +1214,10 @@ export default function SqlStudio() {
 
   return (
     <div className="h-[calc(100vh-4rem)] flex">
-      <ResizablePanelGroup direction="horizontal">
+      <ResizablePanelGroup orientation="horizontal">
         {/* Schema sidebar - Resizable */}
-        <ResizablePanel defaultSize={20} minSize={15} maxSize={40}>
-          <Aside
+        <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
+          <Sidebar
             schema={filteredSchema}
             schemaFilter={schemaFilter}
             schemaLoading={schemaLoading}
@@ -1246,7 +1250,7 @@ export default function SqlStudio() {
         <ResizableHandle withHandle />
 
         {/* Main content */}
-        <ResizablePanel defaultSize={80}>
+        <ResizablePanel defaultSize={75}>
           <div className="h-full flex flex-col">
             {/* Header: Tabs + Run Button | Live Query + Actions */}
             <div className="border-b flex items-center h-12 px-2 gap-2 shrink-0 bg-background">
@@ -1383,9 +1387,9 @@ export default function SqlStudio() {
         </div>
 
         {/* Editor and Results - Resizable Vertical Split */}
-        <ResizablePanelGroup direction="vertical" className="flex-1">
+        <ResizablePanelGroup orientation="vertical" className="flex-1">
           {/* Editor Panel */}
-          <ResizablePanel defaultSize={20} minSize={10} maxSize={40}>
+          <ResizablePanel defaultSize={35} minSize={15} maxSize={70}>
             <Editor
               height="100%"
               defaultLanguage="sql"
@@ -1410,7 +1414,7 @@ export default function SqlStudio() {
           <ResizableHandle withHandle />
 
           {/* Results Panel */}
-          <ResizablePanel defaultSize={80}>
+          <ResizablePanel defaultSize={65}>
             <div className="h-full flex flex-col overflow-hidden">
           {/* Query Results Status Bar - show for non-live queries with results */}
           {!activeTab?.isLive && (activeTab?.results !== null || activeTab?.error) && (

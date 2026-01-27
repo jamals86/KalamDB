@@ -33,7 +33,7 @@ export function useAuditLogs() {
       // Build SQL with optional filters
       let sql = `
         SELECT audit_id, timestamp, actor_user_id, actor_username, action, target, details, ip_address
-        FROM kalam.system.audit_logs
+        FROM system.audit_log
       `;
       
       const conditions: string[] = [];
