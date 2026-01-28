@@ -18,14 +18,14 @@ use crate::views::lazy_system_schema::LazySystemSchemaProvider;
 use async_trait::async_trait;
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::models::UserId;
+use kalamdb_commons::models::{NamespaceId, UserId};
 use kalamdb_commons::{constants::ColumnFamilyNames, NodeId};
 use kalamdb_configs::ServerConfig;
 use kalamdb_filestore::StorageRegistry;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_store::StorageBackend;
-use kalamdb_system::{ClusterCoordinator, Job, SystemTablesRegistry};
+use kalamdb_system::{ClusterCoordinator, Job, Namespace, SystemTablesRegistry};
 use kalamdb_tables::{SharedTableStore, UserTableStore};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
@@ -254,6 +254,19 @@ impl AppContext {
             // Register existing namespaces as DataFusion schemas
             // This ensures all namespaces persisted in RocksDB are available for SQL queries
             let namespaces_provider = system_tables.namespaces();
+
+            let default_namespace_id = NamespaceId::default();
+            if namespaces_provider
+                .get_namespace(&default_namespace_id)
+                .expect("Failed to read namespaces")
+                .is_none()
+            {
+                let default_namespace = Namespace::new(default_namespace_id.as_str());
+                namespaces_provider
+                    .create_namespace(default_namespace)
+                    .expect("Failed to create default namespace");
+            }
+
             if let Ok(namespaces) = namespaces_provider.list_namespaces() {
                 let namespace_names: Vec<String> =
                     namespaces.iter().map(|ns| ns.namespace_id.as_str().to_string()).collect();

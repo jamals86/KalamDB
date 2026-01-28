@@ -112,7 +112,7 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         // Authorization check is handled inside table_creation helpers
         // (they call can_create_table for each table type)
         // This allows unified error messages
-        use crate::auth::rbac::can_create_table;
+        use kalamdb_session::can_create_table;
 
         let effective_type = Self::resolve_table_type(statement, context);
 

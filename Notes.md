@@ -1015,7 +1015,6 @@ i prefer to keep the one in kalamdb-commons
 
 make sure the backend compiles after this
 
-60) Make a new crate which has struct's which link and backend has them in common
 
 62) the crate kalamdb-core is taking long to compile i guess we can remove some of the code from inside and divide it into multiple crates for better compile times and also better code organization
 
@@ -1149,8 +1148,6 @@ i guess we need to add a new column to the jobs table to track each node the sta
 74) Add another columns which are computed ones from manifest table
 
 76) add ability to the kalam-link to automatically forward to the leader
-
-77) UpdateLiveQueryStats is never called or emit
 
 78) no need for Running startup compaction for, we should add a command to do storage compact all
 

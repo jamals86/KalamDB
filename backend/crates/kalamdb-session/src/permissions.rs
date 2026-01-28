@@ -8,7 +8,7 @@ use crate::session_context::SessionUserContext;
 use datafusion::catalog::Session;
 use datafusion::execution::context::SessionState;
 use kalamdb_commons::models::{NamespaceId, ReadContext, Role, TableId, TableName, UserId};
-use kalamdb_commons::schemas::{TableDefinition, TableOptions};
+use kalamdb_commons::schemas::{TableDefinition, TableOptions, TableType};
 use kalamdb_commons::TableAccess;
 
 /// Check if a role can access system tables.
@@ -21,6 +21,91 @@ use kalamdb_commons::TableAccess;
 #[inline]
 pub fn can_access_system_table(role: Role) -> bool {
     matches!(role, Role::System | Role::Dba)
+}
+
+/// Check if a role can access a given table type.
+///
+/// # Access Rules
+/// - **System role**: can access ALL table types
+/// - **Dba role**: can access ALL table types
+/// - **Service role**: can access USER/SHARED/STREAM tables
+/// - **User role**: can access USER/STREAM tables
+#[inline]
+pub fn can_access_table_type(role: Role, table_type: TableType) -> bool {
+    match role {
+        Role::System | Role::Dba => true,
+        Role::Service => matches!(table_type, TableType::Shared | TableType::Stream | TableType::User),
+        Role::User => matches!(table_type, TableType::User | TableType::Stream),
+        Role::Anonymous => false,
+    }
+}
+
+/// Check if a role can create a table of the given type.
+#[inline]
+pub fn can_create_table(role: Role, table_type: TableType) -> bool {
+    match role {
+        Role::System => true,
+        Role::Dba => matches!(table_type, TableType::User | TableType::Shared | TableType::Stream),
+        Role::Service => matches!(table_type, TableType::User | TableType::Shared | TableType::Stream),
+        Role::User => matches!(table_type, TableType::User | TableType::Stream),
+        Role::Anonymous => false,
+    }
+}
+
+/// Check if a role can delete a table.
+#[inline]
+pub fn can_delete_table(role: Role, table_type: TableType, _is_owner: bool) -> bool {
+    match role {
+        Role::System => true,
+        Role::Dba => !matches!(table_type, TableType::System),
+        Role::Service | Role::User => false,
+        Role::Anonymous => false,
+    }
+}
+
+/// Check if a role can alter a table.
+///
+/// - System/Dba can alter any table.
+/// - Service can alter Shared/User/Stream tables.
+/// - User can alter User/Stream tables.
+#[inline]
+pub fn can_alter_table(role: Role, table_type: TableType, _is_owner: bool) -> bool {
+    match role {
+        Role::System | Role::Dba => true,
+        Role::Service => matches!(table_type, TableType::Shared | TableType::User | TableType::Stream),
+        Role::User => matches!(table_type, TableType::User | TableType::Stream),
+        Role::Anonymous => false,
+    }
+}
+
+/// Check if a role can manage users.
+#[inline]
+pub fn can_manage_users(role: Role) -> bool {
+    matches!(role, Role::System | Role::Dba)
+}
+
+/// Check if a role can create views.
+#[inline]
+pub fn can_create_view(role: Role) -> bool {
+    matches!(role, Role::System | Role::Dba)
+}
+
+/// Check if a role has admin privileges.
+#[inline]
+pub fn is_admin_role(role: Role) -> bool {
+    matches!(role, Role::System | Role::Dba)
+}
+
+/// Check if a role is system.
+#[inline]
+pub fn is_system_role(role: Role) -> bool {
+    matches!(role, Role::System)
+}
+
+/// Helper for CREATE TABLE: allow USER/SERVICE to downgrade shared to user table.
+#[inline]
+pub fn can_downgrade_shared_to_user(role: Role) -> bool {
+    matches!(role, Role::User | Role::Service)
 }
 
 /// Extract the full SessionUserContext from a DataFusion session.

@@ -240,6 +240,129 @@ pub async fn create_session(
         }
     }
 
+    /// Perform setup and login with created credentials
+    async fn setup_and_login(
+        server_url: &str,
+        verbose: bool,
+        instance: &str,
+        credential_store: &mut FileCredentialStore,
+        save_credentials: bool,
+    ) -> Result<(AuthProvider, Option<String>, bool)> {
+        match run_setup_wizard(server_url).await {
+            Ok((setup_username, setup_password)) => {
+                match try_login(server_url, &setup_username, &setup_password, verbose).await {
+                    LoginResult::Success(login_response) => {
+                        let authenticated_user = login_response.user.username.clone();
+
+                        if save_credentials {
+                            let new_creds = Credentials::with_refresh_token(
+                                instance.to_string(),
+                                login_response.access_token.clone(),
+                                login_response.user.username.clone(),
+                                login_response.expires_at.clone(),
+                                Some(server_url.to_string()),
+                                login_response.refresh_token.clone(),
+                                login_response.refresh_expires_at.clone(),
+                            );
+                            let _ = credential_store.set_credentials(&new_creds);
+                        }
+
+                        Ok((
+                            AuthProvider::jwt_token(login_response.access_token),
+                            Some(authenticated_user),
+                            false,
+                        ))
+                    },
+                    _ => Err(CLIError::SetupRequired(
+                        "Setup completed but login failed. Please try logging in manually.".to_string(),
+                    )),
+                }
+            },
+            Err(e) => Err(CLIError::SetupRequired(e)),
+        }
+    }
+
+    /// Prompt user for credentials and attempt login (interactive only)
+    async fn prompt_and_login(
+        server_url: &str,
+        verbose: bool,
+        instance: &str,
+        credential_store: &mut FileCredentialStore,
+    ) -> Result<(AuthProvider, Option<String>, bool)> {
+        println!();
+        println!("No authentication credentials found.");
+        println!("Please enter your credentials to connect:");
+        println!();
+
+        // Prompt for username
+        print!("Username: ");
+        io::stdout().flush().map_err(|e| {
+            CLIError::FileError(format!("Failed to flush stdout: {}", e))
+        })?;
+        let mut username = String::new();
+        io::stdin().read_line(&mut username).map_err(|e| {
+            CLIError::FileError(format!("Failed to read username: {}", e))
+        })?;
+        let username = username.trim().to_string();
+
+        if username.is_empty() {
+            return Err(CLIError::ConfigurationError(
+                "Username cannot be empty".to_string(),
+            ));
+        }
+
+        // Prompt for password
+        let password = rpassword::prompt_password("Password: ").map_err(|e| {
+            CLIError::FileError(format!("Failed to read password: {}", e))
+        })?;
+
+        // Try to login with provided credentials
+        match try_login(server_url, &username, &password, verbose).await {
+            LoginResult::Success(login_response) => {
+                let authenticated_user = login_response.user.username.clone();
+
+                // Ask if user wants to save credentials
+                print!("\nSave credentials for future use? (y/N): ");
+                io::stdout().flush().ok();
+                let mut save_choice = String::new();
+                io::stdin().read_line(&mut save_choice).ok();
+
+                if save_choice.trim().eq_ignore_ascii_case("y")
+                    || save_choice.trim().eq_ignore_ascii_case("yes")
+                {
+                    let new_creds = Credentials::with_refresh_token(
+                        instance.to_string(),
+                        login_response.access_token.clone(),
+                        login_response.user.username.clone(),
+                        login_response.expires_at.clone(),
+                        Some(server_url.to_string()),
+                        login_response.refresh_token.clone(),
+                        login_response.refresh_expires_at.clone(),
+                    );
+
+                    if let Err(e) = credential_store.set_credentials(&new_creds) {
+                        eprintln!("Warning: Could not save credentials: {}", e);
+                    } else {
+                        println!("Credentials saved for instance '{}'", instance);
+                    }
+                }
+
+                println!();
+                Ok((
+                    AuthProvider::jwt_token(login_response.access_token),
+                    Some(authenticated_user),
+                    false,
+                ))
+            },
+            LoginResult::SetupRequired => {
+                setup_and_login(server_url, verbose, instance, credential_store, true).await
+            },
+            LoginResult::Failed(_) => Err(CLIError::ConfigurationError(
+                "Login failed: invalid username or password".to_string(),
+            )),
+        }
+    }
+
     // Helper function to refresh access token using refresh token
     async fn try_refresh_token(
         server_url: &str,
@@ -342,51 +465,13 @@ pub async fn create_session(
                 )
             },
             LoginResult::SetupRequired => {
-                // Server requires setup - run the setup wizard for localhost
-                if is_localhost_url(&server_url) {
-                    match run_setup_wizard(&server_url).await {
-                        Ok((setup_username, setup_password)) => {
-                            // After setup, login with the new credentials
-                            match try_login(&server_url, &setup_username, &setup_password, cli.verbose).await {
-                                LoginResult::Success(login_response) => {
-                                    let authenticated_user = login_response.user.username.clone();
-                                    
-                                    // Save credentials after setup
-                                    if cli.save_credentials {
-                                        let new_creds = Credentials::with_refresh_token(
-                                            cli.instance.clone(),
-                                            login_response.access_token.clone(),
-                                            login_response.user.username.clone(),
-                                            login_response.expires_at.clone(),
-                                            Some(server_url.clone()),
-                                            login_response.refresh_token.clone(),
-                                            login_response.refresh_expires_at.clone(),
-                                        );
-                                        let _ = credential_store.set_credentials(&new_creds);
-                                    }
-                                    
-                                    (
-                                        AuthProvider::jwt_token(login_response.access_token),
-                                        Some(authenticated_user),
-                                        false,
-                                    )
-                                },
-                                _ => {
-                                    return Err(CLIError::SetupRequired(
-                                        "Setup completed but login failed. Please try logging in manually.".to_string()
-                                    ));
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            return Err(CLIError::SetupRequired(e));
-                        }
-                    }
-                } else {
-                    return Err(CLIError::SetupRequired(
-                        "Server requires initial setup. Connect from localhost to complete setup.".to_string()
-                    ));
-                }
+                setup_and_login(
+                    &server_url,
+                    cli.verbose,
+                    &cli.instance,
+                    credential_store,
+                    cli.save_credentials,
+                )?
             },
             LoginResult::Failed(_) => {
                 return Err(CLIError::ConfigurationError(
@@ -559,113 +644,12 @@ pub async fn create_session(
     } else {
         // No credentials provided - prompt interactively if terminal is available
         if std::io::stdin().is_terminal() {
-            println!();
-            println!("No authentication credentials found.");
-            println!("Please enter your credentials to connect:");
-            println!();
-            
-            // Prompt for username
-            print!("Username: ");
-            io::stdout().flush().map_err(|e| {
-                CLIError::FileError(format!("Failed to flush stdout: {}", e))
-            })?;
-            let mut username = String::new();
-            io::stdin().read_line(&mut username).map_err(|e| {
-                CLIError::FileError(format!("Failed to read username: {}", e))
-            })?;
-            let username = username.trim().to_string();
-            
-            if username.is_empty() {
-                return Err(CLIError::ConfigurationError(
-                    "Username cannot be empty".to_string()
-                ));
-            }
-            
-            // Prompt for password
-            let password = rpassword::prompt_password("Password: ").map_err(|e| {
-                CLIError::FileError(format!("Failed to read password: {}", e))
-            })?;
-            
-            // Try to login with provided credentials
-            match try_login(&server_url, &username, &password, cli.verbose).await {
-                LoginResult::Success(login_response) => {
-                    let authenticated_user = login_response.user.username.clone();
-                    
-                    // Ask if user wants to save credentials
-                    print!("\nSave credentials for future use? (y/N): ");
-                    io::stdout().flush().ok();
-                    let mut save_choice = String::new();
-                    io::stdin().read_line(&mut save_choice).ok();
-                    
-                    if save_choice.trim().eq_ignore_ascii_case("y") || save_choice.trim().eq_ignore_ascii_case("yes") {
-                        let new_creds = Credentials::with_refresh_token(
-                            cli.instance.clone(),
-                            login_response.access_token.clone(),
-                            login_response.user.username.clone(),
-                            login_response.expires_at.clone(),
-                            Some(server_url.clone()),
-                            login_response.refresh_token.clone(),
-                            login_response.refresh_expires_at.clone(),
-                        );
-                        
-                        if let Err(e) = credential_store.set_credentials(&new_creds) {
-                            eprintln!("Warning: Could not save credentials: {}", e);
-                        } else {
-                            println!("Credentials saved for instance '{}'", cli.instance);
-                        }
-                    }
-                    
-                    println!();
-                    (
-                        AuthProvider::jwt_token(login_response.access_token),
-                        Some(authenticated_user),
-                        false,
-                    )
-                },
-                LoginResult::SetupRequired => {
-                    // Server requires setup - run the setup wizard
-                    match run_setup_wizard(&server_url).await {
-                        Ok((setup_username, setup_password)) => {
-                            match try_login(&server_url, &setup_username, &setup_password, cli.verbose).await {
-                                LoginResult::Success(login_response) => {
-                                    let authenticated_user = login_response.user.username.clone();
-                                    
-                                    // Save credentials after setup
-                                    let new_creds = Credentials::with_refresh_token(
-                                        cli.instance.clone(),
-                                        login_response.access_token.clone(),
-                                        login_response.user.username.clone(),
-                                        login_response.expires_at.clone(),
-                                        Some(server_url.clone()),
-                                        login_response.refresh_token.clone(),
-                                        login_response.refresh_expires_at.clone(),
-                                    );
-                                    let _ = credential_store.set_credentials(&new_creds);
-                                    
-                                    (
-                                        AuthProvider::jwt_token(login_response.access_token),
-                                        Some(authenticated_user),
-                                        false,
-                                    )
-                                },
-                                _ => {
-                                    return Err(CLIError::SetupRequired(
-                                        "Setup completed but login failed. Please try logging in manually.".to_string()
-                                    ));
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            return Err(CLIError::SetupRequired(e));
-                        }
-                    }
-                },
-                LoginResult::Failed(_) => {
-                    return Err(CLIError::ConfigurationError(
-                        "Login failed: invalid username or password".to_string()
-                    ));
-                }
-            }
+            prompt_and_login(
+                &server_url,
+                cli.verbose,
+                &cli.instance,
+                credential_store,
+            )?
         } else if is_localhost_url(&server_url) {
             // Non-interactive mode on localhost - try root auto-auth
             let username = "root".to_string();
