@@ -679,6 +679,10 @@ pub struct AuthSettings {
     /// Enforce password complexity policy (uppercase, lowercase, digit, special)
     #[serde(default = "default_auth_enforce_password_complexity")]
     pub enforce_password_complexity: bool,
+
+    /// Allow initial setup from non-localhost clients (default: false)
+    #[serde(default = "default_auth_allow_remote_setup")]
+    pub allow_remote_setup: bool,
 }
 
 /// OAuth settings (Phase 10, User Story 8)
@@ -775,6 +779,7 @@ impl Default for AuthSettings {
             max_password_length: default_auth_max_password_length(),
             bcrypt_cost: default_auth_bcrypt_cost(),
             enforce_password_complexity: default_auth_enforce_password_complexity(),
+            allow_remote_setup: default_auth_allow_remote_setup(),
         }
     }
 }

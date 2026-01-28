@@ -294,6 +294,11 @@ pub fn default_auth_enforce_password_complexity() -> bool {
     false
 }
 
+/// Default: only allow setup from localhost
+pub fn default_auth_allow_remote_setup() -> bool {
+    false
+}
+
 // OAuth defaults
 pub fn default_oauth_enabled() -> bool {
     false

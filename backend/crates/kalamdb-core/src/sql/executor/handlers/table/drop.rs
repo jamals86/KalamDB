@@ -359,7 +359,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             None => TableType::from(statement.table_type),
         };
         let is_owner = false;
-        if !crate::auth::rbac::can_delete_table(context.user_role(), actual_type, is_owner) {
+        if !kalamdb_session::can_delete_table(context.user_role(), actual_type, is_owner) {
             log::error!(
                 "❌ DROP TABLE {}.{}: Insufficient privileges (user: {}, role: {:?}, table_type: {:?})",
                 statement.namespace_id.as_str(),

@@ -464,13 +464,14 @@ pub struct ServerSetupResponse {
 pub async fn server_setup_handler(
     req: HttpRequest,
     user_repo: web::Data<Arc<dyn UserRepository>>,
+    config: web::Data<AuthSettings>,
     body: web::Json<ServerSetupRequest>,
 ) -> HttpResponse {
     use kalamdb_commons::constants::AuthConstants;
 
     // Only allow setup from localhost
     let connection_info = extract_client_ip_secure(&req);
-    if !connection_info.is_localhost() {
+    if !connection_info.is_localhost() && !config.allow_remote_setup {
         return HttpResponse::Forbidden().json(AuthErrorResponse::new(
             "forbidden",
             "Server setup can only be performed from localhost",
@@ -619,12 +620,13 @@ pub async fn server_setup_handler(
 pub async fn setup_status_handler(
     req: HttpRequest,
     user_repo: web::Data<Arc<dyn UserRepository>>,
+    config: web::Data<AuthSettings>,
 ) -> HttpResponse {
     use kalamdb_commons::constants::AuthConstants;
 
     // Only allow status check from localhost
     let connection_info = extract_client_ip_secure(&req);
-    if !connection_info.is_localhost() {
+    if !connection_info.is_localhost() && !config.allow_remote_setup {
         return HttpResponse::Forbidden().json(AuthErrorResponse::new(
             "forbidden",
             "Setup status can only be checked from localhost",

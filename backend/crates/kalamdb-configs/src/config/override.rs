@@ -27,6 +27,7 @@ impl ServerConfig {
     /// - KALAMDB_JWT_TRUSTED_ISSUERS: Override auth.jwt_trusted_issuers
     /// - KALAMDB_JWT_EXPIRY_HOURS: Override auth.jwt_expiry_hours
     /// - KALAMDB_COOKIE_SECURE: Override auth.cookie_secure
+    /// - KALAMDB_ALLOW_REMOTE_SETUP: Override auth.allow_remote_setup
     ///
     /// Environment variables take precedence over server.toml values (T031)
     pub fn apply_env_overrides(&mut self) -> anyhow::Result<()> {
@@ -97,6 +98,12 @@ impl ServerConfig {
         if let Ok(val) = env::var("KALAMDB_COOKIE_SECURE") {
             self.auth.cookie_secure =
                 val.to_lowercase() != "false" && val != "0" && val.to_lowercase() != "no";
+        }
+
+        // Allow remote setup (default: false)
+        if let Ok(val) = env::var("KALAMDB_ALLOW_REMOTE_SETUP") {
+            self.auth.allow_remote_setup =
+                val.to_lowercase() == "true" || val == "1" || val.to_lowercase() == "yes";
         }
 
         // Data directory (new naming convention)

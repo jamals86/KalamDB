@@ -204,7 +204,7 @@ pub fn build_table_definition(
     )?;
 
     // RBAC check
-    if !crate::auth::rbac::can_create_table(user_role, stmt.table_type) {
+    if !kalamdb_session::can_create_table(user_role, stmt.table_type) {
         log::error!(
             "❌ CREATE TABLE {:?} {}: Insufficient privileges (user: {}, role: {:?})",
             stmt.table_type,

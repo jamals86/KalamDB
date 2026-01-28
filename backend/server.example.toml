@@ -263,6 +263,11 @@ disable_common_password_check = false
 # IMPORTANT: Change this in production! Use a strong, random secret.
 jwt_secret = "your-secret-key-at-least-32-chars-change-me-in-production"
 
+# Allow initial server setup from non-localhost clients (default: false)
+# Useful for Docker or remote hosts in trusted networks.
+# WARNING: Only enable in trusted environments.
+allow_remote_setup = false
+
 # Comma-separated list of trusted JWT issuers (leave empty to accept any issuer)
 # Add your OAuth provider domains here
 # Example for Google OAuth: "https://accounts.google.com"

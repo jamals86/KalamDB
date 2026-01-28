@@ -145,7 +145,7 @@ async fn ensure_server_setup(
     let setup_response = client
         .post(format!("{}/v1/api/auth/setup", base_url))
         .json(&json!({
-            "username": "root",
+            "username": "admin",
             "password": root_password,
             "root_password": root_password,
             "email": null
