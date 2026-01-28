@@ -4,7 +4,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::jobs::executors::flush::FlushParams;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::{JobId, TableType};
 use kalamdb_system::JobType;

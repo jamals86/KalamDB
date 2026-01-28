@@ -14,7 +14,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handler_adapter::{DynamicHandlerAdapter, TypedHandlerAdapter};
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use dashmap::DashMap;
 use kalamdb_sql::statement_classifier::SqlStatement;
 use std::sync::Arc;
@@ -190,7 +190,7 @@ impl HandlerRegistry {
         registry.register_typed(
             SqlStatementKind::CreateStorage(kalamdb_sql::ddl::CreateStorageStatement {
                 storage_id: StorageId::new("_placeholder"),
-                storage_type: kalamdb_commons::models::StorageType::Filesystem,
+                storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
                 storage_name: String::new(),
                 description: None,
                 base_directory: String::new(),

@@ -3,7 +3,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_sql::ddl::SubscribeStatement;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -31,7 +31,7 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         // Use the session's default namespace if the statement used "default"
         // This allows SUBSCRIBE TO messages to use the current USE NAMESPACE
-        let effective_namespace = if statement.namespace.as_str() == "default" {
+        let effective_namespace = if statement.namespace.is_default_namespace() {
             context.default_namespace()
         } else {
             statement.namespace.clone()

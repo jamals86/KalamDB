@@ -204,7 +204,7 @@ mod tests {
     use crate::models::schemas::TableName;
 
     fn test_table_id() -> TableId {
-        TableId::new(NamespaceId::new("default"), TableName::new("users"))
+        TableId::new(NamespaceId::default(), TableName::new("users"))
     }
 
     #[test]

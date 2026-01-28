@@ -381,7 +381,7 @@ mod tests {
     fn test_flush_params_validate() {
         let params = FlushParams {
             table_id: TableId::new(
-                NamespaceId::new("default"),
+                NamespaceId::default(),
                 kalamdb_commons::TableName::new("users"),
             ),
             table_type: TableType::User,

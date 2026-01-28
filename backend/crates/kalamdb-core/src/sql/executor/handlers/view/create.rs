@@ -8,7 +8,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::NamespaceId;
 use kalamdb_sql::ddl::CreateViewStatement;
 use std::sync::Arc;
@@ -136,7 +136,7 @@ mod tests {
 
         let stmt = CreateViewStatement::parse(
             "CREATE VIEW default.test_view AS SELECT 1 AS value",
-            &NamespaceId::new("default"),
+            &NamespaceId::default(),
         )
         .expect("parse view");
 
@@ -161,7 +161,7 @@ mod tests {
         let handler = CreateViewHandler::new(app_ctx.clone());
         let stmt = CreateViewStatement::parse(
             "CREATE VIEW default.restricted_view AS SELECT 1",
-            &NamespaceId::new("default"),
+            &NamespaceId::default(),
         )
         .expect("parse view");
 

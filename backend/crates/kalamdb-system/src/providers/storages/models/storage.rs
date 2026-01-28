@@ -2,11 +2,10 @@
 
 use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::ids::StorageId;
-use kalamdb_commons::models::storage::{StorageLocationConfig, StorageLocationConfigError};
 use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
-use super::StorageType;
+use super::{StorageType, StorageLocationConfig, StorageLocationConfigError};
 
 /// Storage configuration in system_storages table
 #[table(

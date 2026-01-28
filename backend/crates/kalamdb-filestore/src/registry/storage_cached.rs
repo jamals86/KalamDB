@@ -43,7 +43,7 @@ use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use bytes::Bytes;
 use futures_util::StreamExt;
-use kalamdb_commons::models::storage::StorageType;
+use kalamdb_system::providers::storages::models::StorageType;
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_system::Storage;
@@ -899,7 +899,7 @@ impl StorageCached {
 mod tests {
     use super::*;
     use kalamdb_commons::models::ids::StorageId;
-    use kalamdb_commons::models::storage::StorageType;
+    use kalamdb_system::providers::storages::models::StorageType;
     use kalamdb_commons::{NamespaceId, TableName};
     use std::env;
 

@@ -7,10 +7,11 @@
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::schema_registry::TableType;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::{ExecutionContext, ExecutionResult};
 use crate::sql::executor::SqlExecutor;
 use datafusion::execution::context::SessionContext;
 use datafusion::arrow::array::{Array, Int64Array};
+use datafusion_common::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;

@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 /// use kalamdb_commons::NamespaceId;
 ///
 /// let namespace = Namespace {
-///     namespace_id: NamespaceId::new("default"),
+///     namespace_id: NamespaceId::default(),
 ///     name: "default".to_string(),
 ///     created_at: 1730000000000,
 ///     options: Some("{}".to_string()),
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn test_namespace_serialization() {
         let namespace = Namespace {
-            namespace_id: NamespaceId::new("default"),
+            namespace_id: NamespaceId::default(),
             name: "default".to_string(),
             created_at: 1730000000000,
             options: Some("{}".to_string()),

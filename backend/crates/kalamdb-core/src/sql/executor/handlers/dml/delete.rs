@@ -7,7 +7,7 @@ use crate::error::KalamDbError;
 use crate::providers::base::BaseTableProvider; // Phase 13.6: Bring trait methods into scope
 use crate::sql::executor::handlers::dml::mod_helpers::extract_pk_from_where_pair;
 use crate::sql::executor::handlers::StatementHandler;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};

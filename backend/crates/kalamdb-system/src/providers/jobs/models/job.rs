@@ -2,19 +2,15 @@
 //!
 //! Represents a background job (flush, retention, cleanup, etc.).
 
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    models::{
-        ids::{JobId, NamespaceId, NodeId},
-        schemas::{ColumnDefinition, ColumnDefault, TableDefinition, TableOptions, TableType},
-        TableName,
-    },
-    system_tables::SystemTable,
-    KSerializable,
-};
-use super::{JobStatus, JobType};
 use bincode::{Decode, Encode};
+use kalamdb_commons::datatypes::KalamDataType;
+use kalamdb_commons::models::ids::{JobId, NamespaceId, NodeId};
+use kalamdb_commons::models::TableName;
+use kalamdb_commons::KSerializable;
+use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
+
+use super::{JobStatus, JobType};
 
 /// Job entity for system.jobs table.
 ///
@@ -82,35 +78,219 @@ use serde::{Deserialize, Serialize};
 /// The `status` field tracks overall job status (local work on this node).
 /// The `leader_status` field tracks leader-only actions when this node is the leader.
 /// The `leader_node_id` field indicates which node performed leader actions.
+#[table(
+    name = "jobs",
+    comment = "Background jobs for maintenance and data management"
+)]
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct Job {
     // 8-byte aligned fields first (i64, Option<i64>, String/pointer types)
-    pub created_at: i64,          // Unix timestamp in milliseconds
-    pub updated_at: i64,          // Unix timestamp in milliseconds
-    pub started_at: Option<i64>,  // Unix timestamp in milliseconds
+    #[column(
+        id = 15,
+        ordinal = 15,
+        data_type(KalamDataType::Timestamp),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Unix timestamp in milliseconds when job was created"
+    )]
+    pub created_at: i64, // Unix timestamp in milliseconds
+    #[column(
+        id = 16,
+        ordinal = 16,
+        data_type(KalamDataType::Timestamp),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Unix timestamp in milliseconds when job was last updated"
+    )]
+    pub updated_at: i64, // Unix timestamp in milliseconds
+    #[column(
+        id = 17,
+        ordinal = 17,
+        data_type(KalamDataType::Timestamp),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Unix timestamp in milliseconds when job started"
+    )]
+    pub started_at: Option<i64>, // Unix timestamp in milliseconds
+    #[column(
+        id = 18,
+        ordinal = 18,
+        data_type(KalamDataType::Timestamp),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Unix timestamp in milliseconds when job completed"
+    )]
     pub finished_at: Option<i64>, // Unix timestamp in milliseconds
+    #[column(
+        id = 13,
+        ordinal = 13,
+        data_type(KalamDataType::BigInt),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Memory usage in bytes"
+    )]
     pub memory_used: Option<i64>, // bytes
-    pub cpu_used: Option<i64>,    // microseconds
+    #[column(
+        id = 14,
+        ordinal = 14,
+        data_type(KalamDataType::BigInt),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "CPU time in microseconds"
+    )]
+    pub cpu_used: Option<i64>, // microseconds
+    #[column(
+        id = 1,
+        ordinal = 1,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = true,
+        default = "None",
+        comment = "Unique job identifier"
+    )]
     pub job_id: JobId,
     #[bincode(with_serde)]
+    #[column(
+        id = 19,
+        ordinal = 19,
+        data_type(KalamDataType::BigInt),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Node/server that owns this job"
+    )]
     pub node_id: NodeId,
     /// Node that performed leader actions (if any). Only set when leader_status is Some.
     #[bincode(with_serde)]
+    #[column(
+        id = 20,
+        ordinal = 20,
+        data_type(KalamDataType::BigInt),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Node that performed leader actions"
+    )]
     pub leader_node_id: Option<NodeId>,
+    #[column(
+        id = 5,
+        ordinal = 5,
+        data_type(KalamDataType::Json),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "JSON object containing job parameters"
+    )]
     pub parameters: Option<String>, // JSON object containing namespace_id, table_name, and other params
-    pub message: Option<String>,    // Unified field replacing result/error_message
+    #[column(
+        id = 6,
+        ordinal = 6,
+        data_type(KalamDataType::Text),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Result or error message"
+    )]
+    pub message: Option<String>, // Unified field replacing result/error_message
+    #[column(
+        id = 7,
+        ordinal = 7,
+        data_type(KalamDataType::Text),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Full stack trace on failures"
+    )]
     pub exception_trace: Option<String>, // Full stack trace on failures
+    #[column(
+        id = 8,
+        ordinal = 8,
+        data_type(KalamDataType::Text),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Key for preventing duplicate jobs"
+    )]
     pub idempotency_key: Option<String>, // For preventing duplicate jobs
-    pub queue: Option<String>,      // Queue name (future use)
+    #[column(
+        id = 9,
+        ordinal = 9,
+        data_type(KalamDataType::Text),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Queue name for job routing"
+    )]
+    pub queue: Option<String>, // Queue name (future use)
     // 4-byte aligned fields (enums, i32)
+    #[column(
+        id = 10,
+        ordinal = 10,
+        data_type(KalamDataType::Int),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Priority value (higher = more priority)"
+    )]
     pub priority: Option<i32>, // Priority value (future use)
+    #[column(
+        id = 2,
+        ordinal = 2,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Type of job (Flush, Compact, Cleanup, Backup, Restore)"
+    )]
     pub job_type: JobType,
     /// Status of local work (runs on all nodes)
+    #[column(
+        id = 3,
+        ordinal = 3,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Job status (New, Queued, Running, Completed, Failed, Cancelled, Retrying)"
+    )]
     pub status: JobStatus,
     /// Status of leader-only actions (only set on leader node for jobs with leader actions)
+    #[column(
+        id = 4,
+        ordinal = 4,
+        data_type(KalamDataType::Text),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Status of leader-only actions"
+    )]
     pub leader_status: Option<JobStatus>,
     // 1-byte fields last
+    #[column(
+        id = 11,
+        ordinal = 11,
+        data_type(KalamDataType::SmallInt),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Number of retries attempted"
+    )]
     pub retry_count: u8, // Number of retries attempted (default 0)
+    #[column(
+        id = 12,
+        ordinal = 12,
+        data_type(KalamDataType::SmallInt),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Maximum retries allowed"
+    )]
     pub max_retries: u8, // Maximum retries allowed (default 3)
 }
 
@@ -215,242 +395,6 @@ impl Job {
             Some(params) => serde_json::from_str(params).ok(),
             None => None,
         }
-    }
-
-    /// Generate TableDefinition for system.jobs
-    pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "job_id",
-                1,
-                KalamDataType::Text,
-                false,
-                true,
-                false,
-                ColumnDefault::None,
-                Some("Unique job identifier".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "job_type",
-                2,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Type of job (Flush, Compact, Cleanup, Backup, Restore)".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "status",
-                3,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Job status (New, Queued, Running, Completed, Failed, Cancelled, Retrying)".to_string()),
-            ),
-            ColumnDefinition::new(
-                4,
-                "leader_status",
-                4,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Status of leader-only actions".to_string()),
-            ),
-            ColumnDefinition::new(
-                5,
-                "parameters",
-                5,
-                KalamDataType::Json,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("JSON object containing job parameters".to_string()),
-            ),
-            ColumnDefinition::new(
-                6,
-                "message",
-                6,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Result or error message".to_string()),
-            ),
-            ColumnDefinition::new(
-                7,
-                "exception_trace",
-                7,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Full stack trace on failures".to_string()),
-            ),
-            ColumnDefinition::new(
-                8,
-                "idempotency_key",
-                8,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Key for preventing duplicate jobs".to_string()),
-            ),
-            ColumnDefinition::new(
-                9,
-                "queue",
-                9,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Queue name for job routing".to_string()),
-            ),
-            ColumnDefinition::new(
-                10,
-                "priority",
-                10,
-                KalamDataType::Int,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Priority value (higher = more priority)".to_string()),
-            ),
-            ColumnDefinition::new(
-                11,
-                "retry_count",
-                11,
-                KalamDataType::SmallInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Number of retries attempted".to_string()),
-            ),
-            ColumnDefinition::new(
-                12,
-                "max_retries",
-                12,
-                KalamDataType::SmallInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Maximum retries allowed".to_string()),
-            ),
-            ColumnDefinition::new(
-                13,
-                "memory_used",
-                13,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Memory usage in bytes".to_string()),
-            ),
-            ColumnDefinition::new(
-                14,
-                "cpu_used",
-                14,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("CPU time in microseconds".to_string()),
-            ),
-            ColumnDefinition::new(
-                15,
-                "created_at",
-                15,
-                KalamDataType::Timestamp,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Unix timestamp in milliseconds when job was created".to_string()),
-            ),
-            ColumnDefinition::new(
-                16,
-                "updated_at",
-                16,
-                KalamDataType::Timestamp,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Unix timestamp in milliseconds when job was last updated".to_string()),
-            ),
-            ColumnDefinition::new(
-                17,
-                "started_at",
-                17,
-                KalamDataType::Timestamp,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Unix timestamp in milliseconds when job started".to_string()),
-            ),
-            ColumnDefinition::new(
-                18,
-                "finished_at",
-                18,
-                KalamDataType::Timestamp,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Unix timestamp in milliseconds when job completed".to_string()),
-            ),
-            ColumnDefinition::new(
-                19,
-                "node_id",
-                19,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Node/server that owns this job".to_string()),
-            ),
-            ColumnDefinition::new(
-                20,
-                "leader_node_id",
-                20,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Node that performed leader actions".to_string()),
-            ),
-        ];
-
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::Jobs.table_name()),
-            TableType::System,
-            columns,
-            TableOptions::system(),
-            Some("Background jobs for maintenance and data management".to_string()),
-        )
-        .expect("Failed to create system.jobs table definition")
     }
 }
 

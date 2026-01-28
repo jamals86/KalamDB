@@ -34,7 +34,7 @@ pub mod user;
 pub mod view;
 
 // Re-export core types from executor/models for convenience
-pub use crate::sql::executor::models::{
+pub use crate::sql::context::{
     ExecutionContext, ExecutionMetadata, ExecutionResult, ScalarValue,
 };
 

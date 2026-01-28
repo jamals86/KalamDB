@@ -35,7 +35,7 @@
 //! use kalamdb_system::{User, Job, LiveQuery};
 //!
 //! let user_id = UserId::new("user_123");
-//! let namespace_id = NamespaceId::new("default");
+//! let namespace_id = NamespaceId::default();
 //! let table_name = TableName::new("conversations");
 //!
 //! // Convert to string
@@ -58,7 +58,7 @@ pub mod websocket;
 extern crate self as kalamdb_commons;
 
 // Re-export commonly used types at crate root
-pub use constants::{ANONYMOUS_USER_ID, MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES};
+pub use constants::{MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES};
 pub use conversions::{
     as_f64,
     encode_pk_value,
@@ -87,7 +87,6 @@ pub use models::{
     NodeId,
     Role,
     StorageId,
-    StorageMode,
     TableId,
     UserId,
     UserName,

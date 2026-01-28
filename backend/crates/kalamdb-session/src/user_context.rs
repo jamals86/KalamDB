@@ -46,8 +46,8 @@ pub struct UserContext {
 impl Default for UserContext {
     fn default() -> Self {
         UserContext {
-            user_id: UserId::from("anonymous"),
-            role: Role::User,
+            user_id: UserId::anonymous(),
+            role: Role::Anonymous,
             read_context: ReadContext::Client, // Default to client reads (require leader)
         }
     }
@@ -122,7 +122,7 @@ mod tests {
     fn test_default_user_context() {
         let ctx = UserContext::default();
         assert_eq!(ctx.user_id.as_str(), "anonymous");
-        assert_eq!(ctx.role, Role::User);
+        assert_eq!(ctx.role, Role::Anonymous);
         assert_eq!(ctx.read_context, ReadContext::Client);
         assert!(!ctx.is_admin());
     }

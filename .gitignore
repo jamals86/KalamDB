@@ -86,3 +86,5 @@ link/sdks/typescript/package-lock.json
 ui/package-lock.json
 ui/package-lock.json
 /.cluster-local
+/docker/utils/minio-data
+ui/package-lock.json

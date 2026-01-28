@@ -26,6 +26,7 @@ pub fn can_access_table_type(role: Role, table_type: TableType) -> bool {
             // Regular users cannot access system tables directly
             !matches!(table_type, TableType::System)
         },
+        Role::Anonymous => false,
     }
 }
 
@@ -52,6 +53,7 @@ pub fn can_create_table(role: Role, table_type: TableType) -> bool {
         },
         // User role can only create USER and STREAM tables
         Role::User => matches!(table_type, TableType::User | TableType::Stream),
+        Role::Anonymous => false,
     }
 }
 
@@ -113,6 +115,7 @@ pub fn can_alter_table(role: Role, table_type: TableType, _is_owner: bool) -> bo
         Role::Service => matches!(table_type, TableType::Shared | TableType::User | TableType::Stream),
         // Allow User role to alter USER and STREAM tables
         Role::User => matches!(table_type, TableType::User | TableType::Stream),
+        Role::Anonymous => false,
     }
 }
 
@@ -148,6 +151,10 @@ pub fn can_execute_admin_operations(role: Role) -> bool {
 /// # Returns
 /// True if access is allowed, false otherwise
 pub fn can_access_shared_table(access_level: TableAccess, is_owner: bool, role: Role) -> bool {
+    if matches!(role, Role::Anonymous) {
+        return false;
+    }
+
     // Admins and service accounts can access everything
     if matches!(role, Role::System | Role::Dba | Role::Service) {
         return true;

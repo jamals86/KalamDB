@@ -6,7 +6,8 @@
 //! - DROP STORAGE: Remove a storage backend
 //! - SHOW STORAGES: List all registered storages
 
-use kalamdb_commons::{models::StorageType, StorageId};
+use kalamdb_commons::StorageId;
+use kalamdb_system::providers::storages::models::StorageType;
 use serde::{Deserialize, Serialize};
 
 /// CREATE STORAGE command

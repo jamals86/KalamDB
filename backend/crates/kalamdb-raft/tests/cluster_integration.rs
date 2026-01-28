@@ -732,7 +732,7 @@ async fn test_meta_group_operations() {
         storage_id: storage_id.clone(),
         storage_name: "test_storage".to_string(),
         description: None,
-        storage_type: kalamdb_commons::models::storage::StorageType::Filesystem,
+        storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
         base_directory: "/tmp/test".to_string(),
         credentials: None,
         config_json: None,

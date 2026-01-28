@@ -33,6 +33,7 @@ pub fn has_order_by(plan: &LogicalPlan) -> bool {
 ///
 /// Returns the first TableScan found in the plan tree.
 /// For simple SELECT queries, this is typically the main table.
+/// /// FIXME: Pass the ExecutionContext to read the default namespace from there
 fn extract_table_reference(plan: &LogicalPlan) -> Option<TableId> {
     match plan {
         LogicalPlan::TableScan(scan) => {
@@ -52,6 +53,7 @@ fn extract_table_reference(plan: &LogicalPlan) -> Option<TableId> {
         // For other plan nodes, check their inputs
         _ => {
             for input in plan.inputs() {
+                /// FIXME: Pass the ExecutionContext to read the default namespace from there
                 if let Some(result) = extract_table_reference(input) {
                     return Some(result);
                 }
@@ -147,6 +149,7 @@ fn sort_columns_in_schema(sort_exprs: &[SortExpr], plan: &LogicalPlan) -> bool {
 /// # Returns
 /// * `Ok(LogicalPlan)` - The original plan if ORDER BY exists, or wrapped plan
 /// * `Err(KalamDbError)` - If schema lookup fails (rare, plan is returned unchanged)
+/// FIXME: Pass the ExecutionContext to read the default namespace from there
 pub fn apply_default_order_by(
     plan: LogicalPlan,
     app_context: &Arc<AppContext>,
@@ -158,6 +161,7 @@ pub fn apply_default_order_by(
     }
 
     // Extract table reference
+    /// FIXME: Pass the ExecutionContext to read the default namespace from there
     let table_id = match extract_table_reference(&plan) {
         Some(id) => id,
         None => {

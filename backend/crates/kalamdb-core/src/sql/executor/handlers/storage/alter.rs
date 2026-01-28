@@ -5,7 +5,7 @@ use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::require_admin;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_sql::ddl::AlterStorageStatement;
 use std::sync::Arc;
 
@@ -161,7 +161,7 @@ mod tests {
             storage_id: StorageId::from(storage_id.as_str()),
             storage_name: "Original Name".to_string(),
             description: None,
-            storage_type: kalamdb_commons::models::StorageType::Filesystem,
+            storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
             base_directory: "/tmp/test".to_string(),
             credentials: None,
             config_json: None,

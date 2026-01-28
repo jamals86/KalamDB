@@ -3,7 +3,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::providers::arrow_json_conversion::scalar_value_to_json;
 use crate::sql::executor::default_evaluator::evaluate_default;
-use crate::sql::executor::models::ScalarValue;
+use datafusion_common::ScalarValue;
 use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::schemas::ColumnDefault;
