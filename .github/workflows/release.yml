@@ -966,6 +966,17 @@ jobs:
           name: dist-cli-linux-x86_64
           path: dist/
 
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang \
+            libclang-dev \
+            llvm-dev \
+            pkg-config \
+            libssl-dev
+
       - name: Setup Rust (for running tests)
         uses: dtolnay/rust-toolchain@stable
         with:

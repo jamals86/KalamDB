@@ -305,9 +305,9 @@ mod tests {
         let store = create_test_store();
         assert_eq!(
             store.partition(),
-            SystemTable::Tables
+            SystemTable::Schemas
                 .column_family_name()
-                .expect("Tables is a table, not a view")
+                .expect("Schemas is a table, not a view")
                 .into()
         );
     }

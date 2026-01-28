@@ -47,6 +47,8 @@ main() {
     fi
     
     log_info "Starting container..."
+    # Set root password for testing
+    ROOT_PASSWORD="testpass123"
     JWT_ENV=()
     if [ -n "${KALAMDB_JWT_SECRET:-}" ]; then
         JWT_ENV=(-e "KALAMDB_JWT_SECRET=${KALAMDB_JWT_SECRET}")
@@ -56,6 +58,7 @@ main() {
         -p "$TEST_PORT:8080" \
         -e KALAMDB_SERVER_HOST=0.0.0.0 \
         -e KALAMDB_LOG_LEVEL=info \
+        -e KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
         "${JWT_ENV[@]}" \
         "$IMAGE_NAME"
     
@@ -129,32 +132,47 @@ main() {
         exit 1
     fi
     
-    # Test 5: Set root password inside container, then test SQL with new password
-    log_info "Test 5: Setting root password inside container..."
-
-    ROOT_PASSWORD="testpass123"
-    docker exec "$CONTAINER_NAME" /usr/local/bin/kalam \
-        --url "http://localhost:8080" \
-        --username root \
-        --password "" \
-        --command "ALTER USER root SET PASSWORD '$ROOT_PASSWORD'" &>/dev/null
-
+    # Test 5: Authentication and SQL query test
+    log_info "Test 5: Testing authentication and SQL query execution..."
+    
+    # First, login to get JWT token
+    LOGIN_RESPONSE=$(curl -sf -X POST \
+        "http://localhost:$TEST_PORT/v1/api/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"root\",\"password\":\"$ROOT_PASSWORD\"}" 2>&1)
+    
     if [ $? -ne 0 ]; then
-        log_warn "⚠ Failed to set root password inside container; skipping SQL auth test"
+        log_error "✗ Login failed"
+        log_info "Container logs:"
+        docker logs "$CONTAINER_NAME" | tail -50
+        exit 1
+    fi
+    
+    # Extract token from response
+    TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+    
+    if [ -z "$TOKEN" ]; then
+        log_error "✗ Failed to extract JWT token from login response"
+        log_info "Login response: $LOGIN_RESPONSE"
+        exit 1
+    fi
+    
+    log_info "✓ Login successful, token received"
+    
+    # Now test SQL query with Bearer token
+    QUERY_RESPONSE=$(curl -sf -X POST \
+        "http://localhost:$TEST_PORT/v1/api/sql" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{"sql":"SELECT 1 as test"}' 2>&1 || echo "FAILED")
+
+    if [ "$QUERY_RESPONSE" != "FAILED" ]; then
+        log_info "✓ SQL query execution passed: $QUERY_RESPONSE"
     else
-        log_info "Root password updated"
-
-        QUERY_RESPONSE=$(curl -sf -X POST \
-            "http://localhost:$TEST_PORT/v1/api/sql" \
-            -u "root:$ROOT_PASSWORD" \
-            -H "Content-Type: application/json" \
-            -d '{"sql":"SELECT 1 as test"}' 2>&1 || echo "FAILED")
-
-        if [ "$QUERY_RESPONSE" != "FAILED" ]; then
-            log_info "✓ SQL query execution passed"
-        else
-            log_warn "⚠ SQL query test failed after password update"
-        fi
+        log_error "✗ SQL query test failed"
+        log_info "Container logs:"
+        docker logs "$CONTAINER_NAME" | tail -50
+        exit 1
     fi
     
     # Test 6: Check container resource usage
