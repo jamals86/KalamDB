@@ -466,7 +466,7 @@ mod tests {
         let sm = SharedDataStateMachine::default();
 
         let cmd = SharedDataCommand::Insert {
-            table_id: TableId::new(NamespaceId::new("default"), "config".into()),
+            table_id: TableId::new(NamespaceId::default(), "config".into()),
             rows: vec![],
             required_meta_index: 0,
         };
@@ -484,7 +484,7 @@ mod tests {
 
         // Insert
         let insert = SharedDataCommand::Insert {
-            table_id: TableId::new(NamespaceId::new("default"), "settings".into()),
+            table_id: TableId::new(NamespaceId::default(), "settings".into()),
             rows: vec![],
             required_meta_index: 0,
         };
@@ -492,7 +492,7 @@ mod tests {
 
         // Update
         let update = SharedDataCommand::Update {
-            table_id: TableId::new(NamespaceId::new("default"), "settings".into()),
+            table_id: TableId::new(NamespaceId::default(), "settings".into()),
             updates: vec![],
             filter: None,
             required_meta_index: 0,
@@ -501,7 +501,7 @@ mod tests {
 
         // Delete
         let delete = SharedDataCommand::Delete {
-            table_id: TableId::new(NamespaceId::new("default"), "settings".into()),
+            table_id: TableId::new(NamespaceId::default(), "settings".into()),
             pk_values: None,
             required_meta_index: 0,
         };

@@ -11,10 +11,11 @@ use kalamdb_auth::{
 };
 use kalamdb_auth::helpers::cookie::extract_auth_token;
 use kalamdb_auth::security::password::{hash_password, validate_password};
-use kalamdb_commons::{AuthType, Role, StorageMode};
+use kalamdb_commons::{AuthType, Role};
 use kalamdb_commons::models::{StorageId, UserId, UserName};
 use kalamdb_configs::AuthSettings;
 use kalamdb_system::User;
+use kalamdb_system::providers::storages::models::StorageMode;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

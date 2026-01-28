@@ -4,7 +4,8 @@
 
 use bincode::{Decode, Encode};
 use kalamdb_commons::datatypes::KalamDataType;
-use kalamdb_commons::models::{ids::UserId, AuthType, Role, StorageId, StorageMode};
+use kalamdb_commons::models::{ids::UserId, AuthType, Role, StorageId};
+use crate::providers::storages::models::StorageMode;
 use kalamdb_commons::UserName;
 use kalamdb_commons::KSerializable;
 use kalamdb_macros::table;

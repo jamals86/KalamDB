@@ -15,7 +15,7 @@ use crate::sql::functions::{
     CurrentUserFunction, SnowflakeIdFunction, UlidFunction, UuidV7Function,
 };
 use datafusion::error::Result as DataFusionResult;
-use datafusion::execution::context::SessionContext;
+use datafusion::execution::context::{SessionContext, SessionState};
 use datafusion::logical_expr::ScalarUDF;
 use datafusion::prelude::SessionConfig;
 use kalamdb_configs::DataFusionSettings;
@@ -31,6 +31,8 @@ pub struct DataFusionSessionFactory {
     target_partitions: usize,
     /// Batch size for Arrow record processing
     batch_size: usize,
+    /// Pre-initialized session state with custom functions registered
+    state: SessionState,
 }
 
 impl DataFusionSessionFactory {
@@ -71,9 +73,24 @@ impl DataFusionSessionFactory {
             settings.batch_size
         );
 
+        let config = SessionConfig::new()
+            .with_information_schema(true)
+            .with_parquet_bloom_filter_pruning(true)
+            .with_parquet_page_index_pruning(true)
+            .with_target_partitions(target_partitions)
+            .with_batch_size(settings.batch_size)
+            .with_default_catalog_and_schema("kalam", "default");
+
+        let base_ctx = SessionContext::new_with_config(config);
+
+        // Register custom functions ONCE on the base context
+        // The resulting SessionState is then reused via cheap clones.
+        Self::register_custom_functions(&base_ctx);
+
         Ok(Self {
             target_partitions,
             batch_size: settings.batch_size,
+            state: base_ctx.state(),
         })
     }
 
@@ -84,21 +101,9 @@ impl DataFusionSessionFactory {
     /// - `batch_size`: Controls memory usage and CPU cache efficiency
     /// - Parquet bloom filter and page index pruning for fast filtering
     pub fn create_session(&self) -> SessionContext {
-        let config = SessionConfig::new()
-            .with_information_schema(true)
-            .with_parquet_bloom_filter_pruning(true)
-            .with_parquet_page_index_pruning(true)
-            .with_target_partitions(self.target_partitions)
-            .with_batch_size(self.batch_size)
-            .with_default_catalog_and_schema("kalam", "default");
-
-        let ctx = SessionContext::new_with_config(config);
-
-        // Register custom functions that are not built-in to DataFusion
-        // Note: NOW() and CURRENT_TIMESTAMP() are already built-in to DataFusion
-        self.register_custom_functions(&ctx);
-
-        ctx
+        // Create a new session using a cloned SessionState.
+        // This keeps per-user config/extensions isolated while sharing heavy internals.
+        SessionContext::new_with_state(self.state.clone())
     }
 
     /// Register custom SQL functions with the session
@@ -112,7 +117,7 @@ impl DataFusionSessionFactory {
     /// DataFusion built-in functions already available:
     /// - NOW() - Current timestamp
     /// - CURRENT_TIMESTAMP() - Alias for NOW()
-    fn register_custom_functions(&self, ctx: &SessionContext) {
+    fn register_custom_functions(ctx: &SessionContext) {
         // Register SNOWFLAKE_ID() function
         let snowflake_fn = SnowflakeIdFunction::new();
         ctx.register_udf(ScalarUDF::from(snowflake_fn));

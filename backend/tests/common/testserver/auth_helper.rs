@@ -11,7 +11,7 @@ use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use kalamdb_system::User;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId, UserName};
 use kalamdb_core::error::KalamDbError;
-use kalamdb_core::sql::executor::models::ExecutionContext;
+use kalamdb_core::sql::context::ExecutionContext;
 use serde::{Deserialize, Serialize};
 
 use super::consolidated_helpers::ensure_user_exists;

@@ -122,7 +122,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
 
         // Ensure default namespace exists
         let namespaces = app_ctx.system_tables().namespaces();
-        let default_namespace = NamespaceId::new("default");
+        let default_namespace = NamespaceId::default();
         if namespaces.get_namespace_by_id(&default_namespace).unwrap().is_none() {
             namespaces
                 .create_namespace(kalamdb_system::Namespace {
@@ -144,7 +144,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
                     storage_id,
                     storage_name: "Local Storage".to_string(),
                     description: Some("Default local storage for tests".to_string()),
-                    storage_type: kalamdb_commons::models::StorageType::Filesystem,
+                    storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
                     base_directory: "/tmp/kalamdb_test".to_string(),
                     credentials: None,
                     config_json: None,

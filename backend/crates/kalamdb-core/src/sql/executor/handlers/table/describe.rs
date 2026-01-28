@@ -3,12 +3,9 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::views::DescribeView;
-use kalamdb_commons::conversions::arrow_conversion::FromArrowType;
-use kalamdb_commons::datatypes::KalamDataType;
 use kalamdb_commons::models::{NamespaceId, TableId};
-use kalamdb_commons::schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType};
 use kalamdb_sql::ddl::DescribeTableStatement;
 use std::sync::Arc;
 
@@ -32,7 +29,7 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let start_time = std::time::Instant::now();
-        let ns = statement.namespace_id.clone().unwrap_or_else(|| NamespaceId::new("default"));
+        let ns = statement.namespace_id.clone().unwrap_or_else(|| NamespaceId::default());
         let table_id = TableId::from_strings(ns.as_str(), statement.table_name.as_str());
         let def = self
             .app_context

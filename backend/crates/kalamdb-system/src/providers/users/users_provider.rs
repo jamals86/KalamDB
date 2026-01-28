@@ -376,7 +376,7 @@ impl TableProvider for UsersTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserName};
+    use kalamdb_commons::{AuthType, Role, StorageId, UserName};
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> UsersTableProvider {
@@ -393,7 +393,7 @@ mod tests {
             email: Some(format!("{}@example.com", username)),
             auth_type: AuthType::Password,
             auth_data: None,
-            storage_mode: StorageMode::Table,
+            storage_mode: crate::providers::storages::models::StorageMode::Table,
             storage_id: Some(StorageId::local()),
             failed_login_attempts: 0,
             locked_until: None,

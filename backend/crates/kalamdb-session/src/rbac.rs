@@ -12,6 +12,7 @@ pub fn can_access_table_type(role: Role, table_type: TableType) -> bool {
         Role::System | Role::Dba => true,
         Role::Service => matches!(table_type, TableType::Shared | TableType::Stream | TableType::User),
         Role::User => matches!(table_type, TableType::User | TableType::Stream),
+        Role::Anonymous => false,
     }
 }
 
@@ -23,6 +24,7 @@ pub fn can_create_table(role: Role, table_type: TableType) -> bool {
         Role::Dba => matches!(table_type, TableType::User | TableType::Shared | TableType::Stream),
         Role::Service => matches!(table_type, TableType::User | TableType::Shared | TableType::Stream),
         Role::User => matches!(table_type, TableType::User | TableType::Stream),
+        Role::Anonymous => false,
     }
 }
 
@@ -33,6 +35,7 @@ pub fn can_delete_table(role: Role, table_type: TableType, _is_owner: bool) -> b
         Role::System => true,
         Role::Dba => !matches!(table_type, TableType::System),
         Role::Service | Role::User => false,
+        Role::Anonymous => false,
     }
 }
 
@@ -47,6 +50,7 @@ pub fn can_alter_table(role: Role, table_type: TableType, _is_owner: bool) -> bo
         Role::System | Role::Dba => true,
         Role::Service => matches!(table_type, TableType::Shared | TableType::User | TableType::Stream),
         Role::User => matches!(table_type, TableType::User | TableType::Stream),
+        Role::Anonymous => false,
     }
 }
 

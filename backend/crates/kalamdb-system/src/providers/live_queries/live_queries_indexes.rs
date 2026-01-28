@@ -90,7 +90,7 @@ mod tests {
         let lq = LiveQuery {
             live_id: live_id.clone(),
             connection_id: "conn456".to_string(),
-            namespace_id: NamespaceId::new("default"),
+            namespace_id: NamespaceId::default(),
             table_name: TableName::new("messages"),
             user_id: UserId::new("user123"),
             query: "SELECT * FROM messages".to_string(),

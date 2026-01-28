@@ -11,7 +11,7 @@ use arrow::record_batch::RecordBatch;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use kalamdb_commons::models::ids::StorageId;
 use kalamdb_commons::models::TableId;
-use kalamdb_commons::models::storage::StorageType;
+use kalamdb_system::providers::storages::models::StorageType;
 use kalamdb_system::Storage;
 use kalamdb_commons::schemas::TableType;
 use std::env;

@@ -312,7 +312,7 @@ impl MetaApplier for NoOpMetaApplier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::models::{AuthType, NamespaceId, StorageMode, TableName, UserName};
+    use kalamdb_commons::models::{AuthType, NamespaceId, TableName, UserName};
     use kalamdb_commons::Role;
     use kalamdb_system::JobType;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -521,7 +521,7 @@ mod tests {
             email: None,
             auth_type: AuthType::Password,
             auth_data: None,
-            storage_mode: StorageMode::Table,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
             storage_id: None,
             failed_login_attempts: 0,
             locked_until: None,
@@ -584,7 +584,7 @@ mod tests {
             storage_id: storage_id.clone(),
             storage_name: "local_storage".to_string(),
             description: None,
-            storage_type: kalamdb_commons::models::storage::StorageType::Filesystem,
+            storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
             base_directory: "/tmp/local".to_string(),
             credentials: None,
             config_json: Some(r#"{"type":"local"}"#.to_string()),
@@ -622,7 +622,7 @@ mod tests {
             email: None,
             auth_type: AuthType::Password,
             auth_data: None,
-            storage_mode: StorageMode::Table,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
             storage_id: None,
             failed_login_attempts: 0,
             locked_until: None,
@@ -636,7 +636,7 @@ mod tests {
             storage_id: StorageId::from("s1"),
             storage_name: "test_storage".to_string(),
             description: None,
-            storage_type: kalamdb_commons::models::storage::StorageType::Filesystem,
+            storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
             base_directory: "/tmp/test".to_string(),
             credentials: None,
             config_json: None,
@@ -768,7 +768,7 @@ mod tests {
             email: None,
             auth_type: AuthType::Password,
             auth_data: None,
-            storage_mode: StorageMode::Table,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
             storage_id: None,
             failed_login_attempts: 0,
             locked_until: None,

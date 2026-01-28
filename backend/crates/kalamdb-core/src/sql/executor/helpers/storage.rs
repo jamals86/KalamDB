@@ -5,9 +5,10 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult};
+use crate::sql::context::{ExecutionContext, ExecutionResult};
 use datafusion::execution::context::SessionContext;
-use kalamdb_commons::models::{StorageId, StorageType};
+use kalamdb_commons::models::StorageId;
+use kalamdb_system::StorageType;
 use kalamdb_sql::CreateStorageStatement;
 use std::sync::Arc;
 

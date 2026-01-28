@@ -3,8 +3,8 @@
 //! Provides centralized validation for query parameters with configurable limits.
 
 use crate::error::KalamDbError;
-use crate::sql::executor::models::ScalarValue;
 use kalamdb_configs::ExecutionSettings;
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 
 /// Parameter validation limits (from server.toml [execution] section)
 pub struct ParameterLimits {

@@ -380,7 +380,7 @@ mod tests {
     fn test_params_validation_success() {
         let params = StreamEvictionParams {
             table_id: TableId::new(
-                NamespaceId::new("default"),
+                NamespaceId::default(),
                 kalamdb_commons::TableName::new("events"),
             ),
             table_type: TableType::Stream,
@@ -394,7 +394,7 @@ mod tests {
     fn test_params_validation_invalid_table_type() {
         let params = StreamEvictionParams {
             table_id: TableId::new(
-                NamespaceId::new("default"),
+                NamespaceId::default(),
                 kalamdb_commons::TableName::new("events"),
             ),
             table_type: TableType::User, // Wrong type
@@ -408,7 +408,7 @@ mod tests {
     fn test_params_validation_zero_ttl() {
         let params = StreamEvictionParams {
             table_id: TableId::new(
-                NamespaceId::new("default"),
+                NamespaceId::default(),
                 kalamdb_commons::TableName::new("events"),
             ),
             table_type: TableType::Stream,

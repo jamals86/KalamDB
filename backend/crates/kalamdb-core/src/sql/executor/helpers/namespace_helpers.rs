@@ -4,7 +4,7 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult};
+use crate::sql::context::{ExecutionContext, ExecutionResult};
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::NamespaceId;
 use kalamdb_system::Namespace;

@@ -65,7 +65,7 @@ mod tests {
         LiveQuery {
             live_id: live_id.clone(),
             connection_id: connection_id.to_string(),
-            namespace_id: NamespaceId::new("default"),
+            namespace_id: NamespaceId::default(),
             table_name: TableName::new(table_name),
             user_id: UserId::new(user_id),
             query: "SELECT * FROM test".to_string(),

@@ -574,7 +574,7 @@ mod tests {
         let sm = UserDataStateMachine::new(0);
 
         let cmd = UserDataCommand::Insert {
-            table_id: TableId::new(NamespaceId::new("default"), "users".into()),
+            table_id: TableId::new(NamespaceId::default(), "users".into()),
             user_id: UserId::new("user123"),
             rows: vec![],
             required_meta_index: 0,

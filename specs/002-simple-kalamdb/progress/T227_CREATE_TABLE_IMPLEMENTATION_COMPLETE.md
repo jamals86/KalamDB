@@ -191,7 +191,7 @@ self.session_context
 
 **Location**: Line 175 in executor.rs:
 ```rust
-let namespace_id = crate::catalog::NamespaceId::new("default"); // TODO: Get from context
+let namespace_id = crate::catalog::NamespaceId::default(); // TODO: Get from context
 ```
 
 **Required**: Extract namespace from session or request context.

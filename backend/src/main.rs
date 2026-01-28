@@ -12,6 +12,10 @@ use kalamdb_configs::ServerConfig;
 use kalamdb_server::lifecycle::{bootstrap, run};
 use log::info;
 
+#[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[actix_web::main]
 async fn main() -> Result<()> {
     let main_start = std::time::Instant::now();

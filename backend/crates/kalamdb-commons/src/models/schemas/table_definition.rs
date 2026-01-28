@@ -428,7 +428,7 @@ mod tests {
     #[test]
     fn test_new_table_definition() {
         let table = TableDefinition::new_with_defaults(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -436,7 +436,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(table.namespace_id, NamespaceId::new("default"));
+        assert_eq!(table.namespace_id, NamespaceId::default());
         assert_eq!(table.table_name, TableName::new("users"));
         assert_eq!(table.table_type, TableType::User);
         assert_eq!(table.columns.len(), 3);
@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn test_new_with_defaults() {
         let table = TableDefinition::new_with_defaults(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("events"),
             TableType::Stream,
             sample_columns(),
@@ -474,7 +474,7 @@ mod tests {
         ];
 
         let table = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("users"),
             TableType::User,
             columns,
@@ -497,7 +497,7 @@ mod tests {
         ];
 
         let result = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("test"),
             TableType::User,
             columns,
@@ -517,7 +517,7 @@ mod tests {
         ];
 
         let result = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("test"),
             TableType::User,
             columns,
@@ -532,7 +532,7 @@ mod tests {
     #[test]
     fn test_to_arrow_schema() {
         let table = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn test_increment_version() {
         let mut table = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn test_add_column() {
         let mut table = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -589,7 +589,7 @@ mod tests {
     #[test]
     fn test_drop_column() {
         let mut table = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -611,7 +611,7 @@ mod tests {
     fn test_table_options_type_safety() {
         // Test USER table options
         let user_table = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -624,7 +624,7 @@ mod tests {
 
         // Test STREAM table options
         let stream_table = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("events"),
             TableType::Stream,
             sample_columns(),
@@ -641,7 +641,7 @@ mod tests {
 
         // Test SHARED table options
         let _shared_table = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("categories"),
             TableType::Shared,
             sample_columns(),
@@ -654,7 +654,7 @@ mod tests {
     #[test]
     fn test_set_options() {
         let mut table = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("events"),
             TableType::Stream,
             sample_columns(),
@@ -690,7 +690,7 @@ mod tests {
         }));
 
         let table = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("users"),
             TableType::Shared,
             columns,
@@ -788,7 +788,7 @@ mod tests {
         ];
 
         let table = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("users"),
             TableType::User,
             columns,
@@ -811,7 +811,7 @@ mod tests {
         ];
 
         let table = TableDefinition::new(
-            NamespaceId::new("default"),
+            NamespaceId::default(),
             TableName::new("no_pk"),
             TableType::Shared,
             columns,

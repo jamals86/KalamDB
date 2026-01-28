@@ -6,8 +6,9 @@ use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::executor::helpers::storage::ensure_filesystem_directory;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use kalamdb_commons::models::{StorageId, StorageType};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use kalamdb_commons::models::StorageId;
+use kalamdb_system::StorageType;
 use kalamdb_sql::ddl::CreateStorageStatement;
 use std::sync::Arc;
 
@@ -158,7 +159,7 @@ mod tests {
             storage_id: StorageId::new("test_storage"),
             storage_name: "Test Storage".to_string(),
             description: None,
-            storage_type: kalamdb_commons::models::StorageType::from("local"),
+            storage_type: kalamdb_system::providers::storages::models::StorageType::from("local"),
             base_directory: "/tmp/storage".to_string(),
             credentials: None,
             config_json: None,
@@ -187,7 +188,7 @@ mod tests {
             storage_id: StorageId::from(storage_id.as_str()),
             storage_name: "Test Storage".to_string(),
             description: Some("Test description".to_string()),
-            storage_type: kalamdb_commons::models::StorageType::from("local"),
+            storage_type: kalamdb_system::providers::storages::models::StorageType::from("local"),
             base_directory: "/tmp/test".to_string(),
             credentials: None,
             config_json: None,
@@ -214,7 +215,7 @@ mod tests {
             storage_id: StorageId::from(storage_id.as_str()),
             storage_name: "Test Duplicate".to_string(),
             description: None,
-            storage_type: kalamdb_commons::models::StorageType::from("local"),
+            storage_type: kalamdb_system::providers::storages::models::StorageType::from("local"),
             base_directory: "/tmp/test".to_string(),
             credentials: None,
             config_json: None,

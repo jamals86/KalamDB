@@ -6,7 +6,7 @@
 use crate::error::KalamDbError;
 use crate::sql::executor::handler_registry::SqlStatementHandler;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_sql::DdlAst;
 use std::marker::PhantomData;

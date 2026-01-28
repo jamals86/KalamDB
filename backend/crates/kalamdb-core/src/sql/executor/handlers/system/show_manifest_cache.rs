@@ -6,7 +6,7 @@
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::TypedStatementHandler;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use async_trait::async_trait;
 use kalamdb_sql::ShowManifestStatement;
 use kalamdb_system::providers::ManifestTableProvider;
@@ -68,7 +68,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_show_manifest_cache_empty() {
-        use crate::sql::executor::models::ExecutionContext;
+        use crate::sql::context::ExecutionContext;
         use datafusion::prelude::SessionContext;
         use kalamdb_commons::models::{Role, UserId};
         use std::sync::Arc;

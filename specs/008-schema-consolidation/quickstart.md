@@ -86,7 +86,7 @@ use kalamdb_commons::schemas::{TableDefinition, ColumnDefinition, KalamDataType}
 let table_def = TableDefinition {
     table_id: TableId::new(),
     table_name: "users".to_string(),
-    namespace_id: NamespaceId::new("default"),
+    namespace_id: NamespaceId::default(),
     table_type: TableType::User,
     schema_version: 1,
     created_at: Utc::now(),
@@ -441,7 +441,7 @@ fn create_documents_table() -> Result<TableDefinition> {
     let table_def = TableDefinition {
         table_id: TableId::new(),
         table_name: "documents".to_string(),
-        namespace_id: NamespaceId::new("default"),
+        namespace_id: NamespaceId::default(),
         table_type: TableType::User,
         schema_version: 1,
         created_at: Utc::now(),

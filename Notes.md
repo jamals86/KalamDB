@@ -1270,7 +1270,9 @@ and then make sure we have a test for it as well
 
 139) For the cli if we click enter dont open the history menu again only execute enter
 
-140) Make system tables loading lazy loaded only when needed not all the time stays registered, this will reduce memory consumption, also the same for views this should be effective for all of system.* tables and views
+140) Make sure we have default namespace whenever we setup the system, and make sure its used by default unless the user changed it using user namespace for that session
+
+141) merge both: backend\crates\kalamdb-auth\src\authorization\rbac.rs and backend\crates\kalamdb-session\src\rbac.rs they should only exist in kalamdb-sessions
 
 
 
@@ -1289,4 +1291,5 @@ Main Epics:
 6) Service consumer - Subscription to shards
 7) Change the code to use FlatBuffers for: Raft/RocksDb storage
 8) Add page for Server Initial Setup
+9) Check S3/WebDAV Storages
 

@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn test_params_validation_success() {
         let params = RetentionParams {
-            table_id: TableId::new(NamespaceId::new("default"), TableName::new("users")),
+            table_id: TableId::new(NamespaceId::default(), TableName::new("users")),
             table_type: TableType::User,
             retention_hours: 720,
         };
@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn test_params_validation_zero_hours() {
         let params = RetentionParams {
-            table_id: TableId::new(NamespaceId::new("default"), TableName::new("users")),
+            table_id: TableId::new(NamespaceId::default(), TableName::new("users")),
             table_type: TableType::User,
             retention_hours: 0,
         };

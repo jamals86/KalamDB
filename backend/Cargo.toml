@@ -9,6 +9,9 @@ default-run = "kalamdb-server"
 build = "build.rs"
 
 [dependencies]
+# Memory optimization
+tikv-jemallocator = { version = "0.5", optional = true }
+
 # Core library
 kalamdb-core = { path = "crates/kalamdb-core" }
 kalamdb-api = { path = "crates/kalamdb-api" }
@@ -63,6 +66,10 @@ anyhow = { workspace = true }
 
 # System
 num_cpus = { workspace = true }
+
+[features]
+default = []
+jemalloc = ["tikv-jemallocator"]
 
 [lib]
 name = "kalamdb_server"

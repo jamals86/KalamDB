@@ -4,7 +4,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_auth::security::password::{validate_password_with_policy, PasswordPolicy};
 use kalamdb_system::User;
 use kalamdb_commons::{AuthType, UserId};
@@ -103,7 +103,7 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
             email: statement.email.clone(),
             auth_type: statement.auth_type,
             auth_data,
-            storage_mode: kalamdb_commons::StorageMode::Table,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
             storage_id: None,
             failed_login_attempts: 0,
             locked_until: None,

@@ -147,7 +147,7 @@ cargo build --lib
    - Modified `execute_sql_v1()` to parse params from request
    - Modified `execute_single_statement()` to accept params parameter
    - Updated executor integration
-   - Fixed import to use `kalamdb_core::sql::executor::models::ScalarValue`
+   - Fixed import to use `kalamdb_core::sql::context::ScalarValue`
 
 ### Core Layer
 3. **backend/crates/kalamdb-core/src/sql/executor/parameter_binding.rs**

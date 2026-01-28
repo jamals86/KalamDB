@@ -60,7 +60,7 @@ Example: `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/alter_namesp
 
 ```rust
 use crate::app_context::AppContext;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult};
+use crate::sql::context::{ExecutionContext, ExecutionResult};
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use kalamdb_commons::models::{NamespaceId, UserRole};
 use kalamdb_commons::error::KalamDbError;

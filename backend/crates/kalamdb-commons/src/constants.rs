@@ -73,13 +73,14 @@ impl AuthConstants {
 
     /// Default system user ID created on first database initialization
     pub const DEFAULT_ROOT_USER_ID: &'static str = "root";
+
+    /// Anonymous user ID constant (matches ExecutionContext::anonymous())
+    pub const ANONYMOUS_USER_ID: &str = "anonymous";
 }
 
 /// Global instance of authentication constants.
 pub const AUTH: AuthConstants = AuthConstants;
 
-/// Anonymous user ID constant (matches ExecutionContext::anonymous())
-pub const ANONYMOUS_USER_ID: &str = "anonymous";
 
 /// Reserved namespace names that cannot be used by users.
 ///
