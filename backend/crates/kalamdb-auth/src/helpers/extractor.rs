@@ -15,8 +15,6 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use kalamdb_auth::{AuthenticatedUser, AuthSession, OptionalAuth};
 //!
 //! // Simple case - just the user
 //! #[post("/api")]
@@ -32,28 +30,16 @@
 //!     // Access connection info via session.connection_info
 //! }
 //!
-//! // Optional authentication - allows anonymous access
-//! #[get("/public")]
-//! async fn public_endpoint(auth: OptionalAuth) -> impl Responder {
-//!     if let Some(user) = auth.user() {
-//!         // user is authenticated
-//!     } else {
-//!         // anonymous access
-//!     }
-//! }
 //! ```
 
 use actix_web::{dev::Payload, http::StatusCode, FromRequest, HttpRequest, ResponseError};
-use kalamdb_commons::models::ConnectionInfo;
 use std::fmt;
 use std::future::Future;
-use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::errors::error::AuthError;
 use crate::helpers::ip_extractor::extract_client_ip_secure;
-use crate::models::context::AuthenticatedUser;
 use crate::repository::user_repo::UserRepository;
 use crate::services::unified::{authenticate, AuthMethod, AuthRequest};
 
@@ -151,335 +137,6 @@ impl From<AuthError> for AuthExtractError {
     }
 }
 
-/// Full authentication session with user, method, and connection info.
-///
-/// Use this when you need access to the authentication method (Bearer)
-/// for audit logging or when you need the connection info.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// async fn handler(session: AuthSession) -> impl Responder {
-///     // Access the authenticated user
-///     let user = &session.user;
-///     
-///     // Access connection info
-///     let ip = &session.connection_info.remote_addr;
-/// }
-/// ```
-#[derive(Debug, Clone)]
-pub struct AuthSession {
-    /// The authenticated user
-    pub user: AuthenticatedUser,
-    /// The authentication method used
-    pub method: AuthMethod,
-    /// Connection information (IP address, localhost check)
-    pub connection_info: ConnectionInfo,
-}
-
-impl Deref for AuthSession {
-    type Target = AuthenticatedUser;
-
-    fn deref(&self) -> &Self::Target {
-        &self.user
-    }
-}
-
-impl FromRequest for AuthSession {
-    type Error = AuthExtractError;
-    type Future = Pin<Box<dyn Future<Output = Result<Self, Self::Error>>>>;
-
-    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
-        let req = req.clone();
-
-        Box::pin(async move {
-            let start_time = std::time::Instant::now();
-
-            // Get user repository from app data - MUST be registered
-            let repo: Arc<dyn UserRepository> = if let Some(repo) =
-                req.app_data::<actix_web::web::Data<Arc<dyn UserRepository>>>()
-            {
-                repo.get_ref().clone()
-            } else {
-                let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                return Err(AuthExtractError::new(
-                        AuthError::DatabaseError(
-                            "User repository not configured. Ensure Arc<dyn UserRepository> is registered as app data.".to_string(),
-                        ),
-                        took,
-                    ));
-            };
-
-            // Extract Authorization header
-            let auth_header = match req.headers().get("Authorization") {
-                Some(val) => match val.to_str() {
-                    Ok(h) => h.to_string(),
-                    Err(_) => {
-                        let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                        return Err(AuthExtractError::new(
-                            AuthError::MalformedAuthorization(
-                                "Authorization header contains invalid characters".to_string(),
-                            ),
-                            took,
-                        ));
-                    },
-                },
-                None => {
-                    let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                    return Err(AuthExtractError::new(
-                        AuthError::MissingAuthorization(
-                            "Authorization header is required. Use 'Authorization: Bearer <token>'".to_string(),
-                        ),
-                        took,
-                    ));
-                },
-            };
-
-            // Reject Basic auth for all extractors (password auth only via login endpoint)
-            if auth_header.trim_start().to_lowercase().starts_with("basic ") {
-                let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                return Err(AuthExtractError::new(
-                    AuthError::InvalidCredentials(
-                        "This endpoint requires a Bearer token. Basic authentication is not supported.".to_string(),
-                    ),
-                    took,
-                ));
-            }
-
-            // Extract client IP with security checks
-            let connection_info = extract_client_ip_secure(&req);
-
-            // Build auth request and authenticate
-            let auth_request = AuthRequest::Header(auth_header);
-
-            match authenticate(auth_request, &connection_info, &repo).await {
-                Ok(result) => {
-                    if !matches!(result.method, AuthMethod::Bearer) {
-                        let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                        return Err(AuthExtractError::new(
-                            AuthError::InvalidCredentials(
-                                "This endpoint requires a Bearer token.".to_string(),
-                            ),
-                            took,
-                        ));
-                    }
-                    Ok(AuthSession {
-                        user: result.user,
-                        method: result.method,
-                        connection_info,
-                    })
-                },
-                Err(e) => {
-                    let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                    Err(AuthExtractError::new(e, took))
-                },
-            }
-        })
-    }
-}
-
-/// Implement FromRequest for AuthenticatedUser.
-///
-/// This allows handlers to receive authenticated users directly:
-/// ```rust,ignore
-/// async fn handler(user: AuthenticatedUser) -> impl Responder { ... }
-/// ```
-///
-/// The extractor will:
-/// 1. Extract the Authorization header
-/// 2. Get the UserRepository from app data (MUST be registered)
-/// 3. Call the unified authenticate function
-/// 4. Return the authenticated user or an error response
-///
-/// # Required App Data
-///
-/// The `Arc<dyn UserRepository>` MUST be registered as app data before using this extractor.
-impl FromRequest for AuthenticatedUser {
-    type Error = AuthExtractError;
-    type Future = Pin<Box<dyn Future<Output = Result<Self, Self::Error>>>>;
-
-    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
-        // Clone what we need for the async block
-        let req = req.clone();
-
-        Box::pin(async move {
-            let start_time = std::time::Instant::now();
-
-            // Get user repository from app data - MUST be registered
-            let repo: Arc<dyn UserRepository> = if let Some(repo) =
-                req.app_data::<actix_web::web::Data<Arc<dyn UserRepository>>>()
-            {
-                repo.get_ref().clone()
-            } else {
-                let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                return Err(AuthExtractError::new(
-                        AuthError::DatabaseError(
-                            "User repository not configured. Ensure Arc<dyn UserRepository> is registered as app data.".to_string(),
-                        ),
-                        took,
-                    ));
-            };
-
-            // Extract Authorization header
-            let auth_header = match req.headers().get("Authorization") {
-                Some(val) => match val.to_str() {
-                    Ok(h) => h.to_string(),
-                    Err(_) => {
-                        let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                        return Err(AuthExtractError::new(
-                            AuthError::MalformedAuthorization(
-                                "Authorization header contains invalid characters".to_string(),
-                            ),
-                            took,
-                        ));
-                    },
-                },
-                None => {
-                    let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                    return Err(AuthExtractError::new(
-                        AuthError::MissingAuthorization(
-                            "Authorization header is required. Use 'Authorization: Bearer <token>'".to_string(),
-                        ),
-                        took,
-                    ));
-                },
-            };
-
-            // Reject Basic auth for all extractors (password auth only via login endpoint)
-            if auth_header.trim_start().to_lowercase().starts_with("basic ") {
-                let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                return Err(AuthExtractError::new(
-                    AuthError::InvalidCredentials(
-                        "This endpoint requires a Bearer token. Basic authentication is not supported.".to_string(),
-                    ),
-                    took,
-                ));
-            }
-
-            // Extract client IP with security checks
-            let connection_info = extract_client_ip_secure(&req);
-
-            // Build auth request and authenticate
-            let auth_request = AuthRequest::Header(auth_header);
-
-            match authenticate(auth_request, &connection_info, &repo).await {
-                Ok(result) => Ok(result.user),
-                Err(e) => {
-                    let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                    Err(AuthExtractError::new(e, took))
-                },
-            }
-        })
-    }
-}
-
-/// Optional authentication wrapper.
-///
-/// Use this when authentication is optional (e.g., public endpoints that
-/// behave differently for authenticated users).
-///
-/// # Example
-///
-/// ```rust,ignore
-/// async fn maybe_auth(auth: OptionalAuth) -> impl Responder {
-///     match auth.user() {
-///         Some(user) => format!("Hello, {}!", user.username),
-///         None => "Hello, anonymous!".to_string(),
-///     }
-/// }
-/// ```
-#[derive(Debug, Clone)]
-pub struct OptionalAuth {
-    user: Option<AuthenticatedUser>,
-}
-
-impl OptionalAuth {
-    /// Create a new OptionalAuth with an authenticated user.
-    pub fn authenticated(user: AuthenticatedUser) -> Self {
-        Self { user: Some(user) }
-    }
-
-    /// Create a new OptionalAuth with no user (anonymous).
-    pub fn anonymous() -> Self {
-        Self { user: None }
-    }
-
-    /// Get the authenticated user, if present.
-    pub fn user(&self) -> Option<&AuthenticatedUser> {
-        self.user.as_ref()
-    }
-
-    /// Take ownership of the authenticated user, if present.
-    pub fn into_user(self) -> Option<AuthenticatedUser> {
-        self.user
-    }
-
-    /// Check if the request is authenticated.
-    pub fn is_authenticated(&self) -> bool {
-        self.user.is_some()
-    }
-}
-
-impl FromRequest for OptionalAuth {
-    type Error = actix_web::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self, Self::Error>>>>;
-
-    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
-        let req = req.clone();
-
-        Box::pin(async move {
-            // Check if Authorization header is present
-            if req.headers().get("Authorization").is_none() {
-                return Ok(OptionalAuth::anonymous());
-            }
-
-            // Try to get user repository
-            let repo: Option<Arc<dyn UserRepository>> = if let Some(repo) =
-                req.app_data::<actix_web::web::Data<Arc<dyn UserRepository>>>()
-            {
-                Some(repo.get_ref().clone())
-            } else {
-                None
-            };
-
-            let Some(repo) = repo else {
-                // No repository available, treat as anonymous
-                return Ok(OptionalAuth::anonymous());
-            };
-
-            // Extract Authorization header
-            let auth_header = match req.headers().get("Authorization") {
-                Some(val) => match val.to_str() {
-                    Ok(h) => h.to_string(),
-                    Err(_) => return Ok(OptionalAuth::anonymous()),
-                },
-                None => return Ok(OptionalAuth::anonymous()),
-            };
-
-            // Reject Basic auth for all extractors (password auth only via login endpoint)
-            if auth_header.trim_start().to_lowercase().starts_with("basic ") {
-                return Err(AuthExtractError::new(
-                    AuthError::InvalidCredentials(
-                        "This endpoint requires a Bearer token. Basic authentication is not supported.".to_string(),
-                    ),
-                    0.0,
-                )
-                .into());
-            }
-
-            // Extract client IP
-            let connection_info = extract_client_ip_secure(&req);
-
-            // Try to authenticate
-            let auth_request = AuthRequest::Header(auth_header);
-            match authenticate(auth_request, &connection_info, &repo).await {
-                Ok(result) => Ok(OptionalAuth::authenticated(result.user)),
-                Err(_) => Ok(OptionalAuth::anonymous()),
-            }
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,13 +161,154 @@ mod tests {
         assert_eq!(err.error_code(), "INSUFFICIENT_PERMISSIONS");
         assert_eq!(err.status_code(), StatusCode::FORBIDDEN);
     }
+}
 
-    #[test]
-    fn test_optional_auth() {
-        let opt = OptionalAuth::anonymous();
-        assert!(!opt.is_authenticated());
-        assert!(opt.user().is_none());
+/// Actix-web extractor wrapper for `kalamdb_session::AuthSession`.
+///
+/// This thin wrapper is required due to Rust's orphan rules (we can't implement
+/// `FromRequest` for an external type in this crate). It automatically extracts:
+/// - User identity (user_id, role)
+/// - Connection info (IP address)
+/// - Request tracking ID (X-Request-ID header)
+/// - Authentication method (Bearer token)
+///
+/// **Usage**: Extract this in handlers, then immediately convert to `kalamdb_session::AuthSession`:
+///
+/// ```rust,ignore
+/// use kalamdb_auth::AuthSessionExtractor;
+/// use kalamdb_session::AuthSession;
+///
+/// #[post("/sql")]
+/// async fn handler(extractor: AuthSessionExtractor) -> impl Responder {
+///     let session: AuthSession = extractor.into();
+///     let user_id = session.user_id();
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct AuthSessionExtractor(kalamdb_session::AuthSession);
 
-        // Can't easily test authenticated case without mocking
+impl From<AuthSessionExtractor> for kalamdb_session::AuthSession {
+    fn from(extractor: AuthSessionExtractor) -> Self {
+        extractor.0
+    }
+}
+
+impl FromRequest for AuthSessionExtractor {
+    type Error = AuthExtractError;
+    type Future = Pin<Box<dyn Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
+        let req = req.clone();
+
+        Box::pin(async move {
+            let start_time = std::time::Instant::now();
+
+            // Get user repository from app data - MUST be registered
+            let repo: Arc<dyn UserRepository> = if let Some(repo) =
+                req.app_data::<actix_web::web::Data<Arc<dyn UserRepository>>>()
+            {
+                repo.get_ref().clone()
+            } else {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return Err(AuthExtractError::new(
+                    AuthError::DatabaseError(
+                        "User repository not configured. Ensure Arc<dyn UserRepository> is registered as app data.".to_string(),
+                    ),
+                    took,
+                ));
+            };
+
+            // Extract Authorization header
+            let auth_header = match req.headers().get("Authorization") {
+                Some(val) => match val.to_str() {
+                    Ok(h) => h.to_string(),
+                    Err(_) => {
+                        let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                        return Err(AuthExtractError::new(
+                            AuthError::MalformedAuthorization(
+                                "Authorization header contains invalid characters".to_string(),
+                            ),
+                            took,
+                        ));
+                    }
+                },
+                None => {
+                    let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                    return Err(AuthExtractError::new(
+                        AuthError::MissingAuthorization(
+                            "Authorization header is required. Use 'Authorization: Bearer <token>'"
+                                .to_string(),
+                        ),
+                        took,
+                    ));
+                }
+            };
+
+            // Reject Basic auth (password auth only via login endpoint)
+            if auth_header.trim_start().to_lowercase().starts_with("basic ") {
+                let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                return Err(AuthExtractError::new(
+                    AuthError::InvalidCredentials(
+                        "This endpoint requires a Bearer token. Basic authentication is not supported."
+                            .to_string(),
+                    ),
+                    took,
+                ));
+            }
+
+            // Extract client IP with security checks
+            let connection_info = extract_client_ip_secure(&req);
+
+            // Extract X-Request-ID header for audit logging
+            let request_id = req
+                .headers()
+                .get("X-Request-ID")
+                .and_then(|h| h.to_str().ok())
+                .map(|s| s.to_string());
+
+            // Build auth request and authenticate
+            let auth_request = AuthRequest::Header(auth_header);
+
+            match authenticate(auth_request, &connection_info, &repo).await {
+                Ok(result) => {
+                    // Only Bearer tokens are accepted for SQL/API endpoints
+                    if !matches!(result.method, AuthMethod::Bearer) {
+                        let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                        return Err(AuthExtractError::new(
+                            AuthError::InvalidCredentials(
+                                "This endpoint requires a Bearer token.".to_string(),
+                            ),
+                            took,
+                        ));
+                    }
+
+                    // Convert AuthMethod to kalamdb_session::AuthMethod
+                    let auth_method = match result.method {
+                        AuthMethod::Bearer => kalamdb_session::AuthMethod::Bearer,
+                        AuthMethod::Basic => kalamdb_session::AuthMethod::Basic,
+                        AuthMethod::Direct => kalamdb_session::AuthMethod::Direct,
+                    };
+
+                    // Construct AuthSession with all extracted information
+                    let mut session = kalamdb_session::AuthSession::with_auth_details(
+                        result.user.user_id,
+                        result.user.role,
+                        connection_info,
+                        auth_method,
+                    );
+
+                    // Add request_id if present
+                    if let Some(rid) = request_id {
+                        session = session.with_request_id(rid);
+                    }
+
+                    Ok(AuthSessionExtractor(session))
+                }
+                Err(e) => {
+                    let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                    Err(AuthExtractError::new(e, took))
+                }
+            }
+        })
     }
 }

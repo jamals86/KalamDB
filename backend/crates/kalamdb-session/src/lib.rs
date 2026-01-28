@@ -43,7 +43,7 @@ pub mod session_context;
 pub mod user_context;
 
 // Re-export main types
-pub use auth_session::AuthSession;
+pub use auth_session::{AuthMethod, AuthSession};
 pub use error::{SessionError, SessionResult};
 pub use permissions::{
     can_access_shared_table, can_access_system_table, can_access_user_table, can_execute_dml,

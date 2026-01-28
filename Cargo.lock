@@ -3426,6 +3426,7 @@ dependencies = [
  "jsonwebtoken",
  "kalamdb-commons",
  "kalamdb-configs",
+ "kalamdb-session",
  "kalamdb-sql",
  "kalamdb-store",
  "kalamdb-system",

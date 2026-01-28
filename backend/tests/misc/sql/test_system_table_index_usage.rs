@@ -21,9 +21,10 @@ use kalamdb_commons::models::{ConnectionId, UserName};
 use kalamdb_system::{Job, JobStatus, JobType, LiveQuery, User};
 use kalamdb_commons::{
     AuthType, JobId, LiveQueryId, NamespaceId, NodeId, Role, StorageId,
-    StorageMode, TableName, UserId,
+    TableName, UserId,
 };
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use kalamdb_system::providers::storages::models::StorageMode;
 
 /// Test: system.users uses username index for WHERE username = '...' queries
 ///

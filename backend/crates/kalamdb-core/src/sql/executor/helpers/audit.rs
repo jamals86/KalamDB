@@ -176,7 +176,6 @@ mod tests {
         let ctx = ExecutionContext::with_audit_info(
             UserId::from("alice"),
             Role::User,
-            None,
             Some("req-123".to_string()),
             Some("192.168.1.1".to_string()),
             test_session(),

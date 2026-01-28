@@ -140,7 +140,10 @@ impl NamespaceId {
     /// - `datafusion`: DataFusion internal catalog
     #[inline]
     pub fn is_system_namespace(&self) -> bool {
-        matches!(self.as_str(), "system" | "information_schema")
+        matches!(
+            self.as_str(),
+            "system" | "information_schema" | "pg_catalog" | "datafusion"
+        )
     }
 
     /// If default namespace

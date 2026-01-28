@@ -7,7 +7,8 @@
 //! 4. Stream file from storage with proper Content-Type
 
 use actix_web::{get, web, HttpResponse, Responder};
-use kalamdb_auth::AuthSession;
+use kalamdb_auth::AuthSessionExtractor;
+use kalamdb_session::AuthSession;
 use kalamdb_commons::models::{TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::TableAccess;
@@ -24,11 +25,14 @@ use crate::models::{ErrorCode, SqlResponse};
 /// For user tables, downloads from current user's table unless ?user_id is specified.
 #[get("/files/{namespace}/{table_name}/{subfolder}/{file_id}")]
 pub async fn download_file(
-    session: AuthSession,
+    extractor: AuthSessionExtractor,
     path: web::Path<(String, String, String, String)>,
     query: web::Query<DownloadQuery>,
     app_context: web::Data<Arc<AppContext>>,
 ) -> impl Responder {
+    // Convert extractor to AuthSession
+    let session: AuthSession = extractor.into();
+    
     let (namespace, table_name, subfolder, file_id) = path.into_inner();
     let table_id = TableId::from_strings(&namespace, &table_name);
 
@@ -52,7 +56,7 @@ pub async fn download_file(
         .map(|user_id| UserId::new(user_id.as_str()));
 
     if let Some(user_id) = &requested_user_id {
-        if user_id != &session.user.user_id && !can_impersonate_user(session.user.role) {
+        if user_id != session.user_id() && !can_impersonate_user(session.role()) {
             return HttpResponse::Forbidden().json(SqlResponse::error(
                 ErrorCode::PermissionDenied,
                 "User impersonation requires Service, Dba, or System role",
@@ -61,13 +65,13 @@ pub async fn download_file(
         }
     }
 
-    let effective_user_id = requested_user_id.unwrap_or_else(|| session.user.user_id.clone());
+    let effective_user_id = requested_user_id.unwrap_or_else(|| session.user_id().clone());
 
     let user_id = match table_type {
         TableType::User => Some(effective_user_id),
         TableType::Shared => {
             let access_level = table_entry.access_level.unwrap_or(TableAccess::Private);
-            if !can_access_shared_table(access_level, session.user.role) {
+            if !can_access_shared_table(access_level, session.role()) {
                 return HttpResponse::Forbidden().json(SqlResponse::error(
                     ErrorCode::PermissionDenied,
                     &format!("Shared table access denied (access_level={:?})", access_level),

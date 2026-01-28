@@ -700,6 +700,10 @@ impl RunningTestHttpServer {
         self.server_handle.stop(false).await;
         let _ = self.server_task.await;
 
+        // Stop JobsManager background loop before tearing down storage/executor
+        self.app_context.job_manager().shutdown();
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
         // Then shutdown the Raft executor to cleanly stop all Raft groups
         // This prevents "Fatal(Stopped)" errors in subsequent tests
         log::debug!("Shutting down Raft executor for test server...");

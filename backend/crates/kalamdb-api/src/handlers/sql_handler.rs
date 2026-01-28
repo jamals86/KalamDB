@@ -9,7 +9,8 @@
 
 use actix_multipart::Multipart;
 use actix_web::{post, web, Either, FromRequest, HttpRequest, HttpResponse, Responder};
-use kalamdb_auth::AuthSession;
+use kalamdb_auth::AuthSessionExtractor;
+use kalamdb_session::AuthSession;
 use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
 use kalamdb_commons::models::ids::StorageId;
 use kalamdb_system::{FileRef, FileSubfolderState};
@@ -75,7 +76,7 @@ use crate::limiter::RateLimiter;
 /// ```
 #[post("/sql")]
 pub async fn execute_sql_v1(
-    session: AuthSession,
+    extractor: AuthSessionExtractor,
     http_req: HttpRequest,
     payload: web::Payload,
     app_context: web::Data<Arc<kalamdb_core::app_context::AppContext>>,
@@ -83,17 +84,20 @@ pub async fn execute_sql_v1(
     rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
 ) -> impl Responder {
     let start_time = Instant::now();
+    
+    // Convert extractor to AuthSession
+    let session: AuthSession = extractor.into();
 
     // NOTE: This endpoint only accepts Bearer token authentication.
     // Password-based (Basic) auth is rejected by AuthSession for security.
 
     // Rate limiting: Check if user can execute query
     if let Some(ref limiter) = rate_limiter {
-        if !limiter.check_query_rate(&session.user.user_id) {
+        if !limiter.check_query_rate(session.user_id()) {
             let took = start_time.elapsed().as_secs_f64() * 1000.0;
             log::warn!(
                 "Rate limit exceeded for user: {} (queries per second)",
-                session.user.user_id.as_str()
+                session.user_id().as_str()
             );
             return HttpResponse::TooManyRequests().json(SqlResponse::error(
                 ErrorCode::RateLimitExceeded,
@@ -150,19 +154,13 @@ pub async fn execute_sql_v1(
 
     let default_namespace = NamespaceId::new(namespace_id.as_deref().unwrap_or("default"));
     let base_session = app_context.base_session_context();
-    let mut exec_ctx = ExecutionContext::new(
-        session.user.user_id.clone(),
-        session.user.role,
-        Arc::clone(&base_session),
-    )
-    .with_namespace_id(default_namespace.clone());
-
-    if let Some(rid) = request_id.as_deref() {
-        exec_ctx = exec_ctx.with_request_id(rid.to_string());
-    }
-    if let Some(ip) = &session.connection_info.remote_addr {
-        exec_ctx = exec_ctx.with_ip(ip.clone());
-    }
+    
+    // NOTE: request_id is now automatically extracted by the AuthSession extractor
+    // from the X-Request-ID header, no need to extract it manually here
+    
+    // Create ExecutionContext from session and set namespace
+    let exec_ctx = ExecutionContext::from_session(session, Arc::clone(&base_session))
+        .with_namespace_id(default_namespace.clone());
 
     let files_present = files.as_ref().map(|f| !f.is_empty()).unwrap_or(false);
     if files_present {
@@ -195,13 +193,6 @@ pub async fn execute_sql_v1(
             return response;
         }
     }
-
-    // Extract request_id for ExecutionContext
-    let request_id = http_req
-        .headers()
-        .get("X-Request-ID")
-        .and_then(|h| h.to_str().ok())
-        .map(|s| s.to_string());
 
     // Parse parameters if provided
     let params = match parse_scalar_params(&params_json) {
@@ -286,7 +277,7 @@ pub async fn execute_sql_v1(
         let table_type = table_entry.table_type;
 
         let user_id = match table_type {
-            TableType::User => Some(session.user.user_id.clone()),
+            TableType::User => Some(exec_ctx.user_id().clone()),
             TableType::Shared => None,
             TableType::Stream | TableType::System => {
                 let took = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -341,7 +332,6 @@ pub async fn execute_sql_v1(
             app_context.get_ref(),
             sql_executor.get_ref(),
             &exec_ctx,
-            &session,
             None,
             params,
         )
@@ -414,7 +404,6 @@ pub async fn execute_sql_v1(
             app_context.get_ref(),
             sql_executor.get_ref(),
             &exec_ctx,
-            &session,
             None,
             params.clone(),
         )
@@ -433,8 +422,8 @@ pub async fn execute_sql_v1(
                     target: "sql::exec",
                     "✅ SQL executed | sql='{}' | user='{}' | role='{:?}' | rows={} | took={:.3}ms",
                     safe_sql,
-                    session.user.user_id.as_str(),
-                    session.user.role,
+                    exec_ctx.user_id().as_str(),
+                    exec_ctx.user_role(),
                     row_count,
                     stmt_duration_ms
                 );
@@ -445,7 +434,7 @@ pub async fn execute_sql_v1(
                     safe_sql,
                     stmt_duration_secs,
                     row_count,
-                    session.user.user_id.clone(),
+                    exec_ctx.user_id().clone(),
                     kalamdb_core::schema_registry::TableType::User,
                     None,
                 );
@@ -779,10 +768,9 @@ fn cleanup_files(
 /// Execute a single SQL statement
 async fn execute_single_statement(
     sql: &str,
-    app_context: &Arc<kalamdb_core::app_context::AppContext>,
+    _app_context: &Arc<kalamdb_core::app_context::AppContext>,
     sql_executor: &Arc<SqlExecutor>,
     exec_ctx: &ExecutionContext,
-    session: &AuthSession,
     metadata: Option<&ExecutorMetadataAlias>,
     params: Vec<ScalarValue>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
@@ -794,7 +782,7 @@ async fn execute_single_statement(
             ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
             ExecutionResult::Rows {
                 batches, schema, ..
-            } => record_batch_to_query_result(batches, schema, Some(session.user.role)),
+            } => record_batch_to_query_result(batches, schema, Some(exec_ctx.user_role())),
             ExecutionResult::Inserted { rows_affected } => Ok(QueryResult::with_affected_rows(
                 rows_affected,
                 Some(format!("Inserted {} row(s)", rows_affected)),

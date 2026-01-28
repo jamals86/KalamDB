@@ -1,7 +1,6 @@
 use crate::sql::CurrentUserFunction;
 use datafusion::logical_expr::ScalarUDF;
 use datafusion::prelude::SessionContext;
-use datafusion::scalar::ScalarValue;
 use kalamdb_commons::models::ReadContext;
 use kalamdb_commons::{NamespaceId, Role, UserId};
 use kalamdb_session::{AuthSession, SessionUserContext};
@@ -12,13 +11,13 @@ use std::time::SystemTime;
 /// Unified execution context for SQL queries
 ///
 /// Combines authenticated session information with DataFusion session management
-/// and query-specific state (parameters, caching).
+/// and query-specific state (namespace, caching).
 #[derive(Clone)]
 pub struct ExecutionContext {
     /// Authenticated session with user identity and metadata
     auth_session: AuthSession,
-    /// Query parameters ($1, $2, ...) - max 50, 512KB each
-    pub params: Vec<ScalarValue>,
+    /// Optional namespace for this query execution
+    namespace_id: Option<NamespaceId>,
     /// Base SessionContext from AppContext (tables already registered)
     /// We extract SessionState from this and inject user_id to create per-request SessionContext
     base_session_context: Arc<SessionContext>,
@@ -49,7 +48,20 @@ impl ExecutionContext {
     ) -> Self {
         Self {
             auth_session: AuthSession::new(user_id, user_role),
-            params: Vec::new(),
+            namespace_id: None,
+            base_session_context,
+            session_context_cache: Arc::new(OnceCell::new()),
+        }
+    }
+
+    /// Create ExecutionContext from an existing AuthSession
+    pub fn from_session(
+        auth_session: AuthSession,
+        base_session_context: Arc<SessionContext>,
+    ) -> Self {
+        Self {
+            auth_session,
+            namespace_id: None,
             base_session_context,
             session_context_cache: Arc::new(OnceCell::new()),
         }
@@ -62,8 +74,8 @@ impl ExecutionContext {
         base_session_context: Arc<SessionContext>,
     ) -> Self {
         Self {
-            auth_session: AuthSession::new(user_id, user_role).with_namespace_id(namespace_id),
-            params: Vec::new(),
+            auth_session: AuthSession::new(user_id, user_role),
+            namespace_id: Some(namespace_id),
             base_session_context,
             session_context_cache: Arc::new(OnceCell::new()),
         }
@@ -72,7 +84,6 @@ impl ExecutionContext {
     pub fn with_audit_info(
         user_id: UserId,
         user_role: Role,
-        namespace_id: Option<NamespaceId>,
         request_id: Option<String>,
         ip_address: Option<String>,
         base_session_context: Arc<SessionContext>,
@@ -81,11 +92,10 @@ impl ExecutionContext {
             auth_session: AuthSession::with_audit_info(
                 user_id,
                 user_role,
-                namespace_id,
                 request_id,
                 ip_address,
             ),
-            params: Vec::new(),
+            namespace_id: None,
             base_session_context,
             session_context_cache: Arc::new(OnceCell::new()),
         }
@@ -94,7 +104,7 @@ impl ExecutionContext {
     pub fn anonymous(base_session_context: Arc<SessionContext>) -> Self {
         Self {
             auth_session: AuthSession::anonymous(),
-            params: Vec::new(),
+            namespace_id: None,
             base_session_context,
             session_context_cache: Arc::new(OnceCell::new()),
         }
@@ -128,10 +138,6 @@ impl ExecutionContext {
         self.auth_session.role()
     }
     #[inline]
-    pub fn namespace_id(&self) -> Option<&NamespaceId> {
-        self.auth_session.namespace_id()
-    }
-    #[inline]
     pub fn request_id(&self) -> Option<&str> {
         self.auth_session.request_id()
     }
@@ -145,11 +151,6 @@ impl ExecutionContext {
     }
 
     // Builder methods for Phase 3
-    pub fn with_params(mut self, params: Vec<ScalarValue>) -> Self {
-        self.params = params;
-        self
-    }
-
     pub fn with_request_id(mut self, request_id: String) -> Self {
         self.auth_session = self.auth_session.with_request_id(request_id);
         self
@@ -162,7 +163,7 @@ impl ExecutionContext {
 
     /// Set the namespace for this execution context
     pub fn with_namespace_id(mut self, namespace_id: NamespaceId) -> Self {
-        self.auth_session = self.auth_session.with_namespace_id(namespace_id);
+        self.namespace_id = Some(namespace_id);
         self.session_context_cache = Arc::new(OnceCell::new());
         self
     }
@@ -196,7 +197,7 @@ impl ExecutionContext {
             ));
 
         // Override default_schema if namespace_id is set on this context
-        if let Some(ref ns) = self.auth_session.namespace_id() {
+        if let Some(ref ns) = self.namespace_id {
             session_state.config_mut().options_mut().catalog.default_schema =
                 ns.as_str().to_string();
         }

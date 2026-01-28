@@ -18,7 +18,8 @@ use kalamdb_api::repositories::CoreUsersRepo;
 use kalamdb_auth::UserRepository;
 use kalamdb_commons::models::UserName;
 use kalamdb_system::User;
-use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
+use kalamdb_commons::{AuthType, Role, StorageId, UserId};
+use kalamdb_system::providers::storages::models::StorageMode;
 use std::net::SocketAddr;
 use std::sync::Arc;
 

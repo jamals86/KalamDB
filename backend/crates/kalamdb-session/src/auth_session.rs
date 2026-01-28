@@ -25,8 +25,19 @@
 //! ```
 
 use crate::UserContext;
-use kalamdb_commons::models::{NamespaceId, ReadContext, Role, UserId};
+use kalamdb_commons::models::{ConnectionInfo, ReadContext, Role, UserId};
 use std::time::SystemTime;
+
+/// Authentication method used for the session
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AuthMethod {
+    /// HTTP Basic Authentication (username:password base64 encoded)
+    Basic,
+    /// JWT Bearer token
+    Bearer,
+    /// Direct username/password (for WebSocket)
+    Direct,
+}
 
 /// Authenticated session with user identity and optional metadata
 ///
@@ -36,20 +47,23 @@ use std::time::SystemTime;
 ///
 /// # Fields
 /// - `user_context`: Core user identity (user_id, role, read_context)
-/// - `namespace_id`: Active namespace for the session (optional)
 /// - `request_id`: Request tracking ID (optional, for audit logging)
 /// - `ip_address`: Client IP address (optional, for audit logging)
+/// - `connection_info`: Connection information (IP address, localhost check)
+/// - `auth_method`: Authentication method used (Bearer, Basic, Direct)
 /// - `timestamp`: Session creation timestamp
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AuthSession {
     /// Core user identity and read context
     pub user_context: UserContext,
-    /// Active namespace (optional)
-    pub namespace_id: Option<NamespaceId>,
     /// Request tracking ID (optional)
     pub request_id: Option<String>,
     /// Client IP address (optional)
     pub ip_address: Option<String>,
+    /// Connection information (IP address, localhost check)
+    pub connection_info: ConnectionInfo,
+    /// Authentication method used
+    pub auth_method: AuthMethod,
     /// Session creation timestamp
     pub timestamp: SystemTime,
 }
@@ -70,9 +84,27 @@ impl AuthSession {
     pub fn new(user_id: UserId, role: Role) -> Self {
         Self {
             user_context: UserContext::client(user_id, role),
-            namespace_id: None,
             request_id: None,
             ip_address: None,
+            connection_info: ConnectionInfo::new(None),
+            auth_method: AuthMethod::Bearer,
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Create a new authenticated session with connection info and auth method
+    pub fn with_auth_details(
+        user_id: UserId,
+        role: Role,
+        connection_info: ConnectionInfo,
+        auth_method: AuthMethod,
+    ) -> Self {
+        Self {
+            user_context: UserContext::client(user_id, role),
+            request_id: None,
+            ip_address: connection_info.remote_addr.clone(),
+            connection_info,
+            auth_method,
             timestamp: SystemTime::now(),
         }
     }
@@ -84,9 +116,10 @@ impl AuthSession {
     pub fn with_read_context(user_id: UserId, role: Role, read_context: ReadContext) -> Self {
         Self {
             user_context: UserContext::new(user_id, role, read_context),
-            namespace_id: None,
             request_id: None,
             ip_address: None,
+            connection_info: ConnectionInfo::new(None),
+            auth_method: AuthMethod::Bearer,
             timestamp: SystemTime::now(),
         }
     }
@@ -100,9 +133,10 @@ impl AuthSession {
     pub fn anonymous() -> Self {
         Self {
             user_context: UserContext::client(UserId::anonymous(), Role::Anonymous),
-            namespace_id: None,
             request_id: None,
             ip_address: None,
+            connection_info: ConnectionInfo::new(None),
+            auth_method: AuthMethod::Bearer,
             timestamp: SystemTime::now(),
         }
     }
@@ -111,26 +145,21 @@ impl AuthSession {
     pub fn with_audit_info(
         user_id: UserId,
         role: Role,
-        namespace_id: Option<NamespaceId>,
         request_id: Option<String>,
         ip_address: Option<String>,
     ) -> Self {
+        let connection_info = ConnectionInfo::new(ip_address.clone());
         Self {
             user_context: UserContext::client(user_id, role),
-            namespace_id,
             request_id,
             ip_address,
+            connection_info,
+            auth_method: AuthMethod::Bearer,
             timestamp: SystemTime::now(),
         }
     }
 
     // Builder methods
-
-    /// Set the active namespace
-    pub fn with_namespace_id(mut self, namespace_id: NamespaceId) -> Self {
-        self.namespace_id = Some(namespace_id);
-        self
-    }
 
     /// Set the request tracking ID
     pub fn with_request_id(mut self, request_id: String) -> Self {
@@ -168,11 +197,6 @@ impl AuthSession {
     }
 
     #[inline]
-    pub fn namespace_id(&self) -> Option<&NamespaceId> {
-        self.namespace_id.as_ref()
-    }
-
-    #[inline]
     pub fn request_id(&self) -> Option<&str> {
         self.request_id.as_deref()
     }
@@ -206,6 +230,21 @@ impl AuthSession {
     pub fn is_anonymous(&self) -> bool {
         self.user_context.user_id.is_anonymous()
     }
+
+    #[inline]
+    pub fn connection_info(&self) -> &ConnectionInfo {
+        &self.connection_info
+    }
+
+    #[inline]
+    pub fn auth_method(&self) -> AuthMethod {
+        self.auth_method
+    }
+
+    #[inline]
+    pub fn is_localhost(&self) -> bool {
+        self.connection_info.is_localhost()
+    }
 }
 
 #[cfg(test)]
@@ -218,18 +257,15 @@ mod tests {
         assert_eq!(session.user_id().as_str(), "alice");
         assert_eq!(session.role(), Role::User);
         assert_eq!(session.read_context(), ReadContext::Client);
-        assert!(session.namespace_id().is_none());
         assert!(!session.is_admin());
     }
 
     #[test]
     fn test_auth_session_builder() {
         let session = AuthSession::new(UserId::new("bob"), Role::User)
-            .with_namespace_id(NamespaceId::new("test"))
             .with_request_id("req-123".to_string())
             .with_ip("127.0.0.1".to_string());
 
-        assert_eq!(session.namespace_id().map(|n| n.as_str()), Some("test"));
         assert_eq!(session.request_id(), Some("req-123"));
         assert_eq!(session.ip_address(), Some("127.0.0.1"));
     }

@@ -10,6 +10,11 @@ description = "Session context, permissions, and secured table provider abstract
 keywords = ["kalamdb", "database", "session", "permissions", "security"]
 categories = ["database"]
 
+[features]
+default = []
+# NOTE: actix feature creates a circular dependency through kalamdb-auth.
+# Extractor remains in kalamdb-auth to avoid this cycle.
+
 [dependencies]
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
