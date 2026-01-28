@@ -290,7 +290,7 @@ impl MetaResponse {
 mod tests {
     use super::*;
     use kalamdb_commons::models::UserName;
-    use kalamdb_commons::{AuthType, Role, StorageMode};
+    use kalamdb_commons::{AuthType, Role};
 
     fn test_user() -> User {
         User {
@@ -302,7 +302,7 @@ mod tests {
             auth_data: None,
             role: Role::User,
             storage_id: None,
-            storage_mode: StorageMode::Table,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
             locked_until: None,
             failed_login_attempts: 0,
             last_login_at: None,

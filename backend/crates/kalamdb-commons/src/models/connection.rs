@@ -3,7 +3,7 @@
 /// Connection information for an authenticated request.
 ///
 /// Used to determine whether remote access is allowed based on IP address.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ConnectionInfo {
     /// IP address of the connecting client (as string from actix-web)
     pub remote_addr: Option<String>,

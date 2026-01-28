@@ -9,9 +9,10 @@
 
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use kalamdb_system::User;
-use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId, UserName};
+use kalamdb_commons::{AuthType, Role, StorageId, UserId, UserName};
+use kalamdb_system::providers::storages::models::StorageMode;
 use kalamdb_core::error::KalamDbError;
-use kalamdb_core::sql::executor::models::ExecutionContext;
+use kalamdb_core::sql::context::ExecutionContext;
 use serde::{Deserialize, Serialize};
 
 use super::consolidated_helpers::ensure_user_exists;
@@ -49,6 +50,7 @@ pub async fn create_test_user(
 
     // Create user via SQL executor (bypassing HTTP layer)
     let role_str = match role {
+        Role::Anonymous => "anonymous",
         Role::User => "user",
         Role::Service => "service",
         Role::Dba => "dba",

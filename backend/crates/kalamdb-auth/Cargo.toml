@@ -31,6 +31,7 @@ cookie = { workspace = true }
 # Internal dependencies
 kalamdb-commons = { path = "../kalamdb-commons" }
 kalamdb-configs = { path = "../kalamdb-configs" }
+kalamdb-session = { path = "../kalamdb-session" }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-sql = { path = "../kalamdb-sql" }
 kalamdb-system = { path = "../kalamdb-system" }

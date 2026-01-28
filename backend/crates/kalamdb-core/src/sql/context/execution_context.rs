@@ -1,31 +1,32 @@
 use crate::sql::CurrentUserFunction;
 use datafusion::logical_expr::ScalarUDF;
 use datafusion::prelude::SessionContext;
-use datafusion::scalar::ScalarValue;
 use kalamdb_commons::models::ReadContext;
 use kalamdb_commons::{NamespaceId, Role, UserId};
-use kalamdb_session::{SessionUserContext, UserContext};
+use kalamdb_session::{AuthSession, SessionUserContext};
+use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use std::time::SystemTime;
 
 /// Unified execution context for SQL queries
+///
+/// Combines authenticated session information with DataFusion session management
+/// and query-specific state (namespace, caching).
 #[derive(Clone)]
 pub struct ExecutionContext {
-    /// User identity executing the query
-    user_context: UserContext,
-    /// Active namespace for the query (optional for backward compatibility)
+    /// Authenticated session with user identity and metadata
+    auth_session: AuthSession,
+    /// Optional namespace for this query execution
     namespace_id: Option<NamespaceId>,
-    /// Optional request ID for tracking
-    request_id: Option<String>,
-    /// Optional IP address for audit logging
-    ip_address: Option<String>,
-    /// Execution timestamp
-    timestamp: SystemTime,
-    /// Query parameters ($1, $2, ...) - max 50, 512KB each
-    pub params: Vec<ScalarValue>,
     /// Base SessionContext from AppContext (tables already registered)
     /// We extract SessionState from this and inject user_id to create per-request SessionContext
     base_session_context: Arc<SessionContext>,
+    /// Cached per-request SessionState with user context injected
+    ///
+    /// This avoids repeated allocations when a single request needs multiple
+    /// SessionContext instances (retries, planning fallbacks) while keeping
+    /// user isolation intact.
+    session_context_cache: Arc<OnceCell<SessionContext>>,
 }
 
 impl ExecutionContext {
@@ -46,13 +47,23 @@ impl ExecutionContext {
         base_session_context: Arc<SessionContext>,
     ) -> Self {
         Self {
-            user_context: UserContext::client(user_id, user_role),
+            auth_session: AuthSession::new(user_id, user_role),
             namespace_id: None,
-            request_id: None,
-            ip_address: None,
-            timestamp: SystemTime::now(),
-            params: Vec::new(),
             base_session_context,
+            session_context_cache: Arc::new(OnceCell::new()),
+        }
+    }
+
+    /// Create ExecutionContext from an existing AuthSession
+    pub fn from_session(
+        auth_session: AuthSession,
+        base_session_context: Arc<SessionContext>,
+    ) -> Self {
+        Self {
+            auth_session,
+            namespace_id: None,
+            base_session_context,
+            session_context_cache: Arc::new(OnceCell::new()),
         }
     }
 
@@ -63,54 +74,49 @@ impl ExecutionContext {
         base_session_context: Arc<SessionContext>,
     ) -> Self {
         Self {
-            user_context: UserContext::client(user_id, user_role),
+            auth_session: AuthSession::new(user_id, user_role),
             namespace_id: Some(namespace_id),
-            request_id: None,
-            ip_address: None,
-            timestamp: SystemTime::now(),
-            params: Vec::new(),
             base_session_context,
+            session_context_cache: Arc::new(OnceCell::new()),
         }
     }
 
     pub fn with_audit_info(
         user_id: UserId,
         user_role: Role,
-        namespace_id: Option<NamespaceId>,
         request_id: Option<String>,
         ip_address: Option<String>,
         base_session_context: Arc<SessionContext>,
     ) -> Self {
         Self {
-            user_context: UserContext::client(user_id, user_role),
-            namespace_id,
-            request_id,
-            ip_address,
-            timestamp: SystemTime::now(),
-            params: Vec::new(),
+            auth_session: AuthSession::with_audit_info(
+                user_id,
+                user_role,
+                request_id,
+                ip_address,
+            ),
+            namespace_id: None,
             base_session_context,
+            session_context_cache: Arc::new(OnceCell::new()),
         }
     }
 
     pub fn anonymous(base_session_context: Arc<SessionContext>) -> Self {
         Self {
-            user_context: UserContext::client(UserId::from("anonymous"), Role::User),
+            auth_session: AuthSession::anonymous(),
             namespace_id: None,
-            request_id: None,
-            ip_address: None,
-            timestamp: SystemTime::now(),
-            params: Vec::new(),
             base_session_context,
+            session_context_cache: Arc::new(OnceCell::new()),
         }
     }
 
     #[inline]
     pub fn is_admin(&self) -> bool {
-        kalamdb_session::is_admin_role(self.user_context.role)
+        self.auth_session.is_admin()
     }
     #[inline]
     pub fn is_system(&self) -> bool {
-        kalamdb_session::is_system_role(self.user_context.role)
+        self.auth_session.is_system()
     }
 
     /// Check if this is an anonymous user (not authenticated)
@@ -120,53 +126,45 @@ impl ExecutionContext {
     /// - Cannot CREATE, ALTER, DROP, INSERT, UPDATE, or DELETE
     #[inline]
     pub fn is_anonymous(&self) -> bool {
-        self.user_context.user_id.as_str() == kalamdb_commons::constants::ANONYMOUS_USER_ID
+        self.auth_session.is_anonymous()
     }
 
     #[inline]
     pub fn user_id(&self) -> &UserId {
-        &self.user_context.user_id
+        self.auth_session.user_id()
     }
     #[inline]
     pub fn user_role(&self) -> Role {
-        self.user_context.role
-    }
-    #[inline]
-    pub fn namespace_id(&self) -> Option<&NamespaceId> {
-        self.namespace_id.as_ref()
+        self.auth_session.role()
     }
     #[inline]
     pub fn request_id(&self) -> Option<&str> {
-        self.request_id.as_deref()
+        self.auth_session.request_id()
     }
     #[inline]
     pub fn ip_address(&self) -> Option<&str> {
-        self.ip_address.as_deref()
+        self.auth_session.ip_address()
     }
     #[inline]
     pub fn timestamp(&self) -> SystemTime {
-        self.timestamp
+        self.auth_session.timestamp()
     }
 
     // Builder methods for Phase 3
-    pub fn with_params(mut self, params: Vec<ScalarValue>) -> Self {
-        self.params = params;
-        self
-    }
-
     pub fn with_request_id(mut self, request_id: String) -> Self {
-        self.request_id = Some(request_id);
+        self.auth_session = self.auth_session.with_request_id(request_id);
         self
     }
 
     pub fn with_ip(mut self, ip_address: String) -> Self {
-        self.ip_address = Some(ip_address);
+        self.auth_session = self.auth_session.with_ip(ip_address);
         self
     }
 
     /// Set the namespace for this execution context
     pub fn with_namespace_id(mut self, namespace_id: NamespaceId) -> Self {
         self.namespace_id = Some(namespace_id);
+        self.session_context_cache = Arc::new(OnceCell::new());
         self
     }
 
@@ -175,8 +173,44 @@ impl ExecutionContext {
     /// Use `ReadContext::Internal` for WebSocket subscriptions on followers
     /// to bypass leader-only read checks while still applying RLS.
     pub fn with_read_context(mut self, read_context: ReadContext) -> Self {
-        self.user_context.read_context = read_context;
+        self.auth_session = self.auth_session.with_read_context_mode(read_context);
+        self.session_context_cache = Arc::new(OnceCell::new());
         self
+    }
+
+    fn build_user_session_context(&self) -> SessionContext {
+        // Clone SessionState to keep per-user options/extensions isolated
+        // (shared internals like RuntimeEnv remain Arc-backed)
+        let mut session_state = self.base_session_context.state().clone();
+
+        // Inject current user_id, role, and read_context into session config extensions
+        // TableProviders will read this during scan() for per-user filtering and leader check
+        // Use the read_context from this ExecutionContext (defaults to Client)
+        session_state
+            .config_mut()
+            .options_mut()
+            .extensions
+            .insert(SessionUserContext::new(
+                self.auth_session.user_id().clone(),
+                self.auth_session.role(),
+                self.auth_session.read_context(),
+            ));
+
+        // Override default_schema if namespace_id is set on this context
+        if let Some(ref ns) = self.namespace_id {
+            session_state.config_mut().options_mut().catalog.default_schema =
+                ns.as_str().to_string();
+        }
+
+        // Create SessionContext from the per-user state
+        let ctx = SessionContext::new_with_state(session_state);
+
+        // Register CURRENT_USER() function with user context
+        // This overrides the default CURRENT_USER() registered in base session
+        let current_user_fn = CurrentUserFunction::with_user_id(self.user_id());
+        ctx.register_udf(ScalarUDF::from(current_user_fn));
+
+        ctx
     }
 
     /// Create a per-request SessionContext with current user_id and role injected
@@ -209,37 +243,11 @@ impl ExecutionContext {
     /// # Returns
     /// SessionContext with user_id and role injected, ready for query execution
     pub fn create_session_with_user(&self) -> SessionContext {
-        // Clone SessionState (mostly Arc pointer copies, ~1-2μs)
-        let mut session_state = self.base_session_context.state();
+        let session = self
+            .session_context_cache
+            .get_or_init(|| self.build_user_session_context());
 
-        // Inject current user_id, role, and read_context into session config extensions
-        // TableProviders will read this during scan() for per-user filtering and leader check
-        // Use the read_context from this ExecutionContext (defaults to Client)
-        session_state
-            .config_mut()
-            .options_mut()
-            .extensions
-            .insert(SessionUserContext::new(
-                self.user_context.user_id.clone(),
-                self.user_context.role,
-                self.user_context.read_context,
-            ));
-
-        // Override default_schema if namespace_id is set on this context
-        if let Some(ref ns) = self.namespace_id {
-            session_state.config_mut().options_mut().catalog.default_schema =
-                ns.as_str().to_string();
-        }
-
-        // Create SessionContext from the per-user state
-        let ctx = SessionContext::new_with_state(session_state);
-
-        // Register CURRENT_USER() function with user context
-        // This overrides the default CURRENT_USER() registered in base session
-        let current_user_fn = CurrentUserFunction::with_user_id(self.user_id());
-        ctx.register_udf(ScalarUDF::from(current_user_fn));
-
-        ctx
+        session.clone()
     }
 
     /// Get the current default namespace (schema) from DataFusion session config
@@ -253,13 +261,23 @@ impl ExecutionContext {
     /// # Returns
     /// The current default namespace as a NamespaceId (defaults to "default")
     pub fn default_namespace(&self) -> NamespaceId {
-        let state = self.base_session_context.state();
+        let state = self
+            .session_context_cache
+            .get()
+            .map(|session| session.state())
+            .unwrap_or_else(|| self.base_session_context.state());
         let default_schema = state.config().options().catalog.default_schema.clone();
         NamespaceId::new(default_schema)
     }
 
     #[inline]
-    pub fn user_context(&self) -> &UserContext {
-        &self.user_context
+    pub fn user_context(&self) -> &kalamdb_session::UserContext {
+        self.auth_session.user_context()
+    }
+
+    /// Get the AuthSession reference (contains all session metadata)
+    #[inline]
+    pub fn auth_session(&self) -> &AuthSession {
+        &self.auth_session
     }
 }

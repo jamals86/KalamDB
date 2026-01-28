@@ -16,7 +16,7 @@
 //! use kalamdb_system::{User, Job, LiveQuery};
 //!
 //! let user_id = UserId::new("user_123");
-//! let namespace_id = NamespaceId::new("default");
+//! let namespace_id = NamespaceId::default();
 //! let table_name = TableName::new("conversations");
 //!
 //! // Type safety prevents mixing
@@ -31,12 +31,12 @@
 pub mod datatypes; // Unified data type system (KalamDataType)
 pub mod ids; // Type-safe identifier wrappers
 pub mod schemas; // Table and column schema definitions
-pub mod storage; // Storage backend configuration types
 
 // Standalone type modules (not IDs, not system tables)
 mod auth_type;
 mod connection;
 mod read_context;
+
 mod role;
 mod user_name;
 
@@ -49,6 +49,7 @@ pub use auth_type::AuthType;
 pub use ids::*;
 pub use read_context::ReadContext;
 pub use role::Role;
+
 pub use schemas::{TableAccess, TableName};
 pub use user_name::UserName;
 
@@ -56,23 +57,11 @@ pub use user_name::UserName;
 pub use rows::{KTableRow, StreamTableRow, UserTableRow};
 
 pub use connection::ConnectionInfo;
-pub use storage::{
-    AzureStorageConfig, GcsStorageConfig, LocalStorageConfig, S3StorageConfig, StorageConfig,
-    StorageLocationConfig, StorageLocationConfigError, StorageMode, StorageType,
-};
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_storage_type_conversion() {
-        assert_eq!(StorageType::from("filesystem"), StorageType::Filesystem);
-        assert_eq!(StorageType::from("s3"), StorageType::S3);
-        assert_eq!(StorageType::from("S3"), StorageType::S3);
-        assert_eq!(StorageType::from("unknown"), StorageType::Filesystem);
-    }
 
     #[test]
     fn test_storage_id_default() {

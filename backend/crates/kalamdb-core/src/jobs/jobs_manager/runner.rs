@@ -219,23 +219,49 @@ impl JobsManager {
         self.recover_incomplete_jobs().await?;
 
         // Health monitoring interval (log every 30 seconds)
-        let health_check_interval = Duration::from_secs(30);
-        let mut last_health_check = Instant::now();
+        let mut health_interval = tokio::time::interval_at(
+            Instant::now() + Duration::from_secs(30),
+            Duration::from_secs(30),
+        );
+        health_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         // Stream eviction interval (configurable, default 60 seconds)
         let app_context = self.get_attached_app_context();
         let eviction_interval_secs = app_context.config().stream.eviction_interval_seconds;
-        let stream_eviction_interval = Duration::from_secs(eviction_interval_secs);
-        let mut last_stream_eviction = Instant::now();
+        let mut stream_eviction_interval = if eviction_interval_secs > 0 {
+            let mut interval = tokio::time::interval_at(
+                Instant::now() + Duration::from_secs(eviction_interval_secs),
+                Duration::from_secs(eviction_interval_secs),
+            );
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            Some(interval)
+        } else {
+            None
+        };
+        let stream_eviction_enabled = stream_eviction_interval.is_some();
 
         // Leadership check interval (for cluster mode)
-        let leadership_check_interval = Duration::from_secs(1);
-        let mut last_leadership_check = Instant::now();
-        let mut was_leader = false;
+        let mut leadership_interval = tokio::time::interval_at(
+            Instant::now() + Duration::from_secs(1),
+            Duration::from_secs(1),
+        );
+        leadership_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut is_leader = self.is_cluster_leader().await;
+        let mut was_leader = is_leader;
         let max_concurrent = max_concurrent.max(1);
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
         let job_manager = self.get_attached_app_context().job_manager();
         let mut join_set = JoinSet::new();
+
+        // Adaptive idle polling (reduces CPU in empty systems)
+        let idle_poll_min_ms: u64 = 500;
+        let idle_poll_max_ms: u64 = 5_000;
+        let mut idle_poll_ms = idle_poll_min_ms;
+        let mut poll_interval = tokio::time::interval_at(
+            Instant::now() + Duration::from_millis(idle_poll_ms),
+            Duration::from_millis(idle_poll_ms),
+        );
+        poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             // Check for shutdown signal (lock-free atomic check)
@@ -250,46 +276,52 @@ impl JobsManager {
                 }
             }
 
-            // Check leadership status (for cluster mode, used for leader-only actions and scheduling)
-            let is_leader = if last_leadership_check.elapsed() >= leadership_check_interval {
-                last_leadership_check = Instant::now();
-                let leader_now = self.is_cluster_leader().await;
-
-                // Log leadership transitions
-                if leader_now && !was_leader {
-                    log::info!("[JobLoop] This node became leader - handling failover");
-                    // Perform leader failover recovery
-                    self.handle_leader_failover().await;
-                } else if !leader_now && was_leader {
-                    log::info!("[JobLoop] This node lost leadership");
+            // Event-driven loop: await job wakeups or periodic ticks
+            let job_id_opt = tokio::select! {
+                biased;
+                // Priority 1: awakened jobs from state machine
+                Some(job_id) = awake_receiver.recv() => Some(job_id),
+                // Priority 2: fallback polling for crash recovery/retries
+                _ = poll_interval.tick() => None,
+                // Periodic leadership check
+                _ = leadership_interval.tick() => {
+                    let leader_now = self.is_cluster_leader().await;
+                    if leader_now && !was_leader {
+                        log::info!("[JobLoop] This node became leader - handling failover");
+                        self.handle_leader_failover().await;
+                    } else if !leader_now && was_leader {
+                        log::info!("[JobLoop] This node lost leadership");
+                    }
+                    was_leader = leader_now;
+                    is_leader = leader_now;
+                    continue;
                 }
-
-                was_leader = leader_now;
-                leader_now
-            } else {
-                was_leader
+                // Periodic health metrics logging (all nodes)
+                _ = health_interval.tick() => {
+                    let app_ctx = self.get_attached_app_context();
+                    if let Err(e) = HealthMonitor::log_metrics(self, app_ctx).await {
+                        log::warn!("Failed to log health metrics: {}", e);
+                    }
+                    continue;
+                }
+                // Periodic stream eviction job creation (leader-only)
+                _ = async {
+                    if stream_eviction_enabled {
+                        let interval = stream_eviction_interval
+                            .as_mut()
+                            .expect("stream eviction interval missing");
+                        interval.tick().await;
+                    }
+                }, if stream_eviction_enabled => {
+                    if is_leader {
+                        let app_ctx = self.get_attached_app_context();
+                        if let Err(e) = StreamEvictionScheduler::check_and_schedule(&app_ctx, self).await {
+                            log::warn!("Failed to check stream eviction: {}", e);
+                        }
+                    }
+                    continue;
+                }
             };
-
-            // Periodic health metrics logging (all nodes)
-            if last_health_check.elapsed() >= health_check_interval {
-                let app_ctx = self.get_attached_app_context();
-                if let Err(e) = HealthMonitor::log_metrics(self, app_ctx).await {
-                    log::warn!("Failed to log health metrics: {}", e);
-                }
-                last_health_check = Instant::now();
-            }
-
-            // Periodic stream eviction job creation (leader-only - creates jobs for all nodes)
-            if is_leader
-                && eviction_interval_secs > 0
-                && last_stream_eviction.elapsed() >= stream_eviction_interval
-            {
-                let app_ctx = self.get_attached_app_context();
-                if let Err(e) = StreamEvictionScheduler::check_and_schedule(&app_ctx, self).await {
-                    log::warn!("Failed to check stream eviction: {}", e);
-                }
-                last_stream_eviction = Instant::now();
-            }
 
             if semaphore.available_permits() == 0 {
                 if let Some(Err(err)) = join_set.join_next().await {
@@ -301,20 +333,9 @@ impl JobsManager {
             let permit = match Arc::clone(&semaphore).try_acquire_owned() {
                 Ok(permit) => permit,
                 Err(_) => {
-                    sleep(Duration::from_millis(50)).await;
+                    tokio::task::yield_now().await;
                     continue;
                 },
-            };
-
-            // Wait for awakened job or poll after timeout (fallback for crash recovery)
-            // The awake channel provides instant dispatch when CreateJobNode is applied.
-            // Fallback polling ensures jobs aren't stuck if awakening fails.
-            let job_id_opt = tokio::select! {
-                biased;
-                // Priority 1: Check for awakened jobs from state machine
-                Some(job_id) = awake_receiver.recv() => Some(job_id),
-                // Priority 2: Fallback polling every 500ms (for crash recovery, retries)
-                _ = sleep(Duration::from_millis(500)) => None,
             };
 
             // Fetch job to execute
@@ -330,6 +351,15 @@ impl JobsManager {
                 Ok(Some((job, job_node))) => {
                     log::info!("[{}] Job fetched for execution: type={:?}, status={:?}, is_leader={}", 
                         job.job_id, job.job_type, job.status, is_leader);
+                    if idle_poll_ms != idle_poll_min_ms {
+                        idle_poll_ms = idle_poll_min_ms;
+                        poll_interval = tokio::time::interval_at(
+                            Instant::now() + Duration::from_millis(idle_poll_ms),
+                            Duration::from_millis(idle_poll_ms),
+                        );
+                        poll_interval
+                            .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    }
                     let jobs_manager = Arc::clone(&job_manager);
                     join_set.spawn(async move {
                         let _permit = permit;
@@ -340,11 +370,30 @@ impl JobsManager {
                 },
                 Ok(None) => {
                     drop(permit);
+                    let next_poll_ms = (idle_poll_ms.saturating_mul(2)).min(idle_poll_max_ms);
+                    if next_poll_ms != idle_poll_ms {
+                        idle_poll_ms = next_poll_ms;
+                        poll_interval = tokio::time::interval_at(
+                            Instant::now() + Duration::from_millis(idle_poll_ms),
+                            Duration::from_millis(idle_poll_ms),
+                        );
+                        poll_interval
+                            .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    }
                     // No jobs available - continue loop (select! already waited)
                 },
                 Err(e) => {
                     drop(permit);
                     log::error!("Failed to poll for next job: {}", e);
+                    if idle_poll_ms != idle_poll_max_ms {
+                        idle_poll_ms = idle_poll_max_ms;
+                        poll_interval = tokio::time::interval_at(
+                            Instant::now() + Duration::from_millis(idle_poll_ms),
+                            Duration::from_millis(idle_poll_ms),
+                        );
+                        poll_interval
+                            .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    }
                     sleep(Duration::from_secs(1)).await;
                 },
             }

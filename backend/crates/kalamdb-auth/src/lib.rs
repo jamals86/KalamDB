@@ -14,14 +14,16 @@ pub mod security;
 pub mod services;
 
 // Re-export commonly used types
-pub use models::context::AuthenticatedUser;
 pub use helpers::cookie::{
     create_auth_cookie, create_logout_cookie, extract_auth_token, CookieConfig, AUTH_COOKIE_NAME,
 };
 pub use errors::error::{AuthError, AuthResult};
-pub use helpers::extractor::{AuthExtractError, AuthSession, OptionalAuth};
-pub use models::impersonation::{ImpersonationContext, ImpersonationOrigin};
+pub use helpers::extractor::{AuthExtractError, AuthSessionExtractor};
+// Re-export unified session type from kalamdb-session
+pub use kalamdb_session::AuthSession;
+// Re-export items needed by extractor
 pub use helpers::ip_extractor::{extract_client_ip_secure, is_localhost_address};
+pub use models::impersonation::{ImpersonationContext, ImpersonationOrigin};
 pub use providers::jwt_auth::{
     create_and_sign_token, generate_jwt_token, refresh_jwt_token, JwtClaims,
     DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER,

@@ -5,7 +5,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use kalamdb_commons::models::StorageType;
+use kalamdb_system::providers::storages::models::StorageType;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableAccess, TableId, UserId};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::Role;

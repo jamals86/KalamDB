@@ -10,7 +10,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::require_admin;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::catalog::MemorySchemaProvider;
 use kalamdb_commons::models::{NamespaceId, UserId};
 use kalamdb_sql::ddl::CreateNamespaceStatement;

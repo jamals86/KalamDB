@@ -305,9 +305,9 @@ mod tests {
         let store = create_test_store();
         assert_eq!(
             store.partition(),
-            SystemTable::Tables
+            SystemTable::Schemas
                 .column_family_name()
-                .expect("Tables is a table, not a view")
+                .expect("Schemas is a table, not a view")
                 .into()
         );
     }
@@ -449,7 +449,7 @@ mod tests {
         store.put_version(&table3_id, &table3_def).unwrap();
 
         // Scan default namespace (latest only)
-        let default_tables = store.scan_namespace(&NamespaceId::new("default")).unwrap();
+        let default_tables = store.scan_namespace(&NamespaceId::default()).unwrap();
         assert_eq!(default_tables.len(), 2);
 
         // Scan test namespace

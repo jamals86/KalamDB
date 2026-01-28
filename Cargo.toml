@@ -90,7 +90,7 @@ jsonwebtoken = { version = "10.2.0", default-features = false, features = ["aws_
 toml = "0.9.8"
 
 # CLI tools
-clap = { version = "4.5.54", features = ["derive", "color"] }
+clap = { version = "4.5.55", features = ["derive", "color"] }
 rustyline = { version = "17.0.2" }
 
 # System
@@ -110,9 +110,9 @@ criterion = { version = "0.8.1", features = ["html_reports"] }
 openraft = { version = "0.9.21", features = ["serde"] }
 
 # gRPC for Raft network layer
-tonic = { version = "0.14.2" }
-tonic-prost = "0.14.2"
-tonic-build = "0.14.2"
+tonic = { version = "0.14.3" }
+tonic-prost = "0.14.3"
+tonic-build = "0.14.3"
 prost = "0.14.3"
 prost-types = "0.14.3"
 
@@ -197,3 +197,6 @@ incremental = true   # incremental builds
 lto = "off"          # no link-time optimization
 codegen-units = 256  # maximum parallelism for codegen
 split-debuginfo = "unpacked"  # faster on macOS
+
+[profile.dev.package."*"]
+opt-level = 0

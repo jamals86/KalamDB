@@ -5,7 +5,7 @@ use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::block_system_namespace_modification;
 // Note: table_registration moved to unified applier commands
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
 use kalamdb_commons::models::{NamespaceId, TableId};

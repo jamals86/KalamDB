@@ -1,0 +1,29 @@
+# docker-compose.yml
+services:
+  minio:
+    image: minio/minio:latest
+    command: server --address ":9000" --console-address ":9001" /data
+    ports:
+      - "9009:9000"  # S3 API
+      - "9010:9001"  # Web console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - ./minio-data:/data
+
+  webdav:
+    image: bytemark/webdav:latest
+    restart: unless-stopped
+    ports:
+      - "8088:80"
+    environment:
+      # For HTTP (no TLS), Digest auth avoids sending plaintext passwords
+      AUTH_TYPE: Digest
+      USERNAME: alice
+      PASSWORD: secret1234
+
+      # Optional: expose WebDAV under /webdav instead of /
+      LOCATION: /webdav
+    volumes:
+      - ./dav-data:/var/lib/dav

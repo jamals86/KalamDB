@@ -38,6 +38,12 @@ impl UserId {
         Self::try_new(id).expect("UserId contains invalid characters")
     }
 
+    ///New anonymous UserId
+    #[inline]
+    pub fn anonymous() -> Self {
+        Self(AuthConstants::ANONYMOUS_USER_ID.to_string())
+    }
+
     /// Creates a new UserId from a string, returning an error if validation fails.
     ///
     /// # Security
@@ -113,7 +119,13 @@ impl UserId {
     /// Is admin user?
     #[inline]
     pub fn is_admin(&self) -> bool {
-        self.as_str() == AuthConstants::DEFAULT_ROOT_USER_ID || self.as_str() == "sys_root"
+        self.as_str() == AuthConstants::DEFAULT_ROOT_USER_ID
+    }
+
+    /// Is anonymous user?
+    #[inline]
+    pub fn is_anonymous(&self) -> bool {
+        self.as_str() == AuthConstants::ANONYMOUS_USER_ID
     }
 }
 

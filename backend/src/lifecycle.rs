@@ -8,12 +8,13 @@ use crate::{middleware, routes};
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
 use kalamdb_api::limiter::RateLimiter;
-use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
+use kalamdb_commons::{AuthType, Role, StorageId, UserId};
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::live::ConnectionsManager;
 use kalamdb_core::live_query::LiveQueryManager;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
+use kalamdb_system::providers::storages::models::StorageMode;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
 use log::debug;
@@ -196,7 +197,7 @@ pub async fn bootstrap(
             storage_id: StorageId::from("local"),
             storage_name: "Local Filesystem".to_string(),
             description: Some("Default local filesystem storage".to_string()),
-            storage_type: kalamdb_commons::models::StorageType::Filesystem,
+            storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
             base_directory: config.storage.storage_dir().to_string_lossy().into_owned(),
             credentials: None,
             config_json: None,
@@ -395,7 +396,7 @@ pub async fn bootstrap_isolated(
             storage_id: StorageId::from("local"),
             storage_name: "Local Filesystem".to_string(),
             description: Some("Default local filesystem storage".to_string()),
-            storage_type: kalamdb_commons::models::StorageType::Filesystem,
+            storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
             base_directory: config.storage.storage_dir().to_string_lossy().into_owned(),
             credentials: None,
             config_json: None,
@@ -698,6 +699,10 @@ impl RunningTestHttpServer {
         // Stop the HTTP server first
         self.server_handle.stop(false).await;
         let _ = self.server_task.await;
+
+        // Stop JobsManager background loop before tearing down storage/executor
+        self.app_context.job_manager().shutdown();
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Then shutdown the Raft executor to cleanly stop all Raft groups
         // This prevents "Fatal(Stopped)" errors in subsequent tests

@@ -11,7 +11,7 @@ use crate::sql::executor::handlers::dml::mod_helpers::{
     scalar_from_sql_value,
 };
 use crate::sql::executor::handlers::StatementHandler;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
 use kalamdb_commons::models::datatypes::KalamDataType;

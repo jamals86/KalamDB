@@ -4,7 +4,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringArray, UInt64Array};
 use kalamdb_commons::arrow_utils::{field_uint64, field_utf8, schema};
 use kalamdb_commons::models::{NamespaceId, TableId};
@@ -31,7 +31,7 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let start_time = std::time::Instant::now();
-        let ns = statement.namespace_id.clone().unwrap_or_else(|| NamespaceId::new("default"));
+        let ns = statement.namespace_id.clone().unwrap_or_else(|| NamespaceId::default());
         let table_id = TableId::from_strings(ns.as_str(), statement.table_name.as_str());
 
         // TableDefinition gives us metadata only; stats system not yet implemented.

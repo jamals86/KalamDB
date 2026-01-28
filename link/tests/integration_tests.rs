@@ -14,7 +14,6 @@
 //! cd cli/kalam-link && cargo test --test integration_tests
 //! ```
 
-use base64::Engine;
 use kalam_link::models::{BatchControl, BatchStatus, KalamDataType, ResponseStatus, SchemaField};
 use kalam_link::{AuthProvider, ChangeEvent, KalamLinkClient, KalamLinkError, SubscriptionConfig};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,7 +22,7 @@ use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{sleep, timeout};
 
-const SERVER_URL: &str = "http://localhost:8080";
+mod common;
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 static TEST_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
@@ -44,26 +43,16 @@ fn unique_ident(prefix: &str) -> String {
 
 /// Check if server is running - returns bool for graceful skipping
 async fn is_server_running() -> bool {
-    // Use Basic Auth with root:<empty> for localhost bypass
-    let credentials = base64::engine::general_purpose::STANDARD.encode("root:");
-    match reqwest::Client::new()
-        .post(format!("{}/v1/api/sql", SERVER_URL))
-        .header("Authorization", format!("Basic {}", credentials))
-        .json(&serde_json::json!({ "sql": "SELECT 1" }))
-        .timeout(Duration::from_secs(2))
-        .send()
-        .await
-    {
-        Ok(resp) => resp.status().is_success(),
-        Err(_) => false,
-    }
+    common::is_server_running().await
 }
 
 fn create_client() -> Result<KalamLinkClient, KalamLinkError> {
+    let token = common::root_access_token_blocking()
+        .map_err(|e| KalamLinkError::InternalError(e.to_string()))?;
     KalamLinkClient::builder()
-        .base_url(SERVER_URL)
+        .base_url(common::server_url())
         .timeout(Duration::from_secs(30))
-        .auth(AuthProvider::system_user_auth("".to_string()))
+        .auth(AuthProvider::jwt_token(token))
         .build()
 }
 
@@ -93,7 +82,7 @@ async fn cleanup_namespace(ns: &str) {
 
 #[tokio::test]
 async fn test_client_builder_basic() {
-    let client = KalamLinkClient::builder().base_url(SERVER_URL).build();
+    let client = KalamLinkClient::builder().base_url(common::server_url()).build();
 
     assert!(client.is_ok(), "Client builder should succeed");
 }
@@ -101,7 +90,7 @@ async fn test_client_builder_basic() {
 #[tokio::test]
 async fn test_client_builder_with_timeout() {
     let client = KalamLinkClient::builder()
-        .base_url(SERVER_URL)
+        .base_url(common::server_url())
         .timeout(Duration::from_secs(5))
         .build();
 
@@ -111,7 +100,7 @@ async fn test_client_builder_with_timeout() {
 #[tokio::test]
 async fn test_client_builder_with_jwt() {
     let client = KalamLinkClient::builder()
-        .base_url(SERVER_URL)
+        .base_url(common::server_url())
         .jwt_token("test.jwt.token")
         .build();
 
@@ -928,7 +917,7 @@ async fn test_custom_timeout() {
     let _permit = acquire_test_permit().await;
 
     let client = KalamLinkClient::builder()
-        .base_url(SERVER_URL)
+        .base_url(common::server_url())
         .timeout(Duration::from_millis(20)) // Very short timeout
         .build()
         .unwrap();

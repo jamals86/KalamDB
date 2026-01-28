@@ -113,7 +113,7 @@ pub fn create_users_indexes() -> Vec<Arc<dyn IndexDefinition<UserId, User>>> {
 mod tests {
     use super::*;
     use kalamdb_commons::models::UserName;
-    use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
+    use kalamdb_commons::{AuthType, Role, StorageId};
 
     fn create_test_user(id: &str, username: &str, role: Role) -> User {
         User {
@@ -124,7 +124,7 @@ mod tests {
             email: Some(format!("{}@example.com", username)),
             auth_type: AuthType::Password,
             auth_data: None,
-            storage_mode: StorageMode::Table,
+            storage_mode: crate::providers::storages::models::StorageMode::Table,
             storage_id: Some(StorageId::local()),
             failed_login_attempts: 0,
             locked_until: None,

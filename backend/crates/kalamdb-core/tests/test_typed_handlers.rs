@@ -5,8 +5,8 @@
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::Role;
 use kalamdb_core::app_context::AppContext;
-use kalamdb_core::sql::executor::models::ExecutionContext;
-use kalamdb_core::sql::executor::models::ExecutionResult;
+use kalamdb_core::sql::context::ExecutionContext;
+use kalamdb_core::sql::context::ExecutionResult;
 use kalamdb_core::sql::executor::SqlExecutor;
 mod test_helpers;
 use std::sync::Arc;

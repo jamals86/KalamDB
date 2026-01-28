@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
     serde(rename_all = "lowercase")
 )]
 pub enum Role {
+    Anonymous,
     User,
     Service,
     Dba,
@@ -21,6 +22,7 @@ pub enum Role {
 impl Role {
     pub fn as_str(&self) -> &'static str {
         match self {
+            Role::Anonymous => "anonymous",
             Role::User => "user",
             Role::Service => "service",
             Role::Dba => "dba",
@@ -30,6 +32,7 @@ impl Role {
 
     pub fn from_str_opt(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
+            "anonymous" => Some(Role::Anonymous),
             "user" => Some(Role::User),
             "service" => Some(Role::Service),
             "dba" => Some(Role::Dba),
@@ -55,6 +58,7 @@ impl fmt::Display for Role {
 impl From<&str> for Role {
     fn from(s: &str) -> Self {
         match s.to_lowercase().as_str() {
+            "anonymous" => Role::Anonymous,
             "user" => Role::User,
             "service" => Role::Service,
             "dba" => Role::Dba,

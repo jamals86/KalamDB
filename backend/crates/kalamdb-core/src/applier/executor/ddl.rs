@@ -134,7 +134,7 @@ impl DdlExecutor {
 #[cfg(test)]
 mod tests {
     use super::DdlExecutor;
-    use crate::sql::executor::models::ExecutionContext;
+    use crate::sql::context::ExecutionContext;
     use crate::sql::executor::SqlExecutor;
     use crate::test_helpers::test_app_context_simple;
     use kalamdb_commons::models::datatypes::KalamDataType;

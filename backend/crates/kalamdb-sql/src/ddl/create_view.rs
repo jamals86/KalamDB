@@ -101,7 +101,7 @@ mod tests {
     use super::*;
 
     fn default_ns() -> NamespaceId {
-        NamespaceId::new("default")
+        NamespaceId::default()
     }
 
     #[test]

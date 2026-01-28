@@ -9,7 +9,8 @@
 
 use super::test_support::TestServer;
 use kalam_link::models::ResponseStatus;
-use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
+use kalamdb_commons::models::{AuthType, Role, UserId, UserName};
+use kalamdb_system::providers::storages::models::StorageMode;
 
 async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId {
     let user_id = UserId::new(username);

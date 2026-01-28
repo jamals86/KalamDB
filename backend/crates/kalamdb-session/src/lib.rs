@@ -34,6 +34,7 @@
 //! | User Management | `handlers::user` | Role changes, password updates |
 //! | RBAC Functions | `kalamdb_session::rbac` | Role-based access helpers |
 
+pub mod auth_session;
 pub mod error;
 pub mod permissions;
 pub mod rbac;
@@ -42,6 +43,7 @@ pub mod session_context;
 pub mod user_context;
 
 // Re-export main types
+pub use auth_session::{AuthMethod, AuthSession};
 pub use error::{SessionError, SessionResult};
 pub use permissions::{
     can_access_shared_table, can_access_system_table, can_access_user_table, can_execute_dml,

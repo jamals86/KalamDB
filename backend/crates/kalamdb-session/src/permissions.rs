@@ -58,7 +58,7 @@ pub fn extract_user_role(session: &dyn Session) -> Role {
 pub fn extract_user_id(session: &dyn Session) -> UserId {
     extract_session_context(session)
         .map(|ctx| ctx.user_id.clone())
-        .unwrap_or_else(|_| UserId::from("anonymous"))
+        .unwrap_or_else(|_| UserId::anonymous())
 }
 
 /// Extract (user_id, role) from DataFusion session.

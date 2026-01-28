@@ -4,7 +4,7 @@
 //! These helpers consolidate repeated validation patterns across handlers.
 
 use crate::error::KalamDbError;
-use crate::sql::executor::models::ExecutionContext;
+use crate::sql::context::ExecutionContext;
 use kalamdb_commons::models::NamespaceId;
 
 /// Block modifications (ALTER, DROP, CREATE) on system namespaces.

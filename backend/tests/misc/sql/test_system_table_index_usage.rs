@@ -21,9 +21,10 @@ use kalamdb_commons::models::{ConnectionId, UserName};
 use kalamdb_system::{Job, JobStatus, JobType, LiveQuery, User};
 use kalamdb_commons::{
     AuthType, JobId, LiveQueryId, NamespaceId, NodeId, Role, StorageId,
-    StorageMode, TableName, UserId,
+    TableName, UserId,
 };
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use kalamdb_system::providers::storages::models::StorageMode;
 
 /// Test: system.users uses username index for WHERE username = '...' queries
 ///
@@ -325,7 +326,7 @@ async fn test_system_live_queries_basic() {
             live_id: live_id.clone(),
             connection_id: format!("conn{}", i),
             subscription_id: format!("sub{}", i),
-            namespace_id: NamespaceId::new("default"),
+            namespace_id: NamespaceId::default(),
             table_name: TableName::new(&format!("table{}", i % 3)), // 3 different tables
             user_id: UserId::new("test_user"),
             query: format!("SELECT * FROM table{}", i % 3),

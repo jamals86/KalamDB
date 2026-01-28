@@ -10,7 +10,7 @@ use crate::jobs::executors::cleanup::{CleanupOperation, CleanupParams, StorageCl
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::block_system_namespace_modification;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_system::JobType;

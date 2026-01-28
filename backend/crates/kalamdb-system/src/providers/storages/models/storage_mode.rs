@@ -1,13 +1,10 @@
 use std::fmt;
 use std::str::FromStr;
-
-#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use bincode::{Decode, Encode};
 
 /// Enum representing storage mode preferences for users.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
 pub enum StorageMode {
     Table,
     Region,

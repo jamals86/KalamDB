@@ -44,33 +44,10 @@ struct AutoTestServer {
 
 impl Drop for AutoTestServer {
     fn drop(&mut self) {
-        let Some(running) = self.running.take() else {
-            return;
-        };
-
-        let shutdown = async move {
-            running.shutdown().await;
-        };
-
-        if let Some(runtime) = AUTO_TEST_RUNTIME.get() {
-            let _ = runtime.block_on(shutdown);
-        } else if tokio::runtime::Handle::try_current().is_ok() {
-            let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                let runtime = match Runtime::new() {
-                    Ok(rt) => rt,
-                    Err(_) => {
-                        let _ = tx.send(());
-                        return;
-                    }
-                };
-                let _ = runtime.block_on(shutdown);
-                let _ = tx.send(());
-            });
-            let _ = rx.recv_timeout(Duration::from_secs(5));
-        } else if let Ok(runtime) = Runtime::new() {
-            let _ = runtime.block_on(shutdown);
-        }
+        // Intentionally skip shutdown in CLI test processes to avoid
+        // intermittent segfaults during runtime teardown. The OS will
+        // reclaim resources when the test process exits.
+        let _ = self.running.take();
     }
 }
 

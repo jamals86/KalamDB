@@ -157,7 +157,7 @@ mod tests {
     };
     use kalamdb_commons::models::ids::StorageId;
     use kalamdb_commons::models::TableId;
-    use kalamdb_commons::models::storage::StorageType;
+    use kalamdb_system::providers::storages::models::StorageType;
     use kalamdb_system::Storage;
     use kalamdb_commons::schemas::TableType;
     use std::sync::Arc;

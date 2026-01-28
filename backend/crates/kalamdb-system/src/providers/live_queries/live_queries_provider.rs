@@ -520,7 +520,7 @@ mod tests {
             live_id: LiveQueryId::from_string(live_id).expect("Invalid LiveQueryId format"),
             connection_id: "conn123".to_string(),
             subscription_id: "sub123".to_string(),
-            namespace_id: NamespaceId::new("default"),
+            namespace_id: NamespaceId::default(),
             table_name: TableName::new(table_name),
             user_id: UserId::new(user_id),
             query: "SELECT * FROM test".to_string(),

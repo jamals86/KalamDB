@@ -3,7 +3,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
-use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::ddl::CreateTableStatement;
@@ -152,7 +152,7 @@ mod tests {
                 storage_id: storage_id.clone(),
                 storage_name: "Local Storage".to_string(),
                 description: Some("Default local storage".to_string()),
-                storage_type: kalamdb_commons::models::StorageType::Filesystem,
+                storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
                 base_directory: "/tmp/kalamdb_test".to_string(),
                 credentials: None,
                 config_json: None,
@@ -173,7 +173,7 @@ mod tests {
         ]));
 
         CreateTableStatement {
-            namespace_id: NamespaceId::new("default"),
+            namespace_id: NamespaceId::default(),
             table_name: format!("test_table_{}", chrono::Utc::now().timestamp_millis()).into(),
             table_type,
             schema,
@@ -247,7 +247,7 @@ mod tests {
         // Ensure default storage and namespace exist
         ensure_default_storage();
         let namespaces_provider = app_ctx.system_tables().namespaces();
-        let namespace_id = NamespaceId::new("default");
+        let namespace_id = NamespaceId::default();
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
             let namespace = kalamdb_system::Namespace {
                 namespace_id: namespace_id.clone(),
@@ -281,7 +281,7 @@ mod tests {
         // Ensure default storage and namespace exist
         ensure_default_storage();
         let namespaces_provider = app_ctx.system_tables().namespaces();
-        let namespace_id = NamespaceId::new("default");
+        let namespace_id = NamespaceId::default();
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
             let namespace = kalamdb_system::Namespace {
                 namespace_id: namespace_id.clone(),

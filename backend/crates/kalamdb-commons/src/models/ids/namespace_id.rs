@@ -125,6 +125,12 @@ impl NamespaceId {
         Self("system".to_string())
     }
 
+    /// Create default namespace ID
+    #[inline]
+    pub fn default() -> Self {
+        Self("default".to_string())
+    }
+
     /// Check if this is a system namespace (internal DataFusion/KalamDB namespaces).
     ///
     /// Returns true for namespaces used internally by the system:
@@ -134,7 +140,16 @@ impl NamespaceId {
     /// - `datafusion`: DataFusion internal catalog
     #[inline]
     pub fn is_system_namespace(&self) -> bool {
-        matches!(self.as_str(), "system" | "information_schema" | "pg_catalog" | "datafusion")
+        matches!(
+            self.as_str(),
+            "system" | "information_schema" | "pg_catalog" | "datafusion"
+        )
+    }
+
+    /// If default namespace
+    #[inline]
+    pub fn is_default_namespace(&self) -> bool {
+        self.as_str() == "default"
     }
 
     /// Check if this namespace name is reserved and cannot be created by users.
@@ -212,7 +227,7 @@ mod tests {
         assert!(NamespaceId::new("kalamdb").is_reserved());
         assert!(NamespaceId::new("kalam").is_reserved());
         assert!(NamespaceId::new("main").is_reserved());
-        assert!(NamespaceId::new("default").is_reserved());
+        assert!(NamespaceId::default().is_reserved());
         assert!(NamespaceId::new("sql").is_reserved());
         assert!(NamespaceId::new("admin").is_reserved());
         assert!(NamespaceId::new("internal").is_reserved());
@@ -246,7 +261,7 @@ mod tests {
 
         // These are reserved but not system namespaces
         assert!(!NamespaceId::new("kalamdb").is_system_namespace());
-        assert!(!NamespaceId::new("default").is_system_namespace());
+        assert!(!NamespaceId::default().is_system_namespace());
     }
 
     #[test]

@@ -115,7 +115,7 @@ Method: `execute_create_table()` (around line 171)
 #### Current Code (Simplified):
 ```rust
 async fn execute_create_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
-    let namespace_id = NamespaceId::new("default");
+    let namespace_id = NamespaceId::default();
     
     if /* user table pattern */ {
         let stmt = CreateUserTableStatement::parse(sql, &namespace_id)?;
@@ -131,7 +131,7 @@ async fn execute_create_table(&self, sql: &str) -> Result<ExecutionResult, Kalam
 #### Required Code (Fixed):
 ```rust
 async fn execute_create_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
-    let namespace_id = NamespaceId::new("default");
+    let namespace_id = NamespaceId::default();
     
     if /* user table pattern */ {
         let stmt = CreateUserTableStatement::parse(sql, &namespace_id)?;

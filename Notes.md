@@ -1257,9 +1257,6 @@ in the cli we can add a new config which the user can choose not to return syste
 ✗ Server error (400): Statement 1 failed: Execution error: SQL error: ParserError("Expected: an SQL statement, found: table at Line: 1, Column: 9")
 and then make sure we have a test for it as well
 
-135) struct AuthenticatedUser
-    pub username: String, //TODO: Use UserName type?
-
 136) Check the downloading of file permissions:
 - User impersonation for file download
 - insert/update/delete as user for file operations with user impersonation
@@ -1270,7 +1267,17 @@ and then make sure we have a test for it as well
 
 139) For the cli if we click enter dont open the history menu again only execute enter
 
-140) Make system tables loading lazy loaded only when needed not all the time stays registered, this will reduce memory consumption, also the same for views this should be effective for all of system.* tables and views
+140) Make sure we have default namespace whenever we setup the system, and make sure its used by default unless the user changed it using user namespace for that session
+
+142) Search these files and make them type-safe and also remove duplicates and use one file for checking permissions:
+backend/crates/kalamdb-auth/src/authorization/roles.rs
+backend/crates/kalamdb-auth/src/authorization/rbac.rs
+backend/crates/kalamdb-session/src/rbac.rs
+backend/crates/kalamdb-session/src/permissions.rs
+Also scan all the code for auth/sessions and api and check if we have any other duplicates for permission checking and roles checking and combine them into one place, and clean the code rmeove any unused methods or dead code
+
+143) Support multiple statements running and in each statement run a separate command
+
 
 
 
@@ -1289,4 +1296,5 @@ Main Epics:
 6) Service consumer - Subscription to shards
 7) Change the code to use FlatBuffers for: Raft/RocksDb storage
 8) Add page for Server Initial Setup
+9) Check S3/WebDAV Storages
 

@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn test_params_validation() {
         let params = CleanupParams {
-            table_id: TableId::new(NamespaceId::new("default"), TableName::new("users")),
+            table_id: TableId::new(NamespaceId::default(), TableName::new("users")),
             table_type: TableType::User,
             operation: CleanupOperation::DropTable,
             storage: StorageCleanupDetails {

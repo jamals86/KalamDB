@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn test_check_lockout_not_locked() {
-        use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId};
+        use kalamdb_commons::models::{AuthType, Role, UserId};
 
         let tracker = LoginTracker::new();
         let user = User {
@@ -159,7 +159,7 @@ mod tests {
             email: None,
             auth_type: AuthType::Password,
             auth_data: None,
-            storage_mode: StorageMode::Table,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
             storage_id: None,
             failed_login_attempts: 0,
             locked_until: None,
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_check_lockout_when_locked() {
-        use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId};
+        use kalamdb_commons::models::{AuthType, Role, UserId};
 
         let tracker = LoginTracker::new();
         let user = User {
@@ -186,7 +186,7 @@ mod tests {
             email: None,
             auth_type: AuthType::Password,
             auth_data: None,
-            storage_mode: StorageMode::Table,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
             storage_id: None,
             failed_login_attempts: 5,
             locked_until: Some(chrono::Utc::now().timestamp_millis() + 900_000), // 15 min
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_disabled_tracking_skips_lockout_check() {
-        use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId};
+        use kalamdb_commons::models::{AuthType, Role, UserId};
 
         let config = LoginTrackingConfig {
             enabled: false,
@@ -220,7 +220,7 @@ mod tests {
             email: None,
             auth_type: AuthType::Password,
             auth_data: None,
-            storage_mode: StorageMode::Table,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
             storage_id: None,
             failed_login_attempts: 5,
             locked_until: Some(chrono::Utc::now().timestamp_millis() + 900_000),
