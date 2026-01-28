@@ -148,8 +148,11 @@ main() {
         exit 1
     fi
     
-    # Extract token from response
-    TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+    # Extract token from response (new field: access_token, fallback: token)
+    TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+    if [ -z "$TOKEN" ]; then
+        TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+    fi
     
     if [ -z "$TOKEN" ]; then
         log_error "✗ Failed to extract JWT token from login response"
