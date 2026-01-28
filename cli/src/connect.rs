@@ -471,7 +471,8 @@ pub async fn create_session(
                     &cli.instance,
                     credential_store,
                     cli.save_credentials,
-                )?
+                )
+                .await?
             },
             LoginResult::Failed(_) => {
                 return Err(CLIError::ConfigurationError(
@@ -649,7 +650,8 @@ pub async fn create_session(
                 cli.verbose,
                 &cli.instance,
                 credential_store,
-            )?
+            )
+            .await?
         } else if is_localhost_url(&server_url) {
             // Non-interactive mode on localhost - try root auto-auth
             let username = "root".to_string();
