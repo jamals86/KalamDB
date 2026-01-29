@@ -15,6 +15,7 @@ use crate::common::{
 use reqwest::Client;
 use serde_json::Value;
 
+#[ntest::timeout(3500)]
 #[tokio::test]
 async fn test_file_datatype_upload_and_download() {
     let ctx = test_context();

@@ -53,7 +53,7 @@ pub use show_namespaces::ShowNamespacesStatement;
 pub use show_table_stats::ShowTableStatsStatement;
 pub use show_tables::ShowTablesStatement;
 pub use storage_commands::{
-    AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
+    AlterStorageStatement, CheckStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
 };
 pub use subscribe_commands::SubscribeStatement;
 // Re-export SubscriptionOptions from kalamdb_commons for convenience

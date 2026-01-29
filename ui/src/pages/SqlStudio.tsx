@@ -38,7 +38,6 @@ import { useDataTypes } from '@/hooks/useDataTypes';
 import { extractTableContext } from "@/components/sql-studio/utils/sqlParser";
 import { Sidebar } from "@/components/sql-studio/sidebar/Sidebar";
 import {
-  flexRender,
   getCoreRowModel,
   getSortedRowModel,
   getPaginationRowModel,
@@ -423,6 +422,15 @@ export default function SqlStudio() {
         },
         ...prev.slice(0, 49), // Keep last 50
       ]);
+
+      // Auto-refresh schema after DDL operations (CREATE, ALTER, DROP)
+      const queryUpper = tab.query.trim().toUpperCase();
+      if (queryUpper.startsWith('CREATE ') || 
+          queryUpper.startsWith('ALTER ') || 
+          queryUpper.startsWith('DROP ')) {
+        console.log('[SqlStudio] DDL detected, refreshing schema...');
+        loadSchema();
+      }
     } catch (error) {
       const executionTime = Math.round(performance.now() - startTime);
       const errorMessage =
@@ -772,6 +780,102 @@ export default function SqlStudio() {
     };
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(newId);
+    return newId;
+  }, []);
+
+  // Add a new tab with a query and optionally execute it
+  const addTabWithQuery = useCallback((query: string, name: string, autoExecute: boolean = false) => {
+    const newId = tabCounter.current.toString();
+    tabCounter.current++;
+    const newTab: QueryTab = {
+      id: newId,
+      name,
+      query,
+      results: null,
+      columns: [],
+      schema: null,
+      error: null,
+      isLoading: false,
+      isLive: false,
+      unsubscribeFn: null,
+      executionTime: null,
+      rowCount: null,
+      message: null,
+      subscriptionStatus: "idle",
+      subscriptionLog: [],
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(newId);
+    
+    if (autoExecute) {
+      // Execute after state updates
+      setTimeout(() => {
+        // Execute for the new tab
+        const executeNewTab = async () => {
+          const startTime = performance.now();
+          try {
+            const response = await executeQueryApi(query);
+            const executionTime = Math.round(performance.now() - startTime);
+            
+            const result = response.results?.[0] as { 
+              schema?: { name: string; data_type: string; index: number }[];
+              rows?: unknown[][];
+              row_count?: number;
+              message?: string;
+            } | undefined;
+            
+            const schema = result?.schema ?? [];
+            const columnNames = schema.map((s) => s.name);
+            const rawRows = (result?.rows ?? []) as unknown[][];
+            const results: Record<string, unknown>[] = rawRows.map((row) => {
+              const obj: Record<string, unknown> = {};
+              schema.forEach((field) => {
+                obj[field.name] = row[field.index] ?? null;
+              });
+              return obj;
+            });
+            
+            const rowCount = result?.row_count ?? results.length;
+            const message = result?.message ?? null;
+            
+            const columns: ColumnDef<Record<string, unknown>>[] = columnNames.map((key) => ({
+              accessorKey: key,
+              header: ({ column }) => (
+                <Button
+                  variant="ghost"
+                  onClick={() =>
+                    column.toggleSorting(column.getIsSorted() === "asc")
+                  }
+                  className="h-8 px-2 font-semibold"
+                >
+                  {key}
+                  <ArrowUpDown className="ml-2 h-4 w-4" />
+                </Button>
+              ),
+              cell: ({ row }) => {
+                const value = row.getValue(key);
+                if (value === null) return <span className="text-muted-foreground italic">null</span>;
+                if (typeof value === "object") return JSON.stringify(value);
+                return String(value);
+              },
+            }));
+
+            setTabs((prev) =>
+              prev.map((t) => (t.id === newId ? { ...t, results, columns, schema, isLoading: false, executionTime, rowCount, message, error: null } : t))
+            );
+          } catch (error) {
+            const executionTime = Math.round(performance.now() - startTime);
+            const errorMessage = error instanceof Error ? error.message : "Query failed";
+            setTabs((prev) =>
+              prev.map((t) => (t.id === newId ? { ...t, error: errorMessage, isLoading: false, results: null, columns: [], schema: null, executionTime, rowCount: null, message: null } : t))
+            );
+          }
+        };
+        executeNewTab();
+      }, 50);
+    }
+    
+    return newId;
   }, []);
 
   const closeTab = useCallback(
@@ -1264,48 +1368,48 @@ export default function SqlStudio() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Header: Tabs + Run Button | Live Query + Actions */}
+        {/* Header: Tabs | Run Button + Live Query + Actions */}
         <div className="border-b flex items-center h-12 px-4 gap-2 shrink-0 bg-background">
-          {/* Left side: Query Tabs + Run Button */}
-          <div className="flex items-center gap-2">
-            {/* Query Tabs */}
-            <div className="flex items-center gap-1">
-              {tabs.map((tab) => (
-                <div
-                  key={tab.id}
-                  onClick={() => setActiveTabId(tab.id)}
-                  className={cn(
-                    "flex items-center gap-2 px-4 py-2 cursor-pointer text-sm border-b-2 transition-colors",
-                    activeTabId === tab.id
-                      ? "border-blue-600 text-foreground font-medium bg-muted/30"
-                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/20"
-                  )}
-                >
-                  {/* Green dot for live subscribed tabs */}
-                  {tab.subscriptionStatus === "connected" && (
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                    </span>
-                  )}
-                  {tab.name}
-                  {tabs.length > 1 && (
-                    <button
-                      onClick={(e) => closeTab(tab.id, e)}
-                      className="ml-1 hover:bg-muted-foreground/20 rounded p-0.5 transition-colors"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-              ))}
-              <Button size="sm" variant="ghost" onClick={addTab} className="h-8 w-8 p-0 ml-2">
-                <Plus className="h-4 w-4" />
-              </Button>
-            </div>
+          {/* Left side: Query Tabs */}
+          <div className="flex items-center gap-1">
+            {tabs.map((tab) => (
+              <div
+                key={tab.id}
+                onClick={() => setActiveTabId(tab.id)}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 cursor-pointer text-sm border-b-2 transition-colors",
+                  activeTabId === tab.id
+                    ? "border-blue-600 text-foreground font-medium bg-muted/30"
+                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/20"
+                )}
+              >
+                {/* Green dot for live subscribed tabs */}
+                {tab.subscriptionStatus === "connected" && (
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                  </span>
+                )}
+                {tab.name}
+                {tabs.length > 1 && (
+                  <button
+                    onClick={(e) => closeTab(tab.id, e)}
+                    className="ml-1 hover:bg-muted-foreground/20 rounded p-0.5 transition-colors"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+            <Button size="sm" variant="ghost" onClick={addTab} className="h-8 w-8 p-0 ml-2">
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
 
-            <div className="w-px h-6 bg-border mx-2" />
+          <div className="flex-1" />
 
+          {/* Right side: Run Button + Live Query Toggle + Actions */}
+          <div className="flex items-center gap-3">
             {/* Run Button */}
             <Button
               size="sm"
@@ -1340,12 +1444,8 @@ export default function SqlStudio() {
                 </>
               )}
             </Button>
-          </div>
 
-          <div className="flex-1" />
-
-          {/* Right side: Live Query Toggle + Actions */}
-          <div className="flex items-center gap-3">
+            <div className="w-px h-6 bg-border" />
             {/* Live Query Toggle */}
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium">Live Query</span>
@@ -1401,7 +1501,7 @@ export default function SqlStudio() {
         {/* Editor and Results - Resizable Vertical Split */}
         <ResizablePanelGroup orientation="vertical" className="flex-1">
           {/* Editor Panel */}
-          <ResizablePanel defaultSize={35} minSize={15} maxSize={70}>
+          <ResizablePanel defaultSize={35} minSize={10} maxSize={85}>
             <Editor
               height="100%"
               defaultLanguage="sql"
@@ -1426,7 +1526,7 @@ export default function SqlStudio() {
           <ResizableHandle withHandle />
 
           {/* Results Panel */}
-          <ResizablePanel defaultSize={65}>
+          <ResizablePanel defaultSize={65} minSize={15}>
             <div className="h-full flex flex-col overflow-hidden">
           {/* Query Results Status Bar - show for non-live queries with results */}
           {!activeTab?.isLive && (activeTab?.results !== null || activeTab?.error) && (
@@ -1566,28 +1666,44 @@ export default function SqlStudio() {
             // SELECT queries - always show table with headers (even if 0 rows)
             <>
               {/* Table with sheet-like cells */}
-              <div className="flex-1 overflow-auto bg-background">
-                <div className="overflow-x-auto w-full">
-                <table className="text-sm min-w-full">
+              <div className="flex-1 overflow-hidden bg-background">
+                <div className="overflow-auto h-full w-full">
+                <table className="text-sm w-max">
                   <thead className="sticky top-0 z-10 bg-muted/50">
                     <tr className="border-b">
                       {table.getHeaderGroups().map((headerGroup) =>
-                        headerGroup.headers.map((header) => (
-                          <th
-                            key={header.id}
-                            className="px-4 py-3 text-left font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap min-w-[150px] border-r border-border/40 last:border-r-0"
-                          >
-                            {header.isPlaceholder ? null : (
-                              <button
-                                className="flex items-center gap-1 hover:text-foreground"
-                                onClick={() => header.column.toggleSorting()}
-                              >
-                                {flexRender(header.column.columnDef.header, header.getContext())}
-                                <ArrowUpDown className="h-3 w-3" />
-                              </button>
-                            )}
-                          </th>
-                        ))
+                        headerGroup.headers.map((header) => {
+                          // Get column schema for datatype
+                          const columnSchema = activeTab?.schema?.find(s => s.name === header.id);
+                          const dataType = typeof columnSchema?.data_type === 'string' 
+                            ? columnSchema.data_type 
+                            : typeof columnSchema?.data_type === 'object' 
+                              ? Object.keys(columnSchema.data_type)[0]
+                              : undefined;
+                          return (
+                            <th
+                              key={header.id}
+                              className="px-3 py-1.5 text-left font-medium text-xs text-muted-foreground whitespace-nowrap min-w-[120px] border-r border-border/40 last:border-r-0"
+                            >
+                              {header.isPlaceholder ? null : (
+                                <div className="flex flex-col gap-0.5">
+                                  <button
+                                    className="flex items-center gap-1 hover:text-foreground"
+                                    onClick={() => header.column.toggleSorting()}
+                                  >
+                                    <span className="uppercase tracking-wider">{header.id}</span>
+                                    <ArrowUpDown className="h-3 w-3" />
+                                  </button>
+                                  {dataType && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-normal w-fit">
+                                      {dataType}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </th>
+                          );
+                        })
                       )}
                     </tr>
                   </thead>
@@ -2088,21 +2204,20 @@ export default function SqlStudio() {
             <button
               className="w-full px-3 py-2 text-sm text-left hover:bg-muted flex items-center gap-2"
               onClick={() => {
-                // Insert SELECT * FROM statement and execute
+                // Open a NEW tab with SELECT * FROM statement and execute it
                 const query = `SELECT * FROM ${schemaContextMenu.namespace}.${schemaContextMenu.tableName} LIMIT 100`;
-                updateTab(activeTabId, { query });
+                const tabName = `${schemaContextMenu.tableName}`;
+                addTabWithQuery(query, tabName, true);
                 setSchemaContextMenu(null);
-                // Execute after a brief delay to allow state to update
-                setTimeout(() => executeQuery(), 50);
               }}
             >
               <Play className="h-4 w-4" />
-              Select * from table
+              SELECT * FROM {schemaContextMenu.tableName}
             </button>
             <button
               className="w-full px-3 py-2 text-sm text-left hover:bg-muted flex items-center gap-2"
               onClick={() => {
-                // Just insert the query without executing
+                // Just insert the query without executing (in current tab)
                 const query = `SELECT * FROM ${schemaContextMenu.namespace}.${schemaContextMenu.tableName}`;
                 updateTab(activeTabId, { query });
                 setSchemaContextMenu(null);

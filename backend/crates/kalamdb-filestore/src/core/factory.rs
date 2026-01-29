@@ -2,9 +2,19 @@
 //!
 //! Uses `object_store` crate uniformly for local filesystem and cloud storage.
 //! No if/else branching - all backends implement the same `ObjectStore` trait.
+//!
+//! # Timeout Configuration
+//!
+//! Timeouts are configured programmatically via `ClientOptions` from server.toml:
+//! - `request_timeout_secs` - timeout for S3/GCS/Azure operations (default: 60s)
+//! - `connect_timeout_secs` - timeout for connection establishment (default: 10s)
+//!
+//! These values are read from `server.toml` [storage.remote_timeouts] section
+//! and applied to all remote storage backends (S3, GCS, Azure).
 
 use crate::core::paths::parse_remote_url;
 use crate::error::{FilestoreError, Result};
+use kalamdb_configs::config::types::RemoteStorageTimeouts;
 use kalamdb_system::providers::storages::models::{StorageLocationConfig, StorageLocationConfigError};
 use kalamdb_system::Storage;
 use object_store::aws::AmazonS3Builder;
@@ -13,24 +23,39 @@ use object_store::gcp::GoogleCloudStorageBuilder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path as ObjectStorePath;
 use object_store::prefix::PrefixStore;
-use object_store::ObjectStore;
+use object_store::{ClientOptions, ObjectStore};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 
 /// Build an `ObjectStore` instance from a Storage entity.
 ///
 /// All storage types (local, S3, GCS, Azure) are unified under `Arc<dyn ObjectStore>`.
 /// For local storage, uses `LocalFileSystem` which implements the same trait.
-pub fn build_object_store(storage: &Storage) -> Result<Arc<dyn ObjectStore>> {
+/// 
+/// Timeouts are applied from server config for remote storage backends.
+pub fn build_object_store(
+    storage: &Storage,
+    timeouts: &RemoteStorageTimeouts,
+) -> Result<Arc<dyn ObjectStore>> {
     let config = resolve_config(storage)?;
 
     match config {
         StorageLocationConfig::Local(_) => build_local(storage),
-        StorageLocationConfig::S3(cfg) => build_s3(storage, &cfg),
-        StorageLocationConfig::Gcs(cfg) => build_gcs(storage, &cfg),
-        StorageLocationConfig::Azure(cfg) => build_azure(storage, &cfg),
+        StorageLocationConfig::S3(cfg) => build_s3(storage, &cfg, timeouts),
+        StorageLocationConfig::Gcs(cfg) => build_gcs(storage, &cfg, timeouts),
+        StorageLocationConfig::Azure(cfg) => build_azure(storage, &cfg, timeouts),
     }
+}
+
+/// Build ClientOptions with timeouts from server configuration.
+fn build_client_options(timeouts: &RemoteStorageTimeouts) -> Option<ClientOptions> {
+    let mut client_options = ClientOptions::new();
+    client_options = client_options.with_timeout(Duration::from_secs(timeouts.request_timeout_secs));
+    client_options = client_options.with_connect_timeout(Duration::from_secs(timeouts.connect_timeout_secs));
+    
+    Some(client_options)
 }
 
 /// Resolve the storage location config, falling back to defaults based on storage_type.
@@ -91,10 +116,12 @@ fn build_local(storage: &Storage) -> Result<Arc<dyn ObjectStore>> {
 fn build_s3(
     storage: &Storage,
     cfg: &kalamdb_system::providers::storages::models::S3StorageConfig,
+    timeouts: &RemoteStorageTimeouts,
 ) -> Result<Arc<dyn ObjectStore>> {
     let (bucket, prefix) = parse_remote_url(&storage.base_directory, &["s3://"])?;
 
-    let mut builder = AmazonS3Builder::new().with_bucket_name(&bucket);
+    let mut builder = AmazonS3Builder::new()
+        .with_bucket_name(&bucket);
 
     if let Some(ref region) = cfg.region {
         builder = builder.with_region(region);
@@ -111,6 +138,11 @@ fn build_s3(
     if let Some(ref token) = cfg.session_token {
         builder = builder.with_token(token);
     }
+    
+    // Apply timeout configuration from server config
+    if let Some(client_options) = build_client_options(timeouts) {
+        builder = builder.with_client_options(client_options);
+    }
 
     let store = builder.build().map_err(|e| FilestoreError::Config(format!("S3: {e}")))?;
 
@@ -120,13 +152,20 @@ fn build_s3(
 fn build_gcs(
     storage: &Storage,
     cfg: &kalamdb_system::providers::storages::models::GcsStorageConfig,
+    timeouts: &RemoteStorageTimeouts,
 ) -> Result<Arc<dyn ObjectStore>> {
     let (bucket, prefix) = parse_remote_url(&storage.base_directory, &["gs://", "gcs://"])?;
 
-    let mut builder = GoogleCloudStorageBuilder::new().with_bucket_name(&bucket);
+    let mut builder = GoogleCloudStorageBuilder::new()
+        .with_bucket_name(&bucket);
 
     if let Some(ref sa) = cfg.service_account_json {
         builder = builder.with_service_account_key(sa);
+    }
+    
+    // Apply timeout configuration from server config
+    if let Some(client_options) = build_client_options(timeouts) {
+        builder = builder.with_client_options(client_options);
     }
 
     let store = builder.build().map_err(|e| FilestoreError::Config(format!("GCS: {e}")))?;
@@ -137,10 +176,12 @@ fn build_gcs(
 fn build_azure(
     storage: &Storage,
     cfg: &kalamdb_system::providers::storages::models::AzureStorageConfig,
+    timeouts: &RemoteStorageTimeouts,
 ) -> Result<Arc<dyn ObjectStore>> {
     let (container, prefix) = parse_remote_url(&storage.base_directory, &["az://", "azure://"])?;
 
-    let mut builder = MicrosoftAzureBuilder::new().with_container_name(&container);
+    let mut builder = MicrosoftAzureBuilder::new()
+        .with_container_name(&container);
 
     if let Some(ref account) = cfg.account_name {
         builder = builder.with_account(account);
@@ -156,6 +197,11 @@ fn build_azure(
             .filter_map(|pair| pair.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
             .collect();
         builder = builder.with_sas_authorization(query_pairs);
+    }
+    
+    // Apply timeout configuration from server config
+    if let Some(client_options) = build_client_options(timeouts) {
+        builder = builder.with_client_options(client_options);
     }
 
     let store = builder.build().map_err(|e| FilestoreError::Config(format!("Azure: {e}")))?;
@@ -208,7 +254,8 @@ mod tests {
             updated_at: now,
         };
 
-        let result = build_object_store(&storage);
+        let timeouts = RemoteStorageTimeouts::default();
+        let result = build_object_store(&storage, &timeouts);
         assert!(result.is_ok(), "Should build filesystem store");
 
         let _ = std::fs::remove_dir_all(&temp_dir);

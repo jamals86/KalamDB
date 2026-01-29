@@ -30,6 +30,7 @@ impl DdlAst for AlterStorageStatement {}
 impl DdlAst for CreateStorageStatement {}
 impl DdlAst for DropStorageStatement {}
 impl DdlAst for ShowStoragesStatement {}
+impl DdlAst for CheckStorageStatement {}
 impl DdlAst for SubscribeStatement {}
 impl DdlAst for CreateUserStatement {}
 impl DdlAst for AlterUserStatement {}

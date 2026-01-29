@@ -236,6 +236,9 @@ pub struct StorageSettings {
     pub user_tables_template: String,
     #[serde(default)]
     pub rocksdb: RocksDbSettings,
+    /// Remote storage timeout settings (S3, GCS, Azure)
+    #[serde(default)]
+    pub remote_timeouts: RemoteStorageTimeouts,
 }
 
 impl StorageSettings {
@@ -322,6 +325,29 @@ impl Default for RocksDbSettings {
             sync_writes: default_rocksdb_sync_writes(),
             disable_wal: false,
             compact_on_startup: default_rocksdb_compact_on_startup(),
+        }
+    }
+}
+
+/// Remote storage timeout settings for S3, GCS, Azure backends
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteStorageTimeouts {
+    /// Request timeout in seconds for remote storage operations (default: 60s)
+    /// Applies to read, write, list, and delete operations
+    #[serde(default = "default_remote_request_timeout")]
+    pub request_timeout_secs: u64,
+    
+    /// Connect timeout in seconds for establishing connections (default: 10s)
+    /// Lower than request timeout to fail fast on connection issues
+    #[serde(default = "default_remote_connect_timeout")]
+    pub connect_timeout_secs: u64,
+}
+
+impl Default for RemoteStorageTimeouts {
+    fn default() -> Self {
+        Self {
+            request_timeout_secs: default_remote_request_timeout(),
+            connect_timeout_secs: default_remote_connect_timeout(),
         }
     }
 }
@@ -896,6 +922,7 @@ impl Default for ServerConfig {
                 shared_tables_template: default_shared_tables_template(),
                 user_tables_template: default_user_tables_template(),
                 rocksdb: RocksDbSettings::default(),
+                remote_timeouts: RemoteStorageTimeouts::default(),
             },
             limits: LimitsSettings {
                 max_message_size: 1048576,

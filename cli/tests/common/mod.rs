@@ -17,6 +17,24 @@ use std::time::Duration;
 use std::time::Instant;
 use tokio::runtime::{Handle, Runtime};
 
+// Load environment variables from .env file at test startup
+fn load_env_file() {
+    // Try to load .env from the cli directory or workspace root
+    let paths = vec![
+        PathBuf::from("cli/.env"),
+        PathBuf::from(".env"),
+        PathBuf::from("../.env"),
+    ];
+    
+    for path in paths {
+        if path.exists() {
+            let _ = dotenv::from_path(&path);
+            eprintln!("[TEST] Loaded environment from: {}", path.display());
+            break;
+        }
+    }
+}
+
 // Re-export commonly used types for credential tests
 pub use kalam_cli::FileCredentialStore;
 pub use kalam_link::credentials::{CredentialStore, Credentials};
@@ -460,6 +478,9 @@ fn reorder_cluster_urls_by_leader(
 
 pub fn test_context() -> &'static TestContext {
     TEST_CONTEXT.get_or_init(|| {
+        // Load environment from .env file first if it exists
+        load_env_file();
+        
         let mut server_url = parse_test_arg("--url")
             .or_else(|| std::env::var("KALAMDB_SERVER_URL").ok())
             .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());

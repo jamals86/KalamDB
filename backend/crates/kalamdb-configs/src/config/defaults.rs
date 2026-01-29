@@ -387,3 +387,12 @@ pub fn default_file_staging_path() -> String {
 pub fn default_file_allowed_mime_types() -> Vec<String> {
     vec![] // Empty = allow all
 }
+
+// Remote storage timeout defaults (S3, GCS, Azure)
+pub fn default_remote_request_timeout() -> u64 {
+    60 // 60 seconds for all remote storage operations (unified timeout)
+}
+
+pub fn default_remote_connect_timeout() -> u64 {
+    10 // 10 seconds for connection establishment
+}

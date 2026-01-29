@@ -190,13 +190,7 @@ fn create_namespace(ns: &str) {
 fn smoke_subscription_multi_batch_initial_data() {
     if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
-                                    // Generate unique subscription ID
-                                    let client = KalamLinkClient::builder()
-                                        .base_url(&base_url)
-                                        .auth(auth_provider_for_user_on_url(&base_url, "root", root_password()))
-                                        .timeouts(KalamLinkTimeouts::fast())
-                                        .build()
-                                        .expect("Failed to create client");
+        return;
     }
 
     let namespace = generate_unique_namespace("smoke_ns");

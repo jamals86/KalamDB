@@ -42,6 +42,7 @@ export interface SchemaNode {
   dataType?: string;
   isNullable?: boolean;
   isPrimaryKey?: boolean;
+  comment?: string; // Table or column comment for tooltip
   children?: SchemaNode[];
   isExpanded?: boolean;
 }

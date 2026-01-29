@@ -160,7 +160,7 @@ impl LazySystemSchemaProvider {
             return Some(Arc::clone(&*provider));
         }
 
-        log::info!("get_or_create_view('{}') not in cache, creating new view...", name);
+        log::debug!("get_or_create_view('{}') not in cache, creating new view...", name);
 
         // Create provider based on view name
         let (table, provider): (SystemTable, Arc<dyn TableProvider>) = match SystemTable::from_name(name).ok()? {
@@ -213,7 +213,7 @@ impl LazySystemSchemaProvider {
         let secured: Arc<dyn TableProvider> = secure_provider(provider, table.table_id());
         self.view_cache.insert(name.to_string(), Arc::clone(&secured));
         
-        log::debug!("LazySystemSchemaProvider: Created and cached view '{}'", name);
+        //log::debug!("LazySystemSchemaProvider: Created and cached view '{}'", name);
         Some(secured)
     }
 }
@@ -226,31 +226,31 @@ impl SchemaProvider for LazySystemSchemaProvider {
 
     fn table_names(&self) -> Vec<String> {
         let names = Self::known_table_names();
-        log::info!("LazySystemSchemaProvider::table_names() returning {} tables", names.len());
+        //log::info!("LazySystemSchemaProvider::table_names() returning {} tables", names.len());
         names
     }
 
     fn table_exist(&self, name: &str) -> bool {
         let exists = Self::known_table_names().contains(&name.to_string());
-        log::debug!("LazySystemSchemaProvider::table_exist('{}') = {}", name, exists);
+        //log::debug!("LazySystemSchemaProvider::table_exist('{}') = {}", name, exists);
         exists
     }
 
     async fn table(&self, name: &str) -> DataFusionResult<Option<Arc<dyn TableProvider>>> {
-        log::info!("LazySystemSchemaProvider::table() called for '{}'", name);
+        //log::info!("LazySystemSchemaProvider::table() called for '{}'", name);
         
         // Fast path: persisted tables (already created in SystemTablesRegistry)
         if let Some(provider) = self.get_persisted_table(name) {
-            log::info!("LazySystemSchemaProvider: Found persisted table '{}'", name);
+            //log::info!("LazySystemSchemaProvider: Found persisted table '{}'", name);
             return Ok(Some(provider));
         }
 
         // Lazy path: virtual views (create on demand, cache for subsequent access)
         let result = self.get_or_create_view(name);
         if result.is_some() {
-            log::info!("LazySystemSchemaProvider: Successfully created/cached view '{}'", name);
+            //log::info!("LazySystemSchemaProvider: Successfully created/cached view '{}'", name);
         } else {
-            log::warn!("LazySystemSchemaProvider: Failed to create view '{}' - returning None", name);
+            //log::warn!("LazySystemSchemaProvider: Failed to create view '{}' - returning None", name);
         }
         Ok(result)
     }

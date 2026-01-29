@@ -1,10 +1,14 @@
 import { useEffect } from 'react';
 import { useSettings, Setting } from '@/hooks/useSettings';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2, RefreshCw, Settings as SettingsIcon } from 'lucide-react';
 
-export function SettingsView() {
+interface SettingsViewProps {
+  filterCategory?: string;
+}
+
+export function SettingsView({ filterCategory }: SettingsViewProps) {
   const { groupedSettings, isLoading, error, fetchSettings } = useSettings();
 
   useEffect(() => {
@@ -32,29 +36,31 @@ export function SettingsView() {
     );
   }
 
-  const categories = Object.keys(groupedSettings);
+  // Filter categories if specified
+  const categories = filterCategory 
+    ? Object.keys(groupedSettings).filter(cat => 
+        cat.toLowerCase().includes(filterCategory.toLowerCase())
+      )
+    : Object.keys(groupedSettings);
 
   if (categories.length === 0) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>No Settings Available</CardTitle>
-          <CardDescription>
-            Configuration settings are not available at this time.
-          </CardDescription>
-        </CardHeader>
-      </Card>
+      <div className="text-muted-foreground text-sm py-4">
+        No settings available for this category.
+      </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Toolbar */}
+      {/* Toolbar - only show for full view */}
+      {!filterCategory && (
       <div className="flex items-center justify-end">
         <Button variant="outline" size="icon" onClick={fetchSettings} disabled={isLoading}>
           <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
         </Button>
       </div>
+      )}
 
       {/* Settings by Category */}
       {categories.map((category) => (
