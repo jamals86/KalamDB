@@ -16,6 +16,7 @@ use reqwest::Client;
 use serde_json::Value;
 
 /// Test that all KalamDataTypes are preserved correctly in query results
+#[ntest::timeout(6000)]
 #[tokio::test]
 async fn test_all_kalam_datatypes_are_preserved() {
     let ctx = test_context();
@@ -162,6 +163,7 @@ async fn test_all_kalam_datatypes_are_preserved() {
 }
 
 /// Test that system.schemas also shows correct data types in the columns JSON
+#[ntest::timeout(4500)]
 #[tokio::test]
 async fn test_system_tables_shows_correct_datatypes() {
     let ctx = test_context();
