@@ -1278,11 +1278,11 @@ after that we can add a button in ui for checking storage health
 
 145) Check that whenever the server starts it reads the server.toml into a global object and can be accessable anywhere in the codebase for example there is a code now custom for reading from kalamdb-filestore, it will be better to allocate them one time only
 
-147) Make sure filestore is done without blocking the main thread, use spawn_blocking where needed
-
 148) remove  storage_base_path: String, from AppContext init since we already pass the config there, so we end up passing the same thing twice
 
-149) 
+149) Add http/webdav storage which object_Store already supports it, in both the backend and the ui
+
+
 
 
 
