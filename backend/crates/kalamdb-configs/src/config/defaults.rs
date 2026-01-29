@@ -355,7 +355,7 @@ pub fn default_rocksdb_max_open_files() -> i32 {
 }
 
 pub fn default_rocksdb_compact_on_startup() -> bool {
-    true // Compact all column families on startup to reduce file count
+    false // Compact all column families on startup to reduce file count
 }
 
 // Security defaults

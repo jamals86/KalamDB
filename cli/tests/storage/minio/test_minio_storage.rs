@@ -215,7 +215,7 @@ fn test_minio_storage_end_to_end() {
     println!("✅ SHARED table files verified (manifest.json + Parquet)");
 
     println!("\n🧹 Step 17: Cleaning up test resources...");
-    // cleanup_minio_resources(&namespace, &user_table, &shared_table, &storage_id);
+    cleanup_minio_resources(&namespace, &user_table, &shared_table, &storage_id);
     println!("✅ Cleanup complete");
 
     println!("\n🎉 MinIO storage integration test PASSED!");

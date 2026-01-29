@@ -164,8 +164,7 @@ async fn main() -> Result<()> {
     )?;
 
     // Display enhanced version information
-    info!("KalamDB Server v{:<37}", SERVER_VERSION);
-    info!("Build date: {}", BUILD_DATE);
+    info!("KalamDB Server v{:<10} | Build: {}", SERVER_VERSION, BUILD_DATE);
 
     // Build application state and kick off background services
     let (components, app_context) = bootstrap(&config).await?;
