@@ -89,6 +89,13 @@ impl StorageCached {
         }
     }
 
+    /// Create a new StorageCached with default timeouts.
+    /// 
+    /// Convenience method that uses RemoteStorageTimeouts::default().
+    pub fn with_default_timeouts(storage: Storage) -> Self {
+        Self::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default())
+    }
+
     // ========== Path Resolution Methods ==========
 
     /// Get the appropriate template for a table type.
@@ -937,7 +944,7 @@ mod tests {
 
     #[test]
     fn test_get_relative_path_shared() {
-        let cached = StorageCached::new(create_test_storage());
+        let cached = StorageCached::with_default_timeouts(create_test_storage());
         let table_id = make_table_id("myns", "mytable");
 
         let result = cached.get_relative_path(TableType::Shared, &table_id, None);
@@ -995,7 +1002,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("test", "data");
         let content = Bytes::from("Hello, KalamDB!");
@@ -1024,7 +1031,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         // Write multiple files
         let table_id1 = make_table_id("namespace1", "table1");
@@ -1078,7 +1085,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("test", "metadata");
         let content = Bytes::from("Some content for metadata test");
@@ -1113,7 +1120,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("test", "delete");
         let content = Bytes::from("Delete this");
@@ -1157,7 +1164,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("ns", "table");
 
@@ -1198,7 +1205,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage);
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("exists", "test");
 
@@ -1235,7 +1242,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("test", "overwrite");
 
@@ -1283,7 +1290,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("nonexistent", "table");
 
@@ -1300,7 +1307,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("test", "large");
 
@@ -1342,7 +1349,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("a", "b");
 
@@ -1373,7 +1380,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("test", "empty");
         let empty = Bytes::new();
@@ -1405,7 +1412,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("empty", "prefix");
 
@@ -1425,7 +1432,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("nonexistent", "table");
 
@@ -1444,7 +1451,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("test", "binary");
 
@@ -1478,7 +1485,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("test", "rename");
         let content = Bytes::from("rename test content");
@@ -1533,7 +1540,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage);
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("test", "rename");
         let content = Bytes::from("cross-directory rename");
@@ -1577,7 +1584,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("ns", "table");
 
@@ -1636,7 +1643,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage);
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("large", "file");
 
@@ -1684,7 +1691,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage();
-        let cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
+        let cached = StorageCached::with_default_timeouts(storage);
 
         let table_id = make_table_id("myns", "mytable");
 

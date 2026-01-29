@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
-const MINIO_ENDPOINT: &str = "http://localhost:9009";
+const MINIO_ENDPOINT: &str = "http://localhost:9120";
 const MINIO_ACCESS_KEY: &str = "minioadmin";
 const MINIO_SECRET_KEY: &str = "minioadmin";
 const MINIO_BUCKET: &str = "kalamdb-test";

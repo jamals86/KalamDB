@@ -11,8 +11,8 @@ services:
       wait
       "
     ports:
-      - "9009:9000"  # S3 API
-      - "9010:9001"  # Web console
+      - "9120:9000"  # S3 API
+      - "9121:9001"  # Web console
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
