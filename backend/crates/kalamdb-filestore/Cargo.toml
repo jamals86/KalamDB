@@ -41,6 +41,9 @@ log = { workspace = true }
 # Time handling
 chrono = { workspace = true }
 
+# Random number generation (for health check test files)
+rand = { workspace = true }
+
 # UUID generation
 uuid = { workspace = true }
 

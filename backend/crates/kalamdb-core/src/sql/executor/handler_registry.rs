@@ -34,7 +34,7 @@ use crate::sql::executor::handlers::namespace::{
     UseNamespaceHandler,
 };
 use crate::sql::executor::handlers::storage::{
-    AlterStorageHandler, CreateStorageHandler, DropStorageHandler, ShowStoragesHandler,
+    AlterStorageHandler, CheckStorageHandler, CreateStorageHandler, DropStorageHandler, ShowStoragesHandler,
 };
 use crate::sql::executor::handlers::subscription::SubscribeHandler;
 use crate::sql::executor::handlers::system::ShowManifestCacheHandler;
@@ -239,6 +239,18 @@ impl HandlerRegistry {
             ShowStoragesHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {
                 SqlStatementKind::ShowStorages(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        registry.register_typed(
+            SqlStatementKind::CheckStorage(kalamdb_sql::ddl::CheckStorageStatement {
+                storage_id: kalamdb_commons::StorageId::from(""),
+                extended: false,
+            }),
+            CheckStorageHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::CheckStorage(s) => Some(s.clone()),
                 _ => None,
             },
         );

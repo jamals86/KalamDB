@@ -5,14 +5,10 @@ import SetupWizard from "./pages/SetupWizard";
 import Dashboard from "./pages/Dashboard";
 import SqlStudio from "./pages/SqlStudio";
 import Users from "./pages/Users";
-import Storages from "./pages/Storages";
 import Namespaces from "./pages/Namespaces";
-import Jobs from "./pages/Jobs";
 import LiveQueries from "./pages/LiveQueries";
-import AuditLogs from "./pages/AuditLogs";
-import ServerLogs from "./pages/ServerLogs";
+import Logging from "./pages/Logging";
 import Settings from "./pages/Settings";
-import Cluster from "./pages/Cluster";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import SetupGuard from "./components/auth/SetupGuard";
 import Layout from "./components/layout/Layout";
@@ -37,14 +33,12 @@ function App() {
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="sql" element={<SqlStudio />} />
               <Route path="users" element={<Users />} />
-              <Route path="storages" element={<Storages />} />
               <Route path="namespaces" element={<Namespaces />} />
-              <Route path="jobs" element={<Jobs />} />
               <Route path="live-queries" element={<LiveQueries />} />
-              <Route path="cluster" element={<Cluster />} />
-              <Route path="audit-logs" element={<AuditLogs />} />
-              <Route path="server-logs" element={<ServerLogs />} />
+              <Route path="logging" element={<Logging />} />
+              <Route path="logging/:tab" element={<Logging />} />
               <Route path="settings" element={<Settings />} />
+              <Route path="settings/:category" element={<Settings />} />
             </Route>
           </Routes>
         </SetupGuard>

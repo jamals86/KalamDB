@@ -223,6 +223,9 @@ impl From<kalamdb_filestore::FilestoreError> for KalamDbError {
             },
             kalamdb_filestore::FilestoreError::NotFound(msg) => KalamDbError::NotFound(msg),
             kalamdb_filestore::FilestoreError::Other(msg) => KalamDbError::Other(msg),
+            kalamdb_filestore::FilestoreError::HealthCheckFailed(msg) => {
+                KalamDbError::Other(format!("Storage health check failed: {}", msg))
+            },
         }
     }
 }

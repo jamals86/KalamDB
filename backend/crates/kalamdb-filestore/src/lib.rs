@@ -26,6 +26,7 @@
 mod core;
 pub mod error;
 pub mod files;
+pub mod health;
 pub mod manifest;
 pub mod parquet;
 pub mod paths;
@@ -53,3 +54,6 @@ pub use parquet_storage_writer::{
 
 // Storage registry re-exports
 pub use registry::{StorageCached, StorageRegistry};
+
+// Health check re-exports
+pub use health::{ConnectivityTestResult, HealthStatus, StorageHealthResult, StorageHealthService};

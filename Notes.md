@@ -1275,6 +1275,13 @@ Also scan all the code for auth/sessions and api and check if we have any other 
 
 143) Support multiple statements running and in each statement run a separate command
 
+144) Whenever we create a new storage or alter a storage we do a connection check before creating the storage and only return success or failed if only the test passes and also the creation passes test: create dir/upload file/list file/remove file if any of those failed then we fail the creation of the storage and return an error and revert the change
+this should be done for both create and alter as well
+make this test as a separate service which you give it a storage object and it will check the connectivity
+we will be needing to add another storage command which check the storage health and this will return information of this storage if they are available like: total/used size and other things we can gather of that storage
+after that we can add a button in ui for checking storage health
+
+
 
 
 
@@ -1294,4 +1301,6 @@ Main Epics:
 7) Change the code to use FlatBuffers for: Raft/RocksDb storage
 8) Add page for Server Initial Setup
 9) Check S3/WebDAV Storages
+10) Move permissions to Shared tables with policies
+
 

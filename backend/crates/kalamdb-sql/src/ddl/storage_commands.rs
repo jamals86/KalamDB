@@ -338,6 +338,61 @@ impl ShowStoragesStatement {
     }
 }
 
+/// STORAGE CHECK command
+///
+/// Syntax:
+/// ```sql
+/// STORAGE CHECK storage_id;            -- Basic connectivity check
+/// STORAGE CHECK storage_id EXTENDED;   -- Extended check with size info
+/// ```
+///
+/// Example:
+/// ```sql
+/// STORAGE CHECK local;
+/// STORAGE CHECK s3_prod EXTENDED;
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CheckStorageStatement {
+    /// Storage identifier to check
+    pub storage_id: StorageId,
+
+    /// If true, perform extended check with size information
+    pub extended: bool,
+}
+
+impl CheckStorageStatement {
+    /// Parse STORAGE CHECK from SQL
+    pub fn parse(sql: &str) -> Result<Self, String> {
+        use crate::parser::utils::normalize_sql;
+
+        let normalized = normalize_sql(sql);
+        let sql_upper = normalized.to_uppercase();
+
+        if !sql_upper.starts_with("STORAGE CHECK") {
+            return Err("SQL must start with STORAGE CHECK".to_string());
+        }
+
+        let tokens: Vec<&str> = normalized.split_whitespace().collect();
+        if tokens.len() < 3 {
+            return Err("Expected storage identifier after STORAGE CHECK".to_string());
+        }
+
+        // Extract storage_id (third token, after STORAGE CHECK)
+        let storage_id = tokens[2].trim_end_matches(';').to_string();
+
+        // Check for EXTENDED flag
+        let extended = tokens
+            .get(3)
+            .map(|t| t.trim_end_matches(';').eq_ignore_ascii_case("EXTENDED"))
+            .unwrap_or(false);
+
+        Ok(CheckStorageStatement {
+            storage_id: StorageId::from(storage_id.as_str()),
+            extended,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,5 +538,21 @@ mod tests {
         let sql = "SHOW STORAGES";
         let stmt = ShowStoragesStatement::parse(sql).unwrap();
         assert!(matches!(stmt, ShowStoragesStatement));
+    }
+
+    #[test]
+    fn test_storage_check_basic() {
+        let sql = "STORAGE CHECK local";
+        let stmt = CheckStorageStatement::parse(sql).unwrap();
+        assert_eq!(stmt.storage_id.as_str(), "local");
+        assert!(!stmt.extended);
+    }
+
+    #[test]
+    fn test_storage_check_extended() {
+        let sql = "STORAGE CHECK my_s3_storage EXTENDED;";
+        let stmt = CheckStorageStatement::parse(sql).unwrap();
+        assert_eq!(stmt.storage_id.as_str(), "my_s3_storage");
+        assert!(stmt.extended);
     }
 }
