@@ -97,7 +97,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = make_table_id();
         let test_json = r#"{\"version\":1,\"segments\":[]}"#;
 
@@ -121,7 +121,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = make_table_id();
 
         // Check doesn't exist initially
@@ -151,7 +151,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = TableId::from_strings("ns1", "ns2");
 
         // Deep nested path
@@ -182,7 +182,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = TableId::from_strings("nonexistent", "table");
 
         let result = read_manifest_json(&storage_cached, TableType::Shared, &table_id, None);
@@ -199,7 +199,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = make_table_id();
 
         // JSON with unicode, escapes, etc.
@@ -222,7 +222,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = make_table_id();
 
         // Write first version
@@ -251,7 +251,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = make_table_id();
         let empty_json = "{}";
 
@@ -272,7 +272,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = make_table_id();
 
         // Generate large JSON with many segments

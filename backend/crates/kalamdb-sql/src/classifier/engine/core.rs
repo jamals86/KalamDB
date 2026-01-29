@@ -368,6 +368,17 @@ impl SqlStatement {
             ["STORAGE", "COMPACT", "TABLE", ..] => Self::wrap(sql, || {
                 CompactTableStatement::parse(sql).map(SqlStatementKind::CompactTable)
             }),
+            ["STORAGE", "CHECK", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for storage operations"
+                            .to_string(),
+                    ));
+                }
+                Self::wrap(sql, || {
+                    CheckStorageStatement::parse(sql).map(SqlStatementKind::CheckStorage)
+                })
+            },
             ["SHOW", "MANIFEST"] => {
                 // SHOW MANIFEST command for inspecting manifest cache
                 Self::wrap(sql, || {
@@ -747,6 +758,7 @@ impl SqlStatement {
             SqlStatementKind::ShowNamespaces(_)
             | SqlStatementKind::ShowTables(_)
             | SqlStatementKind::ShowStorages(_)
+            | SqlStatementKind::CheckStorage(_)
             | SqlStatementKind::ShowStats(_)
             | SqlStatementKind::ShowManifest(_)
             | SqlStatementKind::DescribeTable(_)

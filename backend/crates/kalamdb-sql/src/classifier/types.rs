@@ -67,6 +67,8 @@ pub enum SqlStatementKind {
     DropStorage(DropStorageStatement),
     /// SHOW STORAGES
     ShowStorages(ShowStoragesStatement),
+    /// STORAGE CHECK <name> [EXTENDED]
+    CheckStorage(CheckStorageStatement),
 
     // ===== Table Operations =====
     /// CREATE [USER|SHARED|STREAM] TABLE ...
@@ -238,6 +240,7 @@ impl SqlStatement {
             SqlStatementKind::Select
             | SqlStatementKind::ShowNamespaces(_)
             | SqlStatementKind::ShowStorages(_)
+            | SqlStatementKind::CheckStorage(_)
             | SqlStatementKind::ShowTables(_)
             | SqlStatementKind::DescribeTable(_)
             | SqlStatementKind::ShowStats(_)
@@ -301,6 +304,7 @@ impl SqlStatement {
             SqlStatementKind::AlterStorage(_) => "ALTER STORAGE",
             SqlStatementKind::DropStorage(_) => "DROP STORAGE",
             SqlStatementKind::ShowStorages(_) => "SHOW STORAGES",
+            SqlStatementKind::CheckStorage(_) => "STORAGE CHECK",
             SqlStatementKind::CreateTable(_) => "CREATE TABLE",
             SqlStatementKind::CreateView(_) => "CREATE VIEW",
             SqlStatementKind::AlterTable(_) => "ALTER TABLE",

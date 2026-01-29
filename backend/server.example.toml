@@ -47,6 +47,15 @@ data_path = "./data"
 shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
+# Remote storage timeout settings (S3, GCS, Azure)
+# These timeouts apply programmatically to all remote storage operations
+[storage.remote_timeouts]
+# Request timeout in seconds for all remote storage operations (default: 60s)
+request_timeout_secs = 60
+# Connect timeout in seconds for establishing connections (default: 10s)
+connect_timeout_secs = 10
+
+
 [storage.rocksdb]
 # Write buffer size per column family in bytes (default: 2MB)
 # MEMORY OPTIMIZATION: Reduced from 64MB for lower idle memory footprint

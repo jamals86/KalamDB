@@ -210,7 +210,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = TableId::from_strings("test", "data");
 
         // Write a test parquet file
@@ -249,7 +249,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = TableId::from_strings("test", "schema");
 
         // Write a test parquet file
@@ -289,7 +289,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = TableId::from_strings("test", "empty");
 
         // Create empty batch (0 rows)
@@ -342,7 +342,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = TableId::from_strings("test", "multi");
 
         // Create multiple batches
@@ -386,7 +386,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = TableId::from_strings("test", "types");
 
         // Schema with multiple data types
@@ -440,7 +440,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = TableId::from_strings("nonexistent", "file");
 
         let result = read_parquet_batches_sync(
@@ -463,7 +463,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = TableId::from_strings("test", "nulls");
 
         let schema = schema(vec![
@@ -518,7 +518,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = TableId::from_strings("test", "large");
 
         // Create a large batch (10K rows)

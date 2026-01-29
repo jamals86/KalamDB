@@ -12,6 +12,12 @@ import {
 import { cn } from "@/lib/utils";
 import { getDataTypeColor } from "@/lib/config";
 import { useDataTypes } from "@/hooks/useDataTypes";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { SchemaNode } from "../types";
 
 interface TreeItemProps {
@@ -37,7 +43,33 @@ export function TreeItem({
   const currentPath = [...path, node.name];
   const isExpanded = node.isExpanded;
 
-  return (
+  // Build tooltip content
+  const getTooltipContent = () => {
+    if (node.comment) {
+      return node.comment;
+    }
+    // Default tooltip based on type
+    if (node.type === "table") {
+      const typeLabel = node.tableType ? `${node.tableType} table` : "table";
+      const columnCount = node.children?.length || 0;
+      return `${typeLabel} with ${columnCount} column${columnCount !== 1 ? "s" : ""}`;
+    }
+    if (node.type === "column" && node.dataType) {
+      let tooltip = `Type: ${toSqlType(node.dataType)}`;
+      if (node.isPrimaryKey) tooltip += " (Primary Key)";
+      if (node.isNullable === false) tooltip += " NOT NULL";
+      return tooltip;
+    }
+    if (node.type === "namespace") {
+      const tableCount = node.children?.length || 0;
+      return `Namespace with ${tableCount} table${tableCount !== 1 ? "s" : ""}`;
+    }
+    return null;
+  };
+
+  const tooltipContent = getTooltipContent();
+
+  const itemContent = (
     <div key={currentPath.join(".")} className="select-none">
       <div
         className={cn(
@@ -139,4 +171,22 @@ export function TreeItem({
       )}
     </div>
   );
+
+  // Wrap with tooltip if we have content
+  if (tooltipContent) {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {itemContent}
+          </TooltipTrigger>
+          <TooltipContent side="right" className="max-w-xs">
+            <p className="text-xs">{tooltipContent}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
+  return itemContent;
 }

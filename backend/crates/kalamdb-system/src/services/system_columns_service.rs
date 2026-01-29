@@ -135,7 +135,7 @@ impl SystemColumnsService {
             is_partition_key: false,
             default_value: ColumnDefault::None,
             column_comment: Some(
-                "System-generated Snowflake-based version ID (MVCC) with embedded timestamp"
+                "Version ID (MVCC) with embedded timestamp"
                     .to_string(),
             ),
         });
@@ -152,7 +152,7 @@ impl SystemColumnsService {
             is_primary_key: false,
             is_partition_key: false,
             default_value: ColumnDefault::Literal(serde_json::json!(false)),
-            column_comment: Some("Soft delete flag (true = deleted, false = active)".to_string()),
+            column_comment: Some("Soft delete flag".to_string()),
         });
         table_def.next_column_id += 1;
 

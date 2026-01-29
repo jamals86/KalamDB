@@ -54,7 +54,7 @@ pub use compatibility::{
     ErrorStyle,
 };
 pub use ddl::{
-    parse_job_command, AlterStorageStatement, CompactAllTablesStatement, CompactTableStatement,
+    parse_job_command, AlterStorageStatement, CheckStorageStatement, CompactAllTablesStatement, CompactTableStatement,
     CreateStorageStatement, DropStorageStatement, FlushAllTablesStatement, FlushTableStatement,
     JobCommand, ShowManifestStatement, ShowStoragesStatement, SubscribeStatement,
     SubscriptionOptions,

@@ -8,6 +8,7 @@ use crate::error::{FilestoreError, Result};
 use crate::registry::storage_cached::StorageCached;
 use dashmap::DashMap;
 use kalamdb_commons::models::StorageId;
+use kalamdb_configs::config::types::RemoteStorageTimeouts;
 use kalamdb_system::Storage;
 use kalamdb_system::StoragesTableProvider;
 use std::sync::Arc;
@@ -25,6 +26,8 @@ pub struct StorageRegistry {
     /// Default base path for local filesystem storage when base_directory is empty
     /// Comes from server config: storage.default_storage_path (e.g., "/data/storage")
     _default_storage_path: String,
+    /// Remote storage timeout configuration
+    timeouts: RemoteStorageTimeouts,
     /// In-memory cache for StorageCached objects keyed by StorageId
     /// Avoids repeated RocksDB lookups and ensures one ObjectStore per storage
     /// (not one per table - 100 tables using same storage = 1 ObjectStore)
@@ -36,6 +39,7 @@ impl StorageRegistry {
     pub fn new(
         storages_provider: Arc<StoragesTableProvider>,
         default_storage_path: String,
+        timeouts: RemoteStorageTimeouts,
     ) -> Self {
         use std::path::{Path, PathBuf};
         // Normalize default path: if relative, resolve against current working directory
@@ -51,6 +55,7 @@ impl StorageRegistry {
         Self {
             storages_provider,
             _default_storage_path: normalized,
+            timeouts,
             cache: DashMap::new(),
         }
     }
@@ -80,7 +85,7 @@ impl StorageRegistry {
             .map_err(|e| FilestoreError::StorageError(e.to_string()))?;
 
         if let Some(s) = storage {
-            let cached = Arc::new(StorageCached::new(s));
+            let cached = Arc::new(StorageCached::new(s, self.timeouts.clone()));
             self.cache.insert(storage_id.clone(), Arc::clone(&cached));
             Ok(Some(cached))
         } else {
@@ -423,6 +428,6 @@ mod tests {
             .join("storage")
             .to_string_lossy()
             .into_owned();
-        StorageRegistry::new(storages_provider, default_storage_path)
+        StorageRegistry::new(storages_provider, default_storage_path, kalamdb_configs::config::types::RemoteStorageTimeouts::default())
     }
 }

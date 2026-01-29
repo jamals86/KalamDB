@@ -3,15 +3,11 @@ import {
   LayoutDashboard,
   Terminal,
   Users,
-  HardDrive,
   FolderTree,
-  ScrollText,
   FileText,
   Settings,
   Database,
-  Cog,
   Wifi,
-  Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -19,14 +15,9 @@ const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "SQL Studio", href: "/sql", icon: Terminal },
   { name: "Users", href: "/users", icon: Users },
-  { name: "Storages", href: "/storages", icon: HardDrive },
   { name: "Namespaces", href: "/namespaces", icon: FolderTree },
-  { name: "Jobs", href: "/jobs", icon: Cog },
   { name: "Live Queries", href: "/live-queries", icon: Wifi },
-  { name: "Cluster", href: "/cluster", icon: Network },
-  { name: "Audit Logs", href: "/audit-logs", icon: ScrollText },
-  { name: "Server Logs", href: "/server-logs", icon: FileText },
-  { name: "Settings", href: "/settings", icon: Settings },
+  { name: "Logging", href: "/logging", icon: FileText },
 ];
 
 export default function Sidebar() {
@@ -55,8 +46,22 @@ export default function Sidebar() {
           </NavLink>
         ))}
       </nav>
-      <div className="border-t p-4">
-        <div className="text-xs text-muted-foreground">
+      <div className="border-t p-4 space-y-2">
+        <NavLink
+          to="/settings"
+          className={({ isActive }) =>
+            cn(
+              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              isActive
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            )
+          }
+        >
+          <Settings className="h-5 w-5" />
+          Settings
+        </NavLink>
+        <div className="text-xs text-muted-foreground px-3">
           KalamDB Admin v0.1.0
         </div>
       </div>

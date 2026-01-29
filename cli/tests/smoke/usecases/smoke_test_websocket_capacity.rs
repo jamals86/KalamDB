@@ -1,5 +1,7 @@
 // Smoke test to stress WebSocket connection capacity and ensure HTTP API stays responsive
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use crate::common::*;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
@@ -226,7 +228,7 @@ async fn open_authenticated_connection(
         let auth_header = format!("Bearer {}", token);
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(auth_header)
+            HeaderValue::from_str(&auth_header)
                 .unwrap_or_else(|e| panic!("Invalid auth header value: {}", e)),
         );
         headers.insert(USER_AGENT, HeaderValue::from_static("kalam-smoke-websocket"));

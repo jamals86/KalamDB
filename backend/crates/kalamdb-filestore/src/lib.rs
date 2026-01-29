@@ -19,13 +19,14 @@
 //! use kalamdb_filestore::StorageCached;
 //!
 //! // Write/read files using StorageCached
-//! let cached = StorageCached::new(storage);
+//! let cached = StorageCached::with_default_timeouts(storage);
 //! let _ = cached.put_sync(table_type, &table_id, user_id, "file.parquet", data)?;
 //! ```
 
 mod core;
 pub mod error;
 pub mod files;
+pub mod health;
 pub mod manifest;
 pub mod parquet;
 pub mod paths;
@@ -53,3 +54,6 @@ pub use parquet_storage_writer::{
 
 // Storage registry re-exports
 pub use registry::{StorageCached, StorageRegistry};
+
+// Health check re-exports
+pub use health::{ConnectivityTestResult, HealthStatus, StorageHealthResult, StorageHealthService};

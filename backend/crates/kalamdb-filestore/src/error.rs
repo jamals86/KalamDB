@@ -47,6 +47,9 @@ pub enum FilestoreError {
 
     #[error("Other error: {0}")]
     Other(String),
+
+    #[error("Health check failed: {0}")]
+    HealthCheckFailed(String),
 }
 
 /// Result type for filestore operations

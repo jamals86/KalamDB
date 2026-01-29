@@ -60,7 +60,7 @@ fn test_bloom_filter_for_primary_key_column() {
     fs::create_dir_all(&temp_dir).unwrap();
 
     let storage = create_test_storage(&temp_dir);
-    let storage_cached = StorageCached::new(storage);
+    let storage_cached = StorageCached::with_default_timeouts(storage);
     let table_id = TableId::from_strings("test", "bloom_pk");
 
     // Schema with PRIMARY KEY column "id" + _seq system column
@@ -152,7 +152,7 @@ fn test_bloom_filter_for_composite_primary_key() {
     fs::create_dir_all(&temp_dir).unwrap();
 
     let storage = create_test_storage(&temp_dir);
-    let storage_cached = StorageCached::new(storage);
+    let storage_cached = StorageCached::with_default_timeouts(storage);
     let table_id = TableId::from_strings("test", "bloom_composite");
 
     // Schema with composite PRIMARY KEY (user_id, order_id) + _seq
@@ -263,7 +263,7 @@ fn test_bloom_filter_default_behavior() {
     fs::create_dir_all(&temp_dir).unwrap();
 
     let storage = create_test_storage(&temp_dir);
-    let storage_cached = StorageCached::new(storage);
+    let storage_cached = StorageCached::with_default_timeouts(storage);
     let table_id = TableId::from_strings("test", "bloom_default");
 
     // Schema with PRIMARY KEY + _seq
