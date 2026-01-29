@@ -110,7 +110,7 @@ impl RocksDbInit {
         // Compact all column families on startup if enabled
         // This reduces SST file count and prevents "Too many open files" errors
         if self.settings.compact_on_startup {
-            log::info!("Running startup compaction for {} column families...", cf_names.len());
+            log::debug!("Running startup compaction for {} column families...", cf_names.len());
             let start = std::time::Instant::now();
             for cf_name in &cf_names {
                 if let Some(cf) = db.cf_handle(cf_name) {

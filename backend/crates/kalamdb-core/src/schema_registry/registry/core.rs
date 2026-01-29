@@ -87,15 +87,15 @@ impl SchemaRegistry {
     ///
     /// This should be called once at system startup.
     pub fn initialize_tables(&self) -> Result<(), KalamDbError> {
-        log::info!("Initializing SchemaRegistry: Loading existing tables...");
-        
         // Scan all table definitions
         let all_defs = self.scan_all_table_definitions()?;
         
         if all_defs.is_empty() {
-             log::info!("No existing tables found.");
+             log::debug!("SchemaRegistry initialized: no existing tables found");
              return Ok(());
         }
+        
+        log::debug!("SchemaRegistry initialized: loading {} existing tables...", all_defs.len());
         
         let mut loaded_count = 0;
         let mut failed_count = 0;

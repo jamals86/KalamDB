@@ -1,5 +1,5 @@
 use crate::common::*;
-use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
+use kalam_link::{KalamLinkClient, KalamLinkTimeouts};
 use std::time::Duration;
 
 const MAX_SQL_QUERY_LENGTH: usize = 1024 * 1024;

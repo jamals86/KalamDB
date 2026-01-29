@@ -300,7 +300,7 @@ impl RaftManager {
             return Ok(());
         }
 
-        log::info!(
+        log::debug!(
             "Starting Raft Cluster: node={} rpc={} api={}",
             self.node_id,
             self.config.rpc_addr,

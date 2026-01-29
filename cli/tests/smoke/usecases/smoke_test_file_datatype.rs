@@ -15,8 +15,8 @@ use crate::common::{
 use reqwest::Client;
 use serde_json::Value;
 
-#[ntest::timeout(3500)]
 #[tokio::test]
+#[ntest::timeout(3500)]
 async fn test_file_datatype_upload_and_download() {
     let ctx = test_context();
     let client = Client::new();
@@ -105,7 +105,7 @@ async fn test_file_datatype_upload_and_download() {
     let response_content_type = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
+        .and_then(|v: &reqwest::header::HeaderValue| v.to_str().ok())
         .unwrap_or("")
         .to_string();
     if !status.is_success() {
@@ -200,7 +200,7 @@ async fn test_file_datatype_upload_and_download() {
     let content_type = download_response
         .headers()
         .get("Content-Type")
-        .and_then(|v| v.to_str().ok())
+        .and_then(|v: &reqwest::header::HeaderValue| v.to_str().ok())
         .unwrap_or("");
     assert!(
         content_type.starts_with("text/plain"),
@@ -211,7 +211,7 @@ async fn test_file_datatype_upload_and_download() {
     let content_disposition = download_response
         .headers()
         .get("Content-Disposition")
-        .and_then(|v| v.to_str().ok())
+        .and_then(|v: &reqwest::header::HeaderValue| v.to_str().ok())
         .unwrap_or("");
     assert!(
         content_disposition.contains(&stored_name),

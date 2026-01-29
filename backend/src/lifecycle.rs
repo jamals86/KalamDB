@@ -472,11 +472,11 @@ pub async fn run(
     main_start: std::time::Instant,
 ) -> Result<()> {
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
-    info!("Starting HTTP server on {}", bind_addr);
+    debug!("Starting HTTP server on {}", bind_addr);
     debug!("Endpoints: POST /v1/api/sql, GET /v1/ws");
 
     // Log server configuration for debugging
-    info!(
+    debug!(
         "Server config: workers={}, max_connections={}, backlog={}, blocking_threads={}, body_limit={}MB",
         if config.server.workers == 0 {
             num_cpus::get()
@@ -531,13 +531,14 @@ pub async fn run(
     let ui_path = config.server.ui_path.clone();
 
     // Log UI serving status
-    if kalamdb_api::routes::is_embedded_ui_available() {
-        info!("Admin UI enabled at /ui (embedded in binary)");
-    } else if let Some(ref path) = ui_path {
-        info!("Admin UI enabled at /ui (serving from filesystem: {})", path);
+    let ui_status = if kalamdb_api::routes::is_embedded_ui_available() {
+        "embedded in binary"
+    } else if let Some(ref _path) = ui_path {
+        "filesystem"
     } else {
-        info!("Admin UI not available (run 'npm run build' in ui/ and rebuild server)");
-    }
+        "disabled"
+    };
+    debug!("Admin UI: {} (at /ui)", ui_status);
 
     let server = HttpServer::new(move || {
         let mut app = App::new()
@@ -572,15 +573,26 @@ pub async fn run(
     .backlog(config.performance.backlog);
 
     // Bind with HTTP/2 support if enabled, otherwise use HTTP/1.1 only
+    let http_version = if config.server.enable_http2 {
+        "HTTP/2"
+    } else {
+        "HTTP/1.1"
+    };
     let server = if config.server.enable_http2 {
-        info!("HTTP/2 support enabled (h2c - HTTP/2 cleartext)");
+        debug!("HTTP/2 support enabled (h2c - HTTP/2 cleartext)");
         server.bind_auto_h2c(&bind_addr)?
     } else {
         debug!("HTTP/1.1 only mode");
         server.bind(&bind_addr)?
     };
 
-    info!("🚀 Server started in {:.2}ms", main_start.elapsed().as_secs_f64() * 1000.0);
+    info!(
+        "🚀 Server started in {:.2}ms ({} on {} | UI: {})",
+        main_start.elapsed().as_secs_f64() * 1000.0,
+        http_version,
+        bind_addr,
+        ui_status
+    );
 
     let server = server
     .workers(if config.server.workers == 0 {
