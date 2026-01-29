@@ -1266,12 +1266,6 @@ and then make sure we have a test for it as well
 
 140) Make sure we have default namespace whenever we setup the system, and make sure its used by default unless the user changed it using user namespace for that session
 
-142) Search these files and make them type-safe and also remove duplicates and use one file for checking permissions:
-backend/crates/kalamdb-auth/src/authorization/roles.rs
-backend/crates/kalamdb-auth/src/authorization/rbac.rs
-backend/crates/kalamdb-session/src/rbac.rs
-backend/crates/kalamdb-session/src/permissions.rs
-Also scan all the code for auth/sessions and api and check if we have any other duplicates for permission checking and roles checking and combine them into one place, and clean the code rmeove any unused methods or dead code
 
 143) Support multiple statements running and in each statement run a separate command
 
@@ -1282,9 +1276,13 @@ we will be needing to add another storage command which check the storage health
 after that we can add a button in ui for checking storage health
 
 
+145) Check that whenever the server starts it reads the server.toml into a global object and can be accessable anywhere in the codebase for example there is a code now custom for reading from kalamdb-filestore, it will be better to allocate them one time only
 
+147) Make sure filestore is done without blocking the main thread, use spawn_blocking where needed
 
+148) remove  storage_base_path: String, from AppContext init since we already pass the config there, so we end up passing the same thing twice
 
+149) 
 
 
 

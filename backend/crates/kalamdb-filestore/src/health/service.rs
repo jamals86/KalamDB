@@ -30,8 +30,9 @@ impl StorageHealthService {
     pub async fn test_connectivity(storage: &Storage) -> Result<ConnectivityTestResult> {
         let start = Instant::now();
 
-        // Try to build ObjectStore
-        let store = match build_object_store(storage) {
+        // Try to build ObjectStore with default timeouts
+        let timeouts = kalamdb_configs::config::types::RemoteStorageTimeouts::default();
+        let store = match build_object_store(storage, &timeouts) {
             Ok(s) => s,
             Err(e) => {
                 return Ok(ConnectivityTestResult::failure(
@@ -67,8 +68,9 @@ impl StorageHealthService {
     pub async fn run_full_health_check(storage: &Storage) -> Result<StorageHealthResult> {
         let start = Instant::now();
 
-        // Build ObjectStore
-        let store = match build_object_store(storage) {
+        // Build ObjectStore with default timeouts
+        let timeouts = kalamdb_configs::config::types::RemoteStorageTimeouts::default();
+        let store = match build_object_store(storage, &timeouts) {
             Ok(s) => s,
             Err(e) => {
                 return Ok(StorageHealthResult::unreachable(

@@ -121,7 +121,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
         let table_id = make_table_id();
 
         // Check doesn't exist initially
@@ -151,7 +151,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
 
         let storage = create_test_storage(&temp_dir);
-        let storage_cached = StorageCached::new(storage);
+        let storage_cached = StorageCached::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default());
         let table_id = TableId::from_strings("ns1", "ns2");
 
         // Deep nested path

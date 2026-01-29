@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
-const MINIO_ENDPOINT: &str = "http://localhost:9010";
+const MINIO_ENDPOINT: &str = "http://localhost:9009";
 const MINIO_ACCESS_KEY: &str = "minioadmin";
 const MINIO_SECRET_KEY: &str = "minioadmin";
 const MINIO_BUCKET: &str = "kalamdb-test";
@@ -30,9 +30,25 @@ fn test_minio_storage_end_to_end() {
     if !is_server_running() {
         eprintln!("❌ Server not running. Skipping MinIO storage test.");
         eprintln!("   Please start the server first: cargo run");
-        return;
+        panic!("Server not running");
     }
     println!("✅ Server is running");
+
+    println!("\n🎯 Target backend:");
+    println!("   Server URL: {}", leader_or_server_url());
+    println!("   MinIO endpoint: {}", MINIO_ENDPOINT);
+    println!("   MinIO bucket: {}", MINIO_BUCKET);
+
+    let runtime = Runtime::new().expect("minio runtime");
+    println!("\n🔐 Step 0: Checking MinIO auth/connectivity...");
+    let probe_store = build_minio_store(&format!("s3://{}/", MINIO_BUCKET));
+    if let Err(err) = minio_bucket_reachable(&runtime, &probe_store) {
+        eprintln!("❌ MinIO auth/connectivity check failed: {}", err);
+        eprintln!("   Verify endpoint, access key, secret key, and bucket.");
+        //fail the test early
+        panic!("MinIO auth/connectivity check failed");
+    }
+    println!("✅ MinIO auth/connectivity check passed");
 
     let storage_id = generate_unique_namespace("minio_storage");
     let namespace = generate_unique_namespace("minio_ns");
@@ -164,11 +180,11 @@ fn test_minio_storage_end_to_end() {
     println!("   Root user ID: {}", root_user_id);
 
     println!("\n🔌 Step 13: Connecting to MinIO at {}...", MINIO_ENDPOINT);
-    let runtime = Runtime::new().expect("minio runtime");
     let store = build_minio_store(&storage_meta.base_directory);
 
-    if !minio_bucket_reachable(&runtime, &store) {
+    if let Err(err) = minio_bucket_reachable(&runtime, &store) {
         eprintln!("❌ MinIO bucket not reachable at {}", MINIO_ENDPOINT);
+        eprintln!("   Error: {}", err);
         eprintln!("   Please start MinIO: docker run -p 9010:9000 -p 9011:9001 \\");
         eprintln!("      -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \\");
         eprintln!("      minio/minio server /data --console-address :9001");
@@ -199,7 +215,7 @@ fn test_minio_storage_end_to_end() {
     println!("✅ SHARED table files verified (manifest.json + Parquet)");
 
     println!("\n🧹 Step 17: Cleaning up test resources...");
-    cleanup_minio_resources(&namespace, &user_table, &shared_table, &storage_id);
+    // cleanup_minio_resources(&namespace, &user_table, &shared_table, &storage_id);
     println!("✅ Cleanup complete");
 
     println!("\n🎉 MinIO storage integration test PASSED!");
@@ -389,20 +405,17 @@ fn parse_s3_base_directory(base_directory: &str) -> (String, String) {
     }
 }
 
-fn minio_bucket_reachable(runtime: &Runtime, store: &Arc<dyn ObjectStore>) -> bool {
-    runtime.block_on(async {
-        let list_path = ObjectPath::parse("").expect("minio list root");
-        let mut stream = store.list(Some(&list_path));
-        match stream.next().await {
-            Some(Ok(_)) | None => true,
-            Some(Err(err)) => {
-                let msg = err.to_string().to_lowercase();
-                !(msg.contains("connection refused")
-                    || msg.contains("econnrefused")
-                    || msg.contains("connection reset"))
+fn minio_bucket_reachable(runtime: &Runtime, store: &Arc<dyn ObjectStore>) -> Result<(), String> {
+    runtime
+        .block_on(async {
+            let list_path = ObjectPath::parse("").expect("minio list root");
+            let mut stream = store.list(Some(&list_path));
+            match stream.next().await {
+                Some(Ok(_)) | None => Ok(()),
+                Some(Err(err)) => Err(err.to_string()),
             }
-        }
-    })
+        })
+        .map_err(|err| err.to_string())
 }
 
 fn assert_minio_files(
@@ -422,6 +435,7 @@ fn assert_minio_files(
         context,
         manifest_path
     );
+    println!("   Found manifest: {}", manifest_path);
 
     let list_prefix = ObjectPath::parse(table_dir).expect("table dir object path");
     let parquet_found = runtime

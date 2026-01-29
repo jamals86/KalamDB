@@ -212,8 +212,11 @@ impl AppContext {
             let system_tables = Arc::new(SystemTablesRegistry::new(storage_backend.clone()));
 
             // Create storage registry (uses StoragesTableProvider from system_tables)
-            let storage_registry =
-                Arc::new(StorageRegistry::new(system_tables.storages(), storage_base_path));
+            let storage_registry = Arc::new(StorageRegistry::new(
+                system_tables.storages(),
+                storage_base_path,
+                config.storage.remote_timeouts.clone(),
+            ));
 
             // Create schema cache (Phase 10 unified cache)
             let schema_registry = Arc::new(SchemaRegistry::new(10000));
@@ -583,6 +586,7 @@ impl AppContext {
         let storage_registry = Arc::new(StorageRegistry::new(
             system_tables.storages(),
             "/tmp/kalamdb-test".to_string(),
+            kalamdb_configs::config::types::RemoteStorageTimeouts::default(),
         ));
 
         // Create minimal schema registry
