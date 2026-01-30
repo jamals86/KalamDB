@@ -4,9 +4,12 @@ use super::models::{ConnectivityTestResult, StorageHealthResult};
 use crate::core::factory::build_object_store;
 use crate::error::{FilestoreError, Result};
 use bytes::Bytes;
+use kalamdb_system::providers::storages::models::StorageType;
 use kalamdb_system::Storage;
 use object_store::path::Path as ObjectPath;
 use object_store::ObjectStore;
+use sysinfo::Disks;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -143,7 +146,7 @@ impl StorageHealthService {
         let latency_ms = start.elapsed().as_millis() as u64;
 
         // Determine overall status
-        let result = if readable && writable && listable && deletable {
+        let mut result = if readable && writable && listable && deletable {
             StorageHealthResult::healthy(latency_ms)
         } else if !writable && !readable && !listable {
             StorageHealthResult::unreachable(
@@ -160,6 +163,12 @@ impl StorageHealthService {
                 latency_ms,
             )
         };
+
+        if storage.storage_type == StorageType::Filesystem {
+            if let Some((total_bytes, used_bytes)) = Self::filesystem_capacity(storage) {
+                result = result.with_capacity(Some(total_bytes), Some(used_bytes));
+            }
+        }
 
         Ok(result)
     }
@@ -242,5 +251,38 @@ impl StorageHealthService {
         }
 
         Ok(())
+    }
+
+    fn filesystem_capacity(storage: &Storage) -> Option<(u64, u64)> {
+        let base = storage.base_directory.trim();
+        if base.is_empty() {
+            return None;
+        }
+
+        let base_path = Path::new(base);
+        let canonical = base_path
+            .canonicalize()
+            .unwrap_or_else(|_| base_path.to_path_buf());
+
+        let disks = Disks::new_with_refreshed_list();
+        let mut best: Option<&sysinfo::Disk> = None;
+        let mut best_len = 0usize;
+
+        for disk in disks.list() {
+            let mount = disk.mount_point();
+            if canonical.starts_with(mount) {
+                let mount_len = mount.as_os_str().len();
+                if mount_len >= best_len {
+                    best_len = mount_len;
+                    best = Some(disk);
+                }
+            }
+        }
+
+        best.map(|disk| {
+            let total = disk.total_space();
+            let used = total.saturating_sub(disk.available_space());
+            (total, used)
+        })
     }
 }

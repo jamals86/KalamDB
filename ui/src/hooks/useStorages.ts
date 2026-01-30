@@ -30,6 +30,20 @@ export interface UpdateStorageInput {
   user_tables_template?: string;
 }
 
+export interface StorageHealthResult {
+  storage_id: string;
+  status: 'healthy' | 'degraded' | 'unreachable';
+  readable: boolean;
+  writable: boolean;
+  listable: boolean;
+  deletable: boolean;
+  latency_ms: number;
+  total_bytes: number | null;
+  used_bytes: number | null;
+  error: string | null;
+  tested_at: number | null;
+}
+
 export function useStorages() {
   const [storages, setStorages] = useState<Storage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -137,6 +151,43 @@ export function useStorages() {
     }
   }, [fetchStorages]);
 
+  const checkStorageHealth = useCallback(async (storageId: string, extended = true) => {
+    setError(null);
+    try {
+      const sql = extended
+        ? `STORAGE CHECK ${storageId} EXTENDED`
+        : `STORAGE CHECK ${storageId}`;
+      const rows = await executeSql(sql);
+      if (!rows || rows.length === 0) {
+        throw new Error('No health check result returned');
+      }
+
+      const row = rows[0];
+      const toBool = (value: unknown): boolean =>
+        value === true || value === 'true' || value === 1 || value === '1';
+      const toNumber = (value: unknown): number | null =>
+        value === null || value === undefined ? null : Number(value);
+
+      return {
+        storage_id: String(row.storage_id ?? storageId),
+        status: String(row.status ?? 'unreachable') as StorageHealthResult['status'],
+        readable: toBool(row.readable),
+        writable: toBool(row.writable),
+        listable: toBool(row.listable),
+        deletable: toBool(row.deletable),
+        latency_ms: Number(row.latency_ms ?? 0),
+        total_bytes: toNumber(row.total_bytes),
+        used_bytes: toNumber(row.used_bytes),
+        error: row.error ? String(row.error) : null,
+        tested_at: toNumber(row.tested_at),
+      } as StorageHealthResult;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to check storage health';
+      setError(errorMessage);
+      throw err;
+    }
+  }, []);
+
   return {
     storages,
     isLoading,
@@ -144,5 +195,6 @@ export function useStorages() {
     fetchStorages,
     createStorage,
     updateStorage,
+    checkStorageHealth,
   };
 }
