@@ -1282,6 +1282,7 @@ after that we can add a button in ui for checking storage health
 
 149) Add http/webdav storage which object_Store already supports it, in both the backend and the ui
 
+150) Check if we have any un-safe unwrap methods r code using and fix it
 
 
 
@@ -1297,7 +1298,7 @@ Main Epics:
 5) Combine the models of kalamdb-link and kalamdb-commons into kalamdb-shared crate and use it everywhere
 6) Service consumer - Subscription to shards
 7) Change the code to use FlatBuffers for: Raft/RocksDb storage
-8) Add page for Server Initial Setup
+8) Done - Add page for Server Initial Setup
 9) Check S3/WebDAV Storages
 10) Move permissions to Shared tables with policies
 

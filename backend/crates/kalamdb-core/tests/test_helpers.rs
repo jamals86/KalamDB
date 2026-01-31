@@ -235,17 +235,52 @@ pub fn test_app_context_simple() -> Arc<AppContext> {
     let storage_backend: Arc<dyn StorageBackend> =
         Arc::new(RocksDBBackend::new(test_db.db.clone()));
 
+    let temp_dir = TempDir::new().expect("create temp data dir");
+    let data_path = temp_dir.path().to_path_buf();
+    let storage_base_path = data_path.join("storage");
+    std::fs::create_dir_all(&storage_base_path).expect("create storage base path");
+
     let mut test_config = kalamdb_configs::ServerConfig::default();
-    test_config.storage.data_path = "data".to_string();
+    test_config.storage.data_path = data_path.to_string_lossy().to_string();
     test_config.execution.max_parameters = 50;
     test_config.execution.max_parameter_size_bytes = 512 * 1024;
 
-    AppContext::init(
+    let app_ctx = AppContext::init(
         storage_backend,
         NodeId::new(1),
-        "data/storage".to_string(),
+        storage_base_path.to_string_lossy().to_string(),
         test_config,
-    )
+    );
+
+    // Ensure default local storage exists for tests that expect it.
+    let storages = app_ctx.system_tables().storages();
+    let storage_id = StorageId::from("local");
+    if storages.get_storage_by_id(&storage_id).unwrap().is_none() {
+        storages
+            .create_storage(kalamdb_system::Storage {
+                storage_id,
+                storage_name: "Local Storage".to_string(),
+                description: Some("Default local storage for tests".to_string()),
+                storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
+                base_directory: storage_base_path.to_string_lossy().to_string(),
+                credentials: None,
+                config_json: None,
+                shared_tables_template: "shared/{namespace}/{table}".to_string(),
+                user_tables_template: "user/{namespace}/{table}/{userId}".to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                updated_at: chrono::Utc::now().timestamp_millis(),
+            })
+            .unwrap();
+    }
+
+    // Keep temp dir alive for the AppContext lifetime in this test helper.
+    // This is a short-lived test context, so leaking is acceptable here.
+    // It prevents cleanup from removing storage paths during the test.
+    // (TempDir drops and deletes on scope end.)
+    // SAFETY: tests create isolated temp directories per call.
+    std::mem::forget(temp_dir);
+
+    app_ctx
 }
 
 /// Creates a SessionContext using test_app_context_simple() (no Raft bootstrap).

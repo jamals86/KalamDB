@@ -27,6 +27,7 @@ Create system tables (or system-managed metadata) to track topics, routes, and o
 - `system.topics`
   - `topic_id` (TopicId)
   - `name`
+  - `alias` (optional, unique)
   - `partitions` (u32, default 1)
   - `retention_seconds` (optional)
   - `retention_max_bytes` (optional)
@@ -60,17 +61,17 @@ Stored in RocksDB `topic_logs`:
   - `Diff`: changed columns (future)
 
 ## Storage Layout (RocksDB)
-Use a dedicated Column Family in `kalamdb-store` (preferred) or key prefixes.
+Use a dedicated Column Family in `kalamdb-store` (preferred) or key prefixes. use StoredKey just like the rest.
 
 ### Topic Logs
-Key:
+Key: (similar to the other storagekey's we already have with tuples)
 ```
 topic/<topic_id>/<partition_id>/<offset>
 ```
 Value: binary envelope (bincode/serde).
 
 ### Offsets
-Key:
+Key: (similar to the other storagekey's we already have with tuples)
 ```
 offset/<topic_id>/<group_id>/<partition_id>
 ```
@@ -80,7 +81,7 @@ last_acked_offset (u64)
 ```
 
 ### Offset Counters
-Key:
+Key: (similar to the other storagekey's we already have with tuples)
 ```
 counter/<topic_id>/<partition_id>
 ```
@@ -117,6 +118,15 @@ ON INSERT
 WITH (payload = 'full');
 ```
 
+Filtered route (WHERE):
+```
+ALTER TOPIC app.new_messages
+ADD SOURCE chat.messages
+ON INSERT
+WHERE (is_visible = true AND channel_id = 42)
+WITH (payload = 'key');
+```
+
 Partition key (future-ready):
 ```
 ALTER TOPIC app.new_messages
@@ -148,6 +158,14 @@ FROM OFFSET 12345
 LIMIT 100;
 ```
 
+Consume by alias:
+```
+CONSUME FROM app.new_messages_alias
+GROUP 'ai-service'
+FROM LATEST
+LIMIT 100;
+```
+
 ### Ack
 ```
 ACK app.new_messages
@@ -158,7 +176,7 @@ UPTO OFFSET 220;
 
 ## API Surface (HTTP/SDK)
 ### Consume Request
-- topic
+- topic (name or alias)
 - group_id
 - start: Latest | Earliest | Offset(u64)
 - limit
@@ -184,6 +202,11 @@ UPTO OFFSET 220;
 3. Consumers read from `topic_logs` by `topic_id/partition_id/offset`.
 4. ACK updates `topic_offsets`.
 
+### Live Query Reuse (Future Work)
+- Reuse the existing live query change-event + filter evaluation path to avoid duplicating predicate and projection logic.
+- Potential design: a shared `ChangeEventEvaluator` service that compiles filters/queries once and is used by both live queries and topic routes.
+- For MVP, keep topic routing isolated but structure it to plug into this shared evaluator later.
+
 ## Offset Allocation (Single Node MVP)
 - Read `counter/<topic>/<partition>` to get `last_offset`.
 - `new_offset = last_offset + 1`.
@@ -197,7 +220,8 @@ UPTO OFFSET 220;
 ## Ownership by Crate
 - `kalamdb-store`: RocksDB CFs and low-level get/put/batch APIs.
 - `kalamdb-system`: system tables (`topics`, `topic_routes`, `topic_offsets`).
-- `kalamdb-core`: router, offset allocation, retention job, handlers.
+- `kalamdb-publisher` (new): routing engine, route evaluation, payload materialization, and offset allocation.
+- `kalamdb-core`: orchestrates topic routing, retention job, and delegates to `kalamdb-publisher`.
 - `kalamdb-sql`: SQL parsing/AST for CREATE/ALTER/CONSUME/ACK.
 - `kalamdb-api`: HTTP endpoints for consume/ack and SQL execution.
 - `kalamdb-commons`: types (`TopicId`, `ConsumerGroupId`, `TopicOp`, `PayloadMode`).

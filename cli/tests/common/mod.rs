@@ -1951,8 +1951,51 @@ fn execute_sql_via_cli_as_with_args_and_urls(
         .into())
 }
 
+/// Ensure the server is set up with proper credentials before running CLI commands
+///
+/// This is needed for manually-started servers that haven't gone through the 
+/// auto-start setup process. It performs a no-op if server is already set up.
+pub fn ensure_cli_server_setup() -> Result<(), Box<dyn std::error::Error>> {
+    let url = format!("{}/v1/api/auth/setup", server_url());
+
+    let run_setup = move || -> Result<(), String> {
+        let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+        rt.block_on(async {
+            let client = reqwest::Client::new();
+            let _response = client
+                .post(&url)
+                .json(&json!({
+                    "username": "admin",
+                    "password": "kalamdb123",
+                    "root_password": "kalamdb123",
+                    "email": null
+                }))
+                .send()
+                .await;
+            Ok::<(), String>(())
+        })?;
+        Ok(())
+    };
+
+    if tokio::runtime::Handle::try_current().is_ok() {
+        let handle = std::thread::spawn(run_setup);
+        match handle.join() {
+            Ok(result) => result.map_err(|e| e.into()),
+            Err(_) => Err("ensure_cli_server_setup thread panicked".into()),
+        }
+    } else {
+        run_setup().map_err(|e| e.into())
+    }
+}
+
 /// Helper to execute SQL as root user via CLI
 pub fn execute_sql_as_root_via_cli(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
+    // Ensure server is set up on first CLI call
+    static SETUP_DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    SETUP_DONE.get_or_init(|| {
+        let _ = ensure_cli_server_setup();
+    });
+    
     execute_sql_via_cli_as("root", root_password(), sql)
 }
 

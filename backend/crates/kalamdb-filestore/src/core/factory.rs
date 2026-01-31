@@ -120,31 +120,47 @@ fn build_s3(
 ) -> Result<Arc<dyn ObjectStore>> {
     let (bucket, prefix) = parse_remote_url(&storage.base_directory, &["s3://"])?;
 
+    // Start with bucket name
     let mut builder = AmazonS3Builder::new()
-        .with_bucket_name(&bucket);
+        .with_bucket_name(bucket);
 
-    if let Some(ref region) = cfg.region {
-        builder = builder.with_region(region);
-    }
-    if let Some(ref endpoint) = cfg.endpoint {
+    // Always set region (even for S3-compatible)
+    let region = cfg.region.as_deref().unwrap_or("us-east-1");
+    builder = builder.with_region(region);
+
+    // Set endpoint for S3-compatible services
+    if let Some(endpoint) = &cfg.endpoint {
         builder = builder.with_endpoint(endpoint);
+        // Ensure path-style requests for custom endpoints like MinIO
+        builder = builder.with_virtual_hosted_style_request(false);
     }
+
+    // Enable HTTP if specified (needed for local/MinIO)
     if cfg.allow_http {
         builder = builder.with_allow_http(true);
     }
-    if let (Some(ref ak), Some(ref sk)) = (&cfg.access_key_id, &cfg.secret_access_key) {
-        builder = builder.with_access_key_id(ak).with_secret_access_key(sk);
+
+    // Set credentials
+    if let Some(ak) = &cfg.access_key_id {
+        builder = builder.with_access_key_id(ak);
     }
-    if let Some(ref token) = cfg.session_token {
+    if let Some(sk) = &cfg.secret_access_key {
+        builder = builder.with_secret_access_key(sk);
+    }
+    if let Some(token) = &cfg.session_token {
         builder = builder.with_token(token);
     }
-    
-    // Apply timeout configuration from server config
-    if let Some(client_options) = build_client_options(timeouts) {
-        builder = builder.with_client_options(client_options);
+
+    // Skip ClientOptions for S3-compatible endpoints (to avoid conflicts)
+    if cfg.endpoint.is_none() {
+        if let Some(client_options) = build_client_options(timeouts) {
+            builder = builder.with_client_options(client_options);
+        }
     }
 
-    let store = builder.build().map_err(|e| FilestoreError::Config(format!("S3: {e}")))?;
+    let store = builder.build().map_err(|e| {
+        FilestoreError::Config(format!("S3: {}", e))
+    })?;
 
     wrap_with_prefix(store, &prefix)
 }

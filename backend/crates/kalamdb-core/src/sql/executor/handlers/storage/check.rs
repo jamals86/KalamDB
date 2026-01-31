@@ -69,9 +69,14 @@ impl TypedStatementHandler<CheckStorageStatement> for CheckStorageHandler {
             })?;
 
         // Run the health check
-        let health_result = StorageHealthService::run_full_health_check(&storage)
+        let mut health_result = StorageHealthService::run_full_health_check(&storage)
             .await
             .into_kalamdb_error("Health check failed")?;
+
+        if !statement.extended {
+            health_result.total_bytes = None;
+            health_result.used_bytes = None;
+        }
 
         // Build the result RecordBatch
         let schema = Arc::new(Self::result_schema());
@@ -213,7 +218,9 @@ mod tests {
         let result = handler.execute(stmt, vec![], &ctx).await;
 
         // Should succeed for local storage
-        assert!(result.is_ok());
+        if let Err(err) = &result {
+            panic!("STORAGE CHECK local failed: {}", err);
+        }
         if let Ok(ExecutionResult::Rows { batches, row_count, .. }) = result {
             assert_eq!(row_count, 1);
             assert!(!batches.is_empty());

@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc;
+use std::thread;
 use tokio::sync::Mutex;
 use tokio::sync::OnceCell;
 use tokio::time::{sleep, Duration, Instant};
@@ -143,10 +145,10 @@ pub struct HttpTestServer {
     user_password_cache: std::sync::Mutex<HashMap<String, String>>,
     /// Cache of username -> bearer token to avoid regenerating per request
     user_token_cache: std::sync::Mutex<HashMap<String, String>>,
-    running: kalamdb_server::lifecycle::RunningTestHttpServer,
+    running: Option<kalamdb_server::lifecycle::RunningTestHttpServer>,
     skip_raft_leader_check: bool,
     // Keep temp dir last so it is dropped after server resources.
-    _temp_dir: tempfile::TempDir,
+    _temp_dir: Option<tempfile::TempDir>,
 }
 
 fn acquire_global_http_test_server_lock() -> Result<Option<std::fs::File>> {
@@ -221,7 +223,11 @@ impl HttpTestServer {
 
     /// Access the underlying AppContext for tests that need direct access.
     pub fn app_context(&self) -> Arc<AppContext> {
-        self.running.app_context.clone()
+        self.running
+            .as_ref()
+            .expect("HTTP test server has been shut down")
+            .app_context
+            .clone()
     }
 
     /// Returns the storage root directory (e.g. `<data_path>/storage`).
@@ -717,17 +723,21 @@ impl HttpTestServer {
         }
     }
 
-    pub async fn shutdown(self) {
+    pub async fn shutdown(mut self) {
         // Actix `stop(true)` is graceful: it waits for existing keep-alive connections.
-        let HttpTestServer {
-            _temp_dir,
-            running,
-            ..
-        } = self;
-        running.shutdown().await;
-        drop(_temp_dir);
+        if let Some((running, temp_dir)) = self.take_shutdown_parts() {
+            running.shutdown().await;
+            drop(temp_dir);
+        }
     }
 
+    fn take_shutdown_parts(
+        &mut self,
+    ) -> Option<(kalamdb_server::lifecycle::RunningTestHttpServer, tempfile::TempDir)> {
+        let running = self.running.take()?;
+        let temp_dir = self._temp_dir.take()?;
+        Some((running, temp_dir))
+    }
     #[allow(unused_assignments)]
     async fn wait_until_ready(&self) -> Result<()> {
         // The server may bind before subsystems (notably Raft/bootstrap) are fully ready.
@@ -822,6 +832,32 @@ impl HttpTestServer {
     }
 }
 
+impl Drop for HttpTestServer {
+    fn drop(&mut self) {
+        let Some((running, temp_dir)) = self.take_shutdown_parts() else {
+            return;
+        };
+
+        let (tx, rx) = mpsc::sync_channel(1);
+        thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+
+            if let Ok(runtime) = runtime {
+                runtime.block_on(async {
+                    running.shutdown().await;
+                    drop(temp_dir);
+                });
+            }
+
+            let _ = tx.send(());
+        });
+
+        let _ = rx.recv();
+    }
+}
+
 /// Start a near-production HTTP server on a random available port.
 ///
 /// This is intended for integration tests that want to use `reqwest`/WebSocket
@@ -861,7 +897,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
     let jwt_secret = config.auth.jwt_secret.clone();
 
     let server = HttpTestServer {
-        _temp_dir: temp_dir,
+        _temp_dir: Some(temp_dir),
         _global_lock: None, // No longer use file lock - OnceCell handles per-process synchronization
         base_url,
         data_path,
@@ -871,7 +907,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
         user_id_cache: std::sync::Mutex::new(HashMap::new()),
         user_password_cache: std::sync::Mutex::new(HashMap::new()),
         user_token_cache: std::sync::Mutex::new(HashMap::new()),
-        running,
+        running: Some(running),
         skip_raft_leader_check,
     };
 
@@ -917,7 +953,7 @@ pub async fn start_http_test_server_with_config(
     let jwt_secret = config.auth.jwt_secret.clone();
 
     let server = HttpTestServer {
-        _temp_dir: temp_dir,
+        _temp_dir: Some(temp_dir),
         _global_lock: None, // No longer use file lock
         base_url,
         data_path,
@@ -927,7 +963,7 @@ pub async fn start_http_test_server_with_config(
         user_id_cache: std::sync::Mutex::new(HashMap::new()),
         user_password_cache: std::sync::Mutex::new(HashMap::new()),
         user_token_cache: std::sync::Mutex::new(HashMap::new()),
-        running,
+        running: Some(running),
         skip_raft_leader_check,
     };
 

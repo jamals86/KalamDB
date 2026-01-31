@@ -99,7 +99,7 @@ pub fn default_max_header_size() -> usize {
 
 // DataFusion defaults
 pub fn default_datafusion_memory_limit() -> usize {
-    1024 * 1024 * 1024 // 1GB
+    256 * 1024 * 1024 // 256MB (lower idle footprint)
 }
 
 pub fn default_datafusion_parallelism() -> usize {
@@ -107,7 +107,7 @@ pub fn default_datafusion_parallelism() -> usize {
 }
 
 pub fn default_datafusion_max_partitions() -> usize {
-    16
+    8
 }
 
 pub fn default_datafusion_batch_size() -> usize {
@@ -133,7 +133,7 @@ pub fn default_manifest_cache_eviction_interval() -> i64 {
 }
 
 pub fn default_manifest_cache_max_entries() -> usize {
-    1000 // Reduced from 50000 for lower memory footprint
+    500 // Reduced from 50000 for lower memory footprint
 }
 
 /// Default TTL in days for manifest eviction (default: 7 days)
