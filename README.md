@@ -9,6 +9,7 @@ Faster operations. Lower infrastructure expenses. Zero waste.
 [![Rust](https://img.shields.io/badge/rust-1.92%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![CI](https://github.com/jamals86/KalamDB/actions/workflows/ci.yml/badge.svg)](https://github.com/jamals86/KalamDB/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/github/actions/workflow/status/jamals86/KalamDB/ci.yml?label=tests&branch=main)](https://github.com/jamals86/KalamDB/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/jamals86/KalamDB?display_name=tag)](https://github.com/jamals86/KalamDB/releases)
 [![Docker](https://img.shields.io/docker/v/jamals86/kalamdb?include_prereleases)](https://hub.docker.com/r/jamals86/kalamdb)
 [![Docker Pulls](https://img.shields.io/docker/pulls/jamals86/kalamdb)](https://hub.docker.com/r/jamals86/kalamdb)
