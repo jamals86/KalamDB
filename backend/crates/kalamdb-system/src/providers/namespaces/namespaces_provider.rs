@@ -289,9 +289,9 @@ mod tests {
         NamespacesTableProvider::new(backend)
     }
 
-    fn create_test_namespace(namespace_id: &str, name: &str) -> Namespace {
+    fn create_test_namespace(namespace_id: &NamespaceId, name: &str) -> Namespace {
         Namespace {
-            namespace_id: NamespaceId::new(namespace_id),
+            namespace_id: namespace_id.clone(),
             name: name.to_string(),
             created_at: 1000,
             options: Some("{}".to_string()),
@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn test_create_and_get_namespace() {
         let provider = create_test_provider();
-        let namespace = create_test_namespace("app", "app");
+        let namespace = create_test_namespace(&NamespaceId::new("app"), "app");
 
         provider.create_namespace(namespace.clone()).unwrap();
 
@@ -317,7 +317,7 @@ mod tests {
     #[test]
     fn test_update_namespace() {
         let provider = create_test_provider();
-        let mut namespace = create_test_namespace("app", "app");
+        let mut namespace = create_test_namespace(&NamespaceId::new("app"), "app");
         provider.create_namespace(namespace.clone()).unwrap();
 
         // Update
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn test_delete_namespace() {
         let provider = create_test_provider();
-        let namespace = create_test_namespace("app", "app");
+        let namespace = create_test_namespace(&NamespaceId::new("app"), "app");
 
         provider.create_namespace(namespace).unwrap();
 
@@ -350,7 +350,7 @@ mod tests {
 
         // Insert multiple namespaces
         for i in 1..=3 {
-            let namespace = create_test_namespace(&format!("ns{}", i), &format!("namespace{}", i));
+            let namespace = create_test_namespace(&NamespaceId::new(&format!("ns{}", i)), &format!("namespace{}", i));
             provider.create_namespace(namespace).unwrap();
         }
 
@@ -364,7 +364,7 @@ mod tests {
         let provider = create_test_provider();
 
         // Insert test data
-        let namespace = create_test_namespace("app", "app");
+        let namespace = create_test_namespace(&NamespaceId::new("app"), "app");
         provider.create_namespace(namespace).unwrap();
 
         // Scan
@@ -378,7 +378,7 @@ mod tests {
         let provider = create_test_provider();
 
         // Insert test data
-        let namespace = create_test_namespace("app", "app");
+        let namespace = create_test_namespace(&NamespaceId::new("app"), "app");
         provider.create_namespace(namespace).unwrap();
 
         // Create DataFusion session

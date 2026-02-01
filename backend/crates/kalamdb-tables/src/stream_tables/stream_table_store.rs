@@ -302,12 +302,12 @@ mod tests {
         new_stream_table_store(&table_id, config)
     }
 
-    fn create_test_row(user_id: &str, seq: i64) -> StreamTableRow {
+    fn create_test_row(user_id: &UserId, seq: i64) -> StreamTableRow {
         let mut values = BTreeMap::new();
         values.insert("event".to_string(), ScalarValue::Utf8(Some("click".to_string())));
         values.insert("data".to_string(), ScalarValue::Int64(Some(123)));
         StreamTableRow {
-            user_id: UserId::new(user_id),
+            user_id: user_id.clone(),
             _seq: SeqId::new(seq),
             fields: Row::new(values),
         }
@@ -325,7 +325,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let store = create_test_store(temp_dir.path());
         let key = StreamTableRowId::new(UserId::new("user1"), SeqId::new(100));
-        let row = create_test_row("user1", 100);
+        let row = create_test_row(&UserId::new("user1"), 100);
 
         store.put(&key, &row).unwrap();
         let retrieved = store.get(&key).unwrap();
@@ -338,7 +338,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let store = create_test_store(temp_dir.path());
         let key = StreamTableRowId::new(UserId::new("user1"), SeqId::new(200));
-        let row = create_test_row("user1", 200);
+        let row = create_test_row(&UserId::new("user1"), 200);
 
         store.put(&key, &row).unwrap();
         store.delete(&key).unwrap();
@@ -357,7 +357,7 @@ mod tests {
                     SeqId::new((user_i * 1000 + seq_i) as i64),
                 );
                 let row =
-                    create_test_row(&format!("user{}", user_i), (user_i * 1000 + seq_i) as i64);
+                    create_test_row(&UserId::new(&format!("user{}", user_i)), (user_i * 1000 + seq_i) as i64);
                 store.put(&key, &row).unwrap();
             }
         }

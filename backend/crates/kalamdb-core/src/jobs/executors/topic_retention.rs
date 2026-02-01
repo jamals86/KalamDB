@@ -100,7 +100,7 @@ impl JobExecutor for TopicRetentionExecutor {
         ));
 
         // Get topic publisher service from AppContext
-        let topic_publisher = ctx.app_context().topic_publisher();
+        let topic_publisher = ctx.app_ctx.topic_publisher();
 
         // TODO: Implement actual topic message cleanup logic
         // Implementation sketch:

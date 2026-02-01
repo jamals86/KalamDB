@@ -7,7 +7,7 @@ use kalamdb_commons::models::{NamespaceId, NodeId, StorageId};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobRegistry, RestoreExecutor,
-    RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
+    RetentionExecutor, StreamEvictionExecutor, TopicRetentionExecutor, UserCleanupExecutor,
 };
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
@@ -181,7 +181,7 @@ pub fn create_test_jobs_provider() -> Arc<kalamdb_system::JobsTableProvider> {
 pub fn create_test_job_registry() -> JobRegistry {
     let registry = JobRegistry::new();
 
-    // Register all 8 executors
+    // Register all 9 executors
     registry.register(Arc::new(FlushExecutor::new()));
     registry.register(Arc::new(CleanupExecutor::new()));
     registry.register(Arc::new(RetentionExecutor::new()));
@@ -190,6 +190,7 @@ pub fn create_test_job_registry() -> JobRegistry {
     registry.register(Arc::new(CompactExecutor::new()));
     registry.register(Arc::new(BackupExecutor::new()));
     registry.register(Arc::new(RestoreExecutor::new()));
+    registry.register(Arc::new(TopicRetentionExecutor::new()));
 
     registry
 }

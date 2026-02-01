@@ -114,7 +114,7 @@ async fn authenticate_with_request(
 
     // Send success
     let msg = WebSocketMessage::AuthSuccess {
-        user_id: auth_result.user_id.as_str().to_string(),
+        user_id: auth_result.user_id.clone(),
         role: format!("{:?}", auth_result.role),
     };
     let _ = send_json(session, &msg).await;

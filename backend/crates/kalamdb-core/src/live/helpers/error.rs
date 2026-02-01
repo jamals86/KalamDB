@@ -1,5 +1,6 @@
 //! Error types for kalamdb-live
 
+use kalamdb_commons::models::UserId;
 use thiserror::Error;
 
 /// Errors that can occur in live query operations
@@ -45,7 +46,7 @@ pub enum LiveError {
     TableAccessDenied {
         namespace: String,
         table: String,
-        user_id: String,
+        user_id: UserId,
     },
 
     #[error("Failed to compile filter '{filter}': {reason}")]
@@ -60,7 +61,7 @@ pub enum LiveError {
 
     #[error("User '{user_id}' has reached maximum subscriptions ({current}/{max})")]
     UserSubscriptionLimitExceeded {
-        user_id: String,
+        user_id: UserId,
         current: usize,
         max: usize,
     },

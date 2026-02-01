@@ -2,6 +2,7 @@
 //!
 //! This module defines the structure for SQL query requests sent to the `/v1/api/sql` endpoint.
 
+use kalamdb_commons::NamespaceId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -44,7 +45,7 @@ pub struct QueryRequest {
     /// When set, queries like `SELECT * FROM users` resolve to `namespace_id.users`.
     /// Set via `USE namespace` command in CLI clients.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub namespace_id: Option<String>,
+    pub namespace_id: Option<NamespaceId>,
 }
 
 #[cfg(test)]
@@ -111,6 +112,6 @@ mod tests {
         let json = r#"{"sql": "SELECT * FROM messages", "namespace_id": "chat"}"#;
         let deserialized: QueryRequest = serde_json::from_str(json).unwrap();
         assert_eq!(deserialized.sql, "SELECT * FROM messages");
-        assert_eq!(deserialized.namespace_id, Some("chat".to_string()));
+        assert_eq!(deserialized.namespace_id, Some(NamespaceId::new("chat")));
     }
 }

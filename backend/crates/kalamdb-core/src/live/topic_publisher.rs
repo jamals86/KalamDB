@@ -12,12 +12,11 @@
 //! - AddTopicSourceHandler to update routes
 
 use dashmap::DashMap;
-use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::{
     errors::{CommonError, Result},
-    models::{ConsumerGroupId, PayloadMode, TableId, TopicId, TopicOp},
+    models::{rows::Row, ConsumerGroupId, PayloadMode, TableId, TopicId, TopicOp},
 };
-use kalamdb_store::StorageBackend;
+use kalamdb_store::{EntityStore, StorageBackend};
 use kalamdb_system::providers::topics::{Topic, TopicRoute};
 use kalamdb_tables::{TopicMessage, TopicMessageStore, TopicOffset, TopicOffsetStore};
 use std::sync::Arc;
@@ -194,20 +193,23 @@ impl TopicPublisherService {
 
     // ===== Publishing Methods =====
 
-    /// Route a table operation to matching topics and publish messages
+    /// Publish a single row change to matching topics
+    ///
+    /// Message-centric design: one Row = one message (like Kafka).
+    /// No batching overhead - directly serializes Row to JSON payload.
     ///
     /// # Arguments
     /// * `table_id` - ID of the table (namespace + table name)
     /// * `operation` - Type of operation (Insert/Update/Delete)
-    /// * `batch` - Record batch containing the affected rows
+    /// * `row` - Row containing the affected data
     ///
     /// # Returns
     /// Number of messages published across all matching topics
-    pub fn route_and_publish(
+    pub fn publish_message(
         &self,
         table_id: &TableId,
         operation: TopicOp,
-        batch: &RecordBatch,
+        row: &Row,
     ) -> Result<usize> {
         // Fast path: no routes for this table
         let routes = match self.table_routes.get(table_id) {
@@ -229,53 +231,47 @@ impl TopicPublisherService {
         let mut total_published = 0;
 
         for entry in matching {
-            let count = self.publish_to_topic(&entry, batch)?;
-            total_published += count;
+            // Extract payload based on route's payload mode
+            let payload = self.extract_payload_from_row(&entry.route, row)?;
+
+            // Extract message key (optional)
+            let key = self.extract_key_from_row(&entry.route, row)?;
+
+            // Select partition (consistent hashing if no key, hash key otherwise)
+            let partition_id = if let Some(ref k) = key {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                let mut hasher = DefaultHasher::new();
+                k.hash(&mut hasher);
+                (hasher.finish() % entry.topic_partitions as u64) as u32
+            } else {
+                (self.hash_row(row) % entry.topic_partitions as u64) as u32
+            };
+
+            // Get next offset
+            let offset = self.next_offset(&entry.topic_id, partition_id);
+
+            // Create message
+            let timestamp_ms = chrono::Utc::now().timestamp_millis();
+            let message = TopicMessage::new(
+                entry.topic_id.clone(),
+                partition_id,
+                offset,
+                payload,
+                key,
+                timestamp_ms,
+            );
+
+            // Store message (TODO: integrate with actual persistence layer)
+            // For now, just using message_store directly
+            self.message_store
+                .put(&message.id(), &message)
+                .map_err(|e| CommonError::Internal(format!("Failed to store topic message: {}", e)))?;
+
+            total_published += 1;
         }
 
         Ok(total_published)
-    }
-
-    /// Publish messages from a RecordBatch to a single topic
-    fn publish_to_topic(&self, entry: &RouteEntry, batch: &RecordBatch) -> Result<usize> {
-        let num_rows = batch.num_rows();
-        if num_rows == 0 {
-            return Ok(0);
-        }
-
-        let partition_count = entry.topic_partitions.max(1) as usize;
-        let timestamp_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
-
-        for row_idx in 0..num_rows {
-            // Select partition (round-robin for now)
-            let partition_id = (row_idx % partition_count) as u32;
-
-            // Get next offset for this partition
-            let offset = self.next_offset(&entry.topic_id, partition_id);
-
-            // Extract payload
-            let payload = self.extract_payload(&entry.route, batch, row_idx)?;
-
-            // Extract message key (optional)
-            let key = self.extract_message_key(&entry.route, batch, row_idx)?;
-
-            // Publish message
-            self.message_store
-                .publish(
-                    &entry.topic_id,
-                    partition_id,
-                    offset,
-                    payload,
-                    key,
-                    timestamp_ms,
-                )
-                .map_err(|e| CommonError::Internal(format!("Failed to publish message: {}", e)))?;
-        }
-
-        Ok(num_rows)
     }
 
     /// Get the next offset for a topic partition and increment counter
@@ -287,61 +283,78 @@ impl TopicPublisherService {
         offset
     }
 
-    /// Extract payload from a row based on PayloadMode
-    fn extract_payload(
-        &self,
-        route: &TopicRoute,
-        batch: &RecordBatch,
-        row_idx: usize,
-    ) -> Result<Vec<u8>> {
+    /// Extract payload from a Row based on PayloadMode
+    fn extract_payload_from_row(&self, route: &TopicRoute, row: &Row) -> Result<Vec<u8>> {
         match route.payload_mode {
-            PayloadMode::Key => self.extract_key_columns(batch, row_idx),
-            PayloadMode::Full => self.extract_full_row(batch, row_idx),
+            PayloadMode::Key => self.extract_key_columns_from_row(row),
+            PayloadMode::Full => self.extract_full_row_payload(row),
             PayloadMode::Diff => {
                 // For now, extract full row (diff requires before/after state)
-                self.extract_full_row(batch, row_idx)
+                self.extract_full_row_payload(row)
             }
         }
     }
 
-    /// Extract primary key columns from a row
-    fn extract_key_columns(&self, batch: &RecordBatch, row_idx: usize) -> Result<Vec<u8>> {
-        if batch.num_columns() == 0 {
+    /// Extract primary key columns from a Row
+    fn extract_key_columns_from_row(&self, row: &Row) -> Result<Vec<u8>> {
+        if row.values.is_empty() {
             return Err(CommonError::InvalidInput(
-                "Cannot extract key from empty batch".to_string(),
+                "Cannot extract key from empty row".to_string(),
             ));
         }
 
-        // Placeholder: serialize first column value
-        let col = batch.column(0);
-        let value_str = format!("{:?}", col.slice(row_idx, 1));
-        Ok(value_str.into_bytes())
-    }
-
-    /// Extract full row as serialized bytes
-    fn extract_full_row(&self, batch: &RecordBatch, row_idx: usize) -> Result<Vec<u8>> {
-        let schema = batch.schema();
-        let mut row_data = Vec::new();
+        // Convert ScalarValue to JSON-serializable format
+        let keys: std::collections::BTreeMap<_, _> = row
+            .values
+            .iter()
+            .map(|(k, v)| (k, format!("{:?}", v)))
+            .collect();
         
-        for col_idx in 0..batch.num_columns() {
-            let col = batch.column(col_idx);
-            let field = schema.field(col_idx);
-            let value_str = format!("{}={:?}", field.name(), col.slice(row_idx, 1));
-            row_data.push(value_str);
-        }
-
-        Ok(row_data.join(", ").into_bytes())
+        serde_json::to_vec(&keys)
+            .map_err(|e| CommonError::Internal(format!("Failed to serialize keys: {}", e)))
     }
 
-    /// Extract message key from a row (for keyed topics)
-    fn extract_message_key(
-        &self,
-        _route: &TopicRoute,
-        _batch: &RecordBatch,
-        _row_idx: usize,
-    ) -> Result<Option<String>> {
+    /// Extract full row as serialized JSON bytes
+    fn extract_full_row_payload(&self, row: &Row) -> Result<Vec<u8>> {
+        // Convert ScalarValue to JSON-serializable format
+        let values: std::collections::BTreeMap<_, _> = row
+            .values
+            .iter()
+            .map(|(k, v)| (k, format!("{:?}", v)))
+            .collect();
+        
+        serde_json::to_vec(&values)
+            .map_err(|e| CommonError::Internal(format!("Failed to serialize row: {}", e)))
+    }
+
+    /// Extract message key from a Row (for keyed topics)
+    fn extract_key_from_row(&self, _route: &TopicRoute, row: &Row) -> Result<Option<String>> {
         // TODO: Add partition_key_expr support
-        Ok(None)
+        // For now, use first column value as key if available
+        if let Some((key, value)) = row.values.iter().next() {
+            Ok(Some(format!("{}:{:?}", key, value)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Hash a row for consistent partition selection
+    fn hash_row(&self, row: &Row) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let mut hasher = DefaultHasher::new();
+        // Hash all column names and values in sorted order for consistency
+        let mut entries: Vec<_> = row.values.iter().collect();
+        entries.sort_by_key(|(k, _)| *k);
+        
+        for (key, value) in entries {
+            key.hash(&mut hasher);
+            // Simple hash of debug representation (not ideal but works for now)
+            format!("{:?}", value).hash(&mut hasher);
+        }
+        
+        hasher.finish()
     }
 
     // ===== Message Consumption Methods =====
@@ -427,19 +440,15 @@ mod tests {
         array::{Int32Array, StringArray},
         datatypes::{DataType, Field, Schema},
     };
+    use datafusion::scalar::ScalarValue;
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_store::test_utils::InMemoryBackend;
 
-    fn create_test_batch() -> RecordBatch {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int32, false),
-            Field::new("name", DataType::Utf8, false),
-        ]));
-
-        let ids = Arc::new(Int32Array::from(vec![1, 2, 3]));
-        let names = Arc::new(StringArray::from(vec!["Alice", "Bob", "Charlie"]));
-
-        RecordBatch::try_new(schema, vec![ids, names]).unwrap()
+    fn create_test_row(id: i32, name: &str) -> Row {
+        let mut values = std::collections::BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int32(Some(id)));
+        values.insert("name".to_string(), ScalarValue::Utf8(Some(name.to_string())));
+        Row { values }
     }
 
     fn create_test_topic(topic_id: TopicId, table_id: TableId, op: TopicOp) -> Topic {
@@ -524,16 +533,30 @@ mod tests {
         let topic = create_test_topic(topic_id.clone(), table_id.clone(), TopicOp::Insert);
         service.add_topic(topic);
 
-        let batch = create_test_batch();
-        let count = service
-            .route_and_publish(&table_id, TopicOp::Insert, &batch)
-            .unwrap();
+        // Publish 3 rows individually (message-centric design)
+        let rows = vec![
+            create_test_row(1, "Alice"),
+            create_test_row(2, "Bob"),
+            create_test_row(3, "Charlie"),
+        ];
+        
+        let mut total_count = 0;
+        for row in &rows {
+            let count = service
+                .publish_message(&table_id, TopicOp::Insert, row)
+                .unwrap();
+            total_count += count;
+        }
 
-        assert_eq!(count, 3);
+        assert_eq!(total_count, 3);
 
-        // Verify messages were published
-        let messages = service.fetch_messages(&topic_id, 0, 0, 10).unwrap();
-        assert!(!messages.is_empty());
+        // Verify messages were published (check all partitions)
+        let mut all_messages = Vec::new();
+        for partition_id in 0..2 {
+            let messages = service.fetch_messages(&topic_id, partition_id, 0, 10).unwrap();
+            all_messages.extend(messages);
+        }
+        assert_eq!(all_messages.len(), 3);
     }
 
     #[test]
@@ -544,9 +567,9 @@ mod tests {
         let ns = NamespaceId::new("test_ns");
         let table_id = TableId::new(ns.clone(), TableName::from("no_routes"));
 
-        let batch = create_test_batch();
+        let row = create_test_row(1, "Test");
         let count = service
-            .route_and_publish(&table_id, TopicOp::Insert, &batch)
+            .publish_message(&table_id, TopicOp::Insert, &row)
             .unwrap();
 
         assert_eq!(count, 0);

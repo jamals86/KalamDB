@@ -37,9 +37,9 @@ mod tests {
         new_namespaces_store(backend)
     }
 
-    fn create_test_namespace(namespace_id: &str, name: &str) -> Namespace {
+    fn create_test_namespace(namespace_id: &NamespaceId, name: &str) -> Namespace {
         Namespace {
-            namespace_id: NamespaceId::new(namespace_id),
+            namespace_id: namespace_id.clone(),
             name: name.to_string(),
             created_at: 1000,
             options: Some("{}".to_string()),
@@ -63,7 +63,7 @@ mod tests {
     fn test_put_and_get_namespace() {
         let store = create_test_store();
         let namespace_id = NamespaceId::new("app");
-        let namespace = create_test_namespace("app", "app");
+        let namespace = create_test_namespace(&NamespaceId::new("app"), "app");
 
         // Put namespace
         store.put(&namespace_id, &namespace).unwrap();
@@ -80,7 +80,7 @@ mod tests {
     fn test_delete_namespace() {
         let store = create_test_store();
         let namespace_id = NamespaceId::new("app");
-        let namespace = create_test_namespace("app", "app");
+        let namespace = create_test_namespace(&NamespaceId::new("app"), "app");
 
         // Put then delete
         store.put(&namespace_id, &namespace).unwrap();
@@ -98,7 +98,7 @@ mod tests {
         // Insert multiple namespaces
         for i in 1..=3 {
             let namespace_id = NamespaceId::new(format!("ns{}", i));
-            let namespace = create_test_namespace(&format!("ns{}", i), &format!("namespace{}", i));
+            let namespace = create_test_namespace(&NamespaceId::new(&format!("ns{}", i)), &format!("namespace{}", i));
             store.put(&namespace_id, &namespace).unwrap();
         }
 

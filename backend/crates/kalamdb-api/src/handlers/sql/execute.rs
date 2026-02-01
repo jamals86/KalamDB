@@ -138,7 +138,7 @@ pub async fn execute_sql_v1(
     let req_for_forward = QueryRequest {
         sql: sql.clone(),
         params: params_json.clone(),
-        namespace_id: namespace_id.as_ref().map(|id| id.as_str().to_string()),
+        namespace_id: namespace_id.clone(),
     };
 
     if !files_present {

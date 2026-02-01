@@ -1,6 +1,7 @@
 //! File permission tests over HTTP.
 
 use kalam_link::models::ResponseStatus as LinkResponseStatus;
+use kalamdb_api::handlers::sql::models::{SqlResponse, ResponseStatus};
 use kalamdb_system::FileRef;
 use kalamdb_commons::{Role, UserName};
 use reqwest::multipart;
@@ -142,7 +143,7 @@ async fn test_file_download_permissions_user_table() -> anyhow::Result<()> {
         vec![("doc", "hello.txt", b"hello world", "text/plain")],
     )
     .await?;
-    assert_eq!(upload.status, ApiResponseStatus::Success);
+    assert_eq!(upload.status, ResponseStatus::Success);
 
     let select_sql = format!("SELECT doc FROM {}.{} WHERE id = 1", namespace, table_name);
     let resp = server.execute_sql_with_auth(&select_sql, &alice_auth).await?;
@@ -223,7 +224,7 @@ async fn test_insert_with_files_permission_denied() -> anyhow::Result<()> {
         )
         .await?;
 
-        assert_eq!(upload.status, ApiResponseStatus::Error);
+        assert_eq!(upload.status, ResponseStatus::Error);
         let error_message = upload
             .error
             .as_ref()
@@ -291,7 +292,7 @@ async fn test_failed_insert_cleans_up_files() -> anyhow::Result<()> {
         )
         .await?;
 
-        assert_eq!(upload.status, ApiResponseStatus::Error);
+        assert_eq!(upload.status, ResponseStatus::Error);
 
         let table_path =
             table_path_for_user(&server.storage_root(), &namespace, &table_name, &alice_id);
@@ -354,7 +355,7 @@ async fn test_user_file_access_matrix() -> anyhow::Result<()> {
         vec![("doc", "usera.txt", b"usera", "text/plain")],
     )
     .await?;
-    assert_eq!(upload_a.status, ApiResponseStatus::Success);
+    assert_eq!(upload_a.status, ResponseStatus::Success);
 
     let insert_sql = format!(
         "INSERT INTO {}.{} (id, name, doc) VALUES (1, 'B', FILE(\"doc\"))",
@@ -367,7 +368,7 @@ async fn test_user_file_access_matrix() -> anyhow::Result<()> {
         vec![("doc", "userb.txt", b"userb", "text/plain")],
     )
     .await?;
-    assert_eq!(upload_b.status, ApiResponseStatus::Success);
+    assert_eq!(upload_b.status, ResponseStatus::Success);
 
     let select_sql = format!("SELECT doc FROM {}.{} WHERE id = 1", namespace, table_name);
     let resp_a = server.execute_sql_with_auth(&select_sql, &usera_auth).await?;

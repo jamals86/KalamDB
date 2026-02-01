@@ -156,7 +156,7 @@ pub async fn parse_sql_payload(
         Either::Left(req) => Ok(ParsedSqlPayload {
             sql: req.sql.clone(),
             params: req.params.clone(),
-            namespace_id: req.namespace_id.as_ref().map(|s| NamespaceId::new(s)),
+            namespace_id: req.namespace_id.clone(),
             files: None,
             is_multipart: false,
         }),
@@ -289,9 +289,10 @@ pub fn stage_and_finalize_files(
 
     // Create a temporary staging directory
     let request_id = uuid::Uuid::new_v4().to_string();
-    let user_str = user_id.map(|u| u.as_str()).unwrap_or("system");
+    let system_id = kalamdb_commons::UserId::new("system");
+    let uid = user_id.unwrap_or(&system_id);
 
-    let staging_dir = file_service.create_staging_dir(&request_id, user_str).map_err(|e| {
+    let staging_dir = file_service.create_staging_dir(&request_id, uid).map_err(|e| {
         FileError::new(
             ErrorCode::InternalError,
             format!("Failed to create staging dir: {}", e),

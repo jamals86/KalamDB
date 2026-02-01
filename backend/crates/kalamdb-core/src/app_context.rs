@@ -431,6 +431,10 @@ impl AppContext {
 
             // Wire topic publisher into notification service for CDC → topic routing
             notification_service.set_topic_publisher(topic_publisher);
+            
+            // Wire AppContext into notification service for Raft leadership checks
+            // This ensures only the leader fires notifications, preventing duplicates
+            notification_service.set_app_context(Arc::downgrade(&app_ctx));
 
             let job_manager = Arc::new(crate::jobs::JobsManager::new(
                 jobs_provider,
@@ -707,6 +711,9 @@ impl AppContext {
 
         // Wire topic publisher into notification service for tests
         notification_service.set_topic_publisher(topic_publisher);
+        
+        // Wire AppContext into notification service for leadership checks (tests)
+        notification_service.set_app_context(Arc::downgrade(&app_ctx));
 
         let job_manager = Arc::new(crate::jobs::JobsManager::new(
             jobs_provider,

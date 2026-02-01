@@ -4,7 +4,7 @@ use super::cluster::ClusterTestServer;
 use anyhow::{Context, Result};
 use kalam_link::models::{QueryResponse, ResponseStatus};
 use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
-use kalamdb_commons::{Role, UserId, UserName};
+use kalamdb_commons::{NamespaceId, Role, UserId, UserName};
 use kalamdb_core::app_context::AppContext;
 use once_cell::sync::{Lazy, OnceCell as SyncOnceCell};
 use serde_json::Value as JsonValue;
@@ -615,7 +615,7 @@ impl HttpTestServer {
 
         Ok(resp)
     }
-    fn try_parse_create_table_target(sql: &str) -> Option<(String, String)> {
+    fn try_parse_create_table_target(sql: &str) -> Option<(NamespaceId, String)> {
         // Best-effort parse for statements like:
         //   CREATE TABLE ns.table ( ... ) WITH (...)
         // We keep this intentionally simple for tests; if parsing fails we just skip the wait.
@@ -629,29 +629,29 @@ impl HttpTestServer {
         let ident = after.split_whitespace().next()?.trim_end_matches('(').trim();
 
         let mut parts = ident.splitn(2, '.');
-        let namespace_id = parts.next()?.trim().trim_matches('"').to_string();
+        let namespace_id_str = parts.next()?.trim().trim_matches('"').to_string();
         let table_name = parts.next()?.trim().trim_matches('"').to_string();
 
-        if namespace_id.is_empty() || table_name.is_empty() {
+        if namespace_id_str.is_empty() || table_name.is_empty() {
             return None;
         }
 
-        Some((namespace_id, table_name))
+        Some((NamespaceId::new(namespace_id_str), table_name))
     }
 
     #[allow(unused_assignments)]
     async fn wait_for_table_queryable(
         &self,
-        namespace_id: &str,
+        namespace_id: &NamespaceId,
         table_name: &str,
         auth_header: &str,
     ) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(2);
-        let probe = format!("SELECT 1 AS ok FROM {}.{} LIMIT 1", namespace_id, table_name);
+        let probe = format!("SELECT 1 AS ok FROM {}.{} LIMIT 1", namespace_id.as_str(), table_name);
         let mut last_error: Option<String> = None;
         let system_probe = format!(
             "SELECT COUNT(*) AS cnt FROM system.schemas WHERE namespace_id='{}' AND table_name='{}'",
-            namespace_id, table_name
+            namespace_id.as_str(), table_name
         );
         let mut last_system_cnt: Option<u64> = None;
 
@@ -676,7 +676,7 @@ impl HttpTestServer {
                     if !is_missing {
                         return Err(anyhow::anyhow!(
                             "CREATE TABLE probe failed with non-missing error ({}.{}): {:?}",
-                            namespace_id,
+                            namespace_id.as_str(),
                             table_name,
                             resp.error
                         ));
@@ -712,7 +712,7 @@ impl HttpTestServer {
             if Instant::now() >= deadline {
                 return Err(anyhow::anyhow!(
                     "CREATE TABLE did not become queryable in time ({}.{}): last_error={:?} system.schemas_cnt={:?}",
-                    namespace_id,
+                    namespace_id.as_str(),
                     table_name,
                     last_error,
                     last_system_cnt
