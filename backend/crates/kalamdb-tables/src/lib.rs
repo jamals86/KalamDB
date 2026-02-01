@@ -47,6 +47,7 @@ pub mod utils;
 pub mod shared_tables;
 pub mod store_ext;
 pub mod stream_tables;
+pub mod topics;
 pub mod user_tables;
 
 // Re-export commonly used types
@@ -64,6 +65,10 @@ pub use shared_tables::shared_table_store::{
 pub use stream_tables::stream_table_store::{
     new_stream_table_store, StreamTableStore, StreamTableStoreConfig,
 };
+pub use topics::topic_message_models::{TopicMessage, TopicMessageId};
+pub use topics::topic_message_store::{new_topic_message_store, TopicMessageStore};
+pub use topics::topic_offset_models::{TopicOffset, TopicOffsetId};
+pub use topics::topic_offset_store::{new_topic_offset_store, TopicOffsetStore};
 pub use user_tables::pk_index::{create_user_table_pk_index, UserTablePkIndex};
 pub use user_tables::user_table_store::{
     new_indexed_user_table_store, new_user_table_store, UserTableIndexedStore, UserTableStore,

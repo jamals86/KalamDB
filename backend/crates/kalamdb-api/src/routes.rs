@@ -24,6 +24,8 @@ use serde_json::json;
 /// - GET /v1/api/auth/me - Get current user info
 /// - POST /v1/api/auth/setup - Initial server setup (localhost only, requires no password on root)
 /// - GET /v1/api/auth/status - Check server setup status (localhost only)
+/// - POST /v1/api/topics/consume - Consume messages from a topic (long polling)
+/// - POST /v1/api/topics/ack - Acknowledge offset for consumer group
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg
         // Root-level health check endpoint (no version prefix)
@@ -50,6 +52,12 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                                 .route("/me", web::get().to(handlers::me_handler))
                                 .route("/setup", web::post().to(handlers::server_setup_handler))
                                 .route("/status", web::get().to(handlers::setup_status_handler)),
+                        )
+                        // Topic pub/sub endpoints
+                        .service(
+                            web::scope("/topics")
+                                .service(handlers::consume_handler)
+                                .service(handlers::ack_handler),
                         ),
                 )
                 // File download endpoint (outside of /api scope for shorter URLs)

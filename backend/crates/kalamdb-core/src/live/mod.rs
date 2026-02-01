@@ -1,38 +1,49 @@
-//! Live query module for subscription management
+//! Live query and consumer module for subscription management
 //!
-//! This module handles WebSocket-based live query subscriptions and
-//! real-time change notifications.
+//! This module handles:
+//! - WebSocket-based live query subscriptions
+//! - Topic consumer sessions (long polling)
+//! - Real-time change notifications
+//! - Topic pub/sub message publishing
 //!
 //! Live query notifications are now handled through Raft-replicated data appliers.
 //! When data is applied on any node (leader or follower), the provider's insert/update/delete
-//! methods fire local notifications to connected WebSocket clients.
+//! methods fire local notifications to connected clients.
 
-pub mod connections_manager;
-pub mod error;
-pub mod failover;
-pub mod filter_eval;
-pub mod initial_data;
+pub mod helpers;
 pub mod manager;
+pub mod models; // Consolidated model definitions
 pub mod notification;
-pub mod query_parser;
 pub mod subscription;
-pub mod types;
+pub mod topic_publisher;
 
 // Re-export types from kalamdb-commons (canonical source)
 pub use kalamdb_commons::models::{ConnectionId, LiveQueryId, TableId, UserId};
 pub use kalamdb_commons::NodeId;
 
-// Re-export from connections_manager (consolidated connection management)
-pub use connections_manager::{
-    ConnectionEvent, ConnectionRegistration, ConnectionState, ConnectionsManager,
-    NotificationSender, SharedConnectionState, SubscriptionState,
+// Re-export from models (consolidated model definitions)
+pub use models::{
+    BufferedNotification, ChangeNotification, ChangeType, ConnectionEvent, ConnectionRegistration,
+    ConnectionState, EventReceiver, EventSender, NotificationReceiver, NotificationSender,
+    RegisteredSubscription, RegistryStats, SharedConnectionState, SubscriptionFlowControl,
+    SubscriptionHandle, SubscriptionResult, SubscriptionState, EVENT_CHANNEL_CAPACITY,
+    NOTIFICATION_CHANNEL_CAPACITY,
 };
 
-pub use failover::{CleanupReport as LiveQueryCleanupReport, LiveQueryFailoverHandler};
-pub use filter_eval::{matches as filter_matches, parse_where_clause};
-pub use initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
-pub use manager::LiveQueryManager;
+// Re-export from manager modules
+pub use manager::{ConnectionsManager, LiveQueryManager};
+
+// Re-export from helpers
+pub use helpers::{
+    filter_eval::{matches as filter_matches, parse_where_clause},
+    initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult},
+    query_parser::QueryParser,
+    failover::{CleanupReport as LiveQueryCleanupReport, LiveQueryFailoverHandler},
+    error,
+};
+
+// Re-export from other modules
 pub use notification::NotificationService;
-pub use query_parser::QueryParser;
-pub use subscription::{RegisteredSubscription, SubscriptionService};
-pub use types::{ChangeNotification, ChangeType, RegistryStats, SubscriptionResult};
+pub use subscription::SubscriptionService;
+pub use topic_publisher::{TopicPublisherService, TopicCacheStats};
+

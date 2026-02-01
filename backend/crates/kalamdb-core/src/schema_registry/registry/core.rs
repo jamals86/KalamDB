@@ -3,6 +3,7 @@
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
+use crate::live::models::ChangeNotification;
 use crate::schema_registry::cached_table_data::CachedTableData;
 use dashmap::DashMap;
 use datafusion::datasource::TableProvider;
@@ -11,7 +12,8 @@ use kalamdb_commons::TableAccess;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{StorageId, TableId, TableVersionId};
 use kalamdb_commons::schemas::{TableOptions, TableType};
-use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
+use kalamdb_system::{NotificationService, SchemaRegistry as SchemaRegistryTrait};
+// use kalamdb_system::NotificationService as NotificationServiceTrait;
 use std::sync::{Arc, OnceLock};
 
 /// Lightweight table info for file operations
@@ -242,7 +244,12 @@ impl SchemaRegistry {
             .iter()
             .find(|c| c.is_primary_key)
             .map(|c| c.column_name.clone())
-            .unwrap_or_else(|| "id".to_string());
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Table {} has no primary key defined",
+                    table_id
+                ))
+            })?;
 
         let tables_schema_registry = Arc::new(TablesSchemaRegistryAdapter::new(app_ctx.schema_registry()));
 
@@ -261,7 +268,7 @@ impl SchemaRegistry {
                     app_ctx.system_columns_service(),
                     Some(app_ctx.storage_registry()),
                     app_ctx.manifest_service(),
-                    app_ctx.live_query_manager(),
+                    Arc::clone(app_ctx.notification_service()) as Arc<dyn NotificationService<Notification = ChangeNotification>>,
                     app_ctx.clone(),
                 ));
 
@@ -282,7 +289,7 @@ impl SchemaRegistry {
                     app_ctx.system_columns_service(),
                     Some(app_ctx.storage_registry()),
                     app_ctx.manifest_service(),
-                    app_ctx.live_query_manager(),
+                    Arc::clone(app_ctx.notification_service()) as Arc<dyn NotificationService<Notification = ChangeNotification>>,
                     app_ctx.clone(),
                 ));
 
@@ -317,7 +324,7 @@ impl SchemaRegistry {
                     app_ctx.system_columns_service(),
                     Some(app_ctx.storage_registry()),
                     app_ctx.manifest_service(),
-                    app_ctx.live_query_manager(),
+                    Arc::clone(app_ctx.notification_service()) as Arc<dyn NotificationService<Notification = ChangeNotification>>,
                     app_ctx.clone(),
                 ));
                 

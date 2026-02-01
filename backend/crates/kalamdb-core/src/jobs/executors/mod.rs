@@ -22,6 +22,7 @@ pub mod manifest_eviction;
 pub mod restore;
 pub mod retention;
 pub mod stream_eviction;
+pub mod topic_retention;
 pub mod user_cleanup;
 
 // Re-export key types
@@ -39,4 +40,5 @@ pub use manifest_eviction::ManifestEvictionExecutor;
 pub use restore::RestoreExecutor;
 pub use retention::RetentionExecutor;
 pub use stream_eviction::StreamEvictionExecutor;
+pub use topic_retention::TopicRetentionExecutor;
 pub use user_cleanup::UserCleanupExecutor;

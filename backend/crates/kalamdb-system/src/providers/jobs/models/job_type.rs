@@ -17,6 +17,7 @@ pub enum JobType {
     StreamEviction,
     UserCleanup,
     ManifestEviction,
+    TopicRetention,
     Unknown,
 }
 
@@ -33,6 +34,7 @@ impl JobType {
             JobType::StreamEviction => "stream_eviction",
             JobType::UserCleanup => "user_cleanup",
             JobType::ManifestEviction => "manifest_eviction",
+            JobType::TopicRetention => "topic_retention",
             JobType::Unknown => "unknown",
         }
     }
@@ -62,6 +64,7 @@ impl JobType {
             JobType::StreamEviction => "SE",
             JobType::UserCleanup => "UC",
             JobType::ManifestEviction => "ME",
+            JobType::TopicRetention => "TR",
             JobType::Unknown => "UN",
         }
     }
@@ -78,6 +81,7 @@ impl JobType {
             "stream_eviction" => Some(JobType::StreamEviction),
             "user_cleanup" => Some(JobType::UserCleanup),
             "manifest_eviction" => Some(JobType::ManifestEviction),
+            "topic_retention" => Some(JobType::TopicRetention),
             "unknown" => Some(JobType::Unknown),
             _ => None,
         }
@@ -119,7 +123,8 @@ impl JobType {
             JobType::Compact |          // RocksDB compaction (local files)
             JobType::ManifestEviction | // Local cache eviction
             JobType::StreamEviction |   // Local stream log cleanup
-            JobType::Retention          // Local soft-delete cleanup
+            JobType::Retention |        // Local soft-delete cleanup
+            JobType::TopicRetention     // Local topic message cleanup
         )
     }
 

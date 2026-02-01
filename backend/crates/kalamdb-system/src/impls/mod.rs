@@ -5,17 +5,9 @@ use kalamdb_commons::{StorageId, TableId, UserId};
 use kalamdb_store::StorageError;
 use std::sync::Arc;
 
-/// Interface for LiveQueryManager implementations used by table providers.
-pub trait LiveQueryManager: Send + Sync {
-    type Notification: Send + Sync + 'static;
-
-    fn notify_table_change_async(
-        &self,
-        user_id: UserId,
-        table_id: TableId,
-        notification: Self::Notification,
-    );
-}
+// Notification service trait for data change notifications
+mod notification_service;
+pub use notification_service::NotificationService;
 
 /// Interface for ManifestService implementations used by table providers.
 pub trait ManifestService: Send + Sync {

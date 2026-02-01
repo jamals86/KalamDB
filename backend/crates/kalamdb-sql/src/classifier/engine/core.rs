@@ -577,6 +577,58 @@ impl SqlStatement {
                 SubscribeStatement::parse(sql).map(SqlStatementKind::Subscribe)
             }),
 
+            // Topic pub/sub commands
+            ["CREATE", "TOPIC", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for topic management"
+                            .to_string(),
+                    ));
+                }
+                Self::wrap(sql, || {
+                    crate::ddl::topic_commands::parse_create_topic(sql)
+                        .map(SqlStatementKind::CreateTopic)
+                })
+            },
+            ["DROP", "TOPIC", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for topic management"
+                            .to_string(),
+                    ));
+                }
+                Self::wrap(sql, || {
+                    crate::ddl::topic_commands::parse_drop_topic(sql)
+                        .map(SqlStatementKind::DropTopic)
+                })
+            },
+            ["ALTER", "TOPIC", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for topic management"
+                            .to_string(),
+                    ));
+                }
+                Self::wrap(sql, || {
+                    crate::ddl::topic_commands::parse_alter_topic_add_source(sql)
+                        .map(SqlStatementKind::AddTopicSource)
+                })
+            },
+            ["CONSUME", "FROM", ..] | ["CONSUME", ..] => {
+                // All authenticated users can consume from topics
+                Self::wrap(sql, || {
+                    crate::ddl::topic_commands::parse_consume(sql)
+                        .map(SqlStatementKind::ConsumeTopic)
+                })
+            },
+            ["ACK", ..] => {
+                // All authenticated users can acknowledge topic offsets
+                Self::wrap(sql, || {
+                    crate::ddl::topic_commands::parse_ack(sql)
+                        .map(SqlStatementKind::AckTopic)
+                })
+            },
+
             // User management - require admin (except ALTER USER for self)
             ["CREATE", "USER", ..] => {
                 if !is_admin {
@@ -792,10 +844,20 @@ impl SqlStatement {
 
             // Subscriptions, transactions, and other operations allowed for all users
             SqlStatementKind::Subscribe(_)
+            | SqlStatementKind::ConsumeTopic(_)
+            | SqlStatementKind::AckTopic(_)
             | SqlStatementKind::KillLiveQuery(_)
             | SqlStatementKind::BeginTransaction
             | SqlStatementKind::CommitTransaction
             | SqlStatementKind::RollbackTransaction => Ok(()),
+
+            // Topic management requires admin
+            SqlStatementKind::CreateTopic(_)
+            | SqlStatementKind::DropTopic(_)
+            | SqlStatementKind::AddTopicSource(_) => {
+                Err("Admin privileges (DBA or System role) required for topic management"
+                    .to_string())
+            },
 
             // DataFusion meta commands are already admin-checked in classify_from_tokens
             // This branch should only be reached by admin users (DBA/System)

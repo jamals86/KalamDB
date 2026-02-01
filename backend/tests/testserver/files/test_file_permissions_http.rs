@@ -1,7 +1,6 @@
 //! File permission tests over HTTP.
 
 use kalam_link::models::ResponseStatus as LinkResponseStatus;
-use kalamdb_api::models::{ResponseStatus as ApiResponseStatus, SqlResponse};
 use kalamdb_system::FileRef;
 use kalamdb_commons::{Role, UserName};
 use reqwest::multipart;

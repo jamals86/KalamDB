@@ -5,11 +5,13 @@
 
 use crate::applier::UnifiedApplier;
 use crate::error_extensions::KalamDbResultExt;
-use crate::jobs::executors::{
-    BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobCleanupExecutor,
-    JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
+use crate::jobs::executors::{    BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobCleanupExecutor,
+    JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor,
+    TopicRetentionExecutor, UserCleanupExecutor,
 };
 use crate::live::ConnectionsManager;
+use crate::live::notification::NotificationService;
+use crate::live::TopicPublisherService;
 use crate::live_query::LiveQueryManager;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
@@ -66,6 +68,9 @@ pub struct AppContext {
     job_manager: OnceCell<Arc<crate::jobs::JobsManager>>,
     live_query_manager: OnceCell<Arc<LiveQueryManager>>,
 
+    // ===== Notification Service =====
+    notification_service: Arc<NotificationService>,
+
     // ===== Connections Manager (WebSocket connections, subscriptions, heartbeat) =====
     connection_registry: Arc<ConnectionsManager>,
 
@@ -97,6 +102,10 @@ pub struct AppContext {
     // ===== File Storage Service (for FILE datatype) =====
     file_storage_service: Arc<kalamdb_filestore::FileStorageService>,
 
+    // ===== Topic Pub/Sub Infrastructure =====
+    /// Unified topic publisher service - owns message/offset stores and topic registry
+    topic_publisher: Arc<TopicPublisherService>,
+
     // ===== Unified Applier (single execution path for all commands) =====
     applier: OnceCell<Arc<dyn UnifiedApplier>>,
 
@@ -126,6 +135,7 @@ impl std::fmt::Debug for AppContext {
             .field("system_columns_service", &"Arc<SystemColumnsService>")
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
             .field("manifest_service", &"Arc<ManifestService>")
+            .field("topic_publisher", &"Arc<TopicPublisherService>")
             .field("sql_executor", &"OnceCell<Arc<SqlExecutor>>")
             .finish()
     }
@@ -290,6 +300,7 @@ impl AppContext {
             job_registry.register(Arc::new(CompactExecutor::new()));
             job_registry.register(Arc::new(BackupExecutor::new()));
             job_registry.register(Arc::new(RestoreExecutor::new()));
+            job_registry.register(Arc::new(TopicRetentionExecutor::new()));
 
             // Create unified job manager (Phase 9, T154)
             let jobs_provider = system_tables.jobs();
@@ -383,6 +394,12 @@ impl AppContext {
             // This enables cluster and cluster_groups views (created on first access)
             lazy_system_schema.set_executor(Arc::clone(&executor));
 
+            // Create notification service (before AppContext)
+            let notification_service = NotificationService::new(Arc::clone(&connection_registry));
+
+            // Create unified topic publisher service for pub/sub infrastructure
+            let topic_publisher = Arc::new(TopicPublisherService::new(storage_backend.clone()));
+
             let app_ctx = Arc::new(AppContext {
                 node_id,
                 config,
@@ -392,6 +409,7 @@ impl AppContext {
                 storage_backend,
                 job_manager: OnceCell::new(),
                 live_query_manager: OnceCell::new(),
+                notification_service: Arc::clone(&notification_service),
                 connection_registry,
                 storage_registry,
                 system_tables,
@@ -403,12 +421,16 @@ impl AppContext {
                 slow_query_logger,
                 manifest_service,
                 file_storage_service,
+                topic_publisher: Arc::clone(&topic_publisher),
                 sql_executor: OnceCell::new(),
                 server_start_time: Instant::now(),
             });
 
             // Set AppContext in SchemaRegistry to break circular dependency
             schema_registry.set_app_context(app_ctx.clone());
+
+            // Wire topic publisher into notification service for CDC → topic routing
+            notification_service.set_topic_publisher(topic_publisher);
 
             let job_manager = Arc::new(crate::jobs::JobsManager::new(
                 jobs_provider,
@@ -651,6 +673,12 @@ impl AppContext {
         let manager = Arc::new(kalamdb_raft::manager::RaftManager::new(raft_config));
         let executor: Arc<dyn CommandExecutor> = Arc::new(kalamdb_raft::RaftExecutor::new(manager));
 
+        // Create notification service for tests (before AppContext)
+        let notification_service = NotificationService::new(Arc::clone(&connection_registry));
+
+        // Create unified topic publisher service for tests
+        let topic_publisher = Arc::new(TopicPublisherService::new(storage_backend.clone()));
+
         let app_ctx = Arc::new(AppContext {
             node_id,
             config,
@@ -660,6 +688,7 @@ impl AppContext {
             storage_backend,
             job_manager: OnceCell::new(),
             live_query_manager: OnceCell::new(),
+            notification_service: Arc::clone(&notification_service),
             connection_registry,
             storage_registry,
             system_tables,
@@ -671,9 +700,13 @@ impl AppContext {
             slow_query_logger,
             manifest_service,
             file_storage_service,
+            topic_publisher: Arc::clone(&topic_publisher),
             sql_executor: OnceCell::new(),
             server_start_time: Instant::now(),
         });
+
+        // Wire topic publisher into notification service for tests
+        notification_service.set_topic_publisher(topic_publisher);
 
         let job_manager = Arc::new(crate::jobs::JobsManager::new(
             jobs_provider,
@@ -736,6 +769,11 @@ impl AppContext {
 
     pub fn live_query_manager(&self) -> Arc<LiveQueryManager> {
         self.live_query_manager.get().expect("LiveQueryManager not initialized").clone()
+    }
+
+    /// Get the notification service
+    pub fn notification_service(&self) -> &Arc<NotificationService> {
+        &self.notification_service
     }
 
     /// Get the connections manager (WebSocket connection state)
@@ -913,6 +951,19 @@ impl AppContext {
     /// - Storage routing per table via StorageRegistry
     pub fn file_storage_service(&self) -> Arc<kalamdb_filestore::FileStorageService> {
         self.file_storage_service.clone()
+    }
+
+    // ===== Topic Pub/Sub Service =====
+
+    /// Get the unified topic publisher service for all topic operations
+    ///
+    /// TopicPublisherService provides:
+    /// - Topic registry (in-memory cache + RocksDB persistence)
+    /// - Message publishing and consumption
+    /// - Consumer group offset tracking
+    /// - Table-to-topic routing for CDC
+    pub fn topic_publisher(&self) -> Arc<TopicPublisherService> {
+        self.topic_publisher.clone()
     }
 
     /// Register the shared SqlExecutor (called once during bootstrap)

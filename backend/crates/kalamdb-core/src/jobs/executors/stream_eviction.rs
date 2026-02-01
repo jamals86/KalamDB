@@ -247,8 +247,9 @@ mod tests {
         ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
     };
     use kalamdb_commons::models::{TableId, TableName, UserId};
+    use kalamdb_system::NotificationService;
     use kalamdb_system::providers::jobs::models::Job;
-    use kalamdb_commons::{JobId, NamespaceId, NodeId};
+    use kalamdb_commons::{ChangeNotification, JobId, NamespaceId, NodeId};
     use kalamdb_tables::StreamTableStoreConfig;
     use serde_json::json;
     use std::sync::Arc;
@@ -356,7 +357,7 @@ mod tests {
             app_ctx.system_columns_service(),
             Some(app_ctx.storage_registry()),
             app_ctx.manifest_service(),
-            app_ctx.live_query_manager(),
+            Arc::clone(app_ctx.notification_service()) as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_ctx.clone(),
         ));
         let provider =

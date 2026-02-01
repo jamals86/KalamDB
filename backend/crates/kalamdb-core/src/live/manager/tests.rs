@@ -1,5 +1,5 @@
 use super::*;
-use crate::live::connections_manager::ConnectionsManager;
+use crate::live::manager::ConnectionsManager;
 use crate::sql::executor::SqlExecutor;
 use crate::test_helpers::test_app_context_simple;
 use kalamdb_commons::datatypes::KalamDataType;

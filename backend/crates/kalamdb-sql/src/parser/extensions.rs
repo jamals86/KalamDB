@@ -34,6 +34,12 @@ pub use crate::ddl::subscribe_commands::SubscribeStatement;
 // Re-export SubscriptionOptions from kalamdb_commons
 pub use kalamdb_commons::websocket::SubscriptionOptions;
 
+// Topic pub/sub commands
+pub use crate::ddl::topic_commands::{
+    AddTopicSourceStatement, ConsumePosition, ConsumeStatement, CreateTopicStatement,
+    DropTopicStatement,
+};
+
 // User commands (CREATE USER, ALTER USER, DROP USER)
 pub use crate::ddl::user_commands::{
     AlterUserStatement, CreateUserStatement, DropUserStatement, UserModification,
@@ -68,6 +74,14 @@ pub enum ExtensionStatement {
     KillJob(JobCommand),
     /// SUBSCRIBE TO command (for live query subscriptions)
     Subscribe(SubscribeStatement),
+    /// CREATE TOPIC command (pub/sub)
+    CreateTopic(CreateTopicStatement),
+    /// DROP TOPIC command (pub/sub)
+    DropTopic(DropTopicStatement),
+    /// ALTER TOPIC ADD SOURCE command (pub/sub)
+    AddTopicSource(AddTopicSourceStatement),
+    /// CONSUME FROM command (pub/sub)
+    ConsumeTopic(ConsumeStatement),
     /// CREATE USER command
     CreateUser(CreateUserStatement),
     /// ALTER USER command
@@ -179,6 +193,34 @@ impl ExtensionStatement {
             return SubscribeStatement::parse(sql)
                 .map(ExtensionStatement::Subscribe)
                 .map_err(|e| format!("SUBSCRIBE TO parsing failed: {}", e));
+        }
+
+        // Try CREATE TOPIC
+        if sql_upper.starts_with("CREATE TOPIC") {
+            return crate::ddl::topic_commands::parse_create_topic(sql)
+                .map(ExtensionStatement::CreateTopic)
+                .map_err(|e| format!("CREATE TOPIC parsing failed: {}", e));
+        }
+
+        // Try DROP TOPIC
+        if sql_upper.starts_with("DROP TOPIC") {
+            return crate::ddl::topic_commands::parse_drop_topic(sql)
+                .map(ExtensionStatement::DropTopic)
+                .map_err(|e| format!("DROP TOPIC parsing failed: {}", e));
+        }
+
+        // Try ALTER TOPIC (must check before CREATE/DROP)
+        if sql_upper.starts_with("ALTER TOPIC") {
+            return crate::ddl::topic_commands::parse_alter_topic_add_source(sql)
+                .map(ExtensionStatement::AddTopicSource)
+                .map_err(|e| format!("ALTER TOPIC ADD SOURCE parsing failed: {}", e));
+        }
+
+        // Try CONSUME FROM
+        if sql_upper.starts_with("CONSUME FROM") || sql_upper.starts_with("CONSUME ") {
+            return crate::ddl::topic_commands::parse_consume(sql)
+                .map(ExtensionStatement::ConsumeTopic)
+                .map_err(|e| format!("CONSUME FROM parsing failed: {}", e));
         }
 
         // Try CREATE USER

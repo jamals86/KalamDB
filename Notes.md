@@ -1284,7 +1284,18 @@ after that we can add a button in ui for checking storage health
 
 150) Check if we have any un-safe unwrap methods r code using and fix it
 
+152) backend/crates/kalamdb-core/src/live/manager/connections_manager.rsand livequery_manager.rs have similar code for managing connections and queries we can make the connection_manager a service or the registry inside the livequerymanager and everywhere we directly use only livequerymanager for everything there, then we can name connections manager to connection_registry
 
+
+153) backend/crates/kalamdb-system/src/impls/notification_service.rs should also have 2 methods for topic check if any topics listen to this tableid and also notify table change to topics which are listening to this tableid only
+
+154) backend/crates/kalamdb-api/src/handlers should have sub-folders for auth/sql/ws/topics/cluster/files/health and each route inside backend/crates/kalamdb-api/src/routes.rs
+should have a separate file in the sub-folder intended to it
+also each handler sub-folder should contain a models/ folder to have each model used in the handler like request and responses each model in a separate file
+and all should use: .route("/logout", web::post().to(handlers::logout_handler))
+instead of: .route("/logout", logout_handler)
+so we can have a look at the routes.rs file and understand everything from there
+for topicid  groupid and all of these always in the api request/response use type-safe types instead of raw strings
 
 
 
