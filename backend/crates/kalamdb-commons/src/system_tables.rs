@@ -36,6 +36,10 @@ pub enum SystemTable {
     AuditLog,
     /// system.manifest - Manifest cache entries for query optimization (persisted)
     Manifest,
+    /// system.topics - Durable pub/sub topics (persisted)
+    Topics,
+    /// system.topic_offsets - Consumer group offset tracking (persisted)
+    TopicOffsets,
 
     // ==================== VIRTUAL VIEWS ====================
     /// system.stats - Runtime metrics (computed on-demand)
@@ -72,6 +76,8 @@ impl SystemTable {
             SystemTable::JobNodes => "job_nodes",
             SystemTable::AuditLog => "audit_log",
             SystemTable::Manifest => "manifest",
+            SystemTable::Topics => "topics",
+            SystemTable::TopicOffsets => "topic_offsets",
             // Views
             SystemTable::Stats => "stats",
             SystemTable::Settings => "settings",
@@ -120,6 +126,8 @@ impl SystemTable {
             SystemTable::JobNodes => Some("system_job_nodes"),
             SystemTable::AuditLog => Some("system_audit_log"),
             SystemTable::Manifest => Some("manifest_cache"),
+            SystemTable::Topics => Some("system_topics"),
+            SystemTable::TopicOffsets => Some("system_topic_offsets"),
             // Views have no column family
             SystemTable::Stats
             | SystemTable::Settings
@@ -150,6 +158,8 @@ impl SystemTable {
             "job_nodes" | "system_job_nodes" => Ok(SystemTable::JobNodes),
             "audit_log" | "system_audit_log" => Ok(SystemTable::AuditLog),
             "manifest" | "manifest_cache" => Ok(SystemTable::Manifest),
+            "topics" | "system_topics" => Ok(SystemTable::Topics),
+            "topic_offsets" | "system_topic_offsets" => Ok(SystemTable::TopicOffsets),
             // Views
             "stats" => Ok(SystemTable::Stats),
             "settings" => Ok(SystemTable::Settings),
@@ -177,6 +187,8 @@ impl SystemTable {
             SystemTable::JobNodes,
             SystemTable::AuditLog,
             SystemTable::Manifest,
+            SystemTable::Topics,
+            SystemTable::TopicOffsets,
         ]
     }
 
@@ -247,6 +259,8 @@ impl SystemTable {
         static JOB_NODES: Lazy<Partition> = Lazy::new(|| Partition::new("system_job_nodes"));
         static AUDIT_LOG: Lazy<Partition> = Lazy::new(|| Partition::new("system_audit_log"));
         static MANIFEST: Lazy<Partition> = Lazy::new(|| Partition::new("manifest_cache"));
+        static TOPICS: Lazy<Partition> = Lazy::new(|| Partition::new("system_topics"));
+        static TOPIC_OFFSETS: Lazy<Partition> = Lazy::new(|| Partition::new("system_topic_offsets"));
 
         match self {
             SystemTable::Users => Some(&USERS),
@@ -259,6 +273,8 @@ impl SystemTable {
             SystemTable::JobNodes => Some(&JOB_NODES),
             SystemTable::AuditLog => Some(&AUDIT_LOG),
             SystemTable::Manifest => Some(&MANIFEST),
+            SystemTable::Topics => Some(&TOPICS),
+            SystemTable::TopicOffsets => Some(&TOPIC_OFFSETS),
             // Views have no partition
             SystemTable::Stats
             | SystemTable::Settings

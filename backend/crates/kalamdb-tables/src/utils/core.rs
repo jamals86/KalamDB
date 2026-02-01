@@ -5,7 +5,7 @@ use kalamdb_commons::TableId;
 use kalamdb_filestore::StorageRegistry;
 use kalamdb_system::{
     ClusterCoordinator as ClusterCoordinatorTrait,
-    LiveQueryManager as LiveQueryManagerTrait,
+    NotificationService as NotificationServiceTrait,
     ManifestService as ManifestServiceTrait,
     SchemaRegistry as SchemaRegistryTrait,
 };
@@ -21,7 +21,7 @@ use std::sync::Arc;
 /// **Services**:
 /// - `schema_registry`: Table schema management and caching (from kalamdb-registry)
 /// - `system_columns`: SeqId generation, _deleted flag handling (from kalamdb-registry)
-/// - `live_query_manager`: WebSocket notifications (optional, from kalamdb-core)
+/// - `notification_service`: WebSocket notifications (optional, from kalamdb-core)
 /// - `storage_registry`: Storage path resolution (optional, from kalamdb-core)
 pub struct TableProviderCore {
     /// Table identity shared by provider implementations
@@ -43,7 +43,7 @@ pub struct TableProviderCore {
     pub manifest_service: Arc<dyn ManifestServiceTrait>,
 
     /// Live query manager interface (for change notifications)
-    pub live_query_manager: Arc<dyn LiveQueryManagerTrait<Notification = ChangeNotification>>,
+    pub notification_service: Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>>,
 
     /// Cluster coordinator for leader checks
     pub cluster_coordinator: Arc<dyn ClusterCoordinatorTrait>,
@@ -58,7 +58,7 @@ impl TableProviderCore {
         system_columns: Arc<kalamdb_system::SystemColumnsService>,
         storage_registry: Option<Arc<StorageRegistry>>,
         manifest_service: Arc<dyn ManifestServiceTrait>,
-        live_query_manager: Arc<dyn LiveQueryManagerTrait<Notification = ChangeNotification>>,
+        notification_service: Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>>,
         cluster_coordinator: Arc<dyn ClusterCoordinatorTrait>,
     ) -> Self {
         Self {
@@ -68,7 +68,7 @@ impl TableProviderCore {
             system_columns,
             storage_registry,
             manifest_service,
-            live_query_manager,
+            notification_service,
             cluster_coordinator,
         }
     }
@@ -85,8 +85,8 @@ impl TableProviderCore {
     }
 
     /// LiveQueryManager accessor
-    pub fn live_query_manager(&self) -> &Arc<dyn LiveQueryManagerTrait<Notification = ChangeNotification>> {
-        &self.live_query_manager
+    pub fn notification_service(&self) -> &Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>> {
+        &self.notification_service
     }
 
     /// Cluster coordinator accessor

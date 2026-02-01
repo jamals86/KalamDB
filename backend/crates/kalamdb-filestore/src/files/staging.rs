@@ -57,8 +57,8 @@ impl StagingManager {
     /// Create a request-specific staging directory.
     ///
     /// Format: `{staging_dir}/{request_id}-{user_id}/`
-    pub fn create_request_dir(&self, request_id: &str, user_id: &str) -> Result<PathBuf> {
-        let dir_name = format!("{}-{}", sanitize_path_component(request_id), sanitize_path_component(user_id));
+    pub fn create_request_dir(&self, request_id: &str, user_id: &kalamdb_commons::UserId) -> Result<PathBuf> {
+        let dir_name = format!("{}-{}", sanitize_path_component(request_id), sanitize_path_component(user_id.as_str()));
         let request_dir = self.staging_dir.join(dir_name);
         
         fs::create_dir_all(&request_dir)
@@ -288,7 +288,7 @@ mod tests {
         let manager = StagingManager::new(&temp_dir);
         
         // Create request dir
-        let request_dir = manager.create_request_dir("req123", "user456").unwrap();
+        let request_dir = manager.create_request_dir("req123", &kalamdb_commons::UserId::new("user456")).unwrap();
         assert!(request_dir.exists());
         
         // Stage a file

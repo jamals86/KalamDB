@@ -13,11 +13,13 @@
 
 use crate::error::KalamDbError;
 use crate::error_extensions::KalamDbResultExt;
-use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
+use crate::manifest::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
 use crate::utils::base::{self, BaseTableProvider, TableProviderCore};
 use crate::utils::row_utils::extract_full_user_context;
-use crate::manifest::manifest_helpers::{ensure_manifest_ready, load_row_from_parquet_by_seq};
+use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::conversions::arrow_json_conversion::coerce_rows;
 use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::websocket::ChangeNotification;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -109,6 +111,22 @@ impl SharedTableProvider {
             schema,
             table_def,
         }
+    }
+    
+    /// Build a complete Row for live query/topic notifications including system columns (_seq, _deleted)
+    ///
+    /// This ensures notifications include all columns, not just user-defined fields.
+    fn build_notification_row(entity: &SharedTableRow) -> Row {
+        let mut values = entity.fields.values.clone();
+        values.insert(
+            SystemColumnNames::SEQ.to_string(),
+            ScalarValue::Int64(Some(entity._seq.as_i64())),
+        );
+        values.insert(
+            SystemColumnNames::DELETED.to_string(),
+            ScalarValue::Boolean(Some(entity._deleted)),
+        );
+        Row::new(values)
     }
     
         /// Access the underlying indexed store (used by flush jobs)
@@ -284,6 +302,16 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
         log::debug!("Inserted shared table row with _seq {}", seq_id);
 
+        // Fire topic/CDC notification (INSERT) - no user_id for shared tables
+        let notification_service = self.core.notification_service.clone();
+        let table_id = self.core.table_id().clone();
+
+        if notification_service.has_subscribers(None, &table_id) {
+            let row = Self::build_notification_row(&entity);
+            let notification = ChangeNotification::insert(table_id.clone(), row);
+            notification_service.notify_table_change(None, table_id, notification);
+        }
+
         Ok(row_key)
     }
 
@@ -448,6 +476,18 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             row_keys.last().map(|k| k.as_i64()).unwrap_or(0)
         );
 
+        // Fire topic/CDC notifications (INSERT) - no user_id for shared tables
+        let notification_service = self.core.notification_service.clone();
+        let table_id = self.core.table_id().clone();
+
+        if notification_service.has_subscribers(None, &table_id) {
+            for (_row_key, entity) in entries.iter() {
+                let row = Self::build_notification_row(entity);
+                let notification = ChangeNotification::insert(table_id.clone(), row);
+                notification_service.notify_table_change(None, table_id.clone(), notification);
+            }
+        }
+
         Ok(row_keys)
     }
 
@@ -534,6 +574,17 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 self.core.table_id(),
                 e
             );
+        }
+
+        // Fire topic/CDC notification (UPDATE) - no user_id for shared tables
+        let notification_service = self.core.notification_service.clone();
+        let table_id = self.core.table_id().clone();
+
+        if notification_service.has_subscribers(None, &table_id) {
+            let old_row = Self::build_notification_row(&latest_row);
+            let new_row = Self::build_notification_row(&entity);
+            let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
+            notification_service.notify_table_change(None, table_id, notification);
         }
 
         Ok(row_key)
@@ -645,6 +696,16 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 self.core.table_id(),
                 e
             );
+        }
+
+        // Fire topic/CDC notification (DELETE) - no user_id for shared tables
+        let notification_service = self.core.notification_service.clone();
+        let table_id = self.core.table_id().clone();
+
+        if notification_service.has_subscribers(None, &table_id) {
+            let row = Self::build_notification_row(&entity);
+            let notification = ChangeNotification::delete_soft(table_id.clone(), row);
+            notification_service.notify_table_change(None, table_id, notification);
         }
 
         Ok(())

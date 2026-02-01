@@ -79,17 +79,17 @@ block_cache_size = 4194304
 max_background_jobs = 4
 
 [datafusion]
-# Memory limit for query execution in bytes (default: 1GB)
+# Memory limit for query execution in bytes (default: 256MB)
 # Queries exceeding this limit will be terminated
-memory_limit = 1073741824
+memory_limit = 268435456
 
 # Number of parallel threads for query execution (default: number of CPU cores)
 # Set to 0 to auto-detect CPU count
 query_parallelism = 0
 
-# Maximum number of partitions per query (default: 16)
+# Maximum number of partitions per query (default: 8)
 # Higher values increase parallelism but use more resources
-max_partitions = 16
+max_partitions = 8
 
 # Batch size for record processing (default: 2048 rows)
 # MEMORY OPTIMIZATION: Reduced from 8192 for lower memory usage
@@ -124,19 +124,23 @@ default_max_buffer = 10000
 eviction_interval_seconds = 60
 
 [manifest_cache]
-# Eviction job interval in seconds (default: 600s = 10 minutes)
+# Eviction job interval in seconds (default: 300s = 5 minutes)
 # How often the eviction job runs to clean up stale manifest entries
-eviction_interval_seconds = 600
+eviction_interval_seconds = 300
 
-# Maximum number of manifest entries in hot cache (default: 50000)
+# Maximum number of manifest entries in hot cache (default: 500)
 # Older entries are evicted when this limit is reached (LRU policy)
-max_entries = 50000
+max_entries = 500
 
 # TTL in days for manifest eviction (default: 7 days)
 # Manifests not accessed for this many days will be removed from both
 # hot cache (RAM) and RocksDB persistent cache
 # Set to 0 to disable manifest eviction (not recommended for long-running servers)
 eviction_ttl_days = 7
+
+# Weight factor for user table manifests (default: 10)
+# User tables are evicted N times faster than shared tables.
+user_table_weight_factor = 10
 
 [limits]
 # Maximum message size for REST API requests in bytes (default: 1MB)

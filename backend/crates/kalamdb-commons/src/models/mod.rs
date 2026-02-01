@@ -35,9 +35,10 @@ pub mod schemas; // Table and column schema definitions
 // Standalone type modules (not IDs, not system tables)
 mod auth_type;
 mod connection;
+mod payload_mode;
 mod read_context;
-
 mod role;
+mod topic_op;
 mod user_name;
 
 // Row types only available with full feature (datafusion dependency)
@@ -47,10 +48,11 @@ pub mod rows;
 // Re-export all types from submodules for convenience
 pub use auth_type::AuthType;
 pub use ids::*;
+pub use payload_mode::PayloadMode;
 pub use read_context::ReadContext;
 pub use role::Role;
-
 pub use schemas::{TableAccess, TableName};
+pub use topic_op::TopicOp;
 pub use user_name::UserName;
 
 #[cfg(feature = "full")]

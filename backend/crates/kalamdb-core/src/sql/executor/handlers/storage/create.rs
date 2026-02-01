@@ -8,6 +8,7 @@ use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::executor::helpers::storage::ensure_filesystem_directory;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use kalamdb_commons::models::StorageId;
+use kalamdb_filestore::StorageHealthService;
 use kalamdb_system::StorageType;
 use kalamdb_sql::ddl::CreateStorageStatement;
 use std::sync::Arc;
@@ -113,6 +114,40 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
         };
+
+        let connectivity = StorageHealthService::test_connectivity(&storage)
+            .await
+            .into_kalamdb_error("Storage connectivity check failed")?;
+
+        if !connectivity.connected {
+            let error = connectivity
+                .error
+                .unwrap_or_else(|| "Unknown connectivity error".to_string());
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Storage connectivity check failed (latency {} ms): {}",
+                connectivity.latency_ms, error
+            )));
+        }
+
+        let health_result = StorageHealthService::run_full_health_check(&storage)
+            .await
+            .into_kalamdb_error("Storage health check failed")?;
+
+        if !health_result.is_healthy() {
+            let error = health_result
+                .error
+                .unwrap_or_else(|| "Unknown storage health error".to_string());
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Storage health check failed (status {}, readable={}, writable={}, listable={}, deletable={}, latency {} ms): {}",
+                health_result.status,
+                health_result.readable,
+                health_result.writable,
+                health_result.listable,
+                health_result.deletable,
+                health_result.latency_ms,
+                error
+            )));
+        }
 
         // Delegate to unified applier (handles standalone vs cluster internally)
         self.app_context

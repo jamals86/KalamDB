@@ -434,7 +434,7 @@ pub struct PerformanceSettings {
 /// DataFusion settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataFusionSettings {
-    /// Memory limit for query execution in bytes (default: 1GB)
+    /// Memory limit for query execution in bytes (default: 256MB)
     #[serde(default = "default_datafusion_memory_limit")]
     pub memory_limit: usize,
 
@@ -442,11 +442,11 @@ pub struct DataFusionSettings {
     #[serde(default = "default_datafusion_parallelism")]
     pub query_parallelism: usize,
 
-    /// Maximum number of partitions per query (default: 16)
+    /// Maximum number of partitions per query (default: 8)
     #[serde(default = "default_datafusion_max_partitions")]
     pub max_partitions: usize,
 
-    /// Batch size for record processing (default: 8192)
+    /// Batch size for record processing (default: 2048)
     #[serde(default = "default_datafusion_batch_size")]
     pub batch_size: usize,
 }
@@ -476,7 +476,7 @@ pub struct ManifestCacheSettings {
     #[serde(default = "default_manifest_cache_eviction_interval")]
     pub eviction_interval_seconds: i64,
 
-    /// Maximum number of cached manifest entries (default: 50000)
+    /// Maximum number of cached manifest entries (default: 500)
     #[serde(default = "default_manifest_cache_max_entries")]
     pub max_entries: usize,
 

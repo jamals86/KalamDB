@@ -48,7 +48,7 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# Write buffer size per column family in bytes (default: 4MB)
+# Write buffer size per column family in bytes (default: 2MB)
 # Lower values reduce memory with many column families
 # Formula: memory ~= write_buffer_size × max_write_buffers × num_column_families
 # MEMORY OPTIMIZATION: Reduced for idle server (was 4MB)
@@ -58,7 +58,7 @@ write_buffer_size = 2097152
 # Allows writes to continue while buffers are being flushed
 max_write_buffers = 2
 
-# Block cache size for reads in bytes (default: 16MB)
+# Block cache size for reads in bytes (default: 4MB)
 # Shared LRU cache across all column families
 # MEMORY OPTIMIZATION: Reduced from 16MB to 4MB for idle server
 block_cache_size = 4194304
@@ -79,7 +79,7 @@ query_parallelism = 0
 # Higher values increase parallelism but use more resources
 max_partitions = 8
 
-# Batch size for record processing (default: 4096 rows)
+# Batch size for record processing (default: 2048 rows)
 # Lower batch size reduces memory pressure
 # MEMORY OPTIMIZATION: Reduced from 4096 to 2048 rows
 batch_size = 2048
@@ -116,6 +116,25 @@ default_max_buffer = 10000
 # Stream eviction interval in seconds (default: 60 seconds = 1 minute)
 # How often the background task checks and evicts expired events
 eviction_interval_seconds = 60
+
+[manifest_cache]
+# Eviction job interval in seconds (default: 300s = 5 minutes)
+# How often the eviction job runs to clean up stale manifest entries
+eviction_interval_seconds = 300
+
+# Maximum number of manifest entries in hot cache (default: 500)
+# Older entries are evicted when this limit is reached (LRU policy)
+max_entries = 500
+
+# TTL in days for manifest eviction (default: 7 days)
+# Manifests not accessed for this many days will be removed from both
+# hot cache (RAM) and RocksDB persistent cache
+# Set to 0 to disable manifest eviction (not recommended for long-running servers)
+eviction_ttl_days = 7
+
+# Weight factor for user table manifests (default: 10)
+# User tables are evicted N times faster than shared tables.
+user_table_weight_factor = 10
 
 [limits]
 # Maximum message size for REST API requests in bytes (default: 1MB)

@@ -94,7 +94,7 @@ impl UserTableFlushJob {
     /// Flush accumulated rows for a single user to Parquet
     fn flush_user_data(
         &self,
-        user_id: &str,
+        user_id: &UserId,
         rows: &[(Vec<u8>, Row)],
         parquet_files: &mut Vec<String>,
         bloom_filter_columns: &[String],
@@ -108,7 +108,7 @@ impl UserTableFlushJob {
         log::debug!(
             "💾 Flushing {} rows for user {} (table={})",
             rows_count,
-            user_id,
+            user_id.as_str(),
             self.table_id
         );
 
@@ -116,7 +116,7 @@ impl UserTableFlushJob {
         let batch = self.rows_to_record_batch(rows)?;
 
         // Resolve storage path for this user
-        let user_id_typed = UserId::from(user_id);
+        let user_id_typed = user_id;
         let cached = self.unified_cache.get(&self.table_id).ok_or_else(|| {
             KalamDbError::TableNotFound(format!("Table not found: {}", self.table_id))
         })?;
@@ -128,15 +128,15 @@ impl UserTableFlushJob {
             .full_path;
 
         // RLS ASSERTION: Verify storage path contains user_id
-        if !storage_path.contains(user_id) {
+        if !storage_path.contains(user_id.as_str()) {
             log::error!(
                 "🚨 RLS VIOLATION: Flush storage path does NOT contain user_id! user={}, path={}",
-                user_id,
+                user_id.as_str(),
                 storage_path
             );
             return Err(KalamDbError::Other(format!(
                 "RLS violation: flush path missing user_id isolation for user {}",
-                user_id
+                user_id.as_str()
             )));
         }
 
@@ -164,7 +164,7 @@ impl UserTableFlushJob {
         if let Err(e) = self.manifest_helper.mark_syncing(&self.table_id, Some(&user_id_typed)) {
             log::warn!(
                 "⚠️  Failed to mark manifest as syncing for user {}: {} (continuing)",
-                user_id,
+                user_id.as_str(),
                 e
             );
         }
@@ -263,7 +263,7 @@ impl TableFlush for UserTableFlushJob {
 
         // Map: (user_id, pk_value) -> (key_bytes, row, _seq)
         let mut latest_versions: HashMap<
-            (String, String),
+            (UserId, String),
             (Vec<u8>, kalamdb_tables::UserTableRow, i64),
         > = HashMap::new();
         // Track ALL keys to delete (including old versions)
@@ -303,7 +303,7 @@ impl TableFlush for UserTableFlushJob {
                 all_keys_to_delete.push(row_id.storage_key());
 
                 // Parse user_id from key
-                let user_id = row_id.user_id().as_str().to_string();
+                let user_id = row_id.user_id().clone();
 
                 // Extract PK value from fields
                 let seq_val = row._seq.as_i64();
@@ -321,7 +321,7 @@ impl TableFlush for UserTableFlushJob {
                     Some((_existing_key, _existing_row, existing_seq)) => {
                         if seq_val > *existing_seq {
                             log::trace!("[FLUSH DEDUP] Replacing user={}, pk={}: old_seq={}, new_seq={}, deleted={}",
-                                       user_id, pk_value, existing_seq, seq_val, row._deleted);
+                                       user_id.as_str(), pk_value, existing_seq, seq_val, row._deleted);
                             latest_versions.insert(group_key, (row_id.storage_key(), row, seq_val));
                         }
                     },
@@ -340,7 +340,7 @@ impl TableFlush for UserTableFlushJob {
         stats.rows_after_dedup = latest_versions.len();
 
         // STEP 2: Filter out deleted rows (tombstones)
-        let mut rows_by_user: HashMap<String, Vec<(Vec<u8>, Row)>> = HashMap::new();
+        let mut rows_by_user: HashMap<UserId, Vec<(Vec<u8>, Row)>> = HashMap::new();
 
         for ((user_id, _pk_value), (key_bytes, row, _seq)) in latest_versions {
             // Skip soft-deleted rows (tombstones)
@@ -396,7 +396,7 @@ impl TableFlush for UserTableFlushJob {
                 },
                 Err(e) => {
                     let error_msg =
-                        format!("Failed to flush {} rows for user {}: {}", rows.len(), user_id, e);
+                        format!("Failed to flush {} rows for user {}: {}", rows.len(), user_id.as_str(), e);
                     log::error!("{}. Rows kept in buffer.", error_msg);
                     error_messages.push(error_msg);
                     flush_succeeded = false;
@@ -421,11 +421,10 @@ impl TableFlush for UserTableFlushJob {
             log::debug!("📊 [FLUSH CLEANUP] Invalidating manifest cache to ensure visibility");
             let manifest_service = self.app_context.manifest_service();
             for user_id in rows_by_user.keys() {
-                let user_id_typed = UserId::from(user_id.as_str());
-                if let Err(e) = manifest_service.invalidate(&self.table_id, Some(&user_id_typed)) {
+                if let Err(e) = manifest_service.invalidate(&self.table_id, Some(user_id)) {
                     log::warn!(
                         "Failed to invalidate manifest cache for user {}: {}",
-                        user_id,
+                        user_id.as_str(),
                         e
                     );
                 }

@@ -158,7 +158,7 @@ impl UserTableProvider {
         pk_value: &ScalarValue,
     ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
         // Build prefix for PK index scan
-        let prefix = self.pk_index.build_prefix_for_pk(user_id.as_str(), pk_value);
+        let prefix = self.pk_index.build_prefix_for_pk(user_id, pk_value);
 
         // Scan index for all versions with this PK
         let index_results = self
@@ -307,7 +307,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // If hot storage has entries but all are deleted, the PK can be reused.
-        let hot_prefix = self.pk_index.build_prefix_for_pk(user_id.as_str(), &pk_value);
+        let hot_prefix = self.pk_index.build_prefix_for_pk(user_id, &pk_value);
         let hot_has_versions = self
             .store
             .exists_by_index(0, &hot_prefix)
@@ -388,14 +388,16 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         log::debug!("Inserted user table row for user {} with _seq {}", user_id.as_str(), seq_id);
 
         // Fire live query notification (INSERT)
-        let manager = self.core.live_query_manager.clone();
+        let notification_service = self.core.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
-        // Build complete row including system columns (_seq, _deleted)
-        let row = Self::build_notification_row(&entity);
+        if notification_service.has_subscribers(Some(&user_id), &table_id) {
+            // Build complete row including system columns (_seq, _deleted)
+            let row = Self::build_notification_row(&entity);
 
-        let notification = ChangeNotification::insert(table_id.clone(), row);
-        manager.notify_table_change_async(user_id.clone(), table_id, notification);
+            let notification = ChangeNotification::insert(table_id.clone(), row);
+            notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+        }
 
         Ok(row_key)
     }
@@ -446,7 +448,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 if !matches!(pk_value, ScalarValue::Null) {
                     let pk_str =
                         crate::utils::unified_dml::extract_user_pk_value(row_data, pk_name)?;
-                    let prefix = self.pk_index.build_prefix_for_pk(user_id.as_str(), &pk_value);
+                    let prefix = self.pk_index.build_prefix_for_pk(user_id, &pk_value);
                     pk_values_to_check.push((pk_str, prefix));
                 }
             }
@@ -468,7 +470,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             } else {
                 // Larger batch: use batch index scan for efficiency
                 // Build common prefix for this user's PKs
-                let user_prefix = self.pk_index.build_user_prefix(user_id.as_str());
+                let user_prefix = self.pk_index.build_user_prefix(user_id);
                 let prefixes: Vec<Vec<u8>> =
                     pk_values_to_check.iter().map(|(_, p)| p.clone()).collect();
 
@@ -536,7 +538,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         );
 
         // Fire live query notifications (one per row - async fire-and-forget)
-        let manager = self.core.live_query_manager.clone();
+        let notification_service = self.core.notification_service.clone();
         let table_id = self.core.table_id().clone();
         log::debug!(
             "UserTableProvider::insert_batch: Sending {} notifications for user={}, table={}",
@@ -545,11 +547,13 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             table_id
         );
 
-        for (_row_key, entity) in entries.iter() {
-            // Build complete row including system columns (_seq, _deleted)
-            let row = Self::build_notification_row(entity);
-            let notification = ChangeNotification::insert(table_id.clone(), row);
-            manager.notify_table_change_async(user_id.clone(), table_id.clone(), notification);
+        if notification_service.has_subscribers(Some(&user_id), &table_id) {
+            for (_row_key, entity) in entries.iter() {
+                // Build complete row including system columns (_seq, _deleted)
+                let row = Self::build_notification_row(entity);
+                let notification = ChangeNotification::insert(table_id.clone(), row);
+                notification_service.notify_table_change(Some(user_id.clone()), table_id.clone(), notification);
+            }
         }
 
         Ok(row_keys)
@@ -649,17 +653,19 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // Fire live query notification (UPDATE)
-        let manager = self.core.live_query_manager.clone();
+        let notification_service = self.core.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
-        // Old data: latest prior resolved row (with system columns)
-        let old_row = Self::build_notification_row(&latest_row);
+        if notification_service.has_subscribers(Some(&user_id), &table_id) {
+            // Old data: latest prior resolved row (with system columns)
+            let old_row = Self::build_notification_row(&latest_row);
 
-        // New data: merged entity (with system columns)
-        let new_row = Self::build_notification_row(&entity);
+            // New data: merged entity (with system columns)
+            let new_row = Self::build_notification_row(&entity);
 
-        let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
-        manager.notify_table_change_async(user_id.clone(), table_id, notification);
+            let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
+            notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+        }
         Ok(row_key)
     }
 
@@ -724,17 +730,19 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // Fire live query notification (UPDATE)
-        let manager = self.core.live_query_manager.clone();
+        let notification_service = self.core.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
-        // Old data: latest prior resolved row (with system columns)
-        let old_row = Self::build_notification_row(&latest_row);
+        if notification_service.has_subscribers(Some(&user_id), &table_id) {
+            // Old data: latest prior resolved row (with system columns)
+            let old_row = Self::build_notification_row(&latest_row);
 
-        // New data: merged entity (with system columns)
-        let new_row = Self::build_notification_row(&entity);
+            // New data: merged entity (with system columns)
+            let new_row = Self::build_notification_row(&entity);
 
-        let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
-        manager.notify_table_change_async(user_id.clone(), table_id, notification);
+            let notification = ChangeNotification::update(table_id.clone(), old_row, new_row);
+            notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+        }
         Ok(row_key)
     }
 
@@ -800,14 +808,16 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         }
 
         // Fire live query notification (DELETE soft)
-        let manager = self.core.live_query_manager.clone();
+        let notification_service = self.core.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
-        // Provide tombstone entity with system columns for filter matching
-        let row = Self::build_notification_row(&entity);
+        if notification_service.has_subscribers(Some(&user_id), &table_id) {
+            // Provide tombstone entity with system columns for filter matching
+            let row = Self::build_notification_row(&entity);
 
-        let notification = ChangeNotification::delete_soft(table_id.clone(), row);
-        manager.notify_table_change_async(user_id.clone(), table_id, notification);
+            let notification = ChangeNotification::delete_soft(table_id.clone(), row);
+            notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+        }
         Ok(())
     }
 

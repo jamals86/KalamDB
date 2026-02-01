@@ -6,6 +6,7 @@ use crate::error_extensions::KalamDbResultExt;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::helpers::guards::require_admin;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use kalamdb_filestore::StorageHealthService;
 use kalamdb_sql::ddl::AlterStorageStatement;
 use std::sync::Arc;
 
@@ -82,6 +83,40 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
                 serde_json::to_string(&value)
                     .into_invalid_operation("Failed to normalize CONFIG JSON")?,
             );
+        }
+
+        let connectivity = StorageHealthService::test_connectivity(&storage)
+            .await
+            .into_kalamdb_error("Storage connectivity check failed")?;
+
+        if !connectivity.connected {
+            let error = connectivity
+                .error
+                .unwrap_or_else(|| "Unknown connectivity error".to_string());
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Storage connectivity check failed (latency {} ms): {}",
+                connectivity.latency_ms, error
+            )));
+        }
+
+        let health_result = StorageHealthService::run_full_health_check(&storage)
+            .await
+            .into_kalamdb_error("Storage health check failed")?;
+
+        if !health_result.is_healthy() {
+            let error = health_result
+                .error
+                .unwrap_or_else(|| "Unknown storage health error".to_string());
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Storage health check failed (status {}, readable={}, writable={}, listable={}, deletable={}, latency {} ms): {}",
+                health_result.status,
+                health_result.readable,
+                health_result.writable,
+                health_result.listable,
+                health_result.deletable,
+                health_result.latency_ms,
+                error
+            )));
         }
 
         // Update timestamp

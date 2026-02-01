@@ -48,18 +48,18 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# Write buffer size per column family in bytes (default: 4MB)
+# Write buffer size per column family in bytes (default: 2MB)
 # Lower values reduce memory with many column families
 # Formula: memory ~= write_buffer_size × max_write_buffers × num_column_families
-write_buffer_size = 4194304
+write_buffer_size = 2097152
 
 # Maximum number of write buffers (default: 2)
 # Allows writes to continue while buffers are being flushed
 max_write_buffers = 2
 
-# Block cache size for reads in bytes (default: 16MB)
+# Block cache size for reads in bytes (default: 4MB)
 # Shared LRU cache across all column families
-block_cache_size = 16777216
+block_cache_size = 4194304
 
 # Maximum number of background compaction/flush jobs (default: 4)
 max_background_jobs = 4
@@ -77,9 +77,23 @@ query_parallelism = 0
 # Higher values increase parallelism but use more resources
 max_partitions = 8
 
-# Batch size for record processing (default: 4096 rows)
+# Batch size for record processing (default: 2048 rows)
 # Lower batch size reduces memory pressure
-batch_size = 4096
+batch_size = 2048
+
+[manifest_cache]
+# Eviction job interval in seconds (default: 300s = 5 minutes)
+eviction_interval_seconds = 300
+
+# Maximum number of cached manifest entries (default: 500)
+max_entries = 500
+
+# TTL in days for manifest eviction (default: 7 days)
+eviction_ttl_days = 7
+
+# Weight factor for user table manifests (default: 10)
+# User tables are evicted N times faster than shared tables.
+user_table_weight_factor = 10
 
 [flush]
 # Default row limit for flush policies (default: 10000 rows)
@@ -126,7 +140,7 @@ default_query_limit = 50
 
 [logging]
 # Log level: error, warn, info, debug, trace (default: info)
-level = "info"
+level = "debug"
 
 # Directory for all log files (default: "./logs")
 # Server will create app.log, slow.log, and other log files in this directory

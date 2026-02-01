@@ -26,6 +26,7 @@ pub mod show_table_stats;
 pub mod show_tables;
 pub mod storage_commands;
 pub mod subscribe_commands;
+pub mod topic_commands;
 pub mod use_namespace;
 pub mod user_commands;
 
@@ -58,6 +59,10 @@ pub use storage_commands::{
 pub use subscribe_commands::SubscribeStatement;
 // Re-export SubscriptionOptions from kalamdb_commons for convenience
 pub use kalamdb_commons::websocket::SubscriptionOptions;
+pub use topic_commands::{
+    AckStatement, AddTopicSourceStatement, ConsumePosition, ConsumeStatement,
+    CreateTopicStatement, DropTopicStatement,
+};
 pub use use_namespace::UseNamespaceStatement;
 pub use user_commands::{
     AlterUserStatement, CreateUserStatement, DropUserStatement, UserModification,

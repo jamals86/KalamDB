@@ -27,22 +27,27 @@ Create system tables (or system-managed metadata) to track topics, routes, and o
 - `system.topics`
   - `topic_id` (TopicId)
   - `name`
+  - `alias` (optional, unique)
   - `partitions` (u32, default 1)
   - `retention_seconds` (optional)
   - `retention_max_bytes` (optional)
-- `system.topic_routes`
-  - `topic_id`
-  - `table_id`
-  - `op` (Insert|Update|Delete)
-  - `payload_mode` (Key|Full|Diff)
-  - `filter_expr` (optional)
-  - `partition_key_expr` (optional)
+  - `routes[]` (embedded; one topic can have multiple routes)
+    - `table_id`
+    - `op` (Insert|Update|Delete)
+    - `payload_mode` (Key|Full|Diff)
+    - `filter_expr` (optional)
+    - `partition_key_expr` (optional)
 - `system.topic_offsets`
   - `topic_id`
   - `group_id`
   - `partition_id` (u32)
   - `last_acked_offset` (u64)
   - `updated_at`
+
+### Indexing & Caching
+- `system.topics`: unique index on `name`, unique index on `alias` (when present).
+- Route lookup: build an in-memory index at startup and update on changes: `(table_id, op) -> [topic_id]`.
+- Optional future: persist a secondary index in RocksDB if startup rebuild becomes too expensive.
 
 ### Topic Message Envelope
 Stored in RocksDB `topic_logs`:
@@ -60,17 +65,17 @@ Stored in RocksDB `topic_logs`:
   - `Diff`: changed columns (future)
 
 ## Storage Layout (RocksDB)
-Use a dedicated Column Family in `kalamdb-store` (preferred) or key prefixes.
+Use a dedicated Column Family in `kalamdb-store` (preferred) or key prefixes. use StoredKey just like the rest.
 
 ### Topic Logs
-Key:
+Key: (similar to the other storagekey's we already have with tuples)
 ```
 topic/<topic_id>/<partition_id>/<offset>
 ```
 Value: binary envelope (bincode/serde).
 
 ### Offsets
-Key:
+Key: (similar to the other storagekey's we already have with tuples)
 ```
 offset/<topic_id>/<group_id>/<partition_id>
 ```
@@ -80,7 +85,7 @@ last_acked_offset (u64)
 ```
 
 ### Offset Counters
-Key:
+Key: (similar to the other storagekey's we already have with tuples)
 ```
 counter/<topic_id>/<partition_id>
 ```
@@ -117,6 +122,15 @@ ON INSERT
 WITH (payload = 'full');
 ```
 
+Filtered route (WHERE):
+```
+ALTER TOPIC app.new_messages
+ADD SOURCE chat.messages
+ON INSERT
+WHERE (is_visible = true AND channel_id = 42)
+WITH (payload = 'key');
+```
+
 Partition key (future-ready):
 ```
 ALTER TOPIC app.new_messages
@@ -148,6 +162,14 @@ FROM OFFSET 12345
 LIMIT 100;
 ```
 
+Consume by alias:
+```
+CONSUME FROM app.new_messages_alias
+GROUP 'ai-service'
+FROM LATEST
+LIMIT 100;
+```
+
 ### Ack
 ```
 ACK app.new_messages
@@ -157,21 +179,85 @@ UPTO OFFSET 220;
 ```
 
 ## API Surface (HTTP/SDK)
-### Consume Request
-- topic
-- group_id
-- start: Latest | Earliest | Offset(u64)
-- limit
-- partition_id (optional, default 0)
+### Consume Request (Long Polling)
+**Endpoint**: `POST /api/topics/consume`
+
+**Authentication**: Required (Basic Auth or JWT Bearer)
+**Authorization**: Role must be `service`, `dba`, or `system` (NOT `user`)
+
+**Long Polling Behavior**:
+- Actix-Web async handler keeps request open until messages are available or timeout expires
+- No need for frequent polling - one long-lived request per consumer
+- Configurable timeout via `server.toml` or request header
+- Default timeout: 30 seconds (configurable)
+- If no messages available before timeout, returns empty array
+- Client should immediately reconnect after receiving response or timeout
+
+**Request Body**:
+```json
+{
+  "topic": "app.new_messages",
+  "group_id": "ai-service",
+  "start": "Latest" | "Earliest" | { "Offset": 12345 },
+  "limit": 100,
+  "partition_id": 0,
+  "timeout_seconds": 30
+}
+```
+
+**Request Fields**:
+- `topic` (string): Topic name or alias
+- `group_id` (string): Consumer group identifier
+- `start` (enum): Starting position (Latest | Earliest | Offset(u64))
+- `limit` (int): Maximum messages to return (default 100)
+- `partition_id` (int, optional): Partition to consume from (default 0)
+- `timeout_seconds` (int, optional): Long polling timeout (default from server.toml)
 
 ### Consume Response
-- messages[]: envelope fields with payload
+**Response Body**:
+```json
+{
+  "messages": [
+    {
+      "topic_id": "...",
+      "partition_id": 0,
+      "offset": 12345,
+      "message_id": "...",
+      "source_table": "chat.messages",
+      "op": "Insert",
+      "ts": 1730000000000,
+      "payload_mode": "Key",
+      "payload": "base64-encoded-bytes"
+    }
+  ],
+  "next_offset": 12346,
+  "has_more": true
+}
+```
 
 ### Ack Request
-- topic
-- group_id
-- partition_id (default 0)
-- upto_offset
+**Endpoint**: `POST /api/topics/ack`
+
+**Authentication**: Required (Basic Auth or JWT Bearer)
+**Authorization**: Role must be `service`, `dba`, or `system` (NOT `user`)
+
+**Request Body**:
+```json
+{
+  "topic": "app.new_messages",
+  "group_id": "ai-service",
+  "partition_id": 0,
+  "upto_offset": 220
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "acknowledged_offset": 220
+}
+```
 
 ## Write Path Integration
 1. On table write, existing change-event pipeline emits `ChangeEvent`.
@@ -184,10 +270,26 @@ UPTO OFFSET 220;
 3. Consumers read from `topic_logs` by `topic_id/partition_id/offset`.
 4. ACK updates `topic_offsets`.
 
+### Live Query Reuse (Future Work)
+- Reuse the existing live query change-event + filter evaluation path to avoid duplicating predicate and projection logic.
+- Potential design: a shared `ChangeEventEvaluator` service that compiles filters/queries once and is used by both live queries and topic routes.
+- For MVP, keep topic routing isolated but structure it to plug into this shared evaluator later.
+
 ## Offset Allocation (Single Node MVP)
 - Read `counter/<topic>/<partition>` to get `last_offset`.
 - `new_offset = last_offset + 1`.
 - Write log entry and update counter atomically (single RocksDB batch).
+
+## Configuration (server.toml)
+```toml
+[topics]
+# Long polling timeout for CONSUME requests (seconds)
+default_consume_timeout = 30
+max_consume_timeout = 300
+
+# Authorization settings
+allow_user_role_consume = false  # Only service/dba/system can consume
+```
 
 ## Retention & Cleanup
 - Per-topic retention policy: `retention_seconds` and/or `retention_max_bytes`.
@@ -197,7 +299,8 @@ UPTO OFFSET 220;
 ## Ownership by Crate
 - `kalamdb-store`: RocksDB CFs and low-level get/put/batch APIs.
 - `kalamdb-system`: system tables (`topics`, `topic_routes`, `topic_offsets`).
-- `kalamdb-core`: router, offset allocation, retention job, handlers.
+- `kalamdb-publisher` (new): routing engine, route evaluation, payload materialization, and offset allocation.
+- `kalamdb-core`: orchestrates topic routing, retention job, and delegates to `kalamdb-publisher`.
 - `kalamdb-sql`: SQL parsing/AST for CREATE/ALTER/CONSUME/ACK.
 - `kalamdb-api`: HTTP endpoints for consume/ack and SQL execution.
 - `kalamdb-commons`: types (`TopicId`, `ConsumerGroupId`, `TopicOp`, `PayloadMode`).

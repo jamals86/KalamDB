@@ -81,7 +81,7 @@ impl FileStorageService {
     }
 
     /// Create a staging directory for a request.
-    pub fn create_staging_dir(&self, request_id: &str, user_id: &str) -> Result<std::path::PathBuf> {
+    pub fn create_staging_dir(&self, request_id: &str, user_id: &kalamdb_commons::UserId) -> Result<std::path::PathBuf> {
         self.staging.create_request_dir(request_id, user_id)
     }
 

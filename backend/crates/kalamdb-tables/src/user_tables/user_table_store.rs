@@ -131,12 +131,12 @@ mod tests {
         new_user_table_store(backend, &table_id)
     }
 
-    fn create_test_row(user_id: &str, seq: i64) -> UserTableRow {
+    fn create_test_row(user_id: &UserId, seq: i64) -> UserTableRow {
         let mut values = BTreeMap::new();
         values.insert("name".to_string(), ScalarValue::Utf8(Some("Alice".to_string())));
         values.insert("id".to_string(), ScalarValue::Int64(Some(1)));
         UserTableRow {
-            user_id: UserId::new(user_id),
+            user_id: user_id.clone(),
             _seq: SeqId::new(seq),
             fields: Row::new(values),
             _deleted: false,
@@ -153,7 +153,7 @@ mod tests {
     fn test_user_table_store_put_get() {
         let store = create_test_store();
         let key = UserTableRowId::new(UserId::new("user1"), SeqId::new(100));
-        let row = create_test_row("user1", 100);
+        let row = create_test_row(&UserId::new("user1"), 100);
 
         // Put and get
         store.put(&key, &row).unwrap();
@@ -166,7 +166,7 @@ mod tests {
     fn test_user_table_store_delete() {
         let store = create_test_store();
         let key = UserTableRowId::new(UserId::new("user1"), SeqId::new(200));
-        let row = create_test_row("user1", 200);
+        let row = create_test_row(&UserId::new("user1"), 200);
 
         // Put, delete, verify
         store.put(&key, &row).unwrap();
@@ -187,7 +187,7 @@ mod tests {
                     SeqId::new((user_i * 1000 + row_i) as i64),
                 );
                 let row =
-                    create_test_row(&format!("user{}", user_i), (user_i * 1000 + row_i) as i64);
+                    create_test_row(&UserId::new(&format!("user{}", user_i)), (user_i * 1000 + row_i) as i64);
                 store.put(&key, &row).unwrap();
             }
         }
@@ -203,12 +203,12 @@ mod tests {
 
         // User1's row
         let key1 = UserTableRowId::new(UserId::new("user1"), SeqId::new(100));
-        let row1 = create_test_row("user1", 100);
+        let row1 = create_test_row(&UserId::new("user1"), 100);
         store.put(&key1, &row1).unwrap();
 
         // User2's row with same seq
         let key2 = UserTableRowId::new(UserId::new("user2"), SeqId::new(100));
-        let row2 = create_test_row("user2", 100);
+        let row2 = create_test_row(&UserId::new("user2"), 100);
         store.put(&key2, &row2).unwrap();
 
         // Both exist independently

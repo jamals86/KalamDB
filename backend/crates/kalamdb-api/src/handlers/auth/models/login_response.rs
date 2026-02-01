@@ -1,0 +1,19 @@
+//! Login response model
+
+use super::UserInfo;
+use serde::Serialize;
+
+/// Login response body
+#[derive(Debug, Serialize)]
+pub struct LoginResponse {
+    /// User information
+    pub user: UserInfo,
+    /// Access token expiration time in RFC3339 format
+    pub expires_at: String,
+    /// JWT access token for SDK usage (also set as HttpOnly cookie)
+    pub access_token: String,
+    /// Refresh token for obtaining new access tokens (longer-lived)
+    pub refresh_token: String,
+    /// Refresh token expiration time in RFC3339 format
+    pub refresh_expires_at: String,
+}

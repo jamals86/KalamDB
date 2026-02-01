@@ -226,6 +226,8 @@ CREDENTIALS '{
 **Notes**:
 - Storage ID 'local' is pre-configured and always available.
 - Credentials are stored encrypted in `system.storages`.
+- CREATE STORAGE runs a connectivity check and a full CRUD health check (PUT/LIST/GET/DELETE).
+  If any check fails, the storage is not created and an error is returned.
 
 ---
 
@@ -249,6 +251,10 @@ SET DESCRIPTION 'Primary local storage';
 ALTER STORAGE s3_prod
 SET USER_TABLES_TEMPLATE '{namespace}/users/{userId}/{tableName}/';
 ```
+
+**Notes**:
+- ALTER STORAGE re-validates storage connectivity and CRUD health checks using the updated configuration.
+  If any check fails, the update is rejected and no changes are saved.
 
 ---
 
@@ -282,6 +288,36 @@ storage_id   | type       | base_directory                | table_count
 local        | filesystem | ./data                        | 5
 s3_prod      | s3         | s3://my-bucket/kalamdb-data  | 12
 ```
+
+---
+
+### STORAGE CHECK
+
+Validate storage health and return operational status and capacity (when available).
+
+```sql
+STORAGE CHECK <storage_id>;
+STORAGE CHECK <storage_id> EXTENDED;
+```
+
+**Examples**:
+```sql
+STORAGE CHECK local;
+STORAGE CHECK s3_prod EXTENDED;
+```
+
+**Result Columns**:
+- `storage_id`: Storage identifier
+- `status`: `healthy`, `degraded`, or `unreachable`
+- `readable`, `writable`, `listable`, `deletable`: Per-operation checks
+- `latency_ms`: End-to-end health check latency
+- `total_bytes`, `used_bytes`: Capacity information (if available)
+- `error`: Error details when degraded or unreachable
+- `tested_at`: Timestamp (milliseconds since epoch) when the check ran
+
+**Notes**:
+- The command performs a full CRUD health check (PUT/LIST/GET/DELETE).
+- Capacity fields are populated for local filesystem storage when the underlying disk is detectable.
 
 ---
 

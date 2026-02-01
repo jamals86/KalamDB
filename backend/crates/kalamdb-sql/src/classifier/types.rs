@@ -126,6 +126,18 @@ pub enum SqlStatementKind {
     /// SUBSCRIBE TO <namespace>.<table> [WHERE ...] [OPTIONS (...)]
     Subscribe(SubscribeStatement),
 
+    // ===== Topic Pub/Sub =====
+    /// CREATE TOPIC <name> [PARTITIONS <count>]
+    CreateTopic(CreateTopicStatement),
+    /// DROP TOPIC <name>
+    DropTopic(DropTopicStatement),
+    /// ALTER TOPIC <name> ADD SOURCE ...
+    AddTopicSource(AddTopicSourceStatement),
+    /// CONSUME FROM <topic> [GROUP '<id>'] [FROM <pos>] [LIMIT <n>]
+    ConsumeTopic(ConsumeStatement),
+    /// ACK <topic> GROUP '<id>' [PARTITION <n>] UPTO OFFSET <offset>
+    AckTopic(AckStatement),
+
     // ===== User Management =====
     /// CREATE USER <username> WITH ...
     CreateUser(CreateUserStatement),
@@ -245,6 +257,8 @@ impl SqlStatement {
             | SqlStatementKind::DescribeTable(_)
             | SqlStatementKind::ShowStats(_)
             | SqlStatementKind::ShowManifest(_)
+            | SqlStatementKind::ConsumeTopic(_)
+            | SqlStatementKind::AckTopic(_)
             | SqlStatementKind::DataFusionMetaCommand
             | SqlStatementKind::Unknown => false,
 
@@ -272,6 +286,9 @@ impl SqlStatement {
             | SqlStatementKind::KillJob(_)
             | SqlStatementKind::KillLiveQuery(_)
             | SqlStatementKind::Subscribe(_)
+            | SqlStatementKind::CreateTopic(_)
+            | SqlStatementKind::DropTopic(_)
+            | SqlStatementKind::AddTopicSource(_)
             | SqlStatementKind::CreateUser(_)
             | SqlStatementKind::AlterUser(_)
             | SqlStatementKind::DropUser(_)
@@ -332,6 +349,11 @@ impl SqlStatement {
             SqlStatementKind::CommitTransaction => "COMMIT",
             SqlStatementKind::RollbackTransaction => "ROLLBACK",
             SqlStatementKind::Subscribe(_) => "SUBSCRIBE TO",
+            SqlStatementKind::CreateTopic(_) => "CREATE TOPIC",
+            SqlStatementKind::DropTopic(_) => "DROP TOPIC",
+            SqlStatementKind::AddTopicSource(_) => "ALTER TOPIC ADD SOURCE",
+            SqlStatementKind::ConsumeTopic(_) => "CONSUME FROM",
+            SqlStatementKind::AckTopic(_) => "ACK",
             SqlStatementKind::CreateUser(_) => "CREATE USER",
             SqlStatementKind::AlterUser(_) => "ALTER USER",
             SqlStatementKind::DropUser(_) => "DROP USER",

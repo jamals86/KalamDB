@@ -18,6 +18,7 @@ use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use dashmap::DashMap;
 use kalamdb_sql::statement_classifier::SqlStatement;
 use std::sync::Arc;
+use kalamdb_commons::models::TableId;
 
 // Import all typed handlers
 use crate::sql::executor::handlers::cluster::{
@@ -41,6 +42,9 @@ use crate::sql::executor::handlers::system::ShowManifestCacheHandler;
 use crate::sql::executor::handlers::table::{
     AlterTableHandler, CreateTableHandler, DescribeTableHandler, DropTableHandler,
     ShowStatsHandler, ShowTablesHandler,
+};
+use crate::sql::executor::handlers::topics::{
+    AckHandler, AddTopicSourceHandler, ConsumeHandler, CreateTopicHandler, DropTopicHandler,
 };
 use crate::sql::executor::handlers::user::{AlterUserHandler, CreateUserHandler, DropUserHandler};
 use crate::sql::executor::handlers::view::CreateViewHandler;
@@ -571,6 +575,81 @@ impl HandlerRegistry {
             SubscribeHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {
                 SqlStatementKind::Subscribe(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        // ============================================================================
+        // TOPIC PUB/SUB HANDLERS
+        // ============================================================================
+        use kalamdb_sql::ddl::{
+            AckStatement, AddTopicSourceStatement, ConsumePosition, ConsumeStatement,
+            CreateTopicStatement, DropTopicStatement,
+        };
+        use kalamdb_commons::models::PayloadMode;
+
+        registry.register_typed(
+            SqlStatementKind::CreateTopic(CreateTopicStatement {
+                topic_name: "_placeholder".to_string(),
+                partitions: None,
+            }),
+            CreateTopicHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::CreateTopic(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        registry.register_typed(
+            SqlStatementKind::DropTopic(DropTopicStatement {
+                topic_name: "_placeholder".to_string(),
+            }),
+            DropTopicHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::DropTopic(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        registry.register_typed(
+            SqlStatementKind::AddTopicSource(AddTopicSourceStatement {
+                topic_name: "_placeholder".to_string(),
+                table_id: TableId::from_strings("_placeholder", "_placeholder"),
+                operation: kalamdb_commons::models::TopicOp::Insert,
+                filter_expr: None,
+                payload_mode: PayloadMode::Full,
+            }),
+            AddTopicSourceHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::AddTopicSource(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        registry.register_typed(
+            SqlStatementKind::ConsumeTopic(ConsumeStatement {
+                topic_name: "_placeholder".to_string(),
+                group_id: None,
+                position: ConsumePosition::Latest,
+                limit: None,
+            }),
+            ConsumeHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::ConsumeTopic(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        registry.register_typed(
+            SqlStatementKind::AckTopic(AckStatement {
+                topic_name: "_placeholder".to_string(),
+                group_id: "_placeholder".to_string(),
+                partition_id: 0,
+                upto_offset: 0,
+            }),
+            AckHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::AckTopic(s) => Some(s.clone()),
                 _ => None,
             },
         );

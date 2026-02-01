@@ -161,16 +161,16 @@ Storage was NOT created. Please verify your storage configuration and try again.
 
 ## Implementation Checklist
 
-- [ ] Create `backend/crates/kalamdb-filestore/src/health/mod.rs`
-- [ ] Create `backend/crates/kalamdb-filestore/src/health/models.rs`
-- [ ] Create `backend/crates/kalamdb-filestore/src/health/service.rs`
-- [ ] Add `HealthCheckFailed` error variant to `FilestoreError`
-- [ ] Re-export health module from `lib.rs`
-- [ ] Add `StorageCheckStatement` to `kalamdb-sql/src/ddl/`
-- [ ] Add parser support for `STORAGE CHECK` syntax
-- [ ] Create `CheckStorageHandler` in `kalamdb-core`
-- [ ] Integrate health check into `CreateStorageHandler`
-- [ ] Integrate health check into `AlterStorageHandler`
-- [ ] Add unit tests for `StorageHealthService`
-- [ ] Add CLI integration tests
-- [ ] Update documentation
+- [x] Create `backend/crates/kalamdb-filestore/src/health/mod.rs`
+- [x] Create `backend/crates/kalamdb-filestore/src/health/models.rs`
+- [x] Create `backend/crates/kalamdb-filestore/src/health/service.rs`
+- [x] Add `HealthCheckFailed` error variant to `FilestoreError`
+- [x] Re-export health module from `lib.rs`
+- [x] Add `StorageCheckStatement` to `kalamdb-sql/src/ddl/`
+- [x] Add parser support for `STORAGE CHECK` syntax
+- [x] Create `CheckStorageHandler` in `kalamdb-core`
+- [x] Integrate health check into `CreateStorageHandler`
+- [x] Integrate health check into `AlterStorageHandler`
+- [x] Add unit tests for `StorageHealthService`
+- [x] Add CLI integration tests
+- [x] Update documentation

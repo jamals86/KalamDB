@@ -1,16 +1,17 @@
-//! Subscription service for live queries
+//! Subscription service for live queries and consumer sessions
 //!
-//! Handles registration and unregistration of live query subscriptions,
-//! including permission checks, filter compilation, and system table updates.
+//! Handles registration and unregistration of:
+//! - Live query subscriptions (WebSocket)
+//! - Topic consumer sessions (HTTP long polling)
 //!
 //! All SQL parsing is done inside register_subscription - no intermediate ParsedSubscription.
 //!
 //! Live query records are replicated through Raft UserDataCommand for cluster-wide visibility.
 //! They are sharded by user_id for efficient per-user subscription management.
 
-use super::connections_manager::{
-    ConnectionsManager, SharedConnectionState, SubscriptionFlowControl, SubscriptionHandle,
-    SubscriptionState,
+use super::manager::ConnectionsManager;
+use super::models::{
+    SharedConnectionState, SubscriptionFlowControl, SubscriptionHandle, SubscriptionState,
 };
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
@@ -288,13 +289,3 @@ impl SubscriptionService {
         state.subscriptions.get(subscription_id).map(|s| s.clone())
     }
 }
-
-/// Result of registering a subscription (used for ws_handler response)
-#[derive(Debug, Clone)]
-pub struct RegisteredSubscription {
-    pub live_id: LiveQueryId,
-    pub subscription_id: String,
-    pub table_id: TableId,
-    pub batch_size: usize,
-}
-

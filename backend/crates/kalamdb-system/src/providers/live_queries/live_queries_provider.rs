@@ -515,14 +515,14 @@ mod tests {
         LiveQueriesTableProvider::new(backend)
     }
 
-    fn create_test_live_query(live_id: &str, user_id: &str, table_name: &str) -> LiveQuery {
+    fn create_test_live_query(live_id: &str, user_id: &UserId, table_name: &str) -> LiveQuery {
         LiveQuery {
             live_id: LiveQueryId::from_string(live_id).expect("Invalid LiveQueryId format"),
             connection_id: "conn123".to_string(),
             subscription_id: "sub123".to_string(),
             namespace_id: NamespaceId::default(),
             table_name: TableName::new(table_name),
-            user_id: UserId::new(user_id),
+            user_id: user_id.clone(),
             query: "SELECT * FROM test".to_string(),
             options: Some("{}".to_string()),
             status: crate::LiveQueryStatus::Active,
@@ -537,7 +537,7 @@ mod tests {
     #[test]
     fn test_create_and_get_live_query() {
         let provider = create_test_provider();
-        let live_query = create_test_live_query("user1-conn1-test-q1", "user1", "test");
+        let live_query = create_test_live_query("user1-conn1-test-q1", &UserId::new("user1"), "test");
 
         provider.create_live_query(live_query.clone()).unwrap();
 
@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn test_update_live_query() {
         let provider = create_test_provider();
-        let mut live_query = create_test_live_query("user1-conn1-test-q1", "user1", "test");
+        let mut live_query = create_test_live_query("user1-conn1-test-q1", &UserId::new("user1"), "test");
         provider.create_live_query(live_query.clone()).unwrap();
 
         // Update
@@ -566,7 +566,7 @@ mod tests {
     #[test]
     fn test_delete_live_query() {
         let provider = create_test_provider();
-        let live_query = create_test_live_query("user1-conn1-test-q1", "user1", "test");
+        let live_query = create_test_live_query("user1-conn1-test-q1", &UserId::new("user1"), "test");
 
         provider.create_live_query(live_query.clone()).unwrap();
         provider.delete_live_query_str(live_query.live_id.as_ref()).unwrap();
@@ -582,7 +582,7 @@ mod tests {
         // Insert multiple live queries
         for i in 1..=3 {
             let lq =
-                create_test_live_query(&format!("user1-conn{}-test-q{}", i, i), "user1", "test");
+                create_test_live_query(&format!("user1-conn{}-test-q{}", i, i), &UserId::new("user1"), "test");
             provider.create_live_query(lq).unwrap();
         }
 
@@ -596,7 +596,7 @@ mod tests {
         let provider = create_test_provider();
 
         // Insert test data
-        let lq = create_test_live_query("user1-conn1-test-q1", "user1", "test");
+        let lq = create_test_live_query("user1-conn1-test-q1", &UserId::new("user1"), "test");
         provider.create_live_query(lq).unwrap();
 
         // Scan
@@ -610,7 +610,7 @@ mod tests {
         let provider = create_test_provider();
 
         // Insert test data
-        let lq = create_test_live_query("user1-conn1-test-q1", "user1", "test");
+        let lq = create_test_live_query("user1-conn1-test-q1", &UserId::new("user1"), "test");
         provider.create_live_query(lq).unwrap();
 
         // Create DataFusion session

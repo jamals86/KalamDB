@@ -4,7 +4,7 @@ use super::cluster::ClusterTestServer;
 use anyhow::{Context, Result};
 use kalam_link::models::{QueryResponse, ResponseStatus};
 use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
-use kalamdb_commons::{Role, UserId, UserName};
+use kalamdb_commons::{NamespaceId, Role, UserId, UserName};
 use kalamdb_core::app_context::AppContext;
 use once_cell::sync::{Lazy, OnceCell as SyncOnceCell};
 use serde_json::Value as JsonValue;
@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc;
+use std::thread;
 use tokio::sync::Mutex;
 use tokio::sync::OnceCell;
 use tokio::time::{sleep, Duration, Instant};
@@ -143,10 +145,10 @@ pub struct HttpTestServer {
     user_password_cache: std::sync::Mutex<HashMap<String, String>>,
     /// Cache of username -> bearer token to avoid regenerating per request
     user_token_cache: std::sync::Mutex<HashMap<String, String>>,
-    running: kalamdb_server::lifecycle::RunningTestHttpServer,
+    running: Option<kalamdb_server::lifecycle::RunningTestHttpServer>,
     skip_raft_leader_check: bool,
     // Keep temp dir last so it is dropped after server resources.
-    _temp_dir: tempfile::TempDir,
+    _temp_dir: Option<tempfile::TempDir>,
 }
 
 fn acquire_global_http_test_server_lock() -> Result<Option<std::fs::File>> {
@@ -221,7 +223,11 @@ impl HttpTestServer {
 
     /// Access the underlying AppContext for tests that need direct access.
     pub fn app_context(&self) -> Arc<AppContext> {
-        self.running.app_context.clone()
+        self.running
+            .as_ref()
+            .expect("HTTP test server has been shut down")
+            .app_context
+            .clone()
     }
 
     /// Returns the storage root directory (e.g. `<data_path>/storage`).
@@ -609,7 +615,7 @@ impl HttpTestServer {
 
         Ok(resp)
     }
-    fn try_parse_create_table_target(sql: &str) -> Option<(String, String)> {
+    fn try_parse_create_table_target(sql: &str) -> Option<(NamespaceId, String)> {
         // Best-effort parse for statements like:
         //   CREATE TABLE ns.table ( ... ) WITH (...)
         // We keep this intentionally simple for tests; if parsing fails we just skip the wait.
@@ -623,29 +629,29 @@ impl HttpTestServer {
         let ident = after.split_whitespace().next()?.trim_end_matches('(').trim();
 
         let mut parts = ident.splitn(2, '.');
-        let namespace_id = parts.next()?.trim().trim_matches('"').to_string();
+        let namespace_id_str = parts.next()?.trim().trim_matches('"').to_string();
         let table_name = parts.next()?.trim().trim_matches('"').to_string();
 
-        if namespace_id.is_empty() || table_name.is_empty() {
+        if namespace_id_str.is_empty() || table_name.is_empty() {
             return None;
         }
 
-        Some((namespace_id, table_name))
+        Some((NamespaceId::new(namespace_id_str), table_name))
     }
 
     #[allow(unused_assignments)]
     async fn wait_for_table_queryable(
         &self,
-        namespace_id: &str,
+        namespace_id: &NamespaceId,
         table_name: &str,
         auth_header: &str,
     ) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(2);
-        let probe = format!("SELECT 1 AS ok FROM {}.{} LIMIT 1", namespace_id, table_name);
+        let probe = format!("SELECT 1 AS ok FROM {}.{} LIMIT 1", namespace_id.as_str(), table_name);
         let mut last_error: Option<String> = None;
         let system_probe = format!(
             "SELECT COUNT(*) AS cnt FROM system.schemas WHERE namespace_id='{}' AND table_name='{}'",
-            namespace_id, table_name
+            namespace_id.as_str(), table_name
         );
         let mut last_system_cnt: Option<u64> = None;
 
@@ -670,7 +676,7 @@ impl HttpTestServer {
                     if !is_missing {
                         return Err(anyhow::anyhow!(
                             "CREATE TABLE probe failed with non-missing error ({}.{}): {:?}",
-                            namespace_id,
+                            namespace_id.as_str(),
                             table_name,
                             resp.error
                         ));
@@ -706,7 +712,7 @@ impl HttpTestServer {
             if Instant::now() >= deadline {
                 return Err(anyhow::anyhow!(
                     "CREATE TABLE did not become queryable in time ({}.{}): last_error={:?} system.schemas_cnt={:?}",
-                    namespace_id,
+                    namespace_id.as_str(),
                     table_name,
                     last_error,
                     last_system_cnt
@@ -717,17 +723,21 @@ impl HttpTestServer {
         }
     }
 
-    pub async fn shutdown(self) {
+    pub async fn shutdown(mut self) {
         // Actix `stop(true)` is graceful: it waits for existing keep-alive connections.
-        let HttpTestServer {
-            _temp_dir,
-            running,
-            ..
-        } = self;
-        running.shutdown().await;
-        drop(_temp_dir);
+        if let Some((running, temp_dir)) = self.take_shutdown_parts() {
+            running.shutdown().await;
+            drop(temp_dir);
+        }
     }
 
+    fn take_shutdown_parts(
+        &mut self,
+    ) -> Option<(kalamdb_server::lifecycle::RunningTestHttpServer, tempfile::TempDir)> {
+        let running = self.running.take()?;
+        let temp_dir = self._temp_dir.take()?;
+        Some((running, temp_dir))
+    }
     #[allow(unused_assignments)]
     async fn wait_until_ready(&self) -> Result<()> {
         // The server may bind before subsystems (notably Raft/bootstrap) are fully ready.
@@ -822,6 +832,32 @@ impl HttpTestServer {
     }
 }
 
+impl Drop for HttpTestServer {
+    fn drop(&mut self) {
+        let Some((running, temp_dir)) = self.take_shutdown_parts() else {
+            return;
+        };
+
+        let (tx, rx) = mpsc::sync_channel(1);
+        thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+
+            if let Ok(runtime) = runtime {
+                runtime.block_on(async {
+                    running.shutdown().await;
+                    drop(temp_dir);
+                });
+            }
+
+            let _ = tx.send(());
+        });
+
+        let _ = rx.recv();
+    }
+}
+
 /// Start a near-production HTTP server on a random available port.
 ///
 /// This is intended for integration tests that want to use `reqwest`/WebSocket
@@ -861,7 +897,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
     let jwt_secret = config.auth.jwt_secret.clone();
 
     let server = HttpTestServer {
-        _temp_dir: temp_dir,
+        _temp_dir: Some(temp_dir),
         _global_lock: None, // No longer use file lock - OnceCell handles per-process synchronization
         base_url,
         data_path,
@@ -871,7 +907,7 @@ pub async fn start_http_test_server() -> Result<HttpTestServer> {
         user_id_cache: std::sync::Mutex::new(HashMap::new()),
         user_password_cache: std::sync::Mutex::new(HashMap::new()),
         user_token_cache: std::sync::Mutex::new(HashMap::new()),
-        running,
+        running: Some(running),
         skip_raft_leader_check,
     };
 
@@ -917,7 +953,7 @@ pub async fn start_http_test_server_with_config(
     let jwt_secret = config.auth.jwt_secret.clone();
 
     let server = HttpTestServer {
-        _temp_dir: temp_dir,
+        _temp_dir: Some(temp_dir),
         _global_lock: None, // No longer use file lock
         base_url,
         data_path,
@@ -927,7 +963,7 @@ pub async fn start_http_test_server_with_config(
         user_id_cache: std::sync::Mutex::new(HashMap::new()),
         user_password_cache: std::sync::Mutex::new(HashMap::new()),
         user_token_cache: std::sync::Mutex::new(HashMap::new()),
-        running,
+        running: Some(running),
         skip_raft_leader_check,
     };
 

@@ -1278,12 +1278,16 @@ after that we can add a button in ui for checking storage health
 
 145) Check that whenever the server starts it reads the server.toml into a global object and can be accessable anywhere in the codebase for example there is a code now custom for reading from kalamdb-filestore, it will be better to allocate them one time only
 
-147) Make sure filestore is done without blocking the main thread, use spawn_blocking where needed
-
 148) remove  storage_base_path: String, from AppContext init since we already pass the config there, so we end up passing the same thing twice
 
-149) 
+149) Add http/webdav storage which object_Store already supports it, in both the backend and the ui
 
+150) Check if we have any un-safe unwrap methods r code using and fix it
+
+152) backend/crates/kalamdb-core/src/live/manager/connections_manager.rsand livequery_manager.rs have similar code for managing connections and queries we can make the connection_manager a service or the registry inside the livequerymanager and everywhere we directly use only livequerymanager for everything there, then we can name connections manager to connection_registry
+
+
+153) backend/crates/kalamdb-system/src/impls/notification_service.rs should also have 2 methods for topic check if any topics listen to this tableid and also notify table change to topics which are listening to this tableid only
 
 
 
@@ -1297,7 +1301,7 @@ Main Epics:
 5) Combine the models of kalamdb-link and kalamdb-commons into kalamdb-shared crate and use it everywhere
 6) Service consumer - Subscription to shards
 7) Change the code to use FlatBuffers for: Raft/RocksDb storage
-8) Add page for Server Initial Setup
+8) Done - Add page for Server Initial Setup
 9) Check S3/WebDAV Storages
 10) Move permissions to Shared tables with policies
 

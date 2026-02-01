@@ -94,6 +94,7 @@
 
 use crate::ids::SeqId;
 use crate::models::rows::Row;
+use crate::models::UserId;
 use crate::schemas::SchemaField;
 
 // Simple Row type for WASM (JSON only)
@@ -124,7 +125,7 @@ pub enum WebSocketMessage {
     /// Client can now send Subscribe/Unsubscribe messages.
     AuthSuccess {
         /// Authenticated user ID
-        user_id: String,
+        user_id: UserId,
         /// User role
         role: String,
     },

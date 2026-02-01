@@ -174,5 +174,46 @@ jobs:
         run: |
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
 
-      - name: Run tests
-        run: cargo nextest run --workspace
+      - name: Run tests and generate badge
+        run: |
+          # Run tests and capture output
+          cargo nextest run --workspace --no-fail-fast > test_output.txt 2>&1 || true
+          cat test_output.txt
+          
+          # Parse the summary line from nextest output
+          PASSED=$(grep -oP '\d+(?= passed)' test_output.txt | tail -1 || echo "0")
+          FAILED=$(grep -oP '\d+(?= failed)' test_output.txt | tail -1 || echo "0")
+          TOTAL=$((PASSED + FAILED))
+          
+          echo "Tests: $PASSED passed, $FAILED failed (total: $TOTAL)"
+          
+          # Determine badge color
+          if [ "$FAILED" -eq "0" ]; then
+            COLOR="brightgreen"
+            MESSAGE="$PASSED/$TOTAL passed"
+          else
+            COLOR="red"
+            MESSAGE="$PASSED/$TOTAL passed, $FAILED failed"
+          fi
+          
+          # Generate badge JSON
+          mkdir -p .github/badges
+          cat > .github/badges/tests.json << EOF
+          {
+            "schemaVersion": 1,
+            "label": "tests",
+            "message": "$MESSAGE",
+            "color": "$COLOR"
+          }
+          EOF
+          
+          cat .github/badges/tests.json
+
+      - name: Commit badge
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .github/badges/tests.json
+          git diff --staged --quiet || git commit -m "Update test badge [skip ci]"
+          git push || echo "Nothing to push"

@@ -52,13 +52,13 @@ mod tests {
     }
 
     fn create_test_live_query(
-        user_id: &str,
+        user_id: &UserId,
         connection_id: &str,
         subscription_id: &str,
         table_name: &str,
     ) -> LiveQuery {
         let live_id = LiveQueryId::new(
-            UserId::new(user_id),
+            user_id.clone(),
             ConnectionId::new(connection_id),
             subscription_id,
         );
@@ -67,7 +67,7 @@ mod tests {
             connection_id: connection_id.to_string(),
             namespace_id: NamespaceId::default(),
             table_name: TableName::new(table_name),
-            user_id: UserId::new(user_id),
+            user_id: user_id.clone(),
             query: "SELECT * FROM test".to_string(),
             options: Some("{}".to_string()),
             created_at: 1000,
@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn test_put_and_get_live_query() {
         let store = create_test_store();
-        let live_query = create_test_live_query("user1", "conn1", "sub1", "test");
+        let live_query = create_test_live_query(&UserId::new("user1"), "conn1", "sub1", "test");
 
         store.insert(&live_query.live_id, &live_query).unwrap();
 
@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn test_delete_live_query() {
         let store = create_test_store();
-        let live_query = create_test_live_query("user1", "conn1", "sub1", "test");
+        let live_query = create_test_live_query(&UserId::new("user1"), "conn1", "sub1", "test");
 
         store.insert(&live_query.live_id, &live_query).unwrap();
         store.delete(&live_query.live_id).unwrap();
@@ -120,7 +120,7 @@ mod tests {
         // Insert multiple live queries with different connections
         for i in 1..=3 {
             let live_query = create_test_live_query(
-                "user1",
+                &UserId::new("user1"),
                 &format!("conn{}", i),
                 &format!("sub{}", i),
                 "test",
@@ -139,9 +139,9 @@ mod tests {
         let store = create_test_store();
 
         // Insert live queries for different tables
-        let lq1 = create_test_live_query("user1", "conn1", "sub1", "messages");
-        let lq2 = create_test_live_query("user2", "conn2", "sub2", "messages");
-        let lq3 = create_test_live_query("user1", "conn3", "sub3", "users");
+        let lq1 = create_test_live_query(&UserId::new("user1"), "conn1", "sub1", "messages");
+        let lq2 = create_test_live_query(&UserId::new("user2"), "conn2", "sub2", "messages");
+        let lq3 = create_test_live_query(&UserId::new("user1"), "conn3", "sub3", "users");
 
         store.insert(&lq1.live_id, &lq1).unwrap();
         store.insert(&lq2.live_id, &lq2).unwrap();

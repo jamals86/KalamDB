@@ -55,17 +55,17 @@ impl UserTablePkIndex {
     }
 
     /// Build a prefix for scanning all versions of a PK for a specific user.
-    pub fn build_prefix_for_pk(&self, user_id: &str, pk_value: &ScalarValue) -> Vec<u8> {
+    pub fn build_prefix_for_pk(&self, user_id: &kalamdb_commons::UserId, pk_value: &ScalarValue) -> Vec<u8> {
         let pk_bytes = scalar_value_to_bytes(pk_value);
-        encode_prefix(&(user_id, pk_bytes))
+        encode_prefix(&(user_id.as_str(), pk_bytes))
     }
 
     /// Build a prefix for scanning all PKs for a specific user.
     ///
     /// This is useful for batch PK validation where we want to scan all
     /// PK index entries for a user in a single pass.
-    pub fn build_user_prefix(&self, user_id: &str) -> Vec<u8> {
-        encode_prefix(&(user_id,))
+    pub fn build_user_prefix(&self, user_id: &kalamdb_commons::UserId) -> Vec<u8> {
+        encode_prefix(&(user_id.as_str(),))
     }
 }
 
@@ -137,14 +137,14 @@ mod tests {
     use kalamdb_commons::models::UserId;
     use std::collections::BTreeMap;
 
-    fn create_test_row(user_id: &str, seq: i64, id_value: i64) -> (UserTableRowId, UserTableRow) {
+    fn create_test_row(user_id: &UserId, seq: i64, id_value: i64) -> (UserTableRowId, UserTableRow) {
         let mut values = BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int64(Some(id_value)));
         values.insert("name".to_string(), ScalarValue::Utf8(Some("Test".to_string())));
 
-        let key = UserTableRowId::new(UserId::new(user_id), SeqId::new(seq));
+        let key = UserTableRowId::new(user_id.clone(), SeqId::new(seq));
         let row = UserTableRow {
-            user_id: UserId::new(user_id),
+            user_id: user_id.clone(),
             _seq: SeqId::new(seq),
             _deleted: false,
             fields: Row::new(values),
@@ -156,13 +156,13 @@ mod tests {
     fn test_pk_index_extract_key() {
         let table_id = kalamdb_commons::TableId::from_strings("default", "users");
         let index = UserTablePkIndex::new(&table_id, "id");
-        let (key, row) = create_test_row("user1", 100, 42);
+        let (key, row) = create_test_row(&UserId::new("user1"), 100, 42);
 
         let index_key = index.extract_key(&key, &row);
         assert!(index_key.is_some());
 
         let index_key = index_key.unwrap();
-        let prefix = index.build_prefix_for_pk("user1", &ScalarValue::Int64(Some(42)));
+        let prefix = index.build_prefix_for_pk(&UserId::new("user1"), &ScalarValue::Int64(Some(42)));
         assert!(index_key.starts_with(&prefix));
     }
 
@@ -172,13 +172,13 @@ mod tests {
         let index = UserTablePkIndex::new(&table_id, "id");
 
         // Two versions of the same row (same PK, different seq)
-        let (key1, row1) = create_test_row("user1", 100, 42);
-        let (key2, row2) = create_test_row("user1", 200, 42);
+        let (key1, row1) = create_test_row(&UserId::new("user1"), 100, 42);
+        let (key2, row2) = create_test_row(&UserId::new("user1"), 200, 42);
 
         let index_key1 = index.extract_key(&key1, &row1).unwrap();
         let index_key2 = index.extract_key(&key2, &row2).unwrap();
 
-        let prefix = index.build_prefix_for_pk("user1", &ScalarValue::Int64(Some(42)));
+        let prefix = index.build_prefix_for_pk(&UserId::new("user1"), &ScalarValue::Int64(Some(42)));
         assert!(index_key1.starts_with(&prefix));
         assert!(index_key2.starts_with(&prefix));
         assert_ne!(index_key1, index_key2);
@@ -190,16 +190,16 @@ mod tests {
         let index = UserTablePkIndex::new(&table_id, "id");
 
         // Same PK value for different users
-        let (key1, row1) = create_test_row("alice", 100, 42);
-        let (key2, row2) = create_test_row("bob", 100, 42);
+        let (key1, row1) = create_test_row(&UserId::new("alice"), 100, 42);
+        let (key2, row2) = create_test_row(&UserId::new("bob"), 100, 42);
 
         let index_key1 = index.extract_key(&key1, &row1).unwrap();
         let index_key2 = index.extract_key(&key2, &row2).unwrap();
 
         // Different user_id prefix - keys should be completely different
         assert_ne!(index_key1, index_key2);
-        let user_prefix_1 = index.build_user_prefix("alice");
-        let user_prefix_2 = index.build_user_prefix("bob");
+        let user_prefix_1 = index.build_user_prefix(&UserId::new("alice"));
+        let user_prefix_2 = index.build_user_prefix(&UserId::new("bob"));
         assert!(index_key1.starts_with(&user_prefix_1));
         assert!(index_key2.starts_with(&user_prefix_2));
     }
@@ -209,14 +209,14 @@ mod tests {
         let table_id = kalamdb_commons::TableId::from_strings("default", "users");
         let index = UserTablePkIndex::new(&table_id, "id");
 
-        let (key1, row1) = create_test_row("user1", 100, 42);
-        let (key2, row2) = create_test_row("user1", 100, 99);
+        let (key1, row1) = create_test_row(&UserId::new("user1"), 100, 42);
+        let (key2, row2) = create_test_row(&UserId::new("user1"), 100, 99);
 
         let index_key1 = index.extract_key(&key1, &row1).unwrap();
         let index_key2 = index.extract_key(&key2, &row2).unwrap();
 
-        let prefix1 = index.build_prefix_for_pk("user1", &ScalarValue::Int64(Some(42)));
-        let prefix2 = index.build_prefix_for_pk("user1", &ScalarValue::Int64(Some(99)));
+        let prefix1 = index.build_prefix_for_pk(&UserId::new("user1"), &ScalarValue::Int64(Some(42)));
+        let prefix2 = index.build_prefix_for_pk(&UserId::new("user1"), &ScalarValue::Int64(Some(99)));
         assert!(index_key1.starts_with(&prefix1));
         assert!(index_key2.starts_with(&prefix2));
         assert_ne!(prefix1, prefix2);
@@ -228,8 +228,8 @@ mod tests {
         let index = UserTablePkIndex::new(&table_id, "id");
         let pk_value = ScalarValue::Int64(Some(42));
 
-        let prefix = index.build_prefix_for_pk("user1", &pk_value);
-        let (key, row) = create_test_row("user1", 100, 42);
+        let prefix = index.build_prefix_for_pk(&UserId::new("user1"), &pk_value);
+        let (key, row) = create_test_row(&UserId::new("user1"), 100, 42);
         let index_key = index.extract_key(&key, &row).unwrap();
         assert!(index_key.starts_with(&prefix));
     }

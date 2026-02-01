@@ -183,21 +183,24 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         );
 
         // Fire live query notification (INSERT)
-        let manager = self.core.live_query_manager.clone();
+        let manager = self.core.notification_service.clone();
         let table_id = self.core.table_id().clone();
-        let table_name = table_id.full_name();
 
-        // Build complete row including system column (_seq)
-        let row = Self::build_notification_row(&entity);
-
-        let notification = ChangeNotification::insert(table_id.clone(), row);
-        log::debug!(
-            "[StreamProvider] Notifying change: table={} type=INSERT user={} seq={}",
-            table_name,
-            user_id.as_str(),
-            seq_id.as_i64()
-        );
-        manager.notify_table_change_async(user_id.clone(), table_id, notification);
+        if manager.has_subscribers(Some(&user_id), &table_id) {
+            let table_name = table_id.full_name();
+            
+            // Build complete row including system column (_seq)
+            let row = Self::build_notification_row(&entity);
+            
+            let notification = ChangeNotification::insert(table_id.clone(), row);
+            log::debug!(
+                "[StreamProvider] Notifying change: table={} type=INSERT user={} seq={}",
+                table_name,
+                user_id.as_str(),
+                seq_id.as_i64()
+            );
+            manager.notify_table_change(Some(user_id.clone()), table_id, notification);
+        }
 
         Ok(row_key)
     }
@@ -239,12 +242,14 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         })?;
 
         // Fire live query notification (DELETE hard)
-        let manager = self.core.live_query_manager.clone();
+        let notification_service = self.core.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
-        let row_id_str = format!("{}:{}", key.user_id().as_str(), key.seq().as_i64());
-        let notification = ChangeNotification::delete_hard(table_id.clone(), row_id_str);
-        manager.notify_table_change_async(user_id.clone(), table_id, notification);
+        if notification_service.has_subscribers(Some(&user_id), &table_id) {
+            let row_id_str = format!("{}:{}", key.user_id().as_str(), key.seq().as_i64());
+            let notification = ChangeNotification::delete_hard(table_id.clone(), row_id_str);
+            notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+        }
 
         Ok(())
     }
