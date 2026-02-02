@@ -221,6 +221,8 @@ impl SystemTable {
             SystemTable::JobNodes,
             SystemTable::AuditLog,
             SystemTable::Manifest,
+            SystemTable::Topics,
+            SystemTable::TopicOffsets,
             // Views
             SystemTable::Stats,
             SystemTable::Settings,
@@ -467,7 +469,7 @@ mod tests {
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 19); // 10 tables + 9 views (7 original + Tables + Columns)
+        assert_eq!(all.len(), 21); // 12 tables + 9 views (7 original + Tables + Columns)
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
         assert!(all.contains(&SystemTable::AuditLog));
@@ -481,7 +483,7 @@ mod tests {
     #[test]
     fn test_all_tables() {
         let tables = SystemTable::all_tables();
-        assert_eq!(tables.len(), 10);
+        assert_eq!(tables.len(), 12);
         assert!(tables.iter().all(|t| !t.is_view()));
     }
 

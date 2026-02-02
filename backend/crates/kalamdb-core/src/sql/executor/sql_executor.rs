@@ -187,7 +187,14 @@ impl SqlExecutor {
                                         "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
                                         sql
                                     );
-                                    //let _ = self.load_existing_tables().await;
+                                    if let Err(e) = self.load_existing_tables().await {
+                                        log::warn!(
+                                            target: "sql::plan",
+                                            "⚠️  Failed to reload table providers after missing table | sql='{}' | error='{}'",
+                                            sql,
+                                            e
+                                        );
+                                    }
                                     let retry_session = exec_ctx.create_session_with_user();
                                     match retry_session.sql(sql).await {
                                         Ok(df) => {
@@ -237,7 +244,14 @@ impl SqlExecutor {
                                 "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
                                 sql
                             );
-                            //let _ = self.load_existing_tables().await;
+                            if let Err(e) = self.load_existing_tables().await {
+                                log::warn!(
+                                    target: "sql::plan",
+                                    "⚠️  Failed to reload table providers after missing table | sql='{}' | error='{}'",
+                                    sql,
+                                    e
+                                );
+                            }
                             let retry_session = exec_ctx.create_session_with_user();
                             match retry_session.sql(sql).await {
                                 Ok(df) => {
@@ -274,7 +288,14 @@ impl SqlExecutor {
                             "⚠️  Table not found during planning; reloading table providers and retrying once | sql='{}'",
                             sql
                         );
-                        //let _ = self.load_existing_tables().await;
+                        if let Err(e) = self.load_existing_tables().await {
+                            log::warn!(
+                                target: "sql::plan",
+                                "⚠️  Failed to reload table providers after missing table | sql='{}' | error='{}'",
+                                sql,
+                                e
+                            );
+                        }
                         let retry_session = exec_ctx.create_session_with_user();
                         match retry_session.sql(sql).await {
                             Ok(df) => df,

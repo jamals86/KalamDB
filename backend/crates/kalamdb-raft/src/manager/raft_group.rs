@@ -432,19 +432,29 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             .await
             .map_err(|e| RaftError::Proposal(format!("{:?}", e)))?;
 
-        // Deserialize the response based on command type using centralized serde_helpers
-        // The state machine returns MetaResponse or DataResponse directly, not wrapped in RaftResponse
-        let response_obj = match command {
-            crate::RaftCommand::Meta(_) => {
-                let meta_response: crate::MetaResponse =
-                    crate::state_machine::serde_helpers::decode(&response.data)?;
-                crate::RaftResponse::Meta(meta_response)
-            },
-            crate::RaftCommand::UserData(_) | crate::RaftCommand::SharedData(_) => {
-                let data_response: crate::DataResponse =
-                    crate::state_machine::serde_helpers::decode(&response.data)?;
-                crate::RaftResponse::Data(data_response)
-            },
+        // Deserialize the response based on command type using centralized serde_helpers.
+        // The state machine returns MetaResponse or DataResponse directly, not wrapped in RaftResponse.
+        // If the state machine short-circuits with NoOp, response.data can be empty; treat as Ok.
+        let response_obj = if response.data.is_empty() {
+            match command {
+                crate::RaftCommand::Meta(_) => crate::RaftResponse::Meta(crate::MetaResponse::Ok),
+                crate::RaftCommand::UserData(_) | crate::RaftCommand::SharedData(_) => {
+                    crate::RaftResponse::Data(crate::DataResponse::Ok)
+                },
+            }
+        } else {
+            match command {
+                crate::RaftCommand::Meta(_) => {
+                    let meta_response: crate::MetaResponse =
+                        crate::state_machine::serde_helpers::decode(&response.data)?;
+                    crate::RaftResponse::Meta(meta_response)
+                },
+                crate::RaftCommand::UserData(_) | crate::RaftCommand::SharedData(_) => {
+                    let data_response: crate::DataResponse =
+                        crate::state_machine::serde_helpers::decode(&response.data)?;
+                    crate::RaftResponse::Data(data_response)
+                },
+            }
         };
 
         Ok((response_obj, response.log_id.index))
