@@ -9,7 +9,6 @@
 //! - Storage key format: composite encoding for efficient filtering
 //! - Efficient per-group and per-partition queries
 
-use crate::common::{ensure_partition, partition_name};
 use crate::topics::topic_offset_models::{TopicOffset, TopicOffsetId};
 use kalamdb_commons::models::{ConsumerGroupId, TopicId};
 use kalamdb_commons::storage::Partition;
@@ -107,6 +106,25 @@ impl TopicOffsetStore {
             .collect();
         Ok(filtered)
     }
+
+    /// Delete all offsets for a topic across all consumer groups
+    ///
+    /// This is used when dropping a topic to clean up all consumer group offsets.
+    /// Returns the number of offsets deleted.
+    pub fn delete_topic_offsets(
+        &self,
+        topic_id: &TopicId,
+    ) -> kalamdb_store::storage_trait::Result<usize> {
+        let offsets = self.get_topic_offsets(topic_id)?;
+        let count = offsets.len();
+        
+        for offset in offsets {
+            let offset_id = offset.id();
+            self.delete(&offset_id)?;
+        }
+        
+        Ok(count)
+    }
 }
 
 /// Implement EntityStore trait for typed CRUD operations
@@ -118,17 +136,6 @@ impl EntityStore<TopicOffsetId, TopicOffset> for TopicOffsetStore {
     fn partition(&self) -> Partition {
         self.partition.clone()
     }
-}
-
-/// Helper function to create a new topic offset store with partition initialization
-pub fn new_topic_offset_store(
-    backend: Arc<dyn StorageBackend>,
-    table_id: &kalamdb_commons::TableId,
-) -> TopicOffsetStore {
-    let partition_name = partition_name("topic_offsets", table_id);
-    let partition = Partition::new(partition_name.clone());
-    ensure_partition(&backend, partition_name);
-    TopicOffsetStore::new(backend, partition)
 }
 
 #[cfg(test)]

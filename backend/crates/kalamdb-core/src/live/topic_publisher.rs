@@ -59,13 +59,20 @@ pub struct TopicPublisherService {
 impl TopicPublisherService {
     /// Create a new TopicPublisherService with stores backed by the given storage
     pub fn new(storage_backend: Arc<dyn StorageBackend>) -> Self {
+        // Ensure global partitions for topic messages and offsets exist
+        // These are shared across all topics
+        let messages_partition = kalamdb_commons::storage::Partition::new("topic_messages");
+        let offsets_partition = kalamdb_commons::storage::Partition::new("topic_offsets");
+        let _ = storage_backend.create_partition(&messages_partition);
+        let _ = storage_backend.create_partition(&offsets_partition);
+
         let message_store = Arc::new(TopicMessageStore::new(
             storage_backend.clone(),
-            "topic_messages".to_string(), //TODO: Use partition constant
+            messages_partition.clone()
         ));
         let offset_store = Arc::new(TopicOffsetStore::new(
             storage_backend,
-            "topic_offsets".to_string(), //TODO: Use partition constant
+            offsets_partition.clone()
         ));
 
         Self {

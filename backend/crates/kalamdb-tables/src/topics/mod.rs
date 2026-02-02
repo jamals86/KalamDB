@@ -12,6 +12,6 @@ pub mod topic_offset_models;
 pub mod topic_offset_store;
 
 pub use topic_message_models::{TopicMessage, TopicMessageId};
-pub use topic_message_store::{new_topic_message_store, TopicMessageStore};
+pub use topic_message_store::{TopicMessageStore};
 pub use topic_offset_models::{TopicOffset, TopicOffsetId};
-pub use topic_offset_store::{new_topic_offset_store, TopicOffsetStore};
+pub use topic_offset_store::{TopicOffsetStore};

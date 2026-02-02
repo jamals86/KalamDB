@@ -9,7 +9,6 @@
 //! - Storage key format: composite encoding for efficient filtering
 //! - Efficient range scans for message fetching
 
-use crate::common::{ensure_partition, partition_name};
 use crate::topics::topic_message_models::{TopicMessage, TopicMessageId};
 use kalamdb_commons::models::TopicId;
 use kalamdb_commons::storage::Partition;
@@ -106,17 +105,6 @@ impl EntityStore<TopicMessageId, TopicMessage> for TopicMessageStore {
     fn partition(&self) -> Partition {
         self.partition.clone()
     }
-}
-
-/// Helper function to create a new topic message store with partition initialization
-pub fn new_topic_message_store(
-    backend: Arc<dyn StorageBackend>,
-    table_id: &kalamdb_commons::TableId,
-) -> TopicMessageStore {
-    let partition_name = partition_name("topic_messages", table_id);
-    let partition = Partition::new(partition_name.clone());
-    ensure_partition(&backend, partition_name);
-    TopicMessageStore::new(backend, partition)
 }
 
 #[cfg(test)]
