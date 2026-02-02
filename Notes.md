@@ -1286,8 +1286,7 @@ after that we can add a button in ui for checking storage health
 
 152) backend/crates/kalamdb-core/src/live/manager/connections_manager.rsand livequery_manager.rs have similar code for managing connections and queries we can make the connection_manager a service or the registry inside the livequerymanager and everywhere we directly use only livequerymanager for everything there, then we can name connections manager to connection_registry
 
-
-153) backend/crates/kalamdb-system/src/impls/notification_service.rs should also have 2 methods for topic check if any topics listen to this tableid and also notify table change to topics which are listening to this tableid only
+154) Add a new sql command to clear a topic messages whenever we need
 
 
 

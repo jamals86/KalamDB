@@ -10,5 +10,5 @@ pub mod topic_message_schema;
 pub mod topic_message_store;
 
 pub use topic_message_models::{TopicMessage, TopicMessageId};
-pub use topic_message_store::{new_topic_message_store, TopicMessageStore};
+pub use topic_message_store::TopicMessageStore;
 
