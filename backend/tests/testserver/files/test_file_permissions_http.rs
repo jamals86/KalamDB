@@ -6,6 +6,7 @@ use kalamdb_system::FileRef;
 use kalamdb_commons::{Role, UserName};
 use reqwest::multipart;
 use serde_json::Value as JsonValue;
+use serial_test::serial;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use super::test_support::auth_helper::create_user_auth_header_with_id;
@@ -108,6 +109,7 @@ async fn execute_sql_multipart(
 
 #[tokio::test]
 #[ntest::timeout(60000)]
+#[serial]
 async fn test_file_download_permissions_user_table() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
     let namespace = format!("test_files_{}", unique_suffix());
@@ -317,6 +319,7 @@ async fn test_failed_insert_cleans_up_files() -> anyhow::Result<()> {
 
 #[tokio::test]
 #[ntest::timeout(60000)]
+#[serial]
 async fn test_user_file_access_matrix() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
     let namespace = format!("test_files_{}", unique_suffix());

@@ -8,6 +8,7 @@ use crate::schema_registry::cached_table_data::CachedTableData;
 use dashmap::DashMap;
 use datafusion::datasource::TableProvider;
 use datafusion::arrow::datatypes::SchemaRef;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::TableAccess;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{StorageId, TableId, TableVersionId};
@@ -238,18 +239,26 @@ impl SchemaRegistry {
         let app_ctx = self.app_context();
         let table_id = TableId::from_strings(table_def.namespace_id.as_str(), table_def.table_name.as_str());
         
-        // Resolve PK field (needed for indexed stores)
-        let pk_field = table_def
-            .columns
-            .iter()
-            .find(|c| c.is_primary_key)
-            .map(|c| c.column_name.clone())
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Table {} has no primary key defined",
-                    table_id
-                ))
-            })?;
+        // Resolve PK field (required for User/Shared; Stream falls back to _seq)
+        let pk_field = match table_def.table_type {
+            TableType::Stream => table_def
+                .columns
+                .iter()
+                .find(|c| c.is_primary_key)
+                .map(|c| c.column_name.clone())
+                .unwrap_or_else(|| SystemColumnNames::SEQ.to_string()),
+            _ => table_def
+                .columns
+                .iter()
+                .find(|c| c.is_primary_key)
+                .map(|c| c.column_name.clone())
+                .ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Table {} has no primary key defined",
+                        table_id
+                    ))
+                })?,
+        };
 
         let tables_schema_registry = Arc::new(TablesSchemaRegistryAdapter::new(app_ctx.schema_registry()));
 

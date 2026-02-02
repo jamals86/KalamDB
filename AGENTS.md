@@ -123,6 +123,18 @@ backend/crates/
    - Example: if a test took 40s, set `#[ntest::timeout(60000)]`.
    - Recalculate and update timeouts after significant changes to test behavior or data size.
 
+## Workflows & Commands (Documented)
+
+- Backend build: `cd backend && cargo build`
+- Backend run (default config): `cd backend && cargo run` (server on `http://127.0.0.1:8080`)
+- Backend run (explicit binary): `cd backend && cargo run --bin kalamdb-server`
+- Backend config bootstrap: `cd backend && cp server.example.toml server.toml`
+- Create API key user: `cd backend && cargo run --bin kalamdb-server -- create-user --name "demo-user" --role "user"`
+- Backend config via env vars: `KALAMDB_SERVER_PORT=9000 KALAMDB_LOG_LEVEL=debug cargo run`
+- CLI build: `cd cli && cargo build --release` (binary at `cli/target/release/kalam`)
+- CLI smoke tests with env vars: `KALAMDB_SERVER_URL="http://localhost:3000" KALAMDB_ROOT_PASSWORD="mypass" cargo test --test smoke -- --nocapture`
+- Docker build and run: `cd docker/build && docker build -f Dockerfile -t jamals86/kalamdb:latest ../..` then `cd ../run/single && docker-compose up -d`
+
 **Authentication Patterns**:
 - **Password Security**: ALWAYS use `bcrypt::hash()` for password storage, NEVER store plaintext
 - **Timing-Safe Comparisons**: Use `bcrypt::verify()` for constant-time password verification

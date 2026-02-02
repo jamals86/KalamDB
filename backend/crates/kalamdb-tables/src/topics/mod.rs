@@ -6,6 +6,7 @@
 //! Consumer group offset tracking is now handled by system.topic_offsets table.
 
 pub mod topic_message_models;
+pub mod topic_message_schema;
 pub mod topic_message_store;
 
 pub use topic_message_models::{TopicMessage, TopicMessageId};

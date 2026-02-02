@@ -853,6 +853,9 @@ impl AppContext {
     /// }
     /// ```
     pub async fn is_leader_for_user(&self, user_id: &UserId) -> bool {
+        if !self.is_cluster_mode() {
+            return true;
+        }
         let group_id = self.user_shard_group_id(user_id);
         self.executor.is_leader(group_id).await
     }
@@ -903,6 +906,9 @@ impl AppContext {
     ///
     /// In standalone mode (single-node), this always returns `true`.
     pub async fn is_leader_for_shared(&self) -> bool {
+        if !self.is_cluster_mode() {
+            return true;
+        }
         let router = ShardRouter::from_optional_cluster_config(self.config.cluster.as_ref());
         let group_id = router.shared_group_id();
         self.executor.is_leader(group_id).await
