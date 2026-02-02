@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use super::map_auth_error_to_response;
 use super::models::{AuthErrorResponse, LoginResponse, UserInfo};
+use crate::limiter::RateLimiter;
 
 /// POST /v1/api/auth/refresh
 ///
@@ -22,7 +23,19 @@ pub async fn refresh_handler(
     req: HttpRequest,
     user_repo: web::Data<Arc<dyn UserRepository>>,
     config: web::Data<AuthSettings>,
+    rate_limiter: web::Data<Arc<RateLimiter>>,
 ) -> HttpResponse {
+    // Extract client IP with anti-spoofing checks for localhost validation
+    let connection_info = extract_client_ip_secure(&req);
+
+    // Rate limit auth attempts by client IP
+    if !rate_limiter.get_ref().check_auth_rate(&connection_info) {
+        return HttpResponse::TooManyRequests().json(AuthErrorResponse::new(
+            "rate_limited",
+            "Too many authentication attempts. Please retry shortly.",
+        ));
+    }
+
     // Extract token from cookie
     let token = match extract_auth_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned()))
     {
@@ -34,7 +47,6 @@ pub async fn refresh_handler(
     };
 
     // Validate existing token via unified auth (uses configured trusted issuers)
-    let connection_info = extract_client_ip_secure(&req);
     let auth_request = AuthRequest::Jwt { token: token.clone() };
     let auth_result = match authenticate(auth_request, &connection_info, user_repo.get_ref()).await
     {

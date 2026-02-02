@@ -639,6 +639,10 @@ pub struct RateLimitSettings {
     #[serde(default = "default_rate_limit_max_subscriptions")]
     pub max_subscriptions_per_user: u32,
 
+    /// Maximum auth requests per second per IP (default: 20)
+    #[serde(default = "default_rate_limit_auth_requests_per_ip_per_sec")]
+    pub max_auth_requests_per_ip_per_sec: u32,
+
     /// Maximum concurrent connections per IP address (default: 100)
     /// Prevents a single IP from exhausting all server connections
     #[serde(default = "default_max_connections_per_ip")]
@@ -855,6 +859,7 @@ impl Default for RateLimitSettings {
             max_queries_per_sec: default_rate_limit_queries_per_sec(),
             max_messages_per_sec: default_rate_limit_messages_per_sec(),
             max_subscriptions_per_user: default_rate_limit_max_subscriptions(),
+            max_auth_requests_per_ip_per_sec: default_rate_limit_auth_requests_per_ip_per_sec(),
             max_connections_per_ip: default_max_connections_per_ip(),
             max_requests_per_ip_per_sec: default_max_requests_per_ip_per_sec(),
             request_body_limit_bytes: default_request_body_limit_bytes(),

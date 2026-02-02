@@ -17,8 +17,9 @@ use kalamdb_commons::{
     models::{rows::Row, ConsumerGroupId, PayloadMode, TableId, TopicId, TopicOp},
 };
 use kalamdb_store::{EntityStore, StorageBackend};
+use kalamdb_system::providers::topic_offsets::{TopicOffset, TopicOffsetsTableProvider};
 use kalamdb_system::providers::topics::{Topic, TopicRoute};
-use kalamdb_tables::{TopicMessage, TopicMessageStore, TopicOffset, TopicOffsetStore};
+use kalamdb_tables::{TopicMessage, TopicMessageStore};
 use std::sync::Arc;
 
 /// Cached route entry combining topic ID with route configuration
@@ -40,8 +41,8 @@ struct RouteEntry {
 pub struct TopicPublisherService {
     /// Store for topic messages (owned by this service)
     message_store: Arc<TopicMessageStore>,
-    /// Store for consumer group offsets (owned by this service)
-    offset_store: Arc<TopicOffsetStore>,
+    /// Store for consumer group offsets (system table provider)
+    offset_store: Arc<TopicOffsetsTableProvider>,
     
     /// In-memory cache: TableId → Vec<RouteEntry>
     /// Enables O(1) lookup to check if a table has any topic routes
@@ -63,10 +64,7 @@ impl TopicPublisherService {
             storage_backend.clone(),
             "topic_messages".to_string(), //TODO: Use partition constant
         ));
-        let offset_store = Arc::new(TopicOffsetStore::new(
-            storage_backend,
-            "topic_offsets".to_string(), //TODO: Use partition constant
-        ));
+        let offset_store = Arc::new(TopicOffsetsTableProvider::new(storage_backend));
 
         Self {
             message_store,
@@ -382,13 +380,8 @@ impl TopicPublisherService {
         partition_id: u32,
         offset: u64,
     ) -> Result<()> {
-        let timestamp_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
-
         self.offset_store
-            .ack_offset(topic_id, group_id, partition_id, offset, timestamp_ms)
+            .ack_offset(topic_id, group_id, partition_id, offset)
             .map_err(|e| CommonError::Internal(format!("Failed to ack offset: {}", e)))
     }
 
@@ -411,7 +404,7 @@ impl TopicPublisherService {
     }
 
     /// Get the underlying offset store (for advanced use cases)
-    pub fn offset_store(&self) -> Arc<TopicOffsetStore> {
+    pub fn offset_store(&self) -> Arc<TopicOffsetsTableProvider> {
         self.offset_store.clone()
     }
 

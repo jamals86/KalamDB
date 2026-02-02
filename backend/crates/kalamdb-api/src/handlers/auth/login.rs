@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use super::map_auth_error_to_response;
 use super::models::{AuthErrorResponse, LoginRequest, LoginResponse, UserInfo};
+use crate::limiter::RateLimiter;
 
 /// POST /v1/api/auth/login
 ///
@@ -23,10 +24,19 @@ pub async fn login_handler(
     req: HttpRequest,
     user_repo: web::Data<Arc<dyn UserRepository>>,
     config: web::Data<AuthSettings>,
+    rate_limiter: web::Data<Arc<RateLimiter>>,
     body: web::Json<LoginRequest>,
 ) -> HttpResponse {
     // Extract client IP with anti-spoofing checks for localhost validation
     let connection_info = extract_client_ip_secure(&req);
+
+    // Rate limit auth attempts by client IP
+    if !rate_limiter.get_ref().check_auth_rate(&connection_info) {
+        return HttpResponse::TooManyRequests().json(AuthErrorResponse::new(
+            "rate_limited",
+            "Too many authentication attempts. Please retry shortly.",
+        ));
+    }
 
     // Authenticate using unified auth flow (includes localhost/empty password rules)
     let auth_request = AuthRequest::Credentials {

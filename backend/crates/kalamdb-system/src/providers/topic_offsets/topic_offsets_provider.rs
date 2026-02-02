@@ -222,6 +222,19 @@ impl TopicOffsetsTableProvider {
         Ok(count)
     }
 
+    /// Delete all offsets for a topic (all consumer groups and partitions)
+    pub fn delete_topic_offsets(&self, topic_id: &TopicId) -> Result<usize, SystemError> {
+        let offsets = self.get_topic_offsets(topic_id)?;
+        let count = offsets.len();
+
+        for offset in offsets {
+            let key = Self::make_key(&offset.topic_id, &offset.group_id, offset.partition_id);
+            self.store.delete(&key).into_system_error("delete offset error")?;
+        }
+
+        Ok(count)
+    }
+
     /// List all topic offsets
     pub fn list_offsets(&self) -> Result<Vec<TopicOffset>, SystemError> {
         let offsets = self.store.scan_all_typed(None, None, None)?;

@@ -4,7 +4,7 @@
 //! Optimized for zero-copy access patterns where possible.
 
 use super::token_bucket::TokenBucket;
-use kalamdb_commons::models::UserId;
+use kalamdb_commons::models::{ConnectionInfo, UserId};
 use kalamdb_configs::RateLimitSettings;
 use kalamdb_core::live::ConnectionId;
 use moka::sync::Cache;
@@ -28,10 +28,14 @@ pub struct RateLimiter {
     max_subscriptions_per_user: u32,
     /// Max messages per second per connection
     max_messages_per_sec: u32,
+    /// Max auth requests per second per IP
+    max_auth_requests_per_ip_per_sec: u32,
     /// User query rate buckets - keyed by user_id string
     user_query_buckets: Cache<Arc<str>, Arc<Mutex<TokenBucket>>>,
     /// User subscription counts - keyed by user_id string
     user_subscription_counts: Cache<Arc<str>, Arc<AtomicU32>>,
+    /// Auth rate buckets - keyed by client IP
+    auth_ip_buckets: Cache<Arc<str>, Arc<Mutex<TokenBucket>>>,
     /// Connection message rate buckets - keyed by connection_id
     connection_message_buckets: Cache<ConnectionId, Arc<Mutex<TokenBucket>>>,
 }
@@ -56,6 +60,11 @@ impl RateLimiter {
             .time_to_idle(cache_ttl)
             .build();
 
+        let auth_ip_buckets = Cache::builder()
+            .max_capacity(config.cache_max_entries)
+            .time_to_idle(cache_ttl)
+            .build();
+
         let connection_message_buckets = Cache::builder()
             .max_capacity(config.cache_max_entries)
             .time_to_idle(cache_ttl)
@@ -65,8 +74,10 @@ impl RateLimiter {
             max_queries_per_sec: config.max_queries_per_sec,
             max_subscriptions_per_user: config.max_subscriptions_per_user,
             max_messages_per_sec: config.max_messages_per_sec,
+            max_auth_requests_per_ip_per_sec: config.max_auth_requests_per_ip_per_sec,
             user_query_buckets,
             user_subscription_counts,
+            auth_ip_buckets,
             connection_message_buckets,
         }
     }
@@ -148,6 +159,30 @@ impl RateLimiter {
                     Duration::from_secs(1),
                 )))
             });
+
+        let mut guard = bucket.lock();
+        guard.try_consume(1)
+    }
+
+    /// Check if a client IP can attempt authentication
+    ///
+    /// Returns `true` if allowed, `false` if rate limit exceeded.
+    #[inline]
+    pub fn check_auth_rate(&self, connection_info: &ConnectionInfo) -> bool {
+        let max_auth_requests = self.max_auth_requests_per_ip_per_sec;
+        let ip_key = connection_info
+            .remote_addr
+            .as_deref()
+            .unwrap_or("unknown");
+        let key: Arc<str> = Arc::from(ip_key);
+
+        let bucket = self.auth_ip_buckets.get_with(key, || {
+            Arc::new(Mutex::new(TokenBucket::new(
+                max_auth_requests,
+                max_auth_requests,
+                Duration::from_secs(1),
+            )))
+        });
 
         let mut guard = bucket.lock();
         guard.try_consume(1)
@@ -237,6 +272,20 @@ mod tests {
         // Decrement and should allow again
         limiter.decrement_subscription(&user_id);
         assert!(limiter.check_subscription_limit(&user_id));
+    }
+
+    #[test]
+    fn test_auth_rate_limiting() {
+        let config = RateLimitSettings {
+            max_auth_requests_per_ip_per_sec: 2,
+            ..Default::default()
+        };
+        let limiter = RateLimiter::with_config(&config);
+        let connection_info = ConnectionInfo::new(Some("10.0.0.1".to_string()));
+
+        assert!(limiter.check_auth_rate(&connection_info));
+        assert!(limiter.check_auth_rate(&connection_info));
+        assert!(!limiter.check_auth_rate(&connection_info));
     }
 
     #[test]

@@ -133,6 +133,32 @@ backend/crates/
 - **Authorization Checks**: Verify role permissions BEFORE executing database operations
 - **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
 
+## Security Review Checklist (MUST)
+
+Always check these before shipping changes that touch APIs, auth, SQL, or storage:
+1. SQL injection: ensure any internal SQL built from user input is parsed/parameterized and not string-concatenated into privileged queries.
+2. Auth bypass: confirm every protected endpoint uses `AuthSessionExtractor` or verified JWT, not just header presence.
+3. Role escalation: verify role claims are validated against DB and `AS USER`/impersonation paths are gated.
+4. Flooding/bruteforce: ensure pre-auth rate limits are enabled and login/refresh endpoints are throttled.
+5. System tables: confirm non-admin roles cannot read or mutate `system.*` tables (including via views).
+6. Nested queries: confirm subqueries/UNION/VIEW cannot bypass system table guards.
+7. Anonymous access: enumerate public endpoints and validate the data they return is safe.
+8. File upload/download: validate paths, size limits, storage access checks, and cleanup on failure.
+
+Suggested extra checks:
+1. Token handling: rotation, expiry, and refresh scope for access vs refresh tokens.
+2. Secrets in logs: ensure SQL redaction and auth events never log plaintext secrets.
+3. CORS/Origin: verify WS/HTTP origin checks align with deployment model.
+
+## Security Policies (MUST)
+
+1. Health endpoints must be localhost-only unless explicitly authenticated and authorized.
+2. Never treat `Authorization` header presence as authentication. Always validate tokens.
+3. Auth endpoints must be IP rate-limited in addition to account lockout.
+4. JWT secrets must be non-default and at least 32 chars; refuse startup on non-localhost if not.
+5. Cookies carrying auth tokens must be `HttpOnly` and `SameSite=Strict`; `Secure` in production.
+6. WebSocket origins must be validated against config or rejected when strict mode is enabled.
+
 ## Recent Changes
 
 **Phase 13 - Crate Consolidation** (Complete):

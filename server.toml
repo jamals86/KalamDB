@@ -184,6 +184,10 @@ max_messages_per_sec = 10000
 # Limits total active subscriptions to prevent resource exhaustion
 max_subscriptions_per_user = 100
 
+# Maximum auth requests per second per IP (default: 20)
+# Applies to login/refresh/setup endpoints to slow brute-force attacks
+max_auth_requests_per_ip_per_sec = 50
+
 # ==========================================================================
 # Security Settings
 # ==========================================================================
