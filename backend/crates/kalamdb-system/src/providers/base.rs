@@ -369,7 +369,7 @@ mod tests {
     use datafusion::arrow::array::{RecordBatch, StringArray};
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::execution::context::SessionContext;
-    use datafusion::logical_expr::col;
+    use datafusion::logical_expr::{col, lit};
     use kalamdb_commons::{KSerializable, StorageKey};
     use kalamdb_store::{IndexedEntityStore, StorageBackend};
     use kalamdb_store::test_utils::InMemoryBackend;
@@ -384,7 +384,6 @@ mod tests {
 
     impl KSerializable for DummyValue {}
 
-    #[derive(Debug)]
     struct RecordingBackend {
         inner: InMemoryBackend,
         last_scan: Mutex<Option<(Option<Vec<u8>>, Option<Vec<u8>>, Option<usize>)>>,
@@ -557,7 +556,7 @@ mod tests {
 
         let ctx = SessionContext::new();
         let state = ctx.state();
-        let filter = col("user_id").eq(datafusion::scalar::ScalarValue::Utf8(Some("u1".to_string())));
+        let filter = col("user_id").eq(lit("u1"));
 
         let _plan = provider
             .base_system_scan(&state, None, &[filter], None)
