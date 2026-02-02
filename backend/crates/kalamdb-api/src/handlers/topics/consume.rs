@@ -82,7 +82,7 @@ pub async fn consume_handler(
                 Ok(offsets) => offsets
                     .iter()
                     .find(|o| o.partition_id == body.partition_id)
-                    .map(|o| o.committed_offset + 1)
+                    .map(|o| o.last_acked_offset + 1)
                     .unwrap_or(0),
                 Err(_) => 0,
             }

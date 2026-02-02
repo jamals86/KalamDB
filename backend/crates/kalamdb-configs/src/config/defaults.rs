@@ -214,6 +214,10 @@ pub fn default_rate_limit_max_subscriptions() -> u32 {
     10 // 10 concurrent subscriptions per user
 }
 
+pub fn default_rate_limit_auth_requests_per_ip_per_sec() -> u32 {
+    20 // 20 auth requests per second per IP (login/refresh/setup)
+}
+
 // Connection protection defaults (DoS prevention)
 pub fn default_max_connections_per_ip() -> u32 {
     100 // Maximum 100 concurrent connections per IP address

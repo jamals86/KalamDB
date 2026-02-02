@@ -4,13 +4,14 @@
 
 use crate::embedded_ui;
 use crate::handlers;
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
+use kalamdb_auth::extract_client_ip_secure;
 use kalamdb_core::metrics::{BUILD_DATE, SERVER_VERSION};
 use serde_json::json;
 
 /// Configure API routes for KalamDB
 ///
-/// Health check endpoints (both point to same handler):
+/// Health check endpoints (both point to same handler, localhost-only):
 /// - GET /health - Simple health check (root level, no version prefix)
 /// - GET /v1/api/healthcheck - Health check endpoint (versioned API path)
 /// - GET /v1/api/cluster/health - Cluster health with OpenRaft metrics (local/auth required)
@@ -111,8 +112,15 @@ pub fn configure_ui_routes(cfg: &mut web::ServiceConfig, ui_path: &str) {
         );
 }
 
-/// Health check endpoint handler
-async fn healthcheck_handler() -> HttpResponse {
+/// Health check endpoint handler (localhost-only)
+async fn healthcheck_handler(req: HttpRequest) -> HttpResponse {
+    let connection_info = extract_client_ip_secure(&req);
+    if !connection_info.is_localhost() {
+        return HttpResponse::Forbidden().json(json!({
+            "error": "Access denied. Health endpoint is localhost-only."
+        }));
+    }
+
     HttpResponse::Ok().json(json!({
         "status": "healthy",
         "version": SERVER_VERSION,

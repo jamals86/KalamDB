@@ -162,6 +162,15 @@ Suggested extra checks:
 2. Secrets in logs: ensure SQL redaction and auth events never log plaintext secrets.
 3. CORS/Origin: verify WS/HTTP origin checks align with deployment model.
 
+## Security Policies (MUST)
+
+1. Health endpoints must be localhost-only unless explicitly authenticated and authorized.
+2. Never treat `Authorization` header presence as authentication. Always validate tokens.
+3. Auth endpoints must be IP rate-limited in addition to account lockout.
+4. JWT secrets must be non-default and at least 32 chars; refuse startup on non-localhost if not.
+5. Cookies carrying auth tokens must be `HttpOnly` and `SameSite=Strict`; `Secure` in production.
+6. WebSocket origins must be validated against config or rejected when strict mode is enabled.
+
 ## Recent Changes
 
 **Phase 13 - Crate Consolidation** (Complete):

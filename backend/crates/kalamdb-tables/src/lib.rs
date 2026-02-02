@@ -67,8 +67,6 @@ pub use stream_tables::stream_table_store::{
 };
 pub use topics::topic_message_models::{TopicMessage, TopicMessageId};
 pub use topics::topic_message_store::TopicMessageStore;
-pub use topics::topic_offset_models::{TopicOffset, TopicOffsetId};
-pub use topics::topic_offset_store::{TopicOffsetStore};
 pub use user_tables::pk_index::{create_user_table_pk_index, UserTablePkIndex};
 pub use user_tables::user_table_store::{
     new_indexed_user_table_store, new_user_table_store, UserTableIndexedStore, UserTableStore,

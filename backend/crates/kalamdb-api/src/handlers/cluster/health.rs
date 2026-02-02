@@ -1,27 +1,13 @@
 //! Cluster health endpoint handler
 
 use actix_web::{web, HttpRequest, HttpResponse};
+use kalamdb_auth::extract_client_ip_secure;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_core::metrics::{BUILD_DATE, SERVER_VERSION};
 use kalamdb_raft::NodeStatus;
 use std::sync::Arc;
 
 use super::models::{ClusterHealthResponse, NodeHealth};
-
-/// Check if the request is from localhost or same machine
-fn is_local_request(req: &HttpRequest) -> bool {
-    if let Some(peer_addr) = req.peer_addr() {
-        let ip = peer_addr.ip();
-        return ip.is_loopback() || ip.to_string() == "127.0.0.1" || ip.to_string() == "::1";
-    }
-    false
-}
-
-/// Check if the request has valid authorization
-fn has_valid_auth(req: &HttpRequest) -> bool {
-    // Check for Authorization header (Bearer token or Basic auth)
-    req.headers().get("Authorization").is_some()
-}
 
 /// Cluster health endpoint handler
 ///
@@ -31,16 +17,16 @@ fn has_valid_auth(req: &HttpRequest) -> bool {
 /// - Catchup progress
 ///
 /// Access restricted to:
-/// - Localhost requests (no auth required)
-/// - Authenticated requests (with valid token)
+/// - Localhost requests only (for container/liveness checks)
 pub async fn cluster_health_handler(
     req: HttpRequest,
     ctx: web::Data<Arc<AppContext>>,
 ) -> HttpResponse {
-    // Check access
-    if !is_local_request(&req) && !has_valid_auth(&req) {
+    // Check access (localhost only)
+    let connection_info = extract_client_ip_secure(&req);
+    if !connection_info.is_localhost() {
         return HttpResponse::Forbidden().json(serde_json::json!({
-            "error": "Access denied. Use localhost or provide valid authorization."
+            "error": "Access denied. Cluster health is localhost-only."
         }));
     }
 

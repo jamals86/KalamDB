@@ -3,11 +3,10 @@
 //! Provides endpoints for monitoring cluster health and OpenRaft metrics.
 //!
 //! ## Endpoints
-//! - GET /v1/api/cluster/health - Cluster health with OpenRaft metrics (local/auth required)
+//! - GET /v1/api/cluster/health - Cluster health with OpenRaft metrics (localhost only)
 //!
 //! Access is restricted to:
-//! - Requests from localhost/same machine
-//! - Authenticated requests with valid token
+//! - Requests from localhost/same machine only
 
 pub mod models;
 

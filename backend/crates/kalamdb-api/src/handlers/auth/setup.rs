@@ -17,6 +17,7 @@ use kalamdb_system::User;
 use std::sync::Arc;
 
 use super::models::{AuthErrorResponse, ServerSetupRequest, ServerSetupResponse, UserInfo};
+use crate::limiter::RateLimiter;
 
 /// POST /v1/api/auth/setup
 ///
@@ -32,12 +33,22 @@ pub async fn server_setup_handler(
     req: HttpRequest,
     user_repo: web::Data<Arc<dyn UserRepository>>,
     config: web::Data<AuthSettings>,
+    rate_limiter: web::Data<Arc<RateLimiter>>,
     body: web::Json<ServerSetupRequest>,
 ) -> HttpResponse {
     use kalamdb_commons::constants::AuthConstants;
 
     // Only allow setup from localhost
     let connection_info = extract_client_ip_secure(&req);
+
+    // Rate limit setup attempts by client IP
+    if !rate_limiter.get_ref().check_auth_rate(&connection_info) {
+        return HttpResponse::TooManyRequests().json(AuthErrorResponse::new(
+            "rate_limited",
+            "Too many setup attempts. Please retry shortly.",
+        ));
+    }
+
     if !connection_info.is_localhost() && !config.allow_remote_setup {
         return HttpResponse::Forbidden().json(AuthErrorResponse::new(
             "forbidden",

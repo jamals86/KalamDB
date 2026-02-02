@@ -130,7 +130,7 @@ async fn test_consume_user_role_forbidden() {
     let server = TestServer::new_shared().await;
 
     // Create a regular user (not service/dba/system)
-    server.execute_sql("CREATE USER test_user PASSWORD 'testpass' ROLE user").await;
+    server.execute_sql("CREATE USER test_user WITH PASSWORD 'testpass' ROLE user").await;
     
     // Create topic
     server.execute_sql("CREATE TOPIC forbidden_consume_tp PARTITIONS 1").await;
@@ -157,8 +157,8 @@ async fn test_consume_privileged_roles_allowed() {
     let server = TestServer::new_shared().await;
 
     // Create users with privileged roles
-    server.execute_sql("CREATE USER test_service PASSWORD 'pass' ROLE service").await;
-    server.execute_sql("CREATE USER test_dba PASSWORD 'pass' ROLE dba").await;
+    server.execute_sql("CREATE USER test_service WITH PASSWORD 'pass' ROLE service").await;
+    server.execute_sql("CREATE USER test_dba WITH PASSWORD 'pass' ROLE dba").await;
     
     // Create topic
     server.execute_sql("CREATE TOPIC privileged_consume_tp PARTITIONS 1").await;
@@ -198,7 +198,7 @@ async fn test_ack_user_role_forbidden() {
     let server = TestServer::new_shared().await;
 
     // Create a regular user
-    server.execute_sql("CREATE USER test_user_ack PASSWORD 'testpass' ROLE user").await;
+    server.execute_sql("CREATE USER test_user_ack WITH PASSWORD 'testpass' ROLE user").await;
     
     // Create topic
     server.execute_sql("CREATE TOPIC forbidden_ack_tp PARTITIONS 1").await;
@@ -239,7 +239,7 @@ async fn test_cdc_insert_to_consume_workflow() {
     server.execute_sql("ALTER TOPIC events_stream ADD SOURCE test_cdc_ns.events ON INSERT").await;
 
     // 3. Insert data (should trigger CDC → topic)
-    let insert = "INSERT INTO test_cdc_ns.events VALUES 
+    let insert = "INSERT INTO test_cdc_ns.events (id, event_type, data) VALUES 
         ('evt1', 'user_signup', 'John Doe'),
         ('evt2', 'user_login', 'Jane Smith')";
     let result = server.execute_sql(insert).await;

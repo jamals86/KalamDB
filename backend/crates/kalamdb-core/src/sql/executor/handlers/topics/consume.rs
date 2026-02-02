@@ -68,7 +68,7 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
                 offsets
                     .iter()
                     .find(|o| o.partition_id == partition_id)
-                    .map(|o| o.committed_offset + 1) // Start from next message after committed
+                    .map(|o| o.last_acked_offset + 1) // Start from next message after last acked
                     .unwrap_or(0)
             }
         };
