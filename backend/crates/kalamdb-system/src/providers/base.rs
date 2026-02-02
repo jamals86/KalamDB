@@ -362,3 +362,211 @@ pub fn extract_range_filters(filters: &[Expr], column_name: &str) -> (Option<Str
     }
     (start, end)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datafusion::arrow::array::{RecordBatch, StringArray};
+    use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::execution::context::SessionContext;
+    use datafusion::logical_expr::col;
+    use kalamdb_commons::{KSerializable, StorageKey};
+    use kalamdb_store::{IndexedEntityStore, StorageBackend};
+    use kalamdb_store::test_utils::InMemoryBackend;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+    #[derive(bincode::Encode, bincode::Decode)]
+    struct DummyValue {
+        value: String,
+    }
+
+    impl KSerializable for DummyValue {}
+
+    #[derive(Debug)]
+    struct RecordingBackend {
+        inner: InMemoryBackend,
+        last_scan: Mutex<Option<(Option<Vec<u8>>, Option<Vec<u8>>, Option<usize>)>>,
+        scan_calls: AtomicUsize,
+    }
+
+    impl RecordingBackend {
+        fn new() -> Self {
+            Self {
+                inner: InMemoryBackend::new(),
+                last_scan: Mutex::new(None),
+                scan_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn last_scan(&self) -> Option<(Option<Vec<u8>>, Option<Vec<u8>>, Option<usize>)> {
+            self.last_scan.lock().unwrap().clone()
+        }
+
+        fn scan_calls(&self) -> usize {
+            self.scan_calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl StorageBackend for RecordingBackend {
+        fn get(
+            &self,
+            partition: &kalamdb_commons::storage::Partition,
+            key: &[u8],
+        ) -> kalamdb_store::storage_trait::Result<Option<Vec<u8>>> {
+            self.inner.get(partition, key)
+        }
+
+        fn put(
+            &self,
+            partition: &kalamdb_commons::storage::Partition,
+            key: &[u8],
+            value: &[u8],
+        ) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.put(partition, key, value)
+        }
+
+        fn delete(
+            &self,
+            partition: &kalamdb_commons::storage::Partition,
+            key: &[u8],
+        ) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.delete(partition, key)
+        }
+
+        fn batch(
+            &self,
+            operations: Vec<kalamdb_store::storage_trait::Operation>,
+        ) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.batch(operations)
+        }
+
+        fn scan(
+            &self,
+            partition: &kalamdb_commons::storage::Partition,
+            prefix: Option<&[u8]>,
+            start_key: Option<&[u8]>,
+            limit: Option<usize>,
+        ) -> kalamdb_store::storage_trait::Result<kalamdb_commons::storage::KvIterator<'_>> {
+            *self.last_scan.lock().unwrap() = Some((
+                prefix.map(|p| p.to_vec()),
+                start_key.map(|k| k.to_vec()),
+                limit,
+            ));
+            self.scan_calls.fetch_add(1, Ordering::SeqCst);
+            self.inner.scan(partition, prefix, start_key, limit)
+        }
+
+        fn partition_exists(&self, partition: &kalamdb_commons::storage::Partition) -> bool {
+            self.inner.partition_exists(partition)
+        }
+
+        fn create_partition(
+            &self,
+            partition: &kalamdb_commons::storage::Partition,
+        ) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.create_partition(partition)
+        }
+
+        fn list_partitions(
+            &self,
+        ) -> kalamdb_store::storage_trait::Result<Vec<kalamdb_commons::storage::Partition>> {
+            self.inner.list_partitions()
+        }
+
+        fn drop_partition(
+            &self,
+            partition: &kalamdb_commons::storage::Partition,
+        ) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.drop_partition(partition)
+        }
+
+        fn compact_partition(
+            &self,
+            partition: &kalamdb_commons::storage::Partition,
+        ) -> kalamdb_store::storage_trait::Result<()> {
+            self.inner.compact_partition(partition)
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    struct DummyProvider {
+        store: IndexedEntityStore<kalamdb_commons::models::UserId, DummyValue>,
+    }
+
+    impl DummyProvider {
+        fn new(backend: Arc<dyn StorageBackend>) -> Self {
+            let store = IndexedEntityStore::new(backend, "system_dummy", Vec::new());
+            Self { store }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl SystemTableScan<kalamdb_commons::models::UserId, DummyValue> for DummyProvider {
+        fn store(&self) -> &IndexedEntityStore<kalamdb_commons::models::UserId, DummyValue> {
+            &self.store
+        }
+
+        fn table_name(&self) -> &str {
+            "system.dummy"
+        }
+
+        fn primary_key_column(&self) -> &str {
+            "user_id"
+        }
+
+        fn arrow_schema(&self) -> arrow::datatypes::SchemaRef {
+            Arc::new(Schema::new(vec![Field::new("user_id", DataType::Utf8, false)]))
+        }
+
+        fn parse_key(&self, value: &str) -> Option<kalamdb_commons::models::UserId> {
+            Some(kalamdb_commons::models::UserId::new(value))
+        }
+
+        fn create_batch_from_pairs(
+            &self,
+            pairs: Vec<(kalamdb_commons::models::UserId, DummyValue)>,
+        ) -> Result<RecordBatch, SystemError> {
+            let values: Vec<Option<String>> = pairs
+                .into_iter()
+                .map(|(id, _)| Some(id.as_str().to_string()))
+                .collect();
+            let array = StringArray::from(values);
+            RecordBatch::try_new(
+                self.arrow_schema(),
+                vec![Arc::new(array)],
+            )
+            .map_err(|e| SystemError::Other(e.to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_base_system_scan_uses_prefix_for_pk_filter() {
+        let backend = Arc::new(RecordingBackend::new());
+        let provider = DummyProvider::new(backend.clone());
+
+        let user_id = kalamdb_commons::models::UserId::new("u1");
+        provider
+            .store
+            .insert(&user_id, &DummyValue { value: "v".to_string() })
+            .unwrap();
+
+        let ctx = SessionContext::new();
+        let state = ctx.state();
+        let filter = col("user_id").eq(datafusion::scalar::ScalarValue::Utf8(Some("u1".to_string())));
+
+        let _plan = provider
+            .base_system_scan(&state, None, &[filter], None)
+            .await
+            .unwrap();
+
+        assert_eq!(backend.scan_calls(), 1);
+        let last = backend.last_scan().expect("missing scan");
+        assert_eq!(last.0, Some(user_id.storage_key()));
+        assert_eq!(last.1, None);
+    }
+}

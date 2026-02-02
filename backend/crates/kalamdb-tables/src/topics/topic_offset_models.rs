@@ -5,7 +5,7 @@
 //! - TopicOffset: Offset tracking with committed/pending positions
 
 use kalamdb_commons::models::{ConsumerGroupId, TopicId};
-use kalamdb_commons::{encode_key, decode_key, KSerializable, StorageKey};
+use kalamdb_commons::{decode_key, encode_key, encode_prefix, KSerializable, StorageKey};
 use serde::{Deserialize, Serialize};
 
 /// Composite key for topic offsets: topic_id + group_id + partition_id
@@ -26,6 +26,16 @@ impl TopicOffsetId {
             group_id,
             partition_id,
         }
+    }
+
+    /// Prefix for scanning all offsets for a topic
+    pub fn prefix_for_topic(topic_id: &TopicId) -> Vec<u8> {
+        encode_prefix(&(topic_id.as_str(),))
+    }
+
+    /// Prefix for scanning all offsets for a topic+group
+    pub fn prefix_for_group(topic_id: &TopicId, group_id: &ConsumerGroupId) -> Vec<u8> {
+        encode_prefix(&(topic_id.as_str(), group_id.as_str()))
     }
 }
 

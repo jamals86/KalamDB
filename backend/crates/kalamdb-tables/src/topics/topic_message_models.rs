@@ -5,7 +5,7 @@
 //! - TopicMessage: Message envelope with payload and metadata
 
 use kalamdb_commons::models::TopicId;
-use kalamdb_commons::{encode_key, decode_key, KSerializable, StorageKey};
+use kalamdb_commons::{decode_key, encode_key, encode_prefix, KSerializable, StorageKey};
 use serde::{Deserialize, Serialize};
 
 /// Composite key for topic messages: topic_id + partition_id + offset
@@ -26,6 +26,16 @@ impl TopicMessageId {
             partition_id,
             offset,
         }
+    }
+
+    /// Prefix for scanning all messages in a topic partition
+    pub fn prefix_for_partition(topic_id: &TopicId, partition_id: u32) -> Vec<u8> {
+        encode_prefix(&(topic_id.as_str(), partition_id))
+    }
+
+    /// Start key for scanning messages in a topic partition from an offset
+    pub fn start_key_for_partition(topic_id: &TopicId, partition_id: u32, offset: u64) -> Vec<u8> {
+        encode_key(&(topic_id.as_str(), partition_id, offset))
     }
 }
 

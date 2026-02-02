@@ -77,22 +77,10 @@ impl TopicMessageStore {
         offset: u64,
         limit: usize,
     ) -> kalamdb_store::storage_trait::Result<Vec<TopicMessage>> {
-        // Create start key
-        let start_id = TopicMessageId::new(topic_id.clone(), partition_id, offset);
-        
-        // Scan with prefix matching topic and partition
-        let results = self.scan_all_typed(Some(limit), None, Some(&start_id))?;
-        
-        // Filter to only messages from this topic+partition
-        let messages: Vec<TopicMessage> = results
-            .into_iter()
-            .filter(|(id, _)| {
-                id.topic_id == *topic_id && id.partition_id == partition_id
-            })
-            .map(|(_, msg)| msg)
-            .collect();
-        
-        Ok(messages)
+        let prefix = TopicMessageId::prefix_for_partition(topic_id, partition_id);
+        let start_key = TopicMessageId::start_key_for_partition(topic_id, partition_id, offset);
+        let results = self.scan_with_raw_prefix(&prefix, Some(&start_key), limit)?;
+        Ok(results.into_iter().map(|(_, msg)| msg).collect())
     }
 }
 
@@ -111,10 +99,10 @@ impl EntityStore<TopicMessageId, TopicMessage> for TopicMessageStore {
 mod tests {
     use super::*;
     use kalamdb_commons::StorageKey;
-    use kalamdb_store::test_utils::InMemoryBackend;
+    use crate::utils::test_backend::RecordingBackend;
 
     fn setup_test_store() -> TopicMessageStore {
-        let backend = Arc::new(InMemoryBackend::new());
+        let backend = Arc::new(RecordingBackend::new());
         let partition = Partition::new("test_topic_messages");
         TopicMessageStore::new(backend, partition)
     }
@@ -233,5 +221,33 @@ mod tests {
         let key = msg_id.storage_key();
         let decoded = TopicMessageId::from_storage_key(&key).unwrap();
         assert_eq!(decoded, msg_id);
+    }
+
+    #[test]
+    fn test_fetch_messages_uses_prefix_scan() {
+        let backend = Arc::new(RecordingBackend::new());
+        let partition = Partition::new("test_topic_messages_scan");
+        let store = TopicMessageStore::new(backend.clone(), partition);
+
+        let topic_id = TopicId::from("scan_topic");
+        for i in 0..5 {
+            store
+                .publish(&topic_id, 0, i, vec![i as u8], None, 1000 + i as i64)
+                .unwrap();
+        }
+
+        let _ = store.fetch_messages(&topic_id, 0, 2, 3).unwrap();
+
+        assert_eq!(backend.scan_calls(), 1);
+        let last = backend.last_scan().expect("scan call missing");
+        assert_eq!(
+            last.prefix,
+            Some(TopicMessageId::prefix_for_partition(&topic_id, 0))
+        );
+        assert_eq!(
+            last.start_key,
+            Some(TopicMessageId::start_key_for_partition(&topic_id, 0, 2))
+        );
+        assert_eq!(last.limit, Some(3));
     }
 }

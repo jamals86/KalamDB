@@ -366,6 +366,27 @@ mod tests {
         assert_eq!(all_rows.len(), 6);
     }
 
+    #[test]
+    fn test_scan_user_streaming_respects_limit_and_start_seq() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = create_test_store(temp_dir.path());
+        let user_id = UserId::new("user1");
+
+        for i in 0..10 {
+            let key = StreamTableRowId::new(user_id.clone(), SeqId::new(100 + i));
+            let row = create_test_row(&user_id, 100 + i);
+            store.put(&key, &row).unwrap();
+        }
+
+        let start_seq = SeqId::new(105);
+        let results = store
+            .scan_user_streaming(&user_id, Some(start_seq), 3, None, 0)
+            .unwrap();
+
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|(key, _)| key.seq() >= start_seq));
+    }
+
     // Note: Persistence test removed since we now use in-memory storage.
     // In the future, when we add persistence mode selection, we'll add
     // a separate test for file-backed persistence.

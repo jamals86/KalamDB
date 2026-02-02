@@ -5,6 +5,7 @@
 
 use super::TopicsTableSchema;
 use crate::error::{SystemError, SystemResultExt};
+use crate::providers::base::SystemTableScan;
 use crate::system_table_trait::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
@@ -102,8 +103,14 @@ impl TopicsTableProvider {
     ///
     /// TODO: Add name index for efficient lookups
     pub fn get_topic_by_name(&self, name: &str) -> Result<Option<Topic>, SystemError> {
-        let all_topics = self.store.scan_all_typed(None, None, None)?;
-        Ok(all_topics.iter().find(|(_, t)| t.name == name).map(|(_, t)| t.clone()))
+        let iter = self.store.scan_iterator(None, None)?;
+        for item in iter {
+            let (_, topic) = item?;
+            if topic.name == name {
+                return Ok(Some(topic));
+            }
+        }
+        Ok(None)
     }
 
     /// Update an existing topic entry.
@@ -175,22 +182,19 @@ impl TopicsTableProvider {
         &self.store
     }
 
-    /// Load all topics as a single RecordBatch for DataFusion
-    fn load_batch_internal(&self) -> Result<RecordBatch, SystemError> {
-        let topics = self.list_topics()?;
-        
-        let mut topic_ids = Vec::with_capacity(topics.len());
-        let mut names = Vec::with_capacity(topics.len());
-        let mut aliases = Vec::with_capacity(topics.len());
-        let mut partitions = Vec::with_capacity(topics.len());
-        let mut retention_seconds = Vec::with_capacity(topics.len());
-        let mut retention_max_bytes = Vec::with_capacity(topics.len());
-        let mut routes = Vec::with_capacity(topics.len());
-        let mut created_ats = Vec::with_capacity(topics.len());
-        let mut updated_ats = Vec::with_capacity(topics.len());
+    fn build_batch_from_pairs(&self, pairs: Vec<(TopicId, Topic)>) -> Result<RecordBatch, SystemError> {
+        let mut topic_ids = Vec::with_capacity(pairs.len());
+        let mut names = Vec::with_capacity(pairs.len());
+        let mut aliases = Vec::with_capacity(pairs.len());
+        let mut partitions = Vec::with_capacity(pairs.len());
+        let mut retention_seconds = Vec::with_capacity(pairs.len());
+        let mut retention_max_bytes = Vec::with_capacity(pairs.len());
+        let mut routes = Vec::with_capacity(pairs.len());
+        let mut created_ats = Vec::with_capacity(pairs.len());
+        let mut updated_ats = Vec::with_capacity(pairs.len());
 
-        for topic in topics {
-            topic_ids.push(Some(topic.topic_id.as_str().to_string()));
+        for (topic_id, topic) in pairs {
+            topic_ids.push(Some(topic_id.as_str().to_string()));
             names.push(Some(topic.name));
             aliases.push(topic.alias);
             partitions.push(Some(topic.partitions as i32));
@@ -229,7 +233,37 @@ impl SystemTableProviderExt for TopicsTableProvider {
     }
 
     fn load_batch(&self) -> Result<RecordBatch, SystemError> {
-        self.load_batch_internal()
+        let pairs = self
+            .store
+            .scan_all_typed(None, None, None)
+            .into_system_error("scan_all_typed error")?;
+        self.build_batch_from_pairs(pairs)
+    }
+}
+
+impl SystemTableScan<TopicId, Topic> for TopicsTableProvider {
+    fn store(&self) -> &IndexedEntityStore<TopicId, Topic> {
+        &self.store
+    }
+
+    fn table_name(&self) -> &str {
+        TopicsTableSchema::table_name()
+    }
+
+    fn primary_key_column(&self) -> &str {
+        "topic_id"
+    }
+
+    fn arrow_schema(&self) -> SchemaRef {
+        TopicsTableSchema::schema()
+    }
+
+    fn parse_key(&self, value: &str) -> Option<TopicId> {
+        Some(TopicId::new(value))
+    }
+
+    fn create_batch_from_pairs(&self, pairs: Vec<(TopicId, Topic)>) -> Result<RecordBatch, SystemError> {
+        self.build_batch_from_pairs(pairs)
     }
 }
 
@@ -256,19 +290,12 @@ impl TableProvider for TopicsTableProvider {
 
     async fn scan(
         &self,
-        _state: &dyn datafusion::catalog::Session,
+        state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::datasource::MemTable;
-        
-        let batch = self.load_batch().map_err(|e| {
-            datafusion::error::DataFusionError::Execution(format!("Failed to load topics: {}", e))
-        })?;
-        
-        let table = MemTable::try_new(self.schema(), vec![vec![batch]])?;
-        table.scan(_state, projection, filters, limit).await
+        self.base_system_scan(state, projection, filters, limit).await
     }
 }
 
