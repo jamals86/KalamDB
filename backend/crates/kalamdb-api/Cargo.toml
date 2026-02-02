@@ -19,6 +19,7 @@ kalamdb-auth = { path = "../kalamdb-auth" }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-filestore = { path = "../kalamdb-filestore" }
 kalamdb-session = { path = "../kalamdb-session" }
+kalamdb-tables = { path = "../kalamdb-tables" }
 
 # Apache Arrow
 arrow = { workspace = true }

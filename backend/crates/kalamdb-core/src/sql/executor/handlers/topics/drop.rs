@@ -42,17 +42,34 @@ impl TypedStatementHandler<DropTopicStatement> for DropTopicHandler {
             )));
         }
 
-        // Delete from system.topics
+        // Delete from system.topics first
         topics_provider.delete_topic_async(&topic_id).await?;
 
         // Remove from TopicPublisherService cache
         self.app_context.topic_publisher().remove_topic(&topic_id);
 
-        // TODO: Clean up topic messages from topic_messages table
-        // This will be handled by a background job or retention policy
+        // Clean up all topic data from storage
+        // Note: We don't drop the entire partitions as they're shared across all topics.
+        // Instead, we delete specific topic messages and offsets using scan+delete operations.
+        
+        // Clean up consumer group offsets from the offset store
+        // This removes all offset tracking for all consumer groups on this topic
+        let offset_store = self.app_context.topic_publisher().offset_store();
+        match offset_store.delete_topic_offsets(&topic_id) {
+            Ok(count) => {
+                log::info!("Deleted {} consumer group offsets for topic '{}'", count, statement.topic_name);
+            }
+            Err(e) => {
+                log::warn!("Failed to delete consumer offsets for topic '{}': {}", statement.topic_name, e);
+            }
+        }
+
+        // TODO: Clean up topic messages from the message store
+        // This requires adding a delete_messages_for_topic method to TopicMessageStore
+        // For now, messages will be cleaned up by retention policy
 
         Ok(ExecutionResult::Success {
-            message: format!("Dropped topic '{}'", statement.topic_name),
+            message: format!("Dropped topic '{}' and cleaned up consumer offsets", statement.topic_name),
         })
     }
 

@@ -243,9 +243,7 @@ mod tests {
     use chrono::Utc;
     use datafusion::datasource::TableProvider;
     use kalamdb_commons::models::datatypes::KalamDataType;
-    use kalamdb_commons::models::schemas::{
-        ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
-    };
+    use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
     use kalamdb_commons::models::{TableId, TableName, UserId};
     use kalamdb_system::NotificationService;
     use kalamdb_system::providers::jobs::models::Job;
@@ -301,28 +299,8 @@ mod tests {
             tbl.clone(),
             TableType::Stream,
             vec![
-                ColumnDefinition::new(
-                    1,
-                    "event_id".to_string(),
-                    1,
-                    KalamDataType::Text,
-                    false,
-                    false,
-                    false,
-                    ColumnDefault::None,
-                    None,
-                ),
-                ColumnDefinition::new(
-                    2,
-                    "payload".to_string(),
-                    2,
-                    KalamDataType::Text,
-                    false,
-                    false,
-                    false,
-                    ColumnDefault::None,
-                    None,
-                ),
+                ColumnDefinition::primary_key(1, "event_id", 1, KalamDataType::Text),
+                ColumnDefinition::simple(2, "payload", 2, KalamDataType::Text),
             ],
             TableOptions::stream(1),
             None,

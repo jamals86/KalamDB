@@ -6,11 +6,11 @@ use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::arrow::{
     array::{ArrayRef, Int32Array, Int64Array, StringBuilder, BinaryBuilder},
-    datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
 use kalamdb_commons::models::{ConsumerGroupId, TopicId};
 use kalamdb_sql::ddl::{ConsumeStatement, ConsumePosition};
+use kalamdb_tables::topics::topic_message_schema;
 use std::sync::Arc;
 
 /// Handler for CONSUME FROM statements
@@ -78,15 +78,8 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
             .fetch_messages(&topic_id, partition_id, start_offset, limit)
             .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
 
-        // Convert messages to RecordBatch
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("topic", DataType::Utf8, false),
-            Field::new("partition", DataType::Int32, false),
-            Field::new("offset", DataType::Int64, false),
-            Field::new("key", DataType::Utf8, true),
-            Field::new("payload", DataType::Binary, false),
-            Field::new("timestamp_ms", DataType::Int64, false),
-        ]));
+        // Convert messages to RecordBatch using cached schema
+        let schema = topic_message_schema();
 
         let num_messages = messages.len();
         let mut topics_builder = StringBuilder::new();
@@ -143,10 +136,17 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
     async fn check_authorization(
         &self,
         _statement: &ConsumeStatement,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // All authenticated users can consume from topics
-        // Fine-grained ACLs can be added later
-        Ok(())
+        use kalamdb_commons::Role;
+
+        // Only Service, DBA, and System roles can consume from topics
+        // User role is restricted to prevent unauthorized data access
+        match context.user_role() {
+            Role::Service | Role::Dba | Role::System => Ok(()),
+            _ => Err(KalamDbError::PermissionDenied(
+                "Only service, dba, or system roles can consume from topics".to_string(),
+            )),
+        }
     }
 }

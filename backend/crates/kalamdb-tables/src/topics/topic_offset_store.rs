@@ -9,12 +9,13 @@
 //! - Storage key format: composite encoding for efficient filtering
 //! - Efficient per-group and per-partition queries
 
-use crate::common::{ensure_partition, partition_name};
 use crate::topics::topic_offset_models::{TopicOffset, TopicOffsetId};
 use kalamdb_commons::models::{ConsumerGroupId, TopicId};
 use kalamdb_commons::storage::Partition;
 use kalamdb_store::{EntityStore, StorageBackend};
 use std::sync::Arc;
+
+const DEFAULT_SCAN_LIMIT: usize = 100_000;
 
 /// Store for topic offsets (consumer group offset tracking)
 ///
@@ -85,13 +86,9 @@ impl TopicOffsetStore {
         topic_id: &TopicId,
         group_id: &ConsumerGroupId,
     ) -> kalamdb_store::storage_trait::Result<Vec<TopicOffset>> {
-        let all_offsets = self.scan_all_typed(None, None, None)?;
-        let filtered: Vec<TopicOffset> = all_offsets
-            .into_iter()
-            .filter(|(id, _)| id.topic_id == *topic_id && id.group_id == *group_id)
-            .map(|(_, offset)| offset)
-            .collect();
-        Ok(filtered)
+        let prefix = TopicOffsetId::prefix_for_group(topic_id, group_id);
+        let results = self.scan_with_raw_prefix(&prefix, None, DEFAULT_SCAN_LIMIT)?;
+        Ok(results.into_iter().map(|(_, offset)| offset).collect())
     }
 
     /// Get all offsets for a topic across all consumer groups
@@ -99,13 +96,28 @@ impl TopicOffsetStore {
         &self,
         topic_id: &TopicId,
     ) -> kalamdb_store::storage_trait::Result<Vec<TopicOffset>> {
-        let all_offsets = self.scan_all_typed(None, None, None)?;
-        let filtered: Vec<TopicOffset> = all_offsets
-            .into_iter()
-            .filter(|(id, _)| id.topic_id == *topic_id)
-            .map(|(_, offset)| offset)
-            .collect();
-        Ok(filtered)
+        let prefix = TopicOffsetId::prefix_for_topic(topic_id);
+        let results = self.scan_with_raw_prefix(&prefix, None, DEFAULT_SCAN_LIMIT)?;
+        Ok(results.into_iter().map(|(_, offset)| offset).collect())
+    }
+
+    /// Delete all offsets for a topic across all consumer groups
+    ///
+    /// This is used when dropping a topic to clean up all consumer group offsets.
+    /// Returns the number of offsets deleted.
+    pub fn delete_topic_offsets(
+        &self,
+        topic_id: &TopicId,
+    ) -> kalamdb_store::storage_trait::Result<usize> {
+        let offsets = self.get_topic_offsets(topic_id)?;
+        let count = offsets.len();
+        
+        for offset in offsets {
+            let offset_id = offset.id();
+            self.delete(&offset_id)?;
+        }
+        
+        Ok(count)
     }
 }
 
@@ -120,25 +132,14 @@ impl EntityStore<TopicOffsetId, TopicOffset> for TopicOffsetStore {
     }
 }
 
-/// Helper function to create a new topic offset store with partition initialization
-pub fn new_topic_offset_store(
-    backend: Arc<dyn StorageBackend>,
-    table_id: &kalamdb_commons::TableId,
-) -> TopicOffsetStore {
-    let partition_name = partition_name("topic_offsets", table_id);
-    let partition = Partition::new(partition_name.clone());
-    ensure_partition(&backend, partition_name);
-    TopicOffsetStore::new(backend, partition)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use kalamdb_commons::StorageKey;
-    use kalamdb_store::test_utils::InMemoryBackend;
+    use crate::utils::test_backend::RecordingBackend;
 
     fn setup_test_store() -> TopicOffsetStore {
-        let backend = Arc::new(InMemoryBackend::new());
+        let backend = Arc::new(RecordingBackend::new());
         let partition = Partition::new("test_topic_offsets");
         TopicOffsetStore::new(backend, partition)
     }
@@ -234,5 +235,66 @@ mod tests {
         let key = offset_id.storage_key();
         let decoded = TopicOffsetId::from_storage_key(&key).unwrap();
         assert_eq!(decoded, offset_id);
+    }
+
+    #[test]
+    fn test_get_group_offsets_uses_prefix_scan() {
+        let backend = Arc::new(RecordingBackend::new());
+        let partition = Partition::new("test_topic_offsets_scan_group");
+        let store = TopicOffsetStore::new(backend.clone(), partition);
+
+        let topic_id = TopicId::from("scan_topic");
+        let group_id = ConsumerGroupId::from("scan_group");
+        store
+            .upsert_offset(TopicOffset::new(
+                topic_id.clone(),
+                group_id.clone(),
+                0,
+                1,
+                2,
+                1000,
+            ))
+            .unwrap();
+
+        let _ = store.get_group_offsets(&topic_id, &group_id).unwrap();
+
+        assert_eq!(backend.scan_calls(), 1);
+        let last = backend.last_scan().expect("scan call missing");
+        assert_eq!(
+            last.prefix,
+            Some(TopicOffsetId::prefix_for_group(&topic_id, &group_id))
+        );
+        assert_eq!(last.start_key, None);
+        assert_eq!(last.limit, Some(DEFAULT_SCAN_LIMIT));
+    }
+
+    #[test]
+    fn test_get_topic_offsets_uses_prefix_scan() {
+        let backend = Arc::new(RecordingBackend::new());
+        let partition = Partition::new("test_topic_offsets_scan_topic");
+        let store = TopicOffsetStore::new(backend.clone(), partition);
+
+        let topic_id = TopicId::from("scan_topic");
+        store
+            .upsert_offset(TopicOffset::new(
+                topic_id.clone(),
+                ConsumerGroupId::from("group1"),
+                0,
+                1,
+                2,
+                1000,
+            ))
+            .unwrap();
+
+        let _ = store.get_topic_offsets(&topic_id).unwrap();
+
+        assert_eq!(backend.scan_calls(), 1);
+        let last = backend.last_scan().expect("scan call missing");
+        assert_eq!(
+            last.prefix,
+            Some(TopicOffsetId::prefix_for_topic(&topic_id))
+        );
+        assert_eq!(last.start_key, None);
+        assert_eq!(last.limit, Some(DEFAULT_SCAN_LIMIT));
     }
 }

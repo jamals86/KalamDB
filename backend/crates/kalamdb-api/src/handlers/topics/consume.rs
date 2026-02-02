@@ -1,6 +1,9 @@
 //! Topic consume handler
 //!
 //! POST /api/topics/consume - Consume messages from a topic
+//!
+//! Uses the standard topic_message_schema for consistent field structure
+//! across SQL CONSUME and HTTP API responses.
 
 use actix_web::{post, web, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
@@ -22,6 +25,15 @@ fn is_topic_authorized(session: &AuthSession) -> bool {
 /// POST /api/topics/consume - Consume messages from a topic
 ///
 /// Long polling endpoint that waits for messages or timeout.
+///
+/// # Schema
+/// Response messages follow the standard `topic_message_schema()` field structure:
+/// - topic: Utf8 (NOT NULL) - Topic name
+/// - partition: Int32 (NOT NULL) - Partition ID  
+/// - offset: Int64 (NOT NULL) - Message offset
+/// - key: Utf8 (NULLABLE) - Optional message key
+/// - payload: Binary (NOT NULL) - Message payload bytes (base64-encoded in JSON)
+/// - timestamp_ms: Int64 (NOT NULL) - Message timestamp in milliseconds
 ///
 /// # Authentication
 /// Requires Bearer token authentication.
@@ -92,7 +104,8 @@ pub async fn consume_handler(
         }
     };
 
-    // Convert to response format
+    // Convert to response format (matching topic_message_schema fields)
+    // Schema fields: topic, partition, offset, key, payload, timestamp_ms
     let response_messages: Vec<TopicMessage> = messages
         .iter()
         .map(|msg| {

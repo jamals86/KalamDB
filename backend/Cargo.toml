@@ -96,6 +96,10 @@ path = "tests/scenarios/test_scenarios.rs"
 name = "test_misc"
 path = "tests/misc/test_misc.rs"
 
+[[test]]
+name = "test_integration"
+path = "tests/integration_tests/test_integration.rs"
+
 
 [build-dependencies]
 chrono = { workspace = true }

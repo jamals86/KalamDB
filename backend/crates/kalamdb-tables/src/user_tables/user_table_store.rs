@@ -120,13 +120,13 @@ mod tests {
     use kalamdb_commons::{
         ids::SeqId,
         models::{rows::Row, NamespaceId, TableId, TableName},
-        UserId,
+        UserId, StorageKey,
     };
-    use kalamdb_store::test_utils::InMemoryBackend;
+    use crate::utils::test_backend::RecordingBackend;
     use std::collections::BTreeMap;
 
     fn create_test_store() -> UserTableStore {
-        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RecordingBackend::new());
         let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
         new_user_table_store(backend, &table_id)
     }
@@ -195,6 +195,25 @@ mod tests {
         // Scan all
         let all_rows = store.scan_all_typed(None, None, None).unwrap();
         assert_eq!(all_rows.len(), 6); // 2 users * 3 rows
+    }
+
+    #[test]
+    fn test_scan_with_raw_prefix_uses_backend_prefix() {
+        let backend = Arc::new(RecordingBackend::new());
+        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+        let store = new_user_table_store(backend.clone(), &table_id);
+
+        let user_id = UserId::new("user1");
+        let start_key = UserTableRowId::new(user_id.clone(), SeqId::new(10));
+        let prefix = UserTableRowId::user_prefix(&user_id);
+
+        let _ = store
+            .scan_with_raw_prefix(&prefix, Some(&start_key.storage_key()), 10)
+            .unwrap();
+
+        let last = backend.last_scan().expect("missing scan");
+        assert_eq!(last.prefix, Some(prefix));
+        assert_eq!(last.start_key, Some(start_key.storage_key()));
     }
 
     #[test]

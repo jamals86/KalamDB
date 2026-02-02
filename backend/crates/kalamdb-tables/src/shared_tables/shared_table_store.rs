@@ -150,11 +150,12 @@ mod tests {
     use super::*;
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::models::{NamespaceId, TableId, TableName};
-    use kalamdb_store::test_utils::InMemoryBackend;
+    use crate::utils::test_backend::RecordingBackend;
+    use kalamdb_commons::StorageKey;
     use std::collections::BTreeMap;
 
     fn create_test_store() -> SharedTableStore {
-        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RecordingBackend::new());
         let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
         new_shared_table_store(backend, &table_id)
     }
@@ -214,5 +215,21 @@ mod tests {
         // Scan all
         let all_rows = store.scan_all_typed(None, None, None).unwrap();
         assert_eq!(all_rows.len(), 5);
+    }
+
+    #[test]
+    fn test_scan_with_raw_prefix_uses_backend_prefix() {
+        let backend = Arc::new(RecordingBackend::new());
+        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+        let store = new_shared_table_store(backend.clone(), &table_id);
+
+        let prefix_key = SeqId::new(100);
+        let prefix = prefix_key.storage_key();
+
+        let _ = store.scan_with_raw_prefix(&prefix, None, 10).unwrap();
+
+        let last = backend.last_scan().expect("missing scan");
+        assert_eq!(last.prefix, Some(prefix));
+        assert_eq!(last.start_key, None);
     }
 }

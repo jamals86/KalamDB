@@ -123,6 +123,18 @@ backend/crates/
    - Example: if a test took 40s, set `#[ntest::timeout(60000)]`.
    - Recalculate and update timeouts after significant changes to test behavior or data size.
 
+## Workflows & Commands (Documented)
+
+- Backend build: `cd backend && cargo build`
+- Backend run (default config): `cd backend && cargo run` (server on `http://127.0.0.1:8080`)
+- Backend run (explicit binary): `cd backend && cargo run --bin kalamdb-server`
+- Backend config bootstrap: `cd backend && cp server.example.toml server.toml`
+- Create API key user: `cd backend && cargo run --bin kalamdb-server -- create-user --name "demo-user" --role "user"`
+- Backend config via env vars: `KALAMDB_SERVER_PORT=9000 KALAMDB_LOG_LEVEL=debug cargo run`
+- CLI build: `cd cli && cargo build --release` (binary at `cli/target/release/kalam`)
+- CLI smoke tests with env vars: `KALAMDB_SERVER_URL="http://localhost:3000" KALAMDB_ROOT_PASSWORD="mypass" cargo test --test smoke -- --nocapture`
+- Docker build and run: `cd docker/build && docker build -f Dockerfile -t jamals86/kalamdb:latest ../..` then `cd ../run/single && docker-compose up -d`
+
 **Authentication Patterns**:
 - **Password Security**: ALWAYS use `bcrypt::hash()` for password storage, NEVER store plaintext
 - **Timing-Safe Comparisons**: Use `bcrypt::verify()` for constant-time password verification
@@ -132,6 +144,23 @@ backend/crates/
 - **Soft Deletes**: Set `deleted_at` timestamp, return same error as invalid credentials
 - **Authorization Checks**: Verify role permissions BEFORE executing database operations
 - **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
+
+## Security Review Checklist (MUST)
+
+Always check these before shipping changes that touch APIs, auth, SQL, or storage:
+1. SQL injection: ensure any internal SQL built from user input is parsed/parameterized and not string-concatenated into privileged queries.
+2. Auth bypass: confirm every protected endpoint uses `AuthSessionExtractor` or verified JWT, not just header presence.
+3. Role escalation: verify role claims are validated against DB and `AS USER`/impersonation paths are gated.
+4. Flooding/bruteforce: ensure pre-auth rate limits are enabled and login/refresh endpoints are throttled.
+5. System tables: confirm non-admin roles cannot read or mutate `system.*` tables (including via views).
+6. Nested queries: confirm subqueries/UNION/VIEW cannot bypass system table guards.
+7. Anonymous access: enumerate public endpoints and validate the data they return is safe.
+8. File upload/download: validate paths, size limits, storage access checks, and cleanup on failure.
+
+Suggested extra checks:
+1. Token handling: rotation, expiry, and refresh scope for access vs refresh tokens.
+2. Secrets in logs: ensure SQL redaction and auth events never log plaintext secrets.
+3. CORS/Origin: verify WS/HTTP origin checks align with deployment model.
 
 ## Recent Changes
 

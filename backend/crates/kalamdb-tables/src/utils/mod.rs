@@ -13,6 +13,9 @@ pub mod row_utils;
 pub mod unified_dml; // Phase 13.6: Moved from tables/
 pub mod version_resolution; // Phase 13.6: Moved from tables/
 
+#[cfg(test)]
+pub mod test_backend;
+
 // Provider implementations live alongside table stores
 pub mod users {
 	pub use crate::user_tables::user_table_provider::*;
