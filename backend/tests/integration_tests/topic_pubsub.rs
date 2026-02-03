@@ -432,8 +432,9 @@ async fn test_clear_topic_user_role_forbidden() {
     server.execute_sql("CREATE TOPIC admin_topic PARTITIONS 1").await;
     
     // Try to clear as regular user (should fail)
-    let user_server = TestServer::new_with_user("clear_test_user", "password123").await;
-    let result = user_server.execute_sql("CLEAR TOPIC admin_topic").await;
+    let result = server
+        .execute_sql_as_user("CLEAR TOPIC admin_topic", "clear_test_user")
+        .await;
     
     assert_eq!(result.status, ResponseStatus::Error, "Regular user should not be able to clear topic");
     assert!(

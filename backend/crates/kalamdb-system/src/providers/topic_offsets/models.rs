@@ -70,7 +70,7 @@ pub struct TopicOffset {
     #[column(
         id = 5,
         ordinal = 5,
-        data_type(KalamDataType::BigInt),
+        data_type(KalamDataType::Timestamp),
         nullable = false,
         primary_key = false,
         default = "None",

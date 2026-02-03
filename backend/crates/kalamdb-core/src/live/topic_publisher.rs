@@ -13,6 +13,7 @@
 
 use dashmap::DashMap;
 use kalamdb_commons::{
+    conversions::arrow_json_conversion::row_to_json_map,
     errors::{CommonError, Result},
     models::{rows::Row, ConsumerGroupId, PayloadMode, TableId, TopicId, TopicOp},
 };
@@ -308,39 +309,39 @@ impl TopicPublisherService {
             ));
         }
 
-        // Convert ScalarValue to JSON-serializable format
-        let keys: std::collections::BTreeMap<_, _> = row
-            .values
-            .iter()
-            .map(|(k, v)| (k, format!("{:?}", v)))
-            .collect();
+        // Convert ScalarValue to JSON using proper conversion (faster and cleaner than Debug)
+        let json_map = row_to_json_map(row)
+            .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
         
-        serde_json::to_vec(&keys)
+        serde_json::to_vec(&json_map)
             .map_err(|e| CommonError::Internal(format!("Failed to serialize keys: {}", e)))
     }
 
     /// Extract full row as serialized JSON bytes
     fn extract_full_row_payload(&self, row: &Row) -> Result<Vec<u8>> {
-        // Convert ScalarValue to JSON-serializable format
-        let values: std::collections::BTreeMap<_, _> = row
-            .values
-            .iter()
-            .map(|(k, v)| (k, format!("{:?}", v)))
-            .collect();
+        // Convert ScalarValue to JSON using proper conversion (faster and cleaner than Debug)
+        let json_map = row_to_json_map(row)
+            .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
         
-        serde_json::to_vec(&values)
+        serde_json::to_vec(&json_map)
             .map_err(|e| CommonError::Internal(format!("Failed to serialize row: {}", e)))
     }
 
     /// Extract message key from a Row (for keyed topics)
     fn extract_key_from_row(&self, _route: &TopicRoute, row: &Row) -> Result<Option<String>> {
         // TODO: Add partition_key_expr support
-        // For now, use first column value as key if available
-        if let Some((key, value)) = row.values.iter().next() {
-            Ok(Some(format!("{}:{:?}", key, value)))
-        } else {
-            Ok(None)
+        // For now, serialize entire row as JSON key (consistent with key columns)
+        if row.values.is_empty() {
+            return Ok(None);
         }
+        
+        let json_map = row_to_json_map(row)
+            .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
+        
+        let json_str = serde_json::to_string(&json_map)
+            .map_err(|e| CommonError::Internal(format!("Failed to serialize key: {}", e)))?;
+        
+        Ok(Some(json_str))
     }
 
     /// Hash a row for consistent partition selection
@@ -349,14 +350,18 @@ impl TopicPublisherService {
         use std::hash::{Hash, Hasher};
         
         let mut hasher = DefaultHasher::new();
-        // Hash all column names and values in sorted order for consistency
-        let mut entries: Vec<_> = row.values.iter().collect();
-        entries.sort_by_key(|(k, _)| *k);
         
-        for (key, value) in entries {
+        // Hash the JSON representation for consistency (faster than Debug)
+        if let Ok(json_map) = row_to_json_map(row) {
+            if let Ok(json_str) = serde_json::to_string(&json_map) {
+                json_str.hash(&mut hasher);
+                return hasher.finish();
+            }
+        }
+        
+        // Fallback: hash column names only
+        for key in row.values.keys() {
             key.hash(&mut hasher);
-            // Simple hash of debug representation (not ideal but works for now)
-            format!("{:?}", value).hash(&mut hasher);
         }
         
         hasher.finish()

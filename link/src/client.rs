@@ -5,6 +5,7 @@
 
 use crate::{
     auth::AuthProvider,
+    consumer::ConsumerBuilder,
     error::{KalamLinkError, Result},
     models::{
         ConnectionOptions, HealthCheckResponse, HttpVersion, QueryResponse, SubscriptionConfig,
@@ -202,6 +203,23 @@ impl KalamLinkClient {
     /// Get the configured timeouts
     pub fn timeouts(&self) -> &KalamLinkTimeouts {
         &self.timeouts
+    }
+
+    /// Create a topic consumer builder bound to this client
+    pub fn consumer(&self) -> ConsumerBuilder {
+        ConsumerBuilder::from_client(self.clone())
+    }
+
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    pub(crate) fn http_client(&self) -> reqwest::Client {
+        self.http_client.clone()
+    }
+
+    pub(crate) fn auth(&self) -> &AuthProvider {
+        &self.auth
     }
 
     /// Check server health and get server information
@@ -522,7 +540,7 @@ pub struct KalamLinkClientBuilder {
 }
 
 impl KalamLinkClientBuilder {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             base_url: None,
             timeout: Duration::from_secs(30),

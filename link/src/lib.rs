@@ -115,6 +115,8 @@ pub mod credentials;
 #[cfg(feature = "tokio-runtime")]
 pub mod auth;
 #[cfg(feature = "tokio-runtime")]
+pub mod consumer;
+#[cfg(feature = "tokio-runtime")]
 pub mod client;
 #[cfg(feature = "tokio-runtime")]
 pub mod query;
@@ -131,6 +133,11 @@ pub mod wasm;
 pub use auth::AuthProvider;
 #[cfg(feature = "tokio-runtime")]
 pub use client::KalamLinkClient;
+#[cfg(feature = "tokio-runtime")]
+pub use consumer::{
+    AutoOffsetReset, CommitMode, CommitResult, ConsumerConfig, ConsumerOffsets, ConsumerRecord,
+    PayloadMode, TopicConsumer, TopicOp,
+};
 
 pub use credentials::{CredentialStore, Credentials, MemoryCredentialStore};
 pub use error::{KalamLinkError, Result};
