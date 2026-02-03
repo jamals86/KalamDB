@@ -181,6 +181,89 @@ The consumer uses the existing API surface defined in [specs/024-topic-pubsub/RE
 - Include `topic_name` in consume response to avoid client-side mapping.
 - Add `headers` field to the message envelope for future metadata.
 
+## Implementation Tasks (Full Spec)
+### SDK: Consumer Module (kalam-link)
+1. Create module layout under `link/src/consumer/` exactly as specified.
+2. Implement `models::enums` with `AutoOffsetReset` and `CommitMode`.
+3. Implement `models::consumer_record` mapping the `/api/topics/consume` response.
+4. Implement `models::commit_result` for `/api/topics/ack` response parsing.
+5. Implement `models::consumer_config` with:
+    - Snake_case fields + Kafka alias parsing (`from_map`, `from_properties`).
+    - Validation + defaulting (including `auto_offset_reset`, timeouts, backoff).
+    - `KalamLinkError::ConfigurationError` on invalid values.
+6. Implement `core::poller`:
+    - Long-polling with `poll()` and `poll_with_timeout()`.
+    - HTTP request/response parsing and retry w/ exponential backoff + jitter.
+7. Implement `core::offset_manager`:
+    - Track current position, highest processed offsets, and safe commit offsets.
+    - Support `seek()`, `position()`, `mark_processed()`.
+8. Implement `core::TopicConsumer`:
+    - Builder flow, `poll`, `commit_sync`, `commit_async`, `close`.
+    - Auto-commit timer logic and flushing on `close`.
+9. Implement `utils::backoff` and `utils::time` helpers.
+10. Wire into `KalamLinkClient::consumer()` convenience API.
+11. Add Rust doc examples for `TopicConsumer` and `ConsumerBuilder`.
+
+### Server Compatibility (If Needed)
+1. Confirm `/api/topics/consume` and `/api/topics/ack` support the required fields.
+2. If missing, add optional `topic_name` in consume response (non-breaking).
+3. (Optional) Add `/api/topics/commit` alias and SQL `COMMIT` alias.
+
+## Test Plan (Full Coverage)
+All tests must exercise the kalam-link consumer end-to-end against a running KalamDB server.
+
+### Unit Tests (kalam-link)
+- Config alias parsing:
+  - `snake_case` wins over dotted Kafka keys.
+  - Invalid types/values return `ConfigurationError`.
+- `AutoOffsetReset` parsing: `earliest`, `latest`, explicit `Offset(u64)`.
+- Backoff timing: exponential growth + jitter bounds.
+- Offset manager:
+  - `mark_processed()` advances highest processed offset.
+  - `seek()` resets next position without losing processed markers.
+  - `position()` reflects next fetch offset.
+
+### Integration Tests (kalam-link + server)
+1. Basic consume + manual commit:
+    - Produce N messages.
+    - `poll()` returns records in order.
+    - `mark_processed()` then `commit_sync()` advances server-stored offset.
+2. Auto-commit:
+    - Enable auto-commit with short interval.
+    - Verify committed offset advances without manual `commit_sync()`.
+3. Auto-offset-reset:
+    - With no committed offset, `Earliest` starts from offset 0.
+    - With no committed offset, `Latest` starts at end and returns only new messages.
+4. Timeout + long-poll:
+    - `poll_with_timeout()` returns empty on timeout.
+5. Retry/backoff:
+    - Inject transient HTTP error (e.g., temporary server 5xx) and ensure retry then success.
+6. Disconnection + reconnection:
+    - Simulate client disconnect mid-session.
+    - Reconnect and `poll()` continues from last committed offset.
+    - Verify uncommitted messages are re-delivered (at-least-once).
+7. Commit persistence:
+    - Commit offset, restart client, consume again.
+    - Verify server returns next messages after committed offset.
+8. High load / throughput:
+    - Produce large batches (e.g., 10k+ messages per topic).
+    - Ensure `max_poll_records` respected and no data loss.
+9. Multiple messages per topic:
+    - Validate ordering and offsets within a single topic.
+10. Multiple topics at once:
+    - Run multiple consumers (one per topic) concurrently.
+    - Ensure independent offsets per group/topic/partition.
+    - Verify no cross-topic contamination in results.
+
+### Stress/Soak Tests
+- Sustained high-load polling for 5–15 minutes with auto-commit enabled.
+- Random disconnect/reconnect during load; verify offsets are consistent and no skipped messages.
+
+### Notes
+- Integration tests should live under `link/tests/` and use real HTTP against a running server.
+- Use unique `group_id`s per test to avoid cross-test offset contamination.
+- Validate `ack`/commit persistence by querying server state or re-consuming.
+
 ## Open Questions
 - Do we want a `Stream`-based API (`impl Stream<Item = Result<ConsumerRecord>>`) in addition to `poll()`?
 - Should the consumer accept SQL `CONSUME` as a fallback path when HTTP is unavailable?

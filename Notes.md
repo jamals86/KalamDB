@@ -1286,6 +1286,11 @@ after that we can add a button in ui for checking storage health
 
 152) backend/crates/kalamdb-core/src/live/manager/connections_manager.rsand livequery_manager.rs have similar code for managing connections and queries we can make the connection_manager a service or the registry inside the livequerymanager and everywhere we directly use only livequerymanager for everything there, then we can name connections manager to connection_registry
 
+153) ConsumerConfig shouldnt support properties only type-safe object to configure it
+
+154) Add test which check all commands which belong to admin/dba only with normal user and make sure they all fail with proper error message, also for service consumer commands as well so that whenever we change anything we always make sure these commands fail for normal users
+
+
 
 
 

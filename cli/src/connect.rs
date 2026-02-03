@@ -1,4 +1,5 @@
 use crate::args::Cli;
+use colored::Colorize;
 use kalam_cli::{
     CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result,
 };
@@ -749,22 +750,136 @@ pub async fn create_session(
         }
     }
 
-    CLISession::with_auth_and_instance(
-        server_url,
-        auth,
-        format,
-        !cli.no_color,
-        Some(cli.instance.clone()),
-        Some(credential_store.clone()),
-        authenticated_username,
-        cli.loading_threshold_ms,
-        !cli.no_spinner,
-        Some(Duration::from_secs(cli.timeout)),
-        Some(build_timeouts(cli)),
-        Some(connection_options),
-        config.clone(),
-        config_path,
-        credentials_loaded,
-    )
-    .await
+    // Test auth by creating a test client and trying to execute a simple query
+    let test_auth_result = {
+        let timeouts = build_timeouts(cli);
+        let test_builder = KalamLinkClient::builder()
+            .base_url(&server_url)
+            .timeout(Duration::from_secs(cli.timeout))
+            .auth(auth.clone())
+            .timeouts(timeouts)
+            .connection_options(connection_options.clone());
+        
+        let test_client = test_builder.build()?;
+        // Try to list namespaces - this requires authentication
+        test_client.execute_query("SELECT name FROM system.namespaces LIMIT 1", None, None, None).await
+    };
+
+    // Check if auth test failed
+    let session_result = match test_auth_result {
+        Ok(_) => {
+            // Auth works, create session normally
+            CLISession::with_auth_and_instance(
+                server_url.clone(),
+                auth.clone(),
+                format,
+                !cli.no_color,
+                Some(cli.instance.clone()),
+                Some(credential_store.clone()),
+                authenticated_username,
+                cli.loading_threshold_ms,
+                !cli.no_spinner,
+                Some(Duration::from_secs(cli.timeout)),
+                Some(build_timeouts(cli)),
+                Some(connection_options.clone()),
+                config.clone(),
+                config_path.clone(),
+                credentials_loaded,
+            )
+            .await
+        },
+        Err(e) => {
+            // Auth test failed - return as error for handling below
+            Err(CLIError::LinkError(e))
+        },
+    };
+
+    // If session creation failed with auth error and no --username was provided, prompt for login
+    match session_result {
+        Ok(session) => Ok(session),
+        Err(ref e) => {
+            // Check if setup is required first
+            let is_setup_required = matches!(e, CLIError::LinkError(KalamLinkError::SetupRequired(_)));
+            
+            // Check if it's an auth-related error
+            let is_auth_error = match e {
+                CLIError::LinkError(KalamLinkError::ServerError { status_code, .. }) => *status_code == 401,
+                CLIError::LinkError(KalamLinkError::AuthenticationError(_)) => true,
+                _ => false,
+            };
+
+            // If setup is required and terminal is interactive, run setup wizard directly
+            if is_setup_required && std::io::stdin().is_terminal() {
+                eprintln!("\n{}", "Server requires initial setup.".yellow().bold());
+                
+                // Run setup wizard
+                match setup_and_login(
+                    &server_url,
+                    cli.verbose,
+                    &cli.instance,
+                    credential_store,
+                    cli.save_credentials,
+                )
+                .await {
+                    Ok((new_auth, new_username, new_creds_loaded)) => {
+                        // Create session with new credentials from setup
+                        CLISession::with_auth_and_instance(
+                            server_url,
+                            new_auth,
+                            format,
+                            !cli.no_color,
+                            Some(cli.instance.clone()),
+                            Some(credential_store.clone()),
+                            new_username,
+                            cli.loading_threshold_ms,
+                            !cli.no_spinner,
+                            Some(Duration::from_secs(cli.timeout)),
+                            Some(build_timeouts(cli)),
+                            Some(connection_options),
+                            config.clone(),
+                            config_path,
+                            new_creds_loaded,
+                        )
+                        .await
+                    },
+                    Err(setup_err) => Err(setup_err),
+                }
+            } else if is_auth_error && cli.username.is_none() && cli.token.is_none() && std::io::stdin().is_terminal() {
+                // Auth failure detected (not setup) and we can prompt for new credentials
+                eprintln!("\n{}", "Authentication failed with stored credentials.".yellow().bold());
+                
+                // Prompt for new credentials
+                let (new_auth, new_username, new_creds_loaded) = prompt_and_login(
+                    &server_url,
+                    cli.verbose,
+                    &cli.instance,
+                    credential_store,
+                )
+                .await?;
+
+                // Retry session creation with new credentials
+                CLISession::with_auth_and_instance(
+                    server_url,
+                    new_auth,
+                    format,
+                    !cli.no_color,
+                    Some(cli.instance.clone()),
+                    Some(credential_store.clone()),
+                    new_username,
+                    cli.loading_threshold_ms,
+                    !cli.no_spinner,
+                    Some(Duration::from_secs(cli.timeout)),
+                    Some(build_timeouts(cli)),
+                    Some(connection_options),
+                    config.clone(),
+                    config_path,
+                    new_creds_loaded,
+                )
+                .await
+            } else {
+                // Non-interactive or CLI args provided - return the original error
+                session_result
+            }
+        },
+    }
 }
