@@ -528,13 +528,22 @@ pub async fn create_session(
                         true,
                     )
                 } else {
-                    // Refresh failed - warn and fall back to localhost auto-auth or no auth
+                    // Refresh failed - prompt for credentials if terminal is available
                     eprintln!(
-                        "Warning: Could not refresh token. Please login again with --username and --password --save-credentials"
+                        "Warning: Could not refresh token."
                     );
 
-                    // Fall through to localhost auto-auth or no auth
-                    if is_localhost_url(&server_url) {
+                    if std::io::stdin().is_terminal() {
+                        // Prompt user for credentials interactively
+                        prompt_and_login(
+                            &server_url,
+                            cli.verbose,
+                            &cli.instance,
+                            credential_store,
+                        )
+                        .await?
+                    } else if is_localhost_url(&server_url) {
+                        // Non-interactive mode on localhost - try root auto-auth
                         let username = "root".to_string();
                         let password = "".to_string();
 
@@ -574,17 +583,27 @@ pub async fn create_session(
                             }
                         }
                     } else {
+                        eprintln!("Please login again with --username and --password --save-credentials");
                         (AuthProvider::None, None, false)
                     }
                 }
             } else {
-                // No refresh token available - warn and fall back
+                // No refresh token available - prompt for credentials if terminal is available
                 eprintln!(
-                    "Warning: No refresh token available. Please login again with --username and --password --save-credentials"
+                    "Warning: No refresh token available."
                 );
 
-                // Fall through to localhost auto-auth or no auth
-                if is_localhost_url(&server_url) {
+                if std::io::stdin().is_terminal() {
+                    // Prompt user for credentials interactively
+                    prompt_and_login(
+                        &server_url,
+                        cli.verbose,
+                        &cli.instance,
+                        credential_store,
+                    )
+                    .await?
+                } else if is_localhost_url(&server_url) {
+                    // Non-interactive mode on localhost - try root auto-auth
                     let username = "root".to_string();
                     let password = "".to_string();
 
@@ -624,6 +643,7 @@ pub async fn create_session(
                         }
                     }
                 } else {
+                    eprintln!("Please login again with --username and --password --save-credentials");
                     (AuthProvider::None, None, false)
                 }
             }

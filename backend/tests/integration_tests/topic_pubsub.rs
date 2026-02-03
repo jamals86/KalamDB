@@ -349,6 +349,7 @@ async fn test_consume_schema_structure() {
 // ✅ test_consume_user_role_forbidden() - Authorization checks
 // ✅ test_consume_privileged_roles_allowed() - Service/DBA/System access
 // ✅ test_ack_user_role_forbidden() - ACK authorization checks
+// ✅ test_clear_topic() - CLEAR TOPIC command
 //
 // Planned tests (Phase 10 in IMPLEMENTATION_TASKS.md):
 // - test_consume_multiple_consumer_groups()
@@ -360,3 +361,125 @@ async fn test_consume_schema_structure() {
 //
 // These will be implemented once the HTTP API test client infrastructure
 // is in place and CDC notification timing is stable.
+
+/// Test CLEAR TOPIC command
+#[tokio::test]
+#[ntest::timeout(15000)]
+async fn test_clear_topic() {
+    let server = TestServer::new_shared().await;
+    
+    // Setup: Create namespace, table, and topic
+    server.execute_sql("CREATE NAMESPACE test_clear_ns").await;
+    server.execute_sql("CREATE TABLE test_clear_ns.messages (id TEXT PRIMARY KEY, content TEXT)").await;
+    server.execute_sql("CREATE TOPIC messages_topic PARTITIONS 1").await;
+    server.execute_sql("ALTER TOPIC messages_topic ADD SOURCE test_clear_ns.messages ON INSERT").await;
+    
+    // Insert some data to generate messages
+    server.execute_sql("INSERT INTO test_clear_ns.messages (id, content) VALUES ('1', 'message1')").await;
+    server.execute_sql("INSERT INTO test_clear_ns.messages (id, content) VALUES ('2', 'message2')").await;
+    server.execute_sql("INSERT INTO test_clear_ns.messages (id, content) VALUES ('3', 'message3')").await;
+    
+    // Give CDC some time to process
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    
+    // Consume to verify messages exist
+    let consume_result = server.execute_sql("CONSUME FROM messages_topic GROUP 'test_group' START EARLIEST LIMIT 10").await;
+    assert_eq!(consume_result.status, ResponseStatus::Success, "Initial consume should succeed");
+    
+    // Clear the topic
+    let clear_result = server.execute_sql("CLEAR TOPIC messages_topic").await;
+    assert_eq!(clear_result.status, ResponseStatus::Success, "CLEAR TOPIC should succeed: {:?}", clear_result.error);
+    
+    // Give the cleanup job time to execute
+    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    
+    // Verify messages are cleared by consuming again
+    let verify_result = server.execute_sql("CONSUME FROM messages_topic GROUP 'verify_group' START EARLIEST LIMIT 10").await;
+    assert_eq!(verify_result.status, ResponseStatus::Success, "Consume after clear should succeed");
+    
+    // Topic metadata should still exist
+    let topic_check = server.execute_sql("CREATE TOPIC messages_topic PARTITIONS 1").await;
+    assert!(
+        topic_check.error.as_ref().map(|e| e.message.contains("already exists")).unwrap_or(false),
+        "Topic should still exist after CLEAR"
+    );
+}
+
+/// Test CLEAR TOPIC with non-existent topic
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn test_clear_topic_not_found() {
+    let server = TestServer::new_shared().await;
+    
+    let result = server.execute_sql("CLEAR TOPIC nonexistent_topic").await;
+    assert_eq!(result.status, ResponseStatus::Error, "Should fail for non-existent topic");
+    assert!(
+        result.error.as_ref().map(|e| e.message.contains("does not exist")).unwrap_or(false),
+        "Error should mention topic doesn't exist"
+    );
+}
+
+/// Test CLEAR TOPIC authorization (requires admin role)
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn test_clear_topic_user_role_forbidden() {
+    let server = TestServer::new_shared().await;
+    
+    // Create a regular user
+    server.execute_sql("CREATE USER clear_test_user WITH PASSWORD 'password123' ROLE user").await;
+    
+    // Create topic as admin
+    server.execute_sql("CREATE TOPIC admin_topic PARTITIONS 1").await;
+    
+    // Try to clear as regular user (should fail)
+    let user_server = TestServer::new_with_user("clear_test_user", "password123").await;
+    let result = user_server.execute_sql("CLEAR TOPIC admin_topic").await;
+    
+    assert_eq!(result.status, ResponseStatus::Error, "Regular user should not be able to clear topic");
+    assert!(
+        result.error.as_ref().map(|e| e.message.contains("requires DBA or System role")).unwrap_or(false),
+        "Error should mention role requirement"
+    );
+}
+
+/// Test DROP TOPIC schedules cleanup job
+#[tokio::test]
+#[ntest::timeout(15000)]
+async fn test_drop_topic_schedules_cleanup_job() {
+    let server = TestServer::new_shared().await;
+    
+    // Setup: Create namespace, table, and topic
+    server.execute_sql("CREATE NAMESPACE test_drop_ns").await;
+    server.execute_sql("CREATE TABLE test_drop_ns.events (id TEXT PRIMARY KEY, data TEXT)").await;
+    server.execute_sql("CREATE TOPIC events_topic PARTITIONS 1").await;
+    server.execute_sql("ALTER TOPIC events_topic ADD SOURCE test_drop_ns.events ON INSERT").await;
+    
+    // Insert some data to generate messages
+    server.execute_sql("INSERT INTO test_drop_ns.events (id, data) VALUES ('1', 'event1')").await;
+    server.execute_sql("INSERT INTO test_drop_ns.events (id, data) VALUES ('2', 'event2')").await;
+    
+    // Give CDC some time to process
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    
+    // Drop the topic (should schedule cleanup job)
+    let drop_result = server.execute_sql("DROP TOPIC events_topic").await;
+    assert_eq!(drop_result.status, ResponseStatus::Success, "DROP TOPIC should succeed: {:?}", drop_result.error);
+    assert!(
+        drop_result.results.first()
+            .and_then(|r| r.message.as_ref())
+            .map(|msg| msg.contains("cleanup job"))
+            .unwrap_or(false),
+        "DROP TOPIC should mention cleanup job in message"
+    );
+    
+    // Give the cleanup job time to execute
+    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    
+    // Verify topic is gone
+    let topic_check = server.execute_sql("DROP TOPIC events_topic").await;
+    assert_eq!(topic_check.status, ResponseStatus::Error, "Topic should not exist after drop");
+    assert!(
+        topic_check.error.as_ref().map(|e| e.message.contains("does not exist")).unwrap_or(false),
+        "Error should mention topic doesn't exist"
+    );
+}

@@ -34,6 +34,7 @@ pub use manifest::{InMemoryChecker, ManifestTableProvider};
 pub use namespaces::NamespacesTableProvider;
 pub use storages::StoragesTableProvider;
 pub use tables::SchemasTableProvider;
+pub use topic_offsets::TopicOffsetsTableProvider;
 pub use topics::TopicsTableProvider;
 pub use users::UsersTableProvider;
 
@@ -46,5 +47,6 @@ pub use manifest::ManifestTableSchema;
 pub use namespaces::NamespacesTableSchema;
 pub use storages::StoragesTableSchema;
 pub use tables::SchemasTableSchema;
+pub use topic_offsets::TopicOffsetsTableSchema;
 pub use topics::TopicsTableSchema;
 pub use users::UsersTableSchema;

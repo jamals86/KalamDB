@@ -60,7 +60,7 @@ pub use subscribe_commands::SubscribeStatement;
 // Re-export SubscriptionOptions from kalamdb_commons for convenience
 pub use kalamdb_commons::websocket::SubscriptionOptions;
 pub use topic_commands::{
-    AckStatement, AddTopicSourceStatement, ConsumePosition, ConsumeStatement,
+    AckStatement, AddTopicSourceStatement, ClearTopicStatement, ConsumePosition, ConsumeStatement,
     CreateTopicStatement, DropTopicStatement,
 };
 pub use use_namespace::UseNamespaceStatement;

@@ -82,6 +82,42 @@ impl TopicMessageStore {
         let results = self.scan_with_raw_prefix(&prefix, Some(&start_key), limit)?;
         Ok(results.into_iter().map(|(_, msg)| msg).collect())
     }
+
+    /// Delete all messages for a specific topic
+    ///
+    /// This method scans all messages for the topic and deletes them.
+    /// Returns the count of deleted messages.
+    pub fn delete_topic_messages(&self, topic_id: &TopicId) -> kalamdb_store::storage_trait::Result<usize> {
+        // Use topic_id as prefix to scan all partitions
+        let prefix = kalamdb_commons::encode_prefix(&(topic_id.as_str(),));
+        let messages = self.scan_with_raw_prefix(&prefix, None, usize::MAX)?;
+        
+        let count = messages.len();
+        for (msg_id, _) in messages {
+            self.delete(&msg_id)?;
+        }
+        
+        Ok(count)
+    }
+
+    /// Delete all messages for a specific partition within a topic
+    ///
+    /// Returns the count of deleted messages.
+    pub fn delete_partition_messages(
+        &self,
+        topic_id: &TopicId,
+        partition_id: u32,
+    ) -> kalamdb_store::storage_trait::Result<usize> {
+        let prefix = TopicMessageId::prefix_for_partition(topic_id, partition_id);
+        let messages = self.scan_with_raw_prefix(&prefix, None, usize::MAX)?;
+        
+        let count = messages.len();
+        for (msg_id, _) in messages {
+            self.delete(&msg_id)?;
+        }
+        
+        Ok(count)
+    }
 }
 
 /// Implement EntityStore trait for typed CRUD operations

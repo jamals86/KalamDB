@@ -44,7 +44,8 @@ use crate::sql::executor::handlers::table::{
     ShowStatsHandler, ShowTablesHandler,
 };
 use crate::sql::executor::handlers::topics::{
-    AckHandler, AddTopicSourceHandler, ConsumeHandler, CreateTopicHandler, DropTopicHandler,
+    AckHandler, AddTopicSourceHandler, ClearTopicHandler, ConsumeHandler, CreateTopicHandler,
+    DropTopicHandler,
 };
 use crate::sql::executor::handlers::user::{AlterUserHandler, CreateUserHandler, DropUserHandler};
 use crate::sql::executor::handlers::view::CreateViewHandler;
@@ -583,8 +584,8 @@ impl HandlerRegistry {
         // TOPIC PUB/SUB HANDLERS
         // ============================================================================
         use kalamdb_sql::ddl::{
-            AckStatement, AddTopicSourceStatement, ConsumePosition, ConsumeStatement,
-            CreateTopicStatement, DropTopicStatement,
+            AckStatement, AddTopicSourceStatement, ClearTopicStatement, ConsumePosition,
+            ConsumeStatement, CreateTopicStatement, DropTopicStatement,
         };
         use kalamdb_commons::models::PayloadMode;
 
@@ -607,6 +608,17 @@ impl HandlerRegistry {
             DropTopicHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {
                 SqlStatementKind::DropTopic(s) => Some(s.clone()),
+                _ => None,
+            },
+        );
+
+        registry.register_typed(
+            SqlStatementKind::ClearTopic(ClearTopicStatement {
+                topic_id: kalamdb_commons::models::TopicId::new("_placeholder"),
+            }),
+            ClearTopicHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() {
+                SqlStatementKind::ClearTopic(s) => Some(s.clone()),
                 _ => None,
             },
         );

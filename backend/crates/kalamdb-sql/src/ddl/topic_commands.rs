@@ -33,6 +33,17 @@ pub struct DropTopicStatement {
     pub topic_name: String,
 }
 
+/// CLEAR TOPIC statement
+///
+/// Syntax:
+/// ```sql
+/// CLEAR TOPIC <topic_name>;
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClearTopicStatement {
+    pub topic_id: kalamdb_commons::models::TopicId,
+}
+
 /// ALTER TOPIC ADD SOURCE statement
 ///
 /// Syntax:
@@ -100,6 +111,7 @@ pub struct AckStatement {
 // Implement DdlAst trait for all topic statement types
 impl DdlAst for CreateTopicStatement {}
 impl DdlAst for DropTopicStatement {}
+impl DdlAst for ClearTopicStatement {}
 impl DdlAst for AddTopicSourceStatement {}
 impl DdlAst for ConsumeStatement {}
 impl DdlAst for AckStatement {}
@@ -151,6 +163,25 @@ pub fn parse_drop_topic(sql: &str) -> Result<DropTopicStatement, String> {
     let topic_name = extract_identifier(&normalized, 2)?;
 
     Ok(DropTopicStatement { topic_name })
+}
+
+/// Parse CLEAR TOPIC statement
+///
+/// Syntax: CLEAR TOPIC <name>
+pub fn parse_clear_topic(sql: &str) -> Result<ClearTopicStatement, String> {
+    let normalized = normalize_sql(sql);
+    let sql_upper = normalized.to_uppercase();
+
+    if !sql_upper.starts_with("CLEAR TOPIC") {
+        return Err("Expected CLEAR TOPIC".to_string());
+    }
+
+    // Extract topic name (3rd token: CLEAR TOPIC <name>)
+    let topic_name = extract_identifier(&normalized, 2)?;
+
+    Ok(ClearTopicStatement {
+        topic_id: kalamdb_commons::models::TopicId::new(topic_name),
+    })
 }
 
 /// Parse ALTER TOPIC ADD SOURCE statement

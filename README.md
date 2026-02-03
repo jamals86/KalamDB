@@ -11,7 +11,6 @@ Faster operations. Lower infrastructure expenses. Zero waste.
 [![CI](https://github.com/jamals86/KalamDB/actions/workflows/ci.yml/badge.svg)](https://github.com/jamals86/KalamDB/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jamals86/KalamDB/main/.github/badges/tests.json)](https://github.com/jamals86/KalamDB/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/jamals86/KalamDB?display_name=tag)](https://github.com/jamals86/KalamDB/releases)
-[![Docker](https://img.shields.io/docker/v/jamals86/kalamdb?include_prereleases)](https://hub.docker.com/r/jamals86/kalamdb)
 [![Docker Pulls](https://img.shields.io/docker/pulls/jamals86/kalamdb)](https://hub.docker.com/r/jamals86/kalamdb)
 
 **Latest release:** v0.2.0-alpha2
