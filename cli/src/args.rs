@@ -174,4 +174,29 @@ pub struct Cli {
     /// List active subscriptions
     #[arg(long = "list-subscriptions")]
     pub list_subscriptions: bool,
+
+    // Topic consumption commands
+    /// Start consumer mode (consume messages from a topic)
+    #[arg(long = "consume")]
+    pub consume: bool,
+
+    /// Topic name for consume mode
+    #[arg(long = "topic", requires = "consume")]
+    pub topic: Option<String>,
+
+    /// Consumer group ID for consume mode
+    #[arg(long = "group")]
+    pub group: Option<String>,
+
+    /// Starting offset position: earliest, latest, or numeric offset
+    #[arg(long = "from")]
+    pub from: Option<String>,
+
+    /// Maximum number of messages to consume before exiting
+    #[arg(long = "consume-limit")]
+    pub consume_limit: Option<usize>,
+
+    /// Timeout in seconds for consume mode (exit if idle)
+    #[arg(long = "consume-timeout")]
+    pub consume_timeout: Option<u64>,
 }

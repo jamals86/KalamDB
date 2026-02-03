@@ -1,8 +1,10 @@
 use super::{CLISession, OutputFormat};
-use crate::error::Result;
+use crate::error::{CLIError, Result};
 use crate::parser::Command;
 use colored::Colorize;
 use kalam_link::SubscriptionConfig;
+use std::sync::Arc;
+use std::time::Instant;
 
 impl CLISession {
     /// Execute a parsed command
@@ -187,6 +189,16 @@ impl CLISession {
                 // This should not be reached
                 eprintln!("History command should be handled in interactive mode");
             },
+            Command::Consume {
+                topic,
+                group,
+                from,
+                limit,
+                timeout,
+            } => {
+                self.cmd_consume(&topic, group.as_deref(), from.as_deref(), limit, timeout)
+                    .await?;
+            },
             Command::Unknown(cmd) => {
                 eprintln!("Unknown command: {}. Type \\help for help.", cmd);
             },
@@ -250,6 +262,7 @@ impl CLISession {
             ("\\health", "Health check"),
             ("\\refresh-tables", "Refresh autocomplete"),
             ("\\subscribe <SQL>", "Start live query"),
+            ("\\consume <topic>", "Consume topic messages"),
         ];
         for i in 0..left.len().max(right.len()) {
             let l = left
@@ -275,6 +288,19 @@ impl CLISession {
         println!("║    {:<24} Update credentials", "\\update-credentials <u> <p>".cyan());
         println!("║    {:<24} Delete stored credentials", "\\delete-credentials".cyan());
 
+        // Topic Consumption
+        println!(
+            "{}",
+            "╠───────────────────────────────────────────────────────────╣"
+                .bright_blue()
+                .bold()
+        );
+        println!("{}", "║  Topic Consumption".bright_blue().bold());
+        println!("║    {:<48} Basic consume", "\\consume app.events".cyan());
+        println!("║    {:<48} With consumer group", "\\consume app.events --group my-group".cyan());
+        println!("║    {:<48} From earliest offset", "\\consume app.events --from earliest --limit 10".cyan());
+        println!("║    {}", "CLI args: kalam --consume --topic app.events --group my-group".green());
+
         // Tips & examples
         println!(
             "{}",
@@ -294,5 +320,250 @@ impl CLISession {
                 .bold()
         );
         println!();
+    }
+
+    /// Consume messages from a topic
+    pub async fn cmd_consume(
+        &mut self,
+        topic: &str,
+        group: Option<&str>,
+        from: Option<&str>,
+        limit: Option<usize>,
+        timeout: Option<u64>,
+    ) -> Result<()> {
+        use kalam_link::consumer::AutoOffsetReset;
+        use tokio::signal;
+        use tokio::time::{sleep, Duration};
+
+        // Warn if no consumer group specified
+        if group.is_none() {
+            println!(
+                "{}",
+                "⚠️  Running without consumer group - offsets will not be saved"
+                    .yellow()
+            );
+            println!("{}", "   Use --group NAME to persist progress".dimmed());
+            println!();
+        }
+
+        // Build consumer
+        let mut builder = self
+            .client
+            .consumer()
+            .topic(topic);
+
+        if let Some(group_id) = group {
+            builder = builder.group_id(group_id);
+        }
+
+        // Parse from offset
+        if let Some(from_str) = from {
+            let auto_offset = match from_str.to_lowercase().as_str() {
+                "earliest" => AutoOffsetReset::Earliest,
+                "latest" => AutoOffsetReset::Latest,
+                offset_str => {
+                    if let Ok(offset) = offset_str.parse::<u64>() {
+                        AutoOffsetReset::Offset(offset)
+                    } else {
+                        return Err(CLIError::ParseError(format!(
+                            "Invalid --from value: {}. Use 'earliest', 'latest', or a numeric offset",
+                            from_str
+                        )));
+                    }
+                },
+            };
+            builder = builder.auto_offset_reset(auto_offset);
+        }
+
+        let mut consumer = builder.build().map_err(|e| {
+            CLIError::LinkError(e)
+        })?;
+
+        // Print header
+        println!(
+            "{}",
+            format!("Consuming from topic: {}", topic).bright_green().bold()
+        );
+        if let Some(group_id) = group {
+            println!("{}", format!("  Consumer group: {}", group_id).dimmed());
+        }
+        if let Some(from_str) = from {
+            println!("{}", format!("  Starting from: {}", from_str).dimmed());
+        }
+        if let Some(limit_val) = limit {
+            println!("{}", format!("  Limit: {} messages", limit_val).dimmed());
+        }
+        if let Some(timeout_val) = timeout {
+            println!(
+                "{}",
+                format!("  Timeout: {}s", timeout_val).dimmed()
+            );
+        }
+        println!("{}", "Press Ctrl+C or type 'q' to stop...".dimmed());
+        println!();
+
+        // CSV header for CSV format
+        if matches!(self.format, OutputFormat::Csv) {
+            println!("offset,operation,payload");
+        }
+
+        let start_time = Instant::now();
+        let mut total_consumed = 0_usize;
+        let mut last_offset = 0_u64;
+        let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_flag_clone = stop_flag.clone();
+        let mut error_count = 0;
+
+        // Install Ctrl+C handler
+        tokio::spawn(async move {
+            signal::ctrl_c().await.ok();
+            stop_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+
+        // Poll loop
+        'consume_loop: loop {
+            // Check stop flag
+            if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+
+            // Check timeout
+            if let Some(timeout_seconds) = timeout {
+                if start_time.elapsed().as_secs() >= timeout_seconds {
+                    println!();
+                    println!("{}", "⏱️  Timeout reached".yellow());
+                    break;
+                }
+            }
+
+            // Check limit
+            if let Some(limit_val) = limit {
+                if total_consumed >= limit_val {
+                    break;
+                }
+            }
+
+            // Poll with short timeout to remain responsive
+            let records = match consumer.poll_with_timeout(Duration::from_secs(2)).await {
+                Ok(records) => {
+                    error_count = 0; // Reset error count on success
+                    records
+                },
+                Err(e) => {
+                    error_count += 1;
+                    
+                    // Format detailed error message
+                    let error_msg = format!("{}", e);
+                    let detailed_error = if error_msg.contains("404") {
+                        format!(
+                            "❌ Topic '{}' not found or consume endpoint not available.\n   {}",
+                            topic,
+                            "Create the topic with: CREATE TOPIC <name> SOURCE TABLE <namespace>.<table>".dimmed()
+                        )
+                    } else if error_msg.contains("401") || error_msg.contains("403") {
+                        format!(
+                            "❌ Authentication failed or insufficient permissions.\n   Error: {}",
+                            error_msg
+                        )
+                    } else if error_msg.contains("500") {
+                        format!(
+                            "❌ Server error while consuming from topic '{}'.\n   Error: {}",
+                            topic, error_msg
+                        )
+                    } else {
+                        format!("❌ Poll error: {}", error_msg)
+                    };
+                    
+                    eprintln!("{}", detailed_error.red());
+                    
+                    // Exit after 3 consecutive errors instead of infinite retry
+                    if error_count >= 3 {
+                        eprintln!();
+                        eprintln!(
+                            "{}",
+                            "❌ Too many consecutive errors. Exiting.".red().bold()
+                        );
+                        break 'consume_loop;
+                    }
+                    
+                    sleep(Duration::from_secs(1)).await;
+                    continue;
+                },
+            };
+
+            if records.is_empty() {
+                // No messages, continue polling
+                continue;
+            }
+
+            // Process and display records
+            for record in records {
+                last_offset = record.offset;
+
+                // Format operation as string
+                let op_str = match record.op {
+                    kalam_link::consumer::TopicOp::Insert => "INSERT",
+                    kalam_link::consumer::TopicOp::Update => "UPDATE",
+                    kalam_link::consumer::TopicOp::Delete => "DELETE",
+                };
+
+                // Format and display record
+                let formatted = self.formatter.format_consumer_record(
+                    record.offset,
+                    op_str,
+                    &record.payload,
+                );
+                println!("{}", formatted);
+
+                // Mark as processed
+                consumer.mark_processed(&record);
+
+                total_consumed += 1;
+
+                // Check limit after each record
+                if let Some(limit_val) = limit {
+                    if total_consumed >= limit_val {
+                        break 'consume_loop;
+                    }
+                }
+
+                // Check stop flag
+                if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    break 'consume_loop;
+                }
+            }
+        }
+
+        // Commit offsets before exit
+        println!();
+        if group.is_some() {
+            print!("Committing offsets... ");
+            match consumer.commit_sync().await {
+                Ok(result) => {
+                    println!(
+                        "{}",
+                        format!("✓ Committed offset: {}", result.acknowledged_offset).green()
+                    );
+                },
+                Err(e) => {
+                    println!("{}", format!("✗ Failed: {}", e).red());
+                },
+            }
+        }
+
+        // Print summary
+        println!();
+        println!(
+            "{}",
+            format!(
+                "Consumed {} message(s). Last offset: {}. Duration: {:.2}s",
+                total_consumed,
+                last_offset,
+                start_time.elapsed().as_secs_f64()
+            )
+            .bright_cyan()
+        );
+
+        Ok(())
     }
 }

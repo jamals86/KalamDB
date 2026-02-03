@@ -86,9 +86,25 @@ async fn run() -> Result<()> {
     let mut session = create_session(&cli, &mut credential_store, &config, config_path).await?;
 
     // Execute based on mode
-    match (cli.file, cli.command) {
+    match (cli.file, cli.command, cli.consume) {
+        // Consume mode takes precedence
+        (_, _, true) => {
+            let topic = cli.topic.ok_or_else(|| {
+                CLIError::ConfigurationError("--topic is required for consume mode".into())
+            })?;
+            session
+                .cmd_consume(
+                    &topic,
+                    cli.group.as_deref(),
+                    cli.from.as_deref(),
+                    cli.consume_limit,
+                    cli.consume_timeout,
+                )
+                .await?;
+        },
+
         // Execute SQL file
-        (Some(file), None) => {
+        (Some(file), None, false) => {
             let sql = std::fs::read_to_string(&file).map_err(|e| {
                 CLIError::FileError(format!("Failed to read {}: {}", file.display(), e))
             })?;
@@ -96,17 +112,17 @@ async fn run() -> Result<()> {
         },
 
         // Execute single command
-        (None, Some(command)) => {
+        (None, Some(command), false) => {
             session.execute(&command).await?;
         },
 
         // Interactive mode
-        (None, None) => {
+        (None, None, false) => {
             session.run_interactive().await?;
         },
 
         // Invalid combination
-        (Some(_), Some(_)) => {
+        (Some(_), Some(_), false) => {
             return Err(CLIError::ConfigurationError(
                 "Cannot specify both --file and --command".into(),
             ));
