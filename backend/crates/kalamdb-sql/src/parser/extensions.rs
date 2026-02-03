@@ -36,8 +36,8 @@ pub use kalamdb_commons::websocket::SubscriptionOptions;
 
 // Topic pub/sub commands
 pub use crate::ddl::topic_commands::{
-    AddTopicSourceStatement, ConsumePosition, ConsumeStatement, CreateTopicStatement,
-    DropTopicStatement,
+    AddTopicSourceStatement, ClearTopicStatement, ConsumePosition, ConsumeStatement,
+    CreateTopicStatement, DropTopicStatement,
 };
 
 // User commands (CREATE USER, ALTER USER, DROP USER)
@@ -78,6 +78,8 @@ pub enum ExtensionStatement {
     CreateTopic(CreateTopicStatement),
     /// DROP TOPIC command (pub/sub)
     DropTopic(DropTopicStatement),
+    /// CLEAR TOPIC command (pub/sub)
+    ClearTopic(ClearTopicStatement),
     /// ALTER TOPIC ADD SOURCE command (pub/sub)
     AddTopicSource(AddTopicSourceStatement),
     /// CONSUME FROM command (pub/sub)
@@ -207,6 +209,13 @@ impl ExtensionStatement {
             return crate::ddl::topic_commands::parse_drop_topic(sql)
                 .map(ExtensionStatement::DropTopic)
                 .map_err(|e| format!("DROP TOPIC parsing failed: {}", e));
+        }
+
+        // Try CLEAR TOPIC
+        if sql_upper.starts_with("CLEAR TOPIC") {
+            return crate::ddl::topic_commands::parse_clear_topic(sql)
+                .map(ExtensionStatement::ClearTopic)
+                .map_err(|e| format!("CLEAR TOPIC parsing failed: {}", e));
         }
 
         // Try ALTER TOPIC (must check before CREATE/DROP)

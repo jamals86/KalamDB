@@ -1286,8 +1286,6 @@ after that we can add a button in ui for checking storage health
 
 152) backend/crates/kalamdb-core/src/live/manager/connections_manager.rsand livequery_manager.rs have similar code for managing connections and queries we can make the connection_manager a service or the registry inside the livequerymanager and everywhere we directly use only livequerymanager for everything there, then we can name connections manager to connection_registry
 
-154) Add a new sql command to clear a topic messages whenever we need
-
 
 
 
@@ -1304,4 +1302,10 @@ Main Epics:
 9) Check S3/WebDAV Storages
 10) Move permissions to Shared tables with policies
 
+
+Target Usecase:
+----------------
+1) Have a service code which subscribes to chat messages/conversations/typing events and process them in real-time
+2) Having a chat app messages which recieves and send messages in real-time using subscriptions websocket
+3) Authenticate using Firebase auth tokens
 

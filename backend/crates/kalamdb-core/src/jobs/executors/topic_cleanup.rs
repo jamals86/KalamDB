@@ -108,15 +108,25 @@ impl JobExecutor for TopicCleanupExecutor {
         };
 
         // Step 2: Clean up topic messages from message store
-        // TODO: Implement delete_topic_messages() method in TopicMessageStore
-        // For now, log that this step is pending
-        let messages_deleted = 0;
-        let bytes_freed = 0;
-
-        ctx.log_info(&format!(
-            "TODO: Implement topic message deletion from message store for topic '{}'",
-            topic_name
-        ));
+        let message_store = topic_publisher.message_store();
+        let (messages_deleted, bytes_freed) = match message_store.delete_topic_messages(topic_id) {
+            Ok(count) => {
+                ctx.log_info(&format!(
+                    "Deleted {} messages from topic '{}'",
+                    count, topic_name
+                ));
+                // Estimate bytes freed (rough approximation)
+                let estimated_bytes = count * 512; // Average message size estimate
+                (count, estimated_bytes)
+            }
+            Err(e) => {
+                ctx.log_warn(&format!(
+                    "Failed to delete messages for topic '{}': {}",
+                    topic_name, e
+                ));
+                (0, 0)
+            }
+        };
 
         // NOTE: The topic should already be removed from system.topics
         // and from the TopicPublisherService cache before this job runs.

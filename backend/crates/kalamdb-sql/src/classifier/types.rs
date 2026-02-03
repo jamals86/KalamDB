@@ -131,6 +131,8 @@ pub enum SqlStatementKind {
     CreateTopic(CreateTopicStatement),
     /// DROP TOPIC <name>
     DropTopic(DropTopicStatement),
+    /// CLEAR TOPIC <name>
+    ClearTopic(ClearTopicStatement),
     /// ALTER TOPIC <name> ADD SOURCE ...
     AddTopicSource(AddTopicSourceStatement),
     /// CONSUME FROM <topic> [GROUP '<id>'] [FROM <pos>] [LIMIT <n>]
@@ -288,6 +290,7 @@ impl SqlStatement {
             | SqlStatementKind::Subscribe(_)
             | SqlStatementKind::CreateTopic(_)
             | SqlStatementKind::DropTopic(_)
+            | SqlStatementKind::ClearTopic(_)
             | SqlStatementKind::AddTopicSource(_)
             | SqlStatementKind::CreateUser(_)
             | SqlStatementKind::AlterUser(_)
@@ -351,6 +354,7 @@ impl SqlStatement {
             SqlStatementKind::Subscribe(_) => "SUBSCRIBE TO",
             SqlStatementKind::CreateTopic(_) => "CREATE TOPIC",
             SqlStatementKind::DropTopic(_) => "DROP TOPIC",
+            SqlStatementKind::ClearTopic(_) => "CLEAR TOPIC",
             SqlStatementKind::AddTopicSource(_) => "ALTER TOPIC ADD SOURCE",
             SqlStatementKind::ConsumeTopic(_) => "CONSUME FROM",
             SqlStatementKind::AckTopic(_) => "ACK",

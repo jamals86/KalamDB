@@ -184,9 +184,26 @@ jobs:
           cat test_output.txt
           
           # Parse the summary line from nextest output
-          PASSED=$(grep -oP '\d+(?= passed)' test_output.txt | tail -1 || echo "0")
-          FAILED=$(grep -oP '\d+(?= failed)' test_output.txt | tail -1 || echo "0")
-          TOTAL=$((PASSED + FAILED))
+          # Expected format: "Summary [   15.234s] 2345 tests run: 2344 passed, 1 failed, 0 skipped"
+          SUMMARY=$(grep -E "Summary \[.*\] [0-9]+ tests run:" test_output.txt || echo "")
+          
+          if [ -z "$SUMMARY" ]; then
+            echo "Error: Could not find nextest summary line"
+            PASSED=0
+            FAILED=1
+            TOTAL=1
+          else
+            echo "Found summary: $SUMMARY"
+            # Extract numbers using sed (more portable than grep -oP)
+            PASSED=$(echo "$SUMMARY" | sed -n 's/.*\([0-9]\+\) passed.*/\1/p')
+            FAILED=$(echo "$SUMMARY" | sed -n 's/.*\([0-9]\+\) failed.*/\1/p')
+            TOTAL=$(echo "$SUMMARY" | sed -n 's/.*\([0-9]\+\) tests run.*/\1/p')
+            
+            # Default to 0 if extraction failed
+            PASSED=${PASSED:-0}
+            FAILED=${FAILED:-0}
+            TOTAL=${TOTAL:-0}
+          fi
           
           echo "Tests: $PASSED passed, $FAILED failed (total: $TOTAL)"
           

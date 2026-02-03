@@ -602,6 +602,18 @@ impl SqlStatement {
                         .map(SqlStatementKind::DropTopic)
                 })
             },
+            ["CLEAR", "TOPIC", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for topic management"
+                            .to_string(),
+                    ));
+                }
+                Self::wrap(sql, || {
+                    crate::ddl::topic_commands::parse_clear_topic(sql)
+                        .map(SqlStatementKind::ClearTopic)
+                })
+            },
             ["ALTER", "TOPIC", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -854,6 +866,7 @@ impl SqlStatement {
             // Topic management requires admin
             SqlStatementKind::CreateTopic(_)
             | SqlStatementKind::DropTopic(_)
+            | SqlStatementKind::ClearTopic(_)
             | SqlStatementKind::AddTopicSource(_) => {
                 Err("Admin privileges (DBA or System role) required for topic management"
                     .to_string())

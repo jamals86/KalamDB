@@ -17,6 +17,7 @@ pub enum JobType {
     StreamEviction,
     UserCleanup,
     ManifestEviction,
+    TopicCleanup,
     TopicRetention,
     Unknown,
 }
@@ -34,6 +35,7 @@ impl JobType {
             JobType::StreamEviction => "stream_eviction",
             JobType::UserCleanup => "user_cleanup",
             JobType::ManifestEviction => "manifest_eviction",
+            JobType::TopicCleanup => "topic_cleanup",
             JobType::TopicRetention => "topic_retention",
             JobType::Unknown => "unknown",
         }
@@ -63,6 +65,7 @@ impl JobType {
             JobType::Retention => "RT",
             JobType::StreamEviction => "SE",
             JobType::UserCleanup => "UC",
+            JobType::TopicCleanup => "TC",
             JobType::ManifestEviction => "ME",
             JobType::TopicRetention => "TR",
             JobType::Unknown => "UN",
@@ -80,6 +83,7 @@ impl JobType {
             "retention" => Some(JobType::Retention),
             "stream_eviction" => Some(JobType::StreamEviction),
             "user_cleanup" => Some(JobType::UserCleanup),
+            "topic_cleanup" => Some(JobType::TopicCleanup),
             "manifest_eviction" => Some(JobType::ManifestEviction),
             "topic_retention" => Some(JobType::TopicRetention),
             "unknown" => Some(JobType::Unknown),
@@ -168,6 +172,8 @@ impl From<&str> for JobType {
             "stream_eviction" => JobType::StreamEviction,
             "user_cleanup" => JobType::UserCleanup,
             "manifest_eviction" => JobType::ManifestEviction,
+            "topic_cleanup" => JobType::TopicCleanup,
+            "topic_retention" => JobType::TopicRetention,
             "unknown" => JobType::Unknown,
             _ => JobType::Unknown,
         }

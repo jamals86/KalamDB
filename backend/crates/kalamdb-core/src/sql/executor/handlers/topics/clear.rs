@@ -1,56 +1,57 @@
-//! DROP TOPIC handler
+//! CLEAR TOPIC handler
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
-use kalamdb_commons::models::TopicId;
-use kalamdb_sql::ddl::DropTopicStatement;
+use kalamdb_sql::ddl::ClearTopicStatement;
 use std::sync::Arc;
 
-/// Handler for DROP TOPIC statements
-pub struct DropTopicHandler {
+/// Handler for CLEAR TOPIC statements
+///
+/// Deletes all messages from a topic without dropping the topic metadata.
+/// This is useful for:
+/// - Testing/development environments
+/// - Clearing old messages before a fresh start
+/// - Freeing up storage space while keeping topic configuration
+///
+/// This handler schedules a TopicCleanup job to perform the actual cleanup.
+pub struct ClearTopicHandler {
     app_context: Arc<AppContext>,
 }
 
-impl DropTopicHandler {
+impl ClearTopicHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
     }
 }
 
 #[async_trait::async_trait]
-impl TypedStatementHandler<DropTopicStatement> for DropTopicHandler {
+impl TypedStatementHandler<ClearTopicStatement> for ClearTopicHandler {
     async fn execute(
         &self,
-        statement: DropTopicStatement,
+        statement: ClearTopicStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let topic_id = TopicId::new(&statement.topic_name);
+        let topic_id = &statement.topic_id;
 
         // Access topics provider from system_tables
         let topics_provider = self.app_context.system_tables().topics();
 
         // Check if topic exists
-        let topic = topics_provider.get_topic_by_id_async(&topic_id).await?;
+        let topic = topics_provider.get_topic_by_id_async(topic_id).await?;
 
         if topic.is_none() {
             return Err(KalamDbError::NotFound(format!(
                 "Topic '{}' does not exist",
-                statement.topic_name
+                topic_id.as_str()
             )));
         }
 
         let topic_name = topic.unwrap().name;
 
-        // Delete from system.topics first
-        topics_provider.delete_topic_async(&topic_id).await?;
-
-        // Remove from TopicPublisherService cache
-        self.app_context.topic_publisher().remove_topic(&topic_id);
-
-        // Schedule a TopicCleanup job to clean up all messages and offsets
+        // Schedule a TopicCleanup job to perform the actual cleanup
         use crate::jobs::executors::topic_cleanup::TopicCleanupParams;
         use kalamdb_system::JobType;
 
@@ -68,34 +69,38 @@ impl TypedStatementHandler<DropTopicStatement> for DropTopicHandler {
             .create_job(
                 JobType::TopicCleanup,
                 params_json,
-                Some(format!("drop_topic:{}", topic_id.as_str())),
+                Some(format!("clear_topic:{}", topic_id.as_str())),
                 None,
             )
             .await?;
 
         log::info!(
-            "Dropped topic '{}' and scheduled cleanup job [{}]",
+            "Scheduled topic cleanup job [{}] for topic '{}' ({})",
+            job_id,
             topic_name,
-            job_id
+            topic_id.as_str()
         );
 
         Ok(ExecutionResult::Success {
-            message: format!("Dropped topic '{}' and scheduled cleanup job [{}]", topic_name, job_id),
+            message: format!(
+                "Scheduled cleanup job [{}] for topic '{}'",
+                job_id, topic_name
+            ),
         })
     }
 
     async fn check_authorization(
         &self,
-        _statement: &DropTopicStatement,
+        _statement: &ClearTopicStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         use kalamdb_commons::Role;
 
-        // Only DBA and System roles can drop topics
+        // Only DBA and System roles can clear topics
         match context.user_role() {
             Role::Dba | Role::System => Ok(()),
             _ => Err(KalamDbError::PermissionDenied(
-                "DROP TOPIC requires DBA or System role".to_string(),
+                "CLEAR TOPIC requires DBA or System role".to_string(),
             )),
         }
     }

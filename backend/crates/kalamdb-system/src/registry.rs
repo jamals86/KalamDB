@@ -11,7 +11,8 @@ use super::providers::{
     JobsTableProvider, JobsTableSchema, LiveQueriesTableProvider, LiveQueriesTableSchema,
     ManifestTableProvider, ManifestTableSchema, NamespacesTableProvider, NamespacesTableSchema,
     StoragesTableProvider, StoragesTableSchema, SchemasTableProvider, SchemasTableSchema,
-    TopicsTableProvider, TopicsTableSchema, UsersTableProvider, UsersTableSchema,
+    TopicOffsetsTableProvider, TopicOffsetsTableSchema, TopicsTableProvider, TopicsTableSchema,
+    UsersTableProvider, UsersTableSchema,
 };
 // SchemaRegistry will be passed as Arc parameter from kalamdb-core
 use datafusion::arrow::datatypes::SchemaRef;
@@ -43,6 +44,7 @@ pub struct SystemTablesRegistry {
     schemas: Arc<SchemasTableProvider>,
     audit_logs: Arc<AuditLogsTableProvider>,
     topics: Arc<TopicsTableProvider>,
+    topic_offsets: Arc<TopicOffsetsTableProvider>,
     // ===== Manifest cache table =====
     manifest: Arc<ManifestTableProvider>,
 
@@ -93,6 +95,7 @@ impl SystemTablesRegistry {
             schemas: Arc::new(SchemasTableProvider::new(storage_backend.clone())),
             audit_logs: Arc::new(AuditLogsTableProvider::new(storage_backend.clone())),
             topics: Arc::new(TopicsTableProvider::new(storage_backend.clone())),
+            topic_offsets: Arc::new(TopicOffsetsTableProvider::new(storage_backend.clone())),
 
             // Manifest cache provider
             manifest: Arc::new(ManifestTableProvider::new(storage_backend)),
@@ -124,6 +127,7 @@ impl SystemTablesRegistry {
                 (SystemTable::AuditLog, AuditLogsTableSchema::definition()),
                 (SystemTable::Manifest, ManifestTableSchema::definition()),
                 (SystemTable::Topics, TopicsTableSchema::definition()),
+                (SystemTable::TopicOffsets, TopicOffsetsTableSchema::definition()),
             ];
 
             defs.into_iter()
@@ -153,6 +157,7 @@ impl SystemTablesRegistry {
                 (SystemTable::AuditLog, AuditLogsTableSchema::schema()),
                 (SystemTable::Manifest, ManifestTableSchema::schema()),
                 (SystemTable::Topics, TopicsTableSchema::schema()),
+                (SystemTable::TopicOffsets, TopicOffsetsTableSchema::schema()),
             ]
             .into_iter()
             .map(|(table, schema)| (table.table_id(), schema))
@@ -209,6 +214,11 @@ impl SystemTablesRegistry {
     /// Get the system.topics provider
     pub fn topics(&self) -> Arc<TopicsTableProvider> {
         self.topics.clone()
+    }
+
+    /// Get the system.topic_offsets provider
+    pub fn topic_offsets(&self) -> Arc<TopicOffsetsTableProvider> {
+        self.topic_offsets.clone()
     }
 
     /// Get the system.stats provider (virtual table)
@@ -346,6 +356,14 @@ impl SystemTablesRegistry {
             (
                 SystemTable::Manifest,
                 wrap(SystemTable::Manifest, self.manifest.clone() as Arc<dyn TableProvider>),
+            ),
+            (
+                SystemTable::Topics,
+                wrap(SystemTable::Topics, self.topics.clone() as Arc<dyn TableProvider>),
+            ),
+            (
+                SystemTable::TopicOffsets,
+                wrap(SystemTable::TopicOffsets, self.topic_offsets.clone() as Arc<dyn TableProvider>),
             ),
         ];
 
