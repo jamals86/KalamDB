@@ -166,10 +166,10 @@ impl TopicOffsetsTableProvider {
         let mut topic_offset = self
             .store
             .get(&key)?
-            .unwrap_or_else(|| TopicOffset::new(topic_id.clone(), group_id.clone(), partition_id));
+            .unwrap_or_else(|| TopicOffset::new(topic_id.clone(), group_id.clone(), partition_id, 0, chrono::Utc::now().timestamp_millis()));
 
         // Update offset
-        topic_offset.ack(offset);
+        topic_offset.ack(offset, chrono::Utc::now().timestamp_millis());
 
         // Save back
         self.store
@@ -193,10 +193,10 @@ impl TopicOffsetsTableProvider {
             .get_async(key.clone())
             .await
             .into_system_error("get_async error")?
-            .unwrap_or_else(|| TopicOffset::new(topic_id.clone(), group_id.clone(), partition_id));
+            .unwrap_or_else(|| TopicOffset::new(topic_id.clone(), group_id.clone(), partition_id, 0, chrono::Utc::now().timestamp_millis()));
 
         // Update offset
-        topic_offset.ack(offset);
+        topic_offset.ack(offset, chrono::Utc::now().timestamp_millis());
 
         // Save back
         self.store
@@ -351,6 +351,8 @@ mod tests {
             TopicId::new("topic_123"),
             ConsumerGroupId::new("group_1"),
             0,
+            0,  // last_acked_offset
+            chrono::Utc::now().timestamp_millis(),  // updated_at
         );
 
         // Upsert offset

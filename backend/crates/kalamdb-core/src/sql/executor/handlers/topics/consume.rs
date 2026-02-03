@@ -10,7 +10,8 @@ use datafusion::arrow::{
 };
 use kalamdb_commons::models::{ConsumerGroupId, TopicId};
 use kalamdb_sql::ddl::{ConsumeStatement, ConsumePosition};
-use kalamdb_tables::topics::topic_message_schema;
+use kalamdb_system::providers::topic_offsets::TopicOffset;
+use kalamdb_tables::topics::topic_message_schema::topic_message_schema;
 use std::sync::Arc;
 
 /// Handler for CONSUME FROM statements
@@ -60,7 +61,7 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
             // Earliest with group: use committed offset if available, else 0
             (ConsumePosition::Earliest, Some(group_name)) => {
                 let group_id = ConsumerGroupId::new(group_name);
-                let offsets = topic_publisher
+                let offsets: Vec<TopicOffset> = topic_publisher
                     .get_group_offsets(&topic_id, &group_id)
                     .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
                 
