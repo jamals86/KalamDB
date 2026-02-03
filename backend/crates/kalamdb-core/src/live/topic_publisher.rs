@@ -593,6 +593,6 @@ mod tests {
         // Verify offset was saved
         let offsets = service.get_group_offsets(&topic_id, &group_id).unwrap();
         assert_eq!(offsets.len(), 1);
-        assert_eq!(offsets[0].committed_offset, 42);
+        assert_eq!(offsets[0].last_acked_offset, 42);
     }
 }

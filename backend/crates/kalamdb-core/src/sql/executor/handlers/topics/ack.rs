@@ -97,10 +97,17 @@ impl TypedStatementHandler<AckStatement> for AckHandler {
     async fn check_authorization(
         &self,
         _statement: &AckStatement,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // All authenticated users can acknowledge offsets
-        // Fine-grained ACLs can be added later
-        Ok(())
+        use kalamdb_commons::Role;
+
+        // Only Service, DBA, and System roles can acknowledge topic offsets
+        // User role is restricted to prevent unauthorized offset manipulation
+        match context.user_role() {
+            Role::Service | Role::Dba | Role::System => Ok(()),
+            _ => Err(KalamDbError::PermissionDenied(
+                "Only service, dba, or system roles can acknowledge topic offsets".to_string(),
+            )),
+        }
     }
 }

@@ -18,6 +18,7 @@ pub mod manifest;
 pub mod namespaces;
 pub mod storages;
 pub mod tables;
+pub mod topic_offsets;
 pub mod topics;
 pub mod users;
 

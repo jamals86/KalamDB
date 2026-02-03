@@ -38,6 +38,8 @@ pub enum SystemTable {
     Manifest,
     /// system.topics - Durable pub/sub topics (persisted)
     Topics,
+    /// system.topic_offsets - Consumer group offset tracking (persisted)
+    TopicOffsets,
 
     // ==================== VIRTUAL VIEWS ====================
     /// system.stats - Runtime metrics (computed on-demand)
@@ -75,6 +77,7 @@ impl SystemTable {
             SystemTable::AuditLog => "audit_log",
             SystemTable::Manifest => "manifest",
             SystemTable::Topics => "topics",
+            SystemTable::TopicOffsets => "topic_offsets",
             // Views
             SystemTable::Stats => "stats",
             SystemTable::Settings => "settings",
@@ -124,6 +127,7 @@ impl SystemTable {
             SystemTable::AuditLog => Some("system_audit_log"),
             SystemTable::Manifest => Some("manifest_cache"),
             SystemTable::Topics => Some("system_topics"),
+            SystemTable::TopicOffsets => Some("system_topic_offsets"),
             // Views have no column family
             SystemTable::Stats
             | SystemTable::Settings
@@ -155,6 +159,7 @@ impl SystemTable {
             "audit_log" | "system_audit_log" => Ok(SystemTable::AuditLog),
             "manifest" | "manifest_cache" => Ok(SystemTable::Manifest),
             "topics" | "system_topics" => Ok(SystemTable::Topics),
+            "topic_offsets" | "system_topic_offsets" => Ok(SystemTable::TopicOffsets),
             // Views
             "stats" => Ok(SystemTable::Stats),
             "settings" => Ok(SystemTable::Settings),
@@ -183,6 +188,7 @@ impl SystemTable {
             SystemTable::AuditLog,
             SystemTable::Manifest,
             SystemTable::Topics,
+            SystemTable::TopicOffsets,
         ]
     }
 
@@ -216,6 +222,7 @@ impl SystemTable {
             SystemTable::AuditLog,
             SystemTable::Manifest,
             SystemTable::Topics,
+            SystemTable::TopicOffsets,
             // Views
             SystemTable::Stats,
             SystemTable::Settings,
@@ -255,6 +262,7 @@ impl SystemTable {
         static AUDIT_LOG: Lazy<Partition> = Lazy::new(|| Partition::new("system_audit_log"));
         static MANIFEST: Lazy<Partition> = Lazy::new(|| Partition::new("manifest_cache"));
         static TOPICS: Lazy<Partition> = Lazy::new(|| Partition::new("system_topics"));
+        static TOPIC_OFFSETS: Lazy<Partition> = Lazy::new(|| Partition::new("system_topic_offsets"));
 
         match self {
             SystemTable::Users => Some(&USERS),
@@ -268,6 +276,7 @@ impl SystemTable {
             SystemTable::AuditLog => Some(&AUDIT_LOG),
             SystemTable::Manifest => Some(&MANIFEST),
             SystemTable::Topics => Some(&TOPICS),
+            SystemTable::TopicOffsets => Some(&TOPIC_OFFSETS),
             // Views have no partition
             SystemTable::Stats
             | SystemTable::Settings
@@ -460,10 +469,11 @@ mod tests {
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 21); // 12 tables + 9 views (7 original + Tables + Columns)
+        assert_eq!(all.len(), 21); // 12 tables + 9 views (including TopicOffsets)
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
         assert!(all.contains(&SystemTable::AuditLog));
+        assert!(all.contains(&SystemTable::TopicOffsets));
         assert!(all.contains(&SystemTable::Stats));
         assert!(all.contains(&SystemTable::Cluster));
         assert!(all.contains(&SystemTable::ClusterGroups));
@@ -474,7 +484,7 @@ mod tests {
     #[test]
     fn test_all_tables() {
         let tables = SystemTable::all_tables();
-        assert_eq!(tables.len(), 12);
+        assert_eq!(tables.len(), 12); // Including TopicOffsets
         assert!(tables.iter().all(|t| !t.is_view()));
     }
 
