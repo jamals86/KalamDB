@@ -51,6 +51,14 @@ pub enum Command {
     Stats,
     /// Open interactive history menu
     History,
+    /// Consume messages from a topic
+    Consume {
+        topic: String,
+        group: Option<String>,
+        from: Option<String>,
+        limit: Option<usize>,
+        timeout: Option<u64>,
+    },
     Unknown(String),
 }
 
@@ -232,7 +240,79 @@ impl CommandParser {
             "\\delete-credentials" => Ok(Command::DeleteCredentials),
             "\\info" | "\\session" => Ok(Command::Info),
             "\\history" | "\\h" => Ok(Command::History),
-            _ => Ok(Command::Unknown(command.to_string())),
+            "\\consume" => {
+                if args.is_empty() {
+                    return Err(CLIError::ParseError(
+                        "\\consume requires a topic name. Usage: \\consume <topic> [--group NAME] [--from earliest|latest|OFFSET] [--limit N] [--timeout SECONDS]".into(),
+                    ));
+                }
+                let topic = args[0].to_string();
+                let mut group = None;
+                let mut from = None;
+                let mut limit = None;
+                let mut timeout = None;
+
+                let mut i = 1;
+                while i < args.len() {
+                    match args[i] {
+                        "--group" => {
+                            if i + 1 < args.len() {
+                                group = Some(args[i + 1].to_string());
+                                i += 2;
+                            } else {
+                                return Err(CLIError::ParseError("--group requires a value".into()));
+                            }
+                        }
+                        "--from" => {
+                            if i + 1 < args.len() {
+                                from = Some(args[i + 1].to_string());
+                                i += 2;
+                            } else {
+                                return Err(CLIError::ParseError("--from requires a value".into()));
+                            }
+                        }
+                        "--limit" => {
+                            if i + 1 < args.len() {
+                                limit = args[i + 1].parse::<usize>().ok();
+                                if limit.is_none() {
+                                    return Err(CLIError::ParseError(
+                                        "--limit requires a numeric value".into(),
+                                    ));
+                                }
+                                i += 2;
+                            } else {
+                                return Err(CLIError::ParseError("--limit requires a value".into()));
+                            }
+                        }
+                        "--timeout" => {
+                            if i + 1 < args.len() {
+                                timeout = args[i + 1].parse::<u64>().ok();
+                                if timeout.is_none() {
+                                    return Err(CLIError::ParseError(
+                                        "--timeout requires a numeric value (seconds)".into(),
+                                    ));
+                                }
+                                i += 2;
+                            } else {
+                                return Err(CLIError::ParseError("--timeout requires a value".into()));
+                            }
+                        }
+                        _ => {
+                            return Err(CLIError::ParseError(
+                                format!("Unknown option for \\consume: {}", args[i]),
+                            ));
+                        }
+                    }
+                }
+
+                Ok(Command::Consume {
+                    topic,
+                    group,
+                    from,
+                    limit,
+                    timeout,
+                })
+            }            _ => Ok(Command::Unknown(command.to_string())),
         }
     }
 }

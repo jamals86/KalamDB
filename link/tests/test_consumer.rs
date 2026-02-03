@@ -91,8 +91,10 @@ fn test_consumer_builder_requires_group_id() {
         .topic("test.topic")
         .build();
 
-    assert!(result.is_err());
-    let err = result.unwrap_err();
+    let err = match result {
+        Ok(_) => panic!("Expected error when group_id is missing"),
+        Err(err) => err,
+    };
     assert!(err.to_string().contains("group_id"));
 }
 
@@ -104,7 +106,10 @@ fn test_consumer_builder_requires_topic() {
         .build();
 
     assert!(result.is_err());
-    let err = result.unwrap_err();
+    let err = match result {
+        Ok(_) => panic!("Expected error when topic is missing"),
+        Err(err) => err,
+    };
     assert!(err.to_string().contains("topic"));
 }
 
@@ -116,7 +121,10 @@ fn test_consumer_builder_requires_base_url_without_client() {
         .build();
 
     assert!(result.is_err());
-    let err = result.unwrap_err();
+    let err = match result {
+        Ok(_) => panic!("Expected error when base_url is missing"),
+        Err(err) => err,
+    };
     assert!(err.to_string().contains("base_url"));
 }
 

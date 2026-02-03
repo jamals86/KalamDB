@@ -32,6 +32,39 @@ impl OutputFormatter {
         }
     }
 
+    /// Format a consumer record for display
+    pub fn format_consumer_record(
+        &self,
+        offset: u64,
+        operation: &str,
+        payload_bytes: &[u8],
+    ) -> String {
+        // Parse payload as JSON
+        let payload: JsonValue = serde_json::from_slice(payload_bytes)
+            .unwrap_or_else(|_| JsonValue::String("<invalid json>".to_string()));
+
+        match self.format {
+            OutputFormat::Table => {
+                let payload_str = serde_json::to_string(&payload)
+                    .unwrap_or_else(|_| "null".to_string());
+                format!("[offset={}] {}: {}", offset, operation, payload_str)
+            }
+            OutputFormat::Json => {
+                let record = serde_json::json!({
+                    "offset": offset,
+                    "operation": operation,
+                    "payload": payload,
+                });
+                serde_json::to_string(&record).unwrap_or_else(|_| "{}".to_string())
+            }
+            OutputFormat::Csv => {
+                let payload_str = serde_json::to_string(&payload)
+                    .unwrap_or_else(|_| "null".to_string());
+                format!("{},{},{}", offset, operation, payload_str)
+            }
+        }
+    }
+
     /// Get terminal width, defaulting to 80 if unavailable
     fn get_terminal_width() -> usize {
         if let Some((w, _h)) = term_size::dimensions() {

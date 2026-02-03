@@ -54,6 +54,10 @@ mod smoke_test_subscription_advanced;
 #[path = "smoke/subscription/smoke_test_user_table_subscription.rs"]
 mod smoke_test_user_table_subscription;
 
+// Topic tests
+#[path = "smoke/topics/smoke_test_topic_consumption.rs"]
+mod smoke_test_topic_consumption;
+
 // CLI tests
 #[path = "smoke/cli/smoke_test_cli_commands.rs"]
 mod smoke_test_cli_commands;
