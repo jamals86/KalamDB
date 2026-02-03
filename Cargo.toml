@@ -84,7 +84,7 @@ uuid = { version = "1.20.0", features = ["v4", "v7", "serde"] }
 ulid = "1.1"
 
 # JWT authentication
-jsonwebtoken = { version = "10.2.0", default-features = false, features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "10.3.0", default-features = false, features = ["aws_lc_rs"] }
 
 # Configuration
 toml = "0.9.8"
