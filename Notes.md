@@ -1292,10 +1292,11 @@ after that we can add a button in ui for checking storage health
 
 155) Add a table which i can view all topic messages
 
-156) Make sure the topic eviction works also using clear topic 
+156) 
+$ cd cli && ../target/debug/kalam -u http://127.0.0.1:8090 --username root --password kalamdb123 --command "STORAGE FLUSH ALL IN test_cli
 
-
-
+Storage flush started for 0 table(s) in namespace 'test_cli'. Job IDs: []
+Query OK, 0 rows affected
 
 
 Main Epics:

@@ -14,7 +14,7 @@
 //! These smoke tests focus on single-node behavior that must work in both modes.
 
 use crate::common::*;
-use kalam_link::{KalamLinkClient, KalamLinkTimeouts};
+use kalam_link::KalamLinkTimeouts;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -30,27 +30,26 @@ fn cluster_runtime() -> &'static tokio::runtime::Runtime {
 }
 
 fn query_count_on_url(base_url: &str, sql: &str) -> i64 {
-    let password = root_password().to_string();
+    let password = default_password().to_string();
     let sql = sql.to_string();
     let base_url = base_url.to_string();
 
     cluster_runtime()
         .block_on(async move {
-            let client = KalamLinkClient::builder()
-                .base_url(&base_url)
-                .auth(auth_provider_for_user_on_url(&base_url, "root", &password))
-                .timeouts(
-                    KalamLinkTimeouts::builder()
-                        .connection_timeout_secs(5)
-                        .receive_timeout_secs(30)
-                        .send_timeout_secs(10)
-                        .subscribe_timeout_secs(10)
-                        .auth_timeout_secs(10)
-                        .initial_data_timeout(Duration::from_secs(30))
-                        .build(),
-                )
-                .build()
-                .expect("Failed to build cluster client");
+            let client = client_for_user_on_url_with_timeouts(
+                &base_url,
+                default_username(),
+                &password,
+                KalamLinkTimeouts::builder()
+                    .connection_timeout_secs(5)
+                    .receive_timeout_secs(30)
+                    .send_timeout_secs(10)
+                    .subscribe_timeout_secs(10)
+                    .auth_timeout_secs(10)
+                    .initial_data_timeout(Duration::from_secs(30))
+                    .build(),
+            )
+            .expect("Failed to build cluster client");
             client.execute_query(&sql, None, None, None).await
         })
         .map(|response| {

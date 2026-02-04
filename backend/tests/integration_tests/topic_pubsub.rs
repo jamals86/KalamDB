@@ -438,8 +438,15 @@ async fn test_clear_topic_user_role_forbidden() {
     
     assert_eq!(result.status, ResponseStatus::Error, "Regular user should not be able to clear topic");
     assert!(
-        result.error.as_ref().map(|e| e.message.contains("requires DBA or System role")).unwrap_or(false),
-        "Error should mention role requirement"
+        result
+            .error
+            .as_ref()
+            .map(|e| {
+                let msg = e.message.as_str();
+                msg.contains("DBA") && msg.contains("System")
+            })
+            .unwrap_or(false),
+        "Error should mention DBA/System role requirement"
     );
 }
 

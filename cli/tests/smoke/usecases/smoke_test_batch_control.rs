@@ -186,21 +186,19 @@ impl BatchSubscriptionListener {
 
             runtime.block_on(async move {
                 let base_url = leader_or_server_url();
-                let client = match KalamLinkClient::builder()
-                    .base_url(&base_url)
-                    .auth(auth_provider_for_user_on_url(&base_url, "root", root_password()))
-                    .timeouts(
-                        KalamLinkTimeouts::builder()
-                            .connection_timeout_secs(5)
-                            .receive_timeout_secs(120)
-                            .send_timeout_secs(30)
-                            .subscribe_timeout_secs(10)
-                            .auth_timeout_secs(10)
-                            .initial_data_timeout(Duration::from_secs(120))
-                            .build(),
-                    )
-                    .build()
-                {
+                let client = match client_for_user_on_url_with_timeouts(
+                    &base_url,
+                    default_username(),
+                    default_password(),
+                    KalamLinkTimeouts::builder()
+                        .connection_timeout_secs(5)
+                        .receive_timeout_secs(120)
+                        .send_timeout_secs(30)
+                        .subscribe_timeout_secs(10)
+                        .auth_timeout_secs(10)
+                        .initial_data_timeout(Duration::from_secs(120))
+                        .build(),
+                ) {
                     Ok(c) => c,
                     Err(e) => {
                         let _ = event_tx.send(format!("ERROR: Failed to create client: {}", e));

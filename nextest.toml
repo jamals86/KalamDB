@@ -2,14 +2,14 @@
 # E2E tests hit a shared, stateful KalamDB server and are not safe to run in parallel.
 # Serializing kalam-cli tests avoids timeouts, flaky websocket sessions, and shared state races.
 
-[[profile.default.overrides]]
-filter = 'package(kalam-cli)'
-test-threads = 1
+# [[profile.default.overrides]]
+# filter = 'package(kalam-cli)'
+# test-threads = 1
 
-[[profile.default.overrides]]
-filter = 'package(kalam-link)'
-test-threads = 1
+# [[profile.default.overrides]]
+# filter = 'package(kalam-link)'
+# test-threads = 1
 
-[[profile.default.overrides]]
-filter = 'package(kalamdb-server)'
-test-threads = 1
+# [[profile.default.overrides]]
+# filter = 'package(kalamdb-server)'
+# test-threads = 1

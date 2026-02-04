@@ -1,6 +1,6 @@
 //! Topic ack handler
 //!
-//! POST /api/topics/ack - Acknowledge offset for consumer group
+//! POST /v1/api/topics/ack - Acknowledge offset for consumer group
 
 use actix_web::{post, web, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
@@ -17,14 +17,14 @@ fn is_topic_authorized(session: &AuthSession) -> bool {
     matches!(session.role(), Role::Service | Role::Dba | Role::System)
 }
 
-/// POST /api/topics/ack - Acknowledge offset for consumer group
+/// POST /v1/api/topics/ack - Acknowledge offset for consumer group
 ///
 /// # Authentication
 /// Requires Bearer token authentication.
 ///
 /// # Authorization
 /// Role must be `service`, `dba`, or `system` (NOT `user`).
-#[post("/topics/ack")]
+#[post("/ack")]
 pub async fn ack_handler(
     extractor: AuthSessionExtractor,
     body: web::Json<AckRequest>,

@@ -1,12 +1,11 @@
 #![allow(dead_code, unused_imports)]
 extern crate kalam_cli;
-use kalamdb_configs::ServerConfig;
-use kalamdb_server::lifecycle::RunningTestHttpServer;
 use rand::{distr::Alphanumeric, Rng};
 use reqwest::Client;
 use serde_json::{json, Value};
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader};
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::{Child, Stdio};
@@ -19,25 +18,35 @@ use tokio::runtime::{Handle, Runtime};
 
 // Load environment variables from .env file at test startup
 fn load_env_file() {
-    // Try to load .env from the cli directory or workspace root
-    let paths = vec![
-        PathBuf::from("cli/.env"),
-        PathBuf::from(".env"),
-        PathBuf::from("../.env"),
-    ];
-    
-    for path in paths {
+    static ENV_LOADED: OnceLock<()> = OnceLock::new();
+    ENV_LOADED.get_or_init(|| {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".env");
         if path.exists() {
             let _ = dotenv::from_path(&path);
             eprintln!("[TEST] Loaded environment from: {}", path.display());
-            break;
         }
-    }
+    });
+}
+
+fn root_password_from_env() -> String {
+    load_env_file();
+    parse_test_arg("--password")
+        .or_else(|| std::env::var("KALAMDB_ROOT_PASSWORD").ok())
+        .unwrap_or_else(|| "kalamdb123".to_string())
+}
+
+fn admin_password_from_env() -> String {
+    load_env_file();
+    parse_test_arg("--password")
+        .or_else(|| std::env::var("KALAMDB_ADMIN_PASSWORD").ok())
+        .or_else(|| std::env::var("KALAMDB_ROOT_PASSWORD").ok())
+        .unwrap_or_else(|| "kalamdb123".to_string())
 }
 
 // Re-export commonly used types for credential tests
 pub use kalam_cli::FileCredentialStore;
 pub use kalam_link::credentials::{CredentialStore, Credentials};
+pub use kalam_link::client::KalamLinkClientBuilder;
 pub use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
 pub use tempfile::TempDir;
 
@@ -46,26 +55,459 @@ pub use std::os::unix::fs::PermissionsExt;
 
 static SERVER_URL: OnceLock<String> = OnceLock::new();
 static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
+static ADMIN_PASSWORD: OnceLock<String> = OnceLock::new();
 static TEST_CONTEXT: OnceLock<TestContext> = OnceLock::new();
 static LAST_LEADER_URL: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static AUTO_TEST_SERVER: OnceLock<Mutex<Option<AutoTestServer>>> = OnceLock::new();
-static AUTO_TEST_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+static AUTO_TEST_RUNTIME: OnceLock<&'static Runtime> = OnceLock::new();
 /// Token cache: maps "username:password" to access_token
 static TOKEN_CACHE: OnceLock<Mutex<std::collections::HashMap<String, String>>> = OnceLock::new();
+static TEST_AUTH_MANAGER: OnceLock<TestAuthManager> = OnceLock::new();
+
+struct TestAuthManager {
+    ready_urls: Mutex<HashSet<String>>,
+}
+
+impl TestAuthManager {
+    fn new() -> Self {
+        Self {
+            ready_urls: Mutex::new(HashSet::new()),
+        }
+    }
+
+    async fn complete_setup_if_needed(
+        &self,
+        base_url: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let client = Client::new();
+        let status_response = client
+            .get(format!("{}/v1/api/auth/status", base_url))
+            .send()
+            .await;
+
+        let Ok(status_response) = status_response else {
+            return Ok(());
+        };
+
+        if !status_response.status().is_success() {
+            return Ok(());
+        }
+
+        let body: serde_json::Value = status_response.json().await?;
+        let needs_setup = body
+            .get("needs_setup")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if !needs_setup {
+            return Ok(());
+        }
+
+        let root_password = root_password_from_env();
+        let setup_response = client
+            .post(format!("{}/v1/api/auth/setup", base_url))
+            .json(&json!({
+                "username": "admin",
+                "password": "kalamdb123",
+                "root_password": root_password,
+                "email": null
+            }))
+            .send()
+            .await?;
+
+        if !setup_response.status().is_success() {
+            let text = setup_response.text().await?;
+            return Err(format!("Failed to complete setup: {}", text).into());
+        }
+
+        Ok(())
+    }
+
+    async fn login_for_token(
+        &self,
+        base_url: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let client = Client::new();
+        let mut attempt: u32 = 0;
+        let max_attempts: u32 = 6;
+        let mut backoff_ms: u64 = 150;
+
+        let extract_error_message = |parsed: &serde_json::Value| -> Option<String> {
+            if let Some(msg) = parsed.get("message").and_then(|m| m.as_str()) {
+                return Some(msg.to_string());
+            }
+            if let Some(err) = parsed.get("error") {
+                if let Some(msg) = err.get("message").and_then(|m| m.as_str()) {
+                    return Some(msg.to_string());
+                }
+                if let Some(err_str) = err.as_str() {
+                    return Some(err_str.to_string());
+                }
+            }
+            None
+        };
+
+        loop {
+            let response = client
+                .post(format!("{}/v1/api/auth/login", base_url))
+                .json(&json!({
+                    "username": username,
+                    "password": password
+                }))
+                .send()
+                .await?;
+
+            let status = response.status();
+
+            if status == reqwest::StatusCode::PRECONDITION_REQUIRED {
+                self.complete_setup_if_needed(base_url).await?;
+                continue;
+            }
+
+            let body = response.text().await?;
+            let parsed: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or_else(|_| json!({ "message": body }));
+
+            if status.is_success() {
+                let token = parsed
+                    .get("access_token")
+                    .and_then(|t| t.as_str())
+                    .ok_or_else(|| -> Box<dyn std::error::Error> {
+                        let error_msg = extract_error_message(&parsed)
+                            .unwrap_or_else(|| "Login failed".to_string());
+                        format!("Failed to get access token: {}", error_msg).into()
+                    })?
+                    .to_string();
+                return Ok(token);
+            }
+
+            let error_msg =
+                extract_error_message(&parsed).unwrap_or_else(|| "Login failed".to_string());
+            let is_rate_limited = status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                || error_msg.to_lowercase().contains("too many");
+
+            if is_rate_limited && attempt + 1 < max_attempts {
+                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                backoff_ms = (backoff_ms * 2).min(2000);
+                attempt += 1;
+                continue;
+            }
+
+            return Err(format!("Failed to get access token: {}", error_msg).into());
+        }
+    }
+
+    async fn ensure_admin_user(
+        &self,
+        base_url: &str,
+        root_password: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if self
+            .login_for_token(base_url, admin_username(), admin_password())
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+
+        let root_token = self.login_for_token(base_url, "root", root_password).await?;
+        let client = Client::new();
+        let exists_response = client
+            .post(format!("{}/v1/api/sql", base_url))
+            .bearer_auth(&root_token)
+            .json(&json!({
+                "sql": "SELECT username FROM system.users WHERE username = 'admin' LIMIT 1"
+            }))
+            .send()
+            .await?;
+
+        let admin_exists = if exists_response.status().is_success() {
+            let body = exists_response.text().await?;
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) {
+                if let Some(rows) = get_rows_as_hashmaps(&parsed) {
+                    !rows.is_empty()
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if admin_exists {
+            let password_response = client
+                .post(format!("{}/v1/api/sql", base_url))
+                .bearer_auth(&root_token)
+                .json(&json!({
+                    "sql": format!(
+                        "ALTER USER admin SET PASSWORD '{}'",
+                        admin_password()
+                    )
+                }))
+                .send()
+                .await?;
+
+            if !password_response.status().is_success() {
+                let body = password_response.text().await?;
+                return Err(format!("Failed to reset admin password: {}", body).into());
+            }
+
+            let role_response = client
+                .post(format!("{}/v1/api/sql", base_url))
+                .bearer_auth(&root_token)
+                .json(&json!({
+                    "sql": "ALTER USER admin SET ROLE 'dba'"
+                }))
+                .send()
+                .await?;
+
+            if !role_response.status().is_success() {
+                let body = role_response.text().await?;
+                return Err(format!("Failed to reset admin role: {}", body).into());
+            }
+
+            return Ok(());
+        }
+
+        let response = client
+            .post(format!("{}/v1/api/sql", base_url))
+            .bearer_auth(root_token)
+            .json(&json!({
+                "sql": format!(
+                    "CREATE USER admin WITH PASSWORD '{}' ROLE 'dba'",
+                    admin_password()
+                )
+            }))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let body = response.text().await?;
+            return Err(format!("Failed to ensure admin user: {}", body).into());
+        }
+
+        Ok(())
+    }
+
+    async fn force_reset_admin(
+        &self,
+        base_url: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.complete_setup_if_needed(base_url).await?;
+        let root_password = root_password_from_env();
+        self.ensure_admin_user(base_url, &root_password).await?;
+        if let Ok(mut guard) = self.ready_urls.lock() {
+            guard.insert(base_url.to_string());
+        }
+        if let Ok(mut guard) = TOKEN_CACHE
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+        {
+            guard.retain(|key, _| !key.contains("admin:") && !key.contains("root:"));
+        }
+        Ok(())
+    }
+
+    async fn ensure_ready(&self, base_url: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if let Ok(guard) = self.ready_urls.lock() {
+            if guard.contains(base_url) {
+                return Ok(());
+            }
+        }
+
+        self.complete_setup_if_needed(base_url).await?;
+
+        let auth_required = server_requires_auth_for_url(base_url).unwrap_or(true);
+        if auth_required {
+            let root_password = root_password_from_env();
+            self.ensure_admin_user(base_url, &root_password).await?;
+        }
+
+        if let Ok(mut guard) = self.ready_urls.lock() {
+            guard.insert(base_url.to_string());
+        }
+
+        Ok(())
+    }
+
+    async fn token_for_url(
+        &self,
+        base_url: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        self.ensure_ready(base_url).await?;
+        let cache_key = format!("{}|{}:{}", base_url, username, password);
+
+        if let Ok(guard) = TOKEN_CACHE
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+        {
+            if let Some(token) = guard.get(&cache_key) {
+                return Ok(token.clone());
+            }
+        }
+
+        let token = self.login_for_token(base_url, username, password).await?;
+
+        if let Ok(mut guard) = TOKEN_CACHE
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+        {
+            guard.insert(cache_key, token.clone());
+        }
+
+        Ok(token)
+    }
+
+    fn auth_provider_for_url(
+        &self,
+        base_url: &str,
+        username: &str,
+        password: &str,
+    ) -> AuthProvider {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            let base_url_owned = base_url.to_string();
+            let username_owned = username.to_string();
+            let password_owned = password.to_string();
+            let base_url_display = base_url.to_string();
+            let username_display = username.to_string();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let runtime = match Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(err) => {
+                        let _ = tx.send(Err(err.to_string()));
+                        return;
+                    }
+                };
+                let result = runtime
+                    .block_on(test_auth_manager().token_for_url(
+                        &base_url_owned,
+                        &username_owned,
+                        &password_owned,
+                    ))
+                    .map(AuthProvider::jwt_token)
+                    .map_err(|err| err.to_string());
+                let _ = tx.send(result);
+            });
+            match rx.recv_timeout(Duration::from_secs(10)) {
+                Ok(Ok(auth)) => auth,
+                Ok(Err(err)) => panic!(
+                    "Failed to authenticate user '{}' for {}: {}",
+                    username_display, base_url_display, err
+                ),
+                Err(err) => panic!(
+                    "Failed to authenticate user '{}' for {}: {}",
+                    username_display, base_url_display, err
+                ),
+            }
+        } else {
+            get_shared_runtime()
+                .block_on(self.token_for_url(base_url, username, password))
+                .map(AuthProvider::jwt_token)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "Failed to authenticate user '{}' for {}: {}",
+                        username, base_url, err
+                    )
+                })
+        }
+    }
+
+    fn client_for_url(
+        &self,
+        base_url: &str,
+        username: &str,
+        password: &str,
+    ) -> KalamLinkClient {
+        let auth_required = server_requires_auth_for_url(base_url).unwrap_or(true);
+        if !auth_required {
+            return KalamLinkClient::builder()
+                .base_url(base_url)
+                .auth(AuthProvider::none())
+                .timeouts(
+                    KalamLinkTimeouts::builder()
+                        .connection_timeout_secs(5)
+                        .receive_timeout_secs(120)
+                        .send_timeout_secs(30)
+                        .subscribe_timeout_secs(10)
+                        .auth_timeout_secs(10)
+                        .initial_data_timeout(Duration::from_secs(120))
+                        .build(),
+                )
+                .build()
+                .expect("Failed to create shared client without auth");
+        }
+
+        let auth = self.auth_provider_for_url(base_url, username, password);
+        KalamLinkClient::builder()
+            .base_url(base_url)
+            .auth(auth)
+            .timeouts(
+                KalamLinkTimeouts::builder()
+                    .connection_timeout_secs(5)
+                    .receive_timeout_secs(120)
+                    .send_timeout_secs(30)
+                    .subscribe_timeout_secs(10)
+                    .auth_timeout_secs(10)
+                    .initial_data_timeout(Duration::from_secs(120))
+                    .build(),
+            )
+            .build()
+            .expect("Failed to create shared client with JWT")
+    }
+}
+
+fn force_reset_admin_for_url(base_url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        let base_url_owned = base_url.to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = match Runtime::new() {
+                Ok(rt) => rt,
+                Err(err) => {
+                    let _ = tx.send(Err(err.to_string()));
+                    return;
+                }
+            };
+            let result = runtime
+                .block_on(test_auth_manager().force_reset_admin(&base_url_owned))
+                .map_err(|err| err.to_string());
+            let _ = tx.send(result);
+        });
+        match rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => Err(err.into()),
+            Err(err) => Err(err.to_string().into()),
+        }
+    } else {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(test_auth_manager().force_reset_admin(base_url))
+    }
+}
+
+fn test_auth_manager() -> &'static TestAuthManager {
+    TEST_AUTH_MANAGER.get_or_init(TestAuthManager::new)
+}
 
 struct AutoTestServer {
     base_url: String,
     storage_dir: PathBuf,
-    _temp_dir: TempDir,
-    running: Option<RunningTestHttpServer>,
+    _temp_dir: Option<TempDir>,
+    child: Option<Child>,
 }
 
 impl Drop for AutoTestServer {
     fn drop(&mut self) {
-        // Intentionally skip shutdown in CLI test processes to avoid
-        // intermittent segfaults during runtime teardown. The OS will
-        // reclaim resources when the test process exits.
-        let _ = self.running.take();
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 
@@ -86,17 +528,53 @@ fn has_explicit_server_target() -> bool {
         || std::env::var("KALAMDB_CLUSTER_URLS").is_ok()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServerType {
+    Fresh, // Auto-start a fresh server
+    Running, // Use an existing running server
+    Cluster, // Use an existing running cluster
+}
+
+fn server_type_from_env() -> Option<ServerType> {
+    if let Ok(value) = std::env::var("KALAMDB_SERVER_TYPE") {
+        match value.trim().to_lowercase().as_str() {
+            "fresh" => return Some(ServerType::Fresh),
+            "running" => return Some(ServerType::Running),
+            "cluster" => return Some(ServerType::Cluster),
+            _ => {}
+        }
+    }
+
+    if let Ok(value) = std::env::var("KALAMDB_AUTO_START_TEST_SERVER") {
+        let value = value.trim();
+        if value == "1" {
+            return Some(ServerType::Fresh);
+        }
+        if value == "0" {
+            return Some(ServerType::Running);
+        }
+    }
+
+    None
+}
+
 fn should_auto_start_test_server() -> bool {
+    if let Some(server_type) = server_type_from_env() {
+        return matches!(server_type, ServerType::Fresh);
+    }
+
     if has_explicit_server_target() {
         return false;
     }
 
-    std::env::var("KALAMDB_AUTO_START_TEST_SERVER")
-        .map(|value| {
-            let value = value.trim();
-            !(value.eq_ignore_ascii_case("0") || value.eq_ignore_ascii_case("false"))
-        })
-        .unwrap_or(true)
+    true
+}
+
+fn is_external_server_mode() -> bool {
+    if let Some(server_type) = server_type_from_env() {
+        return matches!(server_type, ServerType::Running | ServerType::Cluster);
+    }
+    has_explicit_server_target()
 }
 
 fn url_reachable(url: &str) -> bool {
@@ -139,9 +617,11 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
                 let runtime = AUTO_TEST_RUNTIME.get_or_init(|| {
-                    Runtime::new().expect("Failed to create auto test server runtime")
+                    Box::leak(Box::new(
+                        Runtime::new().expect("Failed to create auto test server runtime"),
+                    ))
                 });
-                let result = runtime
+                let result = (*runtime)
                     .block_on(start_local_test_server())
                     .map_err(|err| err.to_string());
                 let _ = tx.send(result);
@@ -153,9 +633,11 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
             }
         } else {
             let runtime = AUTO_TEST_RUNTIME.get_or_init(|| {
-                Runtime::new().expect("Failed to create auto test server runtime")
+                Box::leak(Box::new(
+                    Runtime::new().expect("Failed to create auto test server runtime"),
+                ))
             });
-            runtime
+            (*runtime)
                 .block_on(start_local_test_server())
                 .map_err(|err| err.to_string())
         };
@@ -184,6 +666,9 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
 /// This bypasses any externally running server to ensure tests use the
 /// in-process server with the current code version.
 pub fn force_auto_test_server_url() -> String {
+    if !should_auto_start_test_server() {
+        return server_url().to_string();
+    }
     ensure_auto_test_server()
         .map(|(url, _)| url)
         .unwrap_or_else(|| server_url().to_string())
@@ -191,6 +676,9 @@ pub fn force_auto_test_server_url() -> String {
 
 /// Async variant of forcing a local auto-started test server.
 pub async fn force_auto_test_server_url_async() -> String {
+    if !should_auto_start_test_server() {
+        return server_url().to_string();
+    }
     let server_mutex = AUTO_TEST_SERVER.get_or_init(|| Mutex::new(None));
     if let Ok(mut guard) = server_mutex.lock() {
         if guard.is_none() {
@@ -212,72 +700,107 @@ pub async fn force_auto_test_server_url_async() -> String {
     server_url().to_string()
 }
 
+fn kalamdb_server_bin() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Ok(path) = std::env::var("KALAMDB_SERVER_BIN") {
+        return Ok(PathBuf::from(path));
+    }
+
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.pop();
+    path.push("target");
+    path.push("debug");
+    path.push(if cfg!(windows) {
+        "kalamdb-server.exe"
+    } else {
+        "kalamdb-server"
+    });
+
+    if path.exists() {
+        Ok(path)
+    } else {
+        Err(format!(
+            "kalamdb-server binary not found at {}. Build it with `cargo build -p kalamdb-server --bin kalamdb-server`.",
+            path.display()
+        )
+        .into())
+    }
+}
+
 async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let data_path = temp_dir.path().to_path_buf();
 
-    let mut config = ServerConfig::default();
-    config.server.host = "127.0.0.1".to_string();
-    config.server.port = 0;
-    config.server.ui_path = None;
-    config.storage.data_path = data_path.to_string_lossy().into_owned();
-    config.rate_limit.max_queries_per_sec = 100000;
-    config.rate_limit.max_messages_per_sec = 10000;
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
 
-    let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
-    let running =
-        kalamdb_server::lifecycle::run_for_tests(&config, components, app_context).await?;
+    let rpc_listener = TcpListener::bind("127.0.0.1:0")?;
+    let rpc_port = rpc_listener.local_addr()?.port();
+    drop(rpc_listener);
 
-    // Ensure setup is completed for the auto-started server
-    ensure_server_setup(&running.base_url).await?;
+    let api_listener = TcpListener::bind("127.0.0.1:0")?;
+    let api_port = api_listener.local_addr()?.port();
+    drop(api_listener);
+
+    let base_url = format!("http://127.0.0.1:{}", port);
+    let server_bin = kalamdb_server_bin()?;
+
+    let mut config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    config_path.pop();
+    config_path.push("server.toml");
+
+    let log_path = data_path.join("server.log");
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+    let log_file_err = log_file.try_clone()?;
+
+    let mut cmd = Command::new(server_bin);
+    cmd.env("KALAMDB_SERVER_HOST", "127.0.0.1")
+        .env("KALAMDB_SERVER_PORT", port.to_string())
+        .env("KALAMDB_CLUSTER_RPC_ADDR", format!("127.0.0.1:{}", rpc_port))
+        .env("KALAMDB_CLUSTER_API_ADDR", format!("127.0.0.1:{}", api_port))
+        .env("KALAMDB_DATA_DIR", data_path.to_string_lossy().into_owned())
+        .env("KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC", "200")
+        .env("KALAMDB_LOG_LEVEL", "warn")
+        .arg(config_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_file_err));
+
+    let mut child = cmd.spawn()?;
+
+    if !wait_for_url_reachable(&base_url, Duration::from_secs(10)) {
+        let _ = child.kill();
+        let log_tail = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let log_tail = log_tail
+            .lines()
+            .rev()
+            .take(20)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(format!(
+            "Timed out waiting for test server at {}.\nLast server logs:\n{}",
+            base_url, log_tail
+        )
+        .into());
+    }
+
+    // Ensure setup and admin user are ready for the auto-started server
+    test_auth_manager().ensure_ready(&base_url).await?;
 
     Ok(AutoTestServer {
-        base_url: running.base_url.clone(),
+        base_url: base_url.clone(),
         storage_dir: data_path,
-        _temp_dir: temp_dir,
-        running: Some(running),
+        _temp_dir: Some(temp_dir),
+        child: Some(child),
     })
 }
 
-async fn ensure_server_setup(base_url: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new();
-    let status = client
-        .get(format!("{}/v1/api/auth/status", base_url))
-        .send()
-        .await?;
-
-    if !status.status().is_success() {
-        return Err(format!("Failed to check setup status: {}", status.status()).into());
-    }
-
-    let body: serde_json::Value = status.json().await?;
-    let needs_setup = body
-        .get("needs_setup")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    if !needs_setup {
-        return Ok(());
-    }
-
-    let setup_response = client
-        .post(format!("{}/v1/api/auth/setup", base_url))
-        .json(&json!({
-            "username": "admin",
-            "password": "kalamdb123",
-            "root_password": "kalamdb123",
-            "email": null
-        }))
-        .send()
-        .await?;
-
-    if !setup_response.status().is_success() {
-        let text = setup_response.text().await?;
-        return Err(format!("Failed to complete setup: {}", text).into());
-    }
-
-    Ok(())
-}
 
 fn parse_test_arg(name: &str) -> Option<String> {
     let prefix = format!("{}=", name);
@@ -300,6 +823,33 @@ fn parse_test_urls() -> Option<Vec<String>> {
         None
     } else {
         Some(urls)
+    }
+}
+
+fn ensure_server_ready_sync(base_url: &str) {
+    if !url_reachable(base_url) {
+        return;
+    }
+
+    if tokio::runtime::Handle::try_current().is_ok() {
+        let base_url_owned = base_url.to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = match Runtime::new() {
+                Ok(rt) => rt,
+                Err(err) => {
+                    let _ = tx.send(Err(err.to_string()));
+                    return;
+                }
+            };
+            let result = runtime
+                .block_on(test_auth_manager().ensure_ready(&base_url_owned))
+                .map_err(|err| err.to_string());
+            let _ = tx.send(result);
+        });
+        let _ = rx.recv_timeout(Duration::from_secs(10));
+    } else {
+        let _ = get_shared_runtime().block_on(test_auth_manager().ensure_ready(base_url));
     }
 }
 
@@ -480,6 +1030,8 @@ pub fn test_context() -> &'static TestContext {
     TEST_CONTEXT.get_or_init(|| {
         // Load environment from .env file first if it exists
         load_env_file();
+
+        let server_type = server_type_from_env();
         
         let mut server_url = parse_test_arg("--url")
             .or_else(|| std::env::var("KALAMDB_SERVER_URL").ok())
@@ -489,32 +1041,38 @@ pub fn test_context() -> &'static TestContext {
         if should_auto_start_test_server() {
             if let Some((auto_url, storage_dir)) = ensure_auto_test_server() {
                 std::env::set_var("KALAMDB_SERVER_URL", &auto_url);
-                // Use the default setup password for auto-started servers
-                std::env::set_var("KALAMDB_ROOT_PASSWORD", "kalamdb123");
+                if std::env::var("KALAMDB_ROOT_PASSWORD").is_err() {
+                    std::env::set_var("KALAMDB_ROOT_PASSWORD", root_password_from_env());
+                }
                 std::env::set_var("KALAMDB_STORAGE_DIR", storage_dir.to_string_lossy().to_string());
                 server_url = auto_url;
                 auto_started = true;
             }
         }
 
+        ensure_server_ready_sync(&server_url);
+
         let username = parse_test_arg("--user")
             .or_else(|| std::env::var("KALAMDB_USER").ok())
-            .unwrap_or_else(|| "root".to_string());
+            .unwrap_or_else(|| default_username().to_string());
 
         let password = parse_test_arg("--password")
+            .or_else(|| std::env::var("KALAMDB_ADMIN_PASSWORD").ok())
             .or_else(|| std::env::var("KALAMDB_ROOT_PASSWORD").ok())
             // Default to kalamdb123 to match autostart server setup
-            .unwrap_or_else(|| "kalamdb123".to_string());
+            .unwrap_or_else(|| default_password().to_string());
 
         let cluster_default = "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
-        let cluster_urls: Vec<String> = parse_test_urls()
+        let explicit_cluster_urls = parse_test_urls()
             .or_else(|| std::env::var("KALAMDB_CLUSTER_URLS").ok().map(|s| {
                 s.split(',')
                     .map(|url| url.trim().to_string())
                     .filter(|url| !url.is_empty())
                     .collect()
             }))
-            .unwrap_or_else(|| {
+            ;
+
+        let cluster_urls: Vec<String> = explicit_cluster_urls.clone().unwrap_or_else(|| {
                 cluster_default
                     .split(',')
                     .map(|url| url.trim().to_string())
@@ -540,14 +1098,34 @@ pub fn test_context() -> &'static TestContext {
                 .collect()
         };
 
-        let (is_cluster, mut cluster_urls) = if auto_started {
-            (false, vec![server_url.clone()])
-        } else if let Some(explicit_urls) = parse_test_urls() {
-            (explicit_urls.len() > 1, explicit_urls)
-        } else if !healthy_cluster_nodes.is_empty() {
-            (true, healthy_cluster_nodes)
-        } else {
-            (false, vec![server_url.clone()])
+        let (is_cluster, mut cluster_urls) = match server_type {
+            Some(ServerType::Cluster) => {
+                if let Some(explicit_urls) = explicit_cluster_urls {
+                    (explicit_urls.len() > 1, explicit_urls)
+                } else if !healthy_cluster_nodes.is_empty() {
+                    (true, healthy_cluster_nodes)
+                } else {
+                    (false, vec![server_url.clone()])
+                }
+            }
+            Some(ServerType::Fresh) | Some(ServerType::Running) => {
+                if let Some(explicit_urls) = explicit_cluster_urls {
+                    (explicit_urls.len() > 1, explicit_urls)
+                } else {
+                    (false, vec![server_url.clone()])
+                }
+            }
+            None => {
+                if auto_started {
+                    (false, vec![server_url.clone()])
+                } else if let Some(explicit_urls) = explicit_cluster_urls {
+                    (explicit_urls.len() > 1, explicit_urls)
+                } else if !healthy_cluster_nodes.is_empty() {
+                    (true, healthy_cluster_nodes)
+                } else {
+                    (false, vec![server_url.clone()])
+                }
+            }
         };
 
         let cluster_urls_raw = cluster_urls.clone();
@@ -649,8 +1227,24 @@ pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// ```
 pub fn root_password() -> &'static str {
     ROOT_PASSWORD
-    .get_or_init(|| test_context().password.clone())
+    .get_or_init(|| default_password().to_string())
         .as_str()
+}
+
+pub fn admin_username() -> &'static str {
+    "admin"
+}
+
+pub fn admin_password() -> &'static str {
+    ADMIN_PASSWORD.get_or_init(admin_password_from_env).as_str()
+}
+
+pub fn default_username() -> &'static str {
+    admin_username()
+}
+
+pub fn default_password() -> &'static str {
+    admin_password()
 }
 
 /// Get an access token for the given credentials.
@@ -667,120 +1261,14 @@ pub async fn get_access_token(
     get_access_token_for_url(server_url(), username, password).await
 }
 
-async fn get_access_token_for_url(
+pub async fn get_access_token_for_url(
     base_url: &str,
     username: &str,
     password: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let cache_key = format!("{}|{}:{}", base_url, username, password);
-
-    // Check cache first
-    {
-        let cache = TOKEN_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-        if let Ok(guard) = cache.lock() {
-            if let Some(token) = guard.get(&cache_key) {
-                return Ok(token.clone());
-            }
-        }
-    }
-
-    // Login to get token
-    let client = Client::new();
-    let response = client
-        .post(format!("{}/v1/api/auth/login", base_url))
-        .json(&json!({
-            "username": username,
-            "password": password
-        }))
-        .send()
-        .await?;
-
-    // Check for setup required (HTTP 428)
-    if response.status() == reqwest::StatusCode::PRECONDITION_REQUIRED {
-        eprintln!("[TEST] Server requires setup - auto-completing with admin/kalamdb123");
-
-        // Complete server setup
-        let setup_response = client
-            .post(format!("{}/v1/api/auth/setup", base_url))
-            .json(&json!({
-                "username": "admin",
-                "password": "kalamdb123",
-                "root_password": "kalamdb123",
-                "email": null
-            }))
-            .send()
-            .await?;
-
-        if !setup_response.status().is_success() {
-            let body = setup_response.text().await?;
-            return Err(format!("Failed to auto-complete server setup: {}", body).into());
-        }
-
-        eprintln!("[TEST] Server setup completed - retrying login");
-
-        // Retry login after setup
-        let retry_response = client
-            .post(format!("{}/v1/api/auth/login", base_url))
-            .json(&json!({
-                "username": username,
-                "password": password
-            }))
-            .send()
-            .await?;
-
-        let body = retry_response.text().await?;
-        let parsed: serde_json::Value = serde_json::from_str(&body)?;
-
-        let token = parsed
-            .get("access_token")
-            .and_then(|t| t.as_str())
-            .ok_or_else(|| -> Box<dyn std::error::Error> {
-                let error_msg = parsed
-                    .get("error")
-                    .and_then(|e| e.get("message"))
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("Login failed after setup");
-                format!("Failed to get access token after setup: {}", error_msg).into()
-            })?
-            .to_string();
-
-        // Cache the token
-        {
-            let cache = TOKEN_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-            if let Ok(mut guard) = cache.lock() {
-                guard.insert(cache_key, token.clone());
-            }
-        }
-
-        return Ok(token);
-    }
-
-    let body = response.text().await?;
-    let parsed: serde_json::Value = serde_json::from_str(&body)?;
-
-    // Extract access_token from response
-    let token = parsed
-        .get("access_token")
-        .and_then(|t| t.as_str())
-        .ok_or_else(|| -> Box<dyn std::error::Error> {
-            let error_msg = parsed
-                .get("error")
-                .and_then(|e| e.get("message"))
-                .and_then(|m| m.as_str())
-                .unwrap_or("Login failed");
-            format!("Failed to get access token: {}", error_msg).into()
-        })?
-        .to_string();
-
-    // Cache the token
-    {
-        let cache = TOKEN_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-        if let Ok(mut guard) = cache.lock() {
-            guard.insert(cache_key, token.clone());
-        }
-    }
-
-    Ok(token)
+    test_auth_manager()
+        .token_for_url(base_url, username, password)
+        .await
 }
 
 async fn auth_provider_for_user_async(
@@ -793,7 +1281,9 @@ async fn auth_provider_for_user_async(
         return Ok(AuthProvider::none());
     }
 
-    let token = get_access_token_for_url(base_url, username, password).await?;
+    let token = test_auth_manager()
+        .token_for_url(base_url, username, password)
+        .await?;
     Ok(AuthProvider::jwt_token(token))
 }
 
@@ -802,51 +1292,7 @@ pub fn auth_provider_for_user_on_url(
     username: &str,
     password: &str,
 ) -> AuthProvider {
-    if tokio::runtime::Handle::try_current().is_ok() {
-        let base_url_owned = base_url.to_string();
-        let username_owned = username.to_string();
-        let password_owned = password.to_string();
-        let base_url_display = base_url.to_string();
-        let username_display = username.to_string();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let runtime = match Runtime::new() {
-                Ok(rt) => rt,
-                Err(err) => {
-                    let _ = tx.send(Err(err.to_string()));
-                    return;
-                }
-            };
-            let result = runtime
-                .block_on(auth_provider_for_user_async(
-                    &base_url_owned,
-                    &username_owned,
-                    &password_owned,
-                ))
-                .map_err(|err| err.to_string());
-            let _ = tx.send(result);
-        });
-        match rx.recv_timeout(Duration::from_secs(10)) {
-            Ok(Ok(auth)) => auth,
-            Ok(Err(err)) => panic!(
-                "Failed to authenticate user '{}' for {}: {}",
-                username_display, base_url_display, err
-            ),
-            Err(err) => panic!(
-                "Failed to authenticate user '{}' for {}: {}",
-                username_display, base_url_display, err
-            ),
-        }
-    } else {
-        get_shared_runtime()
-            .block_on(auth_provider_for_user_async(base_url, username, password))
-            .unwrap_or_else(|err| {
-                panic!(
-                    "Failed to authenticate user '{}' for {}: {}",
-                    username, base_url, err
-                )
-            })
-    }
+    test_auth_manager().auth_provider_for_url(base_url, username, password)
 }
 
 pub fn auth_provider_for_user(username: &str, password: &str) -> AuthProvider {
@@ -910,7 +1356,7 @@ pub async fn execute_sql_via_http_as(
 pub async fn execute_sql_via_http_as_root(
     sql: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    execute_sql_via_http_as("root", root_password(), sql).await
+    execute_sql_via_http_as(default_username(), default_password(), sql).await
 }
 
 /// Check if the server is running and root authentication succeeds.
@@ -1158,7 +1604,7 @@ pub fn is_server_running() -> bool {
         eprintln!("⚠️  Skipping CLI tests on Windows due to intermittent access violations. Set KALAMDB_FORCE_CLI_TESTS=1 to override.");
         return false;
     }
-    if !is_server_reachable() {
+    if !is_server_reachable() && !wait_for_url_reachable(server_url(), Duration::from_secs(5)) {
         panic!(
             "\n\n\
             ╔══════════════════════════════════════════════════════════════════╗\n\
@@ -1783,6 +2229,10 @@ fn execute_sql_via_cli_as_with_args_and_urls(
     use std::time::Instant;
     use wait_timeout::ChildExt;
 
+    if is_server_reachable() {
+        ensure_cli_server_setup()?;
+    }
+
     if should_auto_start_test_server() {
         if let Some((auto_url, _)) = ensure_auto_test_server() {
             let _ = wait_for_url_reachable(&auto_url, Duration::from_secs(10));
@@ -1810,6 +2260,8 @@ fn execute_sql_via_cli_as_with_args_and_urls(
         };
         let mut retry_after_attempt = false;
         for (idx, url) in urls.iter().enumerate() {
+            let creds_dir = TempDir::new().map_err(|err| err.to_string())?;
+            let creds_path = creds_dir.path().join("credentials.toml");
             let spawn_start = Instant::now();
 
             let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
@@ -1819,6 +2271,7 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                 .arg(username)
                 .arg("--password")
                 .arg(password)
+                .env("KALAMDB_CREDENTIALS_PATH", &creds_path)
                 .env("NO_PROXY", "127.0.0.1,localhost,::1")
                 .env("no_proxy", "127.0.0.1,localhost,::1")
                 .env_remove("HTTP_PROXY")
@@ -1892,6 +2345,14 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                             spawn_duration, wait_duration, total_duration_ms, stderr
                         );
                         let err_msg = format!("CLI command failed: {}", stderr);
+                        if err_msg.to_lowercase().contains("invalid username or password")
+                            && (username == admin_username() || username == default_username())
+                        {
+                            let _ = force_reset_admin_for_url(url);
+                            last_err = Some(err_msg);
+                            retry_after_attempt = true;
+                            break;
+                        }
                         if err_msg.contains("error sending request for url") {
                             let json_output = extra_args.iter().any(|arg| *arg == "--json");
                             if let Ok(output) =
@@ -1956,22 +2417,15 @@ fn execute_sql_via_cli_as_with_args_and_urls(
 /// This is needed for manually-started servers that haven't gone through the 
 /// auto-start setup process. It performs a no-op if server is already set up.
 pub fn ensure_cli_server_setup() -> Result<(), Box<dyn std::error::Error>> {
-    let url = format!("{}/v1/api/auth/setup", server_url());
-
+    load_env_file();
+    let base_url = server_url().to_string();
     let run_setup = move || -> Result<(), String> {
         let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
         rt.block_on(async {
-            let client = reqwest::Client::new();
-            let _response = client
-                .post(&url)
-                .json(&json!({
-                    "username": "admin",
-                    "password": "kalamdb123",
-                    "root_password": "kalamdb123",
-                    "email": null
-                }))
-                .send()
-                .await;
+            test_auth_manager()
+                .ensure_ready(&base_url)
+                .await
+                .map_err(|err| err.to_string())?;
             Ok::<(), String>(())
         })?;
         Ok(())
@@ -1996,12 +2450,12 @@ pub fn execute_sql_as_root_via_cli(sql: &str) -> Result<String, Box<dyn std::err
         let _ = ensure_cli_server_setup();
     });
     
-    execute_sql_via_cli_as("root", root_password(), sql)
+    execute_sql_via_cli_as(admin_username(), admin_password(), sql)
 }
 
 /// Helper to execute SQL as root user via CLI returning JSON output to avoid table truncation
 pub fn execute_sql_as_root_via_cli_json(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_cli_as_with_args("root", root_password(), sql, &["--json"])
+    execute_sql_via_cli_as_with_args(admin_username(), admin_password(), sql, &["--json"])
 }
 
 /// Wait for a SQL query to return output containing an expected substring.
@@ -2057,6 +2511,67 @@ fn get_shared_runtime() -> &'static tokio::runtime::Runtime {
     })
 }
 
+fn build_client_for_url_with_timeouts(
+    base_url: &str,
+    username: &str,
+    password: &str,
+    timeouts: KalamLinkTimeouts,
+) -> Result<KalamLinkClient, Box<dyn std::error::Error + Send + Sync>> {
+    let auth_required = server_requires_auth_for_url(base_url).unwrap_or(true);
+    let auth = if auth_required {
+        test_auth_manager().auth_provider_for_url(base_url, username, password)
+    } else {
+        AuthProvider::none()
+    };
+
+    KalamLinkClient::builder()
+        .base_url(base_url)
+        .auth(auth)
+        .timeouts(timeouts)
+        .build()
+        .map_err(|err| Box::new(err) as Box<dyn std::error::Error + Send + Sync>)
+}
+
+pub fn client_for_user_on_url_with_timeouts(
+    base_url: &str,
+    username: &str,
+    password: &str,
+    timeouts: KalamLinkTimeouts,
+) -> Result<KalamLinkClient, Box<dyn std::error::Error + Send + Sync>> {
+    build_client_for_url_with_timeouts(base_url, username, password, timeouts)
+}
+
+pub fn client_for_url_no_auth(
+    base_url: &str,
+    timeouts: KalamLinkTimeouts,
+) -> Result<KalamLinkClient, Box<dyn std::error::Error + Send + Sync>> {
+    KalamLinkClient::builder()
+        .base_url(base_url)
+        .auth(AuthProvider::none())
+        .timeouts(timeouts)
+        .build()
+        .map_err(|err| Box::new(err) as Box<dyn std::error::Error + Send + Sync>)
+}
+
+pub fn client_builder_for_user_on_url(
+    base_url: &str,
+    username: &str,
+    password: &str,
+) -> KalamLinkClientBuilder {
+    let auth_required = server_requires_auth_for_url(base_url).unwrap_or(true);
+    let auth = if auth_required {
+        test_auth_manager().auth_provider_for_url(base_url, username, password)
+    } else {
+        AuthProvider::none()
+    };
+
+    KalamLinkClient::builder().base_url(base_url).auth(auth)
+}
+
+pub fn client_builder_for_url_no_auth(base_url: &str) -> KalamLinkClientBuilder {
+    KalamLinkClient::builder().base_url(base_url).auth(AuthProvider::none())
+}
+
 /// A shared KalamLinkClient for root user to reuse HTTP connections.
 /// This avoids creating new TCP connections for every query, which helps
 /// avoid macOS TCP connection limits (connections in TIME_WAIT state).
@@ -2077,49 +2592,10 @@ fn shared_root_client_cache() -> &'static Mutex<Option<RootClientCache>> {
 }
 
 fn build_root_client(base_url: &str) -> KalamLinkClient {
-    let auth_required = server_requires_auth_for_url(base_url).unwrap_or(true);
-    if !auth_required {
-        return KalamLinkClient::builder()
-            .base_url(base_url)
-            .auth(AuthProvider::none())
-            .timeouts(
-                KalamLinkTimeouts::builder()
-                    .connection_timeout_secs(5)
-                    .receive_timeout_secs(120)
-                    .send_timeout_secs(30)
-                    .subscribe_timeout_secs(10)
-                    .auth_timeout_secs(10)
-                    .initial_data_timeout(Duration::from_secs(120))
-                    .build(),
-            )
-            .build()
-            .expect("Failed to create shared root client without auth");
-    }
-
-    let auth = auth_provider_for_user_on_url(base_url, "root", root_password());
-    KalamLinkClient::builder()
-        .base_url(base_url)
-        .auth(auth)
-        .timeouts(
-            KalamLinkTimeouts::builder()
-                .connection_timeout_secs(5)
-                .receive_timeout_secs(120)
-                .send_timeout_secs(30)
-                .subscribe_timeout_secs(10)
-                .auth_timeout_secs(10)
-                .initial_data_timeout(Duration::from_secs(120))
-                .build(),
-        )
-        .build()
-        .expect("Failed to create shared root client with JWT")
+    test_auth_manager().client_for_url(base_url, default_username(), default_password())
 }
 
-fn get_shared_root_client() -> KalamLinkClient {
-    let base_url = get_available_server_urls()
-        .first()
-        .cloned()
-        .unwrap_or_else(|| server_url().to_string());
-
+fn get_shared_root_client_for_url(base_url: &str) -> KalamLinkClient {
     if let Ok(mut guard) = shared_root_client_cache().lock() {
         if let Some(cache) = guard.as_ref() {
             if cache.base_url == base_url {
@@ -2127,15 +2603,23 @@ fn get_shared_root_client() -> KalamLinkClient {
             }
         }
 
-        let client = build_root_client(&base_url);
+        let client = build_root_client(base_url);
         *guard = Some(RootClientCache {
-            base_url: base_url.clone(),
+            base_url: base_url.to_string(),
             client: client.clone(),
         });
         return client;
     }
 
-    build_root_client(&base_url)
+    build_root_client(base_url)
+}
+
+fn get_shared_root_client() -> KalamLinkClient {
+    let base_url = get_available_server_urls()
+        .first()
+        .cloned()
+        .unwrap_or_else(|| server_url().to_string());
+    get_shared_root_client_for_url(&base_url)
 }
 
 pub fn execute_sql_via_client_as(
@@ -2176,34 +2660,21 @@ fn execute_sql_via_client_as_with_args(
                 password: &str,
                 sql: &str,
             ) -> Result<kalam_link::QueryResponse, Box<dyn std::error::Error + Send + Sync>> {
-                let auth = if server_requires_auth_for_url(url).unwrap_or(true) {
-                    let token = get_access_token_for_url(url, username, password)
-                        .await
-                        .map_err(|err| {
-                            Box::new(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                err.to_string(),
-                            )) as Box<dyn std::error::Error + Send + Sync>
-                        })?;
-                    AuthProvider::jwt_token(token)
-                } else {
-                    AuthProvider::none()
-                };
+                let timeouts = KalamLinkTimeouts::builder()
+                    .connection_timeout_secs(5)
+                    .receive_timeout_secs(120)
+                    .send_timeout_secs(30)
+                    .subscribe_timeout_secs(20)
+                    .auth_timeout_secs(10)
+                    .initial_data_timeout(Duration::from_secs(120))
+                    .build();
 
-                let client = KalamLinkClient::builder()
-                    .base_url(url)
-                    .auth(auth)
-                    .timeouts(
-                        KalamLinkTimeouts::builder()
-                            .connection_timeout_secs(5)
-                            .receive_timeout_secs(120)
-                            .send_timeout_secs(30)
-                            .subscribe_timeout_secs(20)
-                            .auth_timeout_secs(10)
-                            .initial_data_timeout(Duration::from_secs(120))
-                            .build(),
-                    )
-                    .build()?;
+                let client = if username == default_username() && password == default_password() {
+                    // Reuse a shared root client to avoid per-query connection/auth overhead.
+                    get_shared_root_client_for_url(url)
+                } else {
+                    build_client_for_url_with_timeouts(url, username, password, timeouts)?
+                };
                 let response = client.execute_query(sql, None, None, None).await?;
                 Ok(response)
             }
@@ -2398,14 +2869,14 @@ fn execute_sql_via_client_as_with_args(
 
 /// Execute SQL as root user via kalam-link client
 pub fn execute_sql_as_root_via_client(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_client_as("root", root_password(), sql)
+    execute_sql_via_client_as(default_username(), default_password(), sql)
 }
 
 /// Execute SQL as root user via kalam-link client returning JSON output
 pub fn execute_sql_as_root_via_client_json(
     sql: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_client_as_with_args("root", root_password(), sql, true)
+    execute_sql_via_client_as_with_args(default_username(), default_password(), sql, true)
 }
 
 /// Execute SQL via kalam-link client returning JSON output with custom credentials
@@ -2420,7 +2891,7 @@ pub fn execute_sql_via_client_as_json(
 /// Execute SQL via kalam-link client without authentication (uses default/anonymous)
 /// This is the client equivalent of execute_sql_via_cli (no auth)
 pub fn execute_sql_via_client(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
-    execute_sql_via_client_as("root", root_password(), sql)
+    execute_sql_via_client_as(default_username(), default_password(), sql)
 }
 
 /// Extract a numeric ID from a JSON value that might be a number or a string.
@@ -2569,6 +3040,13 @@ fn to_base36(mut value: u128) -> String {
 /// Helper to create a CLI command with default test settings
 /// Helper to create a CLI command with default test settings (for assert_cmd tests)
 pub fn create_cli_command() -> assert_cmd::Command {
+    if is_server_reachable() {
+        static SETUP_DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        SETUP_DONE.get_or_init(|| {
+            let _ = ensure_cli_server_setup();
+        });
+    }
+
     let mut cmd = assert_cmd::Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.env("NO_PROXY", "127.0.0.1,localhost,::1")
         .env("no_proxy", "127.0.0.1,localhost,::1")
@@ -2597,6 +3075,11 @@ pub fn create_cli_command_with_auth_for_server(
     password: &str,
     server: &str,
 ) -> assert_cmd::Command {
+    static SETUP_DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    SETUP_DONE.get_or_init(|| {
+        let _ = ensure_cli_server_setup();
+    });
+
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(server)
@@ -2609,7 +3092,7 @@ pub fn create_cli_command_with_auth_for_server(
 
 /// Helper to create a CLI command authenticated as root.
 pub fn create_cli_command_with_root_auth() -> assert_cmd::Command {
-    create_cli_command_with_auth("root", root_password())
+    create_cli_command_with_auth(admin_username(), admin_password())
 }
 
 /// Helper to create a temporary credentials file path for CLI tests
@@ -3017,30 +3500,20 @@ impl SubscriptionListener {
                         .unwrap_or_else(|| server_url().to_string())
                 });
 
-                let auth = match auth_provider_for_user_async(&base_url, "root", root_password()).await {
-                    Ok(auth) => auth,
-                    Err(e) => {
-                        let _ = event_tx.send(format!("ERROR: Failed to authenticate: {}", e));
-                        return;
-                    }
-                };
-
                 // Build client for subscription
-                let client = match KalamLinkClient::builder()
-                    .base_url(&base_url)
-                    .auth(auth)
-                    .timeouts(
-                        KalamLinkTimeouts::builder()
-                            .connection_timeout_secs(5)
-                            .receive_timeout_secs(120)
-                            .send_timeout_secs(30)
-                            .subscribe_timeout_secs(10)
-                            .auth_timeout_secs(10)
-                            .initial_data_timeout(Duration::from_secs(120))
-                            .build(),
-                    )
-                    .build()
-                {
+                let client = match build_client_for_url_with_timeouts(
+                    &base_url,
+                    default_username(),
+                    default_password(),
+                    KalamLinkTimeouts::builder()
+                        .connection_timeout_secs(5)
+                        .receive_timeout_secs(120)
+                        .send_timeout_secs(30)
+                        .subscribe_timeout_secs(10)
+                        .auth_timeout_secs(10)
+                        .initial_data_timeout(Duration::from_secs(120))
+                        .build(),
+                ) {
                     Ok(c) => c,
                     Err(e) => {
                         let _ = event_tx.send(format!("ERROR: Failed to create client: {}", e));
@@ -3227,6 +3700,20 @@ const BACKEND_STORAGE_DIR: &str = "../backend/data/storage";
 /// Get the storage directory path for flush verification
 pub fn get_storage_dir() -> std::path::PathBuf {
     use std::path::PathBuf;
+
+    if let Ok(storage_dir) = std::env::var("KALAMDB_STORAGE_DIR") {
+        let path = PathBuf::from(storage_dir);
+        if path.exists() {
+            return path;
+        }
+    }
+
+    if let Ok(data_dir) = std::env::var("KALAMDB_DATA_DIR") {
+        let path = PathBuf::from(data_dir).join("storage");
+        if path.exists() {
+            return path;
+        }
+    }
 
     // The backend server writes to ./data/storage from backend/ directory
     // When tests run from cli/, we need to access ../backend/data/storage
@@ -3439,41 +3926,93 @@ pub fn assert_flush_storage_files_exist(
     is_user_table: bool,
     context: &str,
 ) {
-    // Give filesystem a moment to sync after async flush
-    std::thread::sleep(Duration::from_millis(500));
-
-    let result = if is_user_table {
-        verify_flush_storage_files_user(namespace, table_name)
-    } else {
-        verify_flush_storage_files_shared(namespace, table_name)
-    };
-
-    if result.is_valid() {
-        println!(
-            "✅ [{}] Verified flush storage: manifest.json ({} bytes), {} parquet file(s) ({} bytes total)",
-            context,
-            result.manifest_size,
-            result.parquet_file_count,
-            result.parquet_total_size
-        );
+    if is_external_server_mode() {
+        if manifest_exists_in_system_table(namespace, table_name) {
+            println!(
+                "✅ [{}] Verified flush storage via system.manifest for {}.{}",
+                context, namespace, table_name
+            );
+        } else {
+            println!(
+                "⚠️ [{}] Skipping filesystem manifest checks for external server mode ({}.{})",
+                context, namespace, table_name
+            );
+        }
         return;
     }
 
-    if manifest_exists_in_system_table(namespace, table_name) {
-        println!(
-            "✅ [{}] Verified flush storage via system.manifest for {}.{}",
-            context, namespace, table_name
-        );
-        return;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut last_result: Option<FlushStorageVerificationResult> = None;
+
+    loop {
+        let result = if is_user_table {
+            verify_flush_storage_files_user(namespace, table_name)
+        } else {
+            verify_flush_storage_files_shared(namespace, table_name)
+        };
+
+        if result.is_valid() {
+            println!(
+                "✅ [{}] Verified flush storage: manifest.json ({} bytes), {} parquet file(s) ({} bytes total)",
+                context,
+                result.manifest_size,
+                result.parquet_file_count,
+                result.parquet_total_size
+            );
+            return;
+        }
+
+        if manifest_exists_in_system_table(namespace, table_name) {
+            println!(
+                "✅ [{}] Verified flush storage via system.manifest for {}.{}",
+                context, namespace, table_name
+            );
+            return;
+        }
+
+        last_result = Some(result);
+        if Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
     }
 
-    result.assert_valid(context);
+    if let Some(result) = last_result {
+        result.assert_valid(context);
+    }
+}
+
+fn escape_sql_string(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+fn namespace_id_for_name(namespace: &str) -> Option<String> {
+    let sql = format!(
+        "SELECT namespace_id FROM system.namespaces WHERE name = '{}'",
+        escape_sql_string(namespace)
+    );
+    let json_output = execute_sql_as_root_via_client_json(&sql).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&json_output).ok()?;
+    let rows = get_rows_as_hashmaps(&parsed)?;
+    for row in rows {
+        if let Some(value) = row.get("namespace_id") {
+            let extracted = extract_arrow_value(value).unwrap_or_else(|| value.clone());
+            if let Some(namespace_id) = extracted.as_str() {
+                if !namespace_id.is_empty() {
+                    return Some(namespace_id.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 pub fn manifest_exists_in_system_table(namespace: &str, table_name: &str) -> bool {
+    let namespace_id = namespace_id_for_name(namespace).unwrap_or_else(|| namespace.to_string());
     let sql = format!(
         "SELECT manifest_json FROM system.manifest WHERE namespace_id = '{}' AND table_name = '{}'",
-        namespace, table_name
+        escape_sql_string(&namespace_id),
+        escape_sql_string(table_name)
     );
     let json_output = match execute_sql_as_root_via_client_json(&sql) {
         Ok(output) => output,
@@ -3526,21 +4065,25 @@ pub fn execute_sql_on_node(
         sql: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let rt = Runtime::new()?;
-        let auth = auth_provider_for_user_on_url(base_url, "root", root_password());
-        let client = KalamLinkClient::builder()
-            .base_url(base_url)
-            .auth(auth)
-            .timeouts(
-                KalamLinkTimeouts::builder()
-                    .connection_timeout_secs(5)
-                    .receive_timeout_secs(120)
-                    .send_timeout_secs(30)
-                    .subscribe_timeout_secs(10)
-                    .auth_timeout_secs(10)
-                    .initial_data_timeout(Duration::from_secs(120))
-                    .build(),
-            )
-            .build()?;
+        let client = build_client_for_url_with_timeouts(
+            base_url,
+            default_username(),
+            default_password(),
+            KalamLinkTimeouts::builder()
+                .connection_timeout_secs(5)
+                .receive_timeout_secs(120)
+                .send_timeout_secs(30)
+                .subscribe_timeout_secs(10)
+                .auth_timeout_secs(10)
+                .initial_data_timeout(Duration::from_secs(120))
+                .build(),
+        )
+        .map_err(|err| {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                err.to_string(),
+            )) as Box<dyn std::error::Error>
+        })?;
 
         let sql = sql.to_string();
         let response = rt.block_on(async { client.execute_query(&sql, None, None, None).await })?;

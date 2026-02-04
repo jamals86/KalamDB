@@ -10,9 +10,7 @@
 //!   cargo test --test connection live_connection_tests -- --test-threads=1
 
 use crate::common::*;
-use kalam_link::{
-    ConnectionOptions, HttpVersion, KalamLinkClient, KalamLinkTimeouts, SubscriptionOptions,
-};
+use kalam_link::{ConnectionOptions, HttpVersion, KalamLinkTimeouts, SubscriptionOptions};
 use std::time::Duration;
 
 fn start_subscription_with_retry(query: &str) -> SubscriptionListener {
@@ -552,9 +550,7 @@ fn test_live_http2_query_execution() {
     // Build client with Auto HTTP version (will negotiate or fall back)
     // Note: HTTP/2 prior knowledge doesn't work with servers that don't support h2c
     let base_url = leader_or_server_url();
-    let client = KalamLinkClient::builder()
-        .base_url(&base_url)
-        .auth(auth_provider_for_user_on_url(&base_url, "root", root_password()))
+    let client = client_builder_for_user_on_url(&base_url, default_username(), default_password())
         .http_version(HttpVersion::Auto) // Auto-negotiate, falls back to HTTP/1.1
         .timeouts(KalamLinkTimeouts::fast())
         .build()
@@ -562,7 +558,7 @@ fn test_live_http2_query_execution() {
 
     // Run the async test in a blocking context
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-    let result = runtime
+    let result: Result<kalam_link::QueryResponse, kalam_link::KalamLinkError> = runtime
         .block_on(async { client.execute_query("SELECT 1 as test_value", None, None, None).await });
 
     // The query should succeed
@@ -580,29 +576,25 @@ fn test_live_http2_query_execution() {
 fn test_client_builder_http_versions() {
     // HTTP/1.1 (default)
     let base_url = leader_or_server_url();
-    let client1 = KalamLinkClient::builder()
-        .base_url(&base_url)
+    let client1 = client_builder_for_url_no_auth(&base_url)
         .http_version(HttpVersion::Http1)
         .build();
     assert!(client1.is_ok(), "Client with HTTP/1.1 should build");
 
     // HTTP/2
-    let client2 = KalamLinkClient::builder()
-        .base_url(&base_url)
+    let client2 = client_builder_for_url_no_auth(&base_url)
         .http_version(HttpVersion::Http2)
         .build();
     assert!(client2.is_ok(), "Client with HTTP/2 should build");
 
     // Auto
-    let client3 = KalamLinkClient::builder()
-        .base_url(&base_url)
+    let client3 = client_builder_for_url_no_auth(&base_url)
         .http_version(HttpVersion::Auto)
         .build();
     assert!(client3.is_ok(), "Client with Auto HTTP version should build");
 
     // Using connection_options
-    let client4 = KalamLinkClient::builder()
-        .base_url(&base_url)
+    let client4 = client_builder_for_url_no_auth(&base_url)
         .connection_options(
             ConnectionOptions::new()
                 .with_http_version(HttpVersion::Http2)

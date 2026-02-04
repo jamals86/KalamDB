@@ -1664,11 +1664,10 @@ export default function SqlStudio() {
             </div>
           ) : (
             // SELECT queries - always show table with headers (even if 0 rows)
-            <>
+            <div className="flex-1 flex flex-col min-h-0">
               {/* Table with sheet-like cells */}
-              <div className="flex-1 overflow-hidden bg-background">
-                <div className="overflow-auto h-full w-full">
-                <table className="text-sm w-max">
+              <div className="flex-1 overflow-auto bg-background min-h-0">
+                <table className="text-sm w-max min-w-full">
                   <thead className="sticky top-0 z-10 bg-muted/50">
                     <tr className="border-b">
                       {table.getHeaderGroups().map((headerGroup) =>
@@ -1768,7 +1767,7 @@ export default function SqlStudio() {
                                 <td
                                   key={cell.id}
                                   className={cn(
-                                    "px-4 py-2.5 text-sm min-w-[150px] max-w-[500px] cursor-pointer select-text border-r border-border/30 last:border-r-0",
+                                    "px-4 py-2.5 text-sm min-w-[200px] cursor-pointer select-text border-r border-border/30 last:border-r-0 whitespace-nowrap",
                                     isSelected && "ring-2 ring-blue-500 ring-inset bg-blue-50 dark:bg-blue-950/30"
                                   )}
                                   title={isLongText ? String(value) : undefined}
@@ -1797,11 +1796,15 @@ export default function SqlStudio() {
                     )}
                   </tbody>
                 </table>
-                </div>
               </div>
 
               {/* Sticky Pagination Footer */}
-              <div className="border-t bg-background px-4 py-2 flex items-center justify-end gap-4 shrink-0">
+              <div className="border-t bg-background px-4 py-2 flex items-center justify-between gap-4 shrink-0">
+                <div className="text-sm text-muted-foreground">
+                  {activeTab?.rowCount ?? 0} total rows
+                </div>
+                
+                <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 text-sm">
                   <span className="text-muted-foreground">Rows per page:</span>
                   <Select
@@ -1900,8 +1903,9 @@ export default function SqlStudio() {
                     <ChevronsRight className="h-4 w-4" />
                   </Button>
                 </div>
+                </div>
               </div>
-            </>
+            </div>
           )}
         </div>
           </ResizablePanel>

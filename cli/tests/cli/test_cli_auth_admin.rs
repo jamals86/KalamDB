@@ -19,35 +19,6 @@ use std::time::Duration;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn run_root_cli_command_with_retry(command: &str) -> std::process::Output {
-    fn run_root_command(command: &str, server_override: Option<&str>) -> std::process::Output {
-        let mut cmd = if let Some(server) = server_override {
-            create_cli_command_with_auth_for_server("root", root_password(), server)
-        } else {
-            create_cli_command_with_root_auth()
-        };
-        cmd.arg("--command").arg(command).timeout(TEST_TIMEOUT);
-        cmd.output().expect("Failed to execute CLI command")
-    }
-
-    let output = run_root_command(command, None);
-    if output.status.success() {
-        return output;
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if is_leader_error(&stderr) {
-        if let Some(leader) = leader_url() {
-            let retry = run_root_command(command, Some(&leader));
-            if retry.status.success() {
-                return retry;
-            }
-        }
-    }
-
-    output
-}
-
 /// Test that root user can create namespaces
 #[tokio::test]
 async fn test_root_can_create_namespace() {
@@ -191,21 +162,8 @@ async fn test_cli_create_namespace_as_root() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Execute CREATE NAMESPACE via CLI with root auth
-    let mut cmd = create_cli_command_with_root_auth();
-    cmd.arg("--command")
-        .arg(format!("CREATE NAMESPACE {}", namespace_name))
-        .timeout(TEST_TIMEOUT);
-
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert!(
-        output.status.success(),
-        "CLI should succeed when creating namespace as root.\nstdout: {}\nstderr: {}",
-        stdout,
-        stderr
-    );
+    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_name))
+        .expect("CLI should succeed when creating namespace as root");
 
     // Verify namespace was created
     let result = execute_sql_via_http_as_root(&format!(
@@ -271,25 +229,14 @@ async fn test_cli_with_explicit_credentials() {
         return;
     }
 
-    // Execute query with explicit root credentials
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--username")
-        .arg("root")
-        .arg("--password")
-        .arg(root_password())
-        .arg("--command")
-        .arg("SELECT 1 as test")
-        .timeout(TEST_TIMEOUT);
-
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Execute query with explicit admin credentials
+    let output = execute_sql_via_cli_as(admin_username(), admin_password(), "SELECT 1 as test")
+        .expect("CLI should work with explicit admin credentials");
 
     assert!(
-        output.status.success() && stdout.contains("test"),
-        "CLI should work with explicit root credentials: {}",
-        stdout
+        output.contains("test"),
+        "CLI should work with explicit admin credentials: {}",
+        output
     );
 }
 
@@ -345,15 +292,13 @@ async fn test_cli_admin_operations() {
         "INSERT INTO {}.users (id, name) VALUES ('{}', 'Alice')",
         namespace_name, unique_id
     );
-    let output = run_root_cli_command_with_retry(&insert_sql);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = execute_sql_as_root_via_cli(&insert_sql)
+        .expect("CLI insert should succeed");
 
     assert!(
-        output.status.success() || stdout.contains("1 row") || stdout.contains("Query OK"),
-        "INSERT admin command should succeed.\nstdout: {}\nstderr: {}",
-        stdout,
-        stderr
+        stdout.contains("1 row") || stdout.contains("Query OK"),
+        "INSERT admin command should succeed.\nstdout: {}",
+        stdout
     );
 
     // Step 4: Select to verify
@@ -361,8 +306,8 @@ async fn test_cli_admin_operations() {
         "SELECT * FROM {}.users WHERE id = '{}'",
         namespace_name, unique_id
     );
-    let output = run_root_cli_command_with_retry(&select_sql);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = execute_sql_as_root_via_cli(&select_sql)
+        .expect("CLI select should succeed");
 
     assert!(
         stdout.contains("Alice"),
@@ -383,13 +328,8 @@ async fn test_cli_show_namespaces() {
         return;
     }
 
-    let mut cmd = create_cli_command_with_root_auth();
-    cmd.arg("--command").arg("SHOW NAMESPACES").timeout(TEST_TIMEOUT);
-
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(output.status.success(), "SHOW NAMESPACES command should succeed: {}", stdout);
+    let stdout = execute_sql_as_root_via_cli("SHOW NAMESPACES")
+        .expect("SHOW NAMESPACES command should succeed");
 
     // Should show table format with column headers
     assert!(
@@ -442,17 +382,11 @@ async fn test_cli_flush_table() {
     }
 
     // Execute STORAGE FLUSH TABLE via CLI
-    let output =
-        run_root_cli_command_with_retry(&format!("STORAGE FLUSH TABLE {}.metrics", namespace_name));
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert!(
-        output.status.success(),
-        "STORAGE FLUSH TABLE should succeed.\nstdout: {}\nstderr: {}",
-        stdout,
-        stderr
-    );
+    let stdout = execute_sql_as_root_via_cli(&format!(
+        "STORAGE FLUSH TABLE {}.metrics",
+        namespace_name
+    ))
+    .expect("STORAGE FLUSH TABLE should succeed");
 
     // Verify the flush command was accepted (should show job info or success message)
     assert!(

@@ -21,13 +21,17 @@ pub(crate) struct ConsumerRecordWire {
     pub topic_id: String,
     pub partition_id: u32,
     pub offset: u64,
+    #[serde(default, alias = "key")]
     pub message_id: Option<String>,
-    pub source_table: String,
-    pub op: TopicOp,
-    #[serde(rename = "ts")]
+    #[serde(default)]
+    pub source_table: Option<String>,
+    #[serde(default)]
+    pub op: Option<TopicOp>,
+    #[serde(default, rename = "timestamp_ms", alias = "ts")]
     pub timestamp_ms: u64,
-    pub payload_mode: PayloadMode,
-    #[serde(with = "base64_bytes")]
+    #[serde(default)]
+    pub payload_mode: Option<PayloadMode>,
+    #[serde(default, with = "base64_bytes")]
     pub payload: Vec<u8>,
 }
 
@@ -39,10 +43,10 @@ impl ConsumerRecordWire {
             partition_id: self.partition_id,
             offset: self.offset,
             message_id: self.message_id,
-            source_table: self.source_table,
-            op: self.op,
+            source_table: self.source_table.unwrap_or_default(),
+            op: self.op.unwrap_or(TopicOp::Insert),
             timestamp_ms: self.timestamp_ms,
-            payload_mode: self.payload_mode,
+            payload_mode: self.payload_mode.unwrap_or(PayloadMode::Full),
             payload: self.payload,
         }
     }

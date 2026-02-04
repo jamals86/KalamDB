@@ -1,13 +1,13 @@
 //! Comprehensive smoke test for all system tables and views
 //!
-//! This test validates that ALL system tables (12 persisted + 9 views)
+//! This test validates that ALL system tables (11 persisted + 8 views)
 //! can be queried without schema mismatches or errors.
 //!
 //! Covers:
-//! - Persisted tables: users, namespaces, schemas, table_schemas, storages,
+//! - Persisted tables: users, namespaces, schemas, storages,
 //!   live_queries, jobs, job_nodes, audit_log, manifest, topics, topic_offsets
 //! - Virtual views: stats, settings, server_logs, cluster, cluster_groups,
-//!   datatypes, describe, tables, columns
+//!   datatypes, tables, columns
 //!
 //! This test prevents schema definition bugs like the topic_offsets
 //! updated_at column mismatch (BigInt vs Timestamp).
@@ -16,7 +16,7 @@ use crate::common::*;
 
 /// Test that all system tables can be queried without errors
 ///
-/// Iterates over all 21 system objects (12 tables + 9 views) and
+/// Iterates over all 19 system objects (11 tables + 8 views) and
 /// executes SELECT * FROM system.<table> to validate:
 /// - No schema definition vs RecordBatch builder mismatches
 /// - Column types align with Arrow schema expectations
@@ -32,12 +32,11 @@ fn smoke_test_all_system_tables_and_views_queryable() {
     println!("🧪 Testing all system tables and views for schema consistency");
     println!("{}", "=".repeat(70));
 
-    // Persisted system tables (12)
+    // Persisted system tables (11)
     let persisted_tables = vec![
         "users",
         "namespaces",
         "schemas",
-        "table_schemas",
         "storages",
         "live_queries",
         "jobs",
@@ -48,7 +47,7 @@ fn smoke_test_all_system_tables_and_views_queryable() {
         "topic_offsets", // Previously had schema mismatch bug
     ];
 
-    // Virtual system views (9)
+    // Virtual system views (8)
     let virtual_views = vec![
         "stats",
         "settings",
@@ -56,14 +55,12 @@ fn smoke_test_all_system_tables_and_views_queryable() {
         "cluster",
         "cluster_groups",
         "datatypes",
-        "describe", // Note: DESCRIBE requires table parameter
         "tables",
         "columns",
     ];
 
     let mut tested_count = 0;
     let mut failed_tables = Vec::new();
-    let mut skipped_tables: Vec<String> = Vec::new();
 
     // Test persisted tables
     println!("\n📊 Testing persisted system tables ({}):", persisted_tables.len());
@@ -73,20 +70,30 @@ fn smoke_test_all_system_tables_and_views_queryable() {
         let query = format!("SELECT * FROM system.{} LIMIT 5", table_name);
         print!("  Testing system.{:<20} ... ", table_name);
 
-        match execute_sql_as_root_via_client(&query) {
+        match execute_sql_as_root_via_client_json(&query) {
             Ok(output) => {
-                // Verify no error keywords in output
-                let output_lower = output.to_lowercase();
-                if output_lower.contains("error")
-                    || output_lower.contains("failed")
-                    || output_lower.contains("invalid")
-                {
+                let parsed: serde_json::Value = match serde_json::from_str(&output) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        println!("❌ FAILED");
+                        println!("    Output: {}", output);
+                        println!("    Parse error: {}", err);
+                        failed_tables.push(format!("system.{}", table_name));
+                        continue;
+                    }
+                };
+
+                let status = parsed
+                    .get("status")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
+                if status.eq_ignore_ascii_case("success") {
+                    println!("✅ OK");
+                    tested_count += 1;
+                } else {
                     println!("❌ FAILED");
                     println!("    Output: {}", output);
                     failed_tables.push(format!("system.{}", table_name));
-                } else {
-                    println!("✅ OK");
-                    tested_count += 1;
                 }
             }
             Err(e) => {
@@ -101,40 +108,34 @@ fn smoke_test_all_system_tables_and_views_queryable() {
     println!("{}", "-".repeat(70));
 
     for view_name in &virtual_views {
-        // DESCRIBE view requires a table parameter, handle specially
-        let query = if *view_name == "describe" {
-            // Create a temporary table to test DESCRIBE
-            let test_ns = "default";
-            let test_table = "temp_describe_test";
-            let _ = execute_sql_as_root_via_client(&format!(
-                "DROP TABLE IF EXISTS {}.{}",
-                test_ns, test_table
-            ));
-            let _ = execute_sql_as_root_via_client(&format!(
-                "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY)",
-                test_ns, test_table
-            ));
-
-            format!("SELECT * FROM system.describe('{}.{}')", test_ns, test_table)
-        } else {
-            format!("SELECT * FROM system.{} LIMIT 5", view_name)
-        };
+        let query = format!("SELECT * FROM system.{} LIMIT 5", view_name);
 
         print!("  Testing system.{:<20} ... ", view_name);
 
-        match execute_sql_as_root_via_client(&query) {
+        match execute_sql_as_root_via_client_json(&query) {
             Ok(output) => {
-                let output_lower = output.to_lowercase();
-                if output_lower.contains("error")
-                    || output_lower.contains("failed")
-                    || output_lower.contains("invalid")
-                {
+                let parsed: serde_json::Value = match serde_json::from_str(&output) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        println!("❌ FAILED");
+                        println!("    Output: {}", output);
+                        println!("    Parse error: {}", err);
+                        failed_tables.push(format!("system.{}", view_name));
+                        continue;
+                    }
+                };
+
+                let status = parsed
+                    .get("status")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
+                if status.eq_ignore_ascii_case("success") {
+                    println!("✅ OK");
+                    tested_count += 1;
+                } else {
                     println!("❌ FAILED");
                     println!("    Output: {}", output);
                     failed_tables.push(format!("system.{}", view_name));
-                } else {
-                    println!("✅ OK");
-                    tested_count += 1;
                 }
             }
             Err(e) => {
@@ -143,10 +144,6 @@ fn smoke_test_all_system_tables_and_views_queryable() {
             }
         }
 
-        // Cleanup describe test table
-        if *view_name == "describe" {
-            let _ = execute_sql_as_root_via_client("DROP TABLE IF EXISTS default.temp_describe_test");
-        }
     }
 
     // Summary
@@ -156,9 +153,6 @@ fn smoke_test_all_system_tables_and_views_queryable() {
     println!("  Total system objects: {}", persisted_tables.len() + virtual_views.len());
     println!("  Tested successfully:  {}", tested_count);
     println!("  Failed:               {}", failed_tables.len());
-    if !skipped_tables.is_empty() {
-        println!("  Skipped:              {}", skipped_tables.len());
-    }
     println!("{}", "=".repeat(70));
 
     if !failed_tables.is_empty() {
@@ -171,13 +165,6 @@ fn smoke_test_all_system_tables_and_views_queryable() {
             failed_tables.len(),
             failed_tables
         );
-    }
-
-    if !skipped_tables.is_empty() {
-        println!("\n⚠️  Skipped tables:");
-        for table in &skipped_tables {
-            println!("  - {}", table);
-        }
     }
 
     println!("\n✅ All {} system tables and views validated successfully!", tested_count);
@@ -198,7 +185,7 @@ fn smoke_test_topic_offsets_schema_and_operations() {
     println!("🧪 Testing system.topic_offsets schema and timestamp operations");
 
     // Query topic_offsets (may be empty, but schema should work)
-    let query = "SELECT topic_name, consumer_group, last_read_offset, last_acked_offset, updated_at FROM system.topic_offsets LIMIT 5";
+    let query = "SELECT topic_id, group_id, partition_id, last_acked_offset, updated_at FROM system.topic_offsets LIMIT 5";
     let output = execute_sql_as_root_via_client(query)
         .expect("Failed to query system.topic_offsets");
 
@@ -216,7 +203,8 @@ fn smoke_test_topic_offsets_schema_and_operations() {
     );
 
     // Test timestamp filtering (should not error even if no rows)
-    let filter_query = "SELECT COUNT(*) FROM system.topic_offsets WHERE updated_at > 0";
+    let filter_query =
+        "SELECT COUNT(*) FROM system.topic_offsets WHERE updated_at > TIMESTAMP '1970-01-01 00:00:00'";
     let filter_output = execute_sql_as_root_via_client(filter_query)
         .expect("Failed to filter topic_offsets by updated_at timestamp");
 
@@ -243,36 +231,43 @@ fn smoke_test_system_tables_in_information_schema() {
     let query = r#"
         SELECT table_name, column_name, data_type, is_nullable
         FROM information_schema.columns
-        WHERE table_catalog = 'kalam' 
+        WHERE table_catalog = 'kalam'
           AND table_schema = 'system'
+          AND table_name IN ('users', 'topics', 'topic_offsets')
         ORDER BY table_name, ordinal_position
-        LIMIT 100
     "#;
 
-    let output = execute_sql_as_root_via_client(query)
+    let output = execute_sql_as_root_via_client_json(query)
         .expect("Failed to query information_schema.columns for system tables");
 
-    println!("information_schema.columns output (first 100 rows):\n{}", output);
+    println!("information_schema.columns output:\n{}", output);
 
-    // Verify key system tables appear
-    let output_lower = output.to_lowercase();
+    let json: serde_json::Value =
+        serde_json::from_str(&output).expect("Failed to parse information_schema output");
+    let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
+
+    let has_table = |name: &str| {
+        rows.iter().any(|row| {
+            row.get("table_name")
+                .and_then(extract_arrow_value)
+                .or_else(|| row.get("table_name").cloned())
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .map(|value| value.eq_ignore_ascii_case(name))
+                .unwrap_or(false)
+        })
+    };
+
     assert!(
-        output_lower.contains("users"),
+        has_table("users"),
         "system.users should appear in information_schema"
     );
     assert!(
-        output_lower.contains("topics"),
+        has_table("topics"),
         "system.topics should appear in information_schema"
     );
     assert!(
-        output_lower.contains("topic_offsets"),
+        has_table("topic_offsets"),
         "system.topic_offsets should appear in information_schema"
-    );
-
-    // Verify no error messages
-    assert!(
-        !output_lower.contains("error"),
-        "Should not have errors in information_schema query"
     );
 
     println!("✅ System tables correctly reflected in information_schema");

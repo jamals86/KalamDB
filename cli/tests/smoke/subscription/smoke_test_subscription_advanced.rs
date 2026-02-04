@@ -8,6 +8,10 @@ use std::time::Duration;
 // Re-import subscription-related types for advanced tests
 use kalam_link::{SubscriptionConfig, SubscriptionOptions};
 
+fn is_ephemeral_port_error(message: &str) -> bool {
+    message.contains("Can't assign requested address") || message.contains("os error 49")
+}
+
 /// Helper to create a subscription listener with custom configuration
 fn start_subscription_with_config(
     query: &str,
@@ -49,10 +53,12 @@ impl SubscriptionListenerAdvanced {
 
             runtime.block_on(async move {
                 let base_url = leader_or_server_url();
-                let client = match KalamLinkClient::builder()
-                    .base_url(&base_url)
-                    .auth(auth_provider_for_user_on_url(&base_url, "root", root_password()))
-                    .timeouts(
+                let mut client = None;
+                for attempt in 0..5 {
+                    match client_for_user_on_url_with_timeouts(
+                        &base_url,
+                        default_username(),
+                        default_password(),
                         KalamLinkTimeouts::builder()
                             .connection_timeout_secs(5)
                             .receive_timeout_secs(120)
@@ -61,14 +67,30 @@ impl SubscriptionListenerAdvanced {
                             .auth_timeout_secs(10)
                             .initial_data_timeout(Duration::from_secs(120))
                             .build(),
-                    )
-                    .build()
-                {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = event_tx.send(format!("ERROR: Failed to create client: {}", e));
+                    ) {
+                        Ok(c) => {
+                            client = Some(c);
+                            break;
+                        }
+                        Err(e) => {
+                            let message = e.to_string();
+                            if attempt < 4 && is_ephemeral_port_error(&message) {
+                                tokio::time::sleep(Duration::from_millis(200 * (attempt + 1)))
+                                    .await;
+                                continue;
+                            }
+                            let _ = event_tx
+                                .send(format!("ERROR: Failed to create client: {}", message));
+                            return;
+                        }
+                    }
+                }
+                let client = match client {
+                    Some(c) => c,
+                    None => {
+                        let _ = event_tx.send("ERROR: Failed to create client".to_string());
                         return;
-                    },
+                    }
                 };
 
                 // Generate unique subscription ID
@@ -80,18 +102,36 @@ impl SubscriptionListenerAdvanced {
                         .as_nanos()
                 );
 
-                // Create config with options
-                let mut config = SubscriptionConfig::new(subscription_id, &query);
-                if let Some(opts) = options {
-                    config.options = Some(opts);
+                let mut subscription = None;
+                for attempt in 0..5 {
+                    let mut config = SubscriptionConfig::new(&subscription_id, &query);
+                    if let Some(opts) = options.as_ref() {
+                        config.options = Some(opts.clone());
+                    }
+                    match client.subscribe_with_config(config).await {
+                        Ok(s) => {
+                            subscription = Some(s);
+                            break;
+                        }
+                        Err(e) => {
+                            let message = e.to_string();
+                            if attempt < 4 && is_ephemeral_port_error(&message) {
+                                tokio::time::sleep(Duration::from_millis(200 * (attempt + 1)))
+                                    .await;
+                                continue;
+                            }
+                            let _ = event_tx
+                                .send(format!("ERROR: Failed to subscribe: {}", message));
+                            return;
+                        }
+                    }
                 }
-
-                let mut subscription = match client.subscribe_with_config(config).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        let _ = event_tx.send(format!("ERROR: Failed to subscribe: {}", e));
+                let mut subscription = match subscription {
+                    Some(s) => s,
+                    None => {
+                        let _ = event_tx.send("ERROR: Failed to subscribe".to_string());
                         return;
-                    },
+                    }
                 };
 
                 let mut stop_rx = stop_rx;

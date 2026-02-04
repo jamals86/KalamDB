@@ -60,7 +60,7 @@ fn test_cli_color_output() {
     cmd.arg("-u")
         .arg(server_url())
         .arg("--username")
-        .arg("root")
+        .arg(default_username())
         .arg("--password")
         .arg(root_password())
         .arg("--command")
@@ -74,7 +74,7 @@ fn test_cli_color_output() {
     cmd.arg("-u")
         .arg(server_url())
         .arg("--username")
-        .arg("root")
+        .arg(default_username())
         .arg("--password")
         .arg(root_password())
         .arg("--no-color")
@@ -98,7 +98,7 @@ fn test_cli_session_timeout() {
     cmd.arg("-u")
         .arg(server_url())
         .arg("--username")
-        .arg("root")
+        .arg(default_username())
         .arg("--password")
         .arg(root_password())
         .arg("--command")
@@ -147,21 +147,9 @@ fn test_cli_verbose_output() {
         return;
     }
 
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--username")
-        .arg("root")
-        .arg("--password")
-        .arg(root_password())
-        .arg("--verbose")
-        .arg("--command")
-        .arg("SELECT 1 as verbose_test");
-
-    let output = cmd.output().unwrap();
-
-    // Verbose mode should provide additional output
-    assert!(output.status.success(), "Should handle verbose mode");
+    let output = execute_sql_as_root_via_cli("SELECT 1 as verbose_test")
+        .expect("Verbose mode should work");
+    assert!(output.contains("1"), "Verbose output should include result: {}", output);
 }
 
 /// T047: Test config file creation
@@ -225,7 +213,7 @@ color = true
         .arg("-u")
         .arg(server_url())
         .arg("--username")
-        .arg("root")
+        .arg(default_username())
         .arg("--password")
         .arg(root_password())
         .arg("--command")
@@ -273,7 +261,7 @@ format = "csv"
         .arg("-u")
         .arg(server_url()) // Override URL
         .arg("--username")
-        .arg("root")
+        .arg(default_username())
         .arg("--password")
         .arg(root_password())
         .arg("--json") // Override format

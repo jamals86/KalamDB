@@ -174,35 +174,27 @@ async fn wait_for_subscription_ready(
     overall_timeout: Duration,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let deadline = Instant::now() + overall_timeout;
-    while Instant::now() < deadline {
-        match timeout(Duration::from_secs(3), subscription.next()).await {
-            Ok(Some(Ok(event))) => match event {
-                ChangeEvent::Ack { batch_control, .. } => {
-                    if batch_control.status == BatchStatus::Ready {
-                        return Ok(());
-                    }
-                },
-                ChangeEvent::InitialDataBatch { batch_control, .. } => {
-                    if batch_control.status == BatchStatus::Ready {
-                        return Ok(());
-                    }
-                },
-                ChangeEvent::Error {
-                    code,
-                    message,
-                    ..
-                } => {
-                    return Err(format!("Subscription error {}: {}", code, message).into());
-                },
-                _ => continue,
-            },
-            Ok(Some(Err(e))) => return Err(e.into()),
-            Ok(None) => return Err("Subscription closed while waiting for ready".into()),
-            Err(_) => continue,
+    loop {
+        let event = next_with_deadline(subscription, deadline).await;
+        match event {
+            Some(Ok(ChangeEvent::Ack { batch_control, .. })) => {
+                if batch_control.status == BatchStatus::Ready {
+                    return Ok(());
+                }
+            }
+            Some(Ok(ChangeEvent::InitialDataBatch { batch_control, .. })) => {
+                if batch_control.status == BatchStatus::Ready {
+                    return Ok(());
+                }
+            }
+            Some(Ok(ChangeEvent::Error { code, message, .. })) => {
+                return Err(format!("Subscription error {}: {}", code, message).into());
+            }
+            Some(Ok(_)) => continue,
+            Some(Err(e)) => return Err(e.into()),
+            None => return Err("Timeout waiting for subscription ready".into()),
         }
     }
-
-    Err("Timeout waiting for subscription ready".into())
 }
 
 /// Helper to extract string value from row field (handles {"Utf8": "value"} format)
@@ -230,28 +222,44 @@ async fn wait_for_insert_with_type(
     overall_timeout: Duration,
 ) -> Option<ChangeEvent> {
     let deadline = Instant::now() + overall_timeout;
-    while Instant::now() < deadline {
-        match timeout(Duration::from_secs(3), subscription.next()).await {
-            Ok(Some(Ok(event))) => match &event {
-                ChangeEvent::Insert { rows, .. } => {
+    loop {
+        let event = next_with_deadline(subscription, deadline).await;
+        match event {
+            Some(Ok(event)) => {
+                if let ChangeEvent::Insert { rows, .. } = &event {
                     if rows.iter().any(|row| row_matches_type(row, expected_type)) {
                         return Some(event);
                     }
                 }
-                ChangeEvent::Ack { .. } | ChangeEvent::InitialDataBatch { .. } => {
+                if matches!(event, ChangeEvent::Ack { .. } | ChangeEvent::InitialDataBatch { .. }) {
                     continue;
                 }
-                _ => continue,
-            },
-            Ok(Some(Err(e))) => {
+            }
+            Some(Err(e)) => {
                 eprintln!("❌ Subscription error while waiting for insert: {}", e);
             }
-            Ok(None) => break,
-            Err(_) => continue,
+            None => return None,
         }
     }
+}
 
-    None
+async fn next_with_deadline(
+    subscription: &mut SubscriptionManager,
+    deadline: Instant,
+) -> Option<Result<ChangeEvent, kalam_link::KalamLinkError>> {
+    let now = Instant::now();
+    if now >= deadline {
+        return None;
+    }
+
+    let remaining = deadline.saturating_duration_since(now);
+    let mut next_fut = Box::pin(subscription.next());
+    let mut sleep_fut = Box::pin(tokio::time::sleep(remaining));
+
+    tokio::select! {
+        res = &mut next_fut => res,
+        _ = &mut sleep_fut => None,
+    }
 }
 
 /// Test: Multiple filtered subscriptions on a USER table
@@ -527,8 +535,8 @@ async fn test_multiple_filtered_subscriptions() {
 
     let update_deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < update_deadline {
-        match timeout(Duration::from_secs(3), thinking_sub.next()).await {
-            Ok(Some(Ok(event))) => {
+        match next_with_deadline(&mut thinking_sub, update_deadline).await {
+            Some(Ok(event)) => {
                 match &event {
                     ChangeEvent::Update {
                         subscription_id,
@@ -568,17 +576,13 @@ async fn test_multiple_filtered_subscriptions() {
                     },
                 }
             },
-            Ok(Some(Err(e))) => {
+            Some(Err(e)) => {
                 eprintln!("❌ Error on subscription: {}", e);
                 break;
             },
-            Ok(None) => {
+            None => {
                 eprintln!("❌ Subscription closed unexpectedly");
                 break;
-            },
-            Err(_) => {
-                // Timeout, try again
-                continue;
             },
         }
     }
@@ -626,8 +630,9 @@ async fn test_multiple_filtered_subscriptions() {
     let mut received_wrong_type = false;
 
     // Wait and check if 'thinking' sub receives anything (it shouldn't for 'typing' rows)
-    match timeout(Duration::from_secs(3), thinking_sub.next()).await {
-        Ok(Some(Ok(event))) => {
+    let check_deadline = Instant::now() + Duration::from_secs(3);
+    match next_with_deadline(&mut thinking_sub, check_deadline).await {
+        Some(Ok(event)) => {
             match &event {
                 ChangeEvent::Insert { rows, .. } => {
                     // Check if this is a 'typing' row (would mean filtering failed!)
@@ -652,16 +657,17 @@ async fn test_multiple_filtered_subscriptions() {
                 },
             }
         },
-        Ok(Some(Err(e))) => {
+        Some(Err(e)) => {
             println!("⚠️  Error on 'thinking' subscription: {}", e);
         },
-        Ok(None) => {
+        None => {
             println!("⚠️  'thinking' subscription closed");
         },
-        Err(_) => {
-            // Timeout is EXPECTED if filtering works correctly
-            println!("✅ FILTERING VERIFIED: 'thinking' subscription correctly did NOT receive 'typing' insert (timeout)");
-        },
+    }
+
+    if Instant::now() >= check_deadline && !received_wrong_type {
+        // Timeout is EXPECTED if filtering works correctly
+        println!("✅ FILTERING VERIFIED: 'thinking' subscription correctly did NOT receive 'typing' insert (timeout)");
     }
 
     assert!(

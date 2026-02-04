@@ -6,6 +6,7 @@ use crate::consumer::models::AutoOffsetReset;
 use crate::consumer::utils::backoff::jittered_exponential_backoff;
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
+use serde_json;
 use std::time::Duration;
 
 #[derive(Clone)]
@@ -28,8 +29,8 @@ impl ConsumerPoller {
         retry_backoff: Duration,
     ) -> Self {
         Self {
-            consume_url: format!("{}/api/topics/consume", base_url.trim_end_matches('/')),
-            ack_url: format!("{}/api/topics/ack", base_url.trim_end_matches('/')),
+            consume_url: format!("{}/v1/api/topics/consume", base_url.trim_end_matches('/')),
+            ack_url: format!("{}/v1/api/topics/ack", base_url.trim_end_matches('/')),
             http_client,
             auth,
             request_timeout,
@@ -58,8 +59,24 @@ impl ConsumerPoller {
                 Ok(response) => {
                     let status = response.status();
                     if status.is_success() {
-                        let result = response.json::<ConsumeResponse>().await?;
-                        return Ok(result);
+                        let bytes = response.bytes().await?;
+                        if bytes.is_empty() {
+                            return Ok(ConsumeResponse {
+                                messages: Vec::new(),
+                                next_offset: 0,
+                                has_more: false,
+                            });
+                        }
+                        match serde_json::from_slice::<ConsumeResponse>(&bytes) {
+                            Ok(result) => return Ok(result),
+                            Err(_) => {
+                                let body = String::from_utf8_lossy(&bytes);
+                                return Err(KalamLinkError::ServerError {
+                                    status_code: status.as_u16(),
+                                    message: body.to_string(),
+                                });
+                            }
+                        }
                     }
 
                     let error_text = response
@@ -147,7 +164,7 @@ impl ConsumerPoller {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ConsumeRequest {
-    pub topic: String,
+    pub topic_id: String,
     pub group_id: String,
     pub start: AutoOffsetReset,
     pub limit: u32,
@@ -164,7 +181,7 @@ pub struct ConsumeResponse {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AckRequest {
-    pub topic: String,
+    pub topic_id: String,
     pub group_id: String,
     pub partition_id: u32,
     pub upto_offset: u64,

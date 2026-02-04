@@ -191,23 +191,28 @@ jobs:
           if [ -z "$SUMMARY" ]; then
             echo "Error: Could not find nextest summary line"
             cat test_output.txt | tail -20
-            PASSED=0
-            FAILED=1
-            TOTAL=1
-          else
-            echo "Found summary: $SUMMARY"
-            # Extract numbers using grep with basic regex (portable)
-            TOTAL=$(echo "$SUMMARY" | grep -o "[0-9]\+ tests run" | grep -o "[0-9]\+")
-            PASSED=$(echo "$SUMMARY" | grep -o "[0-9]\+ passed" | grep -o "[0-9]\+")
-            FAILED=$(echo "$SUMMARY" | grep -o "[0-9]\+ failed" | grep -o "[0-9]\+")
-            
-            # Default to 0 if extraction failed
-            PASSED=${PASSED:-0}
-            FAILED=${FAILED:-0}
-            TOTAL=${TOTAL:-0}
+            exit 1
           fi
           
+          echo "Found summary: $SUMMARY"
+          
+          # Extract numbers using grep with extended regex (more portable)
+          TOTAL=$(echo "$SUMMARY" | grep -oE "[0-9]+ tests run" | grep -oE "[0-9]+")
+          PASSED=$(echo "$SUMMARY" | grep -oE "[0-9]+ passed" | grep -oE "[0-9]+")
+          FAILED=$(echo "$SUMMARY" | grep -oE "[0-9]+ failed" | grep -oE "[0-9]+")
+          
+          # Default to 0 if extraction failed
+          PASSED=${PASSED:-0}
+          FAILED=${FAILED:-0}
+          TOTAL=${TOTAL:-0}
+          
           echo "Tests: $PASSED passed, $FAILED failed (total: $TOTAL)"
+          
+          # Skip badge generation if parsing failed (total is 0 or 1)
+          if [ "$TOTAL" -le "1" ]; then
+            echo "Error: Invalid test count ($TOTAL). Parsing likely failed."
+            exit 1
+          fi
           
           # Determine badge color
           if [ "$FAILED" -eq "0" ]; then

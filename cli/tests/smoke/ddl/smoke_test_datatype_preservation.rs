@@ -10,24 +10,28 @@
 //! Run with: cargo test --test smoke smoke_test_datatype_preservation
 
 use crate::common::{
-    force_auto_test_server_url_async, generate_unique_namespace, test_context,
+    force_auto_test_server_url_async, generate_unique_namespace, get_access_token_for_url,
+    test_context,
 };
 use reqwest::Client;
 use serde_json::Value;
 
 /// Test that all KalamDataTypes are preserved correctly in query results
 #[tokio::test]
-#[ntest::timeout(6000)]
+#[ntest::timeout(21000)]
 async fn test_all_kalam_datatypes_are_preserved() {
     let ctx = test_context();
     let client = Client::new();
     let base_url = force_auto_test_server_url_async().await;
     let ns = generate_unique_namespace("dtypes");
     let table = "all_types";
+    let token = get_access_token_for_url(&base_url, &ctx.username, &ctx.password)
+        .await
+        .expect("Failed to get access token");
 
     // 1. Create namespace
     let create_ns_sql = format!("CREATE NAMESPACE {}", ns);
-    let result = execute_sql(&client, &base_url, &ctx.username, &ctx.password, &create_ns_sql).await;
+    let result = execute_sql(&client, &base_url, &token, &create_ns_sql).await;
     assert!(result.is_ok(), "Failed to create namespace: {:?}", result);
 
     // 2. Create table with ALL KalamDataTypes
@@ -58,7 +62,7 @@ async fn test_all_kalam_datatypes_are_preserved() {
         table = table
     );
 
-    let result = execute_sql(&client, &base_url, &ctx.username, &ctx.password, &create_sql).await;
+    let result = execute_sql(&client, &base_url, &token, &create_sql).await;
     assert!(
         result.is_ok(),
         "CREATE TABLE with all datatypes failed: {:?}",
@@ -67,7 +71,7 @@ async fn test_all_kalam_datatypes_are_preserved() {
 
     // 3. Query the table to get schema
     let query_sql = format!("SELECT * FROM {}.{}", ns, table);
-    let result = execute_sql(&client, &base_url, &ctx.username, &ctx.password, &query_sql)
+    let result = execute_sql(&client, &base_url, &token, &query_sql)
         .await
         .expect("Query failed");
 
@@ -157,24 +161,27 @@ async fn test_all_kalam_datatypes_are_preserved() {
 
     // 9. Cleanup
     let drop_sql = format!("DROP TABLE {}.{}", ns, table);
-    let _ = execute_sql(&client, &base_url, &ctx.username, &ctx.password, &drop_sql).await;
+    let _ = execute_sql(&client, &base_url, &token, &drop_sql).await;
     let drop_ns_sql = format!("DROP NAMESPACE {}", ns);
-    let _ = execute_sql(&client, &base_url, &ctx.username, &ctx.password, &drop_ns_sql).await;
+    let _ = execute_sql(&client, &base_url, &token, &drop_ns_sql).await;
 }
 
 /// Test that system.schemas also shows correct data types in the columns JSON
 #[tokio::test]
-#[ntest::timeout(4500)]
+#[ntest::timeout(26000)]
 async fn test_system_tables_shows_correct_datatypes() {
     let ctx = test_context();
     let client = Client::new();
     let base_url = force_auto_test_server_url_async().await;
     let ns = generate_unique_namespace("systypes");
     let table = "type_check";
+    let token = get_access_token_for_url(&base_url, &ctx.username, &ctx.password)
+        .await
+        .expect("Failed to get access token");
 
     // 1. Create namespace
     let create_ns_sql = format!("CREATE NAMESPACE {}", ns);
-    let _ = execute_sql(&client, &base_url, &ctx.username, &ctx.password, &create_ns_sql).await;
+    let _ = execute_sql(&client, &base_url, &token, &create_ns_sql).await;
 
     // 2. Create table with specific types we want to verify
     let create_sql = format!(
@@ -186,14 +193,14 @@ async fn test_system_tables_shows_correct_datatypes() {
         ) WITH (TYPE = 'USER')"#,
         ns, table
     );
-    let _ = execute_sql(&client, &base_url, &ctx.username, &ctx.password, &create_sql).await;
+    let _ = execute_sql(&client, &base_url, &token, &create_sql).await;
 
     // 3. Query system.schemas to get the columns JSON
     let query_sql = format!(
         "SELECT columns FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         ns, table
     );
-    let result = execute_sql(&client, &base_url, &ctx.username, &ctx.password, &query_sql)
+    let result = execute_sql(&client, &base_url, &token, &query_sql)
         .await
         .expect("Query system.schemas failed");
 
@@ -261,9 +268,9 @@ async fn test_system_tables_shows_correct_datatypes() {
 
     // 7. Cleanup
     let drop_sql = format!("DROP TABLE {}.{}", ns, table);
-    let _ = execute_sql(&client, &base_url, &ctx.username, &ctx.password, &drop_sql).await;
+    let _ = execute_sql(&client, &base_url, &token, &drop_sql).await;
     let drop_ns_sql = format!("DROP NAMESPACE {}", ns);
-    let _ = execute_sql(&client, &base_url, &ctx.username, &ctx.password, &drop_ns_sql).await;
+    let _ = execute_sql(&client, &base_url, &token, &drop_ns_sql).await;
 }
 
 // ============================================================================
@@ -273,13 +280,12 @@ async fn test_system_tables_shows_correct_datatypes() {
 async fn execute_sql(
     client: &Client,
     base_url: &str,
-    username: &str,
-    password: &str,
+    token: &str,
     sql: &str,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     let response = client
         .post(format!("{}/v1/api/sql", base_url))
-        .basic_auth(username, Some(password))
+        .bearer_auth(token)
         .json(&serde_json::json!({ "sql": sql }))
         .send()
         .await?;

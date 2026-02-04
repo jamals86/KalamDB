@@ -212,7 +212,7 @@ pub fn root_access_token_blocking() -> Result<String, Box<dyn std::error::Error>
             let _ = tx.send(result);
         });
 
-        match rx.recv_timeout(Duration::from_secs(5)) {
+        match rx.recv_timeout(Duration::from_secs(20)) {
             Ok(Ok(token)) => return Ok(token),
             Ok(Err(err)) => return Err(err.into()),
             Err(err) => return Err(err.to_string().into()),

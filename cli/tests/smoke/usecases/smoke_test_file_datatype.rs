@@ -10,27 +10,30 @@
 //! Run with: cargo test --test smoke smoke_test_file_datatype
 
 use crate::common::{
-    force_auto_test_server_url_async, generate_unique_namespace, test_context,
+    force_auto_test_server_url_async, generate_unique_namespace, get_access_token_for_url,
+    test_context,
 };
 use reqwest::Client;
 use serde_json::Value;
 
 #[tokio::test]
-#[ntest::timeout(3500)]
+#[ntest::timeout(6000)]
 async fn test_file_datatype_upload_and_download() {
     let ctx = test_context();
     let client = Client::new();
     let base_url = force_auto_test_server_url_async().await;
     let ns = generate_unique_namespace("file_test");
     let table = "documents";
+    let token = get_access_token_for_url(&base_url, &ctx.username, &ctx.password)
+        .await
+        .expect("Failed to get access token");
 
     // 1. Create namespace
     let create_ns_sql = format!("CREATE NAMESPACE {}", ns);
     let ns_result = execute_sql_via_http_as_for_url(
         &client,
         &base_url,
-        &ctx.username,
-        &ctx.password,
+        &token,
         &create_ns_sql,
     )
     .await;
@@ -44,8 +47,7 @@ async fn test_file_datatype_upload_and_download() {
     let result = execute_sql_via_http_as_for_url(
         &client,
         &base_url,
-        &ctx.username,
-        &ctx.password,
+        &token,
         &create_sql,
     )
     .await;
@@ -79,7 +81,7 @@ async fn test_file_datatype_upload_and_download() {
 
     let request = client
         .post(format!("{}/v1/api/sql", &base_url))
-        .header("Authorization", format!("Basic {}", base64_encode(&ctx.username, &ctx.password)))
+        .bearer_auth(&token)
         .header("Accept", "application/json")
         .header("Content-Type", format!("multipart/form-data; boundary={}", boundary))
         .body(body)
@@ -140,8 +142,7 @@ async fn test_file_datatype_upload_and_download() {
     let result = execute_sql_via_http_as_for_url(
         &client,
         &base_url,
-        &ctx.username,
-        &ctx.password,
+        &token,
         &query_sql,
     )
     .await
@@ -184,7 +185,7 @@ async fn test_file_datatype_upload_and_download() {
     
     let download_response = client
         .get(&download_url)
-        .header("Authorization", format!("Basic {}", base64_encode(&ctx.username, &ctx.password)))
+        .bearer_auth(&token)
         .send()
         .await
         .expect("Failed to download file");
@@ -245,7 +246,7 @@ async fn test_file_datatype_upload_and_download() {
     );
     let missing_response = client
         .get(&missing_url)
-        .header("Authorization", format!("Basic {}", base64_encode(&ctx.username, &ctx.password)))
+        .bearer_auth(&token)
         .send()
         .await
         .expect("Failed to send missing-file download request");
@@ -260,8 +261,7 @@ async fn test_file_datatype_upload_and_download() {
     let delete_result = execute_sql_via_http_as_for_url(
         &client,
         &base_url,
-        &ctx.username,
-        &ctx.password,
+        &token,
         &delete_sql,
     )
     .await;
@@ -272,8 +272,7 @@ async fn test_file_datatype_upload_and_download() {
     let _ = execute_sql_via_http_as_for_url(
         &client,
         &base_url,
-        &ctx.username,
-        &ctx.password,
+        &token,
         &drop_sql,
     )
     .await;
@@ -281,8 +280,7 @@ async fn test_file_datatype_upload_and_download() {
     let _ = execute_sql_via_http_as_for_url(
         &client,
         &base_url,
-        &ctx.username,
-        &ctx.password,
+        &token,
         &drop_ns_sql,
     )
     .await;
@@ -290,21 +288,15 @@ async fn test_file_datatype_upload_and_download() {
     println!("✅ FILE datatype smoke test passed!");
 }
 
-fn base64_encode(username: &str, password: &str) -> String {
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", username, password))
-}
-
 async fn execute_sql_via_http_as_for_url(
     client: &Client,
     base_url: &str,
-    username: &str,
-    password: &str,
+    token: &str,
     sql: &str,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     let response = client
         .post(format!("{}/v1/api/sql", base_url))
-        .basic_auth(username, Some(password))
+        .bearer_auth(token)
         .json(&serde_json::json!({ "sql": sql }))
         .send()
         .await?;

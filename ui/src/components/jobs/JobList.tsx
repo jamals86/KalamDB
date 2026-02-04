@@ -26,7 +26,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2, RefreshCw, Filter, X, Eye, Play, CheckCircle, XCircle, Clock, AlertCircle } from 'lucide-react';
-import { formatTimestamp } from '@/lib/formatters';
+import { formatTimestamp, toMilliseconds } from '@/lib/formatters';
 
 const STATUS_COLORS: Record<string, string> = {
   'New': 'bg-gray-100 text-gray-800',
@@ -67,13 +67,37 @@ function getStatusColor(status: string): string {
 function formatDuration(startedAt: string | null, completedAt: string | null): string {
   if (!startedAt) return '-';
   
-  const start = new Date(startedAt).getTime();
-  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
-  const durationMs = end - start;
+  // Parse timestamps - they could be ISO strings or numeric timestamps
+  // Try to parse as number first (microsecond timestamps from backend)
+  let startMs: number;
+  let endMs: number;
   
-  if (durationMs < 1000) return `${durationMs}ms`;
+  const startNum = Number(startedAt);
+  if (!isNaN(startNum) && startNum > 1000000000) {
+    // It's a numeric timestamp (seconds, milliseconds, or microseconds)
+    startMs = toMilliseconds(startNum);
+  } else {
+    // It's an ISO string
+    startMs = new Date(startedAt).getTime();
+  }
+  
+  if (completedAt) {
+    const endNum = Number(completedAt);
+    if (!isNaN(endNum) && endNum > 1000000000) {
+      endMs = toMilliseconds(endNum);
+    } else {
+      endMs = new Date(completedAt).getTime();
+    }
+  } else {
+    endMs = Date.now();
+  }
+  
+  const durationMs = Math.abs(endMs - startMs);
+  
+  if (durationMs < 1000) return `${Math.round(durationMs)}ms`;
   if (durationMs < 60000) return `${(durationMs / 1000).toFixed(1)}s`;
-  return `${(durationMs / 60000).toFixed(1)}m`;
+  if (durationMs < 3600000) return `${(durationMs / 60000).toFixed(1)}m`;
+  return `${(durationMs / 3600000).toFixed(1)}h`;
 }
 
 interface JobListProps {

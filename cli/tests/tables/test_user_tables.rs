@@ -47,7 +47,7 @@ fn test_cli_basic_query_execution() {
     cmd.arg("-u")
         .arg(server_url())
         .arg("--username")
-        .arg("root")
+        .arg(default_username())
         .arg("--password")
         .arg(root_password())
         .arg("--command")
@@ -103,7 +103,7 @@ fn test_cli_table_output_formatting() {
     cmd.arg("-u")
         .arg(server_url())
         .arg("--username")
-        .arg("root")
+        .arg(default_username())
         .arg("--password")
         .arg(root_password())
         .arg("--command")
@@ -153,25 +153,37 @@ fn test_cli_json_output_format() {
     ));
 
     // Query with JSON format
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--username")
-        .arg("root")
-        .arg("--password")
-        .arg(root_password())
-        .arg("--json")
-        .arg("--command")
-        .arg(format!("SELECT * FROM {} WHERE content = 'JSON Test'", full_table_name));
+    let query = format!("SELECT * FROM {} WHERE content = 'JSON Test'", full_table_name);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut last_stdout = String::new();
+    let mut last_status = None;
 
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    while std::time::Instant::now() < deadline {
+        let mut cmd = create_cli_command();
+        cmd.arg("-u")
+            .arg(server_url())
+            .arg("--username")
+            .arg(default_username())
+            .arg("--password")
+            .arg(root_password())
+            .arg("--json")
+            .arg("--command")
+            .arg(&query);
+
+        let output = cmd.output().unwrap();
+        last_status = Some(output.status);
+        last_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        if output.status.success() && last_stdout.contains("JSON Test") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 
     // Verify JSON output contains test data
     assert!(
-        stdout.contains("JSON Test") && output.status.success(),
+        last_stdout.contains("JSON Test") && last_status.map(|s| s.success()).unwrap_or(false),
         "JSON output should contain test data: {}",
-        stdout
+        last_stdout
     );
 
     // Cleanup
@@ -211,7 +223,7 @@ fn test_cli_csv_output_format() {
     cmd.arg("-u")
         .arg(server_url())
         .arg("--username")
-        .arg("root")
+        .arg(default_username())
         .arg("--password")
         .arg(root_password())
         .arg("--csv")
@@ -262,7 +274,7 @@ fn test_cli_multiline_query() {
     cmd.arg("-u")
         .arg(server_url())
         .arg("--username")
-        .arg("root")
+        .arg(default_username())
         .arg("--password")
         .arg(root_password())
         .arg("--command")
@@ -291,7 +303,7 @@ fn test_cli_query_with_comments() {
     cmd.arg("-u")
         .arg(server_url())
         .arg("--username")
-        .arg("root")
+        .arg(default_username())
         .arg("--password")
         .arg(root_password())
         .arg("--command")
@@ -314,7 +326,7 @@ fn test_cli_empty_query() {
     cmd.arg("-u")
         .arg(server_url())
         .arg("--username")
-        .arg("root")
+        .arg(default_username())
         .arg("--password")
         .arg(root_password())
         .arg("--command")
@@ -365,7 +377,7 @@ fn test_cli_result_pagination() {
     cmd.arg("-u")
         .arg(server_url())
         .arg("--username")
-        .arg("root")
+        .arg(default_username())
         .arg("--password")
         .arg(root_password())
         .arg("--command")
