@@ -88,15 +88,18 @@ impl TopicMessageStore {
     /// This method scans all messages for the topic and deletes them.
     /// Returns the count of deleted messages.
     pub fn delete_topic_messages(&self, topic_id: &TopicId) -> kalamdb_store::storage_trait::Result<usize> {
-        // Use topic_id as prefix to scan all partitions
+        // Use topic_id as prefix to scan all partitions.
+        // Delete using raw keys to avoid deserializing large/corrupt values.
         let prefix = kalamdb_commons::encode_prefix(&(topic_id.as_str(),));
-        let messages = self.scan_with_raw_prefix(&prefix, None, usize::MAX)?;
-        
-        let count = messages.len();
-        for (msg_id, _) in messages {
-            self.delete(&msg_id)?;
+        let partition = self.partition();
+        let iter = self.backend().scan(&partition, Some(&prefix), None, None)?;
+
+        let mut count: usize = 0;
+        for (key_bytes, _) in iter {
+            self.backend().delete(&partition, &key_bytes)?;
+            count += 1;
         }
-        
+
         Ok(count)
     }
 
@@ -109,13 +112,15 @@ impl TopicMessageStore {
         partition_id: u32,
     ) -> kalamdb_store::storage_trait::Result<usize> {
         let prefix = TopicMessageId::prefix_for_partition(topic_id, partition_id);
-        let messages = self.scan_with_raw_prefix(&prefix, None, usize::MAX)?;
-        
-        let count = messages.len();
-        for (msg_id, _) in messages {
-            self.delete(&msg_id)?;
+        let partition = self.partition();
+        let iter = self.backend().scan(&partition, Some(&prefix), None, None)?;
+
+        let mut count: usize = 0;
+        for (key_bytes, _) in iter {
+            self.backend().delete(&partition, &key_bytes)?;
+            count += 1;
         }
-        
+
         Ok(count)
     }
 }

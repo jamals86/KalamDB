@@ -1300,6 +1300,44 @@ pub fn auth_provider_for_user(username: &str, password: &str) -> AuthProvider {
     auth_provider_for_user_on_url(&base_url, username, password)
 }
 
+fn get_access_token_for_url_sync(
+    base_url: &str,
+    username: &str,
+    password: &str,
+) -> Option<String> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        let base_url_owned = base_url.to_string();
+        let username_owned = username.to_string();
+        let password_owned = password.to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = match Runtime::new() {
+                Ok(rt) => rt,
+                Err(err) => {
+                    let _ = tx.send(Err(err.to_string()));
+                    return;
+                }
+            };
+            let result = runtime
+                .block_on(get_access_token_for_url(
+                    &base_url_owned,
+                    &username_owned,
+                    &password_owned,
+                ))
+                .map_err(|err| err.to_string());
+            let _ = tx.send(result);
+        });
+        match rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(token)) => Some(token),
+            _ => None,
+        }
+    } else {
+        get_shared_runtime()
+            .block_on(get_access_token_for_url(base_url, username, password))
+            .ok()
+    }
+}
+
 /// Execute SQL over HTTP with explicit credentials.
 /// 
 /// First obtains a Bearer token via login, then executes SQL.
@@ -1980,6 +2018,10 @@ pub fn storage_base_dir() -> std::path::PathBuf {
         return std::path::PathBuf::from(path);
     }
 
+    if let Ok(path) = std::env::var("KALAMDB_DATA_DIR") {
+        return std::path::PathBuf::from(path).join("storage");
+    }
+
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     if let Some(workspace_root) = manifest_dir.parent() {
         let backend_storage = workspace_root.join("backend").join("data").join("storage");
@@ -2264,13 +2306,21 @@ fn execute_sql_via_cli_as_with_args_and_urls(
             let creds_path = creds_dir.path().join("credentials.toml");
             let spawn_start = Instant::now();
 
-            let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
-                .arg("-u")
-                .arg(url)
-                .arg("--username")
-                .arg(username)
-                .arg("--password")
-                .arg(password)
+            let token = get_access_token_for_url_sync(url, username, password);
+
+            let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"));
+            child.arg("-u").arg(url);
+
+            if let Some(token) = token {
+                child.arg("--token").arg(token);
+            } else {
+                child.arg("--username")
+                    .arg(username)
+                    .arg("--password")
+                    .arg(password);
+            }
+
+            child
                 .env("KALAMDB_CREDENTIALS_PATH", &creds_path)
                 .env("NO_PROXY", "127.0.0.1,localhost,::1")
                 .env("no_proxy", "127.0.0.1,localhost,::1")
@@ -2285,8 +2335,9 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                 .arg("--command")
                 .arg(sql)
                 .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()?;
+                .stderr(std::process::Stdio::piped());
+
+            let mut child = child.spawn()?;
 
             let spawn_duration = spawn_start.elapsed();
             eprintln!("[TEST_CLI] Process spawned in {:?}", spawn_duration);
@@ -3124,7 +3175,7 @@ pub fn create_temp_store() -> (FileCredentialStore, TempDir) {
 /// Helper to setup test namespace and table with unique name
 pub fn setup_test_table(test_name: &str) -> Result<String, Box<dyn std::error::Error>> {
     let table_name = generate_unique_table(test_name);
-    let namespace = "test_cli";
+    let namespace = generate_unique_namespace("test_cli");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Try to drop table first if it exists
@@ -3157,6 +3208,9 @@ pub fn setup_test_table(test_name: &str) -> Result<String, Box<dyn std::error::E
 pub fn cleanup_test_table(table_full_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let drop_sql = format!("DROP TABLE IF EXISTS {}", table_full_name);
     let _ = execute_sql_as_root_via_cli(&drop_sql);
+    if let Some((namespace, _)) = table_full_name.split_once('.') {
+        let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    }
     Ok(())
 }
 

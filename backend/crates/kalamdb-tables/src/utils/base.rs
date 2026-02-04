@@ -78,6 +78,7 @@ use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 use kalamdb_system::Manifest;
 use kalamdb_commons::{StorageKey, TableId};
+use kalamdb_system::ClusterCoordinator as ClusterCoordinatorTrait;
 use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -85,7 +86,7 @@ use std::sync::Arc;
 // Re-export types moved to submodules
 pub use crate::utils::core::TableProviderCore;
 pub use crate::utils::row_utils::{
-    extract_seq_bounds_from_filter, resolve_user_scope, system_user_id,
+    extract_full_user_context, extract_seq_bounds_from_filter, resolve_user_scope, system_user_id,
 };
 pub(crate) use crate::utils::parquet::scan_parquet_files_as_batch;
 pub use crate::utils::row_utils::{inject_system_columns, rows_to_arrow_batch, ScanRow};
@@ -123,6 +124,9 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ///
     /// Named differently from DataFusion's TableProvider::table_type to avoid ambiguity.
     fn provider_table_type(&self) -> TableType;
+
+    /// Cluster coordinator for leader checks (read routing).
+    fn cluster_coordinator(&self) -> &Arc<dyn ClusterCoordinatorTrait>;
 
     /// Get namespace ID from table_id (default implementation)
     fn namespace_id(&self) -> &NamespaceId {
@@ -361,6 +365,10 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        self.ensure_leader_read(state)
+            .await
+            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
         // Combine filters (AND) for pruning and pass to scan_rows
         let combined_filter: Option<Expr> = if filters.is_empty() {
             None
@@ -387,6 +395,37 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         let final_projection = if filters.is_empty() { None } else { projection };
 
         mem.scan(state, final_projection, filters, limit).await
+    }
+
+    /// Enforce leader-only reads for client contexts in cluster mode.
+    async fn ensure_leader_read(&self, state: &dyn Session) -> Result<(), KalamDbError> {
+        let (_user_id, _role, read_context) = extract_full_user_context(state)?;
+        if !read_context.requires_leader() {
+            return Ok(());
+        }
+
+        let coordinator = self.cluster_coordinator();
+        if !coordinator.is_cluster_mode().await {
+            return Ok(());
+        }
+
+        match self.provider_table_type() {
+            TableType::User | TableType::Stream => {
+                let (user_id, _role, _read_context) = extract_full_user_context(state)?;
+                if !coordinator.is_leader_for_user(user_id).await {
+                    let leader_addr = coordinator.leader_addr_for_user(user_id).await;
+                    return Err(KalamDbError::NotLeader { leader_addr });
+                }
+            }
+            TableType::Shared => {
+                if !coordinator.is_leader_for_shared().await {
+                    return Err(KalamDbError::NotLeader { leader_addr: None });
+                }
+            }
+            TableType::System => {}
+        }
+
+        Ok(())
     }
 
     // ===========================

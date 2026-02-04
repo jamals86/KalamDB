@@ -68,33 +68,18 @@ fn test_cli_subscription_commands() {
         return;
     }
 
-    // Test --list-subscriptions command (retry for transient server startup/load)
-    let mut last_list_output: Option<std::process::Output> = None;
-    let mut list_success = false;
-    for _ in 0..5 {
-        let mut cmd = create_cli_command();
-        cmd.arg("-u")
-            .arg(server_url())
-            .arg("--username")
-            .arg(default_username())
-            .arg("--password")
-            .arg(root_password())
-            .arg("--list-subscriptions");
+    // Test --list-subscriptions command
+    let mut cmd = create_cli_command();
+    cmd.arg("-u")
+        .arg(server_url())
+        .arg("--username")
+        .arg(default_username())
+        .arg("--password")
+        .arg(root_password())
+        .arg("--list-subscriptions");
 
-        let output = cmd.output().unwrap();
-        if output.status.success() {
-            list_success = true;
-            break;
-        }
-        last_list_output = Some(output);
-        std::thread::sleep(Duration::from_millis(200));
-    }
-
-    assert!(
-        list_success,
-        "list-subscriptions command should succeed. Last output: {:?}",
-        last_list_output.as_ref().map(|out| String::from_utf8_lossy(&out.stderr))
-    );
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "list-subscriptions command should succeed");
 
     // Test --unsubscribe command (should provide helpful message)
     let mut cmd = create_cli_command();
@@ -315,24 +300,27 @@ fn test_cli_subscription_comprehensive_crud() {
         table_name
     );
     let _ = execute_sql_as_root_via_cli(&insert_sql2);
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    std::thread::sleep(std::time::Duration::from_millis(100));
 
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--username")
-        .arg(default_username())
-        .arg("--password")
-        .arg(root_password())
-        .arg("--command")
-        .arg(format!("SELECT * FROM {} ORDER BY id", table_name));
-
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success() && stdout.contains("initial_data") && stdout.contains("more_data"),
-        "Both rows should be present"
+    // Use wait helper to handle timing issues under load
+    let select_sql = format!("SELECT * FROM {} ORDER BY id", table_name);
+    let output_result = wait_for_sql_output_contains(
+        &select_sql,
+        "more_data",
+        std::time::Duration::from_secs(3),
     );
+    
+    match output_result {
+        Ok(stdout) => {
+            assert!(
+                stdout.contains("initial_data") && stdout.contains("more_data"),
+                "Both rows should be present"
+            );
+        }
+        Err(e) => {
+            panic!("Failed to verify both rows: {}", e);
+        }
+    }
 
     // Test 5: Update operation via CLI
     let update_sql = format!("UPDATE {} SET data = 'updated_data' WHERE id = 1", table_name);

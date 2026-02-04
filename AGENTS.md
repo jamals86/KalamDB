@@ -118,6 +118,7 @@ backend/crates/
 ## Testing (MUST)
 
 - Use `cargo nextest run` for all test executions unless explicitly told otherwise.
+- For CLI e2e tests: run `cargo nextest run --features e2e-tests` **without** `--no-fail-fast`, capture output to a file, then fix failures one-by-one by running only the failing test(s). Re-run the full suite after fixes.
 - For e2e test runs, do NOT pass `--no-fail-fast`. Run normally, fix the first failure, re-run until it passes, then move to the next failing issue.
 - Always add `#[ntest::timeout(time)]` to every async test where `time` is the **actual observed runtime** × 1.5 (to cover slower machines).
    - Example: if a test took 40s, set `#[ntest::timeout(60000)]`.

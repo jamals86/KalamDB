@@ -3,33 +3,52 @@ use crate::connect::create_session;
 use kalam_cli::{CLIConfiguration, FileCredentialStore, Result};
 use std::time::Duration;
 
+fn print_list_subscriptions() {
+    println!("Subscription management:");
+    println!("  • Subscriptions run in blocking mode per CLI session");
+    println!("  • Use Ctrl+C to cancel active subscriptions");
+    println!("  • Each CLI instance can have at most one active subscription");
+    println!("  • No persistent subscription registry is currently implemented");
+}
+
+fn print_unsubscribe_message() {
+    println!("To unsubscribe from an active subscription, use Ctrl+C in the terminal");
+    println!("where the subscription is running, or kill the process.");
+}
+
 pub async fn handle_subscriptions(
     cli: &Cli,
     credential_store: &mut FileCredentialStore,
 ) -> Result<bool> {
-    if cli.list_subscriptions || cli.subscribe.is_some() || cli.unsubscribe.is_some() {
-        // Load configuration
-        let config = CLIConfiguration::load(&cli.config)?;
+    if !(cli.list_subscriptions || cli.subscribe.is_some() || cli.unsubscribe.is_some()) {
+        return Ok(false);
+    }
 
-        let config_path = kalam_cli::config::expand_config_path(&cli.config);
-        let mut session = create_session(cli, credential_store, &config, config_path).await?;
-
-        if cli.list_subscriptions {
-            session.list_subscriptions().await?;
-        } else if let Some(query) = &cli.subscribe {
-            // Convert timeout from seconds to Duration (0 = no timeout)
-            let timeout = if cli.subscription_timeout > 0 {
-                Some(Duration::from_secs(cli.subscription_timeout))
-            } else {
-                None
-            };
-            session.subscribe_with_timeout(query, timeout).await?;
-        } else if let Some(subscription_id) = &cli.unsubscribe {
-            session.unsubscribe(subscription_id).await?;
-        }
-
+    if cli.list_subscriptions {
+        print_list_subscriptions();
         return Ok(true);
     }
 
-    Ok(false)
+    if cli.unsubscribe.is_some() {
+        print_unsubscribe_message();
+        return Ok(true);
+    }
+
+    // Only subscriptions require a server session.
+    // Load configuration
+    let config = CLIConfiguration::load(&cli.config)?;
+    let config_path = kalam_cli::config::expand_config_path(&cli.config);
+    let mut session = create_session(cli, credential_store, &config, config_path).await?;
+
+    if let Some(query) = &cli.subscribe {
+        // Convert timeout from seconds to Duration (0 = no timeout)
+        let timeout = if cli.subscription_timeout > 0 {
+            Some(Duration::from_secs(cli.subscription_timeout))
+        } else {
+            None
+        };
+        session.subscribe_with_timeout(query, timeout).await?;
+    }
+
+    Ok(true)
 }

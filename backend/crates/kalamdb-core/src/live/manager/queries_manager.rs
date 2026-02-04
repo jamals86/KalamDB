@@ -18,9 +18,8 @@ use crate::live::manager::ConnectionsManager;
 use crate::live::helpers::filter_eval::parse_where_clause;
 use crate::live::helpers::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::live::models::{
-    ChangeNotification, RegistryStats, SharedConnectionState, SubscriptionResult,
+    RegistryStats, SharedConnectionState, SubscriptionResult,
 };
-use crate::live::notification::NotificationService;
 use crate::live::helpers::query_parser::QueryParser;
 use crate::live::subscription::SubscriptionService;
 use crate::sql::executor::SqlExecutor;

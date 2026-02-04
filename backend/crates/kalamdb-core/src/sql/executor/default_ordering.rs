@@ -53,7 +53,7 @@ fn extract_table_reference(plan: &LogicalPlan) -> Option<TableId> {
         // For other plan nodes, check their inputs
         _ => {
             for input in plan.inputs() {
-                /// FIXME: Pass the ExecutionContext to read the default namespace from there
+                // FIXME: Pass the ExecutionContext to read the default namespace from there
                 if let Some(result) = extract_table_reference(input) {
                     return Some(result);
                 }
@@ -161,7 +161,7 @@ pub fn apply_default_order_by(
     }
 
     // Extract table reference
-    /// FIXME: Pass the ExecutionContext to read the default namespace from there
+    // FIXME: Pass the ExecutionContext to read the default namespace from there
     let table_id = match extract_table_reference(&plan) {
         Some(id) => id,
         None => {

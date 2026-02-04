@@ -210,6 +210,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         self.core.table_type()
     }
 
+    fn cluster_coordinator(&self) -> &Arc<dyn kalamdb_system::ClusterCoordinator> {
+        &self.core.cluster_coordinator
+    }
+
     fn schema_registry(&self) -> &Arc<dyn SchemaRegistryTrait<Error = KalamDbError>> {
         &self.core.schema_registry
     }

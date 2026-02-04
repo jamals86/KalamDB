@@ -200,7 +200,7 @@ fn build_ui_if_release(repo_root: &Path) {
     // Run npm run build
     // IMPORTANT: use `.status()` (stream output) instead of `.output()`.
     // Capturing large stdout/stderr can make builds appear "stuck".
-    println!("cargo:warning=Running UI build (npm run build) — this can take a few minutes...");
+    eprintln!("Running UI build (npm run build) — this can take a few minutes...");
     let build_status = if cfg!(target_os = "windows") {
         let mut cmd = Command::new("cmd");
         cmd.args(["/C", "npm", "run", "build"])
@@ -219,7 +219,7 @@ fn build_ui_if_release(repo_root: &Path) {
 
     match build_status {
         Ok(status) if status.success() => {
-            println!("cargo:warning=UI build completed successfully");
+            eprintln!("UI build completed successfully");
         },
         Ok(status) => {
             panic!("UI build failed with status: {}\n\nUI is required for release builds!", status);

@@ -33,6 +33,15 @@ pub enum TableError {
     #[error("Schema error: {0}")]
     SchemaError(String),
 
+    /// Not the leader for this shard (Raft cluster mode)
+    ///
+    /// Client should retry the request against the leader node.
+    #[error("Not leader for shard. Leader: {leader_addr:?}")]
+    NotLeader {
+        /// API address of the current leader (if known)
+        leader_addr: Option<String>,
+    },
+
     #[error("Other error: {0}")]
     Other(String),
 }

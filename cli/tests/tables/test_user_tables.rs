@@ -22,7 +22,7 @@ fn test_cli_basic_query_execution() {
 
     // Setup with unique table name
     let table_name = generate_unique_table("messages_basic");
-    let namespace = "test_cli";
+    let namespace = generate_unique_namespace("test_cli");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Create namespace and table via CLI
@@ -67,6 +67,7 @@ fn test_cli_basic_query_execution() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
 }
 
 /// T038: Test table output formatting
@@ -78,7 +79,7 @@ fn test_cli_table_output_formatting() {
     }
 
     let table_name = generate_unique_table("messages_table");
-    let namespace = "test_cli";
+    let namespace = generate_unique_namespace("test_cli");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table and data via CLI
@@ -123,6 +124,7 @@ fn test_cli_table_output_formatting() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
 }
 
 /// T039: Test JSON output format
@@ -134,7 +136,7 @@ fn test_cli_json_output_format() {
     }
 
     let table_name = generate_unique_table("messages_json");
-    let namespace = "test_cli";
+    let namespace = generate_unique_namespace("test_cli");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table and data via CLI
@@ -153,41 +155,30 @@ fn test_cli_json_output_format() {
     ));
 
     // Query with JSON format
-    let query = format!("SELECT * FROM {} WHERE content = 'JSON Test'", full_table_name);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    let mut last_stdout = String::new();
-    let mut last_status = None;
+    let mut cmd = create_cli_command();
+    cmd.arg("-u")
+        .arg(server_url())
+        .arg("--username")
+        .arg(default_username())
+        .arg("--password")
+        .arg(root_password())
+        .arg("--json")
+        .arg("--command")
+        .arg(format!("SELECT * FROM {} WHERE content = 'JSON Test'", full_table_name));
 
-    while std::time::Instant::now() < deadline {
-        let mut cmd = create_cli_command();
-        cmd.arg("-u")
-            .arg(server_url())
-            .arg("--username")
-            .arg(default_username())
-            .arg("--password")
-            .arg(root_password())
-            .arg("--json")
-            .arg("--command")
-            .arg(&query);
-
-        let output = cmd.output().unwrap();
-        last_status = Some(output.status);
-        last_stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        if output.status.success() && last_stdout.contains("JSON Test") {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Verify JSON output contains test data
     assert!(
-        last_stdout.contains("JSON Test") && last_status.map(|s| s.success()).unwrap_or(false),
+        stdout.contains("JSON Test") && output.status.success(),
         "JSON output should contain test data: {}",
-        last_stdout
+        stdout
     );
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
 }
 
 /// T040: Test CSV output format
@@ -200,7 +191,7 @@ fn test_cli_csv_output_format() {
     }
 
     let table_name = generate_unique_table("messages_csv");
-    let namespace = "test_cli";
+    let namespace = generate_unique_namespace("test_cli");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table and data via CLI
@@ -242,6 +233,7 @@ fn test_cli_csv_output_format() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
 }
 
 /// T064: Test multi-line query input
@@ -253,7 +245,7 @@ fn test_cli_multiline_query() {
     }
 
     let table_name = generate_unique_table("multiline");
-    let namespace = "test_cli";
+    let namespace = generate_unique_namespace("test_cli");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table via CLI
@@ -286,6 +278,7 @@ fn test_cli_multiline_query() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
 }
 
 /// T065: Test query with comments
@@ -310,8 +303,15 @@ fn test_cli_query_with_comments() {
         .arg(query_simple);
 
     let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
-    assert!(output.status.success(), "Should handle queries successfully");
+    assert!(
+        output.status.success(),
+        "Should handle queries successfully\nstdout: {}\nstderr: {}",
+        stdout,
+        stderr
+    );
 }
 
 /// T066: Test empty query handling
@@ -350,7 +350,7 @@ fn test_cli_result_pagination() {
     }
 
     let table_name = generate_unique_table("pagination");
-    let namespace = "test_cli";
+    let namespace = generate_unique_namespace("test_cli");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table via CLI
@@ -394,4 +394,5 @@ fn test_cli_result_pagination() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
 }
