@@ -103,12 +103,13 @@ impl JobType {
     pub fn has_leader_actions(&self) -> bool {
         matches!(
             self,
-            JobType::Flush |       // Parquet upload + manifest update
-            JobType::Cleanup |     // Delete external Parquet + metadata
-            JobType::Backup |      // External storage upload
-            JobType::Restore |     // External storage download
-            JobType::JobCleanup |  // Raft-replicated job table cleanup
-            JobType::UserCleanup   // Cascade via Raft
+            JobType::Flush |        // Parquet upload + manifest update
+            JobType::Cleanup |      // Delete external Parquet + metadata
+            JobType::Backup |       // External storage upload
+            JobType::Restore |      // External storage download
+            JobType::JobCleanup |   // Raft-replicated job table cleanup
+            JobType::UserCleanup |  // Cascade via Raft
+            JobType::TopicCleanup   // Delete topic messages + offsets
         )
     }
 

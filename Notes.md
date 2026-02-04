@@ -1290,6 +1290,10 @@ after that we can add a button in ui for checking storage health
 
 154) Add test which check all commands which belong to admin/dba only with normal user and make sure they all fail with proper error message, also for service consumer commands as well so that whenever we change anything we always make sure these commands fail for normal users
 
+155) Add a table which i can view all topic messages
+
+156) Make sure the topic eviction works also using clear topic 
+
 
 
 

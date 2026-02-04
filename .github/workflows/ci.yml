@@ -184,20 +184,22 @@ jobs:
           cat test_output.txt
           
           # Parse the summary line from nextest output
-          # Expected format: "Summary [   15.234s] 2345 tests run: 2344 passed, 1 failed, 0 skipped"
-          SUMMARY=$(grep -E "Summary \[.*\] [0-9]+ tests run:" test_output.txt || echo "")
+          # Expected format: "     Summary [ 427.076s] 2204 tests run: 2203 passed, 1 failed, 90 skipped"
+          # Note: nextest adds leading spaces before "Summary"
+          SUMMARY=$(grep -E "^\s*Summary \[.*\] [0-9]+ tests run:" test_output.txt || echo "")
           
           if [ -z "$SUMMARY" ]; then
             echo "Error: Could not find nextest summary line"
+            cat test_output.txt | tail -20
             PASSED=0
             FAILED=1
             TOTAL=1
           else
             echo "Found summary: $SUMMARY"
-            # Extract numbers using sed (more portable than grep -oP)
-            PASSED=$(echo "$SUMMARY" | sed -n 's/.*\([0-9]\+\) passed.*/\1/p')
-            FAILED=$(echo "$SUMMARY" | sed -n 's/.*\([0-9]\+\) failed.*/\1/p')
-            TOTAL=$(echo "$SUMMARY" | sed -n 's/.*\([0-9]\+\) tests run.*/\1/p')
+            # Extract numbers using grep with basic regex (portable)
+            TOTAL=$(echo "$SUMMARY" | grep -o "[0-9]\+ tests run" | grep -o "[0-9]\+")
+            PASSED=$(echo "$SUMMARY" | grep -o "[0-9]\+ passed" | grep -o "[0-9]\+")
+            FAILED=$(echo "$SUMMARY" | grep -o "[0-9]\+ failed" | grep -o "[0-9]\+")
             
             # Default to 0 if extraction failed
             PASSED=${PASSED:-0}
