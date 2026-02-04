@@ -29,10 +29,12 @@ use super::cluster::create_cluster_provider;
 use super::cluster_groups::create_cluster_groups_provider;
 use super::columns_view::create_columns_view_provider;
 use super::datatypes::{DatatypesTableProvider, DatatypesView};
+use super::describe::DescribeView;
 use super::server_logs::create_server_logs_provider;
 use super::settings::{SettingsTableProvider, SettingsView};
 use super::stats::{StatsTableProvider, StatsView};
 use super::tables_view::create_tables_view_provider;
+use super::view_base::ViewTableProvider;
 
 /// Configuration for lazy view initialization
 pub struct LazyViewConfig {
@@ -124,12 +126,21 @@ impl LazySystemSchemaProvider {
     }
 
     /// List all known table names in the system schema
-    fn known_table_names() -> Vec<String> {
-        // Dynamically gather all system table/view names from SystemTable enum
-        SystemTable::all()
-            .iter()
-            .map(|t| t.table_name().to_string())
-            .collect()
+    fn known_table_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .system_tables
+            .all_system_providers()
+            .into_iter()
+            .map(|(table, _)| table.table_name().to_string())
+            .collect();
+
+        for view in SystemTable::all_views() {
+            names.push(view.table_name().to_string());
+        }
+
+        names.sort();
+        names.dedup();
+        names
     }
 
     /// Get persisted table provider (fast path - already created in SystemTablesRegistry)
@@ -192,6 +203,11 @@ impl LazySystemSchemaProvider {
                 let provider = Arc::new(create_columns_view_provider(Arc::clone(&self.system_tables)));
                 (SystemTable::Columns, provider as Arc<dyn TableProvider>)
             }
+            SystemTable::Describe => {
+                let view = Arc::new(DescribeView::new());
+                let provider = Arc::new(ViewTableProvider::new(view));
+                (SystemTable::Describe, provider as Arc<dyn TableProvider>)
+            }
             SystemTable::Cluster => {
                 // Cluster view needs CommandExecutor - return None if not available
                 let executor = self.view_config.executor.read();
@@ -225,13 +241,13 @@ impl SchemaProvider for LazySystemSchemaProvider {
     }
 
     fn table_names(&self) -> Vec<String> {
-        let names = Self::known_table_names();
+        let names = self.known_table_names();
         //log::info!("LazySystemSchemaProvider::table_names() returning {} tables", names.len());
         names
     }
 
     fn table_exist(&self, name: &str) -> bool {
-        let exists = Self::known_table_names().contains(&name.to_string());
+        let exists = self.known_table_names().contains(&name.to_string());
         //log::debug!("LazySystemSchemaProvider::table_exist('{}') = {}", name, exists);
         exists
     }

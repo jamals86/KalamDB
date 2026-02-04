@@ -28,6 +28,7 @@ impl ServerConfig {
     /// - KALAMDB_JWT_EXPIRY_HOURS: Override auth.jwt_expiry_hours
     /// - KALAMDB_COOKIE_SECURE: Override auth.cookie_secure
     /// - KALAMDB_ALLOW_REMOTE_SETUP: Override auth.allow_remote_setup
+    /// - KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC: Override rate_limit.max_auth_requests_per_ip_per_sec
     ///
     /// Environment variables take precedence over server.toml values (T031)
     pub fn apply_env_overrides(&mut self) -> anyhow::Result<()> {
@@ -104,6 +105,16 @@ impl ServerConfig {
         if let Ok(val) = env::var("KALAMDB_ALLOW_REMOTE_SETUP") {
             self.auth.allow_remote_setup =
                 val.to_lowercase() == "true" || val == "1" || val.to_lowercase() == "yes";
+        }
+
+        // Auth rate limit per IP
+        if let Ok(val) = env::var("KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC") {
+            self.rate_limit.max_auth_requests_per_ip_per_sec = val.parse().map_err(|_| {
+                anyhow::anyhow!(
+                    "Invalid KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC value: {}",
+                    val
+                )
+            })?;
         }
 
         // Data directory (new naming convention)

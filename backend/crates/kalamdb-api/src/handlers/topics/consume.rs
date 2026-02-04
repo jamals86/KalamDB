@@ -1,6 +1,6 @@
 //! Topic consume handler
 //!
-//! POST /api/topics/consume - Consume messages from a topic
+//! POST /v1/api/topics/consume - Consume messages from a topic
 //!
 //! Uses the standard topic_message_schema for consistent field structure
 //! across SQL CONSUME and HTTP API responses.
@@ -22,7 +22,7 @@ fn is_topic_authorized(session: &AuthSession) -> bool {
     matches!(session.role(), Role::Service | Role::Dba | Role::System)
 }
 
-/// POST /api/topics/consume - Consume messages from a topic
+/// POST /v1/api/topics/consume - Consume messages from a topic
 ///
 /// Long polling endpoint that waits for messages or timeout.
 ///
@@ -40,7 +40,7 @@ fn is_topic_authorized(session: &AuthSession) -> bool {
 ///
 /// # Authorization
 /// Role must be `service`, `dba`, or `system` (NOT `user`).
-#[post("/topics/consume")]
+#[post("/consume")]
 pub async fn consume_handler(
     extractor: AuthSessionExtractor,
     body: web::Json<ConsumeRequest>,

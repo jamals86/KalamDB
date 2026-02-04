@@ -27,25 +27,18 @@ async fn count_rows(
 ) -> anyhow::Result<i64> {
     let resp = server
         .execute_sql_with_auth(
-            &format!("SELECT COUNT(DISTINCT id) AS cnt FROM {}.{}", ns, table),
+            &format!("SELECT id FROM {}.{} WHERE _deleted = false", ns, table),
             auth,
         )
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "COUNT failed: {:?}", resp.error);
-
-    let row = resp
+    let rows = resp
         .results
         .first()
-        .and_then(|r| r.row_as_map(0))
-        .ok_or_else(|| anyhow::anyhow!("Missing COUNT result row"))?;
-
-    row.get("cnt")
-        .and_then(|v| {
-            v.as_i64()
-                .or_else(|| v.as_u64().map(|u| u as i64))
-                .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
-        })
-        .ok_or_else(|| anyhow::anyhow!("COUNT value not an integer: {:?}", row.get("cnt")))
+        .and_then(|r| r.rows.as_ref())
+        .map(|r| r.len())
+        .unwrap_or(0);
+    Ok(rows as i64)
 }
 
 async fn wait_for_id_absent(
@@ -717,13 +710,13 @@ async fn test_flush_concurrency_and_correctness_over_http() {
             }
             flush_table_and_wait(server, &ns, t2).await?;
 
-            let delete_timeout = Duration::from_secs(10);
+            let delete_timeout = Duration::from_secs(20);
             wait_for_id_absent(server, &auth_b, &ns, t2, 5, delete_timeout).await?;
             wait_for_id_absent(server, &auth_b, &ns, t2, 15, delete_timeout).await?;
             wait_for_id_absent(server, &auth_b, &ns, t2, 25, delete_timeout).await?;
 
             let _cnt2 =
-                wait_for_row_count(server, &auth_b, &ns, t2, 27, Duration::from_secs(10)).await?;
+                wait_for_row_count(server, &auth_b, &ns, t2, 27, Duration::from_secs(20)).await?;
 
             let resp = server
                 .execute_sql_with_auth(

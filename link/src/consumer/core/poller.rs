@@ -28,8 +28,8 @@ impl ConsumerPoller {
         retry_backoff: Duration,
     ) -> Self {
         Self {
-            consume_url: format!("{}/api/topics/consume", base_url.trim_end_matches('/')),
-            ack_url: format!("{}/api/topics/ack", base_url.trim_end_matches('/')),
+            consume_url: format!("{}/v1/api/topics/consume", base_url.trim_end_matches('/')),
+            ack_url: format!("{}/v1/api/topics/ack", base_url.trim_end_matches('/')),
             http_client,
             auth,
             request_timeout,
@@ -147,7 +147,7 @@ impl ConsumerPoller {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ConsumeRequest {
-    pub topic: String,
+    pub topic_id: String,
     pub group_id: String,
     pub start: AutoOffsetReset,
     pub limit: u32,
@@ -164,7 +164,7 @@ pub struct ConsumeResponse {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AckRequest {
-    pub topic: String,
+    pub topic_id: String,
     pub group_id: String,
     pub partition_id: u32,
     pub upto_offset: u64,

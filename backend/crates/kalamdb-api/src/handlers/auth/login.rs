@@ -8,7 +8,6 @@ use kalamdb_auth::{
     authenticate, create_and_sign_token, create_auth_cookie, extract_client_ip_secure,
     AuthRequest, CookieConfig, UserRepository,
 };
-use kalamdb_commons::Role;
 use kalamdb_configs::AuthSettings;
 use std::sync::Arc;
 
@@ -49,14 +48,6 @@ pub async fn login_handler(
         Ok(result) => result,
         Err(err) => return map_auth_error_to_response(err),
     };
-
-    // Check role - only dba and system can access admin UI
-    if !matches!(auth_result.user.role, Role::Dba | Role::System) {
-        return HttpResponse::Forbidden().json(AuthErrorResponse::new(
-            "forbidden",
-            "Admin UI access requires dba or system role",
-        ));
-    }
 
     // Load full user record for response fields
     let username_typed = auth_result.user.username.clone();

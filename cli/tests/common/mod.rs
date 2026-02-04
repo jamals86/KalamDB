@@ -1,12 +1,11 @@
 #![allow(dead_code, unused_imports)]
 extern crate kalam_cli;
-use kalamdb_configs::ServerConfig;
-use kalamdb_server::lifecycle::RunningTestHttpServer;
 use rand::{distr::Alphanumeric, Rng};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::{Child, Stdio};
@@ -49,23 +48,23 @@ static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
 static TEST_CONTEXT: OnceLock<TestContext> = OnceLock::new();
 static LAST_LEADER_URL: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static AUTO_TEST_SERVER: OnceLock<Mutex<Option<AutoTestServer>>> = OnceLock::new();
-static AUTO_TEST_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+static AUTO_TEST_RUNTIME: OnceLock<&'static Runtime> = OnceLock::new();
 /// Token cache: maps "username:password" to access_token
 static TOKEN_CACHE: OnceLock<Mutex<std::collections::HashMap<String, String>>> = OnceLock::new();
 
 struct AutoTestServer {
     base_url: String,
     storage_dir: PathBuf,
-    _temp_dir: TempDir,
-    running: Option<RunningTestHttpServer>,
+    _temp_dir: Option<TempDir>,
+    child: Option<Child>,
 }
 
 impl Drop for AutoTestServer {
     fn drop(&mut self) {
-        // Intentionally skip shutdown in CLI test processes to avoid
-        // intermittent segfaults during runtime teardown. The OS will
-        // reclaim resources when the test process exits.
-        let _ = self.running.take();
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 
@@ -139,9 +138,11 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
                 let runtime = AUTO_TEST_RUNTIME.get_or_init(|| {
-                    Runtime::new().expect("Failed to create auto test server runtime")
+                    Box::leak(Box::new(
+                        Runtime::new().expect("Failed to create auto test server runtime"),
+                    ))
                 });
-                let result = runtime
+                let result = (*runtime)
                     .block_on(start_local_test_server())
                     .map_err(|err| err.to_string());
                 let _ = tx.send(result);
@@ -153,9 +154,11 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
             }
         } else {
             let runtime = AUTO_TEST_RUNTIME.get_or_init(|| {
-                Runtime::new().expect("Failed to create auto test server runtime")
+                Box::leak(Box::new(
+                    Runtime::new().expect("Failed to create auto test server runtime"),
+                ))
             });
-            runtime
+            (*runtime)
                 .block_on(start_local_test_server())
                 .map_err(|err| err.to_string())
         };
@@ -212,30 +215,104 @@ pub async fn force_auto_test_server_url_async() -> String {
     server_url().to_string()
 }
 
+fn kalamdb_server_bin() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Ok(path) = std::env::var("KALAMDB_SERVER_BIN") {
+        return Ok(PathBuf::from(path));
+    }
+
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.pop();
+    path.push("target");
+    path.push("debug");
+    path.push(if cfg!(windows) {
+        "kalamdb-server.exe"
+    } else {
+        "kalamdb-server"
+    });
+
+    if path.exists() {
+        Ok(path)
+    } else {
+        Err(format!(
+            "kalamdb-server binary not found at {}. Build it with `cargo build -p kalamdb-server --bin kalamdb-server`.",
+            path.display()
+        )
+        .into())
+    }
+}
+
 async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let data_path = temp_dir.path().to_path_buf();
 
-    let mut config = ServerConfig::default();
-    config.server.host = "127.0.0.1".to_string();
-    config.server.port = 0;
-    config.server.ui_path = None;
-    config.storage.data_path = data_path.to_string_lossy().into_owned();
-    config.rate_limit.max_queries_per_sec = 100000;
-    config.rate_limit.max_messages_per_sec = 10000;
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
 
-    let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
-    let running =
-        kalamdb_server::lifecycle::run_for_tests(&config, components, app_context).await?;
+    let rpc_listener = TcpListener::bind("127.0.0.1:0")?;
+    let rpc_port = rpc_listener.local_addr()?.port();
+    drop(rpc_listener);
+
+    let api_listener = TcpListener::bind("127.0.0.1:0")?;
+    let api_port = api_listener.local_addr()?.port();
+    drop(api_listener);
+
+    let base_url = format!("http://127.0.0.1:{}", port);
+    let server_bin = kalamdb_server_bin()?;
+
+    let mut config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    config_path.pop();
+    config_path.push("server.toml");
+
+    let log_path = data_path.join("server.log");
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+    let log_file_err = log_file.try_clone()?;
+
+    let mut cmd = Command::new(server_bin);
+    cmd.env("KALAMDB_SERVER_HOST", "127.0.0.1")
+        .env("KALAMDB_SERVER_PORT", port.to_string())
+        .env("KALAMDB_CLUSTER_RPC_ADDR", format!("127.0.0.1:{}", rpc_port))
+        .env("KALAMDB_CLUSTER_API_ADDR", format!("127.0.0.1:{}", api_port))
+        .env("KALAMDB_DATA_DIR", data_path.to_string_lossy().into_owned())
+        .env("KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC", "200")
+        .env("KALAMDB_LOG_LEVEL", "warn")
+        .arg(config_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_file_err));
+
+    let mut child = cmd.spawn()?;
+
+    if !wait_for_url_reachable(&base_url, Duration::from_secs(10)) {
+        let _ = child.kill();
+        let log_tail = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let log_tail = log_tail
+            .lines()
+            .rev()
+            .take(20)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(format!(
+            "Timed out waiting for test server at {}.\nLast server logs:\n{}",
+            base_url, log_tail
+        )
+        .into());
+    }
 
     // Ensure setup is completed for the auto-started server
-    ensure_server_setup(&running.base_url).await?;
+    ensure_server_setup(&base_url).await?;
 
     Ok(AutoTestServer {
-        base_url: running.base_url.clone(),
+        base_url: base_url.clone(),
         storage_dir: data_path,
-        _temp_dir: temp_dir,
-        running: Some(running),
+        _temp_dir: Some(temp_dir),
+        child: Some(child),
     })
 }
 
@@ -667,7 +744,7 @@ pub async fn get_access_token(
     get_access_token_for_url(server_url(), username, password).await
 }
 
-async fn get_access_token_for_url(
+pub async fn get_access_token_for_url(
     base_url: &str,
     username: &str,
     password: &str,
@@ -684,42 +761,29 @@ async fn get_access_token_for_url(
         }
     }
 
-    // Login to get token
+    // Login to get token (with retry for rate limits)
     let client = Client::new();
-    let response = client
-        .post(format!("{}/v1/api/auth/login", base_url))
-        .json(&json!({
-            "username": username,
-            "password": password
-        }))
-        .send()
-        .await?;
+    let mut attempt: u32 = 0;
+    let max_attempts: u32 = 6;
+    let mut backoff_ms: u64 = 150;
 
-    // Check for setup required (HTTP 428)
-    if response.status() == reqwest::StatusCode::PRECONDITION_REQUIRED {
-        eprintln!("[TEST] Server requires setup - auto-completing with admin/kalamdb123");
-
-        // Complete server setup
-        let setup_response = client
-            .post(format!("{}/v1/api/auth/setup", base_url))
-            .json(&json!({
-                "username": "admin",
-                "password": "kalamdb123",
-                "root_password": "kalamdb123",
-                "email": null
-            }))
-            .send()
-            .await?;
-
-        if !setup_response.status().is_success() {
-            let body = setup_response.text().await?;
-            return Err(format!("Failed to auto-complete server setup: {}", body).into());
+    let extract_error_message = |parsed: &serde_json::Value| -> Option<String> {
+        if let Some(msg) = parsed.get("message").and_then(|m| m.as_str()) {
+            return Some(msg.to_string());
         }
+        if let Some(err) = parsed.get("error") {
+            if let Some(msg) = err.get("message").and_then(|m| m.as_str()) {
+                return Some(msg.to_string());
+            }
+            if let Some(err_str) = err.as_str() {
+                return Some(err_str.to_string());
+            }
+        }
+        None
+    };
 
-        eprintln!("[TEST] Server setup completed - retrying login");
-
-        // Retry login after setup
-        let retry_response = client
+    loop {
+        let response = client
             .post(format!("{}/v1/api/auth/login", base_url))
             .json(&json!({
                 "username": username,
@@ -728,59 +792,71 @@ async fn get_access_token_for_url(
             .send()
             .await?;
 
-        let body = retry_response.text().await?;
-        let parsed: serde_json::Value = serde_json::from_str(&body)?;
+        let status = response.status();
 
-        let token = parsed
-            .get("access_token")
-            .and_then(|t| t.as_str())
-            .ok_or_else(|| -> Box<dyn std::error::Error> {
-                let error_msg = parsed
-                    .get("error")
-                    .and_then(|e| e.get("message"))
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("Login failed after setup");
-                format!("Failed to get access token after setup: {}", error_msg).into()
-            })?
-            .to_string();
+        // Check for setup required (HTTP 428)
+        if status == reqwest::StatusCode::PRECONDITION_REQUIRED {
+            eprintln!("[TEST] Server requires setup - auto-completing with admin/kalamdb123");
 
-        // Cache the token
-        {
-            let cache = TOKEN_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-            if let Ok(mut guard) = cache.lock() {
-                guard.insert(cache_key, token.clone());
+            let setup_response = client
+                .post(format!("{}/v1/api/auth/setup", base_url))
+                .json(&json!({
+                    "username": "admin",
+                    "password": "kalamdb123",
+                    "root_password": "kalamdb123",
+                    "email": null
+                }))
+                .send()
+                .await?;
+
+            if !setup_response.status().is_success() {
+                let body = setup_response.text().await?;
+                return Err(format!("Failed to auto-complete server setup: {}", body).into());
             }
+
+            eprintln!("[TEST] Server setup completed - retrying login");
+            continue;
         }
 
-        return Ok(token);
-    }
+        let body = response.text().await?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&body).unwrap_or_else(|_| json!({ "message": body }));
 
-    let body = response.text().await?;
-    let parsed: serde_json::Value = serde_json::from_str(&body)?;
+        if status.is_success() {
+            let token = parsed
+                .get("access_token")
+                .and_then(|t| t.as_str())
+                .ok_or_else(|| -> Box<dyn std::error::Error> {
+                    let error_msg = extract_error_message(&parsed)
+                        .unwrap_or_else(|| "Login failed".to_string());
+                    format!("Failed to get access token: {}", error_msg).into()
+                })?
+                .to_string();
 
-    // Extract access_token from response
-    let token = parsed
-        .get("access_token")
-        .and_then(|t| t.as_str())
-        .ok_or_else(|| -> Box<dyn std::error::Error> {
-            let error_msg = parsed
-                .get("error")
-                .and_then(|e| e.get("message"))
-                .and_then(|m| m.as_str())
-                .unwrap_or("Login failed");
-            format!("Failed to get access token: {}", error_msg).into()
-        })?
-        .to_string();
+            // Cache the token
+            {
+                let cache = TOKEN_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+                if let Ok(mut guard) = cache.lock() {
+                    guard.insert(cache_key, token.clone());
+                }
+            }
 
-    // Cache the token
-    {
-        let cache = TOKEN_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-        if let Ok(mut guard) = cache.lock() {
-            guard.insert(cache_key, token.clone());
+            return Ok(token);
         }
-    }
 
-    Ok(token)
+        let error_msg = extract_error_message(&parsed).unwrap_or_else(|| "Login failed".to_string());
+        let is_rate_limited = status == reqwest::StatusCode::TOO_MANY_REQUESTS
+            || error_msg.to_lowercase().contains("too many");
+
+        if is_rate_limited && attempt + 1 < max_attempts {
+            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+            backoff_ms = (backoff_ms * 2).min(2000);
+            attempt += 1;
+            continue;
+        }
+
+        return Err(format!("Failed to get access token: {}", error_msg).into());
+    }
 }
 
 async fn auth_provider_for_user_async(

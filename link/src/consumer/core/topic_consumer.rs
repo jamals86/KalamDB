@@ -53,7 +53,7 @@ impl TopicConsumer {
             .ok_or_else(|| KalamLinkError::ConfigurationError("No processed offsets to commit".into()))?;
 
         let request = AckRequest {
-            topic: self.config.topic.clone(),
+            topic_id: self.config.topic.clone(),
             group_id: self.config.group_id.clone(),
             partition_id: self.config.partition_id,
             upto_offset: offset,
@@ -73,14 +73,14 @@ impl TopicConsumer {
         };
 
         let poller = self.poller.clone();
-        let topic = self.config.topic.clone();
+        let topic_id = self.config.topic.clone();
         let group_id = self.config.group_id.clone();
         let partition_id = self.config.partition_id;
 
         tokio::spawn(async move {
             let _ = poller
                 .ack(AckRequest {
-                    topic,
+                    topic_id,
                     group_id,
                     partition_id,
                     upto_offset: offset,
@@ -125,7 +125,7 @@ impl TopicConsumer {
         };
 
         ConsumeRequest {
-            topic: self.config.topic.clone(),
+            topic_id: self.config.topic.clone(),
             group_id: self.config.group_id.clone(),
             start,
             limit: self.config.max_poll_records,

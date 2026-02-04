@@ -1292,9 +1292,6 @@ after that we can add a button in ui for checking storage health
 
 155) Add a table which i can view all topic messages
 
-156) Make sure the topic eviction works also using clear topic 
-
-
 
 
 
