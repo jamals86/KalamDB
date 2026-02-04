@@ -3,7 +3,6 @@ use crate::error::{CLIError, Result};
 use crate::parser::Command;
 use colored::Colorize;
 use kalam_link::SubscriptionConfig;
-use std::sync::Arc;
 use std::time::Instant;
 
 impl CLISession {
@@ -410,23 +409,11 @@ impl CLISession {
         let start_time = Instant::now();
         let mut total_consumed = 0_usize;
         let mut last_offset = 0_u64;
-        let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let stop_flag_clone = stop_flag.clone();
         let mut error_count = 0;
 
-        // Install Ctrl+C handler
-        tokio::spawn(async move {
-            signal::ctrl_c().await.ok();
-            stop_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-        });
-
-        // Poll loop
-        'consume_loop: loop {
-            // Check stop flag
-            if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                break;
-            }
-
+        // Poll loop - library handles long polling (30s default)
+        // Ctrl+C will interrupt the process naturally
+        loop {
             // Check timeout
             if let Some(timeout_seconds) = timeout {
                 if start_time.elapsed().as_secs() >= timeout_seconds {
@@ -443,8 +430,8 @@ impl CLISession {
                 }
             }
 
-            // Poll with short timeout to remain responsive
-            let records = match consumer.poll_with_timeout(Duration::from_secs(2)).await {
+            // Poll with long polling (30s) - library handles the HTTP request timeout
+            let records = match consumer.poll().await {
                 Ok(records) => {
                     error_count = 0; // Reset error count on success
                     records
@@ -483,7 +470,7 @@ impl CLISession {
                             "{}",
                             "❌ Too many consecutive errors. Exiting.".red().bold()
                         );
-                        break 'consume_loop;
+                        break;
                     }
                     
                     sleep(Duration::from_secs(1)).await;
@@ -523,13 +510,8 @@ impl CLISession {
                 // Check limit after each record
                 if let Some(limit_val) = limit {
                     if total_consumed >= limit_val {
-                        break 'consume_loop;
+                        break;
                     }
-                }
-
-                // Check stop flag
-                if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    break 'consume_loop;
                 }
             }
         }

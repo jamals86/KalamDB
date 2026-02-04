@@ -73,7 +73,14 @@ impl JobExecutor for TopicCleanupExecutor {
     }
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
-        ctx.log_info("Starting topic cleanup operation");
+        // No local work needed for topic cleanup
+        Ok(JobDecision::Completed {
+            message: Some("Topic cleanup has no local work".to_string()),
+        })
+    }
+
+    async fn execute_leader(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
+        ctx.log_info("Starting topic cleanup operation (leader)");
 
         // Parameters already validated in JobContext
         let params = ctx.params();
@@ -81,7 +88,7 @@ impl JobExecutor for TopicCleanupExecutor {
         let topic_name = &params.topic_name;
 
         ctx.log_info(&format!(
-            "Cleaning up dropped topic '{}' ({})",
+            "Cleaning up topic '{}' ({})",
             topic_name, topic_id
         ));
 
