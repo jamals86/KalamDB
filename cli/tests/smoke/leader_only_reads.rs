@@ -253,7 +253,7 @@ fn smoke_test_not_leader_error_detection() {
 }
 
 /// Test consecutive read/write operations to ensure consistency
-#[ntest::timeout(90000)]
+#[ntest::timeout(135000)]
 #[test]
 fn smoke_test_read_after_write_consistency() {
     if !is_server_running() {

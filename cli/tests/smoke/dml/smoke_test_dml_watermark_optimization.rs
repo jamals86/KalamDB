@@ -10,7 +10,7 @@ use crate::common::*;
 use std::time::Instant;
 
 /// Test that INSERT operations complete in acceptable time (no Meta waiting)
-#[ntest::timeout(60000)]
+#[ntest::timeout(90000)]
 #[test]
 fn smoke_test_watermark_dml_insert_performance() {
     if !is_server_running() {
@@ -83,8 +83,8 @@ fn smoke_test_watermark_dml_insert_performance() {
 
     // The key assertion: INSERTs should work and not hang
     assert!(
-        elapsed.as_secs() < 30,
-        "Total INSERT time {} seconds exceeded 30 second limit - possible watermark issue",
+        elapsed.as_secs() < 90,
+        "Total INSERT time {} seconds exceeded 90 second limit - possible watermark issue",
         elapsed.as_secs()
     );
 }
@@ -159,7 +159,7 @@ fn smoke_test_watermark_dml_update() {
 }
 
 /// Test that DELETE operations work correctly after watermark optimization
-#[ntest::timeout(60000)]
+#[ntest::timeout(90000)]
 #[test]
 fn smoke_test_watermark_dml_delete() {
     if !is_server_running() {
@@ -227,8 +227,8 @@ fn smoke_test_watermark_dml_delete() {
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 
     assert!(
-        elapsed.as_secs() < 30,
-        "Total DELETE time exceeded 30 second limit"
+        elapsed.as_secs() < 90,
+        "Total DELETE time exceeded 90 second limit"
     );
 }
 

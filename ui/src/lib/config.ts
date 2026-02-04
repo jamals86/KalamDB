@@ -32,7 +32,7 @@ export type TimestampFormat =
   | 'unix-ms'
   | 'unix-sec';
 
-export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = 'locale';
+export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = 'iso8601-datetime';
 
 /**
  * Timezone for displaying timestamps.

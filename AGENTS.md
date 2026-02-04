@@ -118,7 +118,7 @@ backend/crates/
 ## Testing (MUST)
 
 - Use `cargo nextest run` for all test executions unless explicitly told otherwise.
-- When running server tests and fixing issues, always include `--no-fail-fast` so all failures are collected in one run.
+- For e2e test runs, do NOT pass `--no-fail-fast`. Run normally, fix the first failure, re-run until it passes, then move to the next failing issue.
 - Always add `#[ntest::timeout(time)]` to every async test where `time` is the **actual observed runtime** × 1.5 (to cover slower machines).
    - Example: if a test took 40s, set `#[ntest::timeout(60000)]`.
    - Recalculate and update timeouts after significant changes to test behavior or data size.
@@ -170,14 +170,3 @@ Suggested extra checks:
 4. JWT secrets must be non-default and at least 32 chars; refuse startup on non-localhost if not.
 5. Cookies carrying auth tokens must be `HttpOnly` and `SameSite=Strict`; `Secure` in production.
 6. WebSocket origins must be validated against config or rejected when strict mode is enabled.
-
-## Recent Changes
-
-**Phase 13 - Crate Consolidation** (Complete):
-- **Eliminated kalamdb-registry**: All schema management code moved to `kalamdb-core/src/schema_registry/`
-- **Eliminated kalamdb-live**: All live query code moved to `kalamdb-core/src/live/`
-- **Circular Dependency Resolution**: Direct integration into kalamdb-core eliminates circular dependencies
-- **Import Updates**: Changed from `kalamdb_registry::` and `kalamdb_live::` to `crate::schema_registry::` and `crate::live::`
-- **Error Type Consolidation**: RegistryError and LiveError now part of kalamdb-core error module
-- **Workspace Size**: Reduced from 11 crates to 9 crates (more maintainable)
-- **Stats Provider**: Moved from kalamdb-system to kalamdb-core/src/views/stats.rs (virtual view implementation)

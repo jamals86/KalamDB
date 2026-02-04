@@ -9,13 +9,7 @@
 
 use crate::cluster_common::*;
 use crate::common::*;
-use kalam_link::{
-    AuthProvider,
-    ChangeEvent,
-    KalamLinkClient,
-    KalamLinkTimeouts,
-    SubscriptionManager,
-};
+use kalam_link::{ChangeEvent, KalamLinkTimeouts, SubscriptionManager};
 use serde_json::Value;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -62,21 +56,20 @@ fn get_leader_and_followers() -> (String, Vec<String>) {
 }
 
 fn create_ws_client(base_url: &str) -> KalamLinkClient {
-    KalamLinkClient::builder()
-        .base_url(base_url)
-        .auth(auth_provider_for_user_on_url(base_url, "root", root_password()))
-        .timeouts(
-            KalamLinkTimeouts::builder()
-                .connection_timeout_secs(5)
-                .receive_timeout_secs(30)
-                .send_timeout_secs(10)
-                .subscribe_timeout_secs(20)
-                .auth_timeout_secs(10)
-                .initial_data_timeout(Duration::from_secs(30))
-                .build(),
-        )
-        .build()
-        .expect("Failed to build cluster client")
+    client_for_user_on_url_with_timeouts(
+        base_url,
+        default_username(),
+        default_password(),
+        KalamLinkTimeouts::builder()
+            .connection_timeout_secs(5)
+            .receive_timeout_secs(30)
+            .send_timeout_secs(10)
+            .subscribe_timeout_secs(20)
+            .auth_timeout_secs(10)
+            .initial_data_timeout(Duration::from_secs(30))
+            .build(),
+    )
+    .expect("Failed to build cluster client")
 }
 
 /// Execute a query with automatic leader retry on NOT_LEADER errors
@@ -615,21 +608,20 @@ fn cluster_test_subscription_user_table_any_node() {
     // Subscribe as the test user from different nodes and verify
     for (idx, url) in urls.iter().enumerate() {
         cluster_runtime().block_on(async {
-            let client = KalamLinkClient::builder()
-                .base_url(url)
-                .auth(auth_provider_for_user_on_url(url, &test_user, "test_password_123"))
-                .timeouts(
-                    KalamLinkTimeouts::builder()
-                        .connection_timeout_secs(5)
-                        .receive_timeout_secs(10)
-                        .send_timeout_secs(5)
-                        .subscribe_timeout_secs(5)
-                        .auth_timeout_secs(5)
-                        .initial_data_timeout(Duration::from_secs(10))
-                        .build(),
-                )
-                .build()
-                .expect("Failed to build client");
+            let client = client_for_user_on_url_with_timeouts(
+                url,
+                &test_user,
+                "test_password_123",
+                KalamLinkTimeouts::builder()
+                    .connection_timeout_secs(5)
+                    .receive_timeout_secs(10)
+                    .send_timeout_secs(5)
+                    .subscribe_timeout_secs(5)
+                    .auth_timeout_secs(5)
+                    .initial_data_timeout(Duration::from_secs(10))
+                    .build(),
+            )
+            .expect("Failed to build client");
 
             let query = format!("SELECT * FROM {}", full);
             match client.subscribe(&query).await {

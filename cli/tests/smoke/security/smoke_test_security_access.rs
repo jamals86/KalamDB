@@ -1,5 +1,5 @@
 use crate::common::*;
-use kalam_link::{KalamLinkClient, KalamLinkTimeouts};
+use kalam_link::KalamLinkTimeouts;
 use std::time::Duration;
 
 const MAX_SQL_QUERY_LENGTH: usize = 1024 * 1024;
@@ -44,21 +44,20 @@ fn subscribe_as_user(username: &str, password: &str, query: &str) -> Result<(), 
             .unwrap_or_else(|| server_url().to_string())
     });
 
-    let client = KalamLinkClient::builder()
-        .base_url(&base_url)
-        .auth(auth_provider_for_user_on_url(&base_url, username, password))
-        .timeouts(
-            KalamLinkTimeouts::builder()
-                .connection_timeout_secs(5)
-                .receive_timeout_secs(30)
-                .send_timeout_secs(30)
-                .subscribe_timeout_secs(10)
-                .auth_timeout_secs(10)
-                .initial_data_timeout(Duration::from_secs(15))
-                .build(),
-        )
-        .build()
-        .map_err(|e| format!("Failed to build client: {}", e))?;
+    let client = client_for_user_on_url_with_timeouts(
+        &base_url,
+        username,
+        password,
+        KalamLinkTimeouts::builder()
+            .connection_timeout_secs(5)
+            .receive_timeout_secs(30)
+            .send_timeout_secs(30)
+            .subscribe_timeout_secs(10)
+            .auth_timeout_secs(10)
+            .initial_data_timeout(Duration::from_secs(15))
+            .build(),
+    )
+    .map_err(|e| format!("Failed to build client: {}", e))?;
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()

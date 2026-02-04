@@ -6,6 +6,7 @@ use crate::consumer::models::AutoOffsetReset;
 use crate::consumer::utils::backoff::jittered_exponential_backoff;
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
+use serde_json;
 use std::time::Duration;
 
 #[derive(Clone)]
@@ -58,8 +59,24 @@ impl ConsumerPoller {
                 Ok(response) => {
                     let status = response.status();
                     if status.is_success() {
-                        let result = response.json::<ConsumeResponse>().await?;
-                        return Ok(result);
+                        let bytes = response.bytes().await?;
+                        if bytes.is_empty() {
+                            return Ok(ConsumeResponse {
+                                messages: Vec::new(),
+                                next_offset: 0,
+                                has_more: false,
+                            });
+                        }
+                        match serde_json::from_slice::<ConsumeResponse>(&bytes) {
+                            Ok(result) => return Ok(result),
+                            Err(_) => {
+                                let body = String::from_utf8_lossy(&bytes);
+                                return Err(KalamLinkError::ServerError {
+                                    status_code: status.as_u16(),
+                                    message: body.to_string(),
+                                });
+                            }
+                        }
                     }
 
                     let error_text = response

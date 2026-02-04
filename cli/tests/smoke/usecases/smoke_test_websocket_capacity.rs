@@ -18,7 +18,7 @@ use tokio_tungstenite::tungstenite::{
 };
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
-const AUTH_USERNAME: &str = "root";
+const AUTH_USERNAME: &str = "admin";
 // Use conservative count to avoid overwhelming server during testing
 const DEFAULT_WEBSOCKET_CONNECTIONS: usize = 8;
 const SQL_RESPONSIVENESS_BUDGET: Duration = Duration::from_secs(10);
@@ -57,7 +57,7 @@ fn smoke_test_websocket_capacity() {
     let subscription_prefix_for_cleanup = subscription_prefix.clone();
 
     runtime.block_on(async move {
-        let token = get_access_token(AUTH_USERNAME, root_password())
+        let token = get_access_token(AUTH_USERNAME, default_password())
             .await
             .unwrap_or_else(|e| panic!("Failed to get access token: {}", e));
         

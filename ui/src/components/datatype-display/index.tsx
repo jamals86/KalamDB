@@ -32,42 +32,76 @@ export function CellDisplay({ value, dataType, namespace, tableName }: CellDispl
     return <span className="text-muted-foreground italic">null</span>;
   }
 
+  // Normalize dataType for comparison
+  const normalizedType = dataType?.toUpperCase() || '';
+  
   // Route to appropriate display component based on dataType
-  switch (dataType?.toUpperCase()) {
-    case 'TIMESTAMP':
-    case 'DATETIME':
-      return <TimestampDisplay value={value} />;
-    
-    case 'DATE':
-      return <DateDisplay value={value} />;
-    
-    case 'FILE':
-      return <FileDisplay value={value} namespace={namespace} tableName={tableName} />;
-    
-    case 'JSON':
-      return <JsonDisplay value={value} />;
-    
-    case 'BOOLEAN':
-      return <BooleanDisplay value={value} />;
-    
-    case 'INT':
-    case 'BIGINT':
-    case 'SMALLINT':
-    case 'FLOAT':
-    case 'DOUBLE':
-    case 'DECIMAL':
-      return <NumberDisplay value={value} dataType={dataType as any} />;
-    
-    case 'TEXT':
-    case 'STRING':
-    case 'VARCHAR':
-      return <TextDisplay value={value} />;
-    
-    default:
-      // Fallback for unknown types
-      if (typeof value === 'object') {
-        return <JsonDisplay value={value} />;
-      }
-      return <TextDisplay value={String(value)} />;
+  // Handle Timestamp types (including Arrow types)
+  if (normalizedType.startsWith('TIMESTAMP') || normalizedType === 'DATETIME') {
+    return <TimestampDisplay value={value} />;
   }
+  
+  // Handle Date types
+  if (normalizedType === 'DATE' || normalizedType.startsWith('DATE32') || normalizedType.startsWith('DATE64')) {
+    return <DateDisplay value={value} />;
+  }
+  
+  // Handle Boolean
+  if (normalizedType === 'BOOLEAN' || normalizedType === 'BOOL') {
+    return <BooleanDisplay value={value} />;
+  }
+  
+  // Handle Numeric types (including Arrow types)
+  if (
+    // Standard SQL types
+    normalizedType === 'INT' || normalizedType === 'INTEGER' ||
+    normalizedType === 'BIGINT' || 
+    normalizedType === 'SMALLINT' || normalizedType === 'TINYINT' ||
+    normalizedType === 'FLOAT' || normalizedType === 'DOUBLE' || normalizedType === 'DECIMAL' ||
+    // Arrow types
+    normalizedType.startsWith('INT8') || normalizedType.startsWith('INT16') || 
+    normalizedType.startsWith('INT32') || normalizedType.startsWith('INT64') ||
+    normalizedType.startsWith('UINT8') || normalizedType.startsWith('UINT16') || 
+    normalizedType.startsWith('UINT32') || normalizedType.startsWith('UINT64') ||
+    normalizedType.startsWith('FLOAT16') || normalizedType.startsWith('FLOAT32') || 
+    normalizedType.startsWith('FLOAT64')
+  ) {
+    // Map Arrow types to display types
+    let displayType: 'INT' | 'BIGINT' | 'SMALLINT' | 'FLOAT' | 'DOUBLE' | 'DECIMAL' = 'INT';
+    
+    if (normalizedType.includes('64') || normalizedType === 'BIGINT') {
+      displayType = 'BIGINT';
+    } else if (normalizedType.includes('FLOAT') || normalizedType.includes('DOUBLE')) {
+      displayType = 'DOUBLE';
+    } else if (normalizedType === 'DECIMAL') {
+      displayType = 'DECIMAL';
+    } else if (normalizedType.includes('16') || normalizedType.includes('8') || normalizedType === 'SMALLINT') {
+      displayType = 'SMALLINT';
+    }
+    
+    return <NumberDisplay value={value} dataType={displayType} />;
+  }
+  
+  // Handle File type
+  if (normalizedType === 'FILE') {
+    return <FileDisplay value={value} namespace={namespace} tableName={tableName} />;
+  }
+  
+  // Handle JSON type
+  if (normalizedType === 'JSON') {
+    return <JsonDisplay value={value} />;
+  }
+  
+  // Handle Text types
+  if (normalizedType === 'TEXT' || normalizedType === 'STRING' || normalizedType === 'VARCHAR' || 
+      normalizedType.startsWith('UTF8') || normalizedType === 'LARGESTRING') {
+    return <TextDisplay value={value} />;
+  }
+  
+  // Fallback for unknown types
+  if (typeof value === 'object') {
+    return <JsonDisplay value={value} />;
+  }
+  
+  return <TextDisplay value={String(value)} />;
 }

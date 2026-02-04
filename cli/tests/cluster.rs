@@ -18,7 +18,7 @@ mod common;
 /// Cluster-specific common utilities
 mod cluster_common {
     use crate::common::*;
-    use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts, QueryResponse};
+    use kalam_link::{KalamLinkTimeouts, QueryResponse};
     use serde_json::Value;
     use std::sync::OnceLock;
     use std::time::Duration;
@@ -47,22 +47,20 @@ mod cluster_common {
 
     /// Create a client connected to a specific cluster node
     pub fn create_cluster_client(base_url: &str) -> KalamLinkClient {
-        let password = root_password().to_string();
-        KalamLinkClient::builder()
-            .base_url(base_url)
-            .auth(auth_provider_for_user_on_url(base_url, "root", &password))
-            .timeouts(
-                KalamLinkTimeouts::builder()
-                    .connection_timeout_secs(5)
-                    .receive_timeout_secs(30)
-                    .send_timeout_secs(10)
-                    .subscribe_timeout_secs(10)
-                    .auth_timeout_secs(10)
-                    .initial_data_timeout(Duration::from_secs(30))
-                    .build(),
-            )
-            .build()
-            .expect("Failed to build cluster client")
+        client_for_user_on_url_with_timeouts(
+            base_url,
+            default_username(),
+            default_password(),
+            KalamLinkTimeouts::builder()
+                .connection_timeout_secs(5)
+                .receive_timeout_secs(30)
+                .send_timeout_secs(10)
+                .subscribe_timeout_secs(10)
+                .auth_timeout_secs(10)
+                .initial_data_timeout(Duration::from_secs(30))
+                .build(),
+        )
+        .expect("Failed to build cluster client")
     }
 
     /// Create a client connected to a specific cluster node with custom credentials
@@ -71,21 +69,20 @@ mod cluster_common {
         username: &str,
         password: &str,
     ) -> KalamLinkClient {
-        KalamLinkClient::builder()
-            .base_url(base_url)
-            .auth(auth_provider_for_user_on_url(base_url, username, password))
-            .timeouts(
-                KalamLinkTimeouts::builder()
-                    .connection_timeout_secs(5)
-                    .receive_timeout_secs(30)
-                    .send_timeout_secs(10)
-                    .subscribe_timeout_secs(10)
-                    .auth_timeout_secs(10)
-                    .initial_data_timeout(Duration::from_secs(30))
-                    .build(),
-            )
-            .build()
-            .expect("Failed to build cluster client")
+        client_for_user_on_url_with_timeouts(
+            base_url,
+            username,
+            password,
+            KalamLinkTimeouts::builder()
+                .connection_timeout_secs(5)
+                .receive_timeout_secs(30)
+                .send_timeout_secs(10)
+                .subscribe_timeout_secs(10)
+                .auth_timeout_secs(10)
+                .initial_data_timeout(Duration::from_secs(30))
+                .build(),
+        )
+        .expect("Failed to build cluster client")
     }
 
     /// Execute a query on a specific cluster node and return the count

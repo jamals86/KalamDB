@@ -4,13 +4,7 @@
 
 use crate::cluster_common::*;
 use crate::common::*;
-use kalam_link::{
-    AuthProvider,
-    ChangeEvent,
-    KalamLinkClient,
-    KalamLinkTimeouts,
-    SubscriptionManager,
-};
+use kalam_link::{ChangeEvent, KalamLinkTimeouts, SubscriptionManager};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -58,21 +52,20 @@ fn parse_cluster_nodes() -> (String, String) {
 }
 
 fn create_ws_client(base_url: &str) -> KalamLinkClient {
-    KalamLinkClient::builder()
-        .base_url(base_url)
-        .auth(auth_provider_for_user_on_url(base_url, "root", root_password()))
-        .timeouts(
-            KalamLinkTimeouts::builder()
-                .connection_timeout_secs(5)
-                .receive_timeout_secs(30)
-                .send_timeout_secs(10)
-                .subscribe_timeout_secs(20)
-                .auth_timeout_secs(10)
-                .initial_data_timeout(Duration::from_secs(30))
-                .build(),
-        )
-        .build()
-        .expect("Failed to build cluster client")
+    client_for_user_on_url_with_timeouts(
+        base_url,
+        default_username(),
+        default_password(),
+        KalamLinkTimeouts::builder()
+            .connection_timeout_secs(5)
+            .receive_timeout_secs(30)
+            .send_timeout_secs(10)
+            .subscribe_timeout_secs(20)
+            .auth_timeout_secs(10)
+            .initial_data_timeout(Duration::from_secs(30))
+            .build(),
+    )
+    .expect("Failed to build cluster client")
 }
 
 async fn subscribe_with_retry(

@@ -369,7 +369,9 @@ impl raft_server::Raft for RaftService {
 /// This must be called after creating the RaftManager to enable inter-node communication.
 ///
 /// The `advertise_addr` is typically a hostname:port like "kalamdb-node1:9090".
-/// This function extracts the port and binds to "0.0.0.0:PORT" for all interfaces.
+/// This function binds to the advertised address when possible; if the address
+/// is not a valid socket address (e.g., hostname), it falls back to
+/// "0.0.0.0:PORT" to listen on all interfaces.
 /// Returns an error if the server fails to start (e.g., port already in use).
 pub async fn start_rpc_server(
     manager: Arc<RaftManager>,
@@ -385,10 +387,16 @@ pub async fn start_rpc_server(
         ))
     })?;
 
-    let bind_addr = format!("0.0.0.0:{}", port);
-    let addr: std::net::SocketAddr = bind_addr.parse().map_err(|e| {
-        crate::RaftError::Internal(format!("Invalid bind address '{}': {}", bind_addr, e))
-    })?;
+    let (addr, bind_addr) = match advertise_addr.parse::<std::net::SocketAddr>() {
+        Ok(addr) => (addr, advertise_addr.clone()),
+        Err(_) => {
+            let bind_addr = format!("0.0.0.0:{}", port);
+            let addr: std::net::SocketAddr = bind_addr.parse().map_err(|e| {
+                crate::RaftError::Internal(format!("Invalid bind address '{}': {}", bind_addr, e))
+            })?;
+            (addr, bind_addr)
+        }
+    };
 
     // Try to bind the TCP listener first to detect port conflicts early
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {

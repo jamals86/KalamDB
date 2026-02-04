@@ -7,7 +7,7 @@
 //! NOTE: These are integration tests that test actual network behavior.
 //! They do NOT require a running server (they test timeout behavior).
 
-use kalam_link::{AuthProvider, KalamLinkClient, KalamLinkTimeouts};
+use crate::common::{client_for_url_no_auth, KalamLinkTimeouts};
 use std::time::{Duration, Instant};
 
 /// Test that connection timeout is properly enforced when server is unreachable
@@ -26,11 +26,7 @@ async fn test_connection_timeout_unreachable_server() {
         .connection_timeout_secs(2) // 2 second connection timeout
         .build();
 
-    let client = KalamLinkClient::builder()
-        .base_url(unreachable_url)
-        .auth(AuthProvider::none())
-        .timeouts(timeouts)
-        .build()
+    let client = client_for_url_no_auth(unreachable_url, timeouts)
         .expect("Client build should succeed");
 
     let start = Instant::now();
@@ -60,11 +56,7 @@ async fn test_fast_timeout_preset() {
     // Use the fast preset (optimized for local development)
     let timeouts = KalamLinkTimeouts::fast();
 
-    let client = KalamLinkClient::builder()
-        .base_url(unreachable_url)
-        .auth(AuthProvider::none())
-        .timeouts(timeouts)
-        .build()
+    let client = client_for_url_no_auth(unreachable_url, timeouts)
         .expect("Client build should succeed");
 
     let start = Instant::now();
@@ -88,11 +80,7 @@ async fn test_connection_refused() {
     // Port 59999 is unlikely to have a server running
     let wrong_port_url = "http://localhost:59999";
 
-    let client = KalamLinkClient::builder()
-        .base_url(wrong_port_url)
-        .auth(AuthProvider::none())
-        .timeouts(KalamLinkTimeouts::fast())
-        .build()
+    let client = client_for_url_no_auth(wrong_port_url, KalamLinkTimeouts::fast())
         .expect("Client build should succeed");
 
     let start = Instant::now();

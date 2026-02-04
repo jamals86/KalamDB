@@ -398,7 +398,7 @@ impl CLISession {
                 format!("  Timeout: {}s", timeout_val).dimmed()
             );
         }
-        println!("{}", "Press Ctrl+C or type 'q' to stop...".dimmed());
+        println!("{}", "Press Ctrl+C to stop...".dimmed());
         println!();
 
         // CSV header for CSV format
@@ -411,8 +411,11 @@ impl CLISession {
         let mut last_offset = 0_u64;
         let mut error_count = 0;
 
+        // Set up Ctrl+C handler
+        let ctrl_c = signal::ctrl_c();
+        tokio::pin!(ctrl_c);
+
         // Poll loop - library handles long polling (30s default)
-        // Ctrl+C will interrupt the process naturally
         loop {
             // Check timeout
             if let Some(timeout_seconds) = timeout {
@@ -431,7 +434,17 @@ impl CLISession {
             }
 
             // Poll with long polling (30s) - library handles the HTTP request timeout
-            let records = match consumer.poll().await {
+            // Use tokio::select to handle Ctrl+C during the poll
+            let poll_result = tokio::select! {
+                _ = &mut ctrl_c => {
+                    println!();
+                    println!("{}", "⚠️  Interrupted by user (Ctrl+C)".yellow());
+                    break;
+                }
+                result = consumer.poll() => result
+            };
+
+            let records = match poll_result {
                 Ok(records) => {
                     error_count = 0; // Reset error count on success
                     records

@@ -15,6 +15,9 @@ export function NumberDisplay({ value, dataType }: NumberDisplayProps) {
       minimumFractionDigits: 0,
       maximumFractionDigits: 6,
     });
+  } else if (dataType === 'BIGINT') {
+    // Show BigInt as raw number without thousand separators
+    formatted = String(value);
   } else {
     formatted = Number(value).toLocaleString();
   }
