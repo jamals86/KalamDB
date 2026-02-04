@@ -377,8 +377,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         // Create composite key
         let row_key = UserTableRowId::new(user_id.clone(), seq_id);
 
-        log::info!("🔍 [AS_USER_DEBUG] Inserting row for user_id='{}' _seq={}", 
-                   user_id.as_str(), seq_id);
+        // log::info!("🔍 [AS_USER_DEBUG] Inserting row for user_id='{}' _seq={}", 
+        //            user_id.as_str(), seq_id);
 
         // Store the entity in RocksDB (hot storage) with PK index maintenance
         self.store.insert(&row_key, &entity).map_err(|e| {
@@ -832,8 +832,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let (user_id, role) = extract_user_context(state)?;
         let allow_all_users = can_read_all_users(role);
 
-        log::info!("🔍 [AS_USER_DEBUG] scan_rows: user_id='{}' role={:?} allow_all={}", 
-                   user_id.as_str(), role, allow_all_users);
+        // log::info!("🔍 [AS_USER_DEBUG] scan_rows: user_id='{}' role={:?} allow_all={}", 
+        //            user_id.as_str(), role, allow_all_users);
 
         // Extract sequence bounds from filter to optimize RocksDB scan
         let (since_seq, _until_seq) = if let Some(expr) = filter {
@@ -859,7 +859,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         };
 
         let table_id = self.core.table_id();
-        log::debug!(
+        log::trace!(
             "[UserTableProvider] scan_rows resolved {} row(s) for user={} role={:?} table={}",
             kvs.len(),
             user_id.as_str(),

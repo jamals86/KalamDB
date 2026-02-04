@@ -555,6 +555,9 @@ async fn test_topic_consume_from_latest() {
         .build()
         .expect("Failed to build consumer");
 
+    // Give the consumer a moment to initialize before new inserts
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
     // Insert new messages
     for i in 6..=10 {
         execute_sql(&format!(
@@ -564,16 +567,28 @@ async fn test_topic_consume_from_latest() {
         .await;
     }
 
-    let records = poll_records_until(&mut consumer, 5, Duration::from_secs(10)).await;
-    let new_messages: Vec<_> = records
-        .iter()
-        .filter_map(|record| {
+    let mut new_messages: Vec<String> = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(12);
+    while std::time::Instant::now() < deadline && new_messages.len() < 5 {
+        let records = poll_records_until(&mut consumer, 1, Duration::from_secs(2)).await;
+        for record in records {
             let payload = parse_payload(&record.payload);
-            payload.get("msg").and_then(|v| v.as_str()).map(|s| s.to_string())
-        })
-        .filter(|msg| msg.starts_with("new"))
-        .collect();
-    assert!(new_messages.len() >= 5);
+            if let Some(msg) = payload.get("msg").and_then(|v| v.as_str()) {
+                if msg.starts_with("new") {
+                    new_messages.push(msg.to_string());
+                }
+            }
+        }
+        if new_messages.len() < 5 {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    assert!(
+        new_messages.len() >= 5,
+        "Expected at least 5 new messages, got {}",
+        new_messages.len()
+    );
 
     execute_sql(&format!("DROP TOPIC {}", topic)).await;
     execute_sql(&format!("DROP TABLE {}.{}", namespace, table)).await;

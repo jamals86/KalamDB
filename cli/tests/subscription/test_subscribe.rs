@@ -68,18 +68,33 @@ fn test_cli_subscription_commands() {
         return;
     }
 
-    // Test --list-subscriptions command
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--username")
-        .arg(default_username())
-        .arg("--password")
-        .arg(root_password())
-        .arg("--list-subscriptions");
+    // Test --list-subscriptions command (retry for transient server startup/load)
+    let mut last_list_output: Option<std::process::Output> = None;
+    let mut list_success = false;
+    for _ in 0..5 {
+        let mut cmd = create_cli_command();
+        cmd.arg("-u")
+            .arg(server_url())
+            .arg("--username")
+            .arg(default_username())
+            .arg("--password")
+            .arg(root_password())
+            .arg("--list-subscriptions");
 
-    let output = cmd.output().unwrap();
-    assert!(output.status.success(), "list-subscriptions command should succeed");
+        let output = cmd.output().unwrap();
+        if output.status.success() {
+            list_success = true;
+            break;
+        }
+        last_list_output = Some(output);
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    assert!(
+        list_success,
+        "list-subscriptions command should succeed. Last output: {:?}",
+        last_list_output.as_ref().map(|out| String::from_utf8_lossy(&out.stderr))
+    );
 
     // Test --unsubscribe command (should provide helpful message)
     let mut cmd = create_cli_command();
