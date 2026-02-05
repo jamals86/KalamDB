@@ -80,7 +80,7 @@ impl JobsTableSchema {
                 4,
                 "parameters",
                 4,
-                KalamDataType::Text,
+                KalamDataType::Json,
                 true,
                 false,
                 false,

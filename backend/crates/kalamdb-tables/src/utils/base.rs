@@ -1208,6 +1208,9 @@ fn strip_list_prefix<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
 ///
 /// **Optimization**: If the PK column is AUTO_INCREMENT or SNOWFLAKE_ID, this check
 /// is skipped since the system guarantees unique values.
+///
+/// **Cold Storage Check**: After checking hot storage (RocksDB), this also checks
+/// cold storage (Parquet files) using PkExistenceChecker for full PK uniqueness validation.
 pub async fn ensure_unique_pk_value<P, K, V>(
     provider: &P,
     scope: Option<&UserId>,
@@ -1220,7 +1223,7 @@ where
     let table_id = provider.table_id();
 
     // Get table definition to check if PK is auto-increment
-    if let Some(table_def) = provider.schema_registry().get_table_if_exists(table_id)?
+    let table_def = if let Some(table_def) = provider.schema_registry().get_table_if_exists(table_id)?
     {
         // Fast path: Skip uniqueness check if PK is auto-increment
         if crate::utils::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
@@ -1230,18 +1233,52 @@ where
             );
             return Ok(());
         }
-    }
+        table_def
+    } else {
+        return Ok(()); // Table not found, will error elsewhere
+    };
 
     let pk_name = provider.primary_key_field_name();
     if let Some(pk_value) = row_data.get(pk_name) {
         if !matches!(pk_value, ScalarValue::Null) {
             let pk_str = unified_dml::extract_user_pk_value(row_data, pk_name)?;
             let user_scope = resolve_user_scope(scope);
-            // Use find_row_key_by_id_field which can use PK index (O(1) vs O(n))
+            
+            //Step 1: Check hot storage (RocksDB) - fast PK index lookup
             if provider.find_row_key_by_id_field(user_scope, &pk_str).await?.is_some() {
                 return Err(KalamDbError::AlreadyExists(format!(
-                    "Primary key violation: value '{}' already exists in column '{}'",
+                    "Primary key violation: value '{}' already exists in column '{}' (hot storage)",
                     pk_str, pk_name
+                )));
+            }
+
+            // Step 2: Check cold storage (Parquet files) using PkExistenceChecker
+            let core = provider.core();
+            
+            // Skip cold storage check if storage registry is not available
+            let Some(storage_registry) = core.storage_registry.clone() else {
+                return Ok(()); // No cold storage to check
+            };
+            
+            let pk_checker = crate::utils::pk::PkExistenceChecker::new(
+                core.schema_registry.clone(),
+                storage_registry,
+                core.manifest_service.clone(),
+            );
+
+            let table_type = P::provider_table_type(provider);
+            let check_result = pk_checker.check_pk_exists(
+                &table_def,
+                table_id,
+                table_type,
+                scope,
+                &pk_str,
+            ).await?;
+
+            if let crate::utils::pk::PkCheckResult::FoundInCold { segment_path } = check_result {
+                return Err(KalamDbError::AlreadyExists(format!(
+                    "Primary key violation: value '{}' already exists in column '{}' (cold storage: {})",
+                    pk_str, pk_name, segment_path
                 )));
             }
         }

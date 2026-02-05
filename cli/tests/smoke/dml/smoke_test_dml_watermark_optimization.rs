@@ -112,7 +112,7 @@ fn smoke_test_watermark_dml_update() {
         .expect("CREATE NAMESPACE should succeed");
 
     let create_table_sql = format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, status TEXT, counter INT)",
+        "CREATE TABLE {} (id BIGINT PRIMARY KEY, status TEXT, counter INT) WITH (TYPE = 'USER', STORAGE_ID = 'local')",
         full_table_name
     );
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE TABLE should succeed");
@@ -125,6 +125,18 @@ fn smoke_test_watermark_dml_update() {
         ))
         .expect("INSERT should succeed");
     }
+
+    // Verify data was inserted successfully
+    let count_result = execute_sql_as_root_via_client(&format!(
+        "SELECT COUNT(*) as cnt FROM {}",
+        full_table_name
+    ))
+    .expect("SELECT COUNT should succeed");
+    assert!(
+        count_result.contains("10"),
+        "Expected 10 rows after insert, got: {}",
+        count_result
+    );
 
     // Perform UPDATEs and measure time
     let start = Instant::now();

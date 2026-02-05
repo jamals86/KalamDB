@@ -288,10 +288,53 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         Ok(())
     }
 
-    async fn delete_by_pk_value(&self, _user_id: &UserId, _pk_value: &str) -> Result<bool, KalamDbError> {
-        // Stream tables are append-only - DELETE by PK is not supported
-        // Return false indicating no row was deleted
-        Ok(false)
+    async fn delete_by_pk_value(&self, user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError> {
+        // STREAM tables support DELETE by PK value for hard delete
+        // PK column is typically an auto-generated ID (e.g., ULID(), event_id, etc.)
+        
+        // Scan all rows for this user to find matching PK values
+        // Note: This is O(n) but STREAM tables are typically append-only with TTL eviction
+        let rows = self.store
+            .scan_user(user_id, None, usize::MAX)
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Failed to scan stream table keys: {}", e))
+            })?;
+
+        let pk_name = self.primary_key_field_name();
+        let mut deleted_count = 0;
+
+        for (key, entity) in rows {
+            // Check if PK column matches the target value
+            if let Some(row_pk_value) = entity.fields.get(pk_name) {
+                let row_pk_str = match row_pk_value {
+                    ScalarValue::Utf8(Some(s)) => s.clone(),
+                    ScalarValue::Int64(Some(i)) => i.to_string(),
+                    ScalarValue::Int32(Some(i)) => i.to_string(),
+                    _ => continue,
+                };
+
+                if row_pk_str == pk_value {
+                    // Delete this row
+                    self.store.delete(&key).map_err(|e| {
+                        KalamDbError::InvalidOperation(format!("Failed to delete stream event: {}", e))
+                    })?;
+
+                    deleted_count += 1;
+
+                    // Fire live query notification (DELETE hard)
+                    let notification_service = self.core.notification_service.clone();
+                    let table_id = self.core.table_id().clone();
+
+                    if notification_service.has_subscribers(Some(&user_id), &table_id) {
+                        let row_id_str = format!("{}:{}", key.user_id().as_str(), key.seq().as_i64());
+                        let notification = ChangeNotification::delete_hard(table_id.clone(), row_id_str);
+                        notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+                    }
+                }
+            }
+        }
+
+        Ok(deleted_count > 0)
     }
 
     async fn scan_rows(
