@@ -322,7 +322,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     ///
     /// OPTIMIZED: Uses `pk_exists_in_hot` for fast hot-path check (single index lookup + 1 entity fetch max).
     /// OPTIMIZED: Uses `pk_exists_in_cold` with manifest-based segment pruning for cold storage.
-    fn find_row_key_by_id_field(
+    async fn find_row_key_by_id_field(
         &self,
         user_id: &UserId,
         id_value: &str,
@@ -364,7 +364,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             pk_name,
             pk_column_id,
             id_value,
-        )?;
+        ).await?;
 
         if exists_in_cold {
             log::trace!("[UserTableProvider] PK {} exists in cold storage", id_value);
@@ -378,7 +378,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         Ok(None)
     }
 
-    fn insert(&self, user_id: &UserId, row_data: Row) -> Result<UserTableRowId, KalamDbError> {
+    async fn insert(&self, user_id: &UserId, row_data: Row) -> Result<UserTableRowId, KalamDbError> {
         ensure_manifest_ready(
             &self.core,
             self.core.table_type(),
@@ -387,7 +387,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         )?;
 
         // Validate PRIMARY KEY uniqueness if user provided PK value
-        base::ensure_unique_pk_value(self, Some(user_id), &row_data)?;
+        base::ensure_unique_pk_value(self, Some(user_id), &row_data).await?;
 
         // Generate new SeqId via SystemColumnsService
         let sys_cols = self.core.system_columns.clone();
@@ -444,7 +444,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     ///
     /// # Returns
     /// Vector of generated UserTableRowIds
-    fn insert_batch(
+    async fn insert_batch(
         &self,
         user_id: &UserId,
         rows: Vec<Row>,
@@ -489,7 +489,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             if pk_values_to_check.len() <= 2 {
                 // Small batch: individual lookups are faster
                 for (pk_str, _prefix) in &pk_values_to_check {
-                    if self.find_row_key_by_id_field(user_id, pk_str)?.is_some() {
+                    if self.find_row_key_by_id_field(user_id, pk_str).await?.is_some() {
                         return Err(KalamDbError::AlreadyExists(format!(
                             "Primary key violation: value '{}' already exists in column '{}'",
                             pk_str, pk_name
@@ -588,7 +588,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         Ok(row_keys)
     }
 
-    fn update(
+    async fn update(
         &self,
         user_id: &UserId,
         key: &UserTableRowId,
@@ -614,7 +614,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     _deleted: row_data.deleted,
                     fields: row_data.fields,
                 },
-            )?
+            ).await?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
         };
 
@@ -624,7 +624,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         })?;
 
         // Validate PK update (check if new PK value already exists)
-        base::validate_pk_update(self, Some(user_id), &updates, &pk_value_scalar)?;
+        base::validate_pk_update(self, Some(user_id), &updates, &pk_value_scalar).await?;
 
         // Find latest resolved row for this PK under same user
         // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet scan)
@@ -634,7 +634,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             } else {
                 // Not in hot storage, check cold storage
                 let pk_value_str = pk_value_scalar.to_string();
-                base::find_row_by_pk(self, Some(user_id), &pk_value_str)?.ok_or_else(|| {
+                base::find_row_by_pk(self, Some(user_id), &pk_value_str).await?.ok_or_else(|| {
                     KalamDbError::NotFound(format!(
                         "Row with {}={} not found",
                         pk_name, pk_value_scalar
@@ -698,7 +698,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         Ok(row_key)
     }
 
-    fn update_by_pk_value(
+    async fn update_by_pk_value(
         &self,
         user_id: &UserId,
         pk_value: &str,
@@ -714,7 +714,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 result
             } else {
                 // Not in hot storage, check cold storage
-                base::find_row_by_pk(self, Some(user_id), pk_value)?.ok_or_else(|| {
+                base::find_row_by_pk(self, Some(user_id), pk_value).await?.ok_or_else(|| {
                     KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value))
                 })?
             };
@@ -775,7 +775,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         Ok(row_key)
     }
 
-    fn delete(&self, user_id: &UserId, key: &UserTableRowId) -> Result<(), KalamDbError> {
+    async fn delete(&self, user_id: &UserId, key: &UserTableRowId) -> Result<(), KalamDbError> {
         // Load referenced version to extract PK (for validation; we append tombstone regardless)
         // Try RocksDB first, then Parquet
         let prior_opt = self.store.get(key)
@@ -796,7 +796,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     _deleted: row_data.deleted,
                     fields: row_data.fields,
                 },
-            )?
+            ).await?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
 
@@ -850,7 +850,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         Ok(())
     }
 
-    fn delete_by_pk_value(&self, user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError> {
+    async fn delete_by_pk_value(&self, user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError> {
         let pk_name = self.primary_key_field_name().to_string();
         let pk_value_scalar = ScalarValue::Utf8(Some(pk_value.to_string()));
 
@@ -860,7 +860,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             row
         } else {
             // Not in hot storage, check cold storage
-            match base::find_row_by_pk(self, Some(user_id), pk_value)? {
+            match base::find_row_by_pk(self, Some(user_id), pk_value).await? {
                 Some((_key, row)) => row,
                 None => {
                     log::trace!(

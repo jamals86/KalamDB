@@ -97,7 +97,7 @@ impl SegmentStatus {
 /// Fields:
 /// - `manifest`: The Manifest object (stored directly via bincode)
 /// - `etag`: Storage ETag or version identifier for freshness validation
-/// - `last_refreshed`: Unix timestamp (seconds) of last successful refresh
+/// - `last_refreshed`: Unix timestamp (milliseconds) of last successful refresh
 /// - `sync_state`: Current synchronization state (InSync | Stale | Error)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestCacheEntry {
@@ -107,7 +107,7 @@ pub struct ManifestCacheEntry {
     /// ETag or version identifier from storage backend
     pub etag: Option<String>,
 
-    /// Last refresh timestamp (Unix seconds)
+    /// Last refresh timestamp (Unix milliseconds)
     pub last_refreshed: i64,
 
     /// Synchronization state
@@ -135,9 +135,18 @@ impl ManifestCacheEntry {
         serde_json::to_string(&self.manifest).unwrap_or_else(|_| "{}".to_string())
     }
 
-    /// Check if entry is stale based on TTL
-    pub fn is_stale(&self, ttl_seconds: i64, now_timestamp: i64) -> bool {
-        now_timestamp - self.last_refreshed > ttl_seconds
+    /// Normalize last_refreshed to milliseconds (handles legacy seconds data)
+    pub fn last_refreshed_millis(&self) -> i64 {
+        if self.last_refreshed < 1_000_000_000_000 {
+            self.last_refreshed * 1000
+        } else {
+            self.last_refreshed
+        }
+    }
+
+    /// Check if entry is stale based on TTL (milliseconds)
+    pub fn is_stale(&self, ttl_millis: i64, now_millis: i64) -> bool {
+        now_millis - self.last_refreshed_millis() > ttl_millis
     }
 
     /// Mark entry as stale
@@ -161,10 +170,10 @@ impl ManifestCacheEntry {
     }
 
     /// Mark entry as in sync
-    pub fn mark_in_sync(&mut self, etag: Option<String>, timestamp: i64) {
+    pub fn mark_in_sync(&mut self, etag: Option<String>, timestamp_millis: i64) {
         self.sync_state = SyncState::InSync;
         self.etag = etag;
-        self.last_refreshed = timestamp;
+        self.last_refreshed = timestamp_millis;
     }
 
     /// Mark entry as error
@@ -267,7 +276,7 @@ pub struct SegmentMetadata {
     /// Size in bytes
     pub size_bytes: u64,
 
-    /// Creation timestamp (Unix seconds)
+    /// Creation timestamp (Unix milliseconds)
     pub created_at: i64,
 
     /// Unique segment identifier (UUID)
@@ -323,7 +332,7 @@ impl SegmentMetadata {
             max_seq,
             row_count,
             size_bytes,
-            created_at: chrono::Utc::now().timestamp(),
+            created_at: chrono::Utc::now().timestamp_millis(),
             // tombstone: false,
             schema_version: 1, // Default to version 1
             status: SegmentStatus::Committed,
@@ -349,7 +358,7 @@ impl SegmentMetadata {
             max_seq,
             row_count,
             size_bytes,
-            created_at: chrono::Utc::now().timestamp(),
+            created_at: chrono::Utc::now().timestamp_millis(),
             // tombstone: false,
             schema_version,
             status: SegmentStatus::Committed,
@@ -375,7 +384,7 @@ impl SegmentMetadata {
             max_seq,
             row_count: 0,
             size_bytes: 0,
-            created_at: chrono::Utc::now().timestamp(),
+            created_at: chrono::Utc::now().timestamp_millis(),
             schema_version,
             status: SegmentStatus::InProgress,
         }
@@ -440,7 +449,7 @@ pub struct Manifest {
 
 impl Manifest {
     pub fn new(table_id: TableId, user_id: Option<UserId>) -> Self {
-        let now = chrono::Utc::now().timestamp();
+        let now = chrono::Utc::now().timestamp_millis();
         Self {
             table_id,
             user_id,
@@ -455,7 +464,7 @@ impl Manifest {
 
     /// Create a manifest for a table with FILE columns
     pub fn new_with_files(table_id: TableId, user_id: Option<UserId>) -> Self {
-        let now = chrono::Utc::now().timestamp();
+        let now = chrono::Utc::now().timestamp_millis();
         Self {
             table_id,
             user_id,
@@ -481,7 +490,7 @@ impl Manifest {
     pub fn allocate_file_subfolder(&mut self, max_files_per_folder: u32) -> String {
         let state = self.files.as_mut().expect("File tracking not enabled for this manifest");
         let subfolder = state.allocate_file(max_files_per_folder);
-        self.updated_at = chrono::Utc::now().timestamp();
+        self.updated_at = chrono::Utc::now().timestamp_millis();
         self.version += 1;
         subfolder
     }
@@ -504,7 +513,7 @@ impl Manifest {
         self.segments.retain(|s| s.id != segment.id);
 
         self.segments.push(segment);
-        self.updated_at = chrono::Utc::now().timestamp();
+        self.updated_at = chrono::Utc::now().timestamp_millis();
         self.version += 1;
     }
 
@@ -521,7 +530,7 @@ impl Manifest {
     pub fn update_sequence_number(&mut self, seq: u64) {
         if seq > self.last_sequence_number {
             self.last_sequence_number = seq;
-            self.updated_at = chrono::Utc::now().timestamp();
+            self.updated_at = chrono::Utc::now().timestamp_millis();
             // Version bump? Maybe not for just seq update if it happens often in memory
         }
     }
@@ -645,7 +654,7 @@ mod tests {
         entry.mark_in_sync(Some("new_etag".to_string()), 2000);
         assert_eq!(entry.sync_state, SyncState::InSync);
         assert_eq!(entry.etag, Some("new_etag".to_string()));
-        assert_eq!(entry.last_refreshed, 2000);
+        assert_eq!(entry.last_refreshed_millis(), 2000);
 
         entry.mark_error();
         assert_eq!(entry.sync_state, SyncState::Error);

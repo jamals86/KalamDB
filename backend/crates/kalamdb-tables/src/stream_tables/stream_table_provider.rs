@@ -175,7 +175,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
     /// Stream tables are append-only and don't support UPDATE/DELETE by PK.
     /// This always returns None - DML operations other than INSERT are not supported.
-    fn find_row_key_by_id_field(
+    async fn find_row_key_by_id_field(
         &self,
         _user_id: &UserId,
         _id_value: &str,
@@ -184,7 +184,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         Ok(None)
     }
 
-    fn insert(&self, user_id: &UserId, row_data: Row) -> Result<StreamTableRowId, KalamDbError> {
+    async fn insert(&self, user_id: &UserId, row_data: Row) -> Result<StreamTableRowId, KalamDbError> {
         let table_id = self.core.table_id();
 
         // Call SystemColumnsService to generate SeqId
@@ -239,7 +239,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         Ok(row_key)
     }
 
-    fn update(
+    async fn update(
         &self,
         user_id: &UserId,
         _key: &StreamTableRowId,
@@ -252,10 +252,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         // 4. Append new version
 
         // Placeholder: Just append as new version (incomplete implementation)
-        self.insert(user_id, updates)
+        self.insert(user_id, updates).await
     }
 
-    fn update_by_pk_value(
+    async fn update_by_pk_value(
         &self,
         user_id: &UserId,
         _pk_value: &str,
@@ -263,10 +263,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
     ) -> Result<StreamTableRowId, KalamDbError> {
         // TODO: Implement full UPDATE logic for stream tables
         // Stream tables are typically append-only, so UPDATE just inserts a new event
-        self.insert(user_id, updates)
+        self.insert(user_id, updates).await
     }
 
-    fn delete(&self, user_id: &UserId, key: &StreamTableRowId) -> Result<(), KalamDbError> {
+    async fn delete(&self, user_id: &UserId, key: &StreamTableRowId) -> Result<(), KalamDbError> {
         // TODO: Implement DELETE logic for stream tables
         // Stream tables may use hard delete or tombstone depending on requirements
 
@@ -288,7 +288,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         Ok(())
     }
 
-    fn delete_by_pk_value(&self, _user_id: &UserId, _pk_value: &str) -> Result<bool, KalamDbError> {
+    async fn delete_by_pk_value(&self, _user_id: &UserId, _pk_value: &str) -> Result<bool, KalamDbError> {
         // Stream tables are append-only - DELETE by PK is not supported
         // Return false indicating no row was deleted
         Ok(false)

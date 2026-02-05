@@ -111,8 +111,8 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
             config_json: normalized_config_json,
             shared_tables_template: statement.shared_tables_template,
             user_tables_template: statement.user_tables_template,
-            created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: chrono::Utc::now().timestamp_millis(),
         };
 
         let connectivity = StorageHealthService::test_connectivity(&storage)

@@ -41,14 +41,14 @@ pub fn write_manifest_json(
         .map(|_| ())
 }
 
-/// Check if manifest.json exists.
-pub fn manifest_exists(
+/// Check if manifest.json exists (async).
+pub async fn manifest_exists(
     storage_cached: &StorageCached,
     table_type: TableType,
     table_id: &TableId,
     user_id: Option<&UserId>,
 ) -> Result<bool> {
-    match storage_cached.exists_sync(table_type, table_id, user_id, "manifest.json") {
+    match storage_cached.exists(table_type, table_id, user_id, "manifest.json").await {
         Ok(result) => Ok(result.exists),
         Err(FilestoreError::ObjectStore(ref e)) if e.contains("not found") || e.contains("404") => {
             Ok(false)
@@ -114,8 +114,8 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
     }
 
-    #[test]
-    fn test_manifest_exists_after_write() {
+    #[tokio::test]
+    async fn test_manifest_exists_after_write() {
         let temp_dir = env::temp_dir().join("kalamdb_test_manifest_exists");
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
@@ -126,7 +126,7 @@ mod tests {
 
         // Check doesn't exist initially
         let exists_before =
-            manifest_exists(&storage_cached, TableType::Shared, &table_id, None);
+            manifest_exists(&storage_cached, TableType::Shared, &table_id, None).await;
         assert!(exists_before.is_ok());
         assert!(!exists_before.unwrap(), "Manifest should not exist yet");
 
@@ -137,7 +137,7 @@ mod tests {
 
         // Check exists after write
         let exists_after =
-            manifest_exists(&storage_cached, TableType::Shared, &table_id, None);
+            manifest_exists(&storage_cached, TableType::Shared, &table_id, None).await;
         assert!(exists_after.is_ok());
         assert!(exists_after.unwrap(), "Manifest should exist after write");
 

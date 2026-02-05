@@ -298,34 +298,6 @@ impl StorageCached {
     }
 
 
-    /// Read one or multiple Parquet files and return RecordBatch(es)
-    pub fn read_parquet_files_sync(
-        &self,
-        table_type: TableType,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-        files: &[String],
-    ) -> Result<Vec<arrow::record_batch::RecordBatch>> {
-         let table_id = table_id.clone();
-         let user_id = user_id.cloned();
-         let files = files.to_vec();
-
-        run_blocking(|| async {
-            let mut batches = Vec::new();
-            for file in files {
-                 let data = self.get(table_type, &table_id, user_id.as_ref(), &file).await?.data;
-                 let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(data)
-                    .map_err(|e| FilestoreError::Format(e.to_string()))?;
-                 let reader = builder.build()
-                    .map_err(|e| FilestoreError::Format(e.to_string()))?;
-                 for batch in reader {
-                     batches.push(batch.map_err(|e| FilestoreError::Format(e.to_string()))?);
-                 }
-            }
-            Ok(batches)
-        })
-    }
-
     /// Read manifest.json directly (Task 102)
     pub fn read_manifest_sync(
         &self,
@@ -739,21 +711,6 @@ impl StorageCached {
         Ok(DeletePrefixResult::new(cleanup_prefix.into_owned(), deleted_paths))
     }
 
-    /// Delete all files under a table's storage path (sync).
-    pub fn delete_prefix_sync(
-        &self,
-        table_type: TableType,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<DeletePrefixResult> {
-        let table_id = table_id.clone();
-        let user_id = user_id.cloned();
-
-        run_blocking(|| async {
-            self.delete_prefix(table_type, &table_id, user_id.as_ref()).await
-        })
-    }
-
     /// Check if a file exists.
     ///
     /// # Arguments
@@ -786,23 +743,6 @@ impl StorageCached {
             }
             Err(e) => Err(FilestoreError::ObjectStore(e.to_string())),
         }
-    }
-
-    /// Check if a file exists (sync).
-    pub fn exists_sync(
-        &self,
-        table_type: TableType,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-        filename: &str,
-    ) -> Result<ExistsResult> {
-        let table_id = table_id.clone();
-        let user_id = user_id.cloned();
-        let filename = filename.to_string();
-
-        run_blocking(|| async {
-            self.exists(table_type, &table_id, user_id.as_ref(), &filename).await
-        })
     }
 
     /// Get file metadata (size, last modified).
@@ -926,21 +866,6 @@ impl StorageCached {
 
         // Check if at least one file exists
         Ok(stream.next().await.is_some())
-    }
-
-    /// Check if any files exist under a table's storage path (sync).
-    pub fn prefix_exists_sync(
-        &self,
-        table_type: TableType,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<bool> {
-        let table_id = table_id.clone();
-        let user_id = user_id.cloned();
-
-        run_blocking(|| async {
-            self.prefix_exists(table_type, &table_id, user_id.as_ref()).await
-        })
     }
 
     // ========== Cache Management ==========
@@ -1168,8 +1093,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
-    #[test]
-    fn test_delete_file_sync() {
+    #[tokio::test]
+    async fn test_delete_file() {
         let temp_dir = env::temp_dir().join("storage_cached_test_delete_file");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -1182,38 +1107,42 @@ mod tests {
 
         // Write file
         cached
-            .put_sync(
+            .put(
                 TableType::Shared,
                 &table_id,
                 None,
                 "delete_me.txt",
                 content,
             )
+            .await
             .unwrap();
 
         // Verify exists
         let exists_before = cached
-            .exists_sync(TableType::Shared, &table_id, None, "delete_me.txt")
+            .exists(TableType::Shared, &table_id, None, "delete_me.txt")
+            .await
             .unwrap();
         assert!(exists_before.exists);
 
         // Delete file
         let delete_result = cached
-            .delete_sync(TableType::Shared, &table_id, None, "delete_me.txt")
+            .delete(TableType::Shared, &table_id, None, "delete_me.txt")
+            .await
             .unwrap();
         assert!(delete_result.existed);
 
         // Verify deleted
         let exists_after = cached
-            .exists_sync(TableType::Shared, &table_id, None, "delete_me.txt")
+            .exists(TableType::Shared, &table_id, None, "delete_me.txt")
+            .await
             .unwrap();
         assert!(!exists_after.exists);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
-    #[test]
-    fn test_delete_prefix_sync() {
+    #[tokio::test]
+    async fn test_delete_prefix() {
         let temp_dir = env::temp_dir().join("storage_cached_test_delete_prefix");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -1228,33 +1157,37 @@ mod tests {
 
         for file in &files {
             cached
-                .put_sync(TableType::Shared, &table_id, None, file, Bytes::from("test"))
+                .put(TableType::Shared, &table_id, None, file, Bytes::from("test"))
+                .await
                 .unwrap();
         }
 
         // Verify files exist
         let listed_before = cached
-            .list_sync(TableType::Shared, &table_id, None)
+            .list(TableType::Shared, &table_id, None)
+            .await
             .unwrap();
         assert!(listed_before.count >= 3);
 
         // Delete all files under prefix
         let delete_result = cached
-            .delete_prefix_sync(TableType::Shared, &table_id, None)
+            .delete_prefix(TableType::Shared, &table_id, None)
+            .await
             .unwrap();
         assert_eq!(delete_result.files_deleted, 3, "Should delete 3 files");
 
         // Verify all deleted
         let listed_after = cached
-            .list_sync(TableType::Shared, &table_id, None)
+            .list(TableType::Shared, &table_id, None)
+            .await
             .unwrap();
         assert_eq!(listed_after.count, 0, "All files should be deleted");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
-    #[test]
-    fn test_prefix_exists_sync() {
+    #[tokio::test]
+    async fn test_prefix_exists() {
         let temp_dir = env::temp_dir().join("storage_cached_test_prefix_exists");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -1266,24 +1199,27 @@ mod tests {
 
         // Check non-existent prefix
         let exists_before = cached
-            .prefix_exists_sync(TableType::Shared, &table_id, None)
+            .prefix_exists(TableType::Shared, &table_id, None)
+            .await
             .unwrap();
         assert!(!exists_before);
 
         // Write a file
         cached
-            .put_sync(
+            .put(
                 TableType::Shared,
                 &table_id,
                 None,
                 "file.txt",
                 Bytes::from("test"),
             )
+            .await
             .unwrap();
 
         // Check prefix now exists
         let exists_after = cached
-            .prefix_exists_sync(TableType::Shared, &table_id, None)
+            .prefix_exists(TableType::Shared, &table_id, None)
+            .await
             .unwrap();
         assert!(exists_after);
 
@@ -1533,8 +1469,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
-    #[test]
-    fn test_rename_file_sync() {
+    #[tokio::test]
+    async fn test_rename_file() {
         let temp_dir = env::temp_dir().join("storage_cached_test_rename");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -1547,18 +1483,20 @@ mod tests {
 
         // Write source file
         cached
-            .put_sync(
+            .put(
                 TableType::Shared,
                 &table_id,
                 None,
                 "original.txt",
                 content.clone(),
             )
+            .await
             .unwrap();
 
         // Verify source exists
         assert!(cached
-            .exists_sync(TableType::Shared, &table_id, None, "original.txt")
+            .exists(TableType::Shared, &table_id, None, "original.txt")
+            .await
             .unwrap()
             .exists);
 
@@ -1581,15 +1519,16 @@ mod tests {
 
         // Verify source no longer exists
         assert!(!cached
-            .exists_sync(TableType::Shared, &table_id, None, "original.txt")
+            .exists(TableType::Shared, &table_id, None, "original.txt")
+            .await
             .unwrap()
             .exists);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
-    #[test]
-    fn test_rename_file_to_different_directory() {
+    #[tokio::test]
+    async fn test_rename_file_to_different_directory() {
         let temp_dir = env::temp_dir().join("storage_cached_test_rename_dir");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -1602,7 +1541,14 @@ mod tests {
 
         // Write source file
         cached
-            .put_sync(TableType::Shared, &table_id, None, "file.txt", content.clone())
+            .put(
+                TableType::Shared,
+                &table_id,
+                None,
+                "file.txt",
+                content.clone(),
+            )
+            .await
             .unwrap();
 
         // Rename to different directory
@@ -1624,15 +1570,16 @@ mod tests {
 
         // Verify source no longer exists
         assert!(!cached
-            .exists_sync(TableType::Shared, &table_id, None, "file.txt")
+            .exists(TableType::Shared, &table_id, None, "file.txt")
+            .await
             .unwrap()
             .exists);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
-    #[test]
-    fn test_rename_temp_parquet_to_final() {
+    #[tokio::test]
+    async fn test_rename_temp_parquet_to_final() {
         // Simulates the atomic flush pattern: write to .tmp, rename to .parquet
         let temp_dir = env::temp_dir().join("storage_cached_test_rename_parquet");
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1676,7 +1623,8 @@ mod tests {
 
         // Step 4: Verify temp file is gone
         assert!(!cached
-            .exists_sync(TableType::Shared, &table_id, None, "batch-0.parquet.tmp")
+            .exists(TableType::Shared, &table_id, None, "batch-0.parquet.tmp")
+            .await
             .unwrap()
             .exists);
 

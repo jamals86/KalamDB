@@ -64,12 +64,12 @@ impl DmlExecutor {
         // Try UserTableProvider first, then StreamTableProvider
         if let Some(provider) = provider_arc.as_any().downcast_ref::<UserTableProvider>() {
             let row_ids = provider
-                .insert_batch(user_id, rows.to_vec())
+                .insert_batch(user_id, rows.to_vec()).await
                 .map_err(|e| ApplierError::Execution(format!("Failed to insert batch: {}", e)))?;
             log::debug!("DmlExecutor: Inserted {} rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
         } else if let Some(provider) = provider_arc.as_any().downcast_ref::<StreamTableProvider>() {
-            let row_ids = provider.insert_batch(user_id, rows.to_vec()).map_err(|e| {
+            let row_ids = provider.insert_batch(user_id, rows.to_vec()).await.map_err(|e| {
                 ApplierError::Execution(format!("Failed to insert stream batch: {}", e))
             })?;
             log::debug!("DmlExecutor: Inserted {} stream rows into {}", row_ids.len(), table_id);
@@ -104,7 +104,7 @@ impl DmlExecutor {
             .ok_or_else(|| ApplierError::not_found("Table provider", table_id))?;
 
         if let Some(provider) = provider_arc.as_any().downcast_ref::<UserTableProvider>() {
-            let prior_row = match find_row_by_pk(provider, Some(user_id), pk_value) {
+            let prior_row = match find_row_by_pk(provider, Some(user_id), pk_value).await {
                 Ok(Some((_key, row))) => Some(row.fields),
                 Ok(None) => None,
                 Err(err) => {
@@ -127,7 +127,7 @@ impl DmlExecutor {
                 )
             });
 
-            let updated = self.update_user_provider(provider, user_id, pk_value, update_row.clone())?;
+            let updated = self.update_user_provider(provider, user_id, pk_value, update_row.clone()).await?;
             if updated > 0 {
                 delete_file_refs_best_effort(
                     self.app_context.as_ref(),
@@ -135,11 +135,11 @@ impl DmlExecutor {
                     TableType::User,
                     Some(user_id),
                     &replaced_refs,
-                );
+                ).await;
             }
             Ok(updated)
         } else if let Some(provider) = provider_arc.as_any().downcast_ref::<StreamTableProvider>() {
-            self.update_stream_provider(provider, user_id, pk_value, update_row.clone())
+            self.update_stream_provider(provider, user_id, pk_value, update_row.clone()).await
         } else {
             Err(ApplierError::Execution(format!(
                 "Provider type mismatch for user table {}",
@@ -171,7 +171,7 @@ impl DmlExecutor {
         if let Some(provider) = provider_arc.as_any().downcast_ref::<UserTableProvider>() {
             let mut deleted_count = 0;
             for pk_value in pk_values {
-                let file_refs = match find_row_by_pk(provider, Some(user_id), pk_value) {
+                let file_refs = match find_row_by_pk(provider, Some(user_id), pk_value).await {
                     Ok(Some((_key, row))) => collect_file_refs_from_row(
                         self.app_context.as_ref(),
                         table_id,
@@ -190,7 +190,7 @@ impl DmlExecutor {
                 };
 
                 if provider
-                    .delete_by_id_field(user_id, pk_value)
+                    .delete_by_id_field(user_id, pk_value).await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
                     deleted_count += 1;
@@ -200,7 +200,7 @@ impl DmlExecutor {
                         TableType::User,
                         Some(user_id),
                         &file_refs,
-                    );
+                    ).await;
                 }
             }
             log::debug!("DmlExecutor: Deleted {} rows from {}", deleted_count, table_id);
@@ -209,7 +209,7 @@ impl DmlExecutor {
             let mut deleted_count = 0;
             for pk_value in pk_values {
                 if provider
-                    .delete_by_id_field(user_id, pk_value)
+                    .delete_by_id_field(user_id, pk_value).await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
                     deleted_count += 1;
@@ -247,7 +247,7 @@ impl DmlExecutor {
         if let Some(provider) = provider_arc.as_any().downcast_ref::<SharedTableProvider>() {
             let system_user = UserId::from("system");
             let row_ids = provider
-                .insert_batch(&system_user, rows.to_vec())
+                .insert_batch(&system_user, rows.to_vec()).await
                 .map_err(|e| ApplierError::Execution(format!("Failed to insert batch: {}", e)))?;
             log::debug!("DmlExecutor: Inserted {} shared rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
@@ -283,7 +283,7 @@ impl DmlExecutor {
             let system_user = UserId::from("system");
             let update_row = updates[0].clone();
 
-            let prior_row = match find_row_by_pk(provider, None, pk_value) {
+            let prior_row = match find_row_by_pk(provider, None, pk_value).await {
                 Ok(Some((_key, row))) => Some(row.fields),
                 Ok(None) => None,
                 Err(err) => {
@@ -307,7 +307,7 @@ impl DmlExecutor {
             });
 
             provider
-                .update_by_id_field(&system_user, pk_value, update_row)
+                .update_by_id_field(&system_user, pk_value, update_row).await
                 .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
 
             delete_file_refs_best_effort(
@@ -316,7 +316,7 @@ impl DmlExecutor {
                 TableType::Shared,
                 None,
                 &replaced_refs,
-            );
+            ).await;
 
             log::debug!("DmlExecutor: Updated 1 shared row in {} (pk={})", table_id, pk_value);
             Ok(1)
@@ -352,7 +352,7 @@ impl DmlExecutor {
             let mut deleted_count = 0;
 
             for pk_value in pk_values {
-                let file_refs = match find_row_by_pk(provider, None, pk_value) {
+                let file_refs = match find_row_by_pk(provider, None, pk_value).await {
                     Ok(Some((_key, row))) => collect_file_refs_from_row(
                         self.app_context.as_ref(),
                         table_id,
@@ -371,7 +371,7 @@ impl DmlExecutor {
                 };
 
                 if provider
-                    .delete_by_id_field(&system_user, pk_value)
+                    .delete_by_id_field(&system_user, pk_value).await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
                     deleted_count += 1;
@@ -381,7 +381,7 @@ impl DmlExecutor {
                         TableType::Shared,
                         None,
                         &file_refs,
-                    );
+                    ).await;
                 }
             }
 
@@ -400,22 +400,22 @@ impl DmlExecutor {
     // =========================================================================
 
     /// Update with fallback for UserTableProvider
-    fn update_user_provider(
+    async fn update_user_provider(
         &self,
         provider: &UserTableProvider,
         user_id: &UserId,
         pk_value: &str,
         updates: Row,
     ) -> Result<usize, ApplierError> {
-        match provider.update_by_id_field(user_id, pk_value, updates.clone()) {
+        match provider.update_by_id_field(user_id, pk_value, updates.clone()).await {
             Ok(_) => Ok(1),
             Err(kalamdb_tables::TableError::NotFound(_)) => {
                 if let Some(key) =
-                    provider.find_row_key_by_id_field(user_id, pk_value).map_err(|e| {
+                    provider.find_row_key_by_id_field(user_id, pk_value).await.map_err(|e| {
                         ApplierError::Execution(format!("Failed to find row key: {}", e))
                     })?
                 {
-                    provider.update(user_id, &key, updates).map_err(|e| {
+                    provider.update(user_id, &key, updates).await.map_err(|e| {
                         ApplierError::Execution(format!("Failed to update row: {}", e))
                     })?;
                     Ok(1)
@@ -428,22 +428,22 @@ impl DmlExecutor {
     }
 
     /// Update with fallback for StreamTableProvider
-    fn update_stream_provider(
+    async fn update_stream_provider(
         &self,
         provider: &StreamTableProvider,
         user_id: &UserId,
         pk_value: &str,
         updates: Row,
     ) -> Result<usize, ApplierError> {
-        match provider.update_by_id_field(user_id, pk_value, updates.clone()) {
+        match provider.update_by_id_field(user_id, pk_value, updates.clone()).await {
             Ok(_) => Ok(1),
             Err(kalamdb_tables::TableError::NotFound(_)) => {
                 if let Some(key) =
-                    provider.find_row_key_by_id_field(user_id, pk_value).map_err(|e| {
+                    provider.find_row_key_by_id_field(user_id, pk_value).await.map_err(|e| {
                         ApplierError::Execution(format!("Failed to find row key: {}", e))
                     })?
                 {
-                    provider.update(user_id, &key, updates).map_err(|e| {
+                    provider.update(user_id, &key, updates).await.map_err(|e| {
                         ApplierError::Execution(format!("Failed to update row: {}", e))
                     })?;
                     Ok(1)

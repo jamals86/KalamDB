@@ -108,7 +108,7 @@ impl FileStorageService {
     /// Finalize a staged file to permanent storage.
     ///
     /// Returns a FileRef that can be stored in the database.
-    pub fn finalize_file(
+    pub async fn finalize_file(
         &self,
         staged: &StagedFile,
         storage_id: &StorageId,
@@ -175,13 +175,13 @@ impl FileStorageService {
 
         // Get storage from registry and write to permanent storage
         let storage = self.get_storage(storage_id)?;
-        storage.put_sync(
+        storage.put(
             table_type,
             table_id,
             user_id,
             &relative_path,
             Bytes::from(content),
-        )?;
+        ).await?;
 
         log::info!(
             "Finalized file: table={}, storage={}, path={}, size={}, mime={}",
@@ -196,7 +196,7 @@ impl FileStorageService {
     }
 
     /// Delete a file from storage.
-    pub fn delete_file(
+    pub async fn delete_file(
         &self,
         file_ref: &FileRef,
         storage_id: &StorageId,
@@ -207,7 +207,7 @@ impl FileStorageService {
         let relative_path = file_ref.relative_path();
 
         let storage = self.get_storage(storage_id)?;
-        storage.delete_sync(table_type, table_id, user_id, &relative_path)?;
+        storage.delete(table_type, table_id, user_id, &relative_path).await?;
 
         log::info!(
             "Deleted file: table={}, storage={}, path={}",
@@ -220,7 +220,7 @@ impl FileStorageService {
     }
 
     /// Get file content for download.
-    pub fn get_file(
+    pub async fn get_file(
         &self,
         file_ref: &FileRef,
         storage_id: &StorageId,
@@ -230,14 +230,14 @@ impl FileStorageService {
     ) -> Result<Bytes> {
         let relative_path = file_ref.relative_path();
         let storage = self.get_storage(storage_id)?;
-        let result = storage.get_sync(table_type, table_id, user_id, &relative_path)?;
+        let result = storage.get(table_type, table_id, user_id, &relative_path).await?;
         Ok(result.data)
     }
 
     /// Get file content for download by relative path.
     ///
     /// Used for download endpoint where we have subfolder and stored filename directly.
-    pub fn get_file_by_path(
+    pub async fn get_file_by_path(
         &self,
         storage_id: &StorageId,
         table_type: TableType,
@@ -246,7 +246,7 @@ impl FileStorageService {
         relative_path: &str,
     ) -> Result<Bytes> {
         let storage = self.get_storage(storage_id)?;
-        let result = storage.get_sync(table_type, table_id, user_id, relative_path)?;
+        let result = storage.get(table_type, table_id, user_id, relative_path).await?;
         Ok(result.data)
     }
 
@@ -261,7 +261,7 @@ impl FileStorageService {
     }
 
     /// Delete multiple files (for row deletion).
-    pub fn delete_files(
+    pub async fn delete_files(
         &self,
         file_refs: &[FileRef],
         storage_id: &StorageId,
@@ -269,10 +269,11 @@ impl FileStorageService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Vec<Result<()>> {
-        file_refs
-            .iter()
-            .map(|file_ref| self.delete_file(file_ref, storage_id, table_type, table_id, user_id))
-            .collect()
+        let mut results = Vec::with_capacity(file_refs.len());
+        for file_ref in file_refs {
+            results.push(self.delete_file(file_ref, storage_id, table_type, table_id, user_id).await);
+        }
+        results
     }
 }
 

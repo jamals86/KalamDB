@@ -247,7 +247,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     /// OPTIMIZED: Uses `pk_exists_in_hot` for fast hot-path check.
     /// OPTIMIZED: Uses `pk_exists_in_cold` with manifest-based segment pruning for cold storage.
     /// For shared tables, user_id is ignored (no RLS).
-    fn find_row_key_by_id_field(
+    async fn find_row_key_by_id_field(
         &self,
         _user_id: &UserId,
         id_value: &str,
@@ -282,7 +282,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             pk_name,
             pk_column_id,
             id_value,
-        )?;
+        ).await?;
 
         if exists_in_cold {
             log::trace!("[SharedTableProvider] PK {} exists in cold storage", id_value);
@@ -294,11 +294,11 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         Ok(None)
     }
 
-    fn insert(&self, _user_id: &UserId, row_data: Row) -> Result<SharedTableRowId, KalamDbError> {
+    async fn insert(&self, _user_id: &UserId, row_data: Row) -> Result<SharedTableRowId, KalamDbError> {
         ensure_manifest_ready(&self.core, self.core.table_type(), None, "SharedTableProvider")?;
 
         // IGNORE user_id parameter - no RLS for shared tables
-        base::ensure_unique_pk_value(self, None, &row_data)?;
+        base::ensure_unique_pk_value(self, None, &row_data).await?;
 
         // Generate new SeqId via SystemColumnsService
         let sys_cols = self.core.system_columns.clone();
@@ -349,7 +349,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     ///
     /// # Returns
     /// Vector of generated SharedTableRowIds (SeqIds)
-    fn insert_batch(
+    async fn insert_batch(
         &self,
         _user_id: &UserId,
         rows: Vec<Row>,
@@ -442,7 +442,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 pk_name,
                 pk_column_id,
                 &pk_values_to_check,
-            )? {
+            ).await? {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Primary key violation: value '{}' already exists in column '{}'",
                     found_pk, pk_name
@@ -512,7 +512,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         Ok(row_keys)
     }
 
-    fn update(
+    async fn update(
         &self,
         _user_id: &UserId,
         key: &SharedTableRowId,
@@ -540,7 +540,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                     _deleted: row_data.deleted,
                     fields: row_data.fields,
                 },
-            )?
+            ).await?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
         };
 
@@ -549,7 +549,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         })?;
 
         // Validate PK update (check if new PK value already exists)
-        base::validate_pk_update(self, None, &updates, &pk_value_scalar)?;
+        base::validate_pk_update(self, None, &updates, &pk_value_scalar).await?;
 
         // Resolve latest per PK - first try hot storage (O(1) via PK index),
         // then fall back to cold storage (Parquet scan)
@@ -558,7 +558,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         } else {
             // Not in hot storage, check cold storage
             let pk_value_str = pk_value_scalar.to_string();
-            base::find_row_by_pk(self, None, &pk_value_str)?.ok_or_else(|| {
+            base::find_row_by_pk(self, None, &pk_value_str).await?.ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Row with {}={} not found",
                     pk_name, pk_value_scalar
@@ -611,7 +611,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         Ok(row_key)
     }
 
-    fn update_by_pk_value(
+    async fn update_by_pk_value(
         &self,
         _user_id: &UserId,
         pk_value: &str,
@@ -627,7 +627,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             result
         } else {
             // Not in hot storage, check cold storage
-            base::find_row_by_pk(self, None, pk_value)?.ok_or_else(|| {
+            base::find_row_by_pk(self, None, pk_value).await?.ok_or_else(|| {
                 KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value))
             })?
         };
@@ -666,7 +666,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         Ok(row_key)
     }
 
-    fn delete(&self, _user_id: &UserId, key: &SharedTableRowId) -> Result<(), KalamDbError> {
+    async fn delete(&self, _user_id: &UserId, key: &SharedTableRowId) -> Result<(), KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
         // Load referenced version to extract PK so tombstone groups with same logical row
         // Try RocksDB first, then Parquet
@@ -687,7 +687,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                     _deleted: row_data.deleted,
                     fields: row_data.fields,
                 },
-            )?
+            ).await?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
 
@@ -732,7 +732,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         Ok(())
     }
 
-    fn delete_by_pk_value(&self, _user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError> {
+    async fn delete_by_pk_value(&self, _user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
         let pk_name = self.primary_key_field_name().to_string();
         let pk_value_scalar = ScalarValue::Utf8(Some(pk_value.to_string()));
@@ -743,7 +743,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             row
         } else {
             // Not in hot storage, check cold storage
-            match base::find_row_by_pk(self, None, pk_value)? {
+            match base::find_row_by_pk(self, None, pk_value).await? {
                 Some((_key, row)) => row,
                 None => {
                     log::trace!(

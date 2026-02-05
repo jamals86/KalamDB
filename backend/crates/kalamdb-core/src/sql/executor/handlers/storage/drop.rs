@@ -160,8 +160,8 @@ mod tests {
             config_json: None,
             shared_tables_template: String::new(),
             user_tables_template: String::new(),
-            created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: chrono::Utc::now().timestamp_millis(),
         };
         storages_provider.insert_storage(storage).unwrap();
 

@@ -116,14 +116,15 @@ impl ManifestTableProvider {
             // Serialize manifest_json before moving entry fields
             let manifest_json_str = entry.manifest_json();
 
+            let last_refreshed_millis = entry.last_refreshed_millis();
             cache_keys.push(Some(cache_key_str));
             namespace_ids.push(Some(manifest_id.table_id().namespace_id().as_str().to_string()));
             table_names.push(Some(manifest_id.table_id().table_name().as_str().to_string()));
             scopes.push(Some(manifest_id.scope_str()));
-            etags.push(entry.etag);
-            last_refreshed_vals.push(Some(entry.last_refreshed * 1000)); // Convert to milliseconds
+            etags.push(entry.etag.clone());
+            last_refreshed_vals.push(Some(last_refreshed_millis));
             // last_accessed = last_refreshed (moka manages TTI internally, we can't get actual access time)
-            last_accessed_vals.push(Some(entry.last_refreshed * 1000));
+            last_accessed_vals.push(Some(last_refreshed_millis));
             in_memory_vals.push(Some(is_hot));
             sync_states.push(Some(entry.sync_state.to_string()));
             manifest_jsons.push(Some(manifest_json_str));

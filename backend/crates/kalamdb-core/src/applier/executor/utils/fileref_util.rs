@@ -145,7 +145,7 @@ pub fn collect_replaced_file_refs_for_update(
     refs
 }
 
-pub fn delete_file_refs_best_effort(
+pub async fn delete_file_refs_best_effort(
     app_context: &AppContext,
     table_id: &TableId,
     table_type: TableType,
@@ -170,7 +170,7 @@ pub fn delete_file_refs_best_effort(
     };
 
     let file_service = app_context.file_storage_service();
-    let results = file_service.delete_files(file_refs, &storage_id, table_type, table_id, user_id);
+    let results = file_service.delete_files(file_refs, &storage_id, table_type, table_id, user_id).await;
 
     for (file_ref, result) in file_refs.iter().zip(results.into_iter()) {
         if let Err(err) = result {
