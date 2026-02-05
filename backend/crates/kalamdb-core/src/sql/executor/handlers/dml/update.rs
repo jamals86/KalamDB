@@ -225,7 +225,7 @@ impl StatementHandler for UpdateHandler {
                     {
                         let current_row = if needs_row {
                             let (_row_id, row) =
-                                crate::providers::base::find_row_by_pk(provider, None, &id_value)?
+                                crate::providers::base::find_row_by_pk(provider, None, &id_value).await?
                                     .ok_or_else(|| {
                                         KalamDbError::NotFound(format!(
                                             "Row with {}={} not found",

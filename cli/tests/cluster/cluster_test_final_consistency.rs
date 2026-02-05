@@ -17,7 +17,6 @@ fn get_row_count(url: &str, table: &str) -> i64 {
         if count >= 0 {
             return count;
         }
-        std::thread::sleep(Duration::from_millis(200));
     }
     0
 }
@@ -36,7 +35,6 @@ fn cluster_test_final_row_count_consistency() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -119,7 +117,6 @@ fn cluster_test_final_row_count_consistency() {
                 );
             }
 
-            std::thread::sleep(Duration::from_millis(300));
         }
 
         assert!(consistent, "Failed to achieve consistency for {}", table_name);
@@ -191,7 +188,6 @@ fn cluster_test_final_metadata_consistency() {
                 },
                 Err(_) => {},
             }
-            std::thread::sleep(Duration::from_millis(200));
         }
         println!("  Node {} sees {} namespaces", i, ns_set.len());
         ns_results.push(ns_set);
@@ -248,7 +244,6 @@ fn cluster_test_final_mixed_workload_consistency() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -359,7 +354,6 @@ fn cluster_test_final_mixed_workload_consistency() {
                 },
                 Err(_) => {},
             }
-            std::thread::sleep(Duration::from_millis(300));
         }
         println!("  Node {} data snapshot length: {} chars", i, data.len());
         all_data.push(data);
@@ -473,7 +467,6 @@ fn cluster_test_final_cluster_health_consistency() {
             leader_ok = true;
             break;
         }
-        std::thread::sleep(Duration::from_millis(200));
     }
     assert!(leader_ok, "Leader counts did not converge across nodes");
     println!("  ✓ All nodes agree on single leader");
@@ -490,7 +483,6 @@ fn cluster_test_final_cluster_health_consistency() {
             members_ok = true;
             break;
         }
-        std::thread::sleep(Duration::from_millis(200));
     }
     assert!(members_ok, "Cluster member counts did not converge across nodes");
     println!("  ✓ All nodes see {} cluster members", expected_members);
@@ -512,10 +504,8 @@ fn cluster_test_final_empty_table_consistency() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    std::thread::sleep(Duration::from_millis(500));
 
     // Create table but don't insert anything
     execute_on_node(
@@ -558,7 +548,6 @@ fn cluster_test_final_empty_table_consistency() {
             if count == 0 {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(200));
         }
         assert_eq!(count, 0, "Node {} has {} rows after delete, expected 0", i, count);
         println!("  ✓ Node {} correctly shows 0 rows after delete", i);

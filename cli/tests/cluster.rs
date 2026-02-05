@@ -324,7 +324,6 @@ mod cluster_common {
                 }
             }
 
-            std::thread::sleep(Duration::from_millis(300));
         }
 
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
@@ -379,7 +378,6 @@ mod cluster_common {
                 }
             }
 
-            std::thread::sleep(Duration::from_millis(300));
         }
 
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
@@ -449,7 +447,6 @@ mod cluster_common {
                 }
             }
 
-            std::thread::sleep(Duration::from_millis(300));
         }
 
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
@@ -516,7 +513,6 @@ mod cluster_common {
                 }
             }
 
-            std::thread::sleep(Duration::from_millis(300));
         }
 
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
@@ -627,7 +623,6 @@ mod cluster_common {
                 return true;
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(50));
         }
 
         false
@@ -653,7 +648,6 @@ mod cluster_common {
                 return true;
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(50));
         }
 
         false
@@ -681,7 +675,6 @@ mod cluster_common {
                 return true;
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(50));
         }
 
         false
@@ -717,7 +710,6 @@ mod cluster_common {
                 }
             }
 
-            std::thread::sleep(Duration::from_millis(200));
         }
 
         None
@@ -756,7 +748,6 @@ mod cluster_common {
                 }
             }
 
-            std::thread::sleep(Duration::from_millis(200));
         }
 
         false

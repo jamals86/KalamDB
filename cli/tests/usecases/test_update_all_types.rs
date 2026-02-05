@@ -381,7 +381,7 @@ fn test_update_all_types_user_table() {
         }
     } else {
         // If we can't parse job ID, just wait a bit
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(20));
     }
 
     // Verify updated data (after flush)
@@ -504,7 +504,7 @@ fn test_update_all_types_shared_table() {
             eprintln!("Initial flush job failed or timed out: {}", e);
         }
     } else {
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(20));
     }
 
     // Verify initial data is still readable after flush
@@ -567,7 +567,7 @@ fn test_update_all_types_shared_table() {
             eprintln!("Flush job failed or timed out: {}", e);
         }
     } else {
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(20));
     }
 
     // Verify updated data (after flush)

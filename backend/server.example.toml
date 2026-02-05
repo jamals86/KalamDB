@@ -182,24 +182,61 @@ slow_query_threshold_ms = 1000
 request_timeout = 30
 
 # Keep-alive timeout in seconds (default: 75s)
+# HTTP keep-alive allows connection reuse, reducing TCP handshake overhead
 keepalive_timeout = 75
 
-# Maximum concurrent connections (default: 25000)
+# Maximum concurrent connections per worker (default: 25000)
 # Includes both REST API and WebSocket connections
+# For testing environments with high concurrency, consider 50000
 max_connections = 25000
 
+# TCP listen backlog - pending connections queue size (default: 4096)
+# Controls how many connections can wait in the kernel queue before being accepted
+# Increase for burst traffic or high-concurrency scenarios
+# Recommended values:
+#   - Development/Testing: 4096-8192 (handles burst test loads)
+#   - Production: 4096-8192 (handles traffic spikes)
+#   - High traffic: 8192+ (enterprise scale)
+# Industry standards: Nginx (511), Apache (511), Caddy (1024), Actix (2048)
+backlog = 4096
+
+# Max blocking threads per worker for CPU-intensive operations (default: 512)
+# Used for RocksDB I/O and synchronous operations
+# Increase for high-concurrency workloads or test environments
+worker_max_blocking_threads = 512
+
+# Client request timeout in seconds (default: 5)
+# Time allowed for client to send complete request headers
+client_request_timeout = 5
+
+# Client disconnect timeout in seconds (default: 2)
+# Time allowed for graceful connection shutdown
+client_disconnect_timeout = 2
+
+# Maximum HTTP header size in bytes (default: 16384 = 16KB)
+# Increase if you have large JWT tokens or custom headers  
+max_header_size = 16384
+
 [rate_limit]
-# Maximum SQL queries per second per user (default: 100000)
+# Maximum SQL queries per second per user (default: 100)
 # Prevents query flooding from a single user
-max_queries_per_sec = 100000
+# For testing/development environments with high load, increase to 10000-100000
+max_queries_per_sec = 100
 
-# Maximum WebSocket messages per second per connection (default: 500)
+# Maximum WebSocket messages per second per connection (default: 50)
 # Prevents message flooding on WebSocket connections
-max_messages_per_sec = 500
+# For testing/development environments with high load, increase to 500-1000
+max_messages_per_sec = 50
 
-# Maximum concurrent live query subscriptions per user (default: 100)
+# Maximum concurrent live query subscriptions per user (default: 10)
 # Limits total active subscriptions to prevent resource exhaustion
-max_subscriptions_per_user = 100
+# For testing/development environments, increase to 100-1000
+max_subscriptions_per_user = 10
+
+# Maximum authentication requests per IP per second (default: 20)
+# Prevents brute force attacks and login flooding
+# Applies to /auth/login, /auth/refresh, /setup endpoints
+max_auth_requests_per_ip_per_sec = 20
 
 # ============================================================================
 # Security Settings

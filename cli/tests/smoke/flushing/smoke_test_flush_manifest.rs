@@ -33,7 +33,6 @@ fn smoke_test_user_table_flush_manifest() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -52,7 +51,6 @@ fn smoke_test_user_table_flush_manifest() {
         full_table
     );
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created USER table with FLUSH_POLICY='rows:10'");
 
@@ -118,7 +116,6 @@ fn smoke_test_shared_table_flush_manifest() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -138,7 +135,6 @@ fn smoke_test_shared_table_flush_manifest() {
         full_table
     );
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created SHARED table with FLUSH_POLICY='rows:10'");
 
@@ -201,7 +197,6 @@ fn smoke_test_manifest_updated_on_second_flush() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -218,7 +213,6 @@ fn smoke_test_manifest_updated_on_second_flush() {
         full_table
     );
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
-    std::thread::sleep(Duration::from_millis(200));
 
     // First flush cycle
     println!("📝 First flush: Inserting 15 rows...");
@@ -275,7 +269,7 @@ fn smoke_test_manifest_updated_on_second_flush() {
     println!("✅ Second flush completed");
 
     // Verify files exist after second flush and get parquet count
-    std::thread::sleep(Duration::from_millis(500)); // Give filesystem time to sync
+    std::thread::sleep(Duration::from_millis(10)); // Give filesystem time to sync
     let second_result = verify_flush_storage_files_shared(&namespace, &table);
     let second_valid = second_result.is_valid();
     if second_valid {
@@ -327,7 +321,6 @@ fn smoke_test_flush_stream_table_error() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");

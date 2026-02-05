@@ -28,8 +28,10 @@ use kalamdb_configs::DataFusionSettings;
 /// Configuration is loaded from server.toml [datafusion] section.
 pub struct DataFusionSessionFactory {
     /// Target partitions for parallel execution (from config or auto-detected)
+    #[allow(dead_code)]
     target_partitions: usize,
     /// Batch size for Arrow record processing
+    #[allow(dead_code)]
     batch_size: usize,
     /// Pre-initialized session state with custom functions registered
     state: SessionState,

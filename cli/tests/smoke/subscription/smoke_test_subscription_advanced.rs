@@ -189,7 +189,7 @@ impl SubscriptionListenerAdvanced {
         let deadline = std::time::Instant::now() + timeout;
 
         while std::time::Instant::now() < deadline {
-            match self.try_read_line(Duration::from_millis(500)) {
+            match self.try_read_line(Duration::from_millis(100)) {
                 Ok(Some(line)) => {
                     events.push(line.clone());
                     // Check if batch loading is complete
@@ -268,7 +268,6 @@ fn smoke_subscription_multi_batch_initial_data() {
     );
 
     // Small delay to ensure data is visible
-    std::thread::sleep(Duration::from_millis(500));
 
     // Subscribe with small batch size to force multiple batches
     let query = format!("SELECT * FROM {}", full);
@@ -277,7 +276,7 @@ fn smoke_subscription_multi_batch_initial_data() {
         start_subscription_with_config(&query, Some(options)).expect("subscription should start");
 
     // Collect all initial data events
-    let events = listener.collect_events_until_ready(Duration::from_secs(60));
+    let events = listener.collect_events_until_ready(Duration::from_secs(15));
 
     // Count InitialDataBatch events and rows
     let batch_events: Vec<&String> =
@@ -362,14 +361,13 @@ fn smoke_subscription_resume_from_seq_id() {
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
 
-    std::thread::sleep(Duration::from_millis(300));
 
     // First subscription - get initial data and first change
     let query = format!("SELECT * FROM {}", full);
     let mut listener1 = SubscriptionListener::start(&query).expect("subscription should start");
 
     // Wait for initial data to be ready
-    let events1 = listener1.collect_events_until_ready(Duration::from_secs(30));
+    let events1 = listener1.collect_events_until_ready(Duration::from_secs(10));
     assert!(!events1.is_empty(), "Should receive initial data");
 
     // Insert a new row while subscription 1 is active
@@ -384,7 +382,7 @@ fn smoke_subscription_resume_from_seq_id() {
     let mut last_seq_id: Option<String> = None;
     let change_deadline = std::time::Instant::now() + Duration::from_secs(10);
     while std::time::Instant::now() < change_deadline {
-        match listener1.try_read_line(Duration::from_millis(500)) {
+        match listener1.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 println!("[FIRST_SUB] Event: {}...", &line[..std::cmp::min(200, line.len())]);
                 if line.contains(&test_value) || line.contains("Insert") {
@@ -422,7 +420,6 @@ fn smoke_subscription_resume_from_seq_id() {
     ))
     .expect("insert should succeed");
 
-    std::thread::sleep(Duration::from_millis(300));
 
     // Second subscription - resuming from seq_id should skip initial data
     // and only receive changes after that seq_id
@@ -437,7 +434,7 @@ fn smoke_subscription_resume_from_seq_id() {
     let mut events2: Vec<String> = Vec::new();
     let deadline2 = std::time::Instant::now() + Duration::from_secs(15);
     while std::time::Instant::now() < deadline2 {
-        match listener2.try_read_line(Duration::from_millis(500)) {
+        match listener2.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 println!("[SECOND_SUB] Event: {}...", &line[..std::cmp::min(200, line.len())]);
                 events2.push(line.clone());
@@ -508,14 +505,13 @@ fn smoke_subscription_high_volume_changes() {
     );
     execute_sql_as_root_via_client(&create_sql).expect("create user table should succeed");
 
-    std::thread::sleep(Duration::from_millis(200));
 
     // Start subscription BEFORE making changes
     let query = format!("SELECT * FROM {}", full);
     let mut listener = SubscriptionListener::start(&query).expect("subscription should start");
 
     // Wait for initial ack (empty table)
-    let initial_events = listener.collect_events_until_ready(Duration::from_secs(10));
+    let initial_events = listener.collect_events_until_ready(Duration::from_secs(5));
     println!("[TEST] Initial subscription ready, {} events received", initial_events.len());
 
     // Now perform rapid changes
@@ -563,7 +559,7 @@ fn smoke_subscription_high_volume_changes() {
     let collect_deadline = std::time::Instant::now() + Duration::from_secs(60);
 
     while std::time::Instant::now() < collect_deadline {
-        match listener.try_read_line(Duration::from_millis(500)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 all_events.push(line.clone());
 
@@ -667,16 +663,14 @@ fn smoke_subscription_delete_events() {
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
 
-    std::thread::sleep(Duration::from_millis(300));
 
     // Start subscription
     let query = format!("SELECT * FROM {}", full);
     let mut listener = SubscriptionListener::start(&query).expect("subscription should start");
 
     // Wait for initial data
-    let _ = listener.collect_events_until_ready(Duration::from_secs(15));
+    let _ = listener.collect_events_until_ready(Duration::from_secs(6));
 
-    std::thread::sleep(Duration::from_millis(500));
 
     // Delete rows
     let delete_ids = vec![2, 4];
@@ -690,7 +684,7 @@ fn smoke_subscription_delete_events() {
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
 
     while std::time::Instant::now() < deadline {
-        match listener.try_read_line(Duration::from_millis(500)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 println!("[DELETE_TEST] Event: {}...", &line[..std::cmp::min(150, line.len())]);
                 if line.contains("Delete") {
@@ -741,7 +735,7 @@ impl SubscriptionListenerExt for SubscriptionListener {
         let deadline = std::time::Instant::now() + timeout;
 
         while std::time::Instant::now() < deadline {
-            match self.try_read_line(Duration::from_millis(500)) {
+            match self.try_read_line(Duration::from_millis(100)) {
                 Ok(Some(line)) => {
                     events.push(line.clone());
                     // Check if batch loading is complete
@@ -804,7 +798,6 @@ fn smoke_subscription_column_projection() {
     execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
 
     // Give time for the data to be visible
-    std::thread::sleep(Duration::from_millis(500));
 
     // Subscribe with column projection - only select username
     let query = format!("SELECT username FROM {}", full);
@@ -816,7 +809,7 @@ fn smoke_subscription_column_projection() {
     let mut ready = false;
 
     while std::time::Instant::now() < deadline && !ready {
-        match listener.try_read_line(Duration::from_millis(500)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 println!("[TEST] Initial event: {}", &line[..std::cmp::min(400, line.len())]);
                 initial_events.push(line.clone());
@@ -849,7 +842,7 @@ fn smoke_subscription_column_projection() {
         let mut found_insert = false;
         let insert_deadline = std::time::Instant::now() + Duration::from_secs(10);
         while std::time::Instant::now() < insert_deadline {
-            match listener.try_read_line(Duration::from_millis(500)) {
+            match listener.try_read_line(Duration::from_millis(100)) {
                 Ok(Some(line)) => {
                     println!(
                         "[TEST] Event while waiting: {}",
@@ -900,7 +893,6 @@ fn smoke_subscription_column_projection() {
         );
     }
 
-    std::thread::sleep(Duration::from_millis(500));
 
     // Now perform an UPDATE and verify the change event also respects projection
     let updated_username = format!("updated_{}", std::process::id());
@@ -915,7 +907,7 @@ fn smoke_subscription_column_projection() {
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
 
     while std::time::Instant::now() < deadline {
-        match listener.try_read_line(Duration::from_millis(500)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 println!("[TEST] Update event: {}", &line[..std::cmp::min(300, line.len())]);
                 update_events.push(line.clone());

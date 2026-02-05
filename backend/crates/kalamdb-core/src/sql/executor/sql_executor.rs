@@ -174,7 +174,7 @@ impl SqlExecutor {
                             Ok(df) => {
                                 // Apply default ORDER BY for consistency
                                 let plan = df.logical_plan().clone();
-                                let ordered_plan = apply_default_order_by(plan, &self.app_context)?;
+                                let ordered_plan = apply_default_order_by(plan, &self.app_context).await?;
                                 session
                                     .execute_logical_plan(ordered_plan)
                                     .await
@@ -200,7 +200,7 @@ impl SqlExecutor {
                                         Ok(df) => {
                                             let plan = df.logical_plan().clone();
                                             let ordered_plan =
-                                                apply_default_order_by(plan, &self.app_context)?;
+                                                apply_default_order_by(plan, &self.app_context).await?;
                                             retry_session
                                                 .execute_logical_plan(ordered_plan)
                                                 .await
@@ -226,7 +226,7 @@ impl SqlExecutor {
                         // Apply default ORDER BY by primary key columns (or _seq as fallback)
                         // This ensures consistent ordering between hot (RocksDB) and cold (Parquet) storage
                         let plan = df.logical_plan().clone();
-                        let ordered_plan = apply_default_order_by(plan, &self.app_context)?;
+                        let ordered_plan = apply_default_order_by(plan, &self.app_context).await?;
 
                         // Cache the ordered plan for future use (scoped by namespace+role)
                         self.plan_cache.insert(cache_key, ordered_plan.clone());
@@ -257,7 +257,7 @@ impl SqlExecutor {
                                 Ok(df) => {
                                     let plan = df.logical_plan().clone();
                                     let ordered_plan =
-                                        apply_default_order_by(plan, &self.app_context)?;
+                                        apply_default_order_by(plan, &self.app_context).await?;
 
                                     self.plan_cache.insert(cache_key, ordered_plan.clone());
 
@@ -314,7 +314,7 @@ impl SqlExecutor {
             let bound_plan = replace_placeholders_in_plan(plan, &params)?;
 
             // Apply default ORDER BY to the bound plan
-            let ordered_plan = apply_default_order_by(bound_plan, &self.app_context)?;
+            let ordered_plan = apply_default_order_by(bound_plan, &self.app_context).await?;
 
             // Execute the ordered plan
             match session.execute_logical_plan(ordered_plan).await {

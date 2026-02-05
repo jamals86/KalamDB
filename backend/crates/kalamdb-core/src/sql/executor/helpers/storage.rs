@@ -117,8 +117,8 @@ pub async fn execute_create_storage(
         config_json: stmt.config_json,
         shared_tables_template: stmt.shared_tables_template,
         user_tables_template: stmt.user_tables_template,
-        created_at: chrono::Utc::now().timestamp(),
-        updated_at: chrono::Utc::now().timestamp(),
+        created_at: chrono::Utc::now().timestamp_millis(),
+        updated_at: chrono::Utc::now().timestamp_millis(),
     };
 
     let connectivity = StorageHealthService::test_connectivity(&storage)

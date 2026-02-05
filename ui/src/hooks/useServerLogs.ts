@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { executeSql } from '../lib/kalam-client';
 
 export interface ServerLog {
-  timestamp: string;
+  timestamp: number | string;
   level: string;
   thread: string | null;
   target: string | null;
@@ -59,7 +59,7 @@ export function useServerLogs() {
       const rows = await executeSql(sql);
       
       const logList = rows.map((row) => ({
-        timestamp: String(row.timestamp ?? ''),
+        timestamp: row.timestamp as number | string,
         level: String(row.level ?? ''),
         thread: row.thread as string | null,
         target: row.target as string | null,

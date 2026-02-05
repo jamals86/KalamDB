@@ -74,7 +74,6 @@ fn smoke_test_alter_table_with_data_verification() {
         if rows1.len() == 3 {
             break;
         }
-        std::thread::sleep(Duration::from_millis(200));
     }
     assert_eq!(rows1.len(), 3, "Expected 3 initial rows");
 

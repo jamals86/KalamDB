@@ -19,7 +19,6 @@ async fn repro_duplicate_column_error() {
 
     // Setup
     let _ = execute_sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace)).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await.unwrap();
 
     execute_sql(&format!(
@@ -28,7 +27,6 @@ async fn repro_duplicate_column_error() {
     ))
     .await
     .unwrap();
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Add COL1
     println!("Adding COL1...");

@@ -43,7 +43,6 @@ fn test_subscription_listener_functionality() {
     };
 
     // Give subscription time to connect and send initial data
-    std::thread::sleep(Duration::from_secs(2));
 
     // Try to read some lines with timeout
     let mut received_lines = Vec::new();
@@ -55,7 +54,7 @@ fn test_subscription_listener_functionality() {
             break;
         }
 
-        match listener.try_read_line(Duration::from_millis(500)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 received_lines.push(line);
             },

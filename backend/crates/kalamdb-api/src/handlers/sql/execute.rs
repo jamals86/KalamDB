@@ -269,7 +269,7 @@ pub async fn execute_sql_v1(
                 user_id.as_ref(),
                 &mut subfolder_state,
                 None,
-            ) {
+            ).await {
                 Ok(refs) => refs,
                 Err(e) => {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -309,7 +309,7 @@ pub async fn execute_sql_v1(
                     &table_id,
                     user_id.as_ref(),
                     app_context.get_ref(),
-                );
+                ).await;
                 let took = start_time.elapsed().as_secs_f64() * 1000.0;
                 HttpResponse::BadRequest().json(SqlResponse::error_with_details(
                     ErrorCode::SqlExecutionError,

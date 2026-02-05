@@ -109,7 +109,6 @@ fn cluster_test_table_replication() {
 
     // Setup namespace
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -144,7 +143,6 @@ fn cluster_test_table_replication() {
         execute_on_node(&urls[0], sql).expect(&format!("Failed to create {}", name));
     }
 
-    std::thread::sleep(Duration::from_millis(500));
 
     // Verify tables exist on all nodes
     println!("Verifying tables exist on all nodes...");
@@ -184,10 +182,8 @@ fn cluster_test_data_consistency() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    std::thread::sleep(Duration::from_millis(500));
 
     execute_on_node(
         &urls[0],
@@ -221,7 +217,6 @@ fn cluster_test_data_consistency() {
             )
             .expect("Insert failed");
             values.clear();
-            std::thread::sleep(Duration::from_millis(50));
         }
     }
 
@@ -239,7 +234,6 @@ fn cluster_test_data_consistency() {
             if count == 100 {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(200));
         }
 
         assert_eq!(count, 100, "Node {} has {} rows, expected 100", i, count);

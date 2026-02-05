@@ -36,7 +36,6 @@ async fn test_root_can_create_namespace() {
         namespace_name
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Create namespace as root
     let result =
@@ -109,7 +108,6 @@ async fn test_root_can_create_drop_tables() {
     let _ =
         execute_sql_via_http_as_root(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace_name))
             .await;
-    tokio::time::sleep(Duration::from_millis(20)).await;
 
     // Create table as root
     let result = execute_sql_via_http_as_root(&format!(
@@ -159,7 +157,6 @@ async fn test_cli_create_namespace_as_root() {
             eprintln!("DROP NAMESPACE returned non-success: {:?}", result);
         }
     }
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Execute CREATE NAMESPACE via CLI with root auth
     execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_name))
@@ -190,7 +187,6 @@ async fn test_regular_user_cannot_create_namespace() {
 
     // First, create a regular user as root
     let _ = execute_sql_via_http_as_root("DROP USER IF EXISTS testuser").await;
-    tokio::time::sleep(Duration::from_millis(20)).await;
 
     let result =
         execute_sql_via_http_as_root("CREATE USER testuser PASSWORD 'testpass' ROLE user").await;
@@ -200,7 +196,6 @@ async fn test_regular_user_cannot_create_namespace() {
         return;
     }
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Try to create namespace as regular user
     let result =
@@ -267,7 +262,6 @@ async fn test_cli_admin_operations() {
             namespace_name
         ))
         .await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
     // Execute statements individually to avoid batch execution bug with Raft
@@ -277,7 +271,6 @@ async fn test_cli_admin_operations() {
         namespace_name
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Step 2: Create table
     let _ = execute_sql_via_http_as_root(&format!(
@@ -285,7 +278,6 @@ async fn test_cli_admin_operations() {
         namespace_name
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Step 3: Insert data via CLI to actually test CLI functionality
     let insert_sql = format!(
@@ -356,10 +348,8 @@ async fn test_cli_flush_table() {
         namespace_name
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let _ = execute_sql_via_http_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Create a USER table with flush policy (SHARED tables cannot be flushed)
     let result = execute_sql_via_http_as_root(&format!(
@@ -378,7 +368,6 @@ async fn test_cli_flush_table() {
             namespace_name, i, i
         );
         let _ = execute_sql_via_http_as_root(&insert_sql).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     // Execute STORAGE FLUSH TABLE via CLI
@@ -461,7 +450,6 @@ async fn test_cli_flush_table() {
         if std::time::Instant::now() > deadline {
             break (jobs_result, jobs_data);
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
     };
 
     assert!(
@@ -537,7 +525,6 @@ async fn test_cli_flush_table() {
         if Instant::now() > deadline {
             panic!("Timed out waiting for flush job to complete; last status was 'running'");
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Requery current job status
         let refetch = execute_sql_via_http_as_root(&jobs_query).await.unwrap();
@@ -611,10 +598,8 @@ async fn test_cli_flush_all_tables() {
         namespace_name
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let _ = execute_sql_via_http_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Create multiple USER tables (SHARED tables cannot be flushed)
     let _ = execute_sql_via_http_as_root(
@@ -625,7 +610,6 @@ async fn test_cli_flush_all_tables() {
         &format!("CREATE TABLE {}.table2 (id INT PRIMARY KEY, value DOUBLE) WITH (TYPE='USER', FLUSH_POLICY='rows:10')", namespace_name),
     )
     .await;
-    tokio::time::sleep(Duration::from_millis(20)).await;
 
     // Insert some data
     let _ = execute_sql_via_http_as_root(&format!(
@@ -638,7 +622,6 @@ async fn test_cli_flush_all_tables() {
         namespace_name
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(20)).await;
 
     // Execute STORAGE FLUSH ALL via CLI
     let stdout = execute_sql_as_root_via_cli(&format!("STORAGE FLUSH ALL IN {}", namespace_name))
@@ -678,7 +661,6 @@ async fn test_cli_flush_all_tables() {
     println!("Extracted job IDs: {:?}", job_ids);
 
     // Wait for jobs to complete
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // If we have job IDs, query for those specific jobs
     let jobs_query = if !job_ids.is_empty() {

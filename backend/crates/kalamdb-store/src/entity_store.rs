@@ -869,6 +869,45 @@ where
         .await
         .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
     }
+
+    /// Async version of `scan_with_raw_prefix()` - scans entities by raw byte prefix.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    /// This is useful when you have a pre-computed raw prefix (e.g., for user-scoped scans).
+    async fn scan_with_raw_prefix_async(
+        &self,
+        prefix: &[u8],
+        start_key: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<Vec<(K, V)>> {
+        let store = self.clone();
+        let prefix = prefix.to_vec();
+        let start_key = start_key.map(|s| s.to_vec());
+        tokio::task::spawn_blocking(move || {
+            store.scan_with_raw_prefix(&prefix, start_key.as_deref(), limit)
+        })
+        .await
+        .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
+    /// Async version of `scan_typed_with_prefix_and_start()` - scans entities with typed prefix and start key.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
+    async fn scan_typed_with_prefix_and_start_async(
+        &self,
+        prefix: Option<&K>,
+        start_key: Option<&K>,
+        limit: usize,
+    ) -> Result<Vec<(K, V)>> {
+        let store = self.clone();
+        let prefix = prefix.cloned();
+        let start_key = start_key.cloned();
+        tokio::task::spawn_blocking(move || {
+            store.scan_typed_with_prefix_and_start(prefix.as_ref(), start_key.as_ref(), limit)
+        })
+        .await
+        .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
 }
 
 // Blanket implementation for any type that implements EntityStore + Clone + Send + Sync

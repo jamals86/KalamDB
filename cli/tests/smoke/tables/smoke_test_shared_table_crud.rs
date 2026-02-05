@@ -2,6 +2,7 @@
 // Covers: namespace creation, shared table creation, insert/select, delete/update, final select, drop table
 
 use crate::common::*;
+use std::time::Duration;
 
 #[ntest::timeout(180000)]
 #[test]
@@ -34,6 +35,7 @@ fn smoke_shared_table_crud() {
         full
     );
     execute_sql_as_root_via_client(&create_sql).expect("create shared table should succeed");
+    wait_for_table_ready(&full, Duration::from_secs(3)).expect("table should be ready");
 
     // 2) Insert rows
     let ins1 = format!("INSERT INTO {} (name, status) VALUES ('alpha', 'new')", full);
@@ -103,7 +105,7 @@ fn smoke_shared_table_crud() {
     let drop_sql = format!("DROP TABLE {}", full);
     execute_sql_as_root_via_client(&drop_sql).expect("drop table should succeed");
 
-    let select_after_drop = execute_sql_via_client(&sel_all);
+    let select_after_drop = execute_sql_as_root_via_client(&sel_all);
     match select_after_drop {
         Ok(s) => panic!("expected failure selecting dropped table, got output: {}", s),
         Err(e) => {

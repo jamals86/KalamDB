@@ -1,6 +1,6 @@
 use crate::error::KalamDbError;
 use crate::utils::core::TableProviderCore;
-use crate::utils::parquet::scan_parquet_files_as_batch;
+use crate::utils::parquet::scan_parquet_files_as_batch_async;
 use crate::utils::version_resolution::{parquet_batch_to_rows, ParquetRowData};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::logical_expr::Expr;
@@ -58,7 +58,7 @@ pub fn ensure_manifest_ready(
 /// Load a row from Parquet cold storage by SeqId with a scoped filter.
 ///
 /// `build_row` maps parsed Parquet data into the provider's row type.
-pub fn load_row_from_parquet_by_seq<T, F>(
+pub async fn load_row_from_parquet_by_seq<T, F>(
     core: &TableProviderCore,
     table_type: TableType,
     schema: &SchemaRef,
@@ -70,14 +70,14 @@ where
     F: FnOnce(ParquetRowData) -> T,
 {
     let filter: Expr = col(SystemColumnNames::SEQ).eq(lit(seq_id.as_i64()));
-    let batch = scan_parquet_files_as_batch(
+    let batch = scan_parquet_files_as_batch_async(
         core,
         core.table_id(),
         table_type,
         user_id,
         schema.clone(),
         Some(&filter),
-    )?;
+    ).await?;
     let rows = parquet_batch_to_rows(&batch)?;
 
     for row_data in rows.into_iter() {

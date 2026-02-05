@@ -92,7 +92,6 @@ fn wait_for_node_healthy(base_url: &str, timeout_secs: u64) -> bool {
             println!("    ✓ Node healthy after {:?}", start.elapsed());
             return true;
         }
-        std::thread::sleep(Duration::from_millis(500));
     }
 
     println!("    ✗ Node did not become healthy within {}s", timeout_secs);
@@ -126,7 +125,6 @@ fn cluster_test_node_rejoin_system_metadata() {
 
     // Setup: Create initial namespace
     let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(500));
 
     // Step 1: Stop node3
     println!("Step 1: Stopping node3...");
@@ -177,7 +175,7 @@ fn cluster_test_node_rejoin_system_metadata() {
     println!("  ✓ Inserted 3 rows into metadata_test");
 
     // Wait for replication to node2 (verify cluster is working)
-    std::thread::sleep(Duration::from_secs(1));
+    std::thread::sleep(Duration::from_millis(100));
     let node2_url = &urls[1];
     let count =
         query_count_on_url(node2_url, &format!("SELECT count(*) FROM {}.metadata_test", namespace));
@@ -240,7 +238,7 @@ fn cluster_test_node_rejoin_system_metadata() {
             "  ⏳ Waiting for data replication (attempt {}/10, count: {})",
             attempt, data_count
         );
-        std::thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(Duration::from_millis(100));
     }
 
     // Note: Due to Raft group ordering issue, data may not replicate if the
@@ -286,7 +284,6 @@ fn cluster_test_node_rejoin_dml_operations() {
 
     // Setup: Create namespace and table
     let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(500));
     execute_on_node(leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(
@@ -350,7 +347,7 @@ fn cluster_test_node_rejoin_dml_operations() {
     println!("  ✓ Deleted row id=3");
 
     // Verify on node2
-    std::thread::sleep(Duration::from_secs(1));
+    std::thread::sleep(Duration::from_millis(100));
     let node2_url = &urls[1];
     let count =
         query_count_on_url(node2_url, &format!("SELECT count(*) FROM {}.dml_test", namespace));
@@ -455,7 +452,6 @@ fn cluster_test_node_rejoin_user_management() {
 
     // Cleanup any existing test user
     let _ = execute_on_node(leader_url, &format!("DROP USER IF EXISTS {}", test_user));
-    std::thread::sleep(Duration::from_millis(500));
 
     // Step 1: Stop node3
     println!("Step 1: Stopping node3...");
@@ -471,7 +467,7 @@ fn cluster_test_node_rejoin_user_management() {
     println!("  ✓ Created user: {}", test_user);
 
     // Verify user exists on node2
-    std::thread::sleep(Duration::from_secs(1));
+    std::thread::sleep(Duration::from_millis(100));
     let node2_url = &urls[1];
     let user_count = query_count_on_url(
         node2_url,
@@ -540,7 +536,6 @@ fn cluster_test_multiple_rejoin_cycles() {
 
     // Setup
     let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(500));
     execute_on_node(leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(
@@ -635,7 +630,6 @@ fn cluster_test_node_rejoin_schema_changes() {
 
     // Setup: Create namespace and initial table
     let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(500));
     execute_on_node(leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(

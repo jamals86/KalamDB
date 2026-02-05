@@ -36,20 +36,17 @@ fn cluster_test_flush_data_consistency() {
 
     // Cleanup from previous runs
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(500));
 
     // Step 1: Create namespace on first node
     println!("  1. Creating namespace on node 0...");
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    std::thread::sleep(Duration::from_millis(500));
 
     // Step 2: Create shared table
     println!("  2. Creating shared table...");
     let create_sql =
         format!("CREATE SHARED TABLE {} (id INT PRIMARY KEY, name TEXT, value INT)", full_table);
     execute_on_node(&urls[0], &create_sql).expect("Failed to create table");
-    std::thread::sleep(Duration::from_millis(500));
 
     // Wait for table to be visible on all nodes
     println!("  3. Waiting for table to replicate...");
@@ -59,7 +56,6 @@ fn cluster_test_flush_data_consistency() {
             replicated = true;
             break;
         }
-        std::thread::sleep(Duration::from_millis(200));
     }
     assert!(replicated, "Table not replicated to all nodes");
 
@@ -76,7 +72,6 @@ fn cluster_test_flush_data_consistency() {
         );
         execute_on_node(&urls[0], &insert_sql).expect(&format!("Failed to insert row {}", i));
     }
-    std::thread::sleep(Duration::from_millis(500));
 
     // Step 4: Execute FLUSH command
     println!("  5. Executing FLUSH command...");
@@ -172,26 +167,22 @@ fn cluster_test_multiple_flushes() {
 
     // Cleanup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(500));
 
     // Setup
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    std::thread::sleep(Duration::from_millis(500));
 
     execute_on_node(
         &urls[0],
         &format!("CREATE SHARED TABLE {} (id INT PRIMARY KEY, batch INT)", full_table),
     )
     .expect("Failed to create table");
-    std::thread::sleep(Duration::from_millis(500));
 
     // Wait for table to replicate
     for _ in 0..10 {
         if wait_for_table_on_all_nodes(&namespace, table_name, 500) {
             break;
         }
-        std::thread::sleep(Duration::from_millis(200));
     }
 
     // Insert first batch and flush
@@ -286,26 +277,22 @@ fn cluster_test_flush_during_reads() {
 
     // Cleanup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(500));
 
     // Setup
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    std::thread::sleep(Duration::from_millis(500));
 
     execute_on_node(
         &urls[0],
         &format!("CREATE SHARED TABLE {} (id INT PRIMARY KEY, data TEXT)", full_table),
     )
     .expect("Failed to create table");
-    std::thread::sleep(Duration::from_millis(500));
 
     // Wait for table to replicate
     for _ in 0..10 {
         if wait_for_table_on_all_nodes(&namespace, table_name, 500) {
             break;
         }
-        std::thread::sleep(Duration::from_millis(200));
     }
 
     // Insert data

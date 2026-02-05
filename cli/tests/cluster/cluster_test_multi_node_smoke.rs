@@ -249,7 +249,6 @@ fn cluster_test_smoke_auth_any_node() {
         panic!("Namespace {} did not replicate to all nodes", namespace);
     }
     // Additional wait for user replication
-    std::thread::sleep(Duration::from_millis(500));
 
     // Verify user exists and can be queried from all nodes
     for (node_idx, url) in urls.iter().enumerate() {

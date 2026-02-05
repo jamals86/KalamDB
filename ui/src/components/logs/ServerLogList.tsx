@@ -1,13 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useServerLogs, ServerLog, ServerLogFilters } from '@/hooks/useServerLogs';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -38,11 +30,6 @@ const LEVEL_CONFIG: Record<string, { color: string; icon: typeof AlertCircle }> 
 
 function getLevelConfig(level: string) {
   return LEVEL_CONFIG[level.toUpperCase()] || { color: 'bg-gray-100 text-gray-800', icon: Info };
-}
-
-function truncateMessage(message: string, maxLength: number = 100): string {
-  if (message.length <= maxLength) return message;
-  return message.substring(0, maxLength) + '...';
 }
 
 export function ServerLogList() {
@@ -230,55 +217,40 @@ export function ServerLogList() {
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[180px]">Timestamp</TableHead>
-                    <TableHead className="w-[80px]">Level</TableHead>
-                    <TableHead className="w-[150px]">Target</TableHead>
-                    <TableHead>Message</TableHead>
-                    <TableHead className="w-[50px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {logs.map((log, index) => {
-                    const levelConfig = getLevelConfig(log.level);
-                    const LevelIcon = levelConfig.icon;
-                    return (
-                      <TableRow key={`${log.timestamp}-${index}`} className="font-mono text-xs">
-                        <TableCell className="text-muted-foreground">
-                          {formatTimestamp(log.timestamp)}
-                        </TableCell>
-                        <TableCell>
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${levelConfig.color}`}>
-                            <LevelIcon className="h-3 w-3" />
-                            {log.level}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground truncate max-w-[150px]">
-                          {log.target || '-'}
-                        </TableCell>
-                        <TableCell className="max-w-[500px]">
-                          <span title={log.message}>
-                            {truncateMessage(log.message, 120)}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setSelectedLog(log)}
-                            title="View details"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+            <div className="font-mono text-xs overflow-x-auto">
+              {logs.map((log, index) => {
+                const levelConfig = getLevelConfig(log.level);
+                const LevelIcon = levelConfig.icon;
+                return (
+                  <div 
+                    key={`${log.timestamp}-${index}`} 
+                    className="flex items-start gap-3 px-4 py-1.5 hover:bg-muted/50 border-b border-border/30 last:border-b-0 group"
+                  >
+                    <span className="text-muted-foreground shrink-0 w-[180px] whitespace-nowrap">
+                      {formatTimestamp(log.timestamp, 'Timestamp(Microsecond, None)')}
+                    </span>
+                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${levelConfig.color}`}>
+                      <LevelIcon className="h-2.5 w-2.5" />
+                      {log.level}
+                    </span>
+                    <span className="text-muted-foreground shrink-0 w-[120px] truncate" title={log.target || '-'}>
+                      {log.target || '-'}
+                    </span>
+                    <span className="flex-1 min-w-0 break-words">
+                      {log.message}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={() => setSelectedLog(log)}
+                      title="View details"
+                    >
+                      <Eye className="h-3 w-3" />
+                    </Button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </CardContent>

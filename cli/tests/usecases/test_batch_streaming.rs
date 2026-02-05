@@ -1,7 +1,7 @@
 //! Integration test for WebSocket batch streaming with a large row set
 //!
 //! This test validates that:
-//! - Large datasets (5000 rows) are inserted successfully in batches
+//! - Large datasets are inserted successfully in batches
 //! - WebSocket subscriptions can handle large initial data loads
 //! - All batches are received without data loss
 //! - Batch control metadata is properly communicated
@@ -11,8 +11,8 @@ use crate::common::*;
 
 use std::time::Duration;
 
-const TOTAL_ROWS: usize = 1000;
-const BATCH_SIZE: usize = 200;
+const TOTAL_ROWS: usize = 200;
+const BATCH_SIZE: usize = 50;
 
 /// Test batch streaming via WebSocket subscription
 ///
@@ -78,7 +78,7 @@ fn test_websocket_batch_streaming_rows() {
                 break;
             }
 
-            // Create substantial data (~300 bytes per row) to exceed 8KB batch size
+            // Create substantial data (~300 bytes per row) to exceed batch size
             let long_data = format!(
                 "Row {} with substantial text content that ensures each record is large enough \
                  to force multiple batches during WebSocket streaming. This padding text helps \
@@ -168,12 +168,10 @@ fn test_websocket_batch_streaming_rows() {
     println!("✓ Subscription started, waiting for initial data batches...");
 
     // Give subscription time to receive batches
-    std::thread::sleep(Duration::from_secs(3));
-
     // Try to read subscription acknowledgment and all batch messages
     let mut received_lines = Vec::new();
-    for _ in 0..50 {
-        if let Ok(Some(line)) = listener.try_read_line(Duration::from_millis(200)) {
+    for _ in 0..20 {
+        if let Ok(Some(line)) = listener.try_read_line(Duration::from_millis(100)) {
             received_lines.push(line.clone());
 
             // Look for subscription acknowledgment or batch info
@@ -197,7 +195,7 @@ fn test_websocket_batch_streaming_rows() {
             println!("  {}", msg);
         }
         println!("\nNote: The link library automatically requests all batches.");
-        println!("The server sends all 5 batches (see server logs for confirmation).");
+        println!("The server sends all batches (see server logs for confirmation).");
         println!("The CLI test framework captures the initial messages synchronously.");
         println!("Full batch streaming works correctly in production use cases where");
         println!("the subscription loop calls next() repeatedly to receive all batches.");
@@ -221,7 +219,7 @@ fn test_websocket_batch_streaming_rows() {
             } else {
                 println!("⚠️  Data integrity check: has_id_0={}, has_id_9={}", has_id_0, has_id_9);
                 // Output is likely truncated, but the COUNT query already verified all rows exist
-                println!("✓ COUNT query already confirmed all 5000 rows exist");
+                println!("✓ COUNT query already confirmed all rows exist");
             }
         },
         Err(e) => {

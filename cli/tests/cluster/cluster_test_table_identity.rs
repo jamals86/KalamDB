@@ -36,7 +36,6 @@ fn verify_data_identical_with_retry(
                 expected_rows,
                 all_data.iter().map(|d| d.len()).collect::<Vec<_>>()
             ));
-            std::thread::sleep(Duration::from_millis(200));
             continue;
         }
 
@@ -57,7 +56,6 @@ fn verify_data_identical_with_retry(
 
         if let Some(err) = mismatch {
             last_err = Some(err);
-            std::thread::sleep(Duration::from_millis(200));
             continue;
         }
 
@@ -81,7 +79,6 @@ fn cluster_test_table_identity_inserts() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -157,7 +154,6 @@ fn cluster_test_table_identity_updates() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -187,7 +183,6 @@ fn cluster_test_table_identity_updates() {
         .expect("Failed to insert");
     }
 
-    std::thread::sleep(Duration::from_millis(500));
 
     // Update first 5 rows using individual PK-based updates (KalamDB doesn't support predicate-based updates on SHARED tables)
     for i in 0..5 {
@@ -246,10 +241,8 @@ fn cluster_test_table_identity_deletes() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    std::thread::sleep(Duration::from_millis(500));
 
     execute_on_node(
         &urls[0],
@@ -328,7 +321,6 @@ fn cluster_test_table_identity_mixed_operations() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -358,7 +350,6 @@ fn cluster_test_table_identity_mixed_operations() {
         )
         .expect("Failed to insert");
     }
-    std::thread::sleep(Duration::from_millis(500));
 
     // Phase 2: Update first 25 rows using individual PK-based updates (KalamDB doesn't support predicate-based updates on SHARED tables)
     println!("  Phase 2: Updating rows with id 0-24...");
@@ -372,13 +363,11 @@ fn cluster_test_table_identity_mixed_operations() {
         )
         .expect("Failed to update");
     }
-    std::thread::sleep(Duration::from_millis(300));
 
     // Phase 3: Delete some rows
     println!("  Phase 3: Deleting rows with id >= 40...");
     execute_on_node(&urls[0], &format!("DELETE FROM {}.mixed_test WHERE id >= 40", namespace))
         .expect("Failed to delete");
-    std::thread::sleep(Duration::from_millis(300));
 
     // Phase 4: Insert new rows
     println!("  Phase 4: Inserting 10 new rows...");
@@ -392,7 +381,6 @@ fn cluster_test_table_identity_mixed_operations() {
         )
         .expect("Failed to insert");
     }
-    std::thread::sleep(Duration::from_millis(300));
 
     // Phase 5: Update the new rows using individual PK-based updates
     println!("  Phase 5: Updating new rows...");
@@ -473,7 +461,6 @@ fn cluster_test_table_identity_large_batch() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -513,7 +500,6 @@ fn cluster_test_table_identity_large_batch() {
         .expect("Failed to insert batch");
 
         // Small delay between batches
-        std::thread::sleep(Duration::from_millis(50));
     }
 
     // Verify all rows are identical on all nodes
@@ -549,7 +535,6 @@ fn cluster_test_table_identity_user_tables() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -574,7 +559,6 @@ fn cluster_test_table_identity_user_tables() {
         .expect(&format!("Failed to create user {}", user));
     }
 
-    std::thread::sleep(Duration::from_millis(500));
 
     // Insert data as root for each user
     for (user_idx, user) in users.iter().enumerate() {

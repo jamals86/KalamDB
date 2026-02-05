@@ -93,7 +93,6 @@ fn cluster_test_leader_visibility() {
             break;
         }
 
-        std::thread::sleep(Duration::from_millis(200));
     }
 
     assert!(
@@ -124,7 +123,6 @@ fn cluster_test_write_routing() {
     for url in &urls {
         let _ = execute_on_node(url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     }
-    std::thread::sleep(Duration::from_millis(200));
 
     // Try creating namespace from each node
     println!("Testing write routing from each node...");

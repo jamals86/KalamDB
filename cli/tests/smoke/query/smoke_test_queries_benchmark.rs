@@ -115,7 +115,6 @@ fn smoke_queries_benchmark() {
                     if attempts >= 3 {
                         panic!("insert batch failed after retries: {}", e);
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(150));
                 },
             }
         }

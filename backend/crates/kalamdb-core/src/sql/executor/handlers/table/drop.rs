@@ -211,14 +211,15 @@ pub async fn cleanup_parquet_files_internal(
             ))
         })?;
 
-    // Delete Parquet files using StorageCached
+    // Delete Parquet files using StorageCached (async to avoid blocking runtime)
     // Note: For user tables, we'd need user_id, but cleanup is table-wide
     let files_deleted = storage_cached
-        .delete_prefix_sync(
+        .delete_prefix(
             table_type,
             table_id,
             None,  // user_id - cleanup is table-wide
         )
+        .await
         .into_kalamdb_error("Failed to delete Parquet tree")?
         .files_deleted;
 

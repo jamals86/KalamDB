@@ -14,7 +14,10 @@ host = "127.0.0.1"
 port = 8080
 
 # Number of worker threads (0 = number of CPU cores)
-workers = 0
+# INCREASED FOR TEST LOAD: More workers handle concurrent test connections
+# macOS has limited ephemeral ports (~16K), so more workers help process
+# connections faster, reducing TIME_WAIT port exhaustion
+workers = 8
 
 # Enable HTTP/2 protocol support (default: true)
 # When true, server uses automatic HTTP/1.1 and HTTP/2 cleartext (h2c) negotiation
@@ -172,11 +175,14 @@ slow_query_threshold_ms = 1000
 request_timeout = 30
 
 # Keep-alive timeout in seconds (default: 75s)
+# HTTP keep-alive allows connection reuse, reducing TCP handshake overhead
+# Tests benefit from longer keep-alive to reuse connections
 keepalive_timeout = 75
 
 # Maximum concurrent connections per worker (default: 25000)
 # Includes both REST API and WebSocket connections
-max_connections = 25000
+# INCREASED FOR TEST LOAD: Handles burst connections from concurrent tests
+max_connections = 50000
 
 # TCP listen backlog - pending connections queue size (default: 2048)
 # Controls how many connections can wait in the kernel queue before being accepted
@@ -187,6 +193,23 @@ max_connections = 25000
 #   - High traffic: 8192+ (enterprise scale)
 # Industry standards: Nginx (511), Apache (511), Caddy (1024), Actix (1024)
 backlog = 4096
+
+# Max blocking threads per worker for CPU-intensive operations (default: 512)
+# Used for RocksDB I/O and synchronous operations
+# INCREASED FOR TEST LOAD: More threads handle concurrent blocking operations
+worker_max_blocking_threads = 1024
+
+# Client request timeout in seconds (default: 5)
+# Time allowed for client to send complete request headers
+client_request_timeout = 10
+
+# Client disconnect timeout in seconds (default: 2)
+# Time allowed for graceful connection shutdown
+client_disconnect_timeout = 5
+
+# Maximum HTTP header size in bytes (default: 16384 = 16KB)
+# Increase if you have large JWT tokens or custom headers  
+max_header_size = 16384
 
 [rate_limit]
 # Maximum SQL queries per second per user (default: 100)

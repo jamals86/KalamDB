@@ -414,9 +414,11 @@ mod tests {
         let user = UserId::new("user-ttl");
         provider
             .insert(&user, json_to_row(&json!({"event_id": "evt1", "payload": "hello"})).unwrap())
+            .await
             .expect("insert evt1");
         provider
             .insert(&user, json_to_row(&json!({"event_id": "evt2", "payload": "world"})).unwrap())
+            .await
             .expect("insert evt2");
 
         // Wait for TTL to make them eligible for eviction
@@ -468,6 +470,7 @@ mod tests {
         harness
             .provider
             .insert(&user, json_to_row(&json!({"event_id": "evt1", "payload": "fresh"})).unwrap())
+            .await
             .expect("insert fresh row");
 
         let params = StreamEvictionParams {
@@ -493,6 +496,7 @@ mod tests {
         harness
             .provider
             .insert(&user, json_to_row(&json!({"event_id": "evt1", "payload": "expired"})).unwrap())
+            .await
             .expect("insert expired row");
 
         sleep(Duration::from_millis(1200)).await;

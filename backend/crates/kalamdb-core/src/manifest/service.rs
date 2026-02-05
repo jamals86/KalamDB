@@ -120,6 +120,29 @@ impl ManifestService {
         }
     }
 
+    /// Async version of get_or_load to avoid blocking the tokio runtime.
+    pub async fn get_or_load_async(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
+        let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
+        match self.provider.store().get_async(rocksdb_key.clone()).await {
+            Ok(Some(entry)) => Ok(Some(Arc::new(entry))),
+            Ok(None) => Ok(None),
+            Err(StorageError::SerializationError(err)) => {
+                warn!(
+                    "Manifest cache entry corrupted for key {}: {} (dropping)",
+                    rocksdb_key.as_str(),
+                    err
+                );
+                let _ = self.provider.store().delete_async(rocksdb_key).await;
+                Ok(None)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     /// Count all cached manifest entries.
     pub fn count(&self) -> Result<usize, StorageError> {
         self.provider.store().count_all()
@@ -303,8 +326,8 @@ impl ManifestService {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
 
         if let Some(entry) = self.provider.store().get(&rocksdb_key)? {
-            let now = chrono::Utc::now().timestamp();
-            Ok(!entry.is_stale(self.config.ttl_seconds(), now))
+            let now = chrono::Utc::now().timestamp_millis();
+            Ok(!entry.is_stale(self.config.ttl_millis(), now))
         } else {
             Ok(false)
         }
@@ -359,14 +382,14 @@ impl ManifestService {
     /// or RocksDB secondary index to find stale entries efficiently O(log N)
     /// instead of O(N) full scan.
     pub fn evict_stale_entries(&self, ttl_seconds: i64) -> Result<usize, StorageError> {
-        let now = chrono::Utc::now().timestamp();
-        let cutoff = now - ttl_seconds;
+        let now = chrono::Utc::now().timestamp_millis();
+        let cutoff = now - (ttl_seconds * 1000);
         let entries = self.provider.store().scan_all_typed(Some(MAX_MANIFEST_SCAN_LIMIT), None, None)?;
         
         let delete_keys: Vec<ManifestId> = entries
             .into_iter()
             .filter_map(|(key, entry)| {
-                if entry.last_refreshed < cutoff {
+                if entry.last_refreshed_millis() < cutoff {
                     Some(key)
                 } else {
                     None
@@ -719,7 +742,7 @@ impl ManifestService {
         sync_state: SyncState,
     ) -> Result<(), StorageError> {
         let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
-        let now = chrono::Utc::now().timestamp();
+        let now = chrono::Utc::now().timestamp_millis();
 
         log::debug!(
             "[MANIFEST_CACHE_DEBUG] upsert_cache_entry: key={} segments={} sync_state={:?}",
@@ -781,6 +804,7 @@ impl ManifestService {
     // Private helper methods removed - now using StorageCached operations directly
 }
 
+#[async_trait::async_trait]
 impl ManifestServiceTrait for ManifestService {
     fn get_or_load(
         &self,
@@ -788,6 +812,14 @@ impl ManifestServiceTrait for ManifestService {
         user_id: Option<&UserId>,
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
         self.get_or_load(table_id, user_id)
+    }
+
+    async fn get_or_load_async(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
+        self.get_or_load_async(table_id, user_id).await
     }
 
     fn validate_manifest(&self, manifest: &Manifest) -> Result<(), StorageError> {

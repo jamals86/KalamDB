@@ -684,6 +684,42 @@ impl SchemaRegistry {
         }
     }
 
+    /// Async version of get_table_if_exists (avoids blocking RocksDB reads in async context)
+    ///
+    /// Under high load, synchronous RocksDB operations can starve the tokio runtime.
+    /// This async version uses spawn_blocking to prevent runtime starvation.
+    pub async fn get_table_if_exists_async(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
+        let app_ctx = self.app_context();
+        // Fast path: check cache
+        if let Some(cached) = self.get(table_id) {
+            return Ok(Some(Arc::clone(&cached.table)));
+        }
+
+        // Check if it's a system table
+        if table_id.namespace_id().is_system_namespace() {
+            if let Some(def) = app_ctx.system_tables().get_system_definition(table_id) {
+                return Ok(Some(def));
+            }
+        }
+
+        let tables_provider = app_ctx.system_tables().tables();
+
+        // Use async version to avoid blocking the runtime
+        match tables_provider.get_table_by_id_async(table_id).await? {
+            Some(table_def) => {
+                let table_arc = Arc::new(table_def);
+                let data =
+                    CachedTableData::from_table_definition(app_ctx.as_ref(), table_id, table_arc.clone())?;
+                self.insert_cached(table_id.clone(), Arc::new(data));
+                Ok(Some(table_arc))
+            },
+            None => Ok(None),
+        }
+    }
+
     /// Get Arrow schema for a table
     ///
     /// Directly accesses the memoized Arrow schema from CachedTableData.

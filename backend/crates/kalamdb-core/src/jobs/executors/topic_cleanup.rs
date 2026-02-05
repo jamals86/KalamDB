@@ -72,7 +72,7 @@ impl JobExecutor for TopicCleanupExecutor {
         "TopicCleanupExecutor"
     }
 
-    async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
+    async fn execute(&self, _ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         // No local work needed for topic cleanup
         Ok(JobDecision::Completed {
             message: Some("Topic cleanup has no local work".to_string()),

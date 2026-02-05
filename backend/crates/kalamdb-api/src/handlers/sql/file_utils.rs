@@ -275,7 +275,7 @@ pub fn substitute_file_placeholders(sql: &str, file_refs: &HashMap<String, FileR
 }
 
 /// Stage files and create FileRef values
-pub fn stage_and_finalize_files(
+pub async fn stage_and_finalize_files(
     file_service: &FileStorageService,
     files: &HashMap<String, (String, Bytes, Option<String>)>,
     storage_id: &StorageId,
@@ -324,6 +324,7 @@ pub fn stage_and_finalize_files(
                 subfolder_state,
                 shard_id,
             )
+            .await
             .map_err(|e| {
                 FileError::new(
                     ErrorCode::InternalError,

@@ -24,7 +24,6 @@ fn test_link_subscription_initial_batch_then_inserts() {
 
     // Setup namespace
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace));
-    std::thread::sleep(Duration::from_millis(10));
 
     // Create user table
     let create_result = execute_sql_as_root_via_cli(&format!(
@@ -32,7 +31,6 @@ fn test_link_subscription_initial_batch_then_inserts() {
         table_full
     ));
     assert!(create_result.is_ok(), "Failed to create table: {:?}", create_result);
-    std::thread::sleep(Duration::from_millis(10));
 
     // Insert initial rows BEFORE subscribing
     for i in 1..=3 {
@@ -42,7 +40,6 @@ fn test_link_subscription_initial_batch_then_inserts() {
         ));
         assert!(result.is_ok(), "Failed to insert initial row {}: {:?}", i, result);
     }
-    std::thread::sleep(Duration::from_millis(20));
 
     // Start subscription
     let query = format!("SELECT * FROM {}", table_full);
@@ -124,7 +121,6 @@ fn test_link_subscription_empty_table_then_inserts() {
 
     // Setup namespace
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace));
-    std::thread::sleep(Duration::from_millis(10));
 
     // Create user table (empty)
     let create_result = execute_sql_as_root_via_cli(&format!(
@@ -132,7 +128,6 @@ fn test_link_subscription_empty_table_then_inserts() {
         table_full
     ));
     assert!(create_result.is_ok(), "Failed to create table: {:?}", create_result);
-    std::thread::sleep(Duration::from_millis(10));
 
     // Start subscription on empty table
     let query = format!("SELECT * FROM {}", table_full);
@@ -200,13 +195,11 @@ fn test_link_subscription_batch_status_transition() {
 
     // Setup
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace));
-    std::thread::sleep(Duration::from_millis(10));
 
     let _ = execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:100')",
         table_full
     ));
-    std::thread::sleep(Duration::from_millis(10));
 
     // Insert some data
     for i in 1..=5 {
@@ -215,7 +208,6 @@ fn test_link_subscription_batch_status_transition() {
             table_full, i, i
         ));
     }
-    std::thread::sleep(Duration::from_millis(20));
 
     // Start subscription
     let query = format!("SELECT * FROM {}", table_full);
@@ -232,7 +224,7 @@ fn test_link_subscription_batch_status_transition() {
     let mut events = Vec::new();
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_secs(5) {
-        match listener.try_read_line(Duration::from_millis(200)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 eprintln!("[EVENT] {}", line);
                 events.push(line);
@@ -277,13 +269,11 @@ fn test_link_subscription_multiple_live_inserts() {
 
     // Setup
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace));
-    std::thread::sleep(Duration::from_millis(10));
 
     let _ = execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, level VARCHAR, message VARCHAR) WITH (TYPE='USER')",
         table_full
     ));
-    std::thread::sleep(Duration::from_millis(10));
 
     // Start subscription on empty table
     let query = format!("SELECT * FROM {}", table_full);
@@ -312,14 +302,13 @@ fn test_link_subscription_multiple_live_inserts() {
             i + 1
         ))
         .expect("insert should succeed");
-        std::thread::sleep(Duration::from_millis(50));
     }
 
     // Collect insert events
     let mut insert_count = 0;
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_secs(30) && insert_count < levels.len() {
-        match listener.try_read_line(Duration::from_millis(300)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 if line.contains("Insert") {
                     insert_count += 1;
@@ -359,20 +348,17 @@ fn test_link_subscription_delete_events() {
 
     // Setup
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace));
-    std::thread::sleep(Duration::from_millis(10));
 
     let _ = execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER')",
         table_full
     ));
-    std::thread::sleep(Duration::from_millis(10));
 
     // Insert initial data
     let _ = execute_sql_as_root_via_cli(&format!(
         "INSERT INTO {} (id, name) VALUES (1, 'To Delete')",
         table_full
     ));
-    std::thread::sleep(Duration::from_millis(10));
 
     // Start subscription
     let query = format!("SELECT * FROM {}", table_full);

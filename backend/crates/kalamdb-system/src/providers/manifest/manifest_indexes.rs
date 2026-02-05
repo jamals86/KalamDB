@@ -59,7 +59,7 @@ mod tests {
 
     fn create_test_entry(table_id: TableId, user_id: Option<UserId>, sync_state: SyncState) -> ManifestCacheEntry {
         let manifest = Manifest::new(table_id, user_id);
-        ManifestCacheEntry::new(manifest, None, chrono::Utc::now().timestamp(), sync_state)
+        ManifestCacheEntry::new(manifest, None, chrono::Utc::now().timestamp_millis(), sync_state)
     }
 
     #[test]

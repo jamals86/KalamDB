@@ -34,10 +34,10 @@ fn cluster_test_leader_only_flush_jobs() {
     let namespace = generate_unique_namespace("leader_jobs");
     let _ =
         execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    thread::sleep(Duration::from_millis(200));
+    thread::sleep(Duration::from_millis(20));
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    thread::sleep(Duration::from_millis(200));
+    thread::sleep(Duration::from_millis(20));
 
     // Step 1: Create a test table via the leader
     let table_name = format!("test_leader_jobs_{}", rand_suffix());
@@ -58,7 +58,7 @@ fn cluster_test_leader_only_flush_jobs() {
     println!("  ✓ Inserted test data");
 
     // Small delay for replication
-    thread::sleep(Duration::from_millis(500));
+    thread::sleep(Duration::from_millis(50));
 
     // Step 3: Trigger flush from a follower node (should still execute on leader)
     let follower_url = urls.iter().find(|u| *u != &leader_url).expect("Need at least 2 nodes");
@@ -198,18 +198,18 @@ fn cluster_test_job_claiming() {
     let full_table = format!("{}.{}", namespace, table_name);
 
     let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    thread::sleep(Duration::from_millis(200));
+    thread::sleep(Duration::from_millis(20));
 
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    thread::sleep(Duration::from_millis(200));
+    thread::sleep(Duration::from_millis(20));
 
     execute_on_node(
         &leader_url,
         &format!("CREATE SHARED TABLE {} (id INT PRIMARY KEY)", full_table),
     )
     .expect("Failed to create table");
-    thread::sleep(Duration::from_millis(200));
+    thread::sleep(Duration::from_millis(20));
 
     execute_on_node(&leader_url, &format!("INSERT INTO {} (id) VALUES (1)", full_table))
         .expect("Failed to insert row");
@@ -258,16 +258,16 @@ fn cluster_test_flush_job_nodes_completion() {
     let full_table = format!("{}.{}", namespace, table_name);
 
     let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    thread::sleep(Duration::from_millis(200));
+    thread::sleep(Duration::from_millis(20));
 
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    thread::sleep(Duration::from_millis(200));
+    thread::sleep(Duration::from_millis(20));
 
     let create_sql =
         format!("CREATE SHARED TABLE {} (id INT PRIMARY KEY, value TEXT)", full_table);
     execute_on_node(&leader_url, &create_sql).expect("Failed to create table");
-    thread::sleep(Duration::from_millis(300));
+    thread::sleep(Duration::from_millis(30));
 
     for i in 0..20 {
         let insert_sql =
@@ -360,7 +360,7 @@ fn wait_for_job_nodes_completed(
             }
         }
 
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(20));
     }
 
     false

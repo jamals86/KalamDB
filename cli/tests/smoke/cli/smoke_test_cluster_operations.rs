@@ -194,7 +194,6 @@ fn smoke_test_cluster_table_type_consistency() {
     // Cleanup if exists
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     // Create namespace
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -313,7 +312,6 @@ fn smoke_test_cluster_user_data_partitioning() {
     // Cleanup if exists
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     // Create namespace and user table
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -414,7 +412,6 @@ fn smoke_test_cluster_shared_table_consistency() {
     // Cleanup if exists
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     // Create namespace and shared table
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -482,7 +479,6 @@ fn smoke_test_cluster_concurrent_operations() {
     // Cleanup if exists
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     // Create namespace and shared counter table
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -557,7 +553,6 @@ fn smoke_test_cluster_batch_insert_consistency() {
     // Cleanup if exists
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     // Create namespace and table
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -638,7 +633,6 @@ fn smoke_test_cluster_job_tracking() {
     // Cleanup if exists
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     // Create namespace and table
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -673,7 +667,6 @@ fn smoke_test_cluster_job_tracking() {
     }
 
     // Wait a bit for job to be registered
-    std::thread::sleep(Duration::from_millis(500));
 
     // Check system.jobs for flush jobs
     let result = execute_sql_as_root_via_client(
@@ -727,7 +720,6 @@ fn smoke_test_cluster_storage_operations() {
 
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");

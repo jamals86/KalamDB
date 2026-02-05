@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::PathBuf;
+use std::path::Path;
 use std::process::Command;
 use std::process::{Child, Stdio};
 use std::sync::mpsc as std_mpsc;
@@ -15,6 +16,11 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::runtime::{Handle, Runtime};
+use tokio::sync::Mutex as TokioMutex;
+use libc::{flock, LOCK_EX, LOCK_UN};
+use std::fs::OpenOptions;
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 
 // Load environment variables from .env file at test startup
 fn load_env_file() {
@@ -43,6 +49,14 @@ fn admin_password_from_env() -> String {
         .unwrap_or_else(|| "kalamdb123".to_string())
 }
 
+fn shared_token_cache_path() -> PathBuf {
+    std::env::temp_dir().join("kalamdb_test_tokens.json")
+}
+
+fn shared_token_cache_lock_path() -> PathBuf {
+    std::env::temp_dir().join("kalamdb_test_tokens.lock")
+}
+
 // Re-export commonly used types for credential tests
 pub use kalam_cli::FileCredentialStore;
 pub use kalam_link::credentials::{CredentialStore, Credentials};
@@ -63,6 +77,8 @@ static AUTO_TEST_RUNTIME: OnceLock<&'static Runtime> = OnceLock::new();
 /// Token cache: maps "username:password" to access_token
 static TOKEN_CACHE: OnceLock<Mutex<std::collections::HashMap<String, String>>> = OnceLock::new();
 static TEST_AUTH_MANAGER: OnceLock<TestAuthManager> = OnceLock::new();
+static LOGIN_MUTEX: OnceLock<TokioMutex<()>> = OnceLock::new();
+static TOKEN_FILE_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 
 struct TestAuthManager {
     ready_urls: Mutex<HashSet<String>>,
@@ -73,6 +89,83 @@ impl TestAuthManager {
         Self {
             ready_urls: Mutex::new(HashSet::new()),
         }
+    }
+
+    fn with_shared_token_cache<R>(
+        &self,
+        op: impl FnOnce(&mut HashMap<String, String>) -> R,
+    ) -> Result<R, Box<dyn std::error::Error>> {
+        let _guard = TOKEN_FILE_MUTEX
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .map_err(|_| "Failed to lock token cache mutex")?;
+
+        let lock_path = shared_token_cache_lock_path();
+        let cache_path = shared_token_cache_path();
+        let mut lock_file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&lock_path)?;
+
+        #[cfg(unix)]
+        unsafe {
+            if flock(lock_file.as_raw_fd(), LOCK_EX) != 0 {
+                return Err("Failed to acquire token cache lock".into());
+            }
+        }
+
+        let mut map: HashMap<String, String> = if cache_path.exists() {
+            let contents = std::fs::read_to_string(&cache_path).unwrap_or_default();
+            serde_json::from_str(&contents).unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
+
+        let result = op(&mut map);
+
+        let serialized = serde_json::to_string(&map)?;
+        std::fs::write(&cache_path, serialized)?;
+
+        #[cfg(unix)]
+        unsafe {
+            let _ = flock(lock_file.as_raw_fd(), LOCK_UN);
+        }
+
+        Ok(result)
+    }
+
+    fn shared_token_for_key(
+        &self,
+        cache_key: &str,
+    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        self.with_shared_token_cache(|map| map.get(cache_key).cloned())
+    }
+
+    fn store_shared_token(
+        &self,
+        cache_key: &str,
+        token: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.with_shared_token_cache(|map| {
+            map.insert(cache_key.to_string(), token.to_string());
+        })?;
+        Ok(())
+    }
+
+    fn clear_shared_tokens_for_url(
+        &self,
+        base_url: &str,
+        usernames: &[&str],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let prefixes: Vec<String> = usernames
+            .iter()
+            .map(|user| format!("{}|{}:", base_url, user))
+            .collect();
+        self.with_shared_token_cache(|map| {
+            map.retain(|key, _| !prefixes.iter().any(|prefix| key.starts_with(prefix)));
+        })?;
+        Ok(())
     }
 
     async fn complete_setup_if_needed(
@@ -131,8 +224,7 @@ impl TestAuthManager {
     ) -> Result<String, Box<dyn std::error::Error>> {
         let client = Client::new();
         let mut attempt: u32 = 0;
-        let max_attempts: u32 = 6;
-        let mut backoff_ms: u64 = 150;
+        let max_attempts: u32 = 1;
 
         let extract_error_message = |parsed: &serde_json::Value| -> Option<String> {
             if let Some(msg) = parsed.get("message").and_then(|m| m.as_str()) {
@@ -189,8 +281,6 @@ impl TestAuthManager {
                 || error_msg.to_lowercase().contains("too many");
 
             if is_rate_limited && attempt + 1 < max_attempts {
-                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
-                backoff_ms = (backoff_ms * 2).min(2000);
                 attempt += 1;
                 continue;
             }
@@ -205,14 +295,16 @@ impl TestAuthManager {
         root_password: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self
-            .login_for_token(base_url, admin_username(), admin_password())
+            .token_for_url_cached(base_url, admin_username(), admin_password())
             .await
             .is_ok()
         {
             return Ok(());
         }
 
-        let root_token = self.login_for_token(base_url, "root", root_password).await?;
+        let root_token = self
+            .token_for_url_cached(base_url, "root", root_password)
+            .await?;
         let client = Client::new();
         let exists_response = client
             .post(format!("{}/v1/api/sql", base_url))
@@ -309,6 +401,7 @@ impl TestAuthManager {
         {
             guard.retain(|key, _| !key.contains("admin:") && !key.contains("root:"));
         }
+        let _ = self.clear_shared_tokens_for_url(base_url, &["admin", "root"]);
         Ok(())
     }
 
@@ -341,6 +434,15 @@ impl TestAuthManager {
         password: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
         self.ensure_ready(base_url).await?;
+        self.token_for_url_cached(base_url, username, password).await
+    }
+
+    async fn token_for_url_cached(
+        &self,
+        base_url: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let cache_key = format!("{}|{}:{}", base_url, username, password);
 
         if let Ok(guard) = TOKEN_CACHE
@@ -352,14 +454,47 @@ impl TestAuthManager {
             }
         }
 
+        if let Ok(Some(shared)) = self.shared_token_for_key(&cache_key) {
+            if let Ok(mut guard) = TOKEN_CACHE
+                .get_or_init(|| Mutex::new(HashMap::new()))
+                .lock()
+            {
+                guard.insert(cache_key.clone(), shared.clone());
+            }
+            return Ok(shared);
+        }
+
+        let login_lock = LOGIN_MUTEX.get_or_init(|| TokioMutex::new(()));
+        let _guard = login_lock.lock().await;
+
+        if let Ok(guard) = TOKEN_CACHE
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+        {
+            if let Some(token) = guard.get(&cache_key) {
+                return Ok(token.clone());
+            }
+        }
+
+        if let Ok(Some(shared)) = self.shared_token_for_key(&cache_key) {
+            if let Ok(mut guard) = TOKEN_CACHE
+                .get_or_init(|| Mutex::new(HashMap::new()))
+                .lock()
+            {
+                guard.insert(cache_key.clone(), shared.clone());
+            }
+            return Ok(shared);
+        }
+
         let token = self.login_for_token(base_url, username, password).await?;
 
         if let Ok(mut guard) = TOKEN_CACHE
             .get_or_init(|| Mutex::new(HashMap::new()))
             .lock()
         {
-            guard.insert(cache_key, token.clone());
+            guard.insert(cache_key.clone(), token.clone());
         }
+        let _ = self.store_shared_token(&cache_key, &token);
 
         Ok(token)
     }
@@ -593,7 +728,6 @@ fn wait_for_url_reachable(url: &str, timeout: Duration) -> bool {
         if url_reachable(url) {
             return true;
         }
-        std::thread::sleep(Duration::from_millis(50));
     }
     url_reachable(url)
 }
@@ -998,7 +1132,6 @@ fn detect_leader_url(urls: &[String], username: &str, password: &str) -> Option<
                     break;
                 }
 
-                tokio::time::sleep(Duration::from_millis(200)).await;
             }
 
             None
@@ -1298,6 +1431,44 @@ pub fn auth_provider_for_user_on_url(
 pub fn auth_provider_for_user(username: &str, password: &str) -> AuthProvider {
     let base_url = leader_url().unwrap_or_else(|| server_url().to_string());
     auth_provider_for_user_on_url(&base_url, username, password)
+}
+
+fn get_access_token_for_url_sync(
+    base_url: &str,
+    username: &str,
+    password: &str,
+) -> Option<String> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        let base_url_owned = base_url.to_string();
+        let username_owned = username.to_string();
+        let password_owned = password.to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = match Runtime::new() {
+                Ok(rt) => rt,
+                Err(err) => {
+                    let _ = tx.send(Err(err.to_string()));
+                    return;
+                }
+            };
+            let result = runtime
+                .block_on(get_access_token_for_url(
+                    &base_url_owned,
+                    &username_owned,
+                    &password_owned,
+                ))
+                .map_err(|err| err.to_string());
+            let _ = tx.send(result);
+        });
+        match rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(token)) => Some(token),
+            _ => None,
+        }
+    } else {
+        get_shared_runtime()
+            .block_on(get_access_token_for_url(base_url, username, password))
+            .ok()
+    }
 }
 
 /// Execute SQL over HTTP with explicit credentials.
@@ -1879,7 +2050,6 @@ fn wait_for_namespace_on_all_nodes(namespace: &str, timeout: Duration) -> bool {
         if all_visible {
             return true;
         }
-        std::thread::sleep(Duration::from_millis(200));
     }
     false
 }
@@ -1901,7 +2071,6 @@ fn wait_for_table_on_all_nodes(namespace: &str, table: &str, timeout: Duration) 
         if all_visible {
             return true;
         }
-        std::thread::sleep(Duration::from_millis(200));
     }
     false
 }
@@ -1978,6 +2147,10 @@ pub fn websocket_url() -> String {
 pub fn storage_base_dir() -> std::path::PathBuf {
     if let Ok(path) = std::env::var("KALAMDB_STORAGE_DIR") {
         return std::path::PathBuf::from(path);
+    }
+
+    if let Ok(path) = std::env::var("KALAMDB_DATA_DIR") {
+        return std::path::PathBuf::from(path).join("storage");
     }
 
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -2247,7 +2420,7 @@ fn execute_sql_via_cli_as_with_args_and_urls(
 
     eprintln!("[TEST_CLI] Executing as {}: \"{}\"", username, sql_preview.replace('\n', " "));
 
-    let max_attempts = if is_cluster_mode() { 10 } else { 5 };
+    let max_attempts = if is_cluster_mode() { 6 } else { 3 };
     let mut last_err: Option<String> = None;
 
     for attempt in 0..max_attempts {
@@ -2264,13 +2437,21 @@ fn execute_sql_via_cli_as_with_args_and_urls(
             let creds_path = creds_dir.path().join("credentials.toml");
             let spawn_start = Instant::now();
 
-            let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
-                .arg("-u")
-                .arg(url)
-                .arg("--username")
-                .arg(username)
-                .arg("--password")
-                .arg(password)
+            let token = get_access_token_for_url_sync(url, username, password);
+
+            let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"));
+            child.arg("-u").arg(url);
+
+            if let Some(token) = token {
+                child.arg("--token").arg(token);
+            } else {
+                child.arg("--username")
+                    .arg(username)
+                    .arg("--password")
+                    .arg(password);
+            }
+
+            child
                 .env("KALAMDB_CREDENTIALS_PATH", &creds_path)
                 .env("NO_PROXY", "127.0.0.1,localhost,::1")
                 .env("no_proxy", "127.0.0.1,localhost,::1")
@@ -2285,8 +2466,9 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                 .arg("--command")
                 .arg(sql)
                 .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()?;
+                .stderr(std::process::Stdio::piped());
+
+            let mut child = child.spawn()?;
 
             let spawn_duration = spawn_start.elapsed();
             eprintln!("[TEST_CLI] Process spawned in {:?}", spawn_duration);
@@ -2402,7 +2584,7 @@ fn execute_sql_via_cli_as_with_args_and_urls(
             }
         }
         if retry_after_attempt {
-            let delay_ms = 300 + attempt * 200;
+            let delay_ms = 100 + attempt * 100;
             std::thread::sleep(Duration::from_millis(delay_ms as u64));
         }
     }
@@ -2490,6 +2672,32 @@ pub fn wait_for_sql_output_contains(
     Err(format!(
         "Timed out waiting for SQL output to contain '{}'. Last error: {}. Last output: {}",
         expected, error_hint, last_output
+    )
+    .into())
+}
+
+/// Wait until a table is ready for DML (CREATE completed + indexes available).
+pub fn wait_for_table_ready(
+    table: &str,
+    timeout: Duration,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    let mut last_error: Option<String> = None;
+
+    while start.elapsed() < timeout {
+        match execute_sql_as_root_via_client(&format!("SELECT * FROM {} LIMIT 1", table)) {
+            Ok(_) => return Ok(()),
+            Err(err) => {
+                last_error = Some(err.to_string());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    Err(format!(
+        "Timed out waiting for table {} to be ready. Last error: {}",
+        table,
+        last_error.unwrap_or_else(|| "<none>".to_string())
     )
     .into())
 }
@@ -3124,7 +3332,7 @@ pub fn create_temp_store() -> (FileCredentialStore, TempDir) {
 /// Helper to setup test namespace and table with unique name
 pub fn setup_test_table(test_name: &str) -> Result<String, Box<dyn std::error::Error>> {
     let table_name = generate_unique_table(test_name);
-    let namespace = "test_cli";
+    let namespace = generate_unique_namespace("test_cli");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Try to drop table first if it exists
@@ -3157,6 +3365,9 @@ pub fn setup_test_table(test_name: &str) -> Result<String, Box<dyn std::error::E
 pub fn cleanup_test_table(table_full_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let drop_sql = format!("DROP TABLE IF EXISTS {}", table_full_name);
     let _ = execute_sql_as_root_via_cli(&drop_sql);
+    if let Some((namespace, _)) = table_full_name.split_once('.') {
+        let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    }
     Ok(())
 }
 
@@ -3677,7 +3888,7 @@ pub fn start_subscription_listener(
         };
 
         loop {
-            match listener.try_read_line(Duration::from_millis(100)) {
+            match listener.try_read_line(Duration::from_millis(50)) {
                 Ok(Some(line)) => {
                     let _ = event_sender.send(line);
                 },
@@ -3974,7 +4185,6 @@ pub fn assert_flush_storage_files_exist(
         if Instant::now() >= deadline {
             break;
         }
-        std::thread::sleep(Duration::from_millis(500));
     }
 
     if let Some(result) = last_result {

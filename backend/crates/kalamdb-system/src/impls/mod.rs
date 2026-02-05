@@ -10,8 +10,16 @@ mod notification_service;
 pub use notification_service::NotificationService;
 
 /// Interface for ManifestService implementations used by table providers.
+#[async_trait::async_trait]
 pub trait ManifestService: Send + Sync {
     fn get_or_load(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError>;
+
+    /// Async version of get_or_load to avoid blocking the tokio runtime.
+    async fn get_or_load_async(
         &self,
         table_id: &TableId,
         user_id: Option<&UserId>,

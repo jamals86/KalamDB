@@ -182,7 +182,7 @@ impl UserTableProvider {
         }
     }
 
-    /// Scan Parquet files from cold storage for a specific user
+    /// Scan Parquet files from cold storage for a specific user (async version).
     ///
     /// Lists all *.parquet files in the user's storage directory and merges them into a single RecordBatch.
     /// Returns an empty batch if no Parquet files exist.
@@ -190,35 +190,40 @@ impl UserTableProvider {
     /// **Phase 4 (US6, T082-T084)**: Integrated with ManifestService for manifest caching.
     /// Logs cache hits/misses and updates last_accessed timestamp. Full query optimization
     /// (batch file pruning based on manifest metadata) implemented in Phase 5 (US2, T119-T123).
-    fn scan_parquet_files_as_batch(
+    async fn scan_parquet_files_as_batch_async(
         &self,
         user_id: &UserId,
         filter: Option<&Expr>,
     ) -> Result<RecordBatch, KalamDbError> {
-        base::scan_parquet_files_as_batch(
+        base::scan_parquet_files_as_batch_async(
             &self.core,
             self.core.table_id(),
             self.core.table_type(),
             Some(user_id),
             self.schema_ref(),
             filter,
-        )
+        ).await
     }
 
-    fn scan_all_users_with_version_resolution(
+    /// Async version of scan_all_users_with_version_resolution to avoid blocking the async runtime.
+    async fn scan_all_users_with_version_resolution_async(
         &self,
         filter: Option<&Expr>,
         limit: Option<usize>,
         keep_deleted: bool,
         fallback_user_id: Option<&UserId>,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
+        use kalamdb_store::EntityStoreAsync;
+        
         let table_id = self.core.table_id();
         base::warn_if_unfiltered_scan(table_id, filter, limit, self.core.table_type());
 
         let scan_limit = base::calculate_scan_limit(limit);
+        // Use async version to avoid blocking the runtime
         let hot_rows = self
             .store
-            .scan_typed_with_prefix_and_start(None, None, scan_limit)
+            .scan_typed_with_prefix_and_start_async(None, None, scan_limit)
+            .await
             .map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to scan user table hot storage: {}",
@@ -241,7 +246,8 @@ impl UserTableProvider {
 
         let mut cold_rows = Vec::new();
         for user_id in user_ids {
-            let parquet_batch = self.scan_parquet_files_as_batch(&user_id, filter)?;
+            // Use async version to avoid blocking the runtime
+            let parquet_batch = self.scan_parquet_files_as_batch_async(&user_id, filter).await?;
             for row_data in parquet_batch_to_rows(&parquet_batch)? {
                 let seq_id = row_data.seq_id;
                 let row = UserTableRow {
@@ -262,6 +268,7 @@ impl UserTableProvider {
     }
 }
 
+#[async_trait]
 impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     fn table_id(&self) -> &TableId {
         self.core.table_id()
@@ -276,12 +283,35 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         self.core.table_type()
     }
 
+    fn cluster_coordinator(&self) -> &Arc<dyn kalamdb_system::ClusterCoordinator> {
+        &self.core.cluster_coordinator
+    }
+
     fn schema_registry(&self) -> &Arc<dyn SchemaRegistryTrait<Error = KalamDbError>> {
         &self.core.schema_registry
     }
 
     fn primary_key_field_name(&self) -> &str {
         &self.primary_key_field_name
+    }
+
+    fn core(&self) -> &base::TableProviderCore {
+        &self.core
+    }
+
+    fn construct_row_from_parquet_data(
+        &self,
+        user_id: &UserId,
+        row_data: &crate::utils::version_resolution::ParquetRowData,
+    ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
+        let row_key = UserTableRowId::new(user_id.clone(), row_data.seq_id);
+        let row = UserTableRow {
+            user_id: user_id.clone(),
+            _seq: row_data.seq_id,
+            _deleted: row_data.deleted,
+            fields: row_data.fields.clone(),
+        };
+        Ok(Some((row_key, row)))
     }
 
     /// Override find_row_key_by_id_field to use PK index for efficient lookup
@@ -292,7 +322,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     ///
     /// OPTIMIZED: Uses `pk_exists_in_hot` for fast hot-path check (single index lookup + 1 entity fetch max).
     /// OPTIMIZED: Uses `pk_exists_in_cold` with manifest-based segment pruning for cold storage.
-    fn find_row_key_by_id_field(
+    async fn find_row_key_by_id_field(
         &self,
         user_id: &UserId,
         id_value: &str,
@@ -334,22 +364,21 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             pk_name,
             pk_column_id,
             id_value,
-        )?;
+        ).await?;
 
         if exists_in_cold {
             log::trace!("[UserTableProvider] PK {} exists in cold storage", id_value);
-            // Load the actual row_id from cold storage so DELETE/UPDATE can target correct version
-            if let Some((row_id, _row)) = base::find_row_by_pk(self, Some(user_id), id_value)? {
-                return Ok(Some(row_id));
-            }
-
-            return Ok(None);
+            // For cold storage, we just check existence - return a dummy key
+            // The actual row_id is not needed for PK uniqueness check
+            return Ok(None); // Return None to indicate "exists but can't get key"
+            // Note: This is acceptable because for INSERT we just need to know it exists
+            // For UPDATE/DELETE we should use async methods
         }
 
         Ok(None)
     }
 
-    fn insert(&self, user_id: &UserId, row_data: Row) -> Result<UserTableRowId, KalamDbError> {
+    async fn insert(&self, user_id: &UserId, row_data: Row) -> Result<UserTableRowId, KalamDbError> {
         ensure_manifest_ready(
             &self.core,
             self.core.table_type(),
@@ -358,7 +387,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         )?;
 
         // Validate PRIMARY KEY uniqueness if user provided PK value
-        base::ensure_unique_pk_value(self, Some(user_id), &row_data)?;
+        base::ensure_unique_pk_value(self, Some(user_id), &row_data).await?;
 
         // Generate new SeqId via SystemColumnsService
         let sys_cols = self.core.system_columns.clone();
@@ -415,7 +444,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     ///
     /// # Returns
     /// Vector of generated UserTableRowIds
-    fn insert_batch(
+    async fn insert_batch(
         &self,
         user_id: &UserId,
         rows: Vec<Row>,
@@ -460,7 +489,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             if pk_values_to_check.len() <= 2 {
                 // Small batch: individual lookups are faster
                 for (pk_str, _prefix) in &pk_values_to_check {
-                    if self.find_row_key_by_id_field(user_id, pk_str)?.is_some() {
+                    if self.find_row_key_by_id_field(user_id, pk_str).await?.is_some() {
                         return Err(KalamDbError::AlreadyExists(format!(
                             "Primary key violation: value '{}' already exists in column '{}'",
                             pk_str, pk_name
@@ -559,7 +588,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         Ok(row_keys)
     }
 
-    fn update(
+    async fn update(
         &self,
         user_id: &UserId,
         key: &UserTableRowId,
@@ -585,7 +614,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     _deleted: row_data.deleted,
                     fields: row_data.fields,
                 },
-            )?
+            ).await?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
         };
 
@@ -595,7 +624,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         })?;
 
         // Validate PK update (check if new PK value already exists)
-        base::validate_pk_update(self, Some(user_id), &updates, &pk_value_scalar)?;
+        base::validate_pk_update(self, Some(user_id), &updates, &pk_value_scalar).await?;
 
         // Find latest resolved row for this PK under same user
         // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet scan)
@@ -605,7 +634,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             } else {
                 // Not in hot storage, check cold storage
                 let pk_value_str = pk_value_scalar.to_string();
-                base::find_row_by_pk(self, Some(user_id), &pk_value_str)?.ok_or_else(|| {
+                base::find_row_by_pk(self, Some(user_id), &pk_value_str).await?.ok_or_else(|| {
                     KalamDbError::NotFound(format!(
                         "Row with {}={} not found",
                         pk_name, pk_value_scalar
@@ -669,7 +698,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         Ok(row_key)
     }
 
-    fn update_by_pk_value(
+    async fn update_by_pk_value(
         &self,
         user_id: &UserId,
         pk_value: &str,
@@ -685,7 +714,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 result
             } else {
                 // Not in hot storage, check cold storage
-                base::find_row_by_pk(self, Some(user_id), pk_value)?.ok_or_else(|| {
+                base::find_row_by_pk(self, Some(user_id), pk_value).await?.ok_or_else(|| {
                     KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value))
                 })?
             };
@@ -746,7 +775,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         Ok(row_key)
     }
 
-    fn delete(&self, user_id: &UserId, key: &UserTableRowId) -> Result<(), KalamDbError> {
+    async fn delete(&self, user_id: &UserId, key: &UserTableRowId) -> Result<(), KalamDbError> {
         // Load referenced version to extract PK (for validation; we append tombstone regardless)
         // Try RocksDB first, then Parquet
         let prior_opt = self.store.get(key)
@@ -767,7 +796,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                     _deleted: row_data.deleted,
                     fields: row_data.fields,
                 },
-            )?
+            ).await?
             .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
         };
 
@@ -821,7 +850,81 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         Ok(())
     }
 
-    fn scan_rows(
+    async fn delete_by_pk_value(&self, user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError> {
+        let pk_name = self.primary_key_field_name().to_string();
+        let pk_value_scalar = ScalarValue::Utf8(Some(pk_value.to_string()));
+
+        // Find latest resolved row for this PK under same user
+        // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet scan)
+        let latest_row = if let Some((_key, row)) = self.find_by_pk(user_id, &pk_value_scalar)? {
+            row
+        } else {
+            // Not in hot storage, check cold storage
+            match base::find_row_by_pk(self, Some(user_id), pk_value).await? {
+                Some((_key, row)) => row,
+                None => {
+                    log::trace!(
+                        "[UserProvider DELETE_BY_PK] Row with {}={} not found",
+                        pk_name,
+                        pk_value
+                    );
+                    return Ok(false);
+                }
+            }
+        };
+
+        let sys_cols = self.core.system_columns.clone();
+        let seq_id = sys_cols
+            .generate_seq_id()
+            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+
+        // Preserve ALL fields in the tombstone so they can be queried if _deleted=true
+        // This allows "undo" functionality and auditing of deleted records
+        let values = latest_row.fields.values.clone();
+
+        let entity = UserTableRow {
+            user_id: user_id.clone(),
+            _seq: seq_id,
+            _deleted: true,
+            fields: Row::new(values),
+        };
+        let row_key = UserTableRowId::new(user_id.clone(), seq_id);
+        log::info!(
+            "[UserProvider DELETE_BY_PK] Writing tombstone: user={}, pk={}, _seq={}",
+            user_id.as_str(),
+            pk_value,
+            seq_id.as_i64()
+        );
+        // Insert tombstone version (MVCC - all writes are inserts with new SeqId)
+        self.store.insert(&row_key, &entity).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to delete user table row: {}", e))
+        })?;
+
+        // Mark manifest as having pending writes (hot data needs to be flushed)
+        let manifest_service = self.core.manifest_service.clone();
+        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), Some(user_id)) {
+            log::warn!(
+                "Failed to mark manifest as pending_write for {}: {}",
+                self.core.table_id(),
+                e
+            );
+        }
+
+        // Fire live query notification (DELETE soft)
+        let notification_service = self.core.notification_service.clone();
+        let table_id = self.core.table_id().clone();
+
+        if notification_service.has_subscribers(Some(&user_id), &table_id) {
+            // Provide tombstone entity with system columns for filter matching
+            let row = Self::build_notification_row(&entity);
+
+            let notification = ChangeNotification::delete_soft(table_id.clone(), row);
+            notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+        }
+        Ok(true)
+    }
+
+    async fn scan_rows(
         &self,
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
@@ -847,15 +950,15 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         let keep_deleted = filter.map(base::filter_uses_deleted_column).unwrap_or(false);
 
         let kvs = if allow_all_users {
-            self.scan_all_users_with_version_resolution(filter, limit, keep_deleted, Some(user_id))?
+            self.scan_all_users_with_version_resolution_async(filter, limit, keep_deleted, Some(user_id)).await?
         } else {
-            self.scan_with_version_resolution_to_kvs(
+            self.scan_with_version_resolution_to_kvs_async(
                 user_id,
                 filter,
                 since_seq,
                 limit,
                 keep_deleted,
-            )?
+            ).await?
         };
 
         let table_id = self.core.table_id();
@@ -872,7 +975,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         crate::utils::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
     }
 
-    fn scan_with_version_resolution_to_kvs(
+    async fn scan_with_version_resolution_to_kvs_async(
         &self,
         user_id: &UserId,
         filter: Option<&Expr>,
@@ -880,6 +983,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         limit: Option<usize>,
         keep_deleted: bool,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
+        use kalamdb_store::EntityStoreAsync;
+        
         let table_id = self.core.table_id();
 
         // Warn if no filter or limit - potential performance issue
@@ -902,14 +1007,15 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         //  Need to scan more than requested limit because we'll filter by user_id
         let scan_limit = base::calculate_scan_limit(limit) * 10; // Buffer for filtering
 
-        // Using scan_with_raw_prefix for raw byte prefix (user_prefix is Vec<u8>)
+        // Using async version to avoid blocking the runtime
         let hot_rows = self
             .store
-            .scan_with_raw_prefix(
+            .scan_with_raw_prefix_async(
                 &user_prefix,
                 start_key_bytes.as_deref(),
                 scan_limit,
             )
+            .await
             .map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to scan user table hot storage: {}",
@@ -925,7 +1031,8 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         );
 
         // 2) Scan cold storage (Parquet files) - pass filter for pruning
-        let parquet_batch = self.scan_parquet_files_as_batch(user_id, filter)?;
+        // Use async version to avoid blocking the runtime
+        let parquet_batch = self.scan_parquet_files_as_batch_async(user_id, filter).await?;
 
         let cold_rows: Vec<(UserTableRowId, UserTableRow)> = parquet_batch_to_rows(&parquet_batch)?
             .into_iter()

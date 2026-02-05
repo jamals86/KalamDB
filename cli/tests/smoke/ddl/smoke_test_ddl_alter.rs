@@ -35,7 +35,6 @@ fn smoke_test_alter_table_add_column() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -49,14 +48,12 @@ fn smoke_test_alter_table_add_column() {
         full_table
     );
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table with 2 columns (id, name)");
 
     // Insert a row before adding column
     let insert_sql = format!("INSERT INTO {} (name) VALUES ('Alice')", full_table);
     execute_sql_as_root_via_client(&insert_sql).expect("Failed to insert row");
-    std::thread::sleep(Duration::from_millis(200));
 
     // Add nullable column
     let alter_sql = format!("ALTER TABLE {} ADD COLUMN age INT", full_table);
@@ -79,7 +76,6 @@ fn smoke_test_alter_table_add_column() {
             return;
         },
     }
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Added nullable column 'age'");
 
@@ -140,7 +136,6 @@ fn smoke_test_alter_table_drop_column() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -175,7 +170,6 @@ fn smoke_test_alter_table_drop_column() {
         println!("   Error: {:?}", alter_result.unwrap_err());
         return;
     }
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Dropped column 'email'");
 
@@ -218,7 +212,6 @@ fn smoke_test_alter_table_modify_column() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -287,7 +280,6 @@ fn smoke_test_alter_shared_table_access_level() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -360,7 +352,6 @@ fn smoke_test_alter_add_not_null_without_default_error() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -432,7 +423,6 @@ fn smoke_test_alter_system_columns_error() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");

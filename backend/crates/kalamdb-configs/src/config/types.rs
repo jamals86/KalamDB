@@ -498,6 +498,11 @@ impl ManifestCacheSettings {
     pub fn ttl_seconds(&self) -> i64 {
         (self.eviction_ttl_days * 24 * 60 * 60) as i64
     }
+
+    /// Get TTL in milliseconds (converts eviction_ttl_days to milliseconds)
+    pub fn ttl_millis(&self) -> i64 {
+        self.ttl_seconds() * 1000
+    }
 }
 
 impl Default for ManifestCacheSettings {

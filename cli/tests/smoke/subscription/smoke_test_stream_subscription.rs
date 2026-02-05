@@ -23,14 +23,14 @@ fn smoke_stream_table_subscription() {
     let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
     execute_sql_as_root_via_client(&ns_sql).expect("create namespace should succeed");
 
-    // 2) Create stream table with TTL (enough headroom for test retries)
+    // 2) Create stream table with 30-second TTL
     let create_sql = format!(
         r#"CREATE TABLE {} (
             event_id TEXT NOT NULL,
             event_type TEXT,
             payload TEXT,
             timestamp TIMESTAMP
-        ) WITH (TYPE = 'STREAM', TTL_SECONDS = 15)"#,
+        ) WITH (TYPE = 'STREAM', TTL_SECONDS = 10)"#,
         full
     );
     execute_sql_as_root_via_client(&create_sql).expect("create stream table should succeed");
@@ -55,7 +55,7 @@ fn smoke_stream_table_subscription() {
         // After each insert, poll for up to 1s for a subscription line
         let per_attempt_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         while std::time::Instant::now() < per_attempt_deadline {
-            match listener.try_read_line(std::time::Duration::from_millis(250)) {
+            match listener.try_read_line(std::time::Duration::from_millis(100)) {
                 Ok(Some(line)) => {
                     if !line.trim().is_empty() {
                         got_any = true;
@@ -73,43 +73,37 @@ fn smoke_stream_table_subscription() {
     listener.stop().ok();
 
     // 5) Verify data is present via regular SELECT immediately after insert
-    // Insert a fresh event for the SELECT check to avoid TTL timing races.
-    let ev_select = "smoke_stream_event_select";
-    let select_event_id = "e_select";
-    let ins_select = format!(
-        "INSERT INTO {} (event_id, event_type, payload) VALUES ('{}', 'info', '{}')",
-        full, select_event_id, ev_select
-    );
-    execute_sql_as_root_via_client(&ins_select).expect("insert stream event for select should succeed");
-
     let select_sql = format!("SELECT * FROM {}", full);
     let select_visible_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut last_select_output = String::new();
     while std::time::Instant::now() < select_visible_deadline {
         last_select_output =
             execute_sql_as_root_via_client_json(&select_sql).expect("select should succeed");
-        if last_select_output.contains(ev_select) {
+        if last_select_output.contains(ev_val) {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(250));
     }
     assert!(
-        last_select_output.contains(ev_select),
+        last_select_output.contains(ev_val),
         "expected to find inserted event '{}' in SELECT output within 10s after insert. Output:\n{}",
-        ev_select,
+        ev_val,
         last_select_output
     );
 
-    // 6) Wait 16 seconds for TTL eviction (TTL=15s)
-    println!("Waiting 16 seconds for TTL eviction...");
-    std::thread::sleep(std::time::Duration::from_secs(16));
-
-    // 7) Verify data has been evicted via regular SELECT
-    let select_after_ttl =
-        execute_sql_as_root_via_client_json(&select_sql).expect("select after TTL should succeed");
+    // 6) Verify data has been evicted via regular SELECT (poll until TTL passes)
+    let eviction_deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
+    let mut select_after_ttl = String::new();
+    while std::time::Instant::now() < eviction_deadline {
+        select_after_ttl = execute_sql_as_root_via_client_json(&select_sql)
+            .expect("select after TTL should succeed");
+        if !select_after_ttl.contains(ev_val) {
+            break;
+        }
+        std::thread::yield_now();
+    }
     assert!(
-        !select_after_ttl.contains(ev_select),
-        "expected event '{}' to be evicted after 16 seconds (TTL=15s)",
-        ev_select
+        !select_after_ttl.contains(ev_val),
+        "expected event '{}' to be evicted within 12 seconds (TTL=10s)",
+        ev_val
     );
 }

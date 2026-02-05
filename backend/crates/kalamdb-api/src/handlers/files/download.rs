@@ -117,7 +117,7 @@ pub async fn download_file(
         &table_id,
         user_id.as_ref(),
         &relative_path,
-    ) {
+    ).await {
         Ok(data) => {
             //TODO: Get content type from the stored file metadata
             // Guess content type from file extension in file_id

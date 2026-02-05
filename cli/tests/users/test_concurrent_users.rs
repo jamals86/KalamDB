@@ -39,7 +39,6 @@ fn test_concurrent_users_isolation() {
     //Drop the current table if it exists
     let drop_sql = format!("DROP TABLE IF EXISTS {}", full_table);
     let _ = execute_sql_as_root_via_cli(&drop_sql);
-    std::thread::sleep(Duration::from_millis(50));
 
     //Check if the table was dropped successfully
     let check_sql = format!("SELECT * FROM {}", full_table);

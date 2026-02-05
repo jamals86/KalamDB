@@ -45,7 +45,6 @@ fn test_cli_live_query_basic() {
     };
 
     // Give it a moment to connect and receive initial data
-    std::thread::sleep(Duration::from_millis(100));
 
     // Try to read with timeout instead of blocking forever
     let timeout = Duration::from_secs(3);
@@ -68,33 +67,18 @@ fn test_cli_subscription_commands() {
         return;
     }
 
-    // Test --list-subscriptions command (retry for transient server startup/load)
-    let mut last_list_output: Option<std::process::Output> = None;
-    let mut list_success = false;
-    for _ in 0..5 {
-        let mut cmd = create_cli_command();
-        cmd.arg("-u")
-            .arg(server_url())
-            .arg("--username")
-            .arg(default_username())
-            .arg("--password")
-            .arg(root_password())
-            .arg("--list-subscriptions");
+    // Test --list-subscriptions command
+    let mut cmd = create_cli_command();
+    cmd.arg("-u")
+        .arg(server_url())
+        .arg("--username")
+        .arg(default_username())
+        .arg("--password")
+        .arg(root_password())
+        .arg("--list-subscriptions");
 
-        let output = cmd.output().unwrap();
-        if output.status.success() {
-            list_success = true;
-            break;
-        }
-        last_list_output = Some(output);
-        std::thread::sleep(Duration::from_millis(200));
-    }
-
-    assert!(
-        list_success,
-        "list-subscriptions command should succeed. Last output: {:?}",
-        last_list_output.as_ref().map(|out| String::from_utf8_lossy(&out.stderr))
-    );
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "list-subscriptions command should succeed");
 
     // Test --unsubscribe command (should provide helpful message)
     let mut cmd = create_cli_command();
@@ -141,7 +125,6 @@ fn test_cli_live_query_with_filter() {
     };
 
     // Give it a moment
-    std::thread::sleep(Duration::from_millis(100));
 
     // Try to read with timeout - subscription with filter should not block indefinitely
     // Since there's no data with id > 10, we expect a timeout (which is the correct behavior)
@@ -189,10 +172,8 @@ fn test_cli_subscription_with_initial_data() {
         "DROP NAMESPACE IF EXISTS {} CASCADE",
         namespace_name
     ));
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_name));
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, event_type VARCHAR, timestamp BIGINT) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
@@ -209,7 +190,6 @@ fn test_cli_subscription_with_initial_data() {
             i * 1000
         );
         let _ = execute_sql_as_root_via_cli(&insert_sql);
-        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
     // Test that SUBSCRIBE TO command is accepted via CLI
@@ -257,10 +237,8 @@ fn test_cli_subscription_comprehensive_crud() {
         "DROP NAMESPACE IF EXISTS {} CASCADE",
         namespace_name
     ));
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_name));
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, event_type VARCHAR, data VARCHAR, timestamp BIGINT) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
@@ -289,7 +267,6 @@ fn test_cli_subscription_comprehensive_crud() {
     // Test 2: Insert initial data via CLI
     let insert_sql = format!("INSERT INTO {} (id, event_type, data, timestamp) VALUES (1, 'create', 'initial_data', 1000)", table_name);
     let _ = execute_sql_as_root_via_cli(&insert_sql);
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     // Test 3: Verify data was inserted correctly via CLI
     let mut cmd = create_cli_command();
@@ -315,29 +292,30 @@ fn test_cli_subscription_comprehensive_crud() {
         table_name
     );
     let _ = execute_sql_as_root_via_cli(&insert_sql2);
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--username")
-        .arg(default_username())
-        .arg("--password")
-        .arg(root_password())
-        .arg("--command")
-        .arg(format!("SELECT * FROM {} ORDER BY id", table_name));
-
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success() && stdout.contains("initial_data") && stdout.contains("more_data"),
-        "Both rows should be present"
+    // Use wait helper to handle timing issues under load
+    let select_sql = format!("SELECT * FROM {} ORDER BY id", table_name);
+    let output_result = wait_for_sql_output_contains(
+        &select_sql,
+        "more_data",
+        std::time::Duration::from_secs(3),
     );
+    
+    match output_result {
+        Ok(stdout) => {
+            assert!(
+                stdout.contains("initial_data") && stdout.contains("more_data"),
+                "Both rows should be present"
+            );
+        }
+        Err(e) => {
+            panic!("Failed to verify both rows: {}", e);
+        }
+    }
 
     // Test 5: Update operation via CLI
     let update_sql = format!("UPDATE {} SET data = 'updated_data' WHERE id = 1", table_name);
     let _ = execute_sql_as_root_via_cli(&update_sql);
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let select_updated_sql = format!("SELECT * FROM {} WHERE id = 1", table_name);
     let updated_output = wait_for_sql_output_contains(
@@ -354,7 +332,6 @@ fn test_cli_subscription_comprehensive_crud() {
     // Test 6: Delete operation via CLI
     let delete_sql = format!("DELETE FROM {} WHERE id = 2", table_name);
     let _ = execute_sql_as_root_via_cli(&delete_sql);
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let select_after_delete = format!("SELECT * FROM {} ORDER BY id", table_name);
     let start = Instant::now();
@@ -366,7 +343,6 @@ fn test_cli_subscription_comprehensive_crud() {
                 break;
             }
         }
-        std::thread::sleep(Duration::from_millis(120));
     }
 
     assert!(

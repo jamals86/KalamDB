@@ -83,7 +83,6 @@ fn test_storage_drop_requires_detached_tables() {
         verify_job_completed(&job_id, timeout)
             .expect("user table flush job should complete");
     } else {
-        std::thread::sleep(std::time::Duration::from_millis(200));
     }
 
     // For user tables we only require the table directory itself to exist eagerly; the per-user
@@ -121,7 +120,6 @@ fn test_storage_drop_requires_detached_tables() {
         verify_job_completed(&job_id, timeout)
             .expect("shared table flush job should complete");
     } else {
-        std::thread::sleep(std::time::Duration::from_millis(200));
     }
 
     let shared_table_path = base_dir

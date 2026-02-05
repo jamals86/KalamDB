@@ -136,7 +136,7 @@ impl PkExistenceChecker {
     ///
     /// ## Returns
     /// * `PkCheckResult` indicating where (or if) the PK was found
-    pub fn check_pk_exists(
+    pub async fn check_pk_exists(
         &self,
         table_def: &TableDefinition,
         table_id: &TableId,
@@ -161,8 +161,7 @@ impl PkExistenceChecker {
             KalamDbError::InvalidOperation(format!("Table {} has no primary key column", table_id))
         })?;
 
-        // Step 3-6: Use the optimized cold storage check from base provider
-        // This already implements the full flow with manifest caching
+        // Step 3-6: Use the optimized cold storage check
         let exists_in_cold = self.check_cold_storage(
             table_id,
             table_type,
@@ -170,7 +169,7 @@ impl PkExistenceChecker {
             pk_column,
             pk_column_id,
             pk_value,
-        )?;
+        ).await?;
 
         if let Some(segment_path) = exists_in_cold {
             return Ok(PkCheckResult::FoundInCold { segment_path });
@@ -179,10 +178,10 @@ impl PkExistenceChecker {
         Ok(PkCheckResult::NotFound)
     }
 
-    /// Check cold storage for PK existence using manifest-based pruning
+    /// Check cold storage for PK existence using manifest-based pruning (async)
     ///
     /// Returns the segment path if found, None otherwise.
-    fn check_cold_storage(
+    async fn check_cold_storage(
         &self,
         table_id: &TableId,
         table_type: TableType,
@@ -230,8 +229,8 @@ impl PkExistenceChecker {
             },
         };
 
-        // 3. List parquet files using optimized method
-        let all_parquet_files = match storage_cached.list_parquet_files_sync(table_type, table_id, user_id) {
+        // 3. List parquet files using async method
+        let all_parquet_files = match storage_cached.list_parquet_files(table_type, table_id, user_id).await {
             Ok(files) => files,
             Err(_) => {
                 log::trace!(
@@ -273,7 +272,7 @@ impl PkExistenceChecker {
                     scope_label
                 );
                 // Try to load from storage (manifest.json file)
-                self.load_manifest_from_storage(&storage_cached, table_type, table_id, user_id)?
+                self.load_manifest_from_storage_async(&storage_cached, table_type, table_id, user_id).await?
             },
             Err(e) => {
                 log::warn!(
@@ -322,7 +321,7 @@ impl PkExistenceChecker {
 
         // 6. Scan pruned Parquet files for the PK
         for file_name in files_to_scan {
-            if self.pk_exists_in_parquet(
+            if self.pk_exists_in_parquet_async(
                 &storage_cached,
                 table_type,
                 table_id,
@@ -330,7 +329,7 @@ impl PkExistenceChecker {
                 &file_name,
                 pk_column,
                 pk_value,
-            )? {
+            ).await? {
                 log::trace!(
                     "[PkExistenceChecker] Found PK {} in {} for {}.{} {}",
                     pk_value,
@@ -344,122 +343,6 @@ impl PkExistenceChecker {
         }
 
         Ok(None)
-    }
-
-    /// Load manifest.json from storage if not in cache
-    fn load_manifest_from_storage(
-        &self,
-        storage_cached: &kalamdb_filestore::StorageCached,
-        table_type: TableType,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<Option<Manifest>, KalamDbError> {
-        match storage_cached.get_sync(table_type, table_id, user_id, "manifest.json") {
-            Ok(result) => {
-                let manifest: Manifest = serde_json::from_slice(&result.data).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!("Failed to parse manifest.json: {}", e))
-                })?;
-                log::trace!(
-                    "[PkExistenceChecker] Loaded manifest.json from storage: {} segments",
-                    manifest.segments.len()
-                );
-                Ok(Some(manifest))
-            },
-            Err(_) => {
-                log::trace!("[PkExistenceChecker] No manifest.json found in storage");
-                Ok(None)
-            },
-        }
-    }
-
-    /// Check if a PK exists in a specific Parquet file (with MVCC version resolution)
-    fn pk_exists_in_parquet(
-        &self,
-        storage_cached: &kalamdb_filestore::StorageCached,
-        table_type: TableType,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-        parquet_filename: &str,
-        pk_column: &str,
-        pk_value: &str,
-    ) -> Result<bool, KalamDbError> {
-        use datafusion::arrow::array::{Array, BooleanArray, Int64Array, UInt64Array};
-        use kalamdb_commons::constants::SystemColumnNames;
-        use std::collections::HashMap;
-
-        // Use the centralized helper (Tasks 99/100)
-        let batches = storage_cached
-            .read_parquet_files_sync(table_type, table_id, user_id, &[parquet_filename.to_string()])
-            .into_kalamdb_error("Failed to read Parquet file")?;
-
-        // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
-        let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
-
-        for batch in batches {
-            let pk_idx = batch.schema().index_of(pk_column).ok();
-            let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
-            let deleted_idx = batch.schema().index_of(SystemColumnNames::DELETED).ok();
-
-            let (Some(pk_i), Some(seq_i)) = (pk_idx, seq_idx) else {
-                continue;
-            };
-
-            let pk_col = batch.column(pk_i);
-            let seq_col = batch.column(seq_i);
-            let deleted_col = deleted_idx.map(|i| batch.column(i));
-
-            for row_idx in 0..batch.num_rows() {
-                let row_pk = Self::extract_pk_as_string(pk_col.as_ref(), row_idx);
-                let Some(row_pk_str) = row_pk else { continue };
-
-                // Only check rows matching target PK
-                if row_pk_str != pk_value {
-                    continue;
-                }
-
-                // Extract _seq
-                let seq = if let Some(arr) = seq_col.as_any().downcast_ref::<Int64Array>() {
-                    arr.value(row_idx)
-                } else if let Some(arr) = seq_col.as_any().downcast_ref::<UInt64Array>() {
-                    arr.value(row_idx) as i64
-                } else {
-                    continue;
-                };
-
-                // Extract _deleted
-                let deleted = if let Some(del_col) = &deleted_col {
-                    if let Some(arr) = del_col.as_any().downcast_ref::<BooleanArray>() {
-                        if arr.is_null(row_idx) {
-                            false
-                        } else {
-                            arr.value(row_idx)
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-                // Update version tracking (keep highest seq per PK)
-                versions
-                    .entry(row_pk_str)
-                    .and_modify(|(current_seq, current_deleted)| {
-                        if seq > *current_seq {
-                            *current_seq = seq;
-                            *current_deleted = deleted;
-                        }
-                    })
-                    .or_insert((seq, deleted));
-            }
-        }
-
-        // Check if the target PK exists and is not deleted
-        if let Some((_, is_deleted)) = versions.get(pk_value) {
-            Ok(!*is_deleted)
-        } else {
-            Ok(false)
-        }
     }
 
     /// Extract PK value as string from an Arrow array
@@ -498,6 +381,117 @@ impl PkExistenceChecker {
         }
 
         None
+    }
+
+    /// Async load manifest.json from storage
+    async fn load_manifest_from_storage_async(
+        &self,
+        storage_cached: &kalamdb_filestore::StorageCached,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<Option<Manifest>, KalamDbError> {
+        match storage_cached.get(table_type, table_id, user_id, "manifest.json").await {
+            Ok(result) => {
+                let manifest: Manifest = serde_json::from_slice(&result.data).map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Failed to parse manifest.json: {}", e))
+                })?;
+                log::trace!(
+                    "[PkExistenceChecker] Loaded manifest.json from storage: {} segments",
+                    manifest.segments.len()
+                );
+                Ok(Some(manifest))
+            },
+            Err(_) => {
+                log::trace!("[PkExistenceChecker] No manifest.json found in storage");
+                Ok(None)
+            },
+        }
+    }
+
+    /// Async check if a PK exists in a specific Parquet file
+    async fn pk_exists_in_parquet_async(
+        &self,
+        storage_cached: &kalamdb_filestore::StorageCached,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        parquet_filename: &str,
+        pk_column: &str,
+        pk_value: &str,
+    ) -> Result<bool, KalamDbError> {
+        use datafusion::arrow::array::{Array, BooleanArray, Int64Array, UInt64Array};
+        use kalamdb_commons::constants::SystemColumnNames;
+        use std::collections::HashMap;
+
+        let batches = storage_cached
+            .read_parquet_files(table_type, table_id, user_id, &[parquet_filename.to_string()])
+            .await
+            .into_kalamdb_error("Failed to read Parquet file")?;
+
+        // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
+        let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
+
+        for batch in batches {
+            let pk_idx = batch.schema().index_of(pk_column).ok();
+            let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
+            let deleted_idx = batch.schema().index_of(SystemColumnNames::DELETED).ok();
+
+            let (Some(pk_i), Some(seq_i)) = (pk_idx, seq_idx) else {
+                continue;
+            };
+
+            let pk_col = batch.column(pk_i);
+            let seq_col = batch.column(seq_i);
+            let deleted_col = deleted_idx.map(|i| batch.column(i));
+
+            for row_idx in 0..batch.num_rows() {
+                let row_pk = Self::extract_pk_as_string(pk_col.as_ref(), row_idx);
+                let Some(row_pk_str) = row_pk else { continue };
+
+                if row_pk_str != pk_value {
+                    continue;
+                }
+
+                let seq = if let Some(arr) = seq_col.as_any().downcast_ref::<Int64Array>() {
+                    arr.value(row_idx)
+                } else if let Some(arr) = seq_col.as_any().downcast_ref::<UInt64Array>() {
+                    arr.value(row_idx) as i64
+                } else {
+                    continue;
+                };
+
+                let deleted = if let Some(del_col) = &deleted_col {
+                    if let Some(arr) = del_col.as_any().downcast_ref::<BooleanArray>() {
+                        if arr.is_null(row_idx) {
+                            false
+                        } else {
+                            arr.value(row_idx)
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                versions
+                    .entry(row_pk_str)
+                    .and_modify(|(current_seq, current_deleted)| {
+                        if seq > *current_seq {
+                            *current_seq = seq;
+                            *current_deleted = deleted;
+                        }
+                    })
+                    .or_insert((seq, deleted));
+            }
+        }
+
+        if let Some((_, is_deleted)) = versions.get(pk_value) {
+            Ok(!*is_deleted)
+        } else {
+            Ok(false)
+        }
     }
 }
 

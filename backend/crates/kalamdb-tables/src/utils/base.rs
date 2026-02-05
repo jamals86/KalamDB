@@ -78,6 +78,7 @@ use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 use kalamdb_system::Manifest;
 use kalamdb_commons::{StorageKey, TableId};
+use kalamdb_system::ClusterCoordinator as ClusterCoordinatorTrait;
 use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -85,9 +86,9 @@ use std::sync::Arc;
 // Re-export types moved to submodules
 pub use crate::utils::core::TableProviderCore;
 pub use crate::utils::row_utils::{
-    extract_seq_bounds_from_filter, resolve_user_scope, system_user_id,
+    extract_full_user_context, extract_seq_bounds_from_filter, resolve_user_scope, system_user_id,
 };
-pub(crate) use crate::utils::parquet::scan_parquet_files_as_batch;
+pub(crate) use crate::utils::parquet::scan_parquet_files_as_batch_async;
 pub use crate::utils::row_utils::{inject_system_columns, rows_to_arrow_batch, ScanRow};
 
 /// Unified trait for all table providers with generic storage abstraction
@@ -124,6 +125,9 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// Named differently from DataFusion's TableProvider::table_type to avoid ambiguity.
     fn provider_table_type(&self) -> TableType;
 
+    /// Cluster coordinator for leader checks (read routing).
+    fn cluster_coordinator(&self) -> &Arc<dyn ClusterCoordinatorTrait>;
+
     /// Get namespace ID from table_id (default implementation)
     fn namespace_id(&self) -> &NamespaceId {
         self.table_id().namespace_id()
@@ -158,6 +162,18 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// Primary key field name from schema definition (e.g., "id", "email")
     fn primary_key_field_name(&self) -> &str;
 
+    /// Get the TableProviderCore for low-level access (storage, manifest, etc.)
+    /// This is needed by find_row_by_pk to access storage for cold storage scans.
+    fn core(&self) -> &TableProviderCore;
+
+    /// Construct (K, V) from ParquetRowData for cold storage lookups.
+    /// Providers should override this to create their specific key and value types.
+    fn construct_row_from_parquet_data(
+        &self,
+        user_id: &UserId,
+        row_data: &crate::utils::version_resolution::ParquetRowData,
+    ) -> Result<Option<(K, V)>, KalamDbError>;
+
     // ===========================
     // DML Operations (Synchronous - No Handlers)
     // ===========================
@@ -179,7 +195,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// - AS USER impersonation (executor passes subject_user_id)
     /// - Per-request user scoping without per-user provider instances
     /// - Clean separation: executor handles auth/context, provider handles storage
-    fn insert(&self, user_id: &UserId, row_data: Row) -> Result<K, KalamDbError>;
+    async fn insert(&self, user_id: &UserId, row_data: Row) -> Result<K, KalamDbError>;
 
     /// Insert multiple rows in a batch (optimized for bulk operations)
     ///
@@ -190,14 +206,18 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// # Default Implementation
     /// Iterates over rows and calls insert() for each. Providers may override
     /// with batch-optimized implementation.
-    fn insert_batch(&self, user_id: &UserId, rows: Vec<Row>) -> Result<Vec<K>, KalamDbError> {
+    async fn insert_batch(&self, user_id: &UserId, rows: Vec<Row>) -> Result<Vec<K>, KalamDbError> {
         // Coerce rows to match schema types (e.g. String -> Timestamp)
         // This ensures real-time events match the storage format
         let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
         })?;
 
-        coerced_rows.into_iter().map(|row| self.insert(user_id, row)).collect()
+        let mut results = Vec::with_capacity(coerced_rows.len());
+        for row in coerced_rows {
+            results.push(self.insert(user_id, row).await?);
+        }
+        Ok(results)
     }
 
     /// Update a row by key (appends new version with incremented _seq)
@@ -211,7 +231,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ///
     /// # Returns
     /// New storage key (new SeqId for versioning)
-    fn update(&self, user_id: &UserId, key: &K, updates: Row) -> Result<K, KalamDbError>;
+    async fn update(&self, user_id: &UserId, key: &K, updates: Row) -> Result<K, KalamDbError>;
 
     /// Delete a row by key (appends tombstone with _deleted=true)
     ///
@@ -220,23 +240,28 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// # Arguments
     /// * `user_id` - Subject user ID for RLS
     /// * `key` - Storage key identifying the row
-    fn delete(&self, user_id: &UserId, key: &K) -> Result<(), KalamDbError>;
+    async fn delete(&self, user_id: &UserId, key: &K) -> Result<(), KalamDbError>;
 
     /// Update multiple rows in a batch (default implementation)
-    fn update_batch(
+    async fn update_batch(
         &self,
         user_id: &UserId,
         updates: Vec<(K, Row)>,
     ) -> Result<Vec<K>, KalamDbError> {
-        updates
-            .into_iter()
-            .map(|(key, update)| BaseTableProvider::update(self, user_id, &key, update))
-            .collect()
+        let mut results = Vec::with_capacity(updates.len());
+        for (key, update) in updates {
+            results.push(BaseTableProvider::update(self, user_id, &key, update).await?);
+        }
+        Ok(results)
     }
 
     /// Delete multiple rows in a batch (default implementation)
-    fn delete_batch(&self, user_id: &UserId, keys: Vec<K>) -> Result<Vec<()>, KalamDbError> {
-        keys.into_iter().map(|key| self.delete(user_id, &key)).collect()
+    async fn delete_batch(&self, user_id: &UserId, keys: Vec<K>) -> Result<Vec<()>, KalamDbError> {
+        let mut results = Vec::with_capacity(keys.len());
+        for key in keys {
+            results.push(self.delete(user_id, &key).await?);
+        }
+        Ok(results)
     }
 
     // ===========================
@@ -260,34 +285,12 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ///
     /// # Note
     /// Providers with PK indexes should override this method for efficient lookups.
-    fn find_row_key_by_id_field(
+    /// Uses async I/O for cold storage access.
+    async fn find_row_key_by_id_field(
         &self,
         user_id: &UserId,
         id_value: &str,
-    ) -> Result<Option<K>, KalamDbError> {
-        // Default implementation: full table scan with version resolution
-        // Providers with PK indexes override this for O(1) lookups
-        let rows = self.scan_with_version_resolution_to_kvs(user_id, None, None, None, false)?;
-
-        log::trace!(
-            "[find_row_key_by_id_field] Scanning {} rows for pk='{}', value='{}', user='{}'",
-            rows.len(),
-            self.primary_key_field_name(),
-            id_value,
-            user_id.as_str()
-        );
-
-        for (key, row) in rows {
-            let fields = Self::extract_row(&row);
-            if let Some(pk_val) = fields.get(self.primary_key_field_name()) {
-                if scalar_value_matches_id(pk_val, id_value) {
-                    return Ok(Some(key));
-                }
-            }
-        }
-
-        Ok(None)
-    }
+    ) -> Result<Option<K>, KalamDbError>;
 
     /// Update a row by primary key value directly (no key lookup needed)
     ///
@@ -301,7 +304,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ///
     /// # Returns
     /// New storage key (new SeqId for versioning)
-    fn update_by_pk_value(
+    async fn update_by_pk_value(
         &self,
         user_id: &UserId,
         pk_value: &str,
@@ -309,26 +312,36 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ) -> Result<K, KalamDbError>;
 
     /// Update a row by searching for matching ID field value
-    fn update_by_id_field(
+    async fn update_by_id_field(
         &self,
         user_id: &UserId,
         id_value: &str,
         updates: Row,
     ) -> Result<K, KalamDbError> {
         // Directly update by PK value - no need to find key first, then load row to extract PK
-        self.update_by_pk_value(user_id, id_value, updates)
+        self.update_by_pk_value(user_id, id_value, updates).await
     }
+
+    /// Delete a row by primary key value directly (no key lookup needed)
+    ///
+    /// This is more efficient than `delete()` and works for both hot and cold storage.
+    /// It finds the row by PK value (using find_row_by_pk for cold storage),
+    /// then writes a tombstone.
+    ///
+    /// # Arguments
+    /// * `user_id` - Subject user ID for RLS
+    /// * `pk_value` - Primary key value (e.g., "user123")
+    ///
+    /// # Returns
+    /// `Ok(true)` if row was deleted, `Ok(false)` if row was not found
+    async fn delete_by_pk_value(&self, user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError>;
 
     /// Delete a row by searching for matching ID field value.
     ///
     /// Returns `true` if a row was deleted, `false` if the row did not exist.
-    fn delete_by_id_field(&self, user_id: &UserId, id_value: &str) -> Result<bool, KalamDbError> {
-        if let Some(key) = self.find_row_key_by_id_field(user_id, id_value)? {
-            self.delete(user_id, &key)?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+    async fn delete_by_id_field(&self, user_id: &UserId, id_value: &str) -> Result<bool, KalamDbError> {
+        // Directly delete by PK value - handles both hot and cold storage
+        self.delete_by_pk_value(user_id, id_value).await
     }
 
     // ===========================
@@ -361,6 +374,10 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        self.ensure_leader_read(state)
+            .await
+            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
         // Combine filters (AND) for pruning and pass to scan_rows
         let combined_filter: Option<Expr> = if filters.is_empty() {
             None
@@ -378,6 +395,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
 
         let batch = self
             .scan_rows(state, effective_projection, combined_filter.as_ref(), limit)
+            .await
             .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
 
         let mem = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
@@ -387,6 +405,37 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         let final_projection = if filters.is_empty() { None } else { projection };
 
         mem.scan(state, final_projection, filters, limit).await
+    }
+
+    /// Enforce leader-only reads for client contexts in cluster mode.
+    async fn ensure_leader_read(&self, state: &dyn Session) -> Result<(), KalamDbError> {
+        let (_user_id, _role, read_context) = extract_full_user_context(state)?;
+        if !read_context.requires_leader() {
+            return Ok(());
+        }
+
+        let coordinator = self.cluster_coordinator();
+        if !coordinator.is_cluster_mode().await {
+            return Ok(());
+        }
+
+        match self.provider_table_type() {
+            TableType::User | TableType::Stream => {
+                let (user_id, _role, _read_context) = extract_full_user_context(state)?;
+                if !coordinator.is_leader_for_user(user_id).await {
+                    let leader_addr = coordinator.leader_addr_for_user(user_id).await;
+                    return Err(KalamDbError::NotLeader { leader_addr });
+                }
+            }
+            TableType::Shared => {
+                if !coordinator.is_leader_for_shared().await {
+                    return Err(KalamDbError::NotLeader { leader_addr: None });
+                }
+            }
+            TableType::System => {}
+        }
+
+        Ok(())
     }
 
     // ===========================
@@ -428,8 +477,8 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ///
     /// # Note
     /// Called by DataFusion's TableProvider::scan(). For direct DML operations,
-    /// use scan_with_version_resolution_to_kvs().
-    fn scan_rows(
+    /// use scan_with_version_resolution_to_kvs_async().
+    async fn scan_rows(
         &self,
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
@@ -437,11 +486,13 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError>;
 
-    /// Scan with version resolution returning key-value pairs (for internal DML use)
+    /// Async scan with version resolution returning key-value pairs (for internal DML use)
     ///
     /// Used by UPDATE/DELETE to find current version before appending new version.
     /// Unlike scan_rows(), this is called directly by DML operations with user_id
     /// passed explicitly.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
     ///
     /// # Arguments
     /// * `user_id` - Subject user ID for RLS scoping
@@ -449,7 +500,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// * `since_seq` - Optional sequence number to start scanning from (optimization)
     /// * `limit` - Optional limit on number of rows
     /// * `keep_deleted` - Whether to include soft-deleted rows (tombstones) in the result
-    fn scan_with_version_resolution_to_kvs(
+    async fn scan_with_version_resolution_to_kvs_async(
         &self,
         user_id: &UserId,
         filter: Option<&Expr>,
@@ -464,22 +515,6 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     fn extract_row(row: &V) -> &Row;
 }
 
-/// Check if a ScalarValue matches a target string value
-///
-/// Supports string and numeric comparisons for primary key lookups.
-fn scalar_value_matches_id(value: &ScalarValue, target: &str) -> bool {
-    match value {
-        ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s == target,
-        ScalarValue::Int64(Some(n)) => target.parse::<i64>().map(|t| *n == t).unwrap_or(false),
-        ScalarValue::Int32(Some(n)) => target.parse::<i32>().map(|t| *n == t).unwrap_or(false),
-        ScalarValue::Int16(Some(n)) => target.parse::<i16>().map(|t| *n == t).unwrap_or(false),
-        ScalarValue::UInt64(Some(n)) => target.parse::<u64>().map(|t| *n == t).unwrap_or(false),
-        ScalarValue::UInt32(Some(n)) => target.parse::<u32>().map(|t| *n == t).unwrap_or(false),
-        ScalarValue::Boolean(Some(b)) => target.parse::<bool>().map(|t| *b == t).unwrap_or(false),
-        _ => false,
-    }
-}
-
 /// Check if a filter expression references the _deleted column
 pub fn filter_uses_deleted_column(filter: &Expr) -> bool {
     let mut columns = HashSet::new();
@@ -490,11 +525,16 @@ pub fn filter_uses_deleted_column(filter: &Expr) -> bool {
     }
 }
 
-/// Locate the latest non-deleted row matching the provided primary-key value
+/// Locate the latest non-deleted row matching the provided primary-key value (async).
 ///
-/// **DEPRECATED**: Use `pk_exists_in_cold` for existence checks (returns bool, faster).
-/// This function is kept for UPDATE/DELETE operations that need the actual row data.
-pub fn find_row_by_pk<P, K, V>(
+/// This function scans cold storage (Parquet files) to find a row by its primary key.
+/// For UPDATE/DELETE operations on cold storage data, this is needed to:
+/// 1. Get the current row data to merge with updates
+/// 2. Verify the row exists before creating a tombstone (delete)
+///
+/// Uses async I/O to avoid blocking the tokio runtime.
+/// For hot storage lookups, providers should use their own O(1) PK index first.
+pub async fn find_row_by_pk<P, K, V>(
     provider: &P,
     scope: Option<&UserId>,
     pk_value: &str,
@@ -503,24 +543,82 @@ where
     P: BaseTableProvider<K, V>,
     K: StorageKey,
 {
-    let user_scope = resolve_user_scope(scope);
-    let resolved =
-        provider.scan_with_version_resolution_to_kvs(user_scope, None, None, None, false)?;
+    use crate::utils::version_resolution::{parquet_batch_to_rows, ParquetRowData};
+    use datafusion::prelude::{col, lit};
+    
     let pk_name = provider.primary_key_field_name();
-
-    for (key, row) in resolved.into_iter() {
-        let fields = P::extract_row(&row);
-        if let Some(val) = fields.get(pk_name) {
-            if scalar_value_matches_id(val, pk_value) {
-                return Ok(Some((key, row)));
+    let user_scope = resolve_user_scope(scope);
+    
+    // Build filter for the specific PK value
+    let filter: Expr = col(pk_name).eq(lit(pk_value));
+    
+    // Get core from provider (we need schema, table_id, table_type, and storage access)
+    let core = provider.core();
+    let table_id = provider.table_id();
+    let table_type = provider.provider_table_type();
+    let schema = provider.schema_ref();
+    
+    // Scan cold storage for this PK value using async I/O
+    let batch = scan_parquet_files_as_batch_async(
+        core,
+        table_id,
+        table_type,
+        scope,
+        schema,
+        Some(&filter),
+    ).await?;
+    
+    if batch.num_rows() == 0 {
+        return Ok(None);
+    }
+    
+    // Parse rows from Parquet batch
+    let rows_data: Vec<ParquetRowData> = parquet_batch_to_rows(&batch)?;
+    
+    // Find the latest non-deleted version with matching PK
+    // Rows should already be filtered by PK, but we need version resolution
+    let mut latest: Option<ParquetRowData> = None;
+    
+    for row_data in rows_data {
+        // Skip deleted rows
+        if row_data.deleted {
+            continue;
+        }
+        
+        // Check if this row matches the PK value
+        if let Some(row_pk) = row_data.fields.values.get(pk_name) {
+            let row_pk_str = match row_pk {
+                ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s.clone(),
+                ScalarValue::Int64(Some(n)) => n.to_string(),
+                ScalarValue::Int32(Some(n)) => n.to_string(),
+                ScalarValue::Int16(Some(n)) => n.to_string(),
+                ScalarValue::UInt64(Some(n)) => n.to_string(),
+                ScalarValue::UInt32(Some(n)) => n.to_string(),
+                ScalarValue::Boolean(Some(b)) => b.to_string(),
+                _ => continue,
+            };
+            
+            if row_pk_str != pk_value {
+                continue;
+            }
+            
+            // Keep the row with highest _seq (latest version)
+            if latest.as_ref().map(|l| row_data.seq_id > l.seq_id).unwrap_or(true) {
+                latest = Some(row_data);
             }
         }
     }
-
+    
+    // Convert ParquetRowData to the provider's (K, V) types
+    if let Some(row_data) = latest {
+        let result = provider.construct_row_from_parquet_data(user_scope, &row_data)?;
+        return Ok(result);
+    }
+    
     Ok(None)
 }
 
-/// Check if a PK value exists in cold storage (Parquet files) using manifest-based pruning.
+/// Check if a PK value exists in cold storage (Parquet files) using manifest-based pruning (async).
 ///
 /// **Optimized for PK existence checks during INSERT**:
 /// 1. Load manifest from cache (no disk I/O if cached)
@@ -542,7 +640,7 @@ where
 /// # Returns
 /// * `Ok(true)` - PK exists in cold storage (non-deleted)
 /// * `Ok(false)` - PK does not exist in cold storage
-pub fn pk_exists_in_cold(
+pub async fn pk_exists_in_cold(
     core: &TableProviderCore,
     table_id: &TableId,
     table_type: TableType,
@@ -581,7 +679,7 @@ pub fn pk_exists_in_cold(
             KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
         })?;
 
-    let list_result = match storage_cached.list_sync(table_type, table_id, user_id) {
+    let list_result = match storage_cached.list(table_type, table_id, user_id).await {
         Ok(result) => result,
         Err(_) => {
             log::trace!(
@@ -687,7 +785,7 @@ pub fn pk_exists_in_cold(
             &file_name,
             pk_column,
             pk_value,
-        )? {
+        ).await? {
             log::trace!(
                 "[pk_exists_in_cold] Found PK {} in {} for {}.{} {}",
                 pk_value,
@@ -703,7 +801,7 @@ pub fn pk_exists_in_cold(
     Ok(false)
 }
 
-/// Batch check if any PK values exist in cold storage (Parquet files).
+/// Batch check if any PK values exist in cold storage (Parquet files) (async).
 ///
 /// **OPTIMIZED for batch INSERT**: Checks multiple PK values in a single pass through cold storage.
 /// This is O(files) instead of O(files × N) where N is the number of PK values.
@@ -720,7 +818,7 @@ pub fn pk_exists_in_cold(
 /// # Returns
 /// * `Ok(Some(pk))` - First PK that exists in cold storage (non-deleted)
 /// * `Ok(None)` - None of the PKs exist in cold storage
-pub fn pk_exists_batch_in_cold(
+pub async fn pk_exists_batch_in_cold(
     core: &TableProviderCore,
     table_id: &TableId,
     table_type: TableType,
@@ -763,7 +861,7 @@ pub fn pk_exists_batch_in_cold(
             KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
         })?;
 
-    let list_result = match storage_cached.list_sync(table_type, table_id, user_id) {
+    let list_result = match storage_cached.list(table_type, table_id, user_id).await {
         Ok(result) => result,
         Err(_) => {
             log::trace!(
@@ -875,7 +973,7 @@ pub fn pk_exists_batch_in_cold(
             &file_name,
             pk_column,
             &pk_set,
-        )? {
+        ).await? {
             log::trace!(
                 "[pk_exists_batch_in_cold] Found PK {} in {} for {}.{} {}",
                 found_pk,
@@ -891,10 +989,10 @@ pub fn pk_exists_batch_in_cold(
     Ok(None)
 }
 
-/// Batch check if any PK values exist in a single Parquet file via StorageCached.
+/// Batch check if any PK values exist in a single Parquet file via StorageCached (async).
 ///
 /// Returns the first matching PK found (with non-deleted latest version).
-fn pk_exists_batch_in_parquet_via_storage_cache(
+async fn pk_exists_batch_in_parquet_via_storage_cache(
     storage_cached: &kalamdb_filestore::StorageCached,
     table_type: TableType,
     table_id: &TableId,
@@ -904,7 +1002,8 @@ fn pk_exists_batch_in_parquet_via_storage_cache(
     pk_values: &std::collections::HashSet<&str>,
 ) -> Result<Option<String>, KalamDbError> {
     let result = storage_cached
-        .get_sync(table_type, table_id, user_id, parquet_filename)
+        .get(table_type, table_id, user_id, parquet_filename)
+        .await
         .into_kalamdb_error("Failed to read Parquet file")?;
     let batches = kalamdb_filestore::parse_parquet_from_bytes(result.data)
         .into_kalamdb_error("Failed to parse Parquet file")?;
@@ -977,10 +1076,10 @@ fn pk_exists_batch_in_parquet_via_storage_cache(
     Ok(None)
 }
 
-/// Check if a PK value exists in a single Parquet file via StorageCached (with MVCC version resolution).
+/// Check if a PK value exists in a single Parquet file via StorageCached (async, with MVCC version resolution).
 ///
 /// Reads the file via StorageCached and checks if any non-deleted row has the matching PK value.
-fn pk_exists_in_parquet_via_storage_cache(
+async fn pk_exists_in_parquet_via_storage_cache(
     storage_cached: &kalamdb_filestore::StorageCached,
     table_type: TableType,
     table_id: &TableId,
@@ -990,7 +1089,8 @@ fn pk_exists_in_parquet_via_storage_cache(
     pk_value: &str,
 ) -> Result<bool, KalamDbError> {
     let result = storage_cached
-        .get_sync(table_type, table_id, user_id, parquet_filename)
+        .get(table_type, table_id, user_id, parquet_filename)
+        .await
         .into_kalamdb_error("Failed to read Parquet file")?;
     let batches = kalamdb_filestore::parse_parquet_from_bytes(result.data)
         .into_kalamdb_error("Failed to parse Parquet file")?;
@@ -1108,7 +1208,10 @@ fn strip_list_prefix<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
 ///
 /// **Optimization**: If the PK column is AUTO_INCREMENT or SNOWFLAKE_ID, this check
 /// is skipped since the system guarantees unique values.
-pub fn ensure_unique_pk_value<P, K, V>(
+///
+/// **Cold Storage Check**: After checking hot storage (RocksDB), this also checks
+/// cold storage (Parquet files) using PkExistenceChecker for full PK uniqueness validation.
+pub async fn ensure_unique_pk_value<P, K, V>(
     provider: &P,
     scope: Option<&UserId>,
     row_data: &Row,
@@ -1120,7 +1223,7 @@ where
     let table_id = provider.table_id();
 
     // Get table definition to check if PK is auto-increment
-    if let Some(table_def) = provider.schema_registry().get_table_if_exists(table_id)?
+    let table_def = if let Some(table_def) = provider.schema_registry().get_table_if_exists(table_id)?
     {
         // Fast path: Skip uniqueness check if PK is auto-increment
         if crate::utils::pk::PkExistenceChecker::is_auto_increment_pk(&table_def) {
@@ -1130,18 +1233,52 @@ where
             );
             return Ok(());
         }
-    }
+        table_def
+    } else {
+        return Ok(()); // Table not found, will error elsewhere
+    };
 
     let pk_name = provider.primary_key_field_name();
     if let Some(pk_value) = row_data.get(pk_name) {
         if !matches!(pk_value, ScalarValue::Null) {
             let pk_str = unified_dml::extract_user_pk_value(row_data, pk_name)?;
             let user_scope = resolve_user_scope(scope);
-            // Use find_row_key_by_id_field which can use PK index (O(1) vs O(n))
-            if provider.find_row_key_by_id_field(user_scope, &pk_str)?.is_some() {
+            
+            //Step 1: Check hot storage (RocksDB) - fast PK index lookup
+            if provider.find_row_key_by_id_field(user_scope, &pk_str).await?.is_some() {
                 return Err(KalamDbError::AlreadyExists(format!(
-                    "Primary key violation: value '{}' already exists in column '{}'",
+                    "Primary key violation: value '{}' already exists in column '{}' (hot storage)",
                     pk_str, pk_name
+                )));
+            }
+
+            // Step 2: Check cold storage (Parquet files) using PkExistenceChecker
+            let core = provider.core();
+            
+            // Skip cold storage check if storage registry is not available
+            let Some(storage_registry) = core.storage_registry.clone() else {
+                return Ok(()); // No cold storage to check
+            };
+            
+            let pk_checker = crate::utils::pk::PkExistenceChecker::new(
+                core.schema_registry.clone(),
+                storage_registry,
+                core.manifest_service.clone(),
+            );
+
+            let table_type = P::provider_table_type(provider);
+            let check_result = pk_checker.check_pk_exists(
+                &table_def,
+                table_id,
+                table_type,
+                scope,
+                &pk_str,
+            ).await?;
+
+            if let crate::utils::pk::PkCheckResult::FoundInCold { segment_path } = check_result {
+                return Err(KalamDbError::AlreadyExists(format!(
+                    "Primary key violation: value '{}' already exists in column '{}' (cold storage: {})",
+                    pk_str, pk_name, segment_path
                 )));
             }
         }
@@ -1195,7 +1332,7 @@ pub fn warn_if_unfiltered_scan(
 /// * `Ok(())` if the update is valid
 /// * `Err(AlreadyExists)` if the new PK value already exists
 /// * `Err(InvalidOperation)` if trying to change an auto-increment PK
-pub fn validate_pk_update<P, K, V>(
+pub async fn validate_pk_update<P, K, V>(
     provider: &P,
     scope: Option<&UserId>,
     updates: &Row,
@@ -1234,7 +1371,7 @@ where
     let new_pk_str = unified_dml::extract_user_pk_value(updates, pk_name)?;
     let user_scope = resolve_user_scope(scope);
 
-    if provider.find_row_key_by_id_field(user_scope, &new_pk_str)?.is_some() {
+    if provider.find_row_key_by_id_field(user_scope, &new_pk_str).await?.is_some() {
         return Err(KalamDbError::AlreadyExists(format!(
             "Primary key violation: value '{}' already exists in column '{}' (UPDATE would create duplicate)",
             new_pk_str, pk_name

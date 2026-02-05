@@ -4,7 +4,7 @@
 
 use crate::common::*;
 
-#[ntest::timeout(180000)]
+#[ntest::timeout(120000)]
 #[test]
 fn smoke_user_table_subscription_lifecycle() {
     if !require_server_running() {
@@ -44,7 +44,6 @@ fn smoke_user_table_subscription_lifecycle() {
     assert!(out.contains("beta"), "expected to see 'beta' in select output: {}", out);
 
     // Small delay to ensure data is visible to subscription queries
-    std::thread::sleep(std::time::Duration::from_millis(200));
 
     // Double-check data is visible right before subscribing
     let verify_sel = format!("SELECT COUNT(*) as cnt FROM {}", full);
@@ -58,9 +57,9 @@ fn smoke_user_table_subscription_lifecycle() {
 
     // 4a) Collect snapshot rows with extended timeout; if none captured, fallback to direct SELECT snapshot
     let mut snapshot_lines: Vec<String> = Vec::new();
-    let snapshot_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let snapshot_deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
     while std::time::Instant::now() < snapshot_deadline {
-        match listener.try_read_line(std::time::Duration::from_millis(300)) {
+        match listener.try_read_line(std::time::Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 if !line.trim().is_empty() {
                     println!("[subscription][snapshot] {}", line);
@@ -98,11 +97,11 @@ fn smoke_user_table_subscription_lifecycle() {
     println!("[DEBUG] Insert completed, waiting for change event...");
 
     let mut change_lines: Vec<String> = Vec::new();
-    let change_deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    let change_deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
     let mut poll_count = 0;
     while std::time::Instant::now() < change_deadline {
         poll_count += 1;
-        match listener.try_read_line(std::time::Duration::from_millis(250)) {
+        match listener.try_read_line(std::time::Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 if !line.trim().is_empty() {
                     println!("[subscription][change] {}", line);
@@ -151,9 +150,9 @@ fn smoke_user_table_subscription_lifecycle() {
 
     // Wait for terminal state (completed or failed) to avoid flakes
     let job_timeout = if is_cluster_mode() {
-        std::time::Duration::from_secs(30)
+        std::time::Duration::from_secs(20)
     } else {
-        std::time::Duration::from_secs(15)
+        std::time::Duration::from_secs(10)
     };
     let final_status = wait_for_job_finished(&job_id, job_timeout)
         .expect("flush job should reach terminal state");

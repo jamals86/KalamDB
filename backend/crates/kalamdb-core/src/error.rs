@@ -713,6 +713,7 @@ impl From<kalamdb_tables::TableError> for KalamDbError {
             TableError::Arrow(e) => KalamDbError::Other(format!("Arrow error: {}", e)),
             TableError::Filestore(msg) => KalamDbError::Other(format!("Filestore error: {}", msg)),
             TableError::SchemaError(msg) => KalamDbError::SchemaError(msg),
+            TableError::NotLeader { leader_addr } => KalamDbError::NotLeader { leader_addr },
             TableError::Other(msg) => KalamDbError::Other(msg),
         }
     }

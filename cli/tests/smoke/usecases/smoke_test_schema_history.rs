@@ -35,11 +35,9 @@ fn smoke_test_schema_history_in_system_tables() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    std::thread::sleep(Duration::from_millis(100));
 
     // =========================================================================
     // Step 1: Create initial table (should create version 1)
@@ -52,7 +50,6 @@ fn smoke_test_schema_history_in_system_tables() {
         full_table
     );
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table with initial schema (version 1)");
 
@@ -101,7 +98,6 @@ fn smoke_test_schema_history_in_system_tables() {
             return;
         },
     }
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Added column 'email' (should create version 2)");
 
@@ -143,7 +139,6 @@ fn smoke_test_schema_history_in_system_tables() {
     // =========================================================================
     let alter2_sql = format!("ALTER TABLE {} ADD COLUMN age INT", full_table);
     execute_sql_as_root_via_client(&alter2_sql).expect("Failed to add 'age' column");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Added column 'age' (should create version 3)");
 
@@ -175,7 +170,6 @@ fn smoke_test_schema_history_in_system_tables() {
         let alter_sql = format!("ALTER TABLE {} ADD COLUMN {} TEXT", full_table, col_name);
         execute_sql_as_root_via_client(&alter_sql)
             .unwrap_or_else(|e| panic!("Failed to add column {}: {:?}", col_name, e));
-        std::thread::sleep(Duration::from_millis(100));
     }
 
     println!("✅ Added {} more columns", num_additional_alters);
@@ -329,7 +323,6 @@ fn smoke_test_drop_table_removes_schema_history() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -338,7 +331,6 @@ fn smoke_test_drop_table_removes_schema_history() {
     let create_sql =
         format!("CREATE TABLE {} (id BIGINT PRIMARY KEY) WITH (TYPE = 'USER')", full_table);
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
-    std::thread::sleep(Duration::from_millis(100));
 
     execute_sql_as_root_via_client(&format!("ALTER TABLE {} ADD COLUMN a TEXT", full_table))
         .unwrap_or_else(|_| {
@@ -347,7 +339,6 @@ fn smoke_test_drop_table_removes_schema_history() {
         });
     execute_sql_as_root_via_client(&format!("ALTER TABLE {} ADD COLUMN b TEXT", full_table))
         .unwrap_or_else(|_| "".to_string());
-    std::thread::sleep(Duration::from_millis(100));
 
     // Verify we have multiple versions
     let query_before = format!(
@@ -362,7 +353,6 @@ fn smoke_test_drop_table_removes_schema_history() {
     // DROP TABLE
     execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table))
         .expect("Failed to DROP TABLE");
-    std::thread::sleep(Duration::from_millis(200));
 
     // Verify all versions removed
     let query_after = format!(

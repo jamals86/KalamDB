@@ -4,7 +4,7 @@
 
 use crate::error::KalamDbError;
 use kalamdb_configs::ExecutionSettings;
-use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::context::ScalarValue;
 
 /// Parameter validation limits (from server.toml [execution] section)
 pub struct ParameterLimits {

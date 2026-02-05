@@ -36,7 +36,6 @@ fn smoke_test_snowflake_id_default() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -52,7 +51,6 @@ fn smoke_test_snowflake_id_default() {
     );
 
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table with SNOWFLAKE_ID");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table with SNOWFLAKE_ID() DEFAULT");
 
@@ -63,7 +61,6 @@ fn smoke_test_snowflake_id_default() {
         execute_sql_as_root_via_client(&insert_sql)
             .unwrap_or_else(|e| panic!("Failed to insert row {}: {}", i, e));
         // Small delay to ensure IDs are time-ordered
-        std::thread::sleep(Duration::from_millis(10));
     }
 
     println!("✅ Inserted 5 rows");
@@ -118,7 +115,6 @@ fn smoke_test_uuid_v7_default() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -135,7 +131,6 @@ fn smoke_test_uuid_v7_default() {
     );
 
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table with UUID_V7");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table with UUID_V7() DEFAULT");
 
@@ -150,7 +145,6 @@ fn smoke_test_uuid_v7_default() {
         );
         execute_sql_as_root_via_client(&insert_sql)
             .unwrap_or_else(|e| panic!("Failed to insert session {}: {}", i, e));
-        std::thread::sleep(Duration::from_millis(10));
     }
 
     println!("✅ Inserted 3 sessions");
@@ -204,7 +198,6 @@ fn smoke_test_ulid_default() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -222,7 +215,6 @@ fn smoke_test_ulid_default() {
     );
 
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table with ULID");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table with ULID() DEFAULT");
 
@@ -235,7 +227,6 @@ fn smoke_test_ulid_default() {
         );
         execute_sql_as_root_via_client(&insert_sql)
             .unwrap_or_else(|e| panic!("Failed to insert event {}: {}", i, e));
-        std::thread::sleep(Duration::from_millis(10));
     }
 
     println!("✅ Inserted 3 events");
@@ -280,7 +271,6 @@ fn smoke_test_current_user_default() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -298,7 +288,6 @@ fn smoke_test_current_user_default() {
     );
 
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table with CURRENT_USER");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table with CURRENT_USER() DEFAULT");
 
@@ -361,7 +350,6 @@ fn smoke_test_all_custom_functions_combined() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -381,7 +369,6 @@ fn smoke_test_all_custom_functions_combined() {
 
     execute_sql_as_root_via_client(&create_sql)
         .expect("Failed to create table with all custom functions");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created table with SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER, NOW defaults");
 

@@ -128,6 +128,7 @@ impl StreamTableProvider {
     }
 }
 
+#[async_trait]
 impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider {
     fn table_id(&self) -> &TableId {
         self.core.table_id()
@@ -142,6 +143,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         self.core.table_type()
     }
 
+    fn cluster_coordinator(&self) -> &Arc<dyn kalamdb_system::ClusterCoordinator> {
+        &self.core.cluster_coordinator
+    }
+
     fn schema_registry(&self) -> &Arc<dyn SchemaRegistryTrait<Error = KalamDbError>> {
         &self.core.schema_registry
     }
@@ -150,7 +155,36 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         &self.primary_key_field_name
     }
 
-    fn insert(&self, user_id: &UserId, row_data: Row) -> Result<StreamTableRowId, KalamDbError> {
+    fn core(&self) -> &crate::utils::base::TableProviderCore {
+        &self.core
+    }
+
+    fn construct_row_from_parquet_data(
+        &self,
+        user_id: &UserId,
+        row_data: &crate::utils::version_resolution::ParquetRowData,
+    ) -> Result<Option<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
+        let row_key = StreamTableRowId::new(user_id.clone(), row_data.seq_id);
+        let row = StreamTableRow {
+            user_id: user_id.clone(),
+            _seq: row_data.seq_id,
+            fields: row_data.fields.clone(),
+        };
+        Ok(Some((row_key, row)))
+    }
+
+    /// Stream tables are append-only and don't support UPDATE/DELETE by PK.
+    /// This always returns None - DML operations other than INSERT are not supported.
+    async fn find_row_key_by_id_field(
+        &self,
+        _user_id: &UserId,
+        _id_value: &str,
+    ) -> Result<Option<StreamTableRowId>, KalamDbError> {
+        // Stream tables are append-only - no PK-based lookups for DML
+        Ok(None)
+    }
+
+    async fn insert(&self, user_id: &UserId, row_data: Row) -> Result<StreamTableRowId, KalamDbError> {
         let table_id = self.core.table_id();
 
         // Call SystemColumnsService to generate SeqId
@@ -205,7 +239,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         Ok(row_key)
     }
 
-    fn update(
+    async fn update(
         &self,
         user_id: &UserId,
         _key: &StreamTableRowId,
@@ -218,10 +252,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         // 4. Append new version
 
         // Placeholder: Just append as new version (incomplete implementation)
-        self.insert(user_id, updates)
+        self.insert(user_id, updates).await
     }
 
-    fn update_by_pk_value(
+    async fn update_by_pk_value(
         &self,
         user_id: &UserId,
         _pk_value: &str,
@@ -229,10 +263,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
     ) -> Result<StreamTableRowId, KalamDbError> {
         // TODO: Implement full UPDATE logic for stream tables
         // Stream tables are typically append-only, so UPDATE just inserts a new event
-        self.insert(user_id, updates)
+        self.insert(user_id, updates).await
     }
 
-    fn delete(&self, user_id: &UserId, key: &StreamTableRowId) -> Result<(), KalamDbError> {
+    async fn delete(&self, user_id: &UserId, key: &StreamTableRowId) -> Result<(), KalamDbError> {
         // TODO: Implement DELETE logic for stream tables
         // Stream tables may use hard delete or tombstone depending on requirements
 
@@ -254,7 +288,56 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         Ok(())
     }
 
-    fn scan_rows(
+    async fn delete_by_pk_value(&self, user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError> {
+        // STREAM tables support DELETE by PK value for hard delete
+        // PK column is typically an auto-generated ID (e.g., ULID(), event_id, etc.)
+        
+        // Scan all rows for this user to find matching PK values
+        // Note: This is O(n) but STREAM tables are typically append-only with TTL eviction
+        let rows = self.store
+            .scan_user(user_id, None, usize::MAX)
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Failed to scan stream table keys: {}", e))
+            })?;
+
+        let pk_name = self.primary_key_field_name();
+        let mut deleted_count = 0;
+
+        for (key, entity) in rows {
+            // Check if PK column matches the target value
+            if let Some(row_pk_value) = entity.fields.get(pk_name) {
+                let row_pk_str = match row_pk_value {
+                    ScalarValue::Utf8(Some(s)) => s.clone(),
+                    ScalarValue::Int64(Some(i)) => i.to_string(),
+                    ScalarValue::Int32(Some(i)) => i.to_string(),
+                    _ => continue,
+                };
+
+                if row_pk_str == pk_value {
+                    // Delete this row
+                    self.store.delete(&key).map_err(|e| {
+                        KalamDbError::InvalidOperation(format!("Failed to delete stream event: {}", e))
+                    })?;
+
+                    deleted_count += 1;
+
+                    // Fire live query notification (DELETE hard)
+                    let notification_service = self.core.notification_service.clone();
+                    let table_id = self.core.table_id().clone();
+
+                    if notification_service.has_subscribers(Some(&user_id), &table_id) {
+                        let row_id_str = format!("{}:{}", key.user_id().as_str(), key.seq().as_i64());
+                        let notification = ChangeNotification::delete_hard(table_id.clone(), row_id_str);
+                        notification_service.notify_table_change(Some(user_id.clone()), table_id, notification);
+                    }
+                }
+            }
+        }
+
+        Ok(deleted_count > 0)
+    }
+
+    async fn scan_rows(
         &self,
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
@@ -273,13 +356,13 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
         // Perform KV scan (hot-only) and convert to batch
         let keep_deleted = false; // Stream tables don't support soft delete yet
-        let kvs = self.scan_with_version_resolution_to_kvs(
+        let kvs = self.scan_with_version_resolution_to_kvs_async(
             user_id,
             filter,
             since_seq,
             limit,
             keep_deleted,
-        )?;
+        ).await?;
         let table_id = self.core.table_id();
         log::debug!(
             "[StreamProvider] scan_rows: table={} rows={} user={} ttl={:?}",
@@ -300,7 +383,7 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         })
     }
 
-    fn scan_with_version_resolution_to_kvs(
+    async fn scan_with_version_resolution_to_kvs_async(
         &self,
         user_id: &UserId,
         _filter: Option<&Expr>,
@@ -328,8 +411,10 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         // This is more efficient than the pagination loop for LIMIT queries
         let scan_limit = limit.unwrap_or(100_000);
         
+        // Use async version to avoid blocking the runtime
         let results = self.store
-            .scan_user_streaming(user_id, start_seq, scan_limit, ttl_ms, now_ms)
+            .scan_user_streaming_async(user_id, start_seq, scan_limit, ttl_ms, now_ms)
+            .await
             .map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to scan stream table hot storage: {}",

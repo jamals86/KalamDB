@@ -79,7 +79,7 @@ fn test_live_subscription_default_options() {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
 
     while std::time::Instant::now() < deadline && received_count < 3 {
-        match listener.try_read_line(Duration::from_millis(500)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) if !line.trim().is_empty() => {
                 println!("[EVENT] {}", line);
                 if line.contains("msg_") {
@@ -151,7 +151,7 @@ fn test_live_subscription_with_batch_size() {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
 
     while std::time::Instant::now() < deadline {
-        match listener.try_read_line(Duration::from_millis(500)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) if !line.trim().is_empty() => {
                 println!("[SNAPSHOT] {}", line);
                 if line.contains("initial_") {
@@ -222,7 +222,7 @@ fn test_live_subscription_with_last_rows() {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
 
     while std::time::Instant::now() < deadline {
-        match listener.try_read_line(Duration::from_millis(500)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) if !line.trim().is_empty() => {
                 println!("[SNAPSHOT] {}", line);
                 // Try to extract seq_num from the line
@@ -293,7 +293,7 @@ fn test_live_subscription_seq_id_tracking() {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
 
     while std::time::Instant::now() < deadline {
-        match listener.try_read_line(Duration::from_millis(300)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) if !line.trim().is_empty() => {
                 println!("[FIRST SUB] {}", line);
                 last_event = line;
@@ -310,7 +310,7 @@ fn test_live_subscription_seq_id_tracking() {
     // Wait for the new event
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
-        match listener.try_read_line(Duration::from_millis(300)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) if !line.trim().is_empty() => {
                 println!("[FIRST SUB CHANGE] {}", line);
                 if line.contains("second") {
@@ -369,7 +369,6 @@ fn test_live_multiple_subscriptions() {
     let mut listener2 = start_subscription_with_retry(&query);
 
     // Small delay to ensure both are connected
-    std::thread::sleep(Duration::from_millis(500));
 
     // Insert data
     execute_sql_as_root_via_client(&format!("INSERT INTO {} (data) VALUES ('shared_event')", full))
@@ -384,7 +383,7 @@ fn test_live_multiple_subscriptions() {
     while std::time::Instant::now() < deadline && (!sub1_received || !sub2_received) {
         // Check subscription 1
         if !sub1_received {
-            if let Ok(Some(line)) = listener1.try_read_line(Duration::from_millis(100)) {
+            if let Ok(Some(line)) = listener1.try_read_line(Duration::from_millis(50)) {
                 println!("[SUB1] {}", line);
                 if line.contains("shared_event") {
                     sub1_received = true;
@@ -394,7 +393,7 @@ fn test_live_multiple_subscriptions() {
 
         // Check subscription 2
         if !sub2_received {
-            if let Ok(Some(line)) = listener2.try_read_line(Duration::from_millis(100)) {
+            if let Ok(Some(line)) = listener2.try_read_line(Duration::from_millis(50)) {
                 println!("[SUB2] {}", line);
                 if line.contains("shared_event") {
                     sub2_received = true;
@@ -475,14 +474,12 @@ fn test_live_subscription_change_event_order() {
     let mut listener = SubscriptionListener::start(&query).expect("subscription should start");
 
     // Small delay to ensure subscription is ready
-    std::thread::sleep(Duration::from_millis(300));
 
     // Insert rows in order
     for order in 1..=5 {
         let insert_sql = format!("INSERT INTO {} (order_num) VALUES ({})", full, order);
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
         // Small delay between inserts
-        std::thread::sleep(Duration::from_millis(50));
     }
 
     // Collect all change events
@@ -490,7 +487,7 @@ fn test_live_subscription_change_event_order() {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
 
     while std::time::Instant::now() < deadline && received_orders.len() < 5 {
-        match listener.try_read_line(Duration::from_millis(300)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) if !line.trim().is_empty() => {
                 println!("[CHANGE] {}", line);
                 // Try to extract order_num
