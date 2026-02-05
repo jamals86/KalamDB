@@ -55,7 +55,7 @@ fn smoke_stream_table_subscription() {
         // After each insert, poll for up to 1s for a subscription line
         let per_attempt_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         while std::time::Instant::now() < per_attempt_deadline {
-            match listener.try_read_line(std::time::Duration::from_millis(250)) {
+            match listener.try_read_line(std::time::Duration::from_millis(100)) {
                 Ok(Some(line)) => {
                     if !line.trim().is_empty() {
                         got_any = true;
@@ -82,7 +82,6 @@ fn smoke_stream_table_subscription() {
         if last_select_output.contains(ev_val) {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(250));
     }
     assert!(
         last_select_output.contains(ev_val),
@@ -91,16 +90,20 @@ fn smoke_stream_table_subscription() {
         last_select_output
     );
 
-    // 6) Wait 11 seconds for TTL eviction
-    println!("Waiting 11 seconds for TTL eviction...");
-    std::thread::sleep(std::time::Duration::from_secs(11));
-
-    // 7) Verify data has been evicted via regular SELECT
-    let select_after_ttl =
-        execute_sql_as_root_via_client_json(&select_sql).expect("select after TTL should succeed");
+    // 6) Verify data has been evicted via regular SELECT (poll until TTL passes)
+    let eviction_deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
+    let mut select_after_ttl = String::new();
+    while std::time::Instant::now() < eviction_deadline {
+        select_after_ttl = execute_sql_as_root_via_client_json(&select_sql)
+            .expect("select after TTL should succeed");
+        if !select_after_ttl.contains(ev_val) {
+            break;
+        }
+        std::thread::yield_now();
+    }
     assert!(
         !select_after_ttl.contains(ev_val),
-        "expected event '{}' to be evicted after 11 seconds (TTL=10s)",
+        "expected event '{}' to be evicted within 12 seconds (TTL=10s)",
         ev_val
     );
 }

@@ -35,7 +35,6 @@ fn smoke_test_multi_row_insert() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -111,7 +110,6 @@ fn smoke_test_soft_delete_user_table() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -142,7 +140,6 @@ fn smoke_test_soft_delete_user_table() {
         if before_output.contains('3') {
             break;
         }
-        std::thread::sleep(Duration::from_millis(200));
     }
     assert!(before_output.contains('3'), "Expected 3 rows initially");
 
@@ -214,7 +211,6 @@ fn smoke_test_soft_delete_shared_table() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -274,7 +270,6 @@ fn smoke_test_hard_delete_stream_table() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -363,7 +358,6 @@ fn smoke_test_aggregation_queries() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -486,7 +480,6 @@ fn smoke_test_multi_row_update() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");

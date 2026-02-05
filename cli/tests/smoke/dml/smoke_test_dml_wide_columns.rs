@@ -198,7 +198,6 @@ fn smoke_subscription_update_delete_notifications() {
     ));
 
     // Small delay to ensure data is persisted
-    std::thread::sleep(Duration::from_millis(200));
 
     // Start subscription
     let query = format!("SELECT * FROM {}", full);
@@ -211,7 +210,7 @@ fn smoke_subscription_update_delete_notifications() {
     let mut initial_data_received = false;
 
     while std::time::Instant::now() < deadline {
-        match listener.try_read_line(Duration::from_millis(500)) {
+        match listener.try_read_line(Duration::from_millis(50)) {
             Ok(Some(line)) => {
                 println!("[subscription] Event: {}", &line[..std::cmp::min(200, line.len())]);
                 all_events.push(line.clone());
@@ -247,7 +246,6 @@ fn smoke_subscription_update_delete_notifications() {
     assert!(initial_data_received, "Should have received initial data batch");
 
     // Small delay to ensure subscription is fully ready
-    std::thread::sleep(Duration::from_millis(500));
 
     // UPDATE - use a unique value we can search for
     let update_value = format!("upd_{}", std::process::id());
@@ -260,7 +258,7 @@ fn smoke_subscription_update_delete_notifications() {
     let mut found_update = false;
     let update_deadline = std::time::Instant::now() + Duration::from_secs(15);
     while std::time::Instant::now() < update_deadline {
-        match listener.try_read_line(Duration::from_millis(500)) {
+        match listener.try_read_line(Duration::from_millis(50)) {
             Ok(Some(line)) => {
                 println!(
                     "[subscription] After UPDATE: {}",
@@ -291,7 +289,7 @@ fn smoke_subscription_update_delete_notifications() {
     let mut found_delete = false;
     let delete_deadline = std::time::Instant::now() + Duration::from_secs(10);
     while std::time::Instant::now() < delete_deadline {
-        match listener.try_read_line(Duration::from_millis(500)) {
+        match listener.try_read_line(Duration::from_millis(50)) {
             Ok(Some(line)) => {
                 println!(
                     "[subscription] After DELETE: {}",

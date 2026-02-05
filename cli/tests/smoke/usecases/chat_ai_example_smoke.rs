@@ -120,7 +120,7 @@ fn smoke_chat_ai_example_from_readme() {
     let start = std::time::Instant::now();
 
     while start.elapsed() < timeout {
-        match listener.try_read_line(Duration::from_millis(500)) {
+        match listener.try_read_line(Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 if !line.trim().is_empty()
                     && (line.contains("typing")

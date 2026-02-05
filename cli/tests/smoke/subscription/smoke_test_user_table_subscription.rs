@@ -44,7 +44,6 @@ fn smoke_user_table_subscription_lifecycle() {
     assert!(out.contains("beta"), "expected to see 'beta' in select output: {}", out);
 
     // Small delay to ensure data is visible to subscription queries
-    std::thread::sleep(std::time::Duration::from_millis(200));
 
     // Double-check data is visible right before subscribing
     let verify_sel = format!("SELECT COUNT(*) as cnt FROM {}", full);
@@ -60,7 +59,7 @@ fn smoke_user_table_subscription_lifecycle() {
     let mut snapshot_lines: Vec<String> = Vec::new();
     let snapshot_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while std::time::Instant::now() < snapshot_deadline {
-        match listener.try_read_line(std::time::Duration::from_millis(300)) {
+        match listener.try_read_line(std::time::Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 if !line.trim().is_empty() {
                     println!("[subscription][snapshot] {}", line);
@@ -102,7 +101,7 @@ fn smoke_user_table_subscription_lifecycle() {
     let mut poll_count = 0;
     while std::time::Instant::now() < change_deadline {
         poll_count += 1;
-        match listener.try_read_line(std::time::Duration::from_millis(250)) {
+        match listener.try_read_line(std::time::Duration::from_millis(100)) {
             Ok(Some(line)) => {
                 if !line.trim().is_empty() {
                     println!("[subscription][change] {}", line);

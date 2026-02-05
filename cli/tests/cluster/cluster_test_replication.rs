@@ -34,7 +34,6 @@ fn query_count_with_retry(base_url: &str, sql: &str) -> i64 {
             Ok(count) => return count,
             Err(err) => {
                 last_err = Some(err);
-                std::thread::sleep(Duration::from_millis(200));
             },
         }
     }
@@ -61,7 +60,6 @@ fn cluster_test_metadata_replication_timing() {
 
     // Cleanup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     // Create namespace and immediately check replication
     println!("Creating namespace on node 0...");
@@ -74,7 +72,6 @@ fn cluster_test_metadata_replication_timing() {
     let mut check_count = 0;
     while !all_replicated && check_count < 20 {
         check_count += 1;
-        std::thread::sleep(Duration::from_millis(100));
 
         all_replicated = urls.iter().all(|url| {
             let result = execute_on_node(
@@ -118,7 +115,6 @@ fn cluster_test_operation_ordering() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -152,7 +148,6 @@ fn cluster_test_operation_ordering() {
             )
             .expect("Insert failed");
             values.clear();
-            std::thread::sleep(Duration::from_millis(50));
         }
     }
 
@@ -199,7 +194,6 @@ fn cluster_test_concurrent_writes() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -273,7 +267,6 @@ fn cluster_test_concurrent_writes() {
         }
 
         last_counts = counts;
-        std::thread::sleep(Duration::from_millis(300));
     }
 
     if !consistent {

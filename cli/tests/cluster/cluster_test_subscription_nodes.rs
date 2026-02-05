@@ -414,7 +414,6 @@ fn cluster_test_subscription_multi_node_identical() {
                 )
                 .await
                 .expect("Failed to insert");
-            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         // Collect events from the subscription

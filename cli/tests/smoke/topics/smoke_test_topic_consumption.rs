@@ -40,7 +40,6 @@ async fn execute_sql(sql: &str) {
 }
 
 async fn wait_for_topic_ready() {
-    tokio::time::sleep(Duration::from_secs(1)).await;
 }
 
 async fn create_topic_with_sources(topic: &str, table: &str, operations: &[&str]) {
@@ -80,13 +79,11 @@ async fn poll_records_until(
                     || message.contains("network")
                     || message.contains("NetworkError")
                 {
-                    tokio::time::sleep(Duration::from_millis(200)).await;
                     continue;
                 }
                 panic!("Failed to poll: {}", message);
             }
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
     }
     if records.is_empty() {
         if let Some(message) = last_error {
@@ -150,7 +147,6 @@ async fn test_topic_consume_insert_events() {
                 break;
             }
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
     }
     assert!(records.len() >= 5, "Should receive 5 INSERT events");
 
@@ -260,7 +256,6 @@ async fn test_topic_consume_delete_events() {
     ))
     .await;
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     let client = create_test_client().await;
     let mut consumer = client
@@ -409,7 +404,6 @@ async fn test_topic_consume_offset_persistence() {
             ))
             .await;
         }
-        tokio::time::sleep(Duration::from_secs(1)).await;
 
         let records = poll_records_until(&mut consumer, 3, Duration::from_secs(15)).await;
         assert_eq!(records.len(), 3);
@@ -439,7 +433,6 @@ async fn test_topic_consume_offset_persistence() {
             ))
             .await;
         }
-        tokio::time::sleep(Duration::from_secs(1)).await;
 
         let records = poll_records_until(&mut consumer, 3, Duration::from_secs(15)).await;
         assert_eq!(records.len(), 3, "Should receive only batch 2");
@@ -506,7 +499,6 @@ async fn test_topic_consume_from_earliest() {
                 break;
             }
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
     }
     assert_eq!(records.len(), 10, "Should receive all 10 messages");
 

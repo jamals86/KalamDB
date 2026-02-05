@@ -41,11 +41,9 @@ fn smoke_test_user_table_flush() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    std::thread::sleep(Duration::from_millis(200));
 
     // Create USER table with flush policy
     let create_sql = format!(
@@ -62,7 +60,6 @@ fn smoke_test_user_table_flush() {
     );
 
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create user table");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created USER table with FLUSH ROWS {}", FLUSH_POLICY_ROWS);
 
@@ -193,11 +190,9 @@ fn smoke_test_shared_table_flush() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    std::thread::sleep(Duration::from_millis(200));
 
     // Create SHARED table with flush policy
     let create_sql = format!(
@@ -214,7 +209,6 @@ fn smoke_test_shared_table_flush() {
     );
 
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created SHARED table with FLUSH ROWS {}", FLUSH_POLICY_ROWS);
 
@@ -345,11 +339,9 @@ fn smoke_test_mixed_source_query() {
     // Setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    std::thread::sleep(Duration::from_millis(200));
 
     // Create table with small flush policy
     let create_sql = format!(
@@ -365,7 +357,6 @@ fn smoke_test_mixed_source_query() {
     );
 
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
-    std::thread::sleep(Duration::from_millis(200));
 
     // Insert first batch (will be flushed)
     println!("📝 Inserting first batch (50 rows - will exceed flush policy)...");
@@ -409,7 +400,6 @@ fn smoke_test_mixed_source_query() {
         batch2_values.join(", ")
     ))
     .expect("Failed to insert second batch");
-    std::thread::sleep(Duration::from_millis(200));
 
     // Query all data - should combine from both sources
     println!("🔍 Querying all data (should merge RocksDB + Parquet)...");

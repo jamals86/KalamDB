@@ -190,7 +190,7 @@ fn smoke_test_websocket_capacity() {
         // Give the server enough time to process connection closures
         // The cleanup involves RocksDB operations which can be slow
         // Wait long enough to exceed the WebSocket idle timeout (5s) plus cleanup time
-        tokio::time::sleep(Duration::from_secs(7)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Verify live_queries are cleaned up after closing
         let post_close_count = count_live_query_subscriptions(subscription_prefix_for_cleanup.clone()).await;

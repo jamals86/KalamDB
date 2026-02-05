@@ -16,21 +16,18 @@ fn test_cli_subscription_initial_and_changes() {
 
     // Ensure namespace exists
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace));
-    std::thread::sleep(Duration::from_millis(150));
 
     // Create user table
     let _ = execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
         table_full
     ));
-    std::thread::sleep(Duration::from_millis(150));
 
     // Insert initial row BEFORE subscribing
     let _ = execute_sql_as_root_via_cli(&format!(
         "INSERT INTO {} (id, name) VALUES (1, 'Item One')",
         table_full
     ));
-    std::thread::sleep(Duration::from_millis(150));
 
     // Ensure the row is visible before subscribing (reduces flakiness in initial snapshot)
     let _ = wait_for_sql_output_contains(

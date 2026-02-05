@@ -173,7 +173,7 @@ fn test_websocket_batch_streaming_rows() {
     // Try to read subscription acknowledgment and all batch messages
     let mut received_lines = Vec::new();
     for _ in 0..50 {
-        if let Ok(Some(line)) = listener.try_read_line(Duration::from_millis(200)) {
+        if let Ok(Some(line)) = listener.try_read_line(Duration::from_millis(100)) {
             received_lines.push(line.clone());
 
             // Look for subscription acknowledgment or batch info

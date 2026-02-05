@@ -285,7 +285,7 @@ impl BatchSubscriptionListener {
         let deadline = std::time::Instant::now() + timeout;
 
         while std::time::Instant::now() < deadline {
-            match self.try_read_event(Duration::from_millis(500)) {
+            match self.try_read_event(Duration::from_millis(100)) {
                 Ok(Some(event)) => {
                     // Only check InitialDataBatch for ready status, not Ack
                     let is_ready = match &event {
@@ -348,7 +348,6 @@ fn smoke_batch_control_single_batch() {
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
 
-    std::thread::sleep(Duration::from_millis(300));
 
     // Subscribe
     let query = format!("SELECT * FROM {}", full);
@@ -356,7 +355,7 @@ fn smoke_batch_control_single_batch() {
         start_subscription_with_config(&query, None).expect("subscription should start");
 
     // Collect events
-    let events = listener.collect_batches_until_ready(Duration::from_secs(30));
+    let events = listener.collect_batches_until_ready(Duration::from_secs(10));
 
     println!("[TEST] Received {} events", events.len());
     for (i, event) in events.iter().enumerate() {
@@ -434,7 +433,6 @@ fn smoke_batch_control_multi_batch() {
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
 
-    std::thread::sleep(Duration::from_millis(500));
 
     // Subscribe with small batch size to force multiple batches
     let query = format!("SELECT * FROM {}", full);
@@ -443,7 +441,7 @@ fn smoke_batch_control_multi_batch() {
         start_subscription_with_config(&query, Some(options)).expect("subscription should start");
 
     // Collect all events
-    let events = listener.collect_batches_until_ready(Duration::from_secs(60));
+    let events = listener.collect_batches_until_ready(Duration::from_secs(15));
 
     println!("[TEST] Received {} events total", events.len());
 
@@ -524,7 +522,6 @@ fn smoke_batch_control_empty_table() {
         format!("CREATE TABLE {} (id INT PRIMARY KEY, data VARCHAR) WITH (TYPE = 'USER')", full);
     execute_sql_as_root_via_client(&create_sql).expect("create table should succeed");
 
-    std::thread::sleep(Duration::from_millis(300));
 
     // Subscribe to empty table
     let query = format!("SELECT * FROM {}", full);
@@ -532,7 +529,7 @@ fn smoke_batch_control_empty_table() {
         start_subscription_with_config(&query, None).expect("subscription should start");
 
     // Collect events
-    let events = listener.collect_batches_until_ready(Duration::from_secs(30));
+    let events = listener.collect_batches_until_ready(Duration::from_secs(10));
 
     println!("[TEST] Empty table: received {} events", events.len());
     for (i, event) in events.iter().enumerate() {
@@ -592,7 +589,6 @@ fn smoke_batch_control_data_ordering() {
         execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
     }
 
-    std::thread::sleep(Duration::from_millis(300));
 
     // Subscribe with small batch size
     let query = format!("SELECT * FROM {} ORDER BY id", full);
@@ -601,7 +597,7 @@ fn smoke_batch_control_data_ordering() {
         start_subscription_with_config(&query, Some(options)).expect("subscription should start");
 
     // Collect events
-    let events = listener.collect_batches_until_ready(Duration::from_secs(60));
+    let events = listener.collect_batches_until_ready(Duration::from_secs(15));
 
     // Count total initial data events
     let batch_events: Vec<_> = events

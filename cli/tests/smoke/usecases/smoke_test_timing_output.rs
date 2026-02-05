@@ -124,7 +124,6 @@ fn smoke_test_timing_scaling_medium_table() {
 
     // Cleanup first
     let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(std::time::Duration::from_millis(100));
 
     // Create namespace
     execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))

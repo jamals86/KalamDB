@@ -45,7 +45,6 @@ fn test_cli_live_query_basic() {
     };
 
     // Give it a moment to connect and receive initial data
-    std::thread::sleep(Duration::from_millis(100));
 
     // Try to read with timeout instead of blocking forever
     let timeout = Duration::from_secs(3);
@@ -126,7 +125,6 @@ fn test_cli_live_query_with_filter() {
     };
 
     // Give it a moment
-    std::thread::sleep(Duration::from_millis(100));
 
     // Try to read with timeout - subscription with filter should not block indefinitely
     // Since there's no data with id > 10, we expect a timeout (which is the correct behavior)
@@ -174,10 +172,8 @@ fn test_cli_subscription_with_initial_data() {
         "DROP NAMESPACE IF EXISTS {} CASCADE",
         namespace_name
     ));
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_name));
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, event_type VARCHAR, timestamp BIGINT) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
@@ -194,7 +190,6 @@ fn test_cli_subscription_with_initial_data() {
             i * 1000
         );
         let _ = execute_sql_as_root_via_cli(&insert_sql);
-        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
     // Test that SUBSCRIBE TO command is accepted via CLI
@@ -242,10 +237,8 @@ fn test_cli_subscription_comprehensive_crud() {
         "DROP NAMESPACE IF EXISTS {} CASCADE",
         namespace_name
     ));
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_name));
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, event_type VARCHAR, data VARCHAR, timestamp BIGINT) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
@@ -274,7 +267,6 @@ fn test_cli_subscription_comprehensive_crud() {
     // Test 2: Insert initial data via CLI
     let insert_sql = format!("INSERT INTO {} (id, event_type, data, timestamp) VALUES (1, 'create', 'initial_data', 1000)", table_name);
     let _ = execute_sql_as_root_via_cli(&insert_sql);
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     // Test 3: Verify data was inserted correctly via CLI
     let mut cmd = create_cli_command();
@@ -300,7 +292,6 @@ fn test_cli_subscription_comprehensive_crud() {
         table_name
     );
     let _ = execute_sql_as_root_via_cli(&insert_sql2);
-    std::thread::sleep(std::time::Duration::from_millis(100));
 
     // Use wait helper to handle timing issues under load
     let select_sql = format!("SELECT * FROM {} ORDER BY id", table_name);
@@ -325,7 +316,6 @@ fn test_cli_subscription_comprehensive_crud() {
     // Test 5: Update operation via CLI
     let update_sql = format!("UPDATE {} SET data = 'updated_data' WHERE id = 1", table_name);
     let _ = execute_sql_as_root_via_cli(&update_sql);
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let select_updated_sql = format!("SELECT * FROM {} WHERE id = 1", table_name);
     let updated_output = wait_for_sql_output_contains(
@@ -342,7 +332,6 @@ fn test_cli_subscription_comprehensive_crud() {
     // Test 6: Delete operation via CLI
     let delete_sql = format!("DELETE FROM {} WHERE id = 2", table_name);
     let _ = execute_sql_as_root_via_cli(&delete_sql);
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let select_after_delete = format!("SELECT * FROM {} ORDER BY id", table_name);
     let start = Instant::now();
@@ -354,7 +343,6 @@ fn test_cli_subscription_comprehensive_crud() {
                 break;
             }
         }
-        std::thread::sleep(Duration::from_millis(120));
     }
 
     assert!(

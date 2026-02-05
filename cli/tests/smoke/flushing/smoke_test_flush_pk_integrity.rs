@@ -30,11 +30,9 @@ fn smoke_test_flush_pk_integrity_user_table() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    std::thread::sleep(Duration::from_millis(200));
 
     // Create USER table with explicit PK
     let create_sql = format!(
@@ -50,7 +48,6 @@ fn smoke_test_flush_pk_integrity_user_table() {
     );
 
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create user table");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created USER table with INT PRIMARY KEY");
 
@@ -238,11 +235,9 @@ fn smoke_test_flush_pk_integrity_shared_table() {
     // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
-    std::thread::sleep(Duration::from_millis(200));
 
     // Create SHARED table with explicit PK
     let create_sql = format!(
@@ -258,7 +253,6 @@ fn smoke_test_flush_pk_integrity_shared_table() {
     );
 
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
-    std::thread::sleep(Duration::from_millis(200));
 
     println!("✅ Created SHARED table with INT PRIMARY KEY");
 

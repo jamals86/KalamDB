@@ -42,7 +42,6 @@ fn cluster_test_system_tables_replication() {
 
     // Setup: Create namespace and tables on first node
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
 
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -98,7 +97,6 @@ fn cluster_test_system_tables_replication() {
                 Ok(set) => rows = set,
                 Err(_) => {},
             }
-            std::thread::sleep(Duration::from_millis(200));
         }
         println!("  Node {} has {} tables: {:?}", i, rows.len(), rows);
         all_sets.push(rows);
@@ -146,7 +144,6 @@ fn cluster_test_system_namespaces_replication() {
     for ns in &namespaces {
         let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
     }
-    std::thread::sleep(Duration::from_millis(200));
 
     for ns in &namespaces {
         execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", ns))
@@ -174,7 +171,6 @@ fn cluster_test_system_namespaces_replication() {
                 Ok(set) => rows = set,
                 Err(_) => {},
             }
-            std::thread::sleep(Duration::from_millis(200));
         }
         println!("  Node {} has {} namespaces", i, rows.len());
         all_sets.push(rows);
@@ -210,7 +206,6 @@ fn cluster_test_system_users_replication() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -243,7 +238,7 @@ fn cluster_test_system_users_replication() {
                         found = true;
                         break;
                     },
-                    _ => std::thread::sleep(Duration::from_millis(200)),
+                    _ => std::thread::sleep(Duration::from_millis(20)),
                 }
             }
 
@@ -326,7 +321,6 @@ fn cluster_test_alter_table_replication() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -381,7 +375,6 @@ fn cluster_test_alter_table_replication() {
                     }
                 },
             }
-            std::thread::sleep(Duration::from_millis(300));
         }
         assert!(found_age, "Node {} does not have 'age' column", i);
         println!("  ✓ Node {} has updated schema", i);
@@ -407,7 +400,6 @@ fn cluster_test_drop_replication() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -435,7 +427,7 @@ fn cluster_test_drop_replication() {
                     found = true;
                     break;
                 },
-                _ => std::thread::sleep(Duration::from_millis(200)),
+                _ => std::thread::sleep(Duration::from_millis(20)),
             }
         }
         assert!(found, "Table not found on node {} before drop", i);
@@ -462,7 +454,7 @@ fn cluster_test_drop_replication() {
                     gone = true;
                     break;
                 },
-                _ => std::thread::sleep(Duration::from_millis(200)),
+                _ => std::thread::sleep(Duration::from_millis(20)),
             }
         }
         assert!(gone, "Table still exists on node {} after drop", i);

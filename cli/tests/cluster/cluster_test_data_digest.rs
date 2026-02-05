@@ -39,7 +39,6 @@ fn cluster_test_data_digest_consistency() {
     let namespace = generate_unique_namespace("cluster_digest");
 
     let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    std::thread::sleep(Duration::from_millis(200));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -72,7 +71,6 @@ fn cluster_test_data_digest_consistency() {
             )
             .expect("Insert failed");
             values.clear();
-            std::thread::sleep(Duration::from_millis(50));
         }
     }
 
@@ -96,7 +94,6 @@ fn cluster_test_data_digest_consistency() {
             break;
         }
 
-        std::thread::sleep(Duration::from_millis(300));
     }
 
     if !matched {

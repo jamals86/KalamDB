@@ -415,7 +415,6 @@ fn flush_table_and_wait(full_table_name: &str) {
         println!("   Flush job completed");
     } else {
         println!("   Flush command executed (no job ID), waiting 200ms...");
-        std::thread::sleep(Duration::from_millis(200));
     }
 }
 
@@ -638,7 +637,6 @@ fn wait_for_storage_check_healthy(storage_id: &str, timeout: Duration) -> Result
             last_error = "no rows returned".to_string();
         }
 
-        std::thread::sleep(Duration::from_millis(250));
     }
 
     Err(format!(
