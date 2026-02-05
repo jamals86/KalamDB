@@ -117,7 +117,7 @@ impl TypedStatementHandler<CheckStorageStatement> for CheckStorageHandler {
             Some(err) => error_builder.append_value(err),
             None => error_builder.append_null(),
         }
-        tested_at_builder.append_value(health_result.tested_at * 1000);
+        tested_at_builder.append_value(health_result.tested_at);
 
         let columns: Vec<ArrayRef> = vec![
             Arc::new(storage_id_builder.finish()),

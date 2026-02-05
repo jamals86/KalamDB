@@ -83,6 +83,10 @@ mod smoke_test_flush_pk_integrity;
 mod smoke_test_storage_compact;
 #[path = "smoke/storage/smoke_test_storage_templates.rs"]
 mod smoke_test_storage_templates;
+#[path = "smoke/storage/smoke_test_storage_health.rs"]
+mod smoke_test_storage_health;
+#[path = "smoke/storage/smoke_test_show_storages.rs"]
+mod smoke_test_show_storages;
 
 // DDL tests
 #[path = "smoke/ddl/smoke_test_alter_with_data.rs"]
