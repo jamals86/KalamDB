@@ -148,18 +148,18 @@ impl SharedTableProvider {
     ///
     /// **Manifest-Driven Pruning**: Uses ManifestAccessPlanner to select files based on filter predicates,
     /// enabling row-group level pruning when row_group metadata is available.
-    fn scan_parquet_files_as_batch(
+    async fn scan_parquet_files_as_batch_async(
         &self,
         filter: Option<&Expr>,
     ) -> Result<RecordBatch, KalamDbError> {
-        base::scan_parquet_files_as_batch(
+        base::scan_parquet_files_as_batch_async(
             &self.core,
             self.core.table_id(),
             self.core.table_type(),
             None,
             self.schema_ref(),
             filter,
-        )
+        ).await
     }
 
     /// Find a row by PK value using the PK index for efficient O(1) lookup.
@@ -196,6 +196,7 @@ impl SharedTableProvider {
     }
 }
 
+#[async_trait]
 impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider {
     fn table_id(&self) -> &TableId {
         self.core.table_id()
@@ -220,6 +221,25 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
     fn primary_key_field_name(&self) -> &str {
         &self.primary_key_field_name
+    }
+
+    fn core(&self) -> &base::TableProviderCore {
+        &self.core
+    }
+
+    fn construct_row_from_parquet_data(
+        &self,
+        _user_id: &UserId,
+        row_data: &crate::utils::version_resolution::ParquetRowData,
+    ) -> Result<Option<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        // Shared tables use SeqId as the key (no user_id scoping)
+        let row_key = row_data.seq_id;
+        let row = SharedTableRow {
+            _seq: row_data.seq_id,
+            _deleted: row_data.deleted,
+            fields: row_data.fields.clone(),
+        };
+        Ok(Some((row_key, row)))
     }
 
     /// Find row by PK value using the PK index for O(1) lookup.
@@ -266,11 +286,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
         if exists_in_cold {
             log::trace!("[SharedTableProvider] PK {} exists in cold storage", id_value);
-            // Load the actual row_id from cold storage so DML (DELETE/UPDATE) can target it
-            if let Some((row_id, _row)) = base::find_row_by_pk(self, None, id_value)? {
-                return Ok(Some(row_id));
-            }
-
+            // For PK uniqueness check, we just need to know it exists
+            // Return None to indicate "exists but key not available synchronously"
             return Ok(None);
         }
 
@@ -715,7 +732,78 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         Ok(())
     }
 
-    fn scan_rows(
+    fn delete_by_pk_value(&self, _user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError> {
+        // IGNORE user_id parameter - no RLS for shared tables
+        let pk_name = self.primary_key_field_name().to_string();
+        let pk_value_scalar = ScalarValue::Utf8(Some(pk_value.to_string()));
+
+        // Find latest resolved row for this PK
+        // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet scan)
+        let latest_row = if let Some((_key, row)) = self.find_by_pk(&pk_value_scalar)? {
+            row
+        } else {
+            // Not in hot storage, check cold storage
+            match base::find_row_by_pk(self, None, pk_value)? {
+                Some((_key, row)) => row,
+                None => {
+                    log::trace!(
+                        "[SharedProvider DELETE_BY_PK] Row with {}={} not found",
+                        pk_name,
+                        pk_value
+                    );
+                    return Ok(false);
+                }
+            }
+        };
+
+        let sys_cols = self.core.system_columns.clone();
+        let seq_id = sys_cols
+            .generate_seq_id()
+            .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+
+        // Preserve ALL fields in the tombstone
+        let values = latest_row.fields.values.clone();
+
+        let entity = SharedTableRow {
+            _seq: seq_id,
+            _deleted: true,
+            fields: Row::new(values),
+        };
+        let row_key = seq_id;
+        log::info!(
+            "[SharedProvider DELETE_BY_PK] Writing tombstone: pk={}, _seq={}",
+            pk_value,
+            seq_id.as_i64()
+        );
+        // Use insert() to update PK index for the tombstone record
+        self.store.insert(&row_key, &entity).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to delete shared table row: {}", e))
+        })?;
+
+        // Mark manifest as having pending writes (hot data needs to be flushed)
+        let manifest_service = self.core.manifest_service.clone();
+        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
+            log::warn!(
+                "Failed to mark manifest as pending_write for {}: {}",
+                self.core.table_id(),
+                e
+            );
+        }
+
+        // Fire topic/CDC notification (DELETE) - no user_id for shared tables
+        let notification_service = self.core.notification_service.clone();
+        let table_id = self.core.table_id().clone();
+
+        if notification_service.has_subscribers(None, &table_id) {
+            let row = Self::build_notification_row(&entity);
+            let notification = ChangeNotification::delete_soft(table_id.clone(), row);
+            notification_service.notify_table_change(None, table_id, notification);
+        }
+
+        Ok(true)
+    }
+
+    async fn scan_rows(
         &self,
         _state: &dyn Session,
         projection: Option<&Vec<usize>>,
@@ -732,20 +820,20 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let keep_deleted = filter.map(base::filter_uses_deleted_column).unwrap_or(false);
 
         // NO user_id extraction - shared tables scan ALL rows
-        let kvs = self.scan_with_version_resolution_to_kvs(
+        let kvs = self.scan_with_version_resolution_to_kvs_async(
             base::system_user_id(),
             filter,
             since_seq,
             limit,
             keep_deleted,
-        )?;
+        ).await?;
 
         // Convert to JSON rows aligned with schema
         let schema = self.schema_ref();
         crate::utils::base::rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
     }
 
-    fn scan_with_version_resolution_to_kvs(
+    async fn scan_with_version_resolution_to_kvs_async(
         &self,
         _user_id: &UserId,
         filter: Option<&Expr>,
@@ -753,6 +841,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         limit: Option<usize>,
         keep_deleted: bool,
     ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        use kalamdb_store::EntityStoreAsync;
+        
         // Warn if no filter or limit - potential performance issue
         base::warn_if_unfiltered_scan(self.core.table_id(), filter, limit, self.core.table_type());
 
@@ -769,9 +859,11 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Calculate scan limit using common helper
         let scan_limit = base::calculate_scan_limit(limit);
 
+        // Use async version to avoid blocking the runtime
         let hot_rows = self
             .store
-            .scan_typed_with_prefix_and_start(None, start_key.as_ref(), scan_limit)
+            .scan_typed_with_prefix_and_start_async(None, start_key.as_ref(), scan_limit)
+            .await
             .map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to scan shared table hot storage: {}",
@@ -781,7 +873,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         log::debug!("[SharedProvider] RocksDB scan returned {} rows", hot_rows.len());
 
         // Scan cold storage (Parquet files) - pass filter for pruning
-        let parquet_batch = self.scan_parquet_files_as_batch(filter)?;
+        // Use async version to avoid blocking the runtime
+        let parquet_batch = self.scan_parquet_files_as_batch_async(filter).await?;
 
         let pk_name = self.primary_key_field_name().to_string();
 

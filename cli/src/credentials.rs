@@ -30,6 +30,7 @@
 //! server_url = "https://db.example.com"
 //! ```
 
+use crate::history::get_kalam_config_dir;
 use kalam_link::credentials::{CredentialStore, Credentials};
 use kalam_link::Result;
 use serde::{Deserialize, Serialize};
@@ -37,9 +38,6 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-#[cfg(target_os = "windows")]
-use crate::history::get_kalam_config_dir;
 
 /// File-based credential storage
 ///

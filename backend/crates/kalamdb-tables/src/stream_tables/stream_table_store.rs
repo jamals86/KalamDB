@@ -231,6 +231,26 @@ impl StreamTableStore {
         Ok(result)
     }
 
+    /// Async version of scan_user_streaming to avoid blocking the async runtime.
+    ///
+    /// Uses `spawn_blocking` internally.
+    pub async fn scan_user_streaming_async(
+        &self,
+        user_id: &UserId,
+        start_seq: Option<SeqId>,
+        limit: usize,
+        ttl_ms: Option<u64>,
+        now_ms: u64,
+    ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
+        let store = self.clone();
+        let user_id = user_id.clone();
+        tokio::task::spawn_blocking(move || {
+            store.scan_user_streaming(&user_id, start_seq, limit, ttl_ms, now_ms)
+        })
+        .await
+        .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?
+    }
+
     /// Scan row keys for a single user, starting at an optional sequence ID (inclusive).
     pub fn scan_user_keys(
         &self,

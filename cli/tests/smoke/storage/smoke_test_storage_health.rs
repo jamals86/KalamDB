@@ -6,8 +6,15 @@
 // - Tests non-existent storage returns proper error
 
 use crate::common::*;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use serde_json::Value as JsonValue;
+
+fn arrow_value_as_string(value: &JsonValue) -> Option<String> {
+    extract_arrow_value(value)
+        .unwrap_or_else(|| value.clone())
+        .as_str()
+        .map(|s| s.to_string())
+}
 
 #[ntest::timeout(60_000)]
 #[test]
@@ -35,15 +42,13 @@ fn smoke_storage_check_local_basic() {
     // Verify storage_id
     let storage_id = row
         .get("storage_id")
-        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_str())
-        .map(String::from);
+        .and_then(arrow_value_as_string);
     assert_eq!(storage_id.as_deref(), Some("local"), "storage_id should be 'local'");
 
     // Verify status
     let status = row
         .get("status")
-        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_str())
-        .map(String::from);
+        .and_then(arrow_value_as_string);
     assert_eq!(
         status.as_deref(),
         Some("healthy"),
@@ -88,17 +93,17 @@ fn smoke_storage_check_local_basic() {
 
     // Verify error is null
     let error = row.get("error").and_then(|v| {
-        extract_arrow_value(v)
-            .unwrap_or_else(|| v.clone())
-            .as_str()
+        arrow_value_as_string(v)
     });
-    assert!(error.is_none() || error == Some(""), "error should be null for healthy storage");
+    assert!(
+        error.as_deref().is_none() || error.as_deref() == Some(""),
+        "error should be null for healthy storage"
+    );
 
     // CRITICAL: Verify timestamp is current (not 1970)
     let tested_at_str = row
         .get("tested_at")
-        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_str())
-        .map(String::from)
+        .and_then(arrow_value_as_string)
         .expect("tested_at should be present");
 
     let tested_at: DateTime<Utc> = tested_at_str
@@ -172,8 +177,7 @@ fn smoke_storage_check_extended() {
     // Verify status is healthy
     let status = row
         .get("status")
-        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_str())
-        .map(String::from);
+        .and_then(arrow_value_as_string);
     assert_eq!(
         status.as_deref(),
         Some("healthy"),

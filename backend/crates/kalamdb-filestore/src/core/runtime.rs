@@ -1,5 +1,6 @@
 use crate::error::{FilestoreError, Result};
 use std::future::Future;
+use std::sync::OnceLock;
 
 /// Run an async operation in a synchronous context.
 ///
@@ -8,9 +9,9 @@ use std::future::Future;
 /// **Strategy**:
 /// - If we're in a tokio multi-thread runtime context, use `block_in_place` which allows
 ///   blocking while letting other tasks run on other threads
-/// - If we're in a tokio current-thread runtime (common in tests), spawn a new thread
-///   to avoid deadlock since block_in_place is not allowed
-/// - If no runtime exists, create a lightweight current-thread runtime
+/// - If we're in a tokio current-thread runtime (common in tests), spawn the work on a
+///   background thread that uses a shared runtime to avoid nested block_on calls
+/// - If no runtime exists, use the shared runtime's block_on
 ///
 /// **Why this matters for object_store**:
 /// Remote backends (S3, GCS, Azure) use the tokio I/O driver for networking.
@@ -22,6 +23,17 @@ where
     Fut: Future<Output = Result<T>> + Send,
     T: Send,
 {
+    fn shared_blocking_runtime() -> &'static tokio::runtime::Runtime {
+        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("Failed to create shared filestore runtime")
+        })
+    }
+
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => {
             // We're inside a tokio runtime. Check if we can use block_in_place.
@@ -33,49 +45,32 @@ where
                     tokio::task::block_in_place(|| handle.block_on(make_future()))
                 }
                 tokio::runtime::RuntimeFlavor::CurrentThread => {
-                    // Current-thread runtime: block_in_place would panic.
-                    // Spawn a new OS thread to run the future without blocking the runtime.
+                    // Current-thread runtime (e.g., actix-rt): we cannot call block_on
+                    // because we're already inside a block_on. Spawn a background thread
+                    // that uses the shared multi-thread runtime.
                     std::thread::scope(|s| {
                         s.spawn(|| {
-                            // Create a fresh runtime in this thread to avoid deadlock
-                            let rt = tokio::runtime::Builder::new_current_thread()
-                                .enable_all()
-                                .build()
-                                .map_err(|e| {
-                                    FilestoreError::Other(format!("Failed to create runtime: {e}"))
-                                })?;
-                            rt.block_on(make_future())
-                        })
-                        .join()
-                        .map_err(|_| FilestoreError::Other("Thread panicked".into()))?
+                            shared_blocking_runtime().block_on(make_future())
+                        }).join().map_err(|_| {
+                            FilestoreError::Other("Thread panicked in run_blocking".to_string())
+                        })?
                     })
                 }
                 _ => {
-                    // Unknown runtime flavor - fall back to thread spawn
+                    // Unknown runtime flavor - use thread-based approach for safety
                     std::thread::scope(|s| {
                         s.spawn(|| {
-                            let rt = tokio::runtime::Builder::new_current_thread()
-                                .enable_all()
-                                .build()
-                                .map_err(|e| {
-                                    FilestoreError::Other(format!("Failed to create runtime: {e}"))
-                                })?;
-                            rt.block_on(make_future())
-                        })
-                        .join()
-                        .map_err(|_| FilestoreError::Other("Thread panicked".into()))?
+                            shared_blocking_runtime().block_on(make_future())
+                        }).join().map_err(|_| {
+                            FilestoreError::Other("Thread panicked in run_blocking".to_string())
+                        })?
                     })
                 }
             }
         }
         Err(_) => {
-            // No tokio runtime in current thread - create one
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| FilestoreError::Other(format!("Failed to create runtime: {e}")))?;
-
-            rt.block_on(make_future())
+            // No tokio runtime in current thread - safe to use block_on
+            shared_blocking_runtime().block_on(make_future())
         }
     }
 }

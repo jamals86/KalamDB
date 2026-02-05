@@ -10,6 +10,7 @@
 // These tests focus on verifying the implementation is wired correctly on a single node.
 
 use crate::common::*;
+use std::time::Duration;
 
 /// Test that basic SELECT queries work on the leader node
 /// This verifies the leader check doesn't break normal operation
@@ -39,6 +40,8 @@ fn smoke_test_leader_read_succeeds_on_leader() {
         full_table_name
     );
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE TABLE should succeed");
+    wait_for_table_ready(&full_table_name, Duration::from_secs(3))
+        .expect("table should be ready");
 
     // Insert test data
     execute_sql_as_root_via_client(&format!(
@@ -93,6 +96,8 @@ fn smoke_test_leader_read_with_filters() {
         full_table_name
     );
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE TABLE should succeed");
+    wait_for_table_ready(&full_table_name, Duration::from_secs(3))
+        .expect("table should be ready");
 
     // Insert multiple rows
     for i in 0..10 {
@@ -154,6 +159,8 @@ fn smoke_test_leader_read_shared_table() {
         full_table_name
     );
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE SHARED TABLE should succeed");
+    wait_for_table_ready(&full_table_name, Duration::from_secs(3))
+        .expect("table should be ready");
 
     // Insert data
     execute_sql_as_root_via_client(&format!(

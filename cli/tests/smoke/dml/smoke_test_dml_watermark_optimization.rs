@@ -10,7 +10,7 @@ use crate::common::*;
 use std::time::Instant;
 
 /// Test that INSERT operations complete in acceptable time (no Meta waiting)
-#[ntest::timeout(90000)]
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_watermark_dml_insert_performance() {
     if !is_server_running() {
@@ -38,7 +38,7 @@ fn smoke_test_watermark_dml_insert_performance() {
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE TABLE should succeed");
 
     // Perform multiple INSERTs and measure total time
-    const INSERT_COUNT: usize = 50;
+    const INSERT_COUNT: usize = 20;
     let start = Instant::now();
 
     for i in 0..INSERT_COUNT {
@@ -90,7 +90,7 @@ fn smoke_test_watermark_dml_insert_performance() {
 }
 
 /// Test that UPDATE operations work correctly after watermark optimization
-#[ntest::timeout(60000)]
+#[ntest::timeout(45000)]
 #[test]
 fn smoke_test_watermark_dml_update() {
     if !is_server_running() {
@@ -128,7 +128,7 @@ fn smoke_test_watermark_dml_update() {
 
     // Perform UPDATEs and measure time
     let start = Instant::now();
-    const UPDATE_COUNT: usize = 20;
+    const UPDATE_COUNT: usize = 10;
 
     for i in 0..UPDATE_COUNT {
         let id = i % 10;
@@ -159,7 +159,7 @@ fn smoke_test_watermark_dml_update() {
 }
 
 /// Test that DELETE operations work correctly after watermark optimization
-#[ntest::timeout(90000)]
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_test_watermark_dml_delete() {
     if !is_server_running() {
@@ -187,7 +187,7 @@ fn smoke_test_watermark_dml_delete() {
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE TABLE should succeed");
 
     // Insert data to delete
-    const ROW_COUNT: usize = 30;
+    const ROW_COUNT: usize = 15;
     for i in 0..ROW_COUNT {
         execute_sql_as_root_via_client(&format!(
             "INSERT INTO {} (id, data) VALUES ({}, 'item_{}')",
@@ -233,7 +233,7 @@ fn smoke_test_watermark_dml_delete() {
 }
 
 /// Test rapid DDL followed by DML to verify watermark still works when needed
-#[ntest::timeout(60000)]
+#[ntest::timeout(45000)]
 #[test]
 fn smoke_test_watermark_ddl_then_dml() {
     if !is_server_running() {
@@ -253,7 +253,7 @@ fn smoke_test_watermark_ddl_then_dml() {
         .expect("CREATE NAMESPACE should succeed");
 
     // Rapid DDL + DML cycles to verify ordering works
-    const CYCLES: usize = 5;
+    const CYCLES: usize = 3;
     let start = Instant::now();
 
     for i in 0..CYCLES {

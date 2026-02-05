@@ -88,7 +88,7 @@ pub use crate::utils::core::TableProviderCore;
 pub use crate::utils::row_utils::{
     extract_full_user_context, extract_seq_bounds_from_filter, resolve_user_scope, system_user_id,
 };
-pub(crate) use crate::utils::parquet::scan_parquet_files_as_batch;
+pub(crate) use crate::utils::parquet::scan_parquet_files_as_batch_async;
 pub use crate::utils::row_utils::{inject_system_columns, rows_to_arrow_batch, ScanRow};
 
 /// Unified trait for all table providers with generic storage abstraction
@@ -161,6 +161,18 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
 
     /// Primary key field name from schema definition (e.g., "id", "email")
     fn primary_key_field_name(&self) -> &str;
+
+    /// Get the TableProviderCore for low-level access (storage, manifest, etc.)
+    /// This is needed by find_row_by_pk to access storage for cold storage scans.
+    fn core(&self) -> &TableProviderCore;
+
+    /// Construct (K, V) from ParquetRowData for cold storage lookups.
+    /// Providers should override this to create their specific key and value types.
+    fn construct_row_from_parquet_data(
+        &self,
+        user_id: &UserId,
+        row_data: &crate::utils::version_resolution::ParquetRowData,
+    ) -> Result<Option<(K, V)>, KalamDbError>;
 
     // ===========================
     // DML Operations (Synchronous - No Handlers)
@@ -264,34 +276,13 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ///
     /// # Note
     /// Providers with PK indexes should override this method for efficient lookups.
+    /// This is kept synchronous for DML operations (insert/update) which need PK validation.
+    /// The async scan methods are used for query execution.
     fn find_row_key_by_id_field(
         &self,
         user_id: &UserId,
         id_value: &str,
-    ) -> Result<Option<K>, KalamDbError> {
-        // Default implementation: full table scan with version resolution
-        // Providers with PK indexes override this for O(1) lookups
-        let rows = self.scan_with_version_resolution_to_kvs(user_id, None, None, None, false)?;
-
-        log::trace!(
-            "[find_row_key_by_id_field] Scanning {} rows for pk='{}', value='{}', user='{}'",
-            rows.len(),
-            self.primary_key_field_name(),
-            id_value,
-            user_id.as_str()
-        );
-
-        for (key, row) in rows {
-            let fields = Self::extract_row(&row);
-            if let Some(pk_val) = fields.get(self.primary_key_field_name()) {
-                if scalar_value_matches_id(pk_val, id_value) {
-                    return Ok(Some(key));
-                }
-            }
-        }
-
-        Ok(None)
-    }
+    ) -> Result<Option<K>, KalamDbError>;
 
     /// Update a row by primary key value directly (no key lookup needed)
     ///
@@ -323,16 +314,26 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         self.update_by_pk_value(user_id, id_value, updates)
     }
 
+    /// Delete a row by primary key value directly (no key lookup needed)
+    ///
+    /// This is more efficient than `delete()` and works for both hot and cold storage.
+    /// It finds the row by PK value (using find_row_by_pk for cold storage),
+    /// then writes a tombstone.
+    ///
+    /// # Arguments
+    /// * `user_id` - Subject user ID for RLS
+    /// * `pk_value` - Primary key value (e.g., "user123")
+    ///
+    /// # Returns
+    /// `Ok(true)` if row was deleted, `Ok(false)` if row was not found
+    fn delete_by_pk_value(&self, user_id: &UserId, pk_value: &str) -> Result<bool, KalamDbError>;
+
     /// Delete a row by searching for matching ID field value.
     ///
     /// Returns `true` if a row was deleted, `false` if the row did not exist.
     fn delete_by_id_field(&self, user_id: &UserId, id_value: &str) -> Result<bool, KalamDbError> {
-        if let Some(key) = self.find_row_key_by_id_field(user_id, id_value)? {
-            self.delete(user_id, &key)?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        // Directly delete by PK value - handles both hot and cold storage
+        self.delete_by_pk_value(user_id, id_value)
     }
 
     // ===========================
@@ -386,6 +387,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
 
         let batch = self
             .scan_rows(state, effective_projection, combined_filter.as_ref(), limit)
+            .await
             .map_err(|e| DataFusionError::Execution(format!("scan_rows failed: {}", e)))?;
 
         let mem = MemTable::try_new(batch.schema(), vec![vec![batch]])?;
@@ -467,8 +469,8 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     ///
     /// # Note
     /// Called by DataFusion's TableProvider::scan(). For direct DML operations,
-    /// use scan_with_version_resolution_to_kvs().
-    fn scan_rows(
+    /// use scan_with_version_resolution_to_kvs_async().
+    async fn scan_rows(
         &self,
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
@@ -476,11 +478,13 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError>;
 
-    /// Scan with version resolution returning key-value pairs (for internal DML use)
+    /// Async scan with version resolution returning key-value pairs (for internal DML use)
     ///
     /// Used by UPDATE/DELETE to find current version before appending new version.
     /// Unlike scan_rows(), this is called directly by DML operations with user_id
     /// passed explicitly.
+    ///
+    /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
     ///
     /// # Arguments
     /// * `user_id` - Subject user ID for RLS scoping
@@ -488,7 +492,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// * `since_seq` - Optional sequence number to start scanning from (optimization)
     /// * `limit` - Optional limit on number of rows
     /// * `keep_deleted` - Whether to include soft-deleted rows (tombstones) in the result
-    fn scan_with_version_resolution_to_kvs(
+    async fn scan_with_version_resolution_to_kvs_async(
         &self,
         user_id: &UserId,
         filter: Option<&Expr>,
@@ -503,22 +507,6 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     fn extract_row(row: &V) -> &Row;
 }
 
-/// Check if a ScalarValue matches a target string value
-///
-/// Supports string and numeric comparisons for primary key lookups.
-fn scalar_value_matches_id(value: &ScalarValue, target: &str) -> bool {
-    match value {
-        ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s == target,
-        ScalarValue::Int64(Some(n)) => target.parse::<i64>().map(|t| *n == t).unwrap_or(false),
-        ScalarValue::Int32(Some(n)) => target.parse::<i32>().map(|t| *n == t).unwrap_or(false),
-        ScalarValue::Int16(Some(n)) => target.parse::<i16>().map(|t| *n == t).unwrap_or(false),
-        ScalarValue::UInt64(Some(n)) => target.parse::<u64>().map(|t| *n == t).unwrap_or(false),
-        ScalarValue::UInt32(Some(n)) => target.parse::<u32>().map(|t| *n == t).unwrap_or(false),
-        ScalarValue::Boolean(Some(b)) => target.parse::<bool>().map(|t| *b == t).unwrap_or(false),
-        _ => false,
-    }
-}
-
 /// Check if a filter expression references the _deleted column
 pub fn filter_uses_deleted_column(filter: &Expr) -> bool {
     let mut columns = HashSet::new();
@@ -529,10 +517,16 @@ pub fn filter_uses_deleted_column(filter: &Expr) -> bool {
     }
 }
 
-/// Locate the latest non-deleted row matching the provided primary-key value
+/// Locate the latest non-deleted row matching the provided primary-key value.
 ///
-/// **DEPRECATED**: Use `pk_exists_in_cold` for existence checks (returns bool, faster).
-/// This function is kept for UPDATE/DELETE operations that need the actual row data.
+/// This function scans cold storage (Parquet files) to find a row by its primary key.
+/// For UPDATE/DELETE operations on cold storage data, this is needed to:
+/// 1. Get the current row data to merge with updates
+/// 2. Verify the row exists before creating a tombstone (delete)
+///
+/// **Note**: This function uses sync I/O via `run_blocking` internally, which spawns
+/// a background thread when called from a current-thread runtime (e.g., actix-rt tests).
+/// For hot storage lookups, providers should use their own O(1) PK index first.
 pub fn find_row_by_pk<P, K, V>(
     provider: &P,
     scope: Option<&UserId>,
@@ -542,20 +536,87 @@ where
     P: BaseTableProvider<K, V>,
     K: StorageKey,
 {
-    let user_scope = resolve_user_scope(scope);
-    let resolved =
-        provider.scan_with_version_resolution_to_kvs(user_scope, None, None, None, false)?;
+    use crate::utils::parquet::scan_parquet_files_as_batch;
+    use crate::utils::version_resolution::{parquet_batch_to_rows, ParquetRowData};
+    use datafusion::prelude::{col, lit};
+    
     let pk_name = provider.primary_key_field_name();
-
-    for (key, row) in resolved.into_iter() {
-        let fields = P::extract_row(&row);
-        if let Some(val) = fields.get(pk_name) {
-            if scalar_value_matches_id(val, pk_value) {
-                return Ok(Some((key, row)));
+    let user_scope = resolve_user_scope(scope);
+    
+    // Build filter for the specific PK value
+    let filter: Expr = col(pk_name).eq(lit(pk_value));
+    
+    // Get core from provider (we need schema, table_id, table_type, and storage access)
+    let core = provider.core();
+    let table_id = provider.table_id();
+    let table_type = provider.provider_table_type();
+    let schema = provider.schema_ref();
+    
+    // Scan cold storage for this PK value
+    // Note: This uses sync Parquet scan which internally uses run_blocking for object_store ops
+    let batch = scan_parquet_files_as_batch(
+        core,
+        table_id,
+        table_type,
+        scope,
+        schema,
+        Some(&filter),
+    )?;
+    
+    if batch.num_rows() == 0 {
+        return Ok(None);
+    }
+    
+    // Parse rows from Parquet batch
+    let rows_data: Vec<ParquetRowData> = parquet_batch_to_rows(&batch)?;
+    
+    // Find the latest non-deleted version with matching PK
+    // Rows should already be filtered by PK, but we need version resolution
+    let mut latest: Option<ParquetRowData> = None;
+    
+    for row_data in rows_data {
+        // Skip deleted rows
+        if row_data.deleted {
+            continue;
+        }
+        
+        // Check if this row matches the PK value
+        if let Some(row_pk) = row_data.fields.values.get(pk_name) {
+            let row_pk_str = match row_pk {
+                ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s.clone(),
+                ScalarValue::Int64(Some(n)) => n.to_string(),
+                ScalarValue::Int32(Some(n)) => n.to_string(),
+                ScalarValue::Int16(Some(n)) => n.to_string(),
+                ScalarValue::UInt64(Some(n)) => n.to_string(),
+                ScalarValue::UInt32(Some(n)) => n.to_string(),
+                ScalarValue::Boolean(Some(b)) => b.to_string(),
+                _ => continue,
+            };
+            
+            if row_pk_str != pk_value {
+                continue;
+            }
+            
+            // Keep the row with highest _seq (latest version)
+            if latest.as_ref().map(|l| row_data.seq_id > l.seq_id).unwrap_or(true) {
+                latest = Some(row_data);
             }
         }
     }
-
+    
+    // Convert ParquetRowData to the provider's (K, V) types
+    // This is provider-specific, so we use extract_row_from_parquet on BaseTableProvider
+    if let Some(row_data) = latest {
+        // We need to construct K and V from ParquetRowData
+        // K (key) is typically constructed from user_id + seq_id
+        // V (row) contains the fields plus system columns
+        
+        // For now, return Ok(None) if we can't construct the types
+        // The providers should override this method for their specific types
+        let result = provider.construct_row_from_parquet_data(user_scope, &row_data)?;
+        return Ok(result);
+    }
+    
     Ok(None)
 }
 

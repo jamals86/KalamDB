@@ -200,6 +200,111 @@ impl ManifestAccessPlanner {
         selections
     }
 
+    /// Async version of scan_parquet_files for use in async contexts.
+    ///
+    /// This version uses async file I/O to avoid blocking the tokio runtime.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn scan_parquet_files_async(
+        &self,
+        manifest_opt: Option<&Manifest>,
+        storage_cached: Arc<StorageCached>,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        seq_range: Option<(SeqId, SeqId)>,
+        use_degraded_mode: bool,
+        schema: SchemaRef,
+        schema_registry: &dyn SchemaRegistryTrait<Error = KalamDbError>,
+    ) -> Result<(RecordBatch, (usize, usize, usize)), KalamDbError> {
+        let mut parquet_files: Vec<String> = Vec::new();
+        let mut file_schema_versions: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
+        let (mut total_batches, mut skipped, mut scanned) = (0usize, 0usize, 0usize);
+
+        if !use_degraded_mode {
+            if let Some(manifest) = manifest_opt {
+                total_batches = manifest.segments.len();
+
+                let selected_files: Vec<String> = if let Some((min_seq, max_seq)) = seq_range {
+                    let selections = self.plan_by_seq_range(manifest, min_seq, max_seq);
+                    selections.into_iter().map(|s| s.file_path).collect()
+                } else {
+                    self.plan_all_files(manifest)
+                };
+
+                scanned = selected_files.len();
+                skipped = total_batches.saturating_sub(scanned);
+
+                for file_path in selected_files {
+                    if let Some(segment) = manifest.segments.iter().find(|s| s.path == file_path) {
+                        file_schema_versions.insert(file_path.clone(), segment.schema_version);
+                    }
+                    parquet_files.push(file_path);
+                }
+            }
+        }
+
+        // Fallback: only when no manifest (or degraded mode)
+        if parquet_files.is_empty() && (manifest_opt.is_none() || use_degraded_mode) {
+            let files = storage_cached
+                .list_parquet_files(table_type, table_id, user_id)
+                .await
+                .into_kalamdb_error("Failed to list files")?;
+
+            parquet_files.extend(files);
+
+            total_batches = parquet_files.len();
+            scanned = total_batches;
+            skipped = 0;
+        }
+
+        // Return empty batch if no files found
+        if parquet_files.is_empty() {
+            return Ok((RecordBatch::new_empty(schema), (total_batches, skipped, scanned)));
+        }
+
+        let mut all_batches = Vec::new();
+        for parquet_file in &parquet_files {
+            let batches = storage_cached
+                .read_parquet_files(table_type, table_id, user_id, &[parquet_file.clone()])
+                .await
+                .into_kalamdb_error("Failed to read Parquet file")?;
+            let file_schema_version = file_schema_versions.get(parquet_file).copied().unwrap_or(1);
+
+            for batch in batches {
+                let current_version = schema_registry
+                    .get_table_if_exists(table_id)?
+                    .map(|table_def| table_def.schema_version)
+                    .unwrap_or(1);
+
+                let projected_batch = if file_schema_version != current_version {
+                    self.project_batch_to_current_schema(
+                        batch,
+                        file_schema_version,
+                        &schema,
+                        table_id,
+                        schema_registry,
+                    )?
+                } else {
+                    batch
+                };
+
+                all_batches.push(projected_batch);
+            }
+        }
+
+        // Return empty batch if all files were empty
+        if all_batches.is_empty() {
+            return Ok((RecordBatch::new_empty(schema), (total_batches, skipped, scanned)));
+        }
+
+        // Concatenate all batches
+        let combined = datafusion::arrow::compute::concat_batches(&schema, &all_batches)
+            .into_arrow_error_ctx("Failed to concatenate Parquet batches")?;
+
+        Ok((combined, (total_batches, skipped, scanned)))
+    }
+
     /// Project a RecordBatch from an old schema version to the current schema
     ///
     /// Handles:

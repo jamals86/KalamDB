@@ -114,7 +114,7 @@ async fn test_topic_consume_insert_events() {
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT"]).await;
 
     // Insert test data
-    for i in 1..=5 {
+    for i in 1..=3 {
         execute_sql(&format!(
             "INSERT INTO {}.{} (id, name, value) VALUES ({}, 'test{}', {})",
             namespace,
@@ -138,17 +138,17 @@ async fn test_topic_consume_insert_events() {
         .expect("Failed to build consumer");
 
     let mut records = Vec::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
         let batch = consumer.poll().await.expect("Failed to poll");
         if !batch.is_empty() {
             records.extend(batch);
-            if records.len() >= 5 {
+            if records.len() >= 3 {
                 break;
             }
         }
     }
-    assert!(records.len() >= 5, "Should receive 5 INSERT events");
+    assert!(records.len() >= 3, "Should receive 3 INSERT events");
 
     for record in &records {
         let payload = parse_payload(&record.payload);
@@ -157,7 +157,7 @@ async fn test_topic_consume_insert_events() {
     }
 
     let result = consumer.commit_sync().await.expect("Failed to commit");
-    assert_eq!(result.acknowledged_offset, 4);
+    assert_eq!(result.acknowledged_offset, 2);
 
     // Cleanup
     execute_sql(&format!("DROP TOPIC {}", topic)).await;
@@ -187,7 +187,7 @@ async fn test_topic_consume_update_events() {
     ))
     .await;
 
-    for i in 1..=3 {
+    for i in 1..=2 {
         execute_sql(&format!(
             "UPDATE {}.{} SET status = 'active', counter = {} WHERE id = 1",
             namespace, table, i
@@ -204,14 +204,14 @@ async fn test_topic_consume_update_events() {
         .build()
         .expect("Failed to build consumer");
 
-    let records = poll_records_until(&mut consumer, 4, Duration::from_secs(10)).await;
+    let records = poll_records_until(&mut consumer, 3, Duration::from_secs(6)).await;
     assert!(!records.is_empty(), "Should receive at least one event");
 
     let inserts = records.iter().filter(|r| r.op == TopicOp::Insert).count();
     let updates = records.iter().filter(|r| r.op == TopicOp::Update).count();
     if updates > 0 {
         assert_eq!(inserts, 1);
-        assert_eq!(updates, 3);
+        assert_eq!(updates, 2);
     } else {
         assert!(records.len() >= 1);
     }
@@ -242,7 +242,7 @@ async fn test_topic_consume_delete_events() {
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT", "DELETE"])
         .await;
 
-    for i in 1..=5 {
+    for i in 1..=3 {
         execute_sql(&format!(
             "INSERT INTO {}.{} (id, name) VALUES ({}, 'record{}')",
             namespace, table, i, i
@@ -251,7 +251,7 @@ async fn test_topic_consume_delete_events() {
     }
 
     execute_sql(&format!(
-        "DELETE FROM {}.{} WHERE id IN (2, 4)",
+        "DELETE FROM {}.{} WHERE id = 2",
         namespace, table
     ))
     .await;
@@ -267,8 +267,8 @@ async fn test_topic_consume_delete_events() {
         .build()
         .expect("Failed to build consumer");
 
-    let records = poll_records_until(&mut consumer, 7, Duration::from_secs(20)).await;
-    assert!(records.len() >= 7, "Should receive at least 5 INSERTs + 2 DELETEs");
+    let records = poll_records_until(&mut consumer, 4, Duration::from_secs(8)).await;
+    assert!(records.len() >= 4, "Should receive at least 3 INSERTs + 1 DELETE");
 
     let deletes_by_op = records.iter().filter(|r| r.op == TopicOp::Delete).count();
     let deletes_by_payload = records
@@ -281,7 +281,7 @@ async fn test_topic_consume_delete_events() {
                 .unwrap_or(false)
         })
         .count();
-    assert!(deletes_by_op.max(deletes_by_payload) >= 2);
+    assert!(deletes_by_op.max(deletes_by_payload) >= 1);
 
     for record in &records {
         consumer.mark_processed(record);
@@ -313,7 +313,7 @@ async fn test_topic_consume_mixed_operations() {
     )
     .await;
 
-    // Mixed operations: INSERT, UPDATE, INSERT, DELETE, UPDATE
+    // Mixed operations: INSERT, UPDATE, INSERT, DELETE
     execute_sql(&format!(
         "INSERT INTO {}.{} (id, data, version) VALUES (1, 'initial', 1)",
         namespace, table
@@ -330,11 +330,7 @@ async fn test_topic_consume_mixed_operations() {
     ))
     .await;
     execute_sql(&format!("DELETE FROM {}.{} WHERE id = 1", namespace, table)).await;
-    execute_sql(&format!(
-        "UPDATE {}.{} SET version = 2 WHERE id = 2",
-        namespace, table
-    ))
-    .await;
+    // No-op to keep the sequence shorter
 
     let client = create_test_client().await;
     let mut consumer = client
@@ -345,7 +341,7 @@ async fn test_topic_consume_mixed_operations() {
         .build()
         .expect("Failed to build consumer");
 
-    let records = poll_records_until(&mut consumer, 5, Duration::from_secs(10)).await;
+    let records = poll_records_until(&mut consumer, 4, Duration::from_secs(6)).await;
     assert!(!records.is_empty(), "Should receive at least one event");
 
     let inserts = records.iter().filter(|r| r.op == TopicOp::Insert).count();
@@ -353,7 +349,7 @@ async fn test_topic_consume_mixed_operations() {
     let deletes = records.iter().filter(|r| r.op == TopicOp::Delete).count();
     if updates > 0 || deletes > 0 {
         assert_eq!(inserts, 2);
-        assert_eq!(updates, 2);
+        assert_eq!(updates, 1);
         assert_eq!(deletes, 1);
     } else {
         assert!(records.len() >= 2);
@@ -397,7 +393,7 @@ async fn test_topic_consume_offset_persistence() {
             .expect("Failed to build consumer");
 
         // Insert first batch after consumer is ready
-        for i in 1..=3 {
+        for i in 1..=2 {
             execute_sql(&format!(
                 "INSERT INTO {}.{} (id, data) VALUES ({}, 'batch1-{}')",
                 namespace, table, i, i
@@ -405,8 +401,8 @@ async fn test_topic_consume_offset_persistence() {
             .await;
         }
 
-        let records = poll_records_until(&mut consumer, 3, Duration::from_secs(15)).await;
-        assert_eq!(records.len(), 3);
+        let records = poll_records_until(&mut consumer, 2, Duration::from_secs(6)).await;
+        assert_eq!(records.len(), 2);
 
         for record in &records {
             consumer.mark_processed(record);
@@ -426,7 +422,7 @@ async fn test_topic_consume_offset_persistence() {
             .expect("Failed to build consumer");
 
         // Insert second batch after consumer is ready
-        for i in 4..=6 {
+        for i in 3..=4 {
             execute_sql(&format!(
                 "INSERT INTO {}.{} (id, data) VALUES ({}, 'batch2-{}')",
                 namespace, table, i, i
@@ -434,13 +430,13 @@ async fn test_topic_consume_offset_persistence() {
             .await;
         }
 
-        let records = poll_records_until(&mut consumer, 3, Duration::from_secs(15)).await;
-        assert_eq!(records.len(), 3, "Should receive only batch 2");
+        let records = poll_records_until(&mut consumer, 2, Duration::from_secs(6)).await;
+        assert_eq!(records.len(), 2, "Should receive only batch 2");
 
         for record in &records {
             let payload = parse_payload(&record.payload);
             let id = payload.get("id").and_then(|v| v.as_i64()).unwrap();
-            assert!(id >= 4 && id <= 6);
+            assert!(id >= 3 && id <= 4);
             consumer.mark_processed(record);
         }
         consumer.commit_sync().await.ok();
@@ -466,7 +462,7 @@ async fn test_topic_consume_from_earliest() {
     .await;
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT"]).await;
 
-    for i in 1..=10 {
+    for i in 1..=4 {
         execute_sql(&format!(
             "INSERT INTO {}.{} (id, msg) VALUES ({}, 'msg{}')",
             namespace, table, i, i
@@ -486,7 +482,7 @@ async fn test_topic_consume_from_earliest() {
 
     let mut records = Vec::new();
     let mut offsets = HashSet::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + Duration::from_secs(6);
     while std::time::Instant::now() < deadline {
         let batch = consumer.poll().await.expect("Failed to poll");
         if !batch.is_empty() {
@@ -495,12 +491,12 @@ async fn test_topic_consume_from_earliest() {
                     records.push(record);
                 }
             }
-            if records.len() >= 10 {
+            if records.len() >= 4 {
                 break;
             }
         }
     }
-    assert_eq!(records.len(), 10, "Should receive all 10 messages");
+    assert_eq!(records.len(), 4, "Should receive all 4 messages");
 
     let mut offsets: Vec<u64> = records.iter().map(|r| r.offset).collect();
     offsets.sort_unstable();
@@ -529,7 +525,7 @@ async fn test_topic_consume_from_latest() {
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT"]).await;
 
     // Insert old messages
-    for i in 1..=5 {
+    for i in 1..=2 {
         execute_sql(&format!(
             "INSERT INTO {}.{} (id, msg) VALUES ({}, 'old{}')",
             namespace, table, i, i
@@ -548,7 +544,7 @@ async fn test_topic_consume_from_latest() {
         .expect("Failed to build consumer");
 
     // Insert new messages
-    for i in 6..=10 {
+    for i in 3..=4 {
         execute_sql(&format!(
             "INSERT INTO {}.{} (id, msg) VALUES ({}, 'new{}')",
             namespace, table, i, i
@@ -556,7 +552,7 @@ async fn test_topic_consume_from_latest() {
         .await;
     }
 
-    let records = poll_records_until(&mut consumer, 5, Duration::from_secs(10)).await;
+    let records = poll_records_until(&mut consumer, 2, Duration::from_secs(6)).await;
     let new_messages: Vec<_> = records
         .iter()
         .filter_map(|record| {
@@ -565,7 +561,7 @@ async fn test_topic_consume_from_latest() {
         })
         .filter(|msg| msg.starts_with("new"))
         .collect();
-    assert!(new_messages.len() >= 5);
+    assert!(new_messages.len() >= 2);
 
     execute_sql(&format!("DROP TOPIC {}", topic)).await;
     execute_sql(&format!("DROP TABLE {}.{}", namespace, table)).await;

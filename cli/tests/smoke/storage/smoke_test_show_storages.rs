@@ -6,6 +6,19 @@
 use crate::common::*;
 use serde_json::Value as JsonValue;
 
+fn arrow_value_as_string(value: &JsonValue) -> Option<String> {
+    extract_arrow_value(value)
+        .unwrap_or_else(|| value.clone())
+        .as_str()
+        .map(|s| s.to_string())
+}
+
+fn arrow_value_is_present(value: &JsonValue) -> bool {
+    !extract_arrow_value(value)
+        .unwrap_or_else(|| value.clone())
+        .is_null()
+}
+
 #[ntest::timeout(60_000)]
 #[test]
 fn smoke_show_storages_basic() {
@@ -18,7 +31,7 @@ fn smoke_show_storages_basic() {
     }
 
     let sql = "SHOW STORAGES";
-    let result = execute_sql_as_root_via_client(sql).expect("SHOW STORAGES should succeed");
+    let result = execute_sql_as_root_via_client_json(sql).expect("SHOW STORAGES should succeed");
 
     // Parse the JSON result
     let json: JsonValue = serde_json::from_str(&result)
@@ -35,7 +48,8 @@ fn smoke_show_storages_basic() {
         .iter()
         .find(|row| {
             row.get("storage_id")
-                .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_str())
+                .and_then(arrow_value_as_string)
+                .as_deref()
                 == Some("local")
         })
         .expect("'local' storage should be present in SHOW STORAGES output");
@@ -43,8 +57,7 @@ fn smoke_show_storages_basic() {
     // Verify required columns for local storage
     let storage_name = local_storage
         .get("storage_name")
-        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_str())
-        .map(String::from);
+        .and_then(arrow_value_as_string);
     assert!(
         storage_name.is_some() && !storage_name.as_ref().unwrap().is_empty(),
         "storage_name should be non-empty"
@@ -52,8 +65,7 @@ fn smoke_show_storages_basic() {
 
     let storage_type = local_storage
         .get("storage_type")
-        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_str())
-        .map(String::from);
+        .and_then(arrow_value_as_string);
     assert_eq!(
         storage_type.as_deref(),
         Some("filesystem"),
@@ -62,31 +74,24 @@ fn smoke_show_storages_basic() {
 
     let base_directory = local_storage
         .get("base_directory")
-        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_str())
-        .map(String::from);
+        .and_then(arrow_value_as_string);
     assert!(
         base_directory.is_some() && !base_directory.as_ref().unwrap().is_empty(),
         "base_directory should be non-empty for filesystem storage"
     );
 
     // Verify timestamps are present and reasonable
-    let created_at = local_storage
+    let created_at_present = local_storage
         .get("created_at")
-        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_str())
-        .map(String::from);
-    assert!(
-        created_at.is_some(),
-        "created_at should be present"
-    );
+        .map(arrow_value_is_present)
+        .unwrap_or(false);
+    assert!(created_at_present, "created_at should be present");
 
-    let updated_at = local_storage
+    let updated_at_present = local_storage
         .get("updated_at")
-        .and_then(|v| extract_arrow_value(v).unwrap_or_else(|| v.clone()).as_str())
-        .map(String::from);
-    assert!(
-        updated_at.is_some(),
-        "updated_at should be present"
-    );
+        .map(arrow_value_is_present)
+        .unwrap_or(false);
+    assert!(updated_at_present, "updated_at should be present");
 }
 
 #[ntest::timeout(60_000)]
@@ -118,7 +123,7 @@ fn smoke_show_storages_user_access() {
 
     // Regular user SHOULD be able to run SHOW STORAGES (read-only operation)
     let sql = "SHOW STORAGES";
-    let result = execute_sql_via_client_as(&test_user, test_password, sql);
+    let result = execute_sql_via_client_as_json(&test_user, test_password, sql);
 
     assert!(
         result.is_ok(),

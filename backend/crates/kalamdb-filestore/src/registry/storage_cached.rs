@@ -415,6 +415,61 @@ impl StorageCached {
         Ok(files)
     }
 
+    /// List all Parquet files under a table's storage path (async).
+    /// Returns duplicate-free list of filenames ending in .parquet.
+    pub async fn list_parquet_files(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<Vec<String>> {
+        let list_result = self.list(table_type, table_id, user_id).await?;
+        let prefix = list_result.prefix.trim_end_matches('/');
+
+        let mut files: Vec<String> = list_result.paths
+            .into_iter()
+            .filter_map(|path| {
+                let suffix = if path.starts_with(prefix) {
+                    path[prefix.len()..].trim_start_matches('/')
+                } else {
+                    path.rsplit('/').next().unwrap_or(path.as_str())
+                };
+                
+                if suffix.ends_with(".parquet") {
+                    Some(suffix.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+            
+        files.sort();
+        files.dedup();
+        Ok(files)
+    }
+
+    /// Read one or multiple Parquet files and return RecordBatch(es) (async).
+    pub async fn read_parquet_files(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        files: &[String],
+    ) -> Result<Vec<arrow::record_batch::RecordBatch>> {
+        let mut batches = Vec::new();
+        for file in files {
+            let data = self.get(table_type, table_id, user_id, file).await?.data;
+            let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(data)
+                .map_err(|e| FilestoreError::Format(e.to_string()))?;
+            let reader = builder.build()
+                .map_err(|e| FilestoreError::Format(e.to_string()))?;
+            for batch in reader {
+                batches.push(batch.map_err(|e| FilestoreError::Format(e.to_string()))?);
+            }
+        }
+        Ok(batches)
+    }
+
     /// Read a file from storage.
     ///
     /// # Arguments

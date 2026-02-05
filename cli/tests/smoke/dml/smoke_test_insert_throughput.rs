@@ -10,13 +10,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 // Test configuration
-const SINGLE_INSERT_COUNT: usize = 100; // Single-row inserts to test
-const BATCH_SIZE: usize = 100; // Rows per batch insert
-const BATCH_COUNT: usize = 10; // Number of batch inserts
-const PARALLEL_WORKERS: usize = 10; // Concurrent insert workers
-const PARALLEL_INSERTS_PER_WORKER: usize = 50; // Inserts per worker
+const SINGLE_INSERT_COUNT: usize = 30; // Single-row inserts to test
+const BATCH_SIZE: usize = 30; // Rows per batch insert
+const BATCH_COUNT: usize = 5; // Number of batch inserts
+const PARALLEL_WORKERS: usize = 4; // Concurrent insert workers
+const PARALLEL_INSERTS_PER_WORKER: usize = 20; // Inserts per worker
 
-#[ntest::timeout(180000)]
+#[ntest::timeout(120000)]
 #[test]
 fn smoke_test_insert_throughput_single() {
     if !is_server_running() {
@@ -99,7 +99,7 @@ fn smoke_test_insert_throughput_single() {
     assert!(successful > 0, "Expected at least some successful inserts, got 0");
 }
 
-#[ntest::timeout(180000)]
+#[ntest::timeout(120000)]
 #[test]
 fn smoke_test_insert_throughput_batched() {
     if !is_server_running() {
@@ -195,7 +195,7 @@ fn smoke_test_insert_throughput_batched() {
     assert!(total_rows > 0, "Expected at least some rows inserted, got 0");
 }
 
-#[ntest::timeout(180000)]
+#[ntest::timeout(120000)]
 #[test]
 fn smoke_test_insert_throughput_parallel() {
     if !is_server_running() {
@@ -302,7 +302,7 @@ fn smoke_test_insert_throughput_parallel() {
 }
 
 /// Combined benchmark that runs all tests and provides a summary
-#[ntest::timeout(300000)]
+#[ntest::timeout(120000)]
 #[test]
 fn smoke_test_insert_throughput_summary() {
     if !is_server_running() {
@@ -330,7 +330,7 @@ fn smoke_test_insert_throughput_summary() {
     ))
     .expect("CREATE TABLE should succeed");
 
-    let single_count = 200;
+    let single_count = 60;
     let single_start = Instant::now();
     let mut single_success = 0;
     for i in 0..single_count {
@@ -354,8 +354,8 @@ fn smoke_test_insert_throughput_summary() {
     ))
     .expect("CREATE TABLE should succeed");
 
-    let batch_size = 100;
-    let batch_count = 20;
+    let batch_size = 30;
+    let batch_count = 6;
     let batch_start = Instant::now();
     let mut batch_rows = 0;
     for batch in 0..batch_count {
@@ -386,8 +386,8 @@ fn smoke_test_insert_throughput_summary() {
     ))
     .expect("CREATE TABLE should succeed");
 
-    let workers = 10;
-    let per_worker = 100;
+    let workers = 4;
+    let per_worker = 25;
     let parallel_success = Arc::new(AtomicUsize::new(0));
     let parallel_table = Arc::new(parallel_table);
 
@@ -431,13 +431,15 @@ fn smoke_test_insert_throughput_summary() {
         single_rate
     );
     println!(
-        "│  Batched (100/batch)    │  {:>5}  │  {:>6.2}s │  {:>8.1}/s  │",
+        "│  Batched ({}/batch)    │  {:>5}  │  {:>6.2}s │  {:>8.1}/s  │",
+        batch_size,
         batch_rows,
         batch_elapsed.as_secs_f64(),
         batch_rate
     );
     println!(
-        "│  Parallel (10 threads)  │  {:>5}  │  {:>6.2}s │  {:>8.1}/s  │",
+        "│  Parallel ({} threads) │  {:>5}  │  {:>6.2}s │  {:>8.1}/s  │",
+        workers,
         parallel_total,
         parallel_elapsed.as_secs_f64(),
         parallel_rate

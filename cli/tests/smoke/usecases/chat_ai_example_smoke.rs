@@ -36,6 +36,8 @@ fn smoke_chat_ai_example_from_readme() {
     );
     execute_sql_as_root_via_client(&create_conversations)
         .expect("failed to create conversations table");
+    wait_for_table_ready(&conversations_table, Duration::from_secs(3))
+        .expect("conversations table should be ready");
 
     let create_messages = format!(
         "CREATE TABLE IF NOT EXISTS {} (
@@ -48,6 +50,8 @@ fn smoke_chat_ai_example_from_readme() {
         messages_table
     );
     execute_sql_as_root_via_client(&create_messages).expect("failed to create messages table");
+    wait_for_table_ready(&messages_table, Duration::from_secs(3))
+        .expect("messages table should be ready");
 
     let create_typing = format!(
         "CREATE TABLE IF NOT EXISTS {} (
@@ -60,6 +64,8 @@ fn smoke_chat_ai_example_from_readme() {
         typing_events_table
     );
     execute_sql_as_root_via_client(&create_typing).expect("failed to create typing_events table");
+    wait_for_table_ready(&typing_events_table, Duration::from_secs(3))
+        .expect("typing_events table should be ready");
 
     // 2. Insert a conversation
     let insert_conv_sql =
@@ -116,7 +122,7 @@ fn smoke_chat_ai_example_from_readme() {
 
     // 7. Wait for subscription to receive at least one event (increased timeout for subscription initialization)
     let mut received_event = false;
-    let timeout = Duration::from_secs(30);
+    let timeout = Duration::from_secs(10);
     let start = std::time::Instant::now();
 
     while start.elapsed() < timeout {

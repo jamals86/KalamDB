@@ -2676,6 +2676,32 @@ pub fn wait_for_sql_output_contains(
     .into())
 }
 
+/// Wait until a table is ready for DML (CREATE completed + indexes available).
+pub fn wait_for_table_ready(
+    table: &str,
+    timeout: Duration,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    let mut last_error: Option<String> = None;
+
+    while start.elapsed() < timeout {
+        match execute_sql_as_root_via_client(&format!("SELECT * FROM {} LIMIT 1", table)) {
+            Ok(_) => return Ok(()),
+            Err(err) => {
+                last_error = Some(err.to_string());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    Err(format!(
+        "Timed out waiting for table {} to be ready. Last error: {}",
+        table,
+        last_error.unwrap_or_else(|| "<none>".to_string())
+    )
+    .into())
+}
+
 // ============================================================================
 // CLIENT-BASED QUERY EXECUTION (uses kalam-link directly, avoids CLI process spawning)
 // ============================================================================

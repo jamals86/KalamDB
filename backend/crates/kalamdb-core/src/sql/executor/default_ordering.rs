@@ -67,14 +67,14 @@ fn extract_table_reference(plan: &LogicalPlan) -> Option<TableId> {
 ///
 /// Returns primary key columns if defined, otherwise falls back to _seq.
 /// This function assumes system tables have already been filtered out.
-fn get_default_sort_columns(
+async fn get_default_sort_columns(
     app_context: &Arc<AppContext>,
     table_id: &TableId,
 ) -> Result<Option<Vec<SortExpr>>, KalamDbError> {
     let schema_registry = app_context.schema_registry();
 
     // Try to get table definition
-    if let Ok(Some(table_def)) = schema_registry.get_table_if_exists(table_id)
+    if let Ok(Some(table_def)) = schema_registry.get_table_if_exists_async(table_id).await
     {
         let pk_columns = table_def.get_primary_key_columns();
 
@@ -150,7 +150,7 @@ fn sort_columns_in_schema(sort_exprs: &[SortExpr], plan: &LogicalPlan) -> bool {
 /// * `Ok(LogicalPlan)` - The original plan if ORDER BY exists, or wrapped plan
 /// * `Err(KalamDbError)` - If schema lookup fails (rare, plan is returned unchanged)
 /// FIXME: Pass the ExecutionContext to read the default namespace from there
-pub fn apply_default_order_by(
+pub async fn apply_default_order_by(
     plan: LogicalPlan,
     app_context: &Arc<AppContext>,
 ) -> Result<LogicalPlan, KalamDbError> {
@@ -182,7 +182,7 @@ pub fn apply_default_order_by(
     }
 
     // Get sort columns for this table (user/shared/stream tables only)
-    let sort_exprs = match get_default_sort_columns(app_context, &table_id) {
+    let sort_exprs = match get_default_sort_columns(app_context, &table_id).await {
         Ok(Some(exprs)) => exprs,
         Ok(None) => {
             // Table not found in registry - might be a new table or external source

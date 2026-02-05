@@ -120,6 +120,29 @@ impl ManifestService {
         }
     }
 
+    /// Async version of get_or_load to avoid blocking the tokio runtime.
+    pub async fn get_or_load_async(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
+        let rocksdb_key = ManifestId::new(table_id.clone(), user_id.cloned());
+        match self.provider.store().get_async(rocksdb_key.clone()).await {
+            Ok(Some(entry)) => Ok(Some(Arc::new(entry))),
+            Ok(None) => Ok(None),
+            Err(StorageError::SerializationError(err)) => {
+                warn!(
+                    "Manifest cache entry corrupted for key {}: {} (dropping)",
+                    rocksdb_key.as_str(),
+                    err
+                );
+                let _ = self.provider.store().delete_async(rocksdb_key).await;
+                Ok(None)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     /// Count all cached manifest entries.
     pub fn count(&self) -> Result<usize, StorageError> {
         self.provider.store().count_all()
@@ -781,6 +804,7 @@ impl ManifestService {
     // Private helper methods removed - now using StorageCached operations directly
 }
 
+#[async_trait::async_trait]
 impl ManifestServiceTrait for ManifestService {
     fn get_or_load(
         &self,
@@ -788,6 +812,14 @@ impl ManifestServiceTrait for ManifestService {
         user_id: Option<&UserId>,
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
         self.get_or_load(table_id, user_id)
+    }
+
+    async fn get_or_load_async(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
+        self.get_or_load_async(table_id, user_id).await
     }
 
     fn validate_manifest(&self, manifest: &Manifest) -> Result<(), StorageError> {
