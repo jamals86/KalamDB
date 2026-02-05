@@ -6,8 +6,7 @@
 //!
 //! # File Location
 //!
-//! - Windows: `~/.kalam/credentials.toml`
-//! - Linux/macOS: `~/.config/kalamdb/credentials.toml`
+//! - All platforms: `~/.kalam/credentials.toml` (same directory as config.toml)
 //!
 //! # Security
 //!
@@ -44,7 +43,7 @@ use crate::history::get_kalam_config_dir;
 
 /// File-based credential storage
 ///
-/// Persists JWT tokens to `~/.config/kalamdb/credentials.toml` with
+/// Persists JWT tokens to `~/.kalam/credentials.toml` with
 /// secure file permissions.
 #[derive(Debug, Clone)]
 pub struct FileCredentialStore {
@@ -86,8 +85,7 @@ struct CredentialsFile {
 
 impl FileCredentialStore {
     /// Default credentials file path
-    /// - Windows: `~/.kalam/credentials.toml`
-    /// - Linux/macOS: `~/.config/kalamdb/credentials.toml`
+    /// - All platforms: `~/.kalam/credentials.toml` (same directory as config.toml)
     pub fn default_path() -> PathBuf {
         if let Ok(path) = env::var("KALAMDB_CREDENTIALS_PATH") {
             let trimmed = path.trim();
@@ -96,21 +94,8 @@ impl FileCredentialStore {
             }
         }
 
-        #[cfg(target_os = "windows")]
-        {
-            get_kalam_config_dir().join("credentials.toml")
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            if let Some(config_dir) = dirs::config_dir() {
-                config_dir.join("kalamdb").join("credentials.toml")
-            } else if let Some(home_dir) = dirs::home_dir() {
-                home_dir.join(".config").join("kalamdb").join("credentials.toml")
-            } else {
-                PathBuf::from(".kalamdb").join("credentials.toml")
-            }
-        }
+        // Use consistent path across all platforms (same as config.toml)
+        get_kalam_config_dir().join("credentials.toml")
     }
 
     /// Create a new file-based credential store at the default location
