@@ -15,7 +15,7 @@ use dashmap::DashMap;
 use kalamdb_commons::{
     conversions::arrow_json_conversion::row_to_json_map,
     errors::{CommonError, Result},
-    models::{rows::Row, ConsumerGroupId, PayloadMode, TableId, TopicId, TopicOp},
+    models::{rows::Row, ConsumerGroupId, PayloadMode, TableId, TopicId, TopicOp, UserId},
 };
 use kalamdb_store::{EntityStore, StorageBackend};
 use kalamdb_system::providers::topic_offsets::{TopicOffset, TopicOffsetsTableProvider};
@@ -208,6 +208,7 @@ impl TopicPublisherService {
     /// * `table_id` - ID of the table (namespace + table name)
     /// * `operation` - Type of operation (Insert/Update/Delete)
     /// * `row` - Row containing the affected data
+    /// * `user_id` - Optional user who triggered the change
     ///
     /// # Returns
     /// Number of messages published across all matching topics
@@ -216,6 +217,7 @@ impl TopicPublisherService {
         table_id: &TableId,
         operation: TopicOp,
         row: &Row,
+        user_id: Option<&UserId>,
     ) -> Result<usize> {
         // Fast path: no routes for this table
         let routes = match self.table_routes.get(table_id) {
@@ -259,13 +261,14 @@ impl TopicPublisherService {
 
             // Create message
             let timestamp_ms = chrono::Utc::now().timestamp_millis();
-            let message = TopicMessage::new(
+            let message = TopicMessage::new_with_user(
                 entry.topic_id.clone(),
                 partition_id,
                 offset,
                 payload,
                 key,
                 timestamp_ms,
+                user_id.cloned(),
             );
 
             // Store message (TODO: integrate with actual persistence layer)
@@ -590,7 +593,7 @@ mod tests {
         let mut total_count = 0;
         for row in &rows {
             let count = service
-                .publish_message(&table_id, TopicOp::Insert, row)
+                .publish_message(&table_id, TopicOp::Insert, row, None)
                 .unwrap();
             total_count += count;
         }
@@ -616,7 +619,7 @@ mod tests {
 
         let row = create_test_row(1, "Test");
         let count = service
-            .publish_message(&table_id, TopicOp::Insert, &row)
+            .publish_message(&table_id, TopicOp::Insert, &row, None)
             .unwrap();
 
         assert_eq!(count, 0);

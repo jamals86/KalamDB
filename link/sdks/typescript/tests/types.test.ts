@@ -136,7 +136,8 @@ async function testMethods() {
   });
 
   // Test: ConsumerHandler type signature
-  const handler: ConsumerHandler = async (msg: ConsumeMessage, ctx: ConsumeContext) => {
+  const handler: ConsumerHandler = async (ctx: ConsumeContext) => {
+    const msg = ctx.message;
     // Access typed message fields
     const offset: number = msg.offset;
     const partition: number = msg.partition_id;
@@ -147,6 +148,8 @@ async function testMethods() {
     const sourceTable: string | undefined = msg.source_table;
     const op: string | undefined = msg.op;
     const timestampMs: number | undefined = msg.timestamp_ms;
+    // Access username from context
+    const username = ctx.username;
 
     // Manual ack via context
     await ctx.ack();
@@ -158,14 +161,14 @@ async function testMethods() {
     group_id: 'processor',
     auto_ack: true,
   });
-  // autoAckHandle.run(async (msg) => { console.log(msg.value); });
+  // autoAckHandle.run(async (ctx) => { console.log(ctx.message.value); });
 
   // Test: run() with manual ack (handler uses ctx.ack())
   const manualAckHandle = client.consumer({
     topic: 'chat.events',
     group_id: 'processor',
   });
-  // manualAckHandle.run(async (msg, ctx) => { await processMsg(msg); await ctx.ack(); });
+  // manualAckHandle.run(async (ctx) => { await processMsg(ctx.message); await ctx.ack(); });
 
   // Test: stop() is synchronous
   handle.stop();

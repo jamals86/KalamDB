@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+use super::username::Username;
+
 /// A single consumed message from a topic.
 ///
 /// Contains the message payload (decoded from base64), metadata about the
@@ -36,6 +38,10 @@ pub struct ConsumeMessage {
 
     /// Consumer group ID
     pub group_id: String,
+
+    /// Username of the user who produced this message/event
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<Username>,
 
     /// Decoded message payload as a JSON object
     pub value: JsonValue,

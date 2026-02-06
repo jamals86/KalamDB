@@ -31,6 +31,7 @@ pub mod subscription_config;
 pub mod subscription_options;
 pub mod subscription_request;
 pub mod upload_progress;
+pub mod username;
 pub mod utils;
 pub mod ws_auth_credentials;
 
@@ -65,5 +66,6 @@ pub use subscription_config::SubscriptionConfig;
 pub use subscription_options::SubscriptionOptions;
 pub use subscription_request::SubscriptionRequest;
 pub use upload_progress::UploadProgress;
+pub use username::Username;
 pub use utils::parse_i64;
 pub use ws_auth_credentials::WsAuthCredentials;

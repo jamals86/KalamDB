@@ -120,6 +120,16 @@ pub async fn consume_handler(
         .iter()
         .map(|msg| {
             use base64::Engine;
+            // Resolve user_id to username for the consumer
+            let username = msg.user_id.as_ref().and_then(|uid| {
+                app_context
+                    .system_tables()
+                    .users()
+                    .get_user_by_id(uid)
+                    .ok()
+                    .flatten()
+                    .map(|u| u.username.into_string())
+            });
             TopicMessage {
                 topic_id: topic.topic_id.clone(),
                 partition_id: msg.partition_id,
@@ -127,6 +137,7 @@ pub async fn consume_handler(
                 payload: base64::engine::general_purpose::STANDARD.encode(&msg.payload),
                 key: msg.key.clone(),
                 timestamp_ms: msg.timestamp_ms,
+                username,
             }
         })
         .collect();

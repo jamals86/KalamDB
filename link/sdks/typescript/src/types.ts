@@ -115,9 +115,31 @@ export interface SubscriptionInfo {
 /* ================================================================== */
 
 /**
- * Context passed to the consumer handler callback for manual acknowledgment.
+ * Type-safe username wrapper.
+ *
+ * Prevents confusion between usernames and other string identifiers.
+ * Use `.toString()` or template literals to get the raw string value.
+ */
+export type Username = string & { readonly __brand: unique symbol };
+
+/**
+ * Create a type-safe Username from a raw string.
+ */
+export function Username(value: string): Username {
+  return value as Username;
+}
+
+/**
+ * Context passed to the consumer handler callback.
+ *
+ * Contains the username of the user who triggered the event and
+ * a method for manual message acknowledgment.
  */
 export interface ConsumeContext {
+  /** Username of the user who produced this message/event */
+  readonly username: Username | undefined;
+  /** The consumed message with decoded payload */
+  readonly message: import('../.wasm-out/kalam_link.js').ConsumeMessage;
   /** Acknowledge the current message (manual ack mode) */
   ack: () => Promise<void>;
 }
@@ -125,11 +147,9 @@ export interface ConsumeContext {
 /**
  * Consumer handler function signature.
  *
- * @param message - The consumed message with decoded payload
- * @param ctx - Context for manual acknowledgment (`ctx.ack()`)
+ * @param ctx - Context with username, message, and ack method
  */
 export type ConsumerHandler = (
-  message: import('../.wasm-out/kalam_link.js').ConsumeMessage,
   ctx: ConsumeContext,
 ) => Promise<void>;
 
@@ -150,16 +170,17 @@ export interface ConsumerHandle {
    * @example Auto-ack:
    * ```typescript
    * await client.consumer({ topic: "orders", group_id: "billing", auto_ack: true })
-   *   .run(async (msg) => {
-   *     console.log("Order:", msg.value);
+   *   .run(async (ctx) => {
+   *     console.log("Order from:", ctx.username);
+   *     console.log("Data:", ctx.message.value);
    *   });
    * ```
    *
    * @example Manual ack:
    * ```typescript
    * await client.consumer({ topic: "orders", group_id: "billing" })
-   *   .run(async (msg, ctx) => {
-   *     await processOrder(msg.value);
+   *   .run(async (ctx) => {
+   *     await processOrder(ctx.message.value);
    *     await ctx.ack();
    *   });
    * ```

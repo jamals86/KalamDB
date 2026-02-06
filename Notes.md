@@ -1306,6 +1306,7 @@ Query OK, 0 rows affected
 162) processMessage should pass a context which contains the userName of who did this action
 163) Consider adding a new virtual system column which is _user aside of _seq and _deleted
 164) CRITICAL: Whenever we consume a message read the context and reply as this user, maybe do a .query/.sql as a user directly
+165) get a new option to pass userid instead of username: backend/crates/kalamdb-api/src/handlers/topics/consume.rs
 
 
 

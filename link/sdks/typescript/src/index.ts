@@ -50,6 +50,7 @@ export type {
 export {
   ChangeType,
   MessageType,
+  Username,
 } from './types.js';
 
 export type {

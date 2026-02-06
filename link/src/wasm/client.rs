@@ -1115,6 +1115,7 @@ impl KalamClient {
                         partition_id: msg["partition_id"].as_u64().unwrap_or(0) as u32,
                         topic: req.topic.clone(),
                         group_id: req.group_id.clone(),
+                        username: msg["username"].as_str().map(|s| crate::models::Username::from(s)),
                         value,
                     }
                 })

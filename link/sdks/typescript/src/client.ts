@@ -24,6 +24,7 @@ import type {
   SubscriptionOptions,
   Unsubscribe,
   UploadProgress,
+  Username,
 } from './types.js';
 
 import type {
@@ -624,8 +625,8 @@ export class KalamDBClient {
    * await client.consumer({
    *   topic: "orders",
    *   group_id: "billing",
-   * }).run(async (msg, ctx) => {
-   *   await processOrder(msg.value);
+   * }).run(async (ctx) => {
+   *   await processOrder(ctx.message.value);
    *   await ctx.ack();
    * });
    * ```
@@ -654,6 +655,8 @@ export class KalamDBClient {
                 let acked = false;
 
                 const ctx: ConsumeContext = {
+                  username: (message.username as Username | undefined) as ConsumeContext['username'],
+                  message,
                   ack: async () => {
                     if (acked) return;
                     acked = true;
@@ -666,7 +669,7 @@ export class KalamDBClient {
                   },
                 };
 
-                await handler(message, ctx);
+                await handler(ctx);
 
                 // Auto-ack if enabled and handler didn't manually ack
                 if (options.auto_ack && !acked) {

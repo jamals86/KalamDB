@@ -181,7 +181,7 @@ async function testConsumerStop() {
   let messageCount = 0;
 
   // Stop after processing 3 messages
-  const runPromise = handle.run(async (msg) => {
+  const runPromise = handle.run(async (ctx) => {
     messageCount++;
     console.log(`[stop-test] Message #${messageCount}`);
     if (messageCount >= 3) {
@@ -200,10 +200,11 @@ async function testConsumerHandlerTypeSafety() {
   });
 
   // Demonstrate typed handler with specific business logic
-  const handler: ConsumerHandler = async (msg, ctx) => {
+  const handler: ConsumerHandler = async (ctx) => {
+    const msg = ctx.message;
     // TypeScript knows these types at compile time
     if (msg.op === 'insert') {
-      console.log(`New record in ${msg.source_table}:`, msg.value);
+      console.log(`New record in ${msg.source_table} by ${ctx.username}:`, msg.value);
     } else if (msg.op === 'update') {
       console.log(`Updated record at offset ${msg.offset}`);
     } else if (msg.op === 'delete') {

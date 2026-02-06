@@ -160,6 +160,7 @@ impl NotificationService {
                             &task.table_id,
                             operation,
                             &task.notification.row_data,
+                            task.user_id.as_ref(),
                         ) {
                             log::warn!(
                                 "Failed to publish to topics for table {}: {}",

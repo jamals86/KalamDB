@@ -4,7 +4,7 @@
 //! - TopicMessageId: Composite key for message identification
 //! - TopicMessage: Message envelope with payload and metadata
 
-use kalamdb_commons::models::TopicId;
+use kalamdb_commons::models::{TopicId, UserId};
 use kalamdb_commons::{decode_key, encode_key, encode_prefix, KSerializable, StorageKey};
 use serde::{Deserialize, Serialize};
 
@@ -81,6 +81,9 @@ pub struct TopicMessage {
     pub key: Option<String>,
     /// Timestamp when message was published (milliseconds since epoch)
     pub timestamp_ms: i64,
+    /// User who triggered the event that produced this message
+    #[serde(default)]
+    pub user_id: Option<UserId>,
 }
 
 impl TopicMessage {
@@ -100,6 +103,28 @@ impl TopicMessage {
             payload,
             key,
             timestamp_ms,
+            user_id: None,
+        }
+    }
+
+    /// Create a new topic message with an associated user
+    pub fn new_with_user(
+        topic_id: TopicId,
+        partition_id: u32,
+        offset: u64,
+        payload: Vec<u8>,
+        key: Option<String>,
+        timestamp_ms: i64,
+        user_id: Option<UserId>,
+    ) -> Self {
+        Self {
+            topic_id,
+            partition_id,
+            offset,
+            payload,
+            key,
+            timestamp_ms,
+            user_id,
         }
     }
 

@@ -57,10 +57,10 @@ import {
   Auth,
   parseRows,
   type KalamDBClient,
-  type ConsumeMessage,
   type ConsumeContext,
   type ConsumerHandle,
   type QueryResponse,
+  Username,
 } from 'kalam-link';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
@@ -157,7 +157,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function setAiTyping(client: KalamDBClient, conversationId: string, state: 'thinking' | 'typing' | 'finished', ownerUser: string) {
+async function setAiTyping(client: KalamDBClient, conversationId: string, state: 'thinking' | 'typing' | 'finished', ownerUser: Username) {
   const isTyping = state !== 'finished';
   // Use AS USER to impersonate the conversation owner and insert into their STREAM table
   const insertSql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'AI Assistant', ${isTyping}, '${state}') AS USER '${sqlEscape(ownerUser)}'`;
@@ -167,7 +167,7 @@ async function setAiTyping(client: KalamDBClient, conversationId: string, state:
   });
 }
 
-async function clearAiTyping(client: KalamDBClient, conversationId: string, ownerUser: string) {
+async function clearAiTyping(client: KalamDBClient, conversationId: string, ownerUser: Username) {
   // Use AS USER to impersonate the conversation owner and insert into their STREAM table
   const insertSql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'AI Assistant', false, 'finished') AS USER '${sqlEscape(ownerUser)}'`;
   await client.query(insertSql).catch((err) => {
@@ -190,9 +190,11 @@ async function clearAiTyping(client: KalamDBClient, conversationId: string, owne
  */
 async function processMessage(
   client: KalamDBClient,
-  msg: ConsumeMessage,
-  _ctx: ConsumeContext,
+  ctx: ConsumeContext,
 ): Promise<void> {
+  const msg = ctx.message;
+  // The username of who triggered this event (from ConsumeContext)
+  const eventOwner = ctx.username;
   // ── 1. Parse payload ────────────────────────────────────────────────
   // The topic payload may be a CDC event with row data nested inside,
   // or a direct row object depending on topic configuration.
@@ -216,17 +218,25 @@ async function processMessage(
   }
   console.log(`📩 [offset=${msg.offset}] Processing user message ${data.id}: "${preview}"`);
 
-  // ── 3. Get conversation owner for AS USER impersonation ─────────────
-  const convResp = await client.query(
-    `SELECT created_by FROM chat.conversations WHERE id = ${data.conversation_id}`
-  );
-  const convRows = parseRows<Record<string, unknown>>(convResp);
-  if (convRows.length === 0) {
-    console.log(`   ⊘ Conversation ${data.conversation_id} not found`);
-    return;
+  // ── 3. Resolve conversation owner ───────────────────────────────
+  // Prefer the username from ConsumeContext (set by the backend),
+  // fall back to querying the conversation's created_by field.
+  let conversationOwner: Username;
+  if (eventOwner) {
+    conversationOwner = eventOwner;
+    console.log(`   👤 Event owner (from context): ${conversationOwner}`);
+  } else {
+    const convResp = await client.query(
+      `SELECT created_by FROM chat.conversations WHERE id = ${data.conversation_id}`
+    );
+    const convRows = parseRows<Record<string, unknown>>(convResp);
+    if (convRows.length === 0) {
+      console.log(`   ⊘ Conversation ${data.conversation_id} not found`);
+      return;
+    }
+    conversationOwner = String(convRows[0].created_by) as Username;
+    console.log(`   👤 Conversation owner (from query): ${conversationOwner}`);
   }
-  const conversationOwner = String(convRows[0].created_by);
-  console.log(`   👤 Conversation owner: ${conversationOwner}`);
 
   // ── 4. Idempotency: skip if AI already replied ──────────────────────
   if (data.client_id) {
@@ -336,8 +346,8 @@ async function main(): Promise<void> {
   process.on('SIGTERM', shutdown);
 
   // Run consumes messages in a loop until consumer.stop() is called
-  await consumer.run(async (msg, ctx) => {
-    await processMessage(client, msg, ctx);
+  await consumer.run(async (ctx) => {
+    await processMessage(client, ctx);
   });
 
   console.log('Service stopped.');
