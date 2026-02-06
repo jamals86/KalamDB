@@ -675,10 +675,10 @@ kalam> SELECT CURRENT_USER();
 
 ### Credential Storage
 
-The CLI stores credentials in `~/.kalamdb/credentials.toml`:
+The CLI stores credentials in `~/.kalam/credentials.toml`:
 
 ```toml
-# ~/.kalamdb/credentials.toml
+# ~/.kalam/credentials.toml
 
 [[connections]]
 name = "localhost"

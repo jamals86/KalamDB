@@ -735,7 +735,7 @@ Run: `.specify/scripts/bash/update-agent-context.sh copilot`
 
 ### CLI Credential Storage
 
-**Decision**: Store encrypted credentials in config file at `~/.config/kalamdb/credentials.toml` (XDG Base Directory)
+**Decision**: Store encrypted credentials in config file at `~/.kalam/credentials.toml` (same directory as config.toml)
 
 **Rationale**:
 - XDG standard for config files on Linux/macOS
