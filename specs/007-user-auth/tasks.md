@@ -444,7 +444,7 @@
 
 #### CLI-Specific Implementation (cli crate)
 
-- [x] T119 [US6] Implement FileCredentialStore in cli/src/credentials.rs (store at ~/.config/kalamdb/credentials.toml with 0600 permissions, implements CredentialStore trait from link) - **COMPLETED**: Full implementation with TOML serialization, secure file permissions, instance management
+- [x] T119 [US6] Implement FileCredentialStore in cli/src/credentials.rs (store at ~/.kalam/credentials.toml with 0600 permissions, implements CredentialStore trait from link) - **COMPLETED**: Full implementation with TOML serialization, secure file permissions, instance management
 - [x] T120 [US6] Implement automatic authentication in CLI session in cli/src/session.rs (read credentials via FileCredentialStore, create BasicAuth provider, pass to KalamLinkClient) - **COMPLETED**: CLISession::with_auth() accepts AuthProvider, creates authenticated KalamLinkClient
 - [x] T121 [US6] Add CLI commands to view system user credentials in cli/src/commands/credentials.rs (show-credentials command, uses FileCredentialStore) - **COMPLETED**: \\show-credentials command displays instance, username, server URL (password hidden), security warnings about storage location and file permissions
 - [x] T122 [US6] Add CLI commands to update system user credentials in cli/src/commands/credentials.rs (update-credentials command, uses FileCredentialStore) - **COMPLETED**: \\update-credentials <username> <password> and \\delete-credentials commands implemented with colored output and security reminders

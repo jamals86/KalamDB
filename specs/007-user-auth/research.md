@@ -403,7 +403,7 @@ async fn create_table(
 
 ### Decision
 
-**Store credentials in `~/.config/kalamdb/credentials.toml` with file permissions 0600 (owner read/write only)**
+**Store credentials in `~/.kalam/credentials.toml` with file permissions 0600 (owner read/write only)**
 
 ### Rationale
 
@@ -415,7 +415,7 @@ async fn create_table(
 
 2. **File Structure**:
    ```toml
-   # ~/.config/kalamdb/credentials.toml
+   # ~/.kalam/credentials.toml
    
    [default]
    instance_name = "local"
@@ -693,7 +693,7 @@ pub async fn authenticate_request(req: &ServiceRequest) -> Result<AuthenticatedU
 | **Password Hashing** | Bcrypt cost 12, async via spawn_blocking | Industry standard, 250ms acceptable, prevents blocking |
 | **JWT Validation** | jsonwebtoken crate, JWKS caching, RS256/ES256 | Battle-tested library, reduces HTTP requests 99% |
 | **Middleware Architecture** | AuthService (library) → AuthMiddleware (HTTP) | Reusable auth logic, clean separation of concerns |
-| **CLI Credentials** | ~/.config/kalamdb/credentials.toml with 0600 perms | XDG standard, file perms for security, multi-instance |
+| **CLI Credentials** | ~/.kalam/credentials.toml with 0600 perms | Consistent with config.toml, file perms for security, multi-instance |
 | **Migration** | 3-phase gradual (dual auth → deprecation → removal) | Zero downtime, 6-month notice, user choice |
 | **Cost Factor** | 12 (not 13 or 14) | Balance security and UX (~250ms vs 500ms+) |
 | **Algorithm Support** | RS256, ES256, HS256 | Cover external OAuth and internal tokens |
