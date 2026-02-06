@@ -3,12 +3,16 @@
 //! Defines request and response structures for query execution and
 //! WebSocket subscription messages.
 
+pub mod ack_response;
 pub mod batch_control;
 pub mod batch_status;
 pub mod change_event;
 pub mod change_type_raw;
 pub mod client_message;
 pub mod connection_options;
+pub mod consume_message;
+pub mod consume_request;
+pub mod consume_response;
 pub mod error_detail;
 pub mod health_check_response;
 pub mod http_version;
@@ -33,12 +37,16 @@ pub mod ws_auth_credentials;
 #[cfg(test)]
 mod tests;
 
+pub use ack_response::AckResponse;
 pub use batch_control::BatchControl;
 pub use batch_status::BatchStatus;
 pub use change_event::ChangeEvent;
 pub use change_type_raw::ChangeTypeRaw;
 pub use client_message::ClientMessage;
 pub use connection_options::ConnectionOptions;
+pub use consume_message::ConsumeMessage;
+pub use consume_request::ConsumeRequest;
+pub use consume_response::ConsumeResponse;
 pub use error_detail::ErrorDetail;
 pub use health_check_response::HealthCheckResponse;
 pub use http_version::HttpVersion;

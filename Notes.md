@@ -1299,6 +1299,11 @@ Storage flush started for 0 table(s) in namespace 'test_cli'. Job IDs: []
 Query OK, 0 rows affected
 
 
+157) Check that whenever we are creating a topic we create it inside a specific namespace_id
+158) drop namespace chat - does drop the namespace but the tables still there, it should drop all the tables as well (check tests)
+159) whenever i create namespace if its already exists it should give me an error (check tests)
+
+
 Main Epics:
 ------------
 1) Add observability using otel + jaeger + prometheus + grafana

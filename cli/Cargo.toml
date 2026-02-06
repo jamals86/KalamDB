@@ -34,6 +34,56 @@ name = "smoke"
 path = "tests/smoke.rs"
 required-features = ["e2e-tests"]
 
+[[test]]
+name = "auth"
+path = "tests/auth.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "auth_retry_test"
+path = "tests/auth_retry_test.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "cli"
+path = "tests/cli.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "flushing"
+path = "tests/flushing.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "repro_issue"
+path = "tests/repro_issue.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "storage"
+path = "tests/storage.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "subscription"
+path = "tests/subscription.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "tables"
+path = "tests/tables.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "usecases"
+path = "tests/usecases.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "users"
+path = "tests/users.rs"
+required-features = ["e2e-tests"]
+
 [dependencies]
 # KalamDB connectivity
 kalam-link = { path = "../link" }

@@ -1,0 +1,200 @@
+/**
+ * Type definitions for kalam-link SDK
+ *
+ * Model types are auto-generated from Rust via tsify-next and exported from the
+ * WASM bindings. Client-only types (no Rust equivalent) are defined here.
+ */
+
+/* ================================================================== */
+/*  Re-exported WASM-generated types (single source of truth in Rust) */
+/* ================================================================== */
+
+/**
+ * `JsonValue` is used by tsify for `serde_json::Value` fields.
+ * In TypeScript, this corresponds to any valid JSON value.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type JsonValue = any;
+
+export type {
+  AckResponse,
+  BatchControl,
+  BatchStatus,
+  ChangeTypeRaw,
+  ConsumeMessage,
+  ConsumeRequest,
+  ConsumeResponse,
+  ErrorDetail,
+  HealthCheckResponse,
+  HttpVersion,
+  KalamDataType,
+  LoginResponse,
+  LoginUserInfo,
+  QueryResponse,
+  QueryResult,
+  ResponseStatus,
+  SchemaField,
+  SeqId,
+  ServerMessage,
+  SubscriptionOptions,
+  TimestampFormat,
+  UploadProgress,
+} from '../.wasm-out/kalam_link.js';
+
+/* ================================================================== */
+/*  Convenience enums (for runtime values, not just types)            */
+/* ================================================================== */
+
+/**
+ * Message type enum for WebSocket subscription events.
+ * Use these constants when comparing `ServerMessage.type` at runtime.
+ */
+export enum MessageType {
+  SubscriptionAck = 'subscription_ack',
+  InitialDataBatch = 'initial_data_batch',
+  Change = 'change',
+  Error = 'error',
+}
+
+/**
+ * Change type enum for live subscription change events.
+ * Runtime-usable values matching `ChangeTypeRaw`.
+ */
+export enum ChangeType {
+  Insert = 'insert',
+  Update = 'update',
+  Delete = 'delete',
+}
+
+/* ================================================================== */
+/*  Client-only types (TypeScript SDK specific, no Rust equivalent)   */
+/* ================================================================== */
+
+/**
+ * Subscription callback function type
+ */
+export type SubscriptionCallback = (event: import('../.wasm-out/kalam_link.js').ServerMessage) => void;
+
+/**
+ * Typed subscription callback for convenience.
+ *
+ * @example
+ * ```typescript
+ * interface ChatMessage { id: string; content: string; sender: string }
+ *
+ * const handleEvent: TypedSubscriptionCallback<ChatMessage> = (event) => {
+ *   if (event.type === 'change' && event.rows) {
+ *     const messages: ChatMessage[] = event.rows;
+ *   }
+ * };
+ * ```
+ */
+export type TypedSubscriptionCallback<T extends Record<string, unknown>> = (
+  event: import('../.wasm-out/kalam_link.js').ServerMessage & { rows?: T[]; old_values?: T[] },
+) => void;
+
+/**
+ * Function to unsubscribe from a subscription (Firebase/Supabase style)
+ */
+export type Unsubscribe = () => Promise<void>;
+
+/**
+ * Information about an active subscription
+ */
+export interface SubscriptionInfo {
+  /** Unique subscription ID */
+  id: string;
+  /** Table name or SQL query being subscribed to */
+  tableName: string;
+  /** Timestamp when subscription was created */
+  createdAt: Date;
+}
+
+/* ================================================================== */
+/*  Consumer Types (TypeScript SDK specific)                          */
+/* ================================================================== */
+
+/**
+ * Context passed to the consumer handler callback for manual acknowledgment.
+ */
+export interface ConsumeContext {
+  /** Acknowledge the current message (manual ack mode) */
+  ack: () => Promise<void>;
+}
+
+/**
+ * Consumer handler function signature.
+ *
+ * @param message - The consumed message with decoded payload
+ * @param ctx - Context for manual acknowledgment (`ctx.ack()`)
+ */
+export type ConsumerHandler = (
+  message: import('../.wasm-out/kalam_link.js').ConsumeMessage,
+  ctx: ConsumeContext,
+) => Promise<void>;
+
+/**
+ * Handle returned by `client.consumer()`. Call `.run()` to start consuming.
+ */
+export interface ConsumerHandle {
+  /**
+   * Start consuming messages, invoking the handler for each message.
+   *
+   * If `autoAck` was set in the consumer options, messages are acknowledged
+   * automatically after the handler resolves. Otherwise, call `ctx.ack()`
+   * inside the handler for manual acknowledgment.
+   *
+   * The returned promise resolves when `stop()` is called or the consumer
+   * encounters an unrecoverable error.
+   *
+   * @example Auto-ack:
+   * ```typescript
+   * await client.consumer({ topic: "orders", group_id: "billing", auto_ack: true })
+   *   .run(async (msg) => {
+   *     console.log("Order:", msg.value);
+   *   });
+   * ```
+   *
+   * @example Manual ack:
+   * ```typescript
+   * await client.consumer({ topic: "orders", group_id: "billing" })
+   *   .run(async (msg, ctx) => {
+   *     await processOrder(msg.value);
+   *     await ctx.ack();
+   *   });
+   * ```
+   */
+  run: (handler: ConsumerHandler) => Promise<void>;
+
+  /** Stop consuming (signals the run loop to break after the current batch) */
+  stop: () => void;
+}
+
+/* ================================================================== */
+/*  Client Options                                                    */
+/* ================================================================== */
+
+/**
+ * Configuration options for KalamDB client
+ *
+ * @example
+ * ```typescript
+ * const client = createClient({
+ *   url: 'http://localhost:8080',
+ *   auth: Auth.basic('admin', 'admin')
+ * });
+ * ```
+ */
+export interface ClientOptions {
+  /** Server URL (e.g., 'http://localhost:8080') */
+  url: string;
+  /** Authentication credentials (type-safe) */
+  auth: import('./auth.js').AuthCredentials;
+  /**
+   * Explicit URL or buffer for the WASM file.
+   * - Browser: string URL like '/wasm/kalam_link_bg.wasm'
+   * - Node.js: BufferSource (fs.readFileSync result)
+   * Required in bundled environments where import.meta.url doesn't resolve.
+   */
+  wasmUrl?: string | BufferSource;
+}

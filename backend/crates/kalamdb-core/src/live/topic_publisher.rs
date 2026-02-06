@@ -441,10 +441,6 @@ pub struct TopicCacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::{
-        array::{Int32Array, StringArray},
-        datatypes::{DataType, Field, Schema},
-    };
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_store::test_utils::InMemoryBackend;

@@ -4,6 +4,8 @@ use super::login_user_info::LoginUserInfo;
 
 /// Login response from the server
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct LoginResponse {
     /// Authenticated user information
     pub user: LoginUserInfo,

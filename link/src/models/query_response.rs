@@ -9,6 +9,8 @@ use super::response_status::ResponseStatus;
 /// Contains query results, execution metadata, and optional error information.
 /// Matches the server's SqlResponse structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct QueryResponse {
     /// Query execution status ("success" or "error")
     pub status: ResponseStatus,

@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -10,6 +11,7 @@ use web_sys::{
     WebSocket,
 };
 
+use base64::Engine;
 use crate::compression;
 use crate::models::{
     ClientMessage, ConnectionOptions, QueryRequest, ServerMessage, SubscriptionOptions,
@@ -871,16 +873,346 @@ impl KalamClient {
         Ok(())
     }
 
+    /// Login with current Basic Auth credentials and switch to JWT authentication
+    ///
+    /// Sends a POST request to `/v1/api/auth/login` with the stored username/password
+    /// and updates the client to use JWT authentication on success.
+    ///
+    /// # Returns
+    /// The full LoginResponse as a JsValue (includes access_token, refresh_token, user info, etc.)
+    ///
+    /// # Errors
+    /// - If the client doesn't use Basic Auth
+    /// - If login request fails
+    /// - If the response doesn't contain an access_token
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// const client = new KalamClient("http://localhost:8080", "user", "pass");
+    /// const response = await client.login();
+    /// console.log(response.access_token, response.refresh_token);
+    /// await client.connect(); // Now uses JWT for WebSocket
+    /// ```
+    pub async fn login(&mut self) -> Result<JsValue, JsValue> {
+        let (username, password) = match &self.auth {
+            WasmAuthProvider::Basic { username, password } => (username.clone(), password.clone()),
+            _ => {
+                return Err(JsValue::from_str(
+                    "login() requires Basic Auth credentials. Create client with new KalamClient(url, username, password)",
+                ))
+            },
+        };
+
+        let opts = RequestInit::new();
+        opts.set_method("POST");
+        opts.set_mode(RequestMode::Cors);
+
+        let headers = Headers::new()?;
+        headers.set("Content-Type", "application/json")?;
+        opts.set_headers(&headers);
+
+        let body = serde_json::json!({
+            "username": username,
+            "password": password,
+        });
+        opts.set_body(&JsValue::from_str(&body.to_string()));
+
+        let url = format!("{}/v1/api/auth/login", self.url);
+        let request = Request::new_with_str_and_init(&url, &opts)?;
+
+        let resp_value = JsFuture::from(super::helpers::fetch_request(&request)).await?;
+        let resp: Response = resp_value.dyn_into()?;
+
+        if !resp.ok() {
+            let text = JsFuture::from(resp.text()?).await?;
+            let error_msg = text
+                .as_string()
+                .unwrap_or_else(|| format!("Login failed: HTTP {}", resp.status()));
+            return Err(JsValue::from_str(&error_msg));
+        }
+
+        let json = JsFuture::from(resp.text()?).await?;
+        let json_str = json.as_string().unwrap_or_default();
+
+        let login_response: crate::models::LoginResponse = serde_json::from_str(&json_str)
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse login response: {}", e)))?;
+
+        // Switch to JWT auth
+        self.auth = WasmAuthProvider::Jwt {
+            token: login_response.access_token.clone(),
+        };
+
+        console_log("KalamClient: Login successful, switched to JWT authentication");
+
+        // Return full LoginResponse as JsValue
+        serde_wasm_bindgen::to_value(&login_response)
+            .map_err(|e| JsValue::from_str(&format!("Failed to serialize login response: {}", e)))
+    }
+
+    /// Refresh the access token using a refresh token
+    ///
+    /// Sends a POST request to `/v1/api/auth/refresh` with the refresh token
+    /// in the Authorization Bearer header, and updates the client to use the new JWT.
+    ///
+    /// # Arguments
+    /// * `refresh_token` - The refresh token obtained from a previous login
+    ///
+    /// # Returns
+    /// The full LoginResponse as a JsValue (includes new access_token, refresh_token, etc.)
+    ///
+    /// # Errors
+    /// - If the refresh request fails
+    /// - If the response doesn't contain a valid token
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// const client = new KalamClient("http://localhost:8080", "user", "pass");
+    /// const loginResp = await client.login();
+    /// // Later, when access_token expires:
+    /// const refreshResp = await client.refresh_access_token(loginResp.refresh_token);
+    /// console.log(refreshResp.access_token);
+    /// ```
+    pub async fn refresh_access_token(&mut self, refresh_token: &str) -> Result<JsValue, JsValue> {
+        let opts = RequestInit::new();
+        opts.set_method("POST");
+        opts.set_mode(RequestMode::Cors);
+
+        let headers = Headers::new()?;
+        headers.set("Authorization", &format!("Bearer {}", refresh_token))?;
+        opts.set_headers(&headers);
+
+        let url = format!("{}/v1/api/auth/refresh", self.url);
+        let request = Request::new_with_str_and_init(&url, &opts)?;
+
+        let resp_value = JsFuture::from(super::helpers::fetch_request(&request)).await?;
+        let resp: Response = resp_value.dyn_into()?;
+
+        if !resp.ok() {
+            let text = JsFuture::from(resp.text()?).await?;
+            let error_msg = text
+                .as_string()
+                .unwrap_or_else(|| format!("Token refresh failed: HTTP {}", resp.status()));
+            return Err(JsValue::from_str(&error_msg));
+        }
+
+        let json = JsFuture::from(resp.text()?).await?;
+        let json_str = json.as_string().unwrap_or_default();
+
+        let login_response: crate::models::LoginResponse = serde_json::from_str(&json_str)
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse refresh response: {}", e)))?;
+
+        // Update to new JWT
+        self.auth = WasmAuthProvider::Jwt {
+            token: login_response.access_token.clone(),
+        };
+
+        console_log("KalamClient: Token refreshed, updated JWT authentication");
+
+        // Return full LoginResponse as JsValue
+        serde_wasm_bindgen::to_value(&login_response)
+            .map_err(|e| JsValue::from_str(&format!("Failed to serialize refresh response: {}", e)))
+    }
+
+    /// Consume messages from a topic via HTTP API
+    ///
+    /// # Arguments
+    /// * `options` - Type-safe ConsumeRequest with topic, group_id, batch_size, etc.
+    ///
+    /// # Returns
+    /// A type-safe ConsumeResponse as JsValue (includes messages, next_offset, has_more)
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// const result = await client.consume({
+    ///   topic: "chat.new_messages",
+    ///   group_id: "my-consumer-group",
+    ///   batch_size: 10,
+    ///   start: "latest",
+    /// });
+    /// for (const msg of result.messages) {
+    ///   console.log(msg.value);
+    /// }
+    /// ```
+    pub async fn consume(&self, options: JsValue) -> Result<JsValue, JsValue> {
+        let req: crate::models::ConsumeRequest = serde_wasm_bindgen::from_value(options)
+            .map_err(|e| JsValue::from_str(&format!("Invalid consume options: {}", e)))?;
+
+        let opts = RequestInit::new();
+        opts.set_method("POST");
+        opts.set_mode(RequestMode::Cors);
+
+        let headers = Headers::new()?;
+        headers.set("Content-Type", "application/json")?;
+        if let Some(auth_header) = self.auth.to_http_header() {
+            headers.set("Authorization", &auth_header)?;
+        }
+        opts.set_headers(&headers);
+
+        let mut body = serde_json::json!({
+            "topic_id": req.topic,
+            "group_id": req.group_id,
+            "start": req.start,
+            "limit": req.batch_size,
+            "partition_id": req.partition_id,
+        });
+        if let Some(timeout) = req.timeout_seconds {
+            body["timeout_seconds"] = serde_json::json!(timeout);
+        }
+        opts.set_body(&JsValue::from_str(&body.to_string()));
+
+        let url = format!("{}/v1/api/topics/consume", self.url);
+        let request = Request::new_with_str_and_init(&url, &opts)?;
+
+        let resp_value = JsFuture::from(super::helpers::fetch_request(&request)).await?;
+        let resp: Response = resp_value.dyn_into()?;
+
+        if !resp.ok() {
+            let status = resp.status();
+            let text = JsFuture::from(resp.text()?).await?;
+            let error_msg = text
+                .as_string()
+                .unwrap_or_else(|| format!("Consume failed: HTTP {}", status));
+            return Err(JsValue::from_str(&error_msg));
+        }
+
+        let json = JsFuture::from(resp.text()?).await?;
+        let json_str = json.as_string().unwrap_or_default();
+
+        // Parse the raw server response and convert to type-safe ConsumeResponse
+        let raw: serde_json::Value = serde_json::from_str(&json_str)
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse consume response: {}", e)))?;
+
+        let next_offset = raw["next_offset"].as_u64().unwrap_or(0);
+        let has_more = raw["has_more"].as_bool().unwrap_or(false);
+
+        let messages = if let Some(raw_msgs) = raw["messages"].as_array() {
+            raw_msgs
+                .iter()
+                .map(|msg| {
+                    // Decode base64 payload if present
+                    let value = if let Some(payload_str) = msg["payload"].as_str() {
+                        match base64::engine::general_purpose::STANDARD.decode(
+                            payload_str,
+                        ) {
+                            Ok(bytes) => {
+                                serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+                            },
+                            Err(_) => serde_json::Value::String(payload_str.to_string()),
+                        }
+                    } else if msg["payload"].is_object() {
+                        msg["payload"].clone()
+                    } else {
+                        serde_json::Value::Null
+                    };
+
+                    crate::models::ConsumeMessage {
+                        message_id: msg["message_id"].as_str().map(|s| s.to_string())
+                            .or_else(|| msg["key"].as_str().map(|s| s.to_string())),
+                        source_table: msg["source_table"].as_str().map(|s| s.to_string()),
+                        op: msg["op"].as_str().map(|s| s.to_string()),
+                        timestamp_ms: msg["timestamp_ms"].as_u64().or_else(|| msg["ts"].as_u64()),
+                        offset: msg["offset"].as_u64().unwrap_or(0),
+                        partition_id: msg["partition_id"].as_u64().unwrap_or(0) as u32,
+                        topic: req.topic.clone(),
+                        group_id: req.group_id.clone(),
+                        value,
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let response = crate::models::ConsumeResponse {
+            messages,
+            next_offset,
+            has_more,
+        };
+
+        // Use json_compatible() to produce plain JS objects instead of Maps
+        // for nested serde_json::Value fields (ConsumeMessage.value).
+        response.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            .map_err(|e| JsValue::from_str(&format!("Failed to serialize consume response: {}", e)))
+    }
+
+    /// Acknowledge processed messages on a topic
+    ///
+    /// # Arguments
+    /// * `topic` - Topic name
+    /// * `group_id` - Consumer group ID
+    /// * `partition_id` - Partition ID
+    /// * `upto_offset` - Acknowledge all messages up to and including this offset
+    ///
+    /// # Returns
+    /// A type-safe AckResponse as JsValue
+    ///
+    /// # Example (JavaScript)
+    /// ```js
+    /// const result = await client.ack("chat.new_messages", "my-group", 0, 42);
+    /// console.log(result.success, result.acknowledged_offset);
+    /// ```
+    pub async fn ack(
+        &self,
+        topic: String,
+        group_id: String,
+        partition_id: u32,
+        upto_offset: u64,
+    ) -> Result<JsValue, JsValue> {
+        let opts = RequestInit::new();
+        opts.set_method("POST");
+        opts.set_mode(RequestMode::Cors);
+
+        let headers = Headers::new()?;
+        headers.set("Content-Type", "application/json")?;
+        if let Some(auth_header) = self.auth.to_http_header() {
+            headers.set("Authorization", &auth_header)?;
+        }
+        opts.set_headers(&headers);
+
+        let body = serde_json::json!({
+            "topic_id": topic,
+            "group_id": group_id,
+            "partition_id": partition_id,
+            "upto_offset": upto_offset,
+        });
+        opts.set_body(&JsValue::from_str(&body.to_string()));
+
+        let url = format!("{}/v1/api/topics/ack", self.url);
+        let request = Request::new_with_str_and_init(&url, &opts)?;
+
+        let resp_value = JsFuture::from(super::helpers::fetch_request(&request)).await?;
+        let resp: Response = resp_value.dyn_into()?;
+
+        if !resp.ok() {
+            let status = resp.status();
+            let text = JsFuture::from(resp.text()?).await?;
+            let error_msg = text
+                .as_string()
+                .unwrap_or_else(|| format!("Ack failed: HTTP {}", status));
+            return Err(JsValue::from_str(&error_msg));
+        }
+
+        let json = JsFuture::from(resp.text()?).await?;
+        let json_str = json.as_string().unwrap_or_default();
+
+        let raw: serde_json::Value = serde_json::from_str(&json_str)
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse ack response: {}", e)))?;
+
+        let response = crate::models::AckResponse {
+            success: raw["success"].as_bool().unwrap_or(true),
+            acknowledged_offset: raw["acknowledged_offset"].as_u64().unwrap_or(upto_offset),
+        };
+
+        serde_wasm_bindgen::to_value(&response)
+            .map_err(|e| JsValue::from_str(&format!("Failed to serialize ack response: {}", e)))
+    }
+
     /// Internal: Execute SQL via HTTP POST to /v1/api/sql (T063F)
     async fn execute_sql_internal(
         &self,
         sql: &str,
         params: Option<Vec<serde_json::Value>>,
     ) -> Result<String, JsValue> {
-        // T063N: Add proper error handling with JsValue conversion
-        let window =
-            web_sys::window().ok_or_else(|| JsValue::from_str("No window object available"))?;
-
         // T063F: Implement HTTP fetch for SQL queries with authentication
         let opts = RequestInit::new();
         opts.set_method("POST");
@@ -909,8 +1241,8 @@ impl KalamClient {
         let url = format!("{}/v1/api/sql", self.url);
         let request = Request::new_with_str_and_init(&url, &opts)?;
 
-        // Execute fetch
-        let resp_value = JsFuture::from(window.fetch_with_request(&request)).await?;
+        // Execute fetch (cross-platform: works in both browser and Node.js)
+        let resp_value = JsFuture::from(super::helpers::fetch_request(&request)).await?;
         let resp: Response = resp_value.dyn_into()?;
 
         // Check status
@@ -999,8 +1331,7 @@ impl KalamClient {
                 });
             }) as Box<dyn FnMut()>);
 
-            let window = web_sys::window().unwrap();
-            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+            super::helpers::global_set_timeout(
                 reconnect_fn.as_ref().unchecked_ref(),
                 delay as i32,
             );

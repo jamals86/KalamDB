@@ -23,7 +23,6 @@ use tokio::time::sleep;
 use async_trait::async_trait;
 use kalamdb_commons::models::schemas::TableType;
 use kalamdb_commons::models::{JobId, NamespaceId, NodeId, StorageId, TableName, UserId};
-use kalamdb_system::JobNode;
 use kalamdb_system::providers::jobs::models::Job;
 use kalamdb_system::{JobStatus, JobType};
 use kalamdb_commons::TableId;

@@ -74,20 +74,30 @@ pub async fn consume_handler(
     let topic_publisher = app_context.topic_publisher();
 
     // Determine start offset based on position
-    let start_offset = match &body.start {
-        StartPosition::Offset { offset } => *offset,
-        StartPosition::Earliest => {
-            // Try to get committed offset for group
-            match topic_publisher.get_group_offsets(topic_id, group_id) {
-                Ok(offsets) => offsets
-                    .iter()
-                    .find(|o| o.partition_id == body.partition_id)
-                    .map(|o| o.last_acked_offset + 1)
-                    .unwrap_or(0),
-                Err(_) => 0,
-            }
-        }
-        StartPosition::Latest => 0, // In practice, should use HWM tracking
+    //
+    // All positions first check the consumer group's committed offset.
+    // If a committed offset exists, we resume from there (last_acked + 1).
+    // The position only matters when no offset has been committed yet:
+    //   - Earliest: start from offset 0 (replay all history)
+    //   - Latest: start from offset 0 (same as Earliest for now — new groups see all messages)
+    //   - Offset: start from the explicit offset
+    let committed_offset = topic_publisher
+        .get_group_offsets(topic_id, group_id)
+        .ok()
+        .and_then(|offsets| {
+            offsets
+                .iter()
+                .find(|o| o.partition_id == body.partition_id)
+                .map(|o| o.last_acked_offset + 1)
+        });
+
+    let start_offset = match committed_offset {
+        Some(committed) => committed,
+        None => match &body.start {
+            StartPosition::Offset { offset } => *offset,
+            StartPosition::Earliest => 0,
+            StartPosition::Latest => 0,
+        },
     };
 
     // Fetch messages

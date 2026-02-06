@@ -6,6 +6,8 @@ use super::schema_field::SchemaField;
 
 /// Individual query result within a SQL response
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct QueryResult {
     /// Schema describing the columns in the result set
     /// Each field contains: name, data_type (KalamDataType), and index

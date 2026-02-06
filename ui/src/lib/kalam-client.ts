@@ -321,7 +321,7 @@ function parseOptionsFromSql(sql: string): { sql: string; options: SubscriptionO
         } else if (keyLower === 'batch_size') {
           options.batch_size = parseInt(value, 10);
         } else if (keyLower === 'from_seq_id') {
-          options.from_seq_id = value;
+          options.from_seq_id = parseInt(value, 10);
         }
       }
     }

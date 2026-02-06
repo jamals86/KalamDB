@@ -7,7 +7,6 @@ use crate::consumer::core::poller::{AckRequest, ConsumeRequest, ConsumeResponse,
 use crate::consumer::models::{
     AutoOffsetReset, CommitResult, ConsumerConfig, ConsumerRecord,
 };
-use crate::consumer::models::consumer_record::ConsumerRecordWire;
 use crate::error::{KalamLinkError, Result};
 use crate::models::ConnectionOptions;
 use crate::timeouts::KalamLinkTimeouts;

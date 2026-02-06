@@ -632,29 +632,35 @@ mod tests {
     fn test_manifest_cache_entry_is_stale() {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
+        // Use actual millisecond timestamps
+        let base_time_ms = 1_700_000_000_000_i64; // Nov 2023
+        let ttl_ms = 3600 * 1000; // 1 hour in milliseconds
         let entry =
-            ManifestCacheEntry::new(manifest, Some("etag123".to_string()), 1000, SyncState::InSync);
+            ManifestCacheEntry::new(manifest, Some("etag123".to_string()), base_time_ms, SyncState::InSync);
 
-        // Not stale within TTL
-        assert!(!entry.is_stale(3600, 1000 + 1800));
+        // Not stale within TTL (checked at 30 minutes after base time)
+        assert!(!entry.is_stale(ttl_ms, base_time_ms + 1800 * 1000));
 
-        // Stale after TTL
-        assert!(entry.is_stale(3600, 1000 + 3601));
+        // Stale after TTL (checked at 1 hour + 1 second after base time)
+        assert!(entry.is_stale(ttl_ms, base_time_ms + ttl_ms + 1000));
     }
 
     #[test]
     fn test_manifest_cache_entry_state_transitions() {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
-        let mut entry = ManifestCacheEntry::new(manifest, None, 1000, SyncState::InSync);
+        // Use actual millisecond timestamps
+        let initial_time_ms = 1_700_000_000_000_i64; // Nov 2023
+        let updated_time_ms = 1_700_000_100_000_i64; // 100 seconds later
+        let mut entry = ManifestCacheEntry::new(manifest, None, initial_time_ms, SyncState::InSync);
 
         entry.mark_stale();
         assert_eq!(entry.sync_state, SyncState::Stale);
 
-        entry.mark_in_sync(Some("new_etag".to_string()), 2000);
+        entry.mark_in_sync(Some("new_etag".to_string()), updated_time_ms);
         assert_eq!(entry.sync_state, SyncState::InSync);
         assert_eq!(entry.etag, Some("new_etag".to_string()));
-        assert_eq!(entry.last_refreshed_millis(), 2000);
+        assert_eq!(entry.last_refreshed_millis(), updated_time_ms);
 
         entry.mark_error();
         assert_eq!(entry.sync_state, SyncState::Error);

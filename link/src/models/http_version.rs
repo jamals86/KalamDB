@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 ///     .with_http_version(HttpVersion::Http2);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[serde(rename_all = "lowercase")]
 pub enum HttpVersion {
     /// HTTP/1.1 (default) - widely compatible, one request per connection

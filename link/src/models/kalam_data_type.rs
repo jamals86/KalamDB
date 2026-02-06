@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 /// {"Decimal": {"precision": 10, "scale": 2}} // Complex type
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum KalamDataType {
     /// Boolean type
     Boolean,
