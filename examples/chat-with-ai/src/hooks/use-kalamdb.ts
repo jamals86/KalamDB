@@ -141,7 +141,7 @@ export function useConversations() {
     try {
       const escapedTitle = title.replace(/'/g, "''");
       await client.query(
-        `INSERT INTO chat.conversations (title, created_by) VALUES ('${escapedTitle}', 'demo-user')`
+        `INSERT INTO chat.conversations (title, created_by) VALUES ('${escapedTitle}', 'admin')`
       );
 
       // The subscription will pick up the new conversation automatically
@@ -174,10 +174,8 @@ export function useConversations() {
         `DELETE FROM chat.messages WHERE conversation_id = ${conversationId}`
       );
       
-      // Delete typing indicators
-      await client.query(
-        `DELETE FROM chat.typing_indicators WHERE conversation_id = ${conversationId}`
-      ).catch(() => {}); // Non-critical
+      // Note: typing_indicators is a stream table (append-only), so we can't DELETE from it
+      // Old records will naturally age out or be filtered by queries
       
       // Delete conversation
       await client.query(
@@ -341,7 +339,7 @@ export function useMessages(conversationId: string | null) {
         id: `temp-${Date.now()}`,
         client_id: clientId,
         conversation_id: conversationId,
-        sender: 'demo-user',
+        sender: 'admin',
         role: 'user',
         content: trimmed,
         status: 'sending',
@@ -358,7 +356,7 @@ export function useMessages(conversationId: string | null) {
         const placeholders = files.map((file, index) => {
           const fileKey = `file_${index}`;
           const fileLiteral = `FILE(\"${fileKey}\")`;
-          return `('${clientId}', ${conversationId}, 'demo-user', 'user', '${safeContent}', ${fileLiteral}, 'sent')`;
+          return `('${clientId}', ${conversationId}, 'admin', 'user', '${safeContent}', ${fileLiteral}, 'sent')`;
         });
 
         const filesMap = files.reduce<Record<string, File>>((acc, file, index) => {
@@ -381,7 +379,7 @@ export function useMessages(conversationId: string | null) {
           }
         );
       } else {
-        const insertSql = `INSERT INTO chat.messages (client_id, conversation_id, sender, role, content, status) VALUES ('${clientId}', ${conversationId}, 'demo-user', 'user', '${safeContent}', 'sent')`;
+        const insertSql = `INSERT INTO chat.messages (client_id, conversation_id, sender, role, content, status) VALUES ('${clientId}', ${conversationId}, 'admin', 'user', '${safeContent}', 'sent')`;
         console.log('[useMessages] INSERT SQL:', insertSql);
         await client.query(insertSql);
       }
@@ -459,7 +457,9 @@ export function useTypingIndicator(conversationId: string | null) {
 
       try {
         console.log('[useTypingIndicator] Setting up subscription for conversation:', conversationId);
-        const sql = `SELECT * FROM chat.typing_indicators WHERE conversation_id = ${conversationId} AND is_typing = true`;
+        // Stream tables are append-only - query all typing records for this conversation
+        // and filter client-side for latest state per user
+        const sql = `SELECT * FROM chat.typing_indicators WHERE conversation_id = ${conversationId}`;
         console.log('[useTypingIndicator] SQL:', sql);
         const unsub = await client.subscribeWithSql(
           sql,
@@ -470,17 +470,24 @@ export function useTypingIndicator(conversationId: string | null) {
             if (event.type === 'initial_data_batch' || event.type === 'change') {
               if ('rows' in event && event.rows) {
                 const indicators = event.rows as unknown as TypingIndicator[];
-                console.log('[useTypingIndicator] Typing users:', indicators.map(t => t.user_name));
-                setTypingUsers(indicators.map(t => t.user_name));
-              }
-              // For change events with delete, users stopped typing
-              if (event.type === 'change' && 'change_type' in event && event.change_type === 'delete') {
-                if ('rows' in event && event.rows) {
-                  const deleted = event.rows as unknown as TypingIndicator[];
-                  const deletedNames = new Set(deleted.map(t => t.user_name));
-                  console.log('[useTypingIndicator] Users stopped typing:', Array.from(deletedNames));
-                  setTypingUsers(prev => prev.filter(u => !deletedNames.has(u)));
+                console.log('[useTypingIndicator] Raw indicators:', indicators.length);
+                
+                // Stream tables are append-only - find latest state per user
+                const latestByUser = new Map<string, TypingIndicator>();
+                for (const indicator of indicators) {
+                  const existing = latestByUser.get(indicator.user_name);
+                  if (!existing || new Date(indicator.updated_at) > new Date(existing.updated_at)) {
+                    latestByUser.set(indicator.user_name, indicator);
+                  }
                 }
+                
+                // Filter for users currently typing
+                const typingUsersList = Array.from(latestByUser.values())
+                  .filter(ind => ind.is_typing)
+                  .map(ind => ind.user_name);
+                
+                console.log('[useTypingIndicator] Typing users:', typingUsersList);
+                setTypingUsers(typingUsersList);
               }
             }
           }
@@ -510,21 +517,14 @@ export function useTypingIndicator(conversationId: string | null) {
     if (!client || !conversationId) return;
     try {
       console.log('[useTypingIndicator] Setting typing:', isTyping);
-      if (isTyping) {
-        // Upsert typing indicator
-        await client.query(
-          `DELETE FROM chat.typing_indicators WHERE conversation_id = ${conversationId} AND user_name = 'demo-user'`
-        ).catch(() => {});
-        const insertSql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'demo-user', true, 'typing')`;
-        console.log('[useTypingIndicator] INSERT SQL:', insertSql);
-        await client.query(insertSql);
-        console.log('[useTypingIndicator] Typing indicator set');
-      } else {
-        const updateSql = `UPDATE chat.typing_indicators SET is_typing = false, state = 'finished', updated_at = NOW() WHERE conversation_id = ${conversationId} AND user_name = 'demo-user'`;
-        console.log('[useTypingIndicator] UPDATE SQL:', updateSql);
-        await client.query(updateSql);
-        console.log('[useTypingIndicator] Typing indicator cleared');
-      }
+      // Stream tables don't support DELETE/UPDATE - just insert new state records
+      const state = isTyping ? 'typing' : 'finished';
+      const insertSql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'admin', ${isTyping}, '${state}')`;
+      console.log('[useTypingIndicator] INSERT SQL:', insertSql);
+      await client.query(insertSql).catch((err) => {
+        console.warn('[useTypingIndicator] Failed to set typing indicator:', err);
+      }); // Non-critical
+      console.log('[useTypingIndicator] Typing indicator set:', state);
     } catch (err) {
       console.warn('[useTypingIndicator] Failed to set typing indicator:', err);
       // Typing indicators are non-critical

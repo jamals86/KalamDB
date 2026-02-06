@@ -157,18 +157,23 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function setAiTyping(client: KalamDBClient, conversationId: string, state: 'thinking' | 'typing' | 'finished') {
+async function setAiTyping(client: KalamDBClient, conversationId: string, state: 'thinking' | 'typing' | 'finished', ownerUser: string) {
   const isTyping = state !== 'finished';
-  await client.query(
-    `DELETE FROM chat.typing_indicators WHERE conversation_id = ${conversationId} AND user_name = 'AI Assistant'`
-  ).catch(() => {});
-  const sql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'AI Assistant', ${isTyping}, '${state}')`;
-  await client.query(sql).catch(() => {});
+  // Use AS USER to impersonate the conversation owner and insert into their STREAM table
+  const insertSql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'AI Assistant', ${isTyping}, '${state}') AS USER '${sqlEscape(ownerUser)}'`;
+  await client.query(insertSql).catch((err) => {
+    console.error('❌ setAiTyping INSERT failed:', err);
+    console.error('   SQL:', insertSql);
+  });
 }
 
-async function clearAiTyping(client: KalamDBClient, conversationId: string) {
-  const sql = `UPDATE chat.typing_indicators SET is_typing = false, state = 'finished', updated_at = NOW() WHERE conversation_id = ${conversationId} AND user_name = 'AI Assistant'`;
-  await client.query(sql).catch(() => {});
+async function clearAiTyping(client: KalamDBClient, conversationId: string, ownerUser: string) {
+  // Use AS USER to impersonate the conversation owner and insert into their STREAM table
+  const insertSql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'AI Assistant', false, 'finished') AS USER '${sqlEscape(ownerUser)}'`;
+  await client.query(insertSql).catch((err) => {
+    console.error('❌ clearAiTyping INSERT failed:', err);
+    console.error('   SQL:', insertSql);
+  });
 }
 
 // ─── Message handler ────────────────────────────────────────────────────────
@@ -200,26 +205,37 @@ async function processMessage(
   const data = (raw.row ?? raw) as TopicMessage;
 
   if (!data.content) {
-    console.log(`   ⊘ [offset=${msg.offset}] Skipping message with no content`);
     return;
   }
 
   const preview = data.content.length > 60 ? data.content.slice(0, 60) + '…' : data.content;
-  console.log(`📩 [offset=${msg.offset}] ${data.role} message ${data.id}: "${preview}"`);
 
   // ── 2. Filter: only process user messages ───────────────────────────
   if (data.role !== 'user') {
-    console.log(`   ⊘ Skipping ${data.role} message`);
     return;
   }
+  console.log(`📩 [offset=${msg.offset}] Processing user message ${data.id}: "${preview}"`);
 
-  // ── 3. Idempotency: skip if AI already replied ──────────────────────
+  // ── 3. Get conversation owner for AS USER impersonation ─────────────
+  const convResp = await client.query(
+    `SELECT created_by FROM chat.conversations WHERE id = ${data.conversation_id}`
+  );
+  const convRows = parseRows<Record<string, unknown>>(convResp);
+  if (convRows.length === 0) {
+    console.log(`   ⊘ Conversation ${data.conversation_id} not found`);
+    return;
+  }
+  const conversationOwner = String(convRows[0].created_by);
+  console.log(`   👤 Conversation owner: ${conversationOwner}`);
+
+  // ── 4. Idempotency: skip if AI already replied ──────────────────────
   if (data.client_id) {
     const minResp = await client.query(
       `SELECT MIN(id) as min_id FROM chat.messages
        WHERE conversation_id = ${data.conversation_id}
          AND role = 'user'
-         AND client_id = '${sqlEscape(data.client_id)}'`
+         AND client_id = '${sqlEscape(data.client_id)}'
+         AS USER '${sqlEscape(conversationOwner)}'`
     );
     const minRows = parseRows<Record<string, unknown>>(minResp);
     const minId = minRows[0]?.min_id ? Number(minRows[0].min_id) : Number(data.id);
@@ -233,7 +249,8 @@ async function processMessage(
     `SELECT COUNT(*) as cnt FROM chat.messages
      WHERE conversation_id = ${data.conversation_id}
        AND role = 'assistant'
-       AND id > ${data.id}`
+       AND id > ${data.id}
+       AS USER '${sqlEscape(conversationOwner)}'`
   );
   const rows = parseRows<CountRow>(countResp);
   if (rows.length > 0 && Number(rows[0].cnt) > 0) {
@@ -241,19 +258,20 @@ async function processMessage(
     return;
   }
 
-  // ── 4. Generate AI reply ────────────────────────────────────────────
-  await setAiTyping(client, data.conversation_id, 'thinking');
+  // ── 5. Generate AI reply ────────────────────────────────────────────
+  await setAiTyping(client, data.conversation_id, 'thinking', conversationOwner);
   await sleep(600 + Math.random() * 700);
-  await setAiTyping(client, data.conversation_id, 'typing');
+  await setAiTyping(client, data.conversation_id, 'typing', conversationOwner);
   const aiReply = await generateAIResponse(data.content);
   await sleep(Math.min(3500, 1000 + aiReply.length * 8));
 
-  // ── 5. Insert reply ─────────────────────────────────────────────────
+  // ── 6. Insert reply (AS USER to insert into conversation owner's table) ─────
   await client.query(
     `INSERT INTO chat.messages (conversation_id, sender, role, content, status)
-     VALUES (${data.conversation_id}, 'AI Assistant', 'assistant', '${sqlEscape(aiReply)}', 'sent')`
+     VALUES (${data.conversation_id}, 'AI Assistant', 'assistant', '${sqlEscape(aiReply)}', 'sent')
+     AS USER '${sqlEscape(conversationOwner)}'`
   );
-  await clearAiTyping(client, data.conversation_id);
+  await clearAiTyping(client, data.conversation_id, conversationOwner);
   console.log(`   ✓ AI response inserted for message ${data.id}`);
 }
 
@@ -294,6 +312,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   console.log(`✓ Topic "${TOPIC_NAME}" exists`);
+
   console.log('');
   console.log('🚀 Service started — waiting for messages...');
   console.log('   Press Ctrl+C to stop');

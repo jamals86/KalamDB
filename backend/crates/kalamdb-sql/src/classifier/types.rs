@@ -39,7 +39,7 @@ pub struct SqlStatement {
     /// Parsed statement variant
     pub(crate) kind: SqlStatementKind,
     /// Optional AS USER impersonation (Phase 7)
-    /// Extracted from "AS USER 'user_id'" clause in DML statements
+    /// Extracted from "AS USER 'user_id'" clause in SELECT/DML statements
     pub(crate) as_user_id: Option<UserId>,
 }
 

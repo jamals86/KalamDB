@@ -44,7 +44,7 @@ CREATE STREAM TABLE chat.typing_indicators (
     is_typing BOOLEAN NOT NULL DEFAULT TRUE,
     state TEXT NOT NULL DEFAULT 'typing',
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-) WITH (TTL_SECONDS = 30);
+) WITH (TTL_SECONDS = 20000);
 
 -- ============================================================================
 -- Topics (Message processing queue)

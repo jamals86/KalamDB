@@ -128,7 +128,15 @@ impl SqlStatement {
         // Hot path: Check SELECT/INSERT/DELETE first (99% of queries)
         // DML statements - create typed markers for handler pattern
         match first_keyword_upper.as_str() {
-            "SELECT" => return Ok(Self::new(sql.to_string(), SqlStatementKind::Select)),
+            "SELECT" => {
+                // Extract AS USER clause from SELECT statement (Phase 7)
+                let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
+                return if let Some(user_id) = as_user_id {
+                    Ok(Self::with_as_user(cleaned_sql2, SqlStatementKind::Select, user_id))
+                } else {
+                    Ok(Self::new(sql.to_string(), SqlStatementKind::Select))
+                };
+            },
             "INSERT" => {
                 // T151: Extract AS USER clause from INSERT statement (Phase 7)
                 let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
@@ -897,4 +905,35 @@ fn is_create_view(tokens: &[&str]) -> bool {
     tokens[1..view_pos]
         .iter()
         .all(|token| matches!(*token, "OR" | "REPLACE" | "TEMP" | "TEMPORARY" | "MATERIALIZED"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_select_with_as_user_extracts_subject() {
+        let stmt = SqlStatement::classify_and_parse(
+            "SELECT * FROM default.tasks AS USER 'user1'",
+            &NamespaceId::new("default"),
+            Role::Service,
+        )
+        .expect("SELECT AS USER should classify");
+
+        assert!(matches!(stmt.kind(), SqlStatementKind::Select));
+        assert_eq!(stmt.as_user_id().map(|u| u.as_str()), Some("user1"));
+        assert_eq!(stmt.as_str(), "SELECT * FROM default.tasks");
+    }
+
+    #[test]
+    fn classify_select_without_as_user_keeps_original_sql() {
+        let sql = "SELECT * FROM default.tasks WHERE id = 1";
+        let stmt =
+            SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
+                .expect("SELECT should classify");
+
+        assert!(matches!(stmt.kind(), SqlStatementKind::Select));
+        assert!(stmt.as_user_id().is_none());
+        assert_eq!(stmt.as_str(), sql);
+    }
 }

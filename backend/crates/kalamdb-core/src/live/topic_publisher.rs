@@ -428,6 +428,52 @@ impl TopicPublisherService {
             total_routes: self.table_routes.iter().map(|r| r.len()).sum(),
         }
     }
+
+    /// Restore in-memory offset counters by scanning persisted messages.
+    ///
+    /// After a server restart the `offset_counters` DashMap is empty, which
+    /// would cause new messages to be published starting at offset 0 —
+    /// potentially overwriting previously committed data.  This method scans
+    /// each cached topic/partition for the highest existing offset and seeds
+    /// the counter to `max_offset + 1`.
+    pub fn restore_offset_counters(&self) {
+        for entry in self.topics.iter() {
+            let topic = entry.value();
+            for partition_id in 0..topic.partitions {
+                // Fetch a large batch from offset 0 to find the latest message.
+                // We scan with a high limit; the last returned message carries
+                // the highest offset.
+                match self.message_store.fetch_messages(
+                    &topic.topic_id,
+                    partition_id,
+                    0,
+                    usize::MAX,  // scan all
+                ) {
+                    Ok(msgs) => {
+                        if let Some(last) = msgs.last() {
+                            let next = last.offset + 1;
+                            let key = format!("{}:{}", topic.topic_id.as_str(), partition_id);
+                            self.offset_counters.insert(key, next);
+                            log::info!(
+                                "Restored offset counter for topic={} partition={}: next_offset={}",
+                                topic.topic_id.as_str(),
+                                partition_id,
+                                next,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to restore offset for topic={} partition={}: {}",
+                            topic.topic_id.as_str(),
+                            partition_id,
+                            e,
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Statistics about the topic cache

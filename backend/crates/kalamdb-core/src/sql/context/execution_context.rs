@@ -213,6 +213,30 @@ impl ExecutionContext {
         ctx
     }
 
+    fn build_effective_session_context(&self, user_id: UserId, role: Role) -> SessionContext {
+        let mut session_state = self.base_session_context.state().clone();
+
+        session_state
+            .config_mut()
+            .options_mut()
+            .extensions
+            .insert(SessionUserContext::new(
+                user_id.clone(),
+                role,
+                self.auth_session.read_context(),
+            ));
+
+        if let Some(ref ns) = self.namespace_id {
+            session_state.config_mut().options_mut().catalog.default_schema =
+                ns.as_str().to_string();
+        }
+
+        let ctx = SessionContext::new_with_state(session_state);
+        let current_user_fn = CurrentUserFunction::with_user_id(&user_id);
+        ctx.register_udf(ScalarUDF::from(current_user_fn));
+        ctx
+    }
+
     /// Create a per-request SessionContext with current user_id and role injected
     ///
     /// Clones the base SessionState and injects the current user_id and role into config.extensions.
@@ -248,6 +272,14 @@ impl ExecutionContext {
             .get_or_init(|| self.build_user_session_context());
 
         session.clone()
+    }
+
+    /// Create a per-request SessionContext using an explicit effective identity.
+    ///
+    /// This bypasses the cached session and is used for impersonation reads where
+    /// user_id/role must differ from the actor's authenticated session.
+    pub fn create_session_with_effective_user(&self, user_id: &UserId, role: Role) -> SessionContext {
+        self.build_effective_session_context(user_id.clone(), role)
     }
 
     /// Get the current default namespace (schema) from DataFusion session config

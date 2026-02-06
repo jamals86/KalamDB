@@ -1302,6 +1302,12 @@ Query OK, 0 rows affected
 157) Check that whenever we are creating a topic we create it inside a specific namespace_id
 158) drop namespace chat - does drop the namespace but the tables still there, it should drop all the tables as well (check tests)
 159) whenever i create namespace if its already exists it should give me an error (check tests)
+160) at least one delivery if tghere is multiple consumers send to only one of them not all of them, we can add a round robin or random selection for this, check how kafka/nats do it and implement the same way, and also add tests to verify this
+162) processMessage should pass a context which contains the userName of who did this action
+163) Consider adding a new virtual system column which is _user aside of _seq and _deleted
+164) CRITICAL: Whenever we consume a message read the context and reply as this user, maybe do a .query/.sql as a user directly
+
+
 
 
 Main Epics:

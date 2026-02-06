@@ -10,8 +10,8 @@
 import { KalamDBProvider } from '@/providers/kalamdb-provider';
 
 const KALAMDB_URL = process.env.NEXT_PUBLIC_KALAMDB_URL || 'http://localhost:8080';
-const KALAMDB_USERNAME = process.env.NEXT_PUBLIC_KALAMDB_USERNAME || 'demo-user';
-const KALAMDB_PASSWORD = process.env.NEXT_PUBLIC_KALAMDB_PASSWORD || 'demo123';
+const KALAMDB_USERNAME = process.env.NEXT_PUBLIC_KALAMDB_USERNAME || 'admin';
+const KALAMDB_PASSWORD = process.env.NEXT_PUBLIC_KALAMDB_PASSWORD || 'kalamdb123';
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (

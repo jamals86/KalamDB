@@ -432,8 +432,28 @@ impl AppContext {
             schema_registry.set_app_context(app_ctx.clone());
 
             // Wire topic publisher into notification service for CDC → topic routing
-            notification_service.set_topic_publisher(topic_publisher);
-            
+            notification_service.set_topic_publisher(Arc::clone(&topic_publisher));
+
+            // ── Restore topic cache from persisted topics ───────────────────────
+            // On restart the TopicPublisherService starts with empty caches.
+            // Load all persisted topics so CDC routes and offset counters are
+            // available immediately for the notification worker.
+            match app_ctx.system_tables().topics().list_topics() {
+                Ok(topics) => {
+                    let count = topics.len();
+                    topic_publisher.refresh_topics_cache(topics);
+                    topic_publisher.restore_offset_counters();
+                    log::info!(
+                        "Restored {} topics into TopicPublisherService cache (routes={}, offsets ready)",
+                        count,
+                        topic_publisher.cache_stats().total_routes,
+                    );
+                }
+                Err(e) => {
+                    log::warn!("Failed to restore topic cache on startup: {}", e);
+                }
+            }
+
             // Wire AppContext into notification service for Raft leadership checks
             // This ensures only the leader fires notifications, preventing duplicates
             notification_service.set_app_context(Arc::downgrade(&app_ctx));

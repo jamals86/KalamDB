@@ -3,6 +3,6 @@
 
 export const KALAMDB_CONFIG = {
   url: process.env.NEXT_PUBLIC_KALAMDB_URL || 'http://localhost:8080',
-  username: process.env.NEXT_PUBLIC_KALAMDB_USERNAME || 'demo-user',
-  password: process.env.NEXT_PUBLIC_KALAMDB_PASSWORD || 'demo-password-123',
+  username: process.env.NEXT_PUBLIC_KALAMDB_USERNAME || 'admin',
+  password: process.env.NEXT_PUBLIC_KALAMDB_PASSWORD || 'kalamdb123',
 } as const;

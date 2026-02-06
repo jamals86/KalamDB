@@ -574,3 +574,172 @@ fn smoke_as_user_full_workflow() {
 
     println!("✅ smoke_as_user_full_workflow passed!");
 }
+
+/// Smoke Test: SELECT AS USER scopes reads to the impersonated subject on USER tables
+#[ntest::timeout(120000)]
+#[test]
+fn smoke_as_user_select_scopes_reads_for_user_tables() {
+    if !is_server_running() {
+        eprintln!("Skipping smoke_as_user_select_scopes_reads_for_user_tables: server not running");
+        return;
+    }
+
+    let namespace = create_test_namespace("select_scope_user");
+    let table = generate_unique_table("messages");
+    let full_table = format!("{}.{}", namespace, table);
+
+    let service_user = generate_unique_namespace("service");
+    let user1 = generate_unique_namespace("user1");
+    let user2 = generate_unique_namespace("user2");
+    let password = "test_pass_123";
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .expect("Failed to create namespace");
+
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {} (id BIGINT PRIMARY KEY, body VARCHAR) WITH (TYPE='USER')",
+        full_table
+    ))
+    .expect("Failed to create table");
+
+    create_user_with_retry(&service_user, password, "service");
+    create_user_with_retry(&user1, password, "user");
+    create_user_with_retry(&user2, password, "user");
+
+    let user1_id = get_user_id_for_username(&user1).expect("Failed to get user1 user_id");
+    let user2_id = get_user_id_for_username(&user2).expect("Failed to get user2 user_id");
+
+    execute_sql_via_client_as(
+        &service_user,
+        password,
+        &format!(
+            "INSERT INTO {} (id, body) VALUES (1, 'u1-only') AS USER '{}'",
+            full_table, user1_id
+        ),
+    )
+    .expect("Failed to insert row for user1");
+
+    execute_sql_via_client_as(
+        &service_user,
+        password,
+        &format!(
+            "INSERT INTO {} (id, body) VALUES (2, 'u2-only') AS USER '{}'",
+            full_table, user2_id
+        ),
+    )
+    .expect("Failed to insert row for user2");
+
+    let service_all = execute_sql_via_client_as(
+        &service_user,
+        password,
+        &format!("SELECT * FROM {} ORDER BY id", full_table),
+    )
+    .expect("Service select failed");
+    assert!(service_all.contains("u1-only") && service_all.contains("u2-only"));
+
+    let service_as_user1 = execute_sql_via_client_as(
+        &service_user,
+        password,
+        &format!(
+            "SELECT * FROM {} ORDER BY id AS USER '{}'",
+            full_table, user1_id
+        ),
+    )
+    .expect("Service SELECT AS USER user1 failed");
+    assert!(service_as_user1.contains("u1-only"));
+    assert!(!service_as_user1.contains("u2-only"));
+
+    let user2_view = execute_sql_via_client_as(
+        &user2,
+        password,
+        &format!("SELECT * FROM {} ORDER BY id", full_table),
+    )
+    .expect("User2 select failed");
+    assert!(user2_view.contains("u2-only"));
+    assert!(!user2_view.contains("u1-only"));
+
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", service_user));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user1));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user2));
+    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+
+    println!("✅ smoke_as_user_select_scopes_reads_for_user_tables passed!");
+}
+
+/// Smoke Test: USER isolation also holds for STREAM tables (direct and AS USER reads)
+#[ntest::timeout(120000)]
+#[test]
+fn smoke_as_user_stream_table_isolation() {
+    if !is_server_running() {
+        eprintln!("Skipping smoke_as_user_stream_table_isolation: server not running");
+        return;
+    }
+
+    let namespace = create_test_namespace("select_scope_stream");
+    let table = generate_unique_table("events");
+    let full_table = format!("{}.{}", namespace, table);
+
+    let service_user = generate_unique_namespace("service");
+    let user1 = generate_unique_namespace("user1");
+    let user2 = generate_unique_namespace("user2");
+    let password = "test_pass_123";
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .expect("Failed to create namespace");
+
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {} (id BIGINT PRIMARY KEY, payload VARCHAR) WITH (TYPE='STREAM', TTL_SECONDS=3600)",
+        full_table
+    ))
+    .expect("Failed to create stream table");
+
+    create_user_with_retry(&service_user, password, "service");
+    create_user_with_retry(&user1, password, "user");
+    create_user_with_retry(&user2, password, "user");
+
+    let user1_id = get_user_id_for_username(&user1).expect("Failed to get user1 user_id");
+    let user2_id = get_user_id_for_username(&user2).expect("Failed to get user2 user_id");
+
+    execute_sql_via_client_as(
+        &service_user,
+        password,
+        &format!(
+            "INSERT INTO {} (id, payload) VALUES (1, 'stream-u1') AS USER '{}'",
+            full_table, user1_id
+        ),
+    )
+    .expect("Failed to insert stream row for user1");
+
+    let user2_direct = execute_sql_via_client_as(
+        &user2,
+        password,
+        &format!("SELECT * FROM {}", full_table),
+    )
+    .expect("User2 stream select failed");
+    assert!(!user2_direct.contains("stream-u1"));
+
+    let service_as_user1 = execute_sql_via_client_as(
+        &service_user,
+        password,
+        &format!("SELECT * FROM {} AS USER '{}'", full_table, user1_id),
+    )
+    .expect("Service SELECT AS USER user1 on stream failed");
+    assert!(service_as_user1.contains("stream-u1"));
+
+    let service_as_user2 = execute_sql_via_client_as(
+        &service_user,
+        password,
+        &format!("SELECT * FROM {} AS USER '{}'", full_table, user2_id),
+    )
+    .expect("Service SELECT AS USER user2 on stream failed");
+    assert!(!service_as_user2.contains("stream-u1"));
+
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", service_user));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user1));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user2));
+    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+
+    println!("✅ smoke_as_user_stream_table_isolation passed!");
+}
