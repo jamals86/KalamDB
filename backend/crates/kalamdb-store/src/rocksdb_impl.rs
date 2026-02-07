@@ -5,7 +5,8 @@
 //! RocksDB column families.
 
 use crate::storage_trait::{Operation, Partition, Result, StorageBackend, StorageError};
-use rocksdb::{BoundColumnFamily, IteratorMode, Options, WriteOptions, DB};
+use kalamdb_configs::RocksDbSettings;
+use rocksdb::{BoundColumnFamily, Cache, IteratorMode, Options, PrefixRange, WriteOptions, DB};
 use std::sync::Arc;
 
 /// RocksDB implementation of the StorageBackend trait.
@@ -33,16 +34,33 @@ pub struct RocksDBBackend {
     db: Arc<DB>,
     /// Cached write options for fast writes (no sync)
     write_opts: WriteOptions,
+    settings: RocksDbSettings,
+    block_cache: Cache,
 }
 
 impl RocksDBBackend {
+    fn new_internal(
+        db: Arc<DB>,
+        sync_writes: bool,
+        disable_wal: bool,
+        settings: RocksDbSettings,
+    ) -> Self {
+        let mut write_opts = WriteOptions::default();
+        write_opts.set_sync(sync_writes);
+        write_opts.disable_wal(disable_wal);
+        let block_cache = Cache::new_lru_cache(settings.block_cache_size);
+        Self {
+            db,
+            write_opts,
+            settings,
+            block_cache,
+        }
+    }
+
     /// Creates a new RocksDB backend with the given database handle.
     /// Uses default write options (no sync for better write performance).
     pub fn new(db: Arc<DB>) -> Self {
-        let mut write_opts = WriteOptions::default();
-        write_opts.set_sync(false); // Don't sync on each write - WAL provides durability
-        write_opts.disable_wal(false); // Keep WAL enabled for crash safety
-        Self { db, write_opts }
+        Self::new_internal(db, false, false, RocksDbSettings::default())
     }
 
     /// Creates a new RocksDB backend with custom write options.
@@ -52,10 +70,17 @@ impl RocksDBBackend {
     /// * `sync_writes` - If true, sync to disk on each write (slower but more durable)
     /// * `disable_wal` - If true, disable WAL entirely (fastest but data loss on crash)
     pub fn with_options(db: Arc<DB>, sync_writes: bool, disable_wal: bool) -> Self {
-        let mut write_opts = WriteOptions::default();
-        write_opts.set_sync(sync_writes);
-        write_opts.disable_wal(disable_wal);
-        Self { db, write_opts }
+        Self::new_internal(db, sync_writes, disable_wal, RocksDbSettings::default())
+    }
+
+    /// Creates a new backend with write options and explicit RocksDB tuning settings.
+    pub fn with_options_and_settings(
+        db: Arc<DB>,
+        sync_writes: bool,
+        disable_wal: bool,
+        settings: RocksDbSettings,
+    ) -> Self {
+        Self::new_internal(db, sync_writes, disable_wal, settings)
     }
 
     /// Returns a reference to the underlying database.
@@ -146,6 +171,11 @@ impl StorageBackend for RocksDBBackend {
         // RocksDB iterator over the snapshot: bind snapshot to ReadOptions
         let mut readopts = rocksdb::ReadOptions::default();
         readopts.set_snapshot(&snapshot);
+        if let Some(p) = &prefix_vec {
+            // Bound scans to the prefix range at the engine layer to avoid
+            // walking unrelated keys in PK/index existence checks.
+            readopts.set_iterate_range(PrefixRange(p.clone()));
+        }
         let inner = self.db.iterator_cf_opt(&cf, readopts, iter_mode);
 
         struct SnapshotScanIter<'a, D: rocksdb::DBAccess> {
@@ -205,7 +235,16 @@ impl StorageBackend for RocksDBBackend {
 
         // Create new column family
         // Note: With multi-threaded-cf feature, create_cf takes &self and handles locking internally
-        let opts = Options::default();
+        let mut opts = Options::default();
+        opts.set_write_buffer_size(self.settings.write_buffer_size);
+        opts.set_max_write_buffer_number(self.settings.max_write_buffers);
+        opts.optimize_for_point_lookup(std::cmp::max(
+            1,
+            (self.settings.block_cache_size / (1024 * 1024)) as u64,
+        ));
+        opts.set_block_based_table_factory(&crate::rocksdb_init::create_block_options_with_cache(
+            &self.block_cache,
+        ));
         match self.db.create_cf(partition.name(), &opts) {
             Ok(()) => Ok(()),
             Err(e) => {

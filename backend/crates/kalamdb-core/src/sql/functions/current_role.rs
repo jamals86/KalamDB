@@ -47,7 +47,7 @@ impl ScalarUDFImpl for CurrentRoleFunction {
     }
 
     fn name(&self) -> &str {
-        "CURRENT_ROLE"
+        "kdb_current_role"
     }
 
     fn signature(&self) -> &Signature {
@@ -99,7 +99,7 @@ mod tests {
     fn test_current_role_function_creation() {
         let func_impl = CurrentRoleFunction::new();
         let func = ScalarUDF::new_from_impl(func_impl);
-        assert_eq!(func.name(), "CURRENT_ROLE");
+        assert_eq!(func.name(), "kdb_current_role");
     }
 
     #[test]
@@ -107,7 +107,7 @@ mod tests {
         let role = Role::User;
         let func_impl = CurrentRoleFunction::with_role(role);
         let func = ScalarUDF::new_from_impl(func_impl.clone());
-        assert_eq!(func.name(), "CURRENT_ROLE");
+        assert_eq!(func.name(), "kdb_current_role");
 
         // Verify configured role
         assert_eq!(func_impl.role, Some(role));

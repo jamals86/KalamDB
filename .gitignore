@@ -89,3 +89,4 @@ ui/package-lock.json
 /docker/utils/minio-data
 ui/package-lock.json
 /docker/utils/dav-data
+/backend/target_namespace_topic_fix

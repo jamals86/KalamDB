@@ -681,29 +681,6 @@ pub async fn pk_exists_in_cold(
         KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
     })?;
 
-    let list_result = match storage_cached.list(table_type, table_id, user_id).await {
-        Ok(result) => result,
-        Err(_) => {
-            log::trace!(
-                "[pk_exists_in_cold] No storage dir for {}.{} {} - PK not in cold",
-                namespace.as_str(),
-                table.as_str(),
-                scope_label
-            );
-            return Ok(false);
-        },
-    };
-
-    if list_result.is_empty() {
-        log::trace!(
-            "[pk_exists_in_cold] No files in storage for {}.{} {} - PK not in cold",
-            namespace.as_str(),
-            table.as_str(),
-            scope_label
-        );
-        return Ok(false);
-    }
-
     // 4. Load manifest from cache
     let manifest_service = core.manifest_service.clone();
     let cache_result = manifest_service.get_or_load(table_id, user_id);
@@ -731,11 +708,46 @@ pub async fn pk_exists_in_cold(
         },
     };
 
+    // Fast path: manifest loaded and has no cold segments.
+    // Avoid storage listing on hot-only write paths.
+    if let Some(ref m) = manifest {
+        if m.segments.is_empty() {
+            log::trace!(
+                "[pk_exists_in_cold] Manifest has no segments for {}.{} {} - PK not in cold",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(false);
+        }
+    }
+
     // 5. Use manifest to prune segments or list all Parquet files
     let planner = ManifestAccessPlanner::new();
     let files_to_scan: Vec<String> = if let Some(ref m) = manifest {
         let pruned_paths = planner.plan_by_pk_value(m, pk_column_id, pk_value);
         if pruned_paths.is_empty() {
+            let list_result = match storage_cached.list(table_type, table_id, user_id).await {
+                Ok(result) => result,
+                Err(_) => {
+                    log::trace!(
+                        "[pk_exists_in_cold] No storage dir for {}.{} {} - PK not in cold",
+                        namespace.as_str(),
+                        table.as_str(),
+                        scope_label
+                    );
+                    return Ok(false);
+                },
+            };
+            if list_result.is_empty() {
+                log::trace!(
+                    "[pk_exists_in_cold] No files in storage for {}.{} {} - PK not in cold",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                return Ok(false);
+            }
             log::trace!(
                 "[pk_exists_in_cold] Manifest pruning returned no candidate segments for PK {} on {}.{} {} - falling back to full parquet scan",
                 pk_value,
@@ -758,6 +770,27 @@ pub async fn pk_exists_in_cold(
         }
     } else {
         // No manifest - use all Parquet files from listing
+        let list_result = match storage_cached.list(table_type, table_id, user_id).await {
+            Ok(result) => result,
+            Err(_) => {
+                log::trace!(
+                    "[pk_exists_in_cold] No storage dir for {}.{} {} - PK not in cold",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                return Ok(false);
+            },
+        };
+        if list_result.is_empty() {
+            log::trace!(
+                "[pk_exists_in_cold] No files in storage for {}.{} {} - PK not in cold",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(false);
+        }
         collect_parquet_files_from_list(&list_result)
     };
 
@@ -868,29 +901,6 @@ pub async fn pk_exists_batch_in_cold(
         KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
     })?;
 
-    let list_result = match storage_cached.list(table_type, table_id, user_id).await {
-        Ok(result) => result,
-        Err(_) => {
-            log::trace!(
-                "[pk_exists_batch_in_cold] No storage dir for {}.{} {} - PK not in cold",
-                namespace.as_str(),
-                table.as_str(),
-                scope_label
-            );
-            return Ok(None);
-        },
-    };
-
-    if list_result.is_empty() {
-        log::trace!(
-            "[pk_exists_batch_in_cold] No files in storage for {}.{} {} - PK not in cold",
-            namespace.as_str(),
-            table.as_str(),
-            scope_label
-        );
-        return Ok(None);
-    }
-
     // 4. Load manifest from cache
     let manifest_service = core.manifest_service.clone();
     let cache_result = manifest_service.get_or_load(table_id, user_id);
@@ -918,6 +928,20 @@ pub async fn pk_exists_batch_in_cold(
         },
     };
 
+    // Fast path: manifest loaded and has no cold segments.
+    // Avoid storage listing on hot-only write paths.
+    if let Some(ref m) = manifest {
+        if m.segments.is_empty() {
+            log::trace!(
+                "[pk_exists_batch_in_cold] Manifest has no segments for {}.{} {} - PK not in cold",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(None);
+        }
+    }
+
     // 5. Determine files to scan - union of files that may contain any of the PK values
     let planner = ManifestAccessPlanner::new();
     let files_to_scan: Vec<String> = if let Some(ref m) = manifest {
@@ -928,6 +952,27 @@ pub async fn pk_exists_batch_in_cold(
             relevant_files.extend(pruned_paths);
         }
         if relevant_files.is_empty() {
+            let list_result = match storage_cached.list(table_type, table_id, user_id).await {
+                Ok(result) => result,
+                Err(_) => {
+                    log::trace!(
+                        "[pk_exists_batch_in_cold] No storage dir for {}.{} {} - PK not in cold",
+                        namespace.as_str(),
+                        table.as_str(),
+                        scope_label
+                    );
+                    return Ok(None);
+                },
+            };
+            if list_result.is_empty() {
+                log::trace!(
+                    "[pk_exists_batch_in_cold] No files in storage for {}.{} {} - PK not in cold",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                return Ok(None);
+            }
             log::trace!(
                 "[pk_exists_batch_in_cold] Manifest pruning returned no candidate segments for {}.{} {} - falling back to full parquet scan",
                 namespace.as_str(),
@@ -949,6 +994,27 @@ pub async fn pk_exists_batch_in_cold(
         }
     } else {
         // No manifest - use all Parquet files from listing
+        let list_result = match storage_cached.list(table_type, table_id, user_id).await {
+            Ok(result) => result,
+            Err(_) => {
+                log::trace!(
+                    "[pk_exists_batch_in_cold] No storage dir for {}.{} {} - PK not in cold",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                return Ok(None);
+            },
+        };
+        if list_result.is_empty() {
+            log::trace!(
+                "[pk_exists_batch_in_cold] No files in storage for {}.{} {} - PK not in cold",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(None);
+        }
         collect_parquet_files_from_list(&list_result)
     };
 

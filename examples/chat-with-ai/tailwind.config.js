@@ -64,7 +64,15 @@ module.exports = {
         },
         "typing-dot": {
           "0%, 60%, 100%": { opacity: "0.3", transform: "scale(0.8)" },
-          "30%": { opacity: "1", transform: "scale(1)" },
+          "30%": { opacity: "1", transform: "scale(1.2)" },
+        },
+        "pulse-text": {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.4" },
+        },
+        "pulse-slow": {
+          "0%, 100%": { opacity: "1", transform: "scale(1)" },
+          "50%": { opacity: "0.9", transform: "scale(1.05)" },
         },
         "fade-in": {
           from: { opacity: "0", transform: "translateY(8px)" },
@@ -83,6 +91,8 @@ module.exports = {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         "typing-dot": "typing-dot 1.4s infinite ease-in-out",
+        "pulse-text": "pulse-text 1.5s infinite ease-in-out",
+        "pulse-slow": "pulse-slow 2s infinite ease-in-out",
         "fade-in": "fade-in 0.3s ease-out",
         "slide-in": "slide-in 0.2s ease-out",
         "token-appear": "token-appear 0.15s ease-out",

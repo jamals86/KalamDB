@@ -1,4 +1,4 @@
-//! CURRENT_USER() function implementation
+//! KDB_CURRENT_USER() function implementation
 //!
 //! This module provides a user-defined function for DataFusion that returns the current username
 //! from the session context.
@@ -14,7 +14,7 @@ use kalamdb_session::SessionUserContext;
 use std::any::Any;
 use std::sync::Arc;
 
-/// CURRENT_USER() scalar function implementation
+/// KDB_CURRENT_USER() scalar function implementation
 ///
 /// Returns the username of the current session user.
 /// This function takes no arguments and returns a String (Utf8).
@@ -24,12 +24,12 @@ pub struct CurrentUserFunction {
 }
 
 impl CurrentUserFunction {
-    /// Create a new CURRENT_USER function with no user bound
+    /// Create a new KDB_CURRENT_USER function with no user bound
     pub fn new() -> Self {
         Self { username: None }
     }
 
-    /// Create a CURRENT_USER function bound to a specific username
+    /// Create a KDB_CURRENT_USER function bound to a specific username
     pub fn with_username(username: &UserName) -> Self {
         Self {
             username: Some(username.clone()),
@@ -49,7 +49,7 @@ impl ScalarUDFImpl for CurrentUserFunction {
     }
 
     fn name(&self) -> &str {
-        "CURRENT_USER"
+        "kdb_current_user"
     }
 
     fn signature(&self) -> &Signature {
@@ -64,7 +64,7 @@ impl ScalarUDFImpl for CurrentUserFunction {
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
         if !args.args.is_empty() {
-            return Err(DataFusionError::Plan("CURRENT_USER() takes no arguments".to_string()));
+            return Err(DataFusionError::Plan("KDB_CURRENT_USER() takes no arguments".to_string()));
         }
 
         let current_user = if let Some(username) = &self.username {
@@ -74,11 +74,13 @@ impl ScalarUDFImpl for CurrentUserFunction {
             if let Some(username) = &session_ctx.username {
                 username.as_str().to_string()
             } else {
-                session_ctx.user_id.as_str().to_string()
+                return Err(DataFusionError::Execution(
+                    "KDB_CURRENT_USER() failed: username not set in session context".to_string(),
+                ));
             }
         } else {
             return Err(DataFusionError::Execution(
-                "CURRENT_USER() failed: session user context not found".to_string(),
+                "KDB_CURRENT_USER() failed: session user context not found".to_string(),
             ));
         };
 
@@ -97,7 +99,7 @@ mod tests {
     fn test_current_user_function_creation() {
         let func_impl = CurrentUserFunction::new();
         let func = ScalarUDF::new_from_impl(func_impl);
-        assert_eq!(func.name(), "CURRENT_USER");
+        assert_eq!(func.name(), "kdb_current_user");
     }
 
     #[test]
@@ -105,7 +107,7 @@ mod tests {
         let username = UserName::new("test_user");
         let func_impl = CurrentUserFunction::with_username(&username);
         let func = ScalarUDF::new_from_impl(func_impl.clone());
-        assert_eq!(func.name(), "CURRENT_USER");
+        assert_eq!(func.name(), "kdb_current_user");
 
         // Verify configured username
         assert_eq!(func_impl.username, Some(username));

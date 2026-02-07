@@ -1,5 +1,3 @@
-use crate::sql::{CurrentRoleFunction, CurrentUserFunction, CurrentUserIdFunction};
-use datafusion::logical_expr::ScalarUDF;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::ReadContext;
 use kalamdb_commons::{NamespaceId, Role, UserId};
@@ -223,22 +221,6 @@ impl ExecutionContext {
         // Create SessionContext from the per-user state
         let ctx = SessionContext::new_with_state(session_state);
 
-        // Register CURRENT_USER() function with actual username (if available)
-        // This overrides the default CURRENT_USER() registered in base session
-        if let Some(ref username) = self.auth_session.user_context().username {
-            let current_user_fn = CurrentUserFunction::with_username(username);
-            ctx.register_udf(ScalarUDF::from(current_user_fn));
-        }
-
-        // Register CURRENT_USER_ID() function with user_id and role
-        let current_user_id_fn =
-            CurrentUserIdFunction::with_user(self.user_id(), self.auth_session.role());
-        ctx.register_udf(ScalarUDF::from(current_user_id_fn));
-
-        // Register CURRENT_ROLE() function with current role
-        let current_role_fn = CurrentRoleFunction::with_role(self.auth_session.role());
-        ctx.register_udf(ScalarUDF::from(current_role_fn));
-
         ctx
     }
 
@@ -261,18 +243,6 @@ impl ExecutionContext {
         }
 
         let ctx = SessionContext::new_with_state(session_state);
-
-        // Register CURRENT_USER() function (may not have username for effective user)
-        let current_user_fn = CurrentUserFunction::new();
-        ctx.register_udf(ScalarUDF::from(current_user_fn));
-
-        // Register CURRENT_USER_ID() function with user_id and role
-        let current_user_id_fn = CurrentUserIdFunction::with_user(&user_id, role);
-        ctx.register_udf(ScalarUDF::from(current_user_id_fn));
-
-        // Register CURRENT_ROLE() function with current role
-        let current_role_fn = CurrentRoleFunction::with_role(role);
-        ctx.register_udf(ScalarUDF::from(current_role_fn));
 
         ctx
     }

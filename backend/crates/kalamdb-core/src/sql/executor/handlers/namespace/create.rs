@@ -84,8 +84,14 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         let existing = namespaces_provider.get_namespace(&namespace_id)?;
 
         if existing.is_some() {
-            let message = format!("Namespace '{}' already exists", name);
-            return Ok(ExecutionResult::Success { message });
+            if statement.if_not_exists {
+                let message = format!("Namespace '{}' already exists", name);
+                return Ok(ExecutionResult::Success { message });
+            }
+            return Err(KalamDbError::AlreadyExists(format!(
+                "Namespace '{}' already exists",
+                name
+            )));
         }
 
         // In cluster mode, route through executor for Raft replication
@@ -134,6 +140,7 @@ mod tests {
     use crate::test_helpers::{create_test_session_simple, test_app_context_simple};
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
+    use kalamdb_system::Namespace;
 
     fn test_context() -> ExecutionContext {
         ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session_simple())
@@ -212,5 +219,45 @@ mod tests {
         } else {
             panic!("Expected Unauthorized error");
         }
+    }
+
+    #[tokio::test]
+    async fn test_typed_create_namespace_already_exists_returns_error_without_if_not_exists() {
+        let app_ctx = test_app_context_simple();
+        app_ctx
+            .system_tables()
+            .namespaces()
+            .create_namespace(Namespace::new("existing_ns"))
+            .expect("failed to seed namespace");
+
+        let handler = CreateNamespaceHandler::new(app_ctx);
+        let ctx = test_context();
+        let stmt = CreateNamespaceStatement {
+            name: NamespaceId::new("existing_ns"),
+            if_not_exists: false,
+        };
+
+        let result = handler.execute(stmt, vec![], &ctx).await;
+        assert!(matches!(result, Err(KalamDbError::AlreadyExists(_))));
+    }
+
+    #[tokio::test]
+    async fn test_typed_create_namespace_already_exists_succeeds_with_if_not_exists() {
+        let app_ctx = test_app_context_simple();
+        app_ctx
+            .system_tables()
+            .namespaces()
+            .create_namespace(Namespace::new("existing_ns_if"))
+            .expect("failed to seed namespace");
+
+        let handler = CreateNamespaceHandler::new(app_ctx);
+        let ctx = test_context();
+        let stmt = CreateNamespaceStatement {
+            name: NamespaceId::new("existing_ns_if"),
+            if_not_exists: true,
+        };
+
+        let result = handler.execute(stmt, vec![], &ctx).await;
+        assert!(result.is_ok());
     }
 }

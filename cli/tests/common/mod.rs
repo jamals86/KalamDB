@@ -2792,10 +2792,29 @@ pub fn execute_sql_via_client_as(
     execute_sql_via_client_as_with_args(username, password, sql, false)
 }
 
+fn execute_sql_via_client_as_with_params(
+    username: &str,
+    password: &str,
+    sql: &str,
+    params: Vec<serde_json::Value>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_client_internal(username, password, sql, Some(params), false)
+}
+
 fn execute_sql_via_client_as_with_args(
     username: &str,
     password: &str,
     sql: &str,
+    json_output: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_client_internal(username, password, sql, None, json_output)
+}
+
+fn execute_sql_via_client_internal(
+    username: &str,
+    password: &str,
+    sql: &str,
+    params: Option<Vec<serde_json::Value>>,
     json_output: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let runtime = get_shared_runtime();
@@ -2819,6 +2838,7 @@ fn execute_sql_via_client_as_with_args(
                     username: &str,
                     password: &str,
                     sql: &str,
+                    params: &Option<Vec<serde_json::Value>>,
                 ) -> Result<kalam_link::QueryResponse, Box<dyn std::error::Error + Send + Sync>>
                 {
                     let timeouts = KalamLinkTimeouts::builder()
@@ -2832,12 +2852,11 @@ fn execute_sql_via_client_as_with_args(
 
                     let client = if username == default_username() && password == default_password()
                     {
-                        // Reuse a shared root client to avoid per-query connection/auth overhead.
                         get_shared_root_client_for_url(url)
                     } else {
                         build_client_for_url_with_timeouts(url, username, password, timeouts)?
                     };
-                    let response = client.execute_query(sql, None, None, None).await?;
+                    let response = client.execute_query(sql, None, params.clone(), None).await?;
                     Ok(response)
                 }
 
@@ -2850,7 +2869,7 @@ fn execute_sql_via_client_as_with_args(
                         let mut retry_after_attempt = false;
                         for (idx, url) in urls.iter().enumerate() {
                             let response =
-                                execute_once(url, &username_owned, &password_owned, &sql).await;
+                                execute_once(url, &username_owned, &password_owned, &sql, &params).await;
 
                             match response {
                                 Ok(response) => {
@@ -2898,13 +2917,14 @@ fn execute_sql_via_client_as_with_args(
                             tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
                         }
                     }
+
                     return Err(last_err.unwrap_or_else(|| "All cluster nodes failed".into()));
                 }
 
                 let max_attempts = if is_cluster_mode() { 1 } else { 5 };
                 for attempt in 0..max_attempts {
                     let response =
-                        execute_once(&base_url, &username_owned, &password_owned, &sql).await?;
+                        execute_once(&base_url, &username_owned, &password_owned, &sql, &params).await?;
 
                     if response.success() {
                         return Ok::<_, Box<dyn std::error::Error + Send + Sync>>(response);
@@ -2939,7 +2959,9 @@ fn execute_sql_via_client_as_with_args(
 
     match result {
         Ok(response) => {
-            eprintln!("[TEST_CLIENT] Success in {:?}", duration);
+            if std::env::var_os("KALAMDB_TEST_CLIENT_TRACE").is_some() {
+                eprintln!("[TEST_CLIENT] Success in {:?}", duration);
+            }
 
             if json_output {
                 let output = serde_json::to_string_pretty(&response)?;
@@ -3032,6 +3054,14 @@ fn execute_sql_via_client_as_with_args(
 /// Execute SQL as root user via kalam-link client
 pub fn execute_sql_as_root_via_client(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
     execute_sql_via_client_as(default_username(), default_password(), sql)
+}
+
+/// Execute SQL as root user via kalam-link client with query parameters
+pub fn execute_sql_as_root_via_client_with_params(
+    sql: &str,
+    params: Vec<serde_json::Value>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_client_as_with_params(default_username(), default_password(), sql, params)
 }
 
 /// Execute SQL as root user via kalam-link client returning JSON output

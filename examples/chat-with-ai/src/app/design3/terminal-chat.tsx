@@ -13,7 +13,7 @@ interface TerminalChatProps {
 }
 
 export function TerminalChat({ conversation, onRefreshConversations }: TerminalChatProps) {
-  const { messages, loading, sending, uploadProgress, sendMessage } = useMessages(conversation.id);
+  const { messages, loading, sending, uploadProgress, waitingForAI, sendMessage } = useMessages(conversation.id);
   const { typingUsers, setTyping } = useTypingIndicator(conversation.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [newIds, setNewIds] = useState<Set<string>>(new Set());
@@ -48,7 +48,7 @@ export function TerminalChat({ conversation, onRefreshConversations }: TerminalC
     onRefreshConversations();
   }, [sendMessage, onRefreshConversations]);
 
-  const aiTyping = typingUsers.some(u => u.includes('ai') || u.includes('assistant'));
+  const aiTyping = typingUsers.some(u => u.includes('ai') || u.includes('assistant')) || waitingForAI;
 
   return (
     <div className="flex-1 flex flex-col">
@@ -90,9 +90,13 @@ export function TerminalChat({ conversation, onRefreshConversations }: TerminalC
           {aiTyping && (
             <div className="flex items-center gap-2 animate-fade-in text-xs">
               <span className="text-cyan-500">[ai]</span>
-              <span className="text-cyan-400/70">
-                <span className="inline-block animate-pulse">█</span>
+              <span className="text-cyan-400/90 font-medium animate-pulse-text">thinking</span>
+              <span className="text-cyan-400/70 flex gap-0.5">
+                <span className="animate-typing-dot" style={{ animationDelay: '0ms' }}>.</span>
+                <span className="animate-typing-dot" style={{ animationDelay: '200ms' }}>.</span>
+                <span className="animate-typing-dot" style={{ animationDelay: '400ms' }}>.</span>
               </span>
+              <span className="text-cyan-400/70 inline-block animate-pulse">█</span>
             </div>
           )}
         </div>

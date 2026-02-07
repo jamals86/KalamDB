@@ -59,7 +59,7 @@ impl ScalarUDFImpl for CurrentUserIdFunction {
     }
 
     fn name(&self) -> &str {
-        "CURRENT_USER_ID"
+        "kdb_current_user_id"
     }
 
     fn signature(&self) -> &Signature {
@@ -110,7 +110,7 @@ mod tests {
     fn test_current_user_id_function_creation() {
         let func_impl = CurrentUserIdFunction::new();
         let func = ScalarUDF::new_from_impl(func_impl);
-        assert_eq!(func.name(), "CURRENT_USER_ID");
+        assert_eq!(func.name(), "kdb_current_user_id");
     }
 
     #[test]
@@ -118,7 +118,7 @@ mod tests {
         let user_id = UserId::new("u_123");
         let func_impl = CurrentUserIdFunction::with_user(&user_id, Role::Dba);
         let func = ScalarUDF::new_from_impl(func_impl.clone());
-        assert_eq!(func.name(), "CURRENT_USER_ID");
+        assert_eq!(func.name(), "kdb_current_user_id");
 
         // Verify configured user_id and role
         assert_eq!(func_impl.user_id, Some(user_id));

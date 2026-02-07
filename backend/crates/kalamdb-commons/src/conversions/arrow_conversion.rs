@@ -81,9 +81,8 @@ impl ToArrowType for KalamDataType {
                 ArrowDataType::FixedSizeList(std::sync::Arc::new(field), *dim as i32)
             },
             KalamDataType::Uuid => {
-                // UUID is represented as canonical RFC 4122 text in SQL paths.
-                // Using Utf8 keeps DataFusion native DML (INSERT/UPDATE) compatible.
-                ArrowDataType::Utf8
+                // UUID stored as 16-byte binary (RFC 4122 format)
+                ArrowDataType::FixedSizeBinary(16)
             },
             KalamDataType::Decimal { precision, scale } => {
                 // DECIMAL → Decimal128

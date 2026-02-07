@@ -43,6 +43,7 @@ impl RocksDbInit {
         db_opts.set_write_buffer_size(self.settings.write_buffer_size);
         db_opts.set_max_write_buffer_number(self.settings.max_write_buffers);
         db_opts.set_max_background_jobs(self.settings.max_background_jobs);
+        db_opts.increase_parallelism(self.settings.max_background_jobs);
 
         // Limit open files to prevent "Too many open files" errors
         // This is critical when there are many SST files
@@ -53,9 +54,9 @@ impl RocksDbInit {
         // Example: 100 CFs with 4MB cache = still only 4MB total, not 400MB.
         // This is a key optimization for multi-tenant databases with many tables.
         let cache = Cache::new_lru_cache(self.settings.block_cache_size);
-        let mut block_opts = BlockBasedOptions::default();
-        block_opts.set_block_cache(&cache);
+        let block_opts = create_block_options_with_cache(&cache);
         db_opts.set_block_based_table_factory(&block_opts);
+        db_opts.optimize_for_point_lookup(block_cache_size_mb(self.settings.block_cache_size));
 
         // Determine existing CFs (or default if DB missing)
         let mut existing = match DB::list_cf(&db_opts, path) {
@@ -96,9 +97,8 @@ impl RocksDbInit {
             .iter()
             .map(|name| {
                 let mut cf_opts = Options::default();
-                // Use configured settings for each CF
-                cf_opts.set_write_buffer_size(self.settings.write_buffer_size);
-                cf_opts.set_max_write_buffer_number(self.settings.max_write_buffers);
+                apply_cf_settings(&mut cf_opts, &self.settings);
+                cf_opts.set_block_based_table_factory(&create_block_options_with_cache(&cache));
                 ColumnFamilyDescriptor::new(name, cf_opts)
             })
             .collect();
@@ -125,4 +125,26 @@ impl RocksDbInit {
 
     /// Close database handle (drop Arc)
     pub fn close(_db: Arc<DB>) {}
+}
+
+fn block_cache_size_mb(bytes: usize) -> u64 {
+    std::cmp::max(1, (bytes / (1024 * 1024)) as u64)
+}
+
+fn apply_cf_settings(cf_opts: &mut Options, settings: &RocksDbSettings) {
+    cf_opts.set_write_buffer_size(settings.write_buffer_size);
+    cf_opts.set_max_write_buffer_number(settings.max_write_buffers);
+    cf_opts.optimize_for_point_lookup(block_cache_size_mb(settings.block_cache_size));
+}
+
+pub(crate) fn create_block_options_with_cache(cache: &Cache) -> BlockBasedOptions {
+    let mut block_opts = BlockBasedOptions::default();
+    block_opts.set_block_cache(cache);
+    // Bloom + cached metadata improve point/prefix lookups used by PK checks.
+    block_opts.set_bloom_filter(10.0, false);
+    block_opts.set_cache_index_and_filter_blocks(true);
+    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+    block_opts.set_pin_top_level_index_and_filter(true);
+    block_opts.set_whole_key_filtering(true);
+    block_opts
 }

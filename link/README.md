@@ -101,7 +101,7 @@ const client = createClient({
 
 // Connect and query
 await client.connect();
-const result = await client.query('SELECT * FROM todos');
+const result = await client.query('SELECT * FROM todos WHERE owner_id = $1', [42]);
 console.log(result.results[0]?.rows);
 ```
 
@@ -457,4 +457,3 @@ See the main KalamDB repository for license information.
 ## Contributing
 
 See the main KalamDB repository for contribution guidelines.
-

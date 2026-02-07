@@ -822,4 +822,34 @@ mod tests {
         assert!(matches!(stmt.kind(), SqlStatementKind::Select));
         assert_eq!(stmt.as_str(), sql);
     }
+
+    #[test]
+    fn classify_select_with_current_user_call_defers_to_datafusion() {
+        let sql = "SELECT current_user()";
+        let stmt = SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
+            .expect("SELECT should classify without custom parser rejection");
+
+        assert!(matches!(stmt.kind(), SqlStatementKind::Select));
+        assert_eq!(stmt.as_str(), sql);
+    }
+
+    #[test]
+    fn classify_select_with_custom_udf_call_defers_to_datafusion() {
+        let sql = "SELECT SNOWFLAKE_ID()";
+        let stmt = SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
+            .expect("SELECT should classify without custom parser rejection");
+
+        assert!(matches!(stmt.kind(), SqlStatementKind::Select));
+        assert_eq!(stmt.as_str(), sql);
+    }
+
+    #[test]
+    fn classify_dml_defers_parse_errors_to_datafusion() {
+        let sql = "UPDATE default.tasks SET value = WHERE id = 1";
+        let stmt = SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
+            .expect("UPDATE should classify and let DataFusion own parse/plan errors");
+
+        assert!(matches!(stmt.kind(), SqlStatementKind::Update(_)));
+        assert_eq!(stmt.as_str(), sql);
+    }
 }

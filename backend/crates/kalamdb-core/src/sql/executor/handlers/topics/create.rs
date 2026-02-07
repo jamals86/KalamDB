@@ -4,7 +4,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
-use kalamdb_commons::models::TopicId;
+use kalamdb_commons::models::{NamespaceId, TopicId};
 use kalamdb_sql::ddl::CreateTopicStatement;
 use kalamdb_system::providers::topics::models::Topic;
 use std::sync::Arc;
@@ -18,6 +18,22 @@ impl CreateTopicHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
     }
+
+    fn extract_namespace_id(topic_name: &str) -> Result<NamespaceId, KalamDbError> {
+        let (namespace, topic_local_name) = topic_name.split_once('.').ok_or_else(|| {
+            KalamDbError::InvalidOperation(
+                "Topic name must be namespace-qualified: <namespace>.<topic>".to_string(),
+            )
+        })?;
+
+        if namespace.is_empty() || topic_local_name.is_empty() {
+            return Err(KalamDbError::InvalidOperation(
+                "Topic name must be namespace-qualified: <namespace>.<topic>".to_string(),
+            ));
+        }
+
+        Ok(NamespaceId::new(namespace))
+    }
 }
 
 #[async_trait::async_trait]
@@ -28,6 +44,15 @@ impl TypedStatementHandler<CreateTopicStatement> for CreateTopicHandler {
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        let namespace_id = Self::extract_namespace_id(&statement.topic_name)?;
+        let namespaces_provider = self.app_context.system_tables().namespaces();
+        if namespaces_provider.get_namespace_async(&namespace_id).await?.is_none() {
+            return Err(KalamDbError::NotFound(format!(
+                "Namespace '{}' does not exist",
+                namespace_id
+            )));
+        }
+
         let topic_id = TopicId::new(&statement.topic_name);
 
         // Access topics provider from system_tables
@@ -84,6 +109,7 @@ mod tests {
     use crate::test_helpers::{create_test_session_simple, test_app_context_simple};
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
+    use kalamdb_system::Namespace;
 
     fn test_context() -> ExecutionContext {
         ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session_simple())
@@ -92,11 +118,16 @@ mod tests {
     #[tokio::test]
     async fn test_create_topic() {
         let app_ctx = test_app_context_simple();
+        app_ctx
+            .system_tables()
+            .namespaces()
+            .create_namespace(Namespace::new("test"))
+            .expect("failed to seed namespace");
         let handler = CreateTopicHandler::new(app_ctx);
         let ctx = test_context();
 
         let stmt = CreateTopicStatement {
-            topic_name: "test_events".to_string(),
+            topic_name: "test.test_events".to_string(),
             partitions: Some(4),
         };
 
@@ -105,7 +136,7 @@ mod tests {
 
         match result.unwrap() {
             ExecutionResult::Success { message } => {
-                assert!(message.contains("test_events"));
+                assert!(message.contains("test.test_events"));
                 assert!(message.contains("4 partition"));
             },
             _ => panic!("Expected Success result"),
@@ -115,11 +146,16 @@ mod tests {
     #[tokio::test]
     async fn test_create_topic_duplicate() {
         let app_ctx = test_app_context_simple();
+        app_ctx
+            .system_tables()
+            .namespaces()
+            .create_namespace(Namespace::new("test"))
+            .expect("failed to seed namespace");
         let handler = CreateTopicHandler::new(app_ctx);
         let ctx = test_context();
 
         let stmt = CreateTopicStatement {
-            topic_name: "duplicate_topic".to_string(),
+            topic_name: "test.duplicate_topic".to_string(),
             partitions: None,
         };
 
@@ -131,5 +167,35 @@ mod tests {
         let result2 = handler.execute(stmt, vec![], &ctx).await;
         assert!(result2.is_err());
         assert!(matches!(result2.unwrap_err(), KalamDbError::AlreadyExists(_)));
+    }
+
+    #[tokio::test]
+    async fn test_create_topic_requires_namespace_qualified_name() {
+        let app_ctx = test_app_context_simple();
+        let handler = CreateTopicHandler::new(app_ctx);
+        let ctx = test_context();
+
+        let stmt = CreateTopicStatement {
+            topic_name: "topic_without_namespace".to_string(),
+            partitions: None,
+        };
+
+        let result = handler.execute(stmt, vec![], &ctx).await;
+        assert!(matches!(result, Err(KalamDbError::InvalidOperation(_))));
+    }
+
+    #[tokio::test]
+    async fn test_create_topic_requires_existing_namespace() {
+        let app_ctx = test_app_context_simple();
+        let handler = CreateTopicHandler::new(app_ctx);
+        let ctx = test_context();
+
+        let stmt = CreateTopicStatement {
+            topic_name: "missing_ns.events".to_string(),
+            partitions: None,
+        };
+
+        let result = handler.execute(stmt, vec![], &ctx).await;
+        assert!(matches!(result, Err(KalamDbError::NotFound(_))));
     }
 }

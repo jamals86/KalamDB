@@ -217,7 +217,27 @@ export function useMessages(conversationId: string | null) {
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  const [waitingForAI, setWaitingForAI] = useState(false);
   const unsubRef = useRef<Unsubscribe | null>(null);
+  const lastUserMessageTimeRef = useRef<number>(0);
+  const waitingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Timeout for waiting state (30 seconds)
+  useEffect(() => {
+    if (waitingForAI) {
+      waitingTimeoutRef.current = setTimeout(() => {
+        console.log('[useMessages] AI response timeout, clearing waiting state');
+        setWaitingForAI(false);
+      }, 30000);
+      
+      return () => {
+        if (waitingTimeoutRef.current) {
+          clearTimeout(waitingTimeoutRef.current);
+          waitingTimeoutRef.current = null;
+        }
+      };
+    }
+  }, [waitingForAI]);
 
   // Subscribe to messages for current conversation
   useEffect(() => {
@@ -226,6 +246,7 @@ export function useMessages(conversationId: string | null) {
       console.log('[useMessages] Not ready or no conversation selected');
       setMessages([]);
       setLoading(false);
+      setWaitingForAI(false); // Clear waiting state when changing conversations
       return;
     }
 
@@ -275,6 +296,16 @@ export function useMessages(conversationId: string | null) {
                 if ('change_type' in event) {
                   if (event.change_type === 'insert' || event.change_type === 'update') {
                     setMessages(prev => mergeMessageRows(prev, rows));
+                    // Check if AI responded - clear waiting state
+                    const hasNewAssistantMessage = rows.some(r => r.role === 'assistant');
+                    if (hasNewAssistantMessage) {
+                      console.log('[useMessages] AI response received, clearing waiting state');
+                      setWaitingForAI(false);
+                      if (waitingTimeoutRef.current) {
+                        clearTimeout(waitingTimeoutRef.current);
+                        waitingTimeoutRef.current = null;
+                      }
+                    }
                   } else if (event.change_type === 'delete') {
                     setMessages(prev => removeMessageRows(prev, rows));
                   }
@@ -400,6 +431,11 @@ export function useMessages(conversationId: string | null) {
         prev.map(m => m.client_id === clientId ? { ...m, status: 'sent' as const } : m)
       );
 
+      // Set waiting state to show AI typing indicator
+      lastUserMessageTimeRef.current = Date.now();
+      setWaitingForAI(true);
+      console.log('[useMessages] Waiting for AI response...');
+
       return optimisticMsg;
     } catch (err) {
       console.error('[useMessages] Failed to send message:', err);
@@ -407,6 +443,7 @@ export function useMessages(conversationId: string | null) {
         prev.map(m => m.status === 'sending' ? { ...m, status: 'error' as const } : m)
       );
       setError(err instanceof Error ? err.message : 'Failed to send message');
+      setWaitingForAI(false); // Clear waiting state on error
       return null;
     } finally {
       setSending(false);
@@ -426,7 +463,7 @@ export function useMessages(conversationId: string | null) {
     }
   }, [client, conversationId]);
 
-  return { messages, loading, error, sending, uploadProgress, sendMessage, refetch };
+  return { messages, loading, error, sending, uploadProgress, waitingForAI, sendMessage, refetch };
 }
 
 // ============================================================================

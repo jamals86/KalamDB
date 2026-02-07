@@ -17,7 +17,7 @@ interface ChatAreaProps {
 }
 
 export function ChatArea({ conversation, onRefreshConversations }: ChatAreaProps) {
-  const { messages, loading, sending, uploadProgress, sendMessage } = useMessages(conversation.id);
+  const { messages, loading, sending, uploadProgress, waitingForAI, sendMessage } = useMessages(conversation.id);
   const { typingUsers, setTyping } = useTypingIndicator(conversation.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [newMessageIds, setNewMessageIds] = useState<Set<string>>(new Set());
@@ -57,7 +57,7 @@ export function ChatArea({ conversation, onRefreshConversations }: ChatAreaProps
     onRefreshConversations();
   };
 
-  const aiTyping = typingUsers.some(u => u.includes('ai') || u.includes('assistant'));
+  const aiTyping = typingUsers.some(u => u.includes('ai') || u.includes('assistant')) || waitingForAI;
 
   return (
     <div className="flex-1 flex flex-col">
@@ -96,12 +96,12 @@ export function ChatArea({ conversation, onRefreshConversations }: ChatAreaProps
           {/* Typing indicator */}
           {aiTyping && (
             <div className="flex items-start gap-3 animate-fade-in">
-              <Avatar className="h-8 w-8">
+              <Avatar className="h-8 w-8 ring-2 ring-primary/20 animate-pulse-slow">
                 <AvatarFallback className="bg-primary/10 text-primary">
                   <Bot className="h-4 w-4" />
                 </AvatarFallback>
               </Avatar>
-              <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3">
+              <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
                 <TypingDots />
               </div>
             </div>

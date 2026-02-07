@@ -218,9 +218,10 @@ impl SqlExecutor {
             validate_params(&params)?;
         }
 
-        let session = exec_ctx.create_session_with_user();
-
+        // Parameterized DML: reuse cached template plans and only bind placeholders per request.
+        // This avoids reparsing/replanning the same INSERT/UPDATE/DELETE shape repeatedly.
         let df = if params.is_empty() {
+            let session = exec_ctx.create_session_with_user();
             match session.sql(sql).await {
                 Ok(df) => df,
                 Err(e) => {
@@ -244,34 +245,104 @@ impl SqlExecutor {
                 },
             }
         } else {
-            let df = match session.sql(sql).await {
-                Ok(df) => df,
-                Err(e) => {
-                    if Self::is_table_not_found_error(&e) {
-                        if let Err(load_err) = self.load_existing_tables().await {
-                            log::warn!(
-                                target: "sql::dml",
-                                "⚠️  Failed to reload table providers after missing table in DML | sql='{}' | error='{}'",
-                                sql,
-                                load_err
-                            );
-                        }
-                        let retry_session = exec_ctx.create_session_with_user();
-                        retry_session
-                            .sql(sql)
-                            .await
-                            .map_err(|e2| self.log_sql_error(sql, exec_ctx, e2))?
-                    } else {
-                        return Err(self.log_sql_error(sql, exec_ctx, e));
-                    }
-                },
-            };
+            let cache_key =
+                PlanCacheKey::new(exec_ctx.default_namespace().clone(), exec_ctx.user_role(), sql);
+            let session = exec_ctx.create_session_with_user();
 
-            let bound_plan = replace_placeholders_in_plan(df.logical_plan().clone(), &params)?;
-            session
-                .execute_logical_plan(bound_plan)
-                .await
-                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
+            if let Some(template_plan) = self.plan_cache.get(&cache_key) {
+                let bound_plan = replace_placeholders_in_plan((*template_plan).clone(), &params)?;
+                match session.execute_logical_plan(bound_plan).await {
+                    Ok(df) => df,
+                    Err(e) => {
+                        log::warn!(
+                            target: "sql::dml",
+                            "Failed to execute cached DML plan, reparsing SQL: {}",
+                            e
+                        );
+
+                        match session.sql(sql).await {
+                            Ok(planned_df) => {
+                                let template_plan = planned_df.logical_plan().clone();
+                                self.plan_cache.insert(cache_key.clone(), template_plan.clone());
+                                let rebound_plan =
+                                    replace_placeholders_in_plan(template_plan, &params)?;
+                                session
+                                    .execute_logical_plan(rebound_plan)
+                                    .await
+                                    .map_err(|e2| KalamDbError::ExecutionError(e2.to_string()))?
+                            },
+                            Err(e) => {
+                                if Self::is_table_not_found_error(&e) {
+                                    if let Err(load_err) = self.load_existing_tables().await {
+                                        log::warn!(
+                                            target: "sql::dml",
+                                            "⚠️  Failed to reload table providers after missing table in DML | sql='{}' | error='{}'",
+                                            sql,
+                                            load_err
+                                        );
+                                    }
+                                    let retry_session = exec_ctx.create_session_with_user();
+                                    let retry_df = retry_session
+                                        .sql(sql)
+                                        .await
+                                        .map_err(|e2| self.log_sql_error(sql, exec_ctx, e2))?;
+                                    let template_plan = retry_df.logical_plan().clone();
+                                    self.plan_cache.insert(cache_key.clone(), template_plan.clone());
+                                    let rebound_plan =
+                                        replace_placeholders_in_plan(template_plan, &params)?;
+                                    retry_session
+                                        .execute_logical_plan(rebound_plan)
+                                        .await
+                                        .map_err(|e3| {
+                                            KalamDbError::ExecutionError(e3.to_string())
+                                        })?
+                                } else {
+                                    return Err(self.log_sql_error(sql, exec_ctx, e));
+                                }
+                            },
+                        }
+                    },
+                }
+            } else {
+                match session.sql(sql).await {
+                    Ok(planned_df) => {
+                        let template_plan = planned_df.logical_plan().clone();
+                        self.plan_cache.insert(cache_key.clone(), template_plan.clone());
+                        let bound_plan = replace_placeholders_in_plan(template_plan, &params)?;
+                        session
+                            .execute_logical_plan(bound_plan)
+                            .await
+                            .map_err(|e2| KalamDbError::ExecutionError(e2.to_string()))?
+                    },
+                    Err(e) => {
+                        if Self::is_table_not_found_error(&e) {
+                            if let Err(load_err) = self.load_existing_tables().await {
+                                log::warn!(
+                                    target: "sql::dml",
+                                    "⚠️  Failed to reload table providers after missing table in DML | sql='{}' | error='{}'",
+                                    sql,
+                                    load_err
+                                );
+                            }
+                            let retry_session = exec_ctx.create_session_with_user();
+                            let retry_df = retry_session
+                                .sql(sql)
+                                .await
+                                .map_err(|e2| self.log_sql_error(sql, exec_ctx, e2))?;
+
+                            let template_plan = retry_df.logical_plan().clone();
+                            self.plan_cache.insert(cache_key.clone(), template_plan.clone());
+                            let bound_plan = replace_placeholders_in_plan(template_plan, &params)?;
+                            retry_session
+                                .execute_logical_plan(bound_plan)
+                                .await
+                                .map_err(|e3| KalamDbError::ExecutionError(e3.to_string()))?
+                        } else {
+                            return Err(self.log_sql_error(sql, exec_ctx, e));
+                        }
+                    },
+                }
+            }
         };
 
         let batches = df.collect().await.map_err(|e| {

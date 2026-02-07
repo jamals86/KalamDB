@@ -15,7 +15,7 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ conversation, onRefreshConversations }: ChatPanelProps) {
-  const { messages, loading, sending, uploadProgress, sendMessage } = useMessages(conversation.id);
+  const { messages, loading, sending, uploadProgress, waitingForAI, sendMessage } = useMessages(conversation.id);
   const { typingUsers, setTyping } = useTypingIndicator(conversation.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [newMessageIds, setNewMessageIds] = useState<Set<string>>(new Set());
@@ -50,7 +50,7 @@ export function ChatPanel({ conversation, onRefreshConversations }: ChatPanelPro
     onRefreshConversations();
   };
 
-  const aiTyping = typingUsers.some(u => u.includes('ai') || u.includes('assistant'));
+  const aiTyping = typingUsers.some(u => u.includes('ai') || u.includes('assistant')) || waitingForAI;
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)]">
@@ -80,10 +80,10 @@ export function ChatPanel({ conversation, onRefreshConversations }: ChatPanelPro
 
           {aiTyping && (
             <div className="flex items-center gap-3 animate-fade-in">
-              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-400 to-rose-400 flex items-center justify-center">
+              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-400 to-rose-400 flex items-center justify-center animate-pulse-slow shadow-lg shadow-violet-400/30">
                 <Sparkles className="h-3.5 w-3.5 text-white" />
               </div>
-              <div className="bg-muted/60 backdrop-blur-sm rounded-2xl px-4 py-2.5 border border-border/50">
+              <div className="bg-muted/60 backdrop-blur-sm rounded-2xl px-4 py-2.5 border border-border/50 shadow-sm">
                 <TypingDots />
               </div>
             </div>

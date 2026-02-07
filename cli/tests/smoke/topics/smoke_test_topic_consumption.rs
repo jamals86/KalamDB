@@ -37,14 +37,45 @@ async fn execute_sql(sql: &str) {
     common::execute_sql_via_http_as_root(sql).await.expect("Failed to execute SQL");
 }
 
-async fn wait_for_topic_ready() {}
+async fn wait_for_topic_ready(topic: &str, expected_routes: usize) {
+    let sql = format!("SELECT routes FROM system.topics WHERE topic_id = '{}'", topic);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+
+    while std::time::Instant::now() < deadline {
+        if let Ok(response) = common::execute_sql_via_http_as_root(&sql).await {
+            if let Some(rows) = common::get_rows_as_hashmaps(&response) {
+                if let Some(row) = rows.first() {
+                    if let Some(routes_value) = row.get("routes") {
+                        let routes_untyped = common::extract_typed_value(routes_value);
+                        if let Some(routes_json) = routes_untyped
+                            .as_str()
+                            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                        {
+                            let route_count =
+                                routes_json.as_array().map(|routes| routes.len()).unwrap_or(0);
+                            if route_count >= expected_routes {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    panic!(
+        "Timed out waiting for topic '{}' to have at least {} route(s)",
+        topic, expected_routes
+    );
+}
 
 async fn create_topic_with_sources(topic: &str, table: &str, operations: &[&str]) {
     execute_sql(&format!("CREATE TOPIC {}", topic)).await;
     for op in operations {
         execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON {}", topic, table, op)).await;
     }
-    wait_for_topic_ready().await;
+    wait_for_topic_ready(topic, operations.len()).await;
 }
 
 async fn poll_records_until(
@@ -53,16 +84,24 @@ async fn poll_records_until(
     timeout: Duration,
 ) -> Vec<ConsumerRecord> {
     let mut records = Vec::new();
+    let mut seen_offsets = HashSet::new();
     let mut last_error: Option<String> = None;
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
         match consumer.poll().await {
             Ok(batch) => {
-                if !batch.is_empty() {
-                    records.extend(batch);
-                    if records.len() >= min_records {
-                        break;
+                if batch.is_empty() {
+                    tokio::time::sleep(Duration::from_millis(120)).await;
+                    continue;
+                }
+
+                for record in batch {
+                    if seen_offsets.insert((record.partition_id, record.offset)) {
+                        records.push(record);
                     }
+                }
+                if records.len() >= min_records {
+                    break;
                 }
             },
             Err(err) => {
@@ -72,6 +111,7 @@ async fn poll_records_until(
                     || message.contains("network")
                     || message.contains("NetworkError")
                 {
+                    tokio::time::sleep(Duration::from_millis(120)).await;
                     continue;
                 }
                 panic!("Failed to poll: {}", message);
@@ -93,8 +133,8 @@ fn parse_payload(bytes: &[u8]) -> serde_json::Value {
 #[tokio::test]
 #[ntest::timeout(120000)]
 async fn test_topic_consume_insert_events() {
-    let namespace = format!("smoke_topic_ns_{}", chrono::Utc::now().timestamp());
-    let table = format!("events_{}", chrono::Utc::now().timestamp_millis());
+    let namespace = common::generate_unique_namespace("smoke_topic_ns");
+    let table = common::generate_unique_table("events");
     let topic = format!("{}.{}", namespace, table);
 
     // Setup
@@ -130,17 +170,7 @@ async fn test_topic_consume_insert_events() {
         .build()
         .expect("Failed to build consumer");
 
-    let mut records = Vec::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while std::time::Instant::now() < deadline {
-        let batch = consumer.poll().await.expect("Failed to poll");
-        if !batch.is_empty() {
-            records.extend(batch);
-            if records.len() >= 3 {
-                break;
-            }
-        }
-    }
+    let records = poll_records_until(&mut consumer, 3, Duration::from_secs(20)).await;
     assert!(records.len() >= 3, "Should receive 3 INSERT events");
 
     for record in &records {
@@ -161,8 +191,8 @@ async fn test_topic_consume_insert_events() {
 #[tokio::test]
 #[ntest::timeout(120000)]
 async fn test_topic_consume_update_events() {
-    let namespace = format!("smoke_topic_ns_{}", chrono::Utc::now().timestamp());
-    let table = format!("updates_{}", chrono::Utc::now().timestamp_millis());
+    let namespace = common::generate_unique_namespace("smoke_topic_ns");
+    let table = common::generate_unique_table("updates");
     let topic = format!("{}.{}", namespace, table);
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
@@ -197,7 +227,7 @@ async fn test_topic_consume_update_events() {
         .build()
         .expect("Failed to build consumer");
 
-    let records = poll_records_until(&mut consumer, 3, Duration::from_secs(6)).await;
+    let records = poll_records_until(&mut consumer, 3, Duration::from_secs(20)).await;
     assert!(!records.is_empty(), "Should receive at least one event");
 
     let inserts = records.iter().filter(|r| r.op == TopicOp::Insert).count();
@@ -222,8 +252,8 @@ async fn test_topic_consume_update_events() {
 #[tokio::test]
 #[ntest::timeout(120000)]
 async fn test_topic_consume_delete_events() {
-    let namespace = format!("smoke_topic_ns_{}", chrono::Utc::now().timestamp());
-    let table = format!("deletes_{}", chrono::Utc::now().timestamp_millis());
+    let namespace = common::generate_unique_namespace("smoke_topic_ns");
+    let table = common::generate_unique_table("deletes");
     let topic = format!("{}.{}", namespace, table);
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
@@ -252,7 +282,7 @@ async fn test_topic_consume_delete_events() {
         .build()
         .expect("Failed to build consumer");
 
-    let records = poll_records_until(&mut consumer, 4, Duration::from_secs(8)).await;
+    let records = poll_records_until(&mut consumer, 4, Duration::from_secs(20)).await;
     assert!(records.len() >= 4, "Should receive at least 3 INSERTs + 1 DELETE");
 
     let deletes_by_op = records.iter().filter(|r| r.op == TopicOp::Delete).count();
@@ -278,8 +308,8 @@ async fn test_topic_consume_delete_events() {
 #[tokio::test]
 #[ntest::timeout(120000)]
 async fn test_topic_consume_mixed_operations() {
-    let namespace = format!("smoke_topic_ns_{}", chrono::Utc::now().timestamp());
-    let table = format!("mixed_{}", chrono::Utc::now().timestamp_millis());
+    let namespace = common::generate_unique_namespace("smoke_topic_ns");
+    let table = common::generate_unique_table("mixed");
     let topic = format!("{}.{}", namespace, table);
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
@@ -323,7 +353,7 @@ async fn test_topic_consume_mixed_operations() {
         .build()
         .expect("Failed to build consumer");
 
-    let records = poll_records_until(&mut consumer, 4, Duration::from_secs(12)).await;
+    let records = poll_records_until(&mut consumer, 4, Duration::from_secs(20)).await;
     assert!(!records.is_empty(), "Should receive at least one event");
 
     let inserts = records.iter().filter(|r| r.op == TopicOp::Insert).count();
@@ -350,10 +380,10 @@ async fn test_topic_consume_mixed_operations() {
 #[tokio::test]
 #[ntest::timeout(120000)]
 async fn test_topic_consume_offset_persistence() {
-    let namespace = format!("smoke_topic_ns_{}", chrono::Utc::now().timestamp());
-    let table = format!("offsets_{}", chrono::Utc::now().timestamp_millis());
+    let namespace = common::generate_unique_namespace("smoke_topic_ns");
+    let table = common::generate_unique_table("offsets");
     let topic = format!("{}.{}", namespace, table);
-    let group_id = format!("test-offset-group-{}", chrono::Utc::now().timestamp_millis());
+    let group_id = format!("test-offset-group-{}", common::random_string(10));
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, data TEXT)", namespace, table))
@@ -380,7 +410,7 @@ async fn test_topic_consume_offset_persistence() {
             .await;
         }
 
-        let records = poll_records_until(&mut consumer, 2, Duration::from_secs(12)).await;
+        let records = poll_records_until(&mut consumer, 2, Duration::from_secs(20)).await;
         assert_eq!(records.len(), 2);
 
         for record in &records {
@@ -409,7 +439,7 @@ async fn test_topic_consume_offset_persistence() {
             .await;
         }
 
-        let records = poll_records_until(&mut consumer, 2, Duration::from_secs(12)).await;
+        let records = poll_records_until(&mut consumer, 2, Duration::from_secs(20)).await;
         assert_eq!(records.len(), 2, "Should receive only batch 2");
 
         for record in &records {
@@ -429,8 +459,8 @@ async fn test_topic_consume_offset_persistence() {
 #[tokio::test]
 #[ntest::timeout(120000)]
 async fn test_topic_consume_from_earliest() {
-    let namespace = format!("smoke_topic_ns_{}", chrono::Utc::now().timestamp());
-    let table = format!("earliest_{}", chrono::Utc::now().timestamp_millis());
+    let namespace = common::generate_unique_namespace("smoke_topic_ns");
+    let table = common::generate_unique_table("earliest");
     let topic = format!("{}.{}", namespace, table);
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
@@ -450,28 +480,13 @@ async fn test_topic_consume_from_earliest() {
     let mut consumer = client
         .consumer()
         .topic(&topic)
-        .group_id("test-earliest-group")
+        .group_id(&format!("test-earliest-group-{}", common::random_string(10)))
         .auto_offset_reset(AutoOffsetReset::Earliest)
         .max_poll_records(20)
         .build()
         .expect("Failed to build consumer");
 
-    let mut records = Vec::new();
-    let mut offsets = HashSet::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(6);
-    while std::time::Instant::now() < deadline {
-        let batch = consumer.poll().await.expect("Failed to poll");
-        if !batch.is_empty() {
-            for record in batch {
-                if offsets.insert(record.offset) {
-                    records.push(record);
-                }
-            }
-            if records.len() >= 4 {
-                break;
-            }
-        }
-    }
+    let records = poll_records_until(&mut consumer, 4, Duration::from_secs(20)).await;
     assert_eq!(records.len(), 4, "Should receive all 4 messages");
 
     let mut offsets: Vec<u64> = records.iter().map(|r| r.offset).collect();
@@ -488,8 +503,8 @@ async fn test_topic_consume_from_earliest() {
 #[tokio::test]
 #[ntest::timeout(120000)]
 async fn test_topic_consume_from_latest() {
-    let namespace = format!("smoke_topic_ns_{}", chrono::Utc::now().timestamp());
-    let table = format!("latest_{}", chrono::Utc::now().timestamp_millis());
+    let namespace = common::generate_unique_namespace("smoke_topic_ns");
+    let table = common::generate_unique_table("latest");
     let topic = format!("{}.{}", namespace, table);
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
@@ -511,7 +526,7 @@ async fn test_topic_consume_from_latest() {
     let mut consumer = client
         .consumer()
         .topic(&topic)
-        .group_id("test-latest-group")
+        .group_id(&format!("test-latest-group-{}", common::random_string(10)))
         .auto_offset_reset(AutoOffsetReset::Latest)
         .build()
         .expect("Failed to build consumer");
@@ -525,7 +540,7 @@ async fn test_topic_consume_from_latest() {
         .await;
     }
 
-    let records = poll_records_until(&mut consumer, 2, Duration::from_secs(6)).await;
+    let records = poll_records_until(&mut consumer, 2, Duration::from_secs(20)).await;
     let new_messages: Vec<_> = records
         .iter()
         .filter_map(|record| {

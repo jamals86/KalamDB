@@ -63,7 +63,7 @@ impl ScalarUDFImpl for UlidFunction {
     }
 
     fn name(&self) -> &str {
-        "ULID"
+        "ulid"
     }
 
     fn signature(&self) -> &Signature {
@@ -99,7 +99,7 @@ mod tests {
     fn test_ulid_function_creation() {
         let func_impl = UlidFunction::new();
         let func = ScalarUDF::new_from_impl(func_impl);
-        assert_eq!(func.name(), "ULID");
+        assert_eq!(func.name(), "ulid");
     }
 
     #[test]
