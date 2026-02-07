@@ -54,6 +54,7 @@ pub use role::Role;
 pub use schemas::{TableAccess, TableName};
 pub use topic_op::TopicOp;
 pub use user_name::UserName;
+pub use user_name::UserName as Username;
 
 #[cfg(feature = "full")]
 pub use rows::{KTableRow, StreamTableRow, UserTableRow};

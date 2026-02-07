@@ -16,7 +16,7 @@ use kalamdb_commons::models::AuditLogId;
 /// * `action` - Action performed (e.g., "CREATE_TABLE", "DROP_USER")
 /// * `target` - Target of the action (e.g., "default.users", "user:alice")
 /// * `details` - Optional JSON details about the operation
-/// * `subject_user_id` - Optional subject for AS USER impersonation (None for direct operations)
+/// * `subject_user_id` - Optional subject for impersonation (None for direct operations)
 ///
 /// # Returns
 /// * `AuditLogEntry` - Populated audit log entry
@@ -68,7 +68,7 @@ pub fn create_audit_entry(
 /// * `object_type` - Object type (TABLE, NAMESPACE, STORAGE, USER)
 /// * `object_name` - Fully qualified object name
 /// * `details` - Optional operation details
-/// * `subject_user_id` - Optional subject for AS USER impersonation
+/// * `subject_user_id` - Optional subject for impersonation
 pub fn log_ddl_operation(
     context: &ExecutionContext,
     operation: &str,
@@ -90,7 +90,7 @@ pub fn log_ddl_operation(
 /// * `query_type` - Query type (SELECT, DESCRIBE, SHOW)
 /// * `target` - Query target
 /// * `took` - Execution time in milliseconds
-/// * `subject_user_id` - Optional subject for AS USER impersonation
+/// * `subject_user_id` - Optional subject for impersonation
 pub fn log_query_operation(
     context: &ExecutionContext,
     query_type: &str,

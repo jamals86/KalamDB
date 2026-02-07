@@ -1,0 +1,426 @@
+//! Integration tests for SQL context functions: CURRENT_USER(), CURRENT_USER_ID(), CURRENT_ROLE()
+//!
+//! These tests verify that the context functions work end-to-end with ExecutionContext.
+
+use datafusion::prelude::SessionContext;
+use kalamdb_commons::{Role, UserId, UserName};
+use kalamdb_core::sql::context::ExecutionContext;
+use kalamdb_session::AuthSession;
+use std::sync::Arc;
+
+/// Helper to create a simple test session
+fn create_test_session() -> Arc<SessionContext> {
+    Arc::new(SessionContext::new())
+}
+
+#[tokio::test]
+async fn test_current_user_with_username() {
+    let username = UserName::new("alice");
+    let user_id = UserId::new("u_alice");
+    let role = Role::User;
+
+    // Create AuthSession with username
+    let auth_session = AuthSession::with_username_and_auth_details(
+        user_id.clone(),
+        username.clone(),
+        role,
+        kalamdb_commons::models::ConnectionInfo::new(None),
+        kalamdb_session::AuthMethod::Bearer,
+    );
+
+    // Create ExecutionContext
+    let exec_ctx = ExecutionContext::from_session(auth_session, create_test_session());
+
+    // Create session with user
+    let session = exec_ctx.create_session_with_user();
+
+    // Execute CURRENT_USER() - should return username
+    let result = session.sql("SELECT CURRENT_USER() AS username").await;
+    assert!(result.is_ok(), "Query failed: {:?}", result.err());
+
+    let df = result.unwrap();
+    let batches = df.collect().await.unwrap();
+
+    assert_eq!(batches.len(), 1);
+    let batch = &batches[0];
+    assert_eq!(batch.num_rows(), 1);
+    assert_eq!(batch.num_columns(), 1);
+
+    // Verify the returned value is the username
+    let column = batch.column(0);
+    let string_array = column
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(string_array.value(0), "alice");
+}
+
+#[tokio::test]
+async fn test_current_user_without_username_fails() {
+    let user_id = UserId::new("u_bob");
+    let role = Role::User;
+
+    // Create ExecutionContext without username
+    let exec_ctx = ExecutionContext::new(user_id, role, create_test_session());
+
+    // Create session with user
+    let session = exec_ctx.create_session_with_user();
+
+    // Execute CURRENT_USER() - should fail because username is not set
+    let result = session.sql("SELECT CURRENT_USER() AS username").await;
+    assert!(result.is_ok(), "Query parsing failed");
+
+    let df = result.unwrap();
+    let batches_result = df.collect().await;
+    assert!(
+        batches_result.is_err(),
+        "Expected error when username is not set"
+    );
+}
+
+#[tokio::test]
+async fn test_current_user_id_with_dba_role() {
+    let username = UserName::new("admin");
+    let user_id = UserId::new("u_admin");
+    let role = Role::Dba;
+
+    // Create AuthSession with username
+    let auth_session = AuthSession::with_username_and_auth_details(
+        user_id.clone(),
+        username.clone(),
+        role,
+        kalamdb_commons::models::ConnectionInfo::new(None),
+        kalamdb_session::AuthMethod::Bearer,
+    );
+
+    // Create ExecutionContext
+    let exec_ctx = ExecutionContext::from_session(auth_session, create_test_session());
+
+    // Create session with user
+    let session = exec_ctx.create_session_with_user();
+
+    // Execute CURRENT_USER_ID() - should return user_id (DBA role is authorized)
+    let result = session.sql("SELECT CURRENT_USER_ID() AS user_id").await;
+    assert!(result.is_ok(), "Query failed: {:?}", result.err());
+
+    let df = result.unwrap();
+    let batches = df.collect().await.unwrap();
+
+    assert_eq!(batches.len(), 1);
+    let batch = &batches[0];
+    assert_eq!(batch.num_rows(), 1);
+
+    // Verify the returned value is the user_id
+    let column = batch.column(0);
+    let string_array = column
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(string_array.value(0), "u_admin");
+}
+
+#[tokio::test]
+async fn test_current_user_id_with_system_role() {
+    let user_id = UserId::new("system");
+    let role = Role::System;
+
+    // Create ExecutionContext
+    let exec_ctx = ExecutionContext::new(user_id.clone(), role, create_test_session());
+
+    // Create session with user
+    let session = exec_ctx.create_session_with_user();
+
+    // Execute CURRENT_USER_ID() - should work (System role is authorized)
+    let result = session.sql("SELECT CURRENT_USER_ID() AS user_id").await;
+    assert!(result.is_ok(), "Query failed: {:?}", result.err());
+
+    let df = result.unwrap();
+    let batches = df.collect().await.unwrap();
+
+    assert_eq!(batches.len(), 1);
+    let batch = &batches[0];
+    assert_eq!(batch.num_rows(), 1);
+
+    // Verify the returned value is the user_id
+    let column = batch.column(0);
+    let string_array = column
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(string_array.value(0), "system");
+}
+
+#[tokio::test]
+async fn test_current_user_id_with_service_role() {
+    let user_id = UserId::new("u_service");
+    let role = Role::Service;
+
+    // Create ExecutionContext
+    let exec_ctx = ExecutionContext::new(user_id.clone(), role, create_test_session());
+
+    // Create session with user
+    let session = exec_ctx.create_session_with_user();
+
+    // Execute CURRENT_USER_ID() - should work (Service role is authorized)
+    let result = session.sql("SELECT CURRENT_USER_ID() AS user_id").await;
+    assert!(result.is_ok(), "Query failed: {:?}", result.err());
+
+    let df = result.unwrap();
+    let batches = df.collect().await.unwrap();
+
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].num_rows(), 1);
+
+    let column = batches[0].column(0);
+    let string_array = column
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(string_array.value(0), "u_service");
+}
+
+#[tokio::test]
+async fn test_current_user_id_with_user_role_fails() {
+    let user_id = UserId::new("u_regular");
+    let role = Role::User;
+
+    // Create ExecutionContext
+    let exec_ctx = ExecutionContext::new(user_id, role, create_test_session());
+
+    // Create session with user
+    let session = exec_ctx.create_session_with_user();
+
+    // Execute CURRENT_USER_ID() - should fail (User role not authorized)
+    let result = session.sql("SELECT CURRENT_USER_ID() AS user_id").await;
+    assert!(result.is_ok(), "Query parsing failed");
+
+    let df = result.unwrap();
+    let batches_result = df.collect().await;
+    assert!(
+        batches_result.is_err(),
+        "Expected error for unauthorized User role"
+    );
+
+    let err = batches_result.unwrap_err();
+    assert!(
+        err.to_string().contains("system, dba, or service"),
+        "Error message should mention required roles: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_current_role_user() {
+    let username = UserName::new("regular");
+    let user_id = UserId::new("u_regular");
+    let role = Role::User;
+
+    // Create AuthSession
+    let auth_session = AuthSession::with_username_and_auth_details(
+        user_id,
+        username,
+        role,
+        kalamdb_commons::models::ConnectionInfo::new(None),
+        kalamdb_session::AuthMethod::Bearer,
+    );
+
+    // Create ExecutionContext
+    let exec_ctx = ExecutionContext::from_session(auth_session, create_test_session());
+
+    // Create session
+    let session = exec_ctx.create_session_with_user();
+
+    // Execute CURRENT_ROLE()
+    let result = session.sql("SELECT CURRENT_ROLE() AS role").await;
+    assert!(result.is_ok(), "Query failed: {:?}", result.err());
+
+    let df = result.unwrap();
+    let batches = df.collect().await.unwrap();
+
+    assert_eq!(batches.len(), 1);
+    let batch = &batches[0];
+    assert_eq!(batch.num_rows(), 1);
+
+    // Verify the returned value is "user"
+    let column = batch.column(0);
+    let string_array = column
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(string_array.value(0), "user");
+}
+
+#[tokio::test]
+async fn test_current_role_dba() {
+    let user_id = UserId::new("u_admin");
+    let role = Role::Dba;
+
+    let exec_ctx = ExecutionContext::new(user_id, role, create_test_session());
+    let session = exec_ctx.create_session_with_user();
+
+    let result = session.sql("SELECT CURRENT_ROLE() AS role").await.unwrap();
+    let batches = result.collect().await.unwrap();
+
+    assert_eq!(batches.len(), 1);
+    let column = batches[0].column(0);
+    let string_array = column
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(string_array.value(0), "dba");
+}
+
+#[tokio::test]
+async fn test_current_role_system() {
+    let user_id = UserId::new("system");
+    let role = Role::System;
+
+    let exec_ctx = ExecutionContext::new(user_id, role, create_test_session());
+    let session = exec_ctx.create_session_with_user();
+
+    let result = session.sql("SELECT CURRENT_ROLE() AS role").await.unwrap();
+    let batches = result.collect().await.unwrap();
+
+    let column = batches[0].column(0);
+    let string_array = column
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(string_array.value(0), "system");
+}
+
+#[tokio::test]
+async fn test_current_role_service() {
+    let user_id = UserId::new("u_service");
+    let role = Role::Service;
+
+    let exec_ctx = ExecutionContext::new(user_id, role, create_test_session());
+    let session = exec_ctx.create_session_with_user();
+
+    let result = session.sql("SELECT CURRENT_ROLE() AS role").await.unwrap();
+    let batches = result.collect().await.unwrap();
+
+    let column = batches[0].column(0);
+    let string_array = column
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(string_array.value(0), "service");
+}
+
+#[tokio::test]
+async fn test_all_three_functions_together() {
+    let username = UserName::new("testuser");
+    let user_id = UserId::new("u_testuser");
+    let role = Role::Dba;
+
+    // Create AuthSession
+    let auth_session = AuthSession::with_username_and_auth_details(
+        user_id,
+        username,
+        role,
+        kalamdb_commons::models::ConnectionInfo::new(None),
+        kalamdb_session::AuthMethod::Bearer,
+    );
+
+    let exec_ctx = ExecutionContext::from_session(auth_session, create_test_session());
+    let session = exec_ctx.create_session_with_user();
+
+    // Query all three functions at once
+    let result = session
+        .sql("SELECT CURRENT_USER() AS username, CURRENT_USER_ID() AS user_id, CURRENT_ROLE() AS role")
+        .await;
+    assert!(result.is_ok(), "Query failed: {:?}", result.err());
+
+    let df = result.unwrap();
+    let batches = df.collect().await.unwrap();
+
+    assert_eq!(batches.len(), 1);
+    let batch = &batches[0];
+    assert_eq!(batch.num_rows(), 1);
+    assert_eq!(batch.num_columns(), 3);
+
+    // Verify username
+    let username_col = batch.column(0);
+    let username_array = username_col
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(username_array.value(0), "testuser");
+
+    // Verify user_id
+    let user_id_col = batch.column(1);
+    let user_id_array = user_id_col
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(user_id_array.value(0), "u_testuser");
+
+    // Verify role
+    let role_col = batch.column(2);
+    let role_array = role_col
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(role_array.value(0), "dba");
+}
+
+#[tokio::test]
+async fn test_functions_in_where_clause() {
+    let username = UserName::new("admin");
+    let user_id = UserId::new("u_admin");
+    let role = Role::Dba;
+
+    let auth_session = AuthSession::with_username_and_auth_details(
+        user_id,
+        username,
+        role,
+        kalamdb_commons::models::ConnectionInfo::new(None),
+        kalamdb_session::AuthMethod::Bearer,
+    );
+
+    let exec_ctx = ExecutionContext::from_session(auth_session, create_test_session());
+    let session = exec_ctx.create_session_with_user();
+
+    // Test functions in WHERE clause
+    let result = session
+        .sql("SELECT 1 WHERE CURRENT_USER() = 'admin' AND CURRENT_ROLE() = 'dba'")
+        .await;
+    assert!(result.is_ok(), "Query failed: {:?}", result.err());
+
+    let df = result.unwrap();
+    let batches = df.collect().await.unwrap();
+
+    // Should return one row (conditions are true)
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].num_rows(), 1);
+}
+
+#[tokio::test]
+async fn test_functions_with_no_arguments() {
+    let username = UserName::new("test");
+    let user_id = UserId::new("u_test");
+    let role = Role::User;
+
+    let auth_session = AuthSession::with_username_and_auth_details(
+        user_id,
+        username,
+        role,
+        kalamdb_commons::models::ConnectionInfo::new(None),
+        kalamdb_session::AuthMethod::Bearer,
+    );
+
+    let exec_ctx = ExecutionContext::from_session(auth_session, create_test_session());
+    let session = exec_ctx.create_session_with_user();
+
+    // All three functions should work without arguments
+    let result = session
+        .sql("SELECT CURRENT_USER(), CURRENT_ROLE()")
+        .await;
+    assert!(result.is_ok(), "Query should succeed: {:?}", result.err());
+
+    let df = result.unwrap();
+    let batches = df.collect().await.unwrap();
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].num_rows(), 1);
+}

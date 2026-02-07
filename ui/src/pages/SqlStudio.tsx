@@ -53,6 +53,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+// ── Table change tracking & inline editing ──────────────────────────────────
+import { useTableChanges } from "@/hooks/useTableChanges";
+import { generateSqlStatements, generateAlterTableSql, generateDropTableSql, generateCreateTableDdl } from "@/components/sql-studio/utils/sqlGenerator";
+import { CellContextMenu, type CellContextMenuState } from "@/components/sql-studio/CellContextMenu";
+import { InlineCellEditor, type InlineEditContext } from "@/components/sql-studio/InlineCellEditor";
+import { TableChangeToolbar } from "@/components/sql-studio/TableChangeToolbar";
+import { useSqlPreview } from "@/components/sql-preview";
+
 const STORAGE_KEY = "kalamdb-sql-studio-tabs";
 
 // Persisted tab state (subset of QueryTab that we save to localStorage)
@@ -83,6 +91,7 @@ interface QueryTab {
   executionTime: number | null;
   rowCount: number | null;
   message: string | null; // For DML statements (INSERT/UPDATE/DELETE)
+  executedAs: string | null; // Effective SQL execution user returned by backend
   subscriptionStatus: 'idle' | 'connecting' | 'connected' | 'error'; // Subscription state
   subscriptionLog: string[]; // Log messages for subscription activity
 }
@@ -128,6 +137,7 @@ function loadPersistedState(): { tabs: QueryTab[]; activeTabId: string; tabCount
           executionTime: null,
           rowCount: null,
           message: null,
+          executedAs: null,
           subscriptionStatus: 'idle' as const,
           subscriptionLog: [],
         }));
@@ -158,6 +168,7 @@ function loadPersistedState(): { tabs: QueryTab[]; activeTabId: string; tabCount
         executionTime: null,
         rowCount: null,
         message: null,
+        executedAs: null,
         subscriptionStatus: 'idle' as const,
         subscriptionLog: [],
       },
@@ -179,7 +190,9 @@ export default function SqlStudio() {
   const [schemaFilter, setSchemaFilter] = useState("");
   // Cell selection and context menu state
   const [selectedCell, setSelectedCell] = useState<{ rowIndex: number; columnId: string; value: unknown } | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; value: unknown } | null>(null);
+  const [cellContextMenu, setCellContextMenu] = useState<CellContextMenuState | null>(null);
+  // Inline cell editor state
+  const [inlineEditContext, setInlineEditContext] = useState<InlineEditContext | null>(null);
   // WebSocket log modal state
   const [showWsLogModal, setShowWsLogModal] = useState(false);
   // Table properties panel state
@@ -201,6 +214,19 @@ export default function SqlStudio() {
   
   // Data type mappings from system.datatypes
   const { toSqlType } = useDataTypes();
+
+  // ── Table change tracking (edits & deletions) ──────────────────────────────
+  const tableChanges = useTableChanges();
+  const { openSqlPreview } = useSqlPreview();
+
+  // Discard table changes whenever the active tab changes or query re-runs
+  const prevActiveTabIdRef = useRef(activeTabId);
+  useEffect(() => {
+    if (prevActiveTabIdRef.current !== activeTabId) {
+      tableChanges.discardAll();
+      prevActiveTabIdRef.current = activeTabId;
+    }
+  }, [activeTabId, tableChanges]);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
 
@@ -334,6 +360,9 @@ export default function SqlStudio() {
     const tab = tabs.find((t) => t.id === activeTabId);
     if (!tab || !tab.query.trim()) return;
 
+    // Discard any pending table edits when re-executing a query
+    tableChanges.discardAll();
+
     updateTab(activeTabId, { isLoading: true, error: null });
     const startTime = performance.now();
 
@@ -347,6 +376,7 @@ export default function SqlStudio() {
         rows?: unknown[][];
         row_count?: number;
         message?: string;
+        as_user?: string;
       } | undefined;
       
       // Extract schema (new format) - array of {name, data_type, index}
@@ -365,6 +395,7 @@ export default function SqlStudio() {
       
       const rowCount = result?.row_count ?? results.length;
       const message = result?.message ?? null;
+      const executedAs = result?.as_user ?? null;
       
       // Debug: Log what we received from server
       console.log('[SqlStudio] Query response:', { 
@@ -373,6 +404,7 @@ export default function SqlStudio() {
         schema,
         rowCount, 
         message,
+        executedAs,
         rawResponse: result
       });
 
@@ -407,6 +439,7 @@ export default function SqlStudio() {
         executionTime,
         rowCount,
         message,
+        executedAs,
         error: null,
       });
 
@@ -444,6 +477,7 @@ export default function SqlStudio() {
         executionTime,
         rowCount: null,
         message: null,
+        executedAs: null,
       });
 
       setQueryHistory((prev) => [
@@ -775,6 +809,7 @@ export default function SqlStudio() {
       executionTime: null,
       rowCount: null,
       message: null,
+      executedAs: null,
       subscriptionStatus: "idle",
       subscriptionLog: [],
     };
@@ -801,6 +836,7 @@ export default function SqlStudio() {
       executionTime: null,
       rowCount: null,
       message: null,
+      executedAs: null,
       subscriptionStatus: "idle",
       subscriptionLog: [],
     };
@@ -822,6 +858,7 @@ export default function SqlStudio() {
               rows?: unknown[][];
               row_count?: number;
               message?: string;
+              as_user?: string;
             } | undefined;
             
             const schema = result?.schema ?? [];
@@ -837,6 +874,7 @@ export default function SqlStudio() {
             
             const rowCount = result?.row_count ?? results.length;
             const message = result?.message ?? null;
+            const executedAs = result?.as_user ?? null;
             
             const columns: ColumnDef<Record<string, unknown>>[] = columnNames.map((key) => ({
               accessorKey: key,
@@ -861,13 +899,13 @@ export default function SqlStudio() {
             }));
 
             setTabs((prev) =>
-              prev.map((t) => (t.id === newId ? { ...t, results, columns, schema, isLoading: false, executionTime, rowCount, message, error: null } : t))
+              prev.map((t) => (t.id === newId ? { ...t, results, columns, schema, isLoading: false, executionTime, rowCount, message, executedAs, error: null } : t))
             );
           } catch (error) {
             const executionTime = Math.round(performance.now() - startTime);
             const errorMessage = error instanceof Error ? error.message : "Query failed";
             setTabs((prev) =>
-              prev.map((t) => (t.id === newId ? { ...t, error: errorMessage, isLoading: false, results: null, columns: [], schema: null, executionTime, rowCount: null, message: null } : t))
+              prev.map((t) => (t.id === newId ? { ...t, error: errorMessage, isLoading: false, results: null, columns: [], schema: null, executionTime, rowCount: null, message: null, executedAs: null } : t))
             );
           }
         };
@@ -930,6 +968,142 @@ export default function SqlStudio() {
     },
     [activeTabId, activeTab?.query, updateTab]
   );
+
+  // ── Table change tracking helpers ──────────────────────────────────────────
+
+  /**
+   * Extract primary key values for a row.
+   * Looks for columns marked as PK in the schema tree, or falls back
+   * to the first column (acting as a best-effort row identifier).
+   */
+  const getPrimaryKeyValues = useCallback(
+    (rowData: Record<string, unknown>): Record<string, unknown> => {
+      const tableContext = activeTab?.query ? extractTableContext(activeTab.query) : null;
+      if (!tableContext) {
+        // Fallback: use all columns as identifier
+        return { ...rowData };
+      }
+
+      // Look up PK columns from the schema tree
+      const ns = schema.find((n) => n.name === tableContext.namespace);
+      const tbl = ns?.children?.find((t) => t.name === tableContext.tableName);
+      const pkColumns = tbl?.children?.filter((c) => c.isPrimaryKey).map((c) => c.name) ?? [];
+
+      if (pkColumns.length > 0) {
+        const pkValues: Record<string, unknown> = {};
+        for (const pk of pkColumns) {
+          pkValues[pk] = rowData[pk];
+        }
+        return pkValues;
+      }
+
+      // Fallback: use all columns as the WHERE clause
+      return { ...rowData };
+    },
+    [activeTab?.query, schema],
+  );
+
+  /** Handle "Edit Cell" from the context menu. */
+  const handleEditCell = useCallback(
+    (rowIndex: number, columnName: string, currentValue: unknown) => {
+      // Find the cell's DOM element to get its position
+      const cells = document.querySelectorAll(`[data-row-index="${rowIndex}"][data-column-name="${columnName}"]`);
+      const cell = cells[0] as HTMLElement | undefined;
+      if (cell) {
+        setInlineEditContext({
+          rowIndex,
+          columnName,
+          value: currentValue,
+          rect: cell.getBoundingClientRect(),
+        });
+      }
+    },
+    [],
+  );
+
+  /** Handle saving an inline cell edit. */
+  const handleSaveInlineEdit = useCallback(
+    (rowIndex: number, columnName: string, oldValue: unknown, newValue: unknown) => {
+      const row = activeTab?.results?.[rowIndex];
+      if (!row) return;
+      const pkValues = getPrimaryKeyValues(row);
+      console.log('[handleSaveInlineEdit]', { rowIndex, columnName, oldValue, newValue, pkValues });
+      tableChanges.editCell(rowIndex, columnName, oldValue, newValue, pkValues);
+      setInlineEditContext(null);
+    },
+    [activeTab?.results, getPrimaryKeyValues, tableChanges],
+  );
+
+  /** Handle "Delete Row" from the context menu. */
+  const handleDeleteRow = useCallback(
+    (rowIndex: number) => {
+      const row = activeTab?.results?.[rowIndex];
+      if (!row) return;
+      const pkValues = getPrimaryKeyValues(row);
+      console.log('[handleDeleteRow]', { rowIndex, pkValues, row });
+      tableChanges.deleteRow(rowIndex, pkValues, row);
+    },
+    [activeTab?.results, getPrimaryKeyValues, tableChanges],
+  );
+
+  /** Open SQL Preview to review and commit all pending changes. */
+  const handleReviewChanges = useCallback(() => {
+    console.log('[handleReviewChanges] Starting...', {
+      query: activeTab?.query,
+      editsCount: tableChanges.edits.size,
+      deletionsCount: tableChanges.deletions.size,
+    });
+
+    const tableContext = activeTab?.query ? extractTableContext(activeTab.query) : null;
+    if (!tableContext) {
+      console.error('[handleReviewChanges] Could not extract table context from query:', activeTab?.query);
+      alert('Unable to determine table name from the current query. Please ensure your query is a SELECT statement with a valid FROM clause.');
+      return;
+    }
+
+    console.log('[handleReviewChanges] Table context:', tableContext);
+
+    const generated = generateSqlStatements(
+      tableContext.namespace,
+      tableContext.tableName,
+      tableChanges.edits,
+      tableChanges.deletions,
+    );
+
+    console.log('[handleReviewChanges] Generated SQL:', {
+      statementCount: generated.statements.length,
+      updateCount: generated.updateCount,
+      deleteCount: generated.deleteCount,
+      sql: generated.fullSql,
+    });
+
+    if (generated.statements.length === 0) {
+      console.warn('[handleReviewChanges] No statements to execute');
+      alert('No changes to commit.');
+      return;
+    }
+
+    openSqlPreview({
+      sql: generated.fullSql,
+      title: 'Review Changes',
+      description: `${generated.updateCount} update(s) and ${generated.deleteCount} delete(s) for ${tableContext.namespace}.${tableContext.tableName}`,
+      onExecute: async (singleStatement: string) => {
+        console.log('[handleReviewChanges] Executing single statement:', singleStatement);
+        // Execute a single statement (called by dialog for each statement)
+        await executeSql(singleStatement);
+      },
+      onComplete: () => {
+        console.log('[handleReviewChanges] All statements completed successfully');
+        // On success, discard all tracked changes and re-execute the query
+        tableChanges.discardAll();
+        executeQuery();
+      },
+      onDiscard: () => {
+        console.log('[handleReviewChanges] Discarding changes');
+        tableChanges.discardAll();
+      },
+    });
+  }, [activeTab?.query, tableChanges, openSqlPreview, executeQuery]);
 
   const table = useReactTable({
     data: activeTab?.results || [],
@@ -1534,6 +1708,7 @@ export default function SqlStudio() {
               success={!activeTab?.error}
               rowCount={activeTab?.rowCount ?? null}
               executionTime={activeTab?.executionTime ?? null}
+              executedAs={activeTab?.executedAs ?? null}
               error={activeTab?.error ?? null}
               onExport={exportToCSV}
             />
@@ -1665,6 +1840,15 @@ export default function SqlStudio() {
           ) : (
             // SELECT queries - always show table with headers (even if 0 rows)
             <div className="flex-1 flex flex-col min-h-0">
+              {/* Change tracking toolbar – shown when edits/deletions are pending */}
+              <TableChangeToolbar
+                changeCount={tableChanges.changeCount}
+                editCount={tableChanges.edits.size}
+                deleteCount={tableChanges.deletions.size}
+                onSave={handleReviewChanges}
+                onDiscard={() => tableChanges.discardAll()}
+              />
+
               {/* Table with sheet-like cells */}
               <div className="flex-1 overflow-auto bg-background min-h-0">
                 <table className="text-sm w-max min-w-full">
@@ -1720,13 +1904,17 @@ export default function SqlStudio() {
                       table.getRowModel().rows.map((row) => {
                         const rowData = row.original as Record<string, unknown>;
                         const isNewRow = rowData._isNew === true;
+                        const rowStatus = tableChanges.getRowStatus(row.index);
                         
                         return (
                           <tr 
                             key={row.id} 
                             className={cn(
                               "border-b border-border/40 hover:bg-muted/30 transition-colors",
-                              isNewRow && "animate-pulse bg-green-50 dark:bg-green-950/30"
+                              isNewRow && "animate-pulse bg-green-50 dark:bg-green-950/30",
+                              // Row-level change indicators
+                              rowStatus === 'deleted' && "bg-red-50 dark:bg-red-950/20 line-through opacity-60",
+                              rowStatus === 'edited' && !isNewRow && "bg-amber-50/50 dark:bg-amber-950/10",
                             )}
                             onAnimationEnd={() => {
                               // Clear the _isNew flag after animation completes
@@ -1762,27 +1950,42 @@ export default function SqlStudio() {
                               
                               const isLongText = typeof value === "string" && value.length > 40;
                               const isSelected = selectedCell?.rowIndex === row.index && selectedCell?.columnId === cell.column.id;
+                              const cellEdited = tableChanges.isCellEdited(row.index, columnName);
+
+                              // Show the edited value if available
+                              const displayValue = cellEdited
+                                ? tableChanges.getCellEditedValue(row.index, columnName)
+                                : value;
 
                               return (
                                 <td
                                   key={cell.id}
+                                  data-row-index={row.index}
+                                  data-column-name={columnName}
                                   className={cn(
                                     "px-4 py-2.5 text-sm min-w-[200px] cursor-pointer select-text border-r border-border/30 last:border-r-0 whitespace-nowrap",
-                                    isSelected && "ring-2 ring-blue-500 ring-inset bg-blue-50 dark:bg-blue-950/30"
+                                    isSelected && "ring-2 ring-blue-500 ring-inset bg-blue-50 dark:bg-blue-950/30",
+                                    // Cell-level edit indicator (light yellow)
+                                    cellEdited && rowStatus !== 'deleted' && "bg-amber-100/70 dark:bg-amber-900/20",
                                   )}
                                   title={isLongText ? String(value) : undefined}
                                   onClick={() => setSelectedCell({ rowIndex: row.index, columnId: cell.column.id, value })}
                                   onContextMenu={(e) => {
                                     e.preventDefault();
                                     setSelectedCell({ rowIndex: row.index, columnId: cell.column.id, value });
-                                    // Only show context menu if there's data worth viewing
-                                    if (value !== null && (typeof value === "object" || (typeof value === "string" && value.length > 40))) {
-                                      setContextMenu({ x: e.clientX, y: e.clientY, value });
-                                    }
+                                    setCellContextMenu({
+                                      x: e.clientX,
+                                      y: e.clientY,
+                                      rowIndex: row.index,
+                                      columnName,
+                                      value,
+                                      rowStatus,
+                                      cellEdited,
+                                    });
                                   }}
                                 >
                                   <CellDisplay
-                                    value={value}
+                                    value={displayValue}
                                     dataType={dataType}
                                     namespace={tableContext?.namespace}
                                     tableName={tableContext?.tableName}
@@ -1975,16 +2178,35 @@ export default function SqlStudio() {
           isNewTable={selectedTable.isNewTable}
           onClose={() => setShowTableProperties(false)}
           onAlter={() => {
-            // Insert ALTER TABLE statement
-            updateTab(activeTabId, {
-              query: `ALTER TABLE ${selectedTable.namespace}.${selectedTable.tableName} `,
+            // Open SQL preview with ALTER TABLE statement
+            const sql = generateAlterTableSql(
+              selectedTable.namespace,
+              selectedTable.tableName,
+              'add_column',
+              { columnName: 'new_column', dataType: 'STRING' },
+            );
+            openSqlPreview({
+              sql,
+              title: `Alter Table: ${selectedTable.namespace}.${selectedTable.tableName}`,
+              description: 'Edit the ALTER TABLE statement below, then click Commit to execute.',
+              onExecute: async (finalSql: string) => {
+                await executeSql(finalSql);
+                loadSchema();
+              },
             });
             setShowTableProperties(false);
           }}
           onDrop={() => {
-            // Insert DROP TABLE statement
-            updateTab(activeTabId, {
-              query: `DROP TABLE ${selectedTable.namespace}.${selectedTable.tableName}`,
+            // Open SQL preview with DROP TABLE statement
+            const sql = generateDropTableSql(selectedTable.namespace, selectedTable.tableName);
+            openSqlPreview({
+              sql,
+              title: `Drop Table: ${selectedTable.namespace}.${selectedTable.tableName}`,
+              description: 'This will permanently delete the table and all its data.',
+              onExecute: async (finalSql: string) => {
+                await executeSql(finalSql);
+                loadSchema();
+              },
             });
             setShowTableProperties(false);
           }}
@@ -1997,114 +2219,126 @@ export default function SqlStudio() {
             navigator.clipboard.writeText(ddl);
           }}
           onEditColumn={(columnName) => {
-            // Insert ALTER TABLE ... MODIFY COLUMN statement
+            // Open SQL preview with ALTER TABLE ... MODIFY COLUMN statement
             const col = selectedTable.columns.find((c) => c.name === columnName);
             if (col) {
-              updateTab(activeTabId, {
-                query: `ALTER TABLE ${selectedTable.namespace}.${selectedTable.tableName} MODIFY COLUMN ${columnName} ${toSqlType(col.dataType || "unknown")}`,
+              const sql = generateAlterTableSql(
+                selectedTable.namespace,
+                selectedTable.tableName,
+                'modify_column',
+                { columnName, dataType: toSqlType(col.dataType || "unknown") },
+              );
+              openSqlPreview({
+                sql,
+                title: `Modify Column: ${columnName}`,
+                description: `Edit the ALTER TABLE statement to modify column "${columnName}".`,
+                onExecute: async (finalSql: string) => {
+                  await executeSql(finalSql);
+                  loadSchema();
+                },
               });
             }
           }}
           onAddColumn={() => {
-            // Insert ALTER TABLE ... ADD COLUMN statement (using KalamDataType)
-            updateTab(activeTabId, {
-              query: `ALTER TABLE ${selectedTable.namespace}.${selectedTable.tableName} ADD COLUMN new_column STRING`,
+            // Open SQL preview with ALTER TABLE ... ADD COLUMN statement
+            const sql = generateAlterTableSql(
+              selectedTable.namespace,
+              selectedTable.tableName,
+              'add_column',
+              { columnName: 'new_column', dataType: 'STRING' },
+            );
+            openSqlPreview({
+              sql,
+              title: `Add Column to ${selectedTable.tableName}`,
+              description: 'Edit the column name and type, then click Commit.',
+              onExecute: async (finalSql: string) => {
+                await executeSql(finalSql);
+                loadSchema();
+              },
             });
           }}
           onCreateTable={() => {
-            // Insert CREATE TABLE statement
-            const columns = selectedTable.columns.length > 0
-              ? selectedTable.columns
-                  .map((col) => `  ${col.name} ${toSqlType(col.dataType || "unknown")}${col.isNullable === false ? " NOT NULL" : ""}`)
-                  .join(",\n")
-              : "  id BIGINT NOT NULL,\n  created_at TIMESTAMP";
-            const ddl = `CREATE TABLE ${selectedTable.namespace || "default"}.${selectedTable.tableName || "new_table"} (\n${columns}\n)`;
-            updateTab(activeTabId, { query: ddl });
+            // Open SQL preview with CREATE TABLE statement
+            const cols = selectedTable.columns.length > 0
+              ? selectedTable.columns.map((col) => ({
+                  name: col.name,
+                  dataType: toSqlType(col.dataType || "unknown"),
+                  nullable: col.isNullable,
+                }))
+              : [
+                  { name: 'id', dataType: 'BIGINT', nullable: false },
+                  { name: 'created_at', dataType: 'TIMESTAMP', nullable: undefined },
+                ];
+            const sql = generateCreateTableDdl(
+              selectedTable.namespace || "default",
+              selectedTable.tableName || "new_table",
+              cols,
+            );
+            openSqlPreview({
+              sql,
+              title: 'Create Table',
+              description: 'Review the CREATE TABLE statement and click Commit to execute.',
+              onExecute: async (finalSql: string) => {
+                await executeSql(finalSql);
+                loadSchema();
+              },
+            });
             setShowTableProperties(false);
           }}
           toSqlType={toSqlType}
         />
       )}
 
-      {/* Context menu for viewing cell data */}
-      {contextMenu && (
-        <>
-          {/* Backdrop to close context menu on click outside */}
-          <div 
-            className="fixed inset-0 z-40" 
-            onClick={() => setContextMenu(null)}
-          />
-          <div
-            className="fixed z-50 bg-background border border-border rounded-md shadow-lg py-1 min-w-[120px]"
-            style={{ 
-              left: contextMenu.x, 
-              top: contextMenu.y,
-              // Ensure menu stays within viewport
-              maxHeight: 'calc(100vh - 100px)',
-            }}
-          >
-            <button
-              className="w-full px-3 py-2 text-sm text-left hover:bg-muted flex items-center gap-2"
-              onClick={() => {
-                // Show full data in a dialog/modal
-                const value = contextMenu.value;
-                const formattedValue = typeof value === "object" 
-                  ? JSON.stringify(value, null, 2) 
-                  : String(value);
-                
-                // Create a simple modal to show the data
-                const modal = document.createElement('div');
-                modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/50';
-                modal.innerHTML = `
-                  <div class="bg-background border rounded-lg shadow-xl max-w-2xl max-h-[80vh] overflow-auto p-4 m-4">
-                    <div class="flex justify-between items-center mb-3">
-                      <h3 class="font-semibold text-lg">Cell Data</h3>
-                      <button class="p-1 hover:bg-muted rounded" id="close-modal">✕</button>
-                    </div>
-                    <pre class="font-mono text-sm whitespace-pre-wrap bg-muted/50 p-3 rounded overflow-auto max-h-[60vh]">${formattedValue.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
-                    <div class="mt-3 flex justify-end gap-2">
-                      <button class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700" id="copy-data">Copy</button>
-                    </div>
-                  </div>
-                `;
-                document.body.appendChild(modal);
-                
-                modal.addEventListener('click', (e) => {
-                  if (e.target === modal) {
-                    modal.remove();
-                  }
-                });
-                modal.querySelector('#close-modal')?.addEventListener('click', () => modal.remove());
-                modal.querySelector('#copy-data')?.addEventListener('click', () => {
-                  navigator.clipboard.writeText(formattedValue);
-                  const btn = modal.querySelector('#copy-data') as HTMLButtonElement;
-                  if (btn) {
-                    btn.textContent = 'Copied!';
-                    setTimeout(() => btn.textContent = 'Copy', 1500);
-                  }
-                });
-                
-                setContextMenu(null);
-              }}
-            >
-              <span>👁</span> View Data
-            </button>
-            <button
-              className="w-full px-3 py-2 text-sm text-left hover:bg-muted flex items-center gap-2"
-              onClick={() => {
-                const value = contextMenu.value;
-                const textValue = typeof value === "object" 
-                  ? JSON.stringify(value, null, 2) 
-                  : String(value);
-                navigator.clipboard.writeText(textValue);
-                setContextMenu(null);
-              }}
-            >
-              <span>📋</span> Copy Value
-            </button>
-          </div>
-        </>
-      )}
+      {/* Cell context menu for edit/delete/view/copy */}
+      <CellContextMenu
+        context={cellContextMenu}
+        onEdit={handleEditCell}
+        onDelete={handleDeleteRow}
+        onUndoEdit={(rowIndex) => tableChanges.undoRowEdits(rowIndex)}
+        onUndoDelete={(rowIndex) => tableChanges.undeleteRow(rowIndex)}
+        onCopyValue={(value) => {
+          const textValue = typeof value === "object"
+            ? JSON.stringify(value, null, 2)
+            : String(value);
+          navigator.clipboard.writeText(textValue);
+        }}
+        onViewData={(value) => {
+          const formattedValue = typeof value === "object"
+            ? JSON.stringify(value, null, 2)
+            : String(value);
+
+          const modal = document.createElement('div');
+          modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/50';
+          modal.innerHTML = `
+            <div class="bg-background border rounded-lg shadow-xl max-w-2xl max-h-[80vh] overflow-auto p-4 m-4">
+              <div class="flex justify-between items-center mb-3">
+                <h3 class="font-semibold text-lg">Cell Data</h3>
+                <button class="p-1 hover:bg-muted rounded" id="close-modal">✕</button>
+              </div>
+              <pre class="font-mono text-sm whitespace-pre-wrap bg-muted/50 p-3 rounded overflow-auto max-h-[60vh]">${formattedValue.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+              <div class="mt-3 flex justify-end gap-2">
+                <button class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700" id="copy-data">Copy</button>
+              </div>
+            </div>
+          `;
+          document.body.appendChild(modal);
+          modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+          modal.querySelector('#close-modal')?.addEventListener('click', () => modal.remove());
+          modal.querySelector('#copy-data')?.addEventListener('click', () => {
+            navigator.clipboard.writeText(formattedValue);
+            const btn = modal.querySelector('#copy-data') as HTMLButtonElement;
+            if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500); }
+          });
+        }}
+        onClose={() => setCellContextMenu(null)}
+      />
+
+      {/* Inline cell editor overlay */}
+      <InlineCellEditor
+        context={inlineEditContext}
+        onSave={handleSaveInlineEdit}
+        onCancel={() => setInlineEditContext(null)}
+      />
 
       {/* WebSocket Log Modal */}
       {showWsLogModal && activeTab && (

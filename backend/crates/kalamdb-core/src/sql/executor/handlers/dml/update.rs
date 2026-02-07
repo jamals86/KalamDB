@@ -87,16 +87,7 @@ impl StatementHandler for UpdateHandler {
 
         let needs_row = assignments.iter().any(|(_, expr)| Self::expr_needs_row(expr));
 
-        // T153: Use effective user_id for impersonation support (Phase 7)
-        let effective_user_id = statement.as_user_id().unwrap_or(context.user_id());
-
-        // T163: Reject AS USER on Shared tables (Phase 7)
-        use kalamdb_commons::schemas::TableType;
-        if statement.as_user_id().is_some() && matches!(def.table_type, TableType::Shared) {
-            return Err(KalamDbError::InvalidOperation(
-                "AS USER impersonation is not supported for SHARED tables".to_string(),
-            ));
-        }
+        let effective_user_id = context.user_id();
 
         match def.table_type {
             kalamdb_commons::schemas::TableType::User => {
@@ -309,16 +300,6 @@ impl StatementHandler for UpdateHandler {
 
         // T050: Block anonymous users from write operations
         block_anonymous_write(context, "UPDATE")?;
-
-        // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
-        if statement.as_user_id().is_some() {
-            use kalamdb_session::can_impersonate_user;
-            if !can_impersonate_user(context.user_role()) {
-                return Err(KalamDbError::Unauthorized(
-                    format!("Role {:?} is not authorized to use AS USER. Only Service, Dba, and System roles are permitted.", context.user_role())
-                ));
-            }
-        }
 
         use kalamdb_session::can_execute_dml;
         if can_execute_dml(context.user_role()) {

@@ -48,7 +48,7 @@ pub mod schema_metadata;
 pub use scalar_bytes::{encode_pk_value, scalar_value_to_bytes};
 pub use scalar_numeric::{as_f64, scalar_to_f64, scalar_to_i64};
 pub use scalar_size::estimate_scalar_value_size;
-pub use scalar_string::scalar_to_pk_string;
+pub use scalar_string::{parse_string_as_scalar, scalar_to_pk_string};
 pub use arrow_json_conversion::*;
 pub use schema_metadata::{
 	read_kalam_data_type_metadata,

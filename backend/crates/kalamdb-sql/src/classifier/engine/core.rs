@@ -1,66 +1,11 @@
 use crate::classifier::types::{SqlStatement, SqlStatementKind, StatementClassificationError};
 use crate::ddl::*;
 use crate::parser::utils::{collect_non_whitespace_tokens, parse_sql_statements, tokens_to_words};
-use kalamdb_commons::models::{NamespaceId, UserId};
+use kalamdb_commons::models::NamespaceId;
 use kalamdb_commons::Role;
 use kalamdb_session::is_admin_role;
 
 impl SqlStatement {
-    /// Extract AS USER 'user_id' clause from SQL if present
-    /// Returns (cleaned_sql, optional_user_id)
-    pub(crate) fn extract_as_user(sql: &str) -> (String, Option<UserId>) {
-        let upper = sql.to_ascii_uppercase();
-
-        // Find "AS USER 'user_id'" or "AS USER \"user_id\"" pattern
-        if let Some(as_user_pos) = upper.find(" AS USER ") {
-            // Extract after "AS USER "
-            let after_as_user = &sql[as_user_pos + 9..].trim_start();
-
-            // Determine quote type and extract user_id
-            let user_id_str = if let Some(after_quote) = after_as_user.strip_prefix('\'') {
-                // Single quote: 'user_id'
-                if let Some(end_quote) = after_quote.find('\'') {
-                    &after_quote[..end_quote]
-                } else {
-                    return (sql.to_string(), None); // Malformed, ignore
-                }
-            } else if let Some(after_quote) = after_as_user.strip_prefix('"') {
-                // Double quote: "user_id"
-                if let Some(end_quote) = after_quote.find('"') {
-                    &after_quote[..end_quote]
-                } else {
-                    return (sql.to_string(), None); // Malformed, ignore
-                }
-            } else {
-                return (sql.to_string(), None); // No quote, ignore
-            };
-
-            // Remove AS USER clause from SQL
-            let before_as_user = &sql[..as_user_pos];
-            let quote_end_pos = as_user_pos + 9 + 1 + user_id_str.len() + 1; // " AS USER " + quote + user_id + quote
-            let after_as_user_clause = if quote_end_pos < sql.len() {
-                &sql[quote_end_pos..]
-            } else {
-                ""
-            };
-
-            let before_trimmed = before_as_user.trim();
-            let after_trimmed = after_as_user_clause.trim();
-            let mut cleaned_sql =
-                String::with_capacity(before_trimmed.len() + after_trimmed.len() + 1);
-            cleaned_sql.push_str(before_trimmed);
-            if !after_trimmed.is_empty() {
-                cleaned_sql.push(' ');
-                cleaned_sql.push_str(after_trimmed);
-            }
-            let user_id = UserId::from(user_id_str.to_string());
-
-            (cleaned_sql, Some(user_id))
-        } else {
-            (sql.to_string(), None)
-        }
-    }
-
     /// Wrap a parsed statement into SqlStatement with sql_text
     fn wrap<F, E>(sql: &str, parser: F) -> Result<Self, StatementClassificationError>
     where
@@ -129,61 +74,25 @@ impl SqlStatement {
         // DML statements - create typed markers for handler pattern
         match first_keyword_upper.as_str() {
             "SELECT" => {
-                // Extract AS USER clause from SELECT statement (Phase 7)
-                let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
-                return if let Some(user_id) = as_user_id {
-                    Ok(Self::with_as_user(cleaned_sql2, SqlStatementKind::Select, user_id))
-                } else {
-                    Ok(Self::new(sql.to_string(), SqlStatementKind::Select))
-                };
+                return Ok(Self::new(sql.to_string(), SqlStatementKind::Select));
             },
             "INSERT" => {
-                // T151: Extract AS USER clause from INSERT statement (Phase 7)
-                let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
-                return if let Some(user_id) = as_user_id {
-                    Ok(Self::with_as_user(
-                        cleaned_sql2,
-                        SqlStatementKind::Insert(crate::ddl::InsertStatement),
-                        user_id,
-                    ))
-                } else {
-                    Ok(Self::new(
-                        sql.to_string(),
-                        SqlStatementKind::Insert(crate::ddl::InsertStatement),
-                    ))
-                };
+                return Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::Insert(crate::ddl::InsertStatement),
+                ));
             },
             "DELETE" => {
-                // T151: Extract AS USER clause from DELETE statement (Phase 7)
-                let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
-                return if let Some(user_id) = as_user_id {
-                    Ok(Self::with_as_user(
-                        cleaned_sql2,
-                        SqlStatementKind::Delete(crate::ddl::DeleteStatement),
-                        user_id,
-                    ))
-                } else {
-                    Ok(Self::new(
-                        sql.to_string(),
-                        SqlStatementKind::Delete(crate::ddl::DeleteStatement),
-                    ))
-                };
+                return Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::Delete(crate::ddl::DeleteStatement),
+                ));
             },
             "UPDATE" => {
-                // T151: Extract AS USER clause from UPDATE statement (Phase 7)
-                let (cleaned_sql2, as_user_id) = Self::extract_as_user(sql);
-                return if let Some(user_id) = as_user_id {
-                    Ok(Self::with_as_user(
-                        cleaned_sql2,
-                        SqlStatementKind::Update(crate::ddl::UpdateStatement),
-                        user_id,
-                    ))
-                } else {
-                    Ok(Self::new(
-                        sql.to_string(),
-                        SqlStatementKind::Update(crate::ddl::UpdateStatement),
-                    ))
-                };
+                return Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::Update(crate::ddl::UpdateStatement),
+                ));
             },
             _ => {},
         }
@@ -912,28 +821,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classify_select_with_as_user_extracts_subject() {
-        let stmt = SqlStatement::classify_and_parse(
-            "SELECT * FROM default.tasks AS USER 'user1'",
-            &NamespaceId::new("default"),
-            Role::Service,
-        )
-        .expect("SELECT AS USER should classify");
-
-        assert!(matches!(stmt.kind(), SqlStatementKind::Select));
-        assert_eq!(stmt.as_user_id().map(|u| u.as_str()), Some("user1"));
-        assert_eq!(stmt.as_str(), "SELECT * FROM default.tasks");
-    }
-
-    #[test]
-    fn classify_select_without_as_user_keeps_original_sql() {
+    fn classify_select_keeps_original_sql() {
         let sql = "SELECT * FROM default.tasks WHERE id = 1";
-        let stmt =
-            SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
-                .expect("SELECT should classify");
+        let stmt = SqlStatement::classify_and_parse(
+            sql,
+            &NamespaceId::new("default"),
+            Role::User,
+        )
+        .expect("SELECT should classify");
 
         assert!(matches!(stmt.kind(), SqlStatementKind::Select));
-        assert!(stmt.as_user_id().is_none());
         assert_eq!(stmt.as_str(), sql);
     }
 }

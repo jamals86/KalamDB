@@ -51,6 +51,7 @@ pub use permissions::{
     can_execute_dml, can_execute_maintenance, can_manage_users, can_read_all_users,
     can_write_shared_table, can_write_stream_table, can_write_user_table, is_admin_role,
     is_system_role,
+    can_impersonate_role,
     check_shared_table_access,
     check_shared_table_write_access, check_shared_table_write_access_level,
     check_stream_table_write_access_level, check_system_table_access, check_user_table_access,

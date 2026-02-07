@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { executeSql } from '../lib/kalam-client';
 import { Job } from './useJobs';
 import { AuditLog } from './useAuditLogs';
@@ -10,7 +10,7 @@ export interface Notifications {
   hasUnread: boolean;
 }
 
-export function useNotifications(refreshInterval = 3000) {
+export function useNotifications() {
   const [notifications, setNotifications] = useState<Notifications>({
     runningJobs: [],
     recentAuditLogs: [],
@@ -87,14 +87,6 @@ export function useNotifications(refreshInterval = 3000) {
       setIsLoading(false);
     }
   }, []);
-
-  // Auto-refresh every `refreshInterval` ms
-  useEffect(() => {
-    fetchNotifications();
-    
-    const interval = setInterval(fetchNotifications, refreshInterval);
-    return () => clearInterval(interval);
-  }, [fetchNotifications, refreshInterval]);
 
   return {
     notifications,

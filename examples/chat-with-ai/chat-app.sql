@@ -14,7 +14,7 @@ CREATE NAMESPACE IF NOT EXISTS chat;
 -- Tables
 -- ============================================================================
 
--- Conversations table (shared table - all users see all conversations)
+-- Conversations table (user table - all users see their own conversations and messages)
 CREATE USER TABLE chat.conversations (
     id BIGINT NOT NULL DEFAULT SNOWFLAKE_ID() PRIMARY KEY,
     title TEXT NOT NULL,
@@ -23,7 +23,7 @@ CREATE USER TABLE chat.conversations (
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
--- Messages table (shared table - all users see all messages including AI replies)
+-- Messages table (user table - all users see their own messages including AI replies)
 CREATE USER TABLE chat.messages (
     id BIGINT NOT NULL DEFAULT SNOWFLAKE_ID() PRIMARY KEY,
     client_id TEXT,
@@ -36,7 +36,7 @@ CREATE USER TABLE chat.messages (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
--- Typing indicators table (shared table - all users see typing status)
+-- Typing indicators table (stream table - used for real-time typing status updates, not persisted long-term)
 CREATE STREAM TABLE chat.typing_indicators (
     id BIGINT NOT NULL DEFAULT SNOWFLAKE_ID() PRIMARY KEY,
     conversation_id BIGINT NOT NULL,

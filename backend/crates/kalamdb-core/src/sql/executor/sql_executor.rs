@@ -1,11 +1,9 @@
 use super::SqlExecutor;
 use crate::error::KalamDbError;
-use crate::sql::{ExecutionContext, ExecutionMetadata, ExecutionResult};
 use crate::sql::plan_cache::PlanCacheKey;
+use crate::sql::{ExecutionContext, ExecutionMetadata, ExecutionResult};
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::Role;
-use kalamdb_session::can_impersonate_user;
-use kalamdb_sql::statement_classifier::SqlStatement;
+use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 
 impl SqlExecutor {
     fn is_table_not_found_error(e: &datafusion::error::DataFusionError) -> bool {
@@ -96,18 +94,12 @@ impl SqlExecutor {
         })?;
 
         // Step 2: Route based on statement type
-        use kalamdb_sql::statement_classifier::SqlStatementKind;
         match classified.kind() {
             // Hot path: SELECT queries use DataFusion
             // Tables are already registered in base session, we just inject user_id
             SqlStatementKind::Select => {
-                self.execute_via_datafusion(
-                    classified.as_str(),
-                    params,
-                    exec_ctx,
-                    classified.as_user_id(),
-                )
-                .await
+                self.execute_via_datafusion(classified.as_str(), params, exec_ctx)
+                    .await
             },
 
             // DataFusion meta commands (EXPLAIN, SET, SHOW, etc.) - admin only
@@ -147,7 +139,6 @@ impl SqlExecutor {
         sql: &str,
         params: Vec<ScalarValue>,
         exec_ctx: &ExecutionContext,
-        as_user_id: Option<&kalamdb_commons::models::UserId>,
     ) -> Result<ExecutionResult, KalamDbError> {
         use crate::sql::executor::default_ordering::apply_default_order_by;
         use crate::sql::executor::parameter_binding::{
@@ -159,36 +150,12 @@ impl SqlExecutor {
             validate_params(&params)?;
         }
 
-        let mut effective_user_id = exec_ctx.user_id();
-        let mut effective_role = exec_ctx.user_role();
-        if let Some(subject_user_id) = as_user_id {
-            if !can_impersonate_user(exec_ctx.user_role()) {
-                return Err(KalamDbError::Unauthorized(format!(
-                    "Role {:?} is not authorized to use AS USER. Only Service, Dba, and System roles are permitted.",
-                    exec_ctx.user_role()
-                )));
-            }
-            effective_user_id = subject_user_id;
-            effective_role = Role::User;
-        }
-
-        let build_session = || {
-            if as_user_id.is_some() {
-                exec_ctx.create_session_with_effective_user(effective_user_id, effective_role)
-            } else {
-                exec_ctx.create_session_with_user()
-            }
-        };
-
-        // Create per-request SessionContext with effective identity injected.
-        // For SELECT AS USER, use the subject user id and role=User so reads are scoped
-        // to that user (no admin/service all-user bypass during impersonation reads).
-        let session = build_session();
+        let session = exec_ctx.create_session_with_user();
 
         // Try to get cached plan first (only if no params - parameterized queries can't use cached plans)
         // Note: Cached plans already have default ORDER BY applied
         // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan time
-        let cache_key = PlanCacheKey::new(exec_ctx.default_namespace().clone(), effective_role, sql);
+        let cache_key = PlanCacheKey::new(exec_ctx.default_namespace().clone(), exec_ctx.user_role(), sql);
 
         let df = if params.is_empty() {
             if let Some(plan) = self.plan_cache.get(&cache_key) {
@@ -226,7 +193,7 @@ impl SqlExecutor {
                                             e
                                         );
                                     }
-                                    let retry_session = build_session();
+                                    let retry_session = exec_ctx.create_session_with_user();
                                     match retry_session.sql(sql).await {
                                         Ok(df) => {
                                             let plan = df.logical_plan().clone();
@@ -283,7 +250,7 @@ impl SqlExecutor {
                                     e
                                 );
                             }
-                            let retry_session = build_session();
+                            let retry_session = exec_ctx.create_session_with_user();
                             match retry_session.sql(sql).await {
                                 Ok(df) => {
                                     let plan = df.logical_plan().clone();
@@ -327,7 +294,7 @@ impl SqlExecutor {
                                 e
                             );
                         }
-                        let retry_session = build_session();
+                        let retry_session = exec_ctx.create_session_with_user();
                         match retry_session.sql(sql).await {
                             Ok(df) => df,
                             Err(e2) => {
@@ -380,8 +347,8 @@ impl SqlExecutor {
                     target: "sql::exec",
                     "❌ SQL execution failed | sql='{}' | user='{}' | role='{:?}' | error='{}'",
                     sql,
-                    effective_user_id.as_str(),
-                    effective_role,
+                    exec_ctx.user_id().as_str(),
+                    exec_ctx.user_role(),
                     e
                 );
                 return Err(KalamDbError::Other(format!("Error executing query: {}", e)));

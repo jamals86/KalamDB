@@ -129,7 +129,7 @@ impl SharedTableProvider {
         Row::new(values)
     }
     
-        /// Access the underlying indexed store (used by flush jobs)
+    /// Access the underlying indexed store (used by flush jobs)
         pub fn store(&self) -> Arc<SharedTableIndexedStore> {
             Arc::clone(&self.store)
         }
@@ -619,7 +619,18 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     ) -> Result<SharedTableRowId, KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
         let pk_name = self.primary_key_field_name().to_string();
-        let pk_value_scalar = ScalarValue::Utf8(Some(pk_value.to_string()));
+        
+        // Get PK column data type from schema for proper type coercion
+        let schema = self.schema();
+        let pk_field = schema
+            .field_with_name(&pk_name)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("PK column '{}' not found in schema: {}", pk_name, e)))?;
+        let pk_column_type = pk_field.data_type();
+        
+        // Convert string PK value to proper ScalarValue based on column type
+        use kalamdb_commons::conversions::parse_string_as_scalar;
+        let pk_value_scalar = parse_string_as_scalar(pk_value, pk_column_type)
+            .map_err(|e| KalamDbError::InvalidOperation(e))?;
 
         // Resolve latest per PK - first try hot storage (O(1) via PK index),
         // then fall back to cold storage (Parquet scan)
@@ -627,8 +638,13 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             result
         } else {
             // Not in hot storage, check cold storage
+            log::debug!(
+                "[UPDATE] PK {} not found in hot storage, querying cold storage for pk={}",
+                pk_name,
+                pk_value
+            );
             base::find_row_by_pk(self, None, pk_value).await?.ok_or_else(|| {
-                KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value))
+                KalamDbError::NotFound(format!("Row with {}={} not found (checked both hot and cold storage)", pk_name, pk_value))
             })?
         };
 

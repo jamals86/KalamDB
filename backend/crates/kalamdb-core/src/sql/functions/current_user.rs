@@ -1,6 +1,6 @@
 //! CURRENT_USER() function implementation
 //!
-//! This module provides a user-defined function for DataFusion that returns the current user ID
+//! This module provides a user-defined function for DataFusion that returns the current username
 //! from the session context.
 
 use datafusion::arrow::array::{ArrayRef, StringArray};
@@ -9,29 +9,29 @@ use datafusion::logical_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
 };
 use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
-use kalamdb_commons::UserId;
+use kalamdb_commons::UserName;
 use std::any::Any;
 use std::sync::Arc;
 
 /// CURRENT_USER() scalar function implementation
 ///
-/// Returns the user ID of the current session user.
+/// Returns the username of the current session user.
 /// This function takes no arguments and returns a String (Utf8).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CurrentUserFunction {
-    user_id: Option<UserId>,
+    username: Option<UserName>,
 }
 
 impl CurrentUserFunction {
     /// Create a new CURRENT_USER function with no user bound
     pub fn new() -> Self {
-        Self { user_id: None }
+        Self { username: None }
     }
 
-    /// Create a CURRENT_USER function bound to a specific user id
-    pub fn with_user_id(user_id: &UserId) -> Self {
+    /// Create a CURRENT_USER function bound to a specific username
+    pub fn with_username(username: &UserName) -> Self {
         Self {
-            user_id: Some(user_id.clone()),
+            username: Some(username.clone()),
         }
     }
 }
@@ -66,13 +66,13 @@ impl ScalarUDFImpl for CurrentUserFunction {
             return Err(DataFusionError::Plan("CURRENT_USER() takes no arguments".to_string()));
         }
 
-        let user_id = self.user_id.as_ref().ok_or_else(|| {
+        let username = self.username.as_ref().ok_or_else(|| {
             DataFusionError::Execution(
-                "CURRENT_USER() failed: User ID must not be null or empty".to_string(),
+                "CURRENT_USER() failed: Username must not be null or empty".to_string(),
             )
         })?;
 
-        let array = StringArray::from(vec![user_id.as_str()]);
+        let array = StringArray::from(vec![username.as_str()]);
         Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
     }
 }
@@ -92,13 +92,13 @@ mod tests {
 
     #[test]
     fn test_current_user_with_user_id() {
-        let user_id = UserId::new("test_user");
-        let func_impl = CurrentUserFunction::with_user_id(&user_id);
+        let username = UserName::new("test_user");
+        let func_impl = CurrentUserFunction::with_username(&username);
         let func = ScalarUDF::new_from_impl(func_impl.clone());
         assert_eq!(func.name(), "CURRENT_USER");
 
-        // Verify configured user_id
-        assert_eq!(func_impl.user_id, Some(user_id));
+        // Verify configured username
+        assert_eq!(func_impl.username, Some(username));
     }
 
     // Test removed - testing internal DataFusion behavior that changed in newer versions

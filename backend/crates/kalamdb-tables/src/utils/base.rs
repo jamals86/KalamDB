@@ -77,6 +77,7 @@ use kalamdb_commons::ids::SeqId;
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 use kalamdb_system::Manifest;
+use kalamdb_filestore::registry::ListResult;
 use kalamdb_commons::{StorageKey, TableId};
 use kalamdb_system::ClusterCoordinator as ClusterCoordinatorTrait;
 use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
@@ -735,39 +736,28 @@ pub async fn pk_exists_in_cold(
         let pruned_paths = planner.plan_by_pk_value(m, pk_column_id, pk_value);
         if pruned_paths.is_empty() {
             log::trace!(
-                "[pk_exists_in_cold] Manifest pruning: PK {} not in any segment range for {}.{} {}",
+                "[pk_exists_in_cold] Manifest pruning returned no candidate segments for PK {} on {}.{} {} - falling back to full parquet scan",
                 pk_value,
                 namespace.as_str(),
                 table.as_str(),
                 scope_label
             );
-            return Ok(false); // PK definitely not in cold storage
+            collect_parquet_files_from_list(&list_result)
+        } else {
+            log::trace!(
+                "[pk_exists_in_cold] Manifest pruning: {} of {} segments may contain PK {} for {}.{} {}",
+                pruned_paths.len(),
+                m.segments.len(),
+                pk_value,
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            pruned_paths
         }
-        log::trace!(
-            "[pk_exists_in_cold] Manifest pruning: {} of {} segments may contain PK {} for {}.{} {}",
-            pruned_paths.len(),
-            m.segments.len(),
-            pk_value,
-            namespace.as_str(),
-            table.as_str(),
-            scope_label
-        );
-        pruned_paths
     } else {
         // No manifest - use all Parquet files from listing
-        let prefix = list_result.prefix.trim_end_matches('/');
-        list_result
-            .paths
-            .into_iter()
-            .filter_map(|path| {
-                let stripped = strip_list_prefix(&path, prefix).unwrap_or(&path);
-                if stripped.ends_with(".parquet") {
-                    Some(stripped.to_string())
-                } else {
-                    None
-                }
-            })
-            .collect()
+        collect_parquet_files_from_list(&list_result)
     };
 
     if files_to_scan.is_empty() {
@@ -799,6 +789,22 @@ pub async fn pk_exists_in_cold(
     }
 
     Ok(false)
+}
+
+fn collect_parquet_files_from_list(list_result: &ListResult) -> Vec<String> {
+    let prefix = list_result.prefix.trim_end_matches('/');
+    list_result
+        .paths
+        .iter()
+        .filter_map(|path| {
+            let stripped = strip_list_prefix(path, prefix).unwrap_or(path);
+            if stripped.ends_with(".parquet") {
+                Some(stripped.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Batch check if any PK values exist in cold storage (Parquet files) (async).
@@ -922,38 +928,27 @@ pub async fn pk_exists_batch_in_cold(
         }
         if relevant_files.is_empty() {
             log::trace!(
-                "[pk_exists_batch_in_cold] Manifest pruning: no segments may contain any PK for {}.{} {}",
+                "[pk_exists_batch_in_cold] Manifest pruning returned no candidate segments for {}.{} {} - falling back to full parquet scan",
                 namespace.as_str(),
                 table.as_str(),
                 scope_label
             );
-            return Ok(None);
+            collect_parquet_files_from_list(&list_result)
+        } else {
+            log::trace!(
+                "[pk_exists_batch_in_cold] Manifest pruning: {} of {} segments may contain {} PKs for {}.{} {}",
+                relevant_files.len(),
+                m.segments.len(),
+                pk_values.len(),
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            relevant_files.into_iter().collect()
         }
-        log::trace!(
-            "[pk_exists_batch_in_cold] Manifest pruning: {} of {} segments may contain {} PKs for {}.{} {}",
-            relevant_files.len(),
-            m.segments.len(),
-            pk_values.len(),
-            namespace.as_str(),
-            table.as_str(),
-            scope_label
-        );
-        relevant_files.into_iter().collect()
     } else {
         // No manifest - use all Parquet files from listing
-        let prefix = list_result.prefix.trim_end_matches('/');
-        list_result
-            .paths
-            .into_iter()
-            .filter_map(|path| {
-                let stripped = strip_list_prefix(&path, prefix).unwrap_or(&path);
-                if stripped.ends_with(".parquet") {
-                    Some(stripped.to_string())
-                } else {
-                    None
-                }
-            })
-            .collect()
+        collect_parquet_files_from_list(&list_result)
     };
 
     if files_to_scan.is_empty() {

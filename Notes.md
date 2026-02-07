@@ -1305,8 +1305,27 @@ Query OK, 0 rows affected
 160) at least one delivery if tghere is multiple consumers send to only one of them not all of them, we can add a round robin or random selection for this, check how kafka/nats do it and implement the same way, and also add tests to verify this
 162) processMessage should pass a context which contains the userName of who did this action
 163) Consider adding a new virtual system column which is _user aside of _seq and _deleted
-164) CRITICAL: Whenever we consume a message read the context and reply as this user, maybe do a .query/.sql as a user directly
+164) CRITICAL: Whenever we consume a message read the context and reply as this user, maybe do a .query/.sql as a user parameter to the call
 165) get a new option to pass userid instead of username: backend/crates/kalamdb-api/src/handlers/topics/consume.rs
+166) add command in cli \subscribe to multiple queries at once
+167) Fix the subscribe issue in the ui itds not reciving any changes at all
+
+169) 
+"SQL_EXECUTION_ERROR"
+"UPDATE chat.conversations SET updated_at = NOW() WHERE id = 278486627852849152"
+"Statement 1 failed: Invalid operation: Unsupported UPDATE expression: NOW()"
+
+170) datafusion should have a better approche than this one: fn evaluate_function(
+    func_name: &str,
+    args: &[JsonValue],
+    user_id: &UserId,
+    sys_cols: Option<Arc<SystemColumnsService>>,
+);
+
+171) when using consume from topic if the network disconnected keep looping and reconnect, follow the same configuration of the websocket reconnection logics, we can use this logic in both the subscription and the consumer
+
+172) Whenever we subscribe to a query and there is an update only push the updated columns and not all the other columns data
+5
 
 
 

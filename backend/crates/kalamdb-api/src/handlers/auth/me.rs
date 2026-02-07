@@ -4,13 +4,11 @@
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use kalamdb_auth::{
-    authenticate, extract_client_ip_secure,
-    helpers::cookie::extract_auth_token,
-    AuthRequest, UserRepository,
+    authenticate, extract_client_ip_secure, AuthRequest, UserRepository,
 };
 use std::sync::Arc;
 
-use super::map_auth_error_to_response;
+use super::{extract_bearer_or_cookie_token, map_auth_error_to_response};
 use super::models::{AuthErrorResponse, UserInfo};
 
 /// GET /v1/api/auth/me
@@ -20,14 +18,9 @@ pub async fn me_handler(
     req: HttpRequest,
     user_repo: web::Data<Arc<dyn UserRepository>>,
 ) -> HttpResponse {
-    // Extract token from cookie
-    let token = match extract_auth_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned()))
-    {
-        Some(t) => t,
-        None => {
-            return HttpResponse::Unauthorized()
-                .json(AuthErrorResponse::new("unauthorized", "Not authenticated"));
-        },
+    let token = match extract_bearer_or_cookie_token(&req) {
+        Ok(t) => t,
+        Err(err) => return map_auth_error_to_response(err),
     };
 
     // Validate token via unified auth (uses configured trusted issuers)

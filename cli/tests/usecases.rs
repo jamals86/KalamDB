@@ -22,3 +22,6 @@ mod test_datatypes_json;
 
 #[path = "usecases/test_update_all_types.rs"]
 mod test_update_all_types;
+
+#[path = "usecases/test_update_null_values.rs"]
+mod test_update_null_values;

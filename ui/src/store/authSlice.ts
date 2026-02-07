@@ -42,7 +42,7 @@ export const logout = createAsyncThunk("auth/logout", async () => {
   } catch {
     // Ignore logout errors
   } finally {
-    clearClient();
+    await clearClient();
   }
 });
 
@@ -54,7 +54,7 @@ export const refresh = createAsyncThunk(
       await setClientToken(response.access_token);
       return response;
     } catch (err) {
-      clearClient();
+      await clearClient();
       if (err instanceof ApiRequestError) {
         return rejectWithValue(err.apiError.message);
       }
@@ -69,7 +69,7 @@ export const checkAuth = createAsyncThunk(
     try {
       const userInfo = await authApi.me();
       // After getting user info, trigger a refresh to get access token and expiry
-      await dispatch(refresh());
+      await dispatch(refresh()).unwrap();
       return userInfo;
     } catch (err) {
       return rejectWithValue("Not authenticated");

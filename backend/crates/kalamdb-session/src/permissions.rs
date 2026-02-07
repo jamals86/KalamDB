@@ -296,10 +296,27 @@ pub fn check_stream_table_write_access_level(
     check_user_table_write_access_level(role, namespace_id, table_name)
 }
 
-/// Check if a role can impersonate another user (AS USER).
+/// Check if a role can impersonate another user (EXECUTE AS USER).
 #[inline]
 pub fn can_impersonate_user(role: Role) -> bool {
     matches!(role, Role::Service | Role::Dba | Role::System)
+}
+
+/// Check whether `actor_role` is allowed to impersonate `target_role`.
+///
+/// Policy:
+/// - System can impersonate any role.
+/// - Dba can impersonate Service/User/Anonymous.
+/// - Service can impersonate User/Anonymous.
+/// - User/Anonymous cannot impersonate.
+#[inline]
+pub fn can_impersonate_role(actor_role: Role, target_role: Role) -> bool {
+    match actor_role {
+        Role::System => true,
+        Role::Dba => matches!(target_role, Role::Service | Role::User | Role::Anonymous),
+        Role::Service => matches!(target_role, Role::User | Role::Anonymous),
+        Role::User | Role::Anonymous => false,
+    }
 }
 
 /// Determine the access level for a shared table definition.
@@ -507,6 +524,27 @@ mod tests {
         // Non-admins cannot access
         assert!(!can_access_system_table(Role::Service));
         assert!(!can_access_system_table(Role::User));
+    }
+
+    #[test]
+    fn test_can_impersonate_role() {
+        assert!(can_impersonate_role(Role::System, Role::System));
+        assert!(can_impersonate_role(Role::System, Role::Dba));
+        assert!(can_impersonate_role(Role::System, Role::Service));
+        assert!(can_impersonate_role(Role::System, Role::User));
+
+        assert!(!can_impersonate_role(Role::Dba, Role::System));
+        assert!(!can_impersonate_role(Role::Dba, Role::Dba));
+        assert!(can_impersonate_role(Role::Dba, Role::Service));
+        assert!(can_impersonate_role(Role::Dba, Role::User));
+
+        assert!(!can_impersonate_role(Role::Service, Role::System));
+        assert!(!can_impersonate_role(Role::Service, Role::Dba));
+        assert!(!can_impersonate_role(Role::Service, Role::Service));
+        assert!(can_impersonate_role(Role::Service, Role::User));
+
+        assert!(!can_impersonate_role(Role::User, Role::User));
+        assert!(!can_impersonate_role(Role::Anonymous, Role::User));
     }
 
     #[test]

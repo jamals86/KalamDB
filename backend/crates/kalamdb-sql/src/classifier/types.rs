@@ -1,5 +1,4 @@
 use crate::ddl::*;
-use kalamdb_commons::models::UserId;
 
 /// Error returned when classifying or parsing SQL statements.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,9 +37,6 @@ pub struct SqlStatement {
     pub(crate) sql_text: String,
     /// Parsed statement variant
     pub(crate) kind: SqlStatementKind,
-    /// Optional AS USER impersonation (Phase 7)
-    /// Extracted from "AS USER 'user_id'" clause in SELECT/DML statements
-    pub(crate) as_user_id: Option<UserId>,
 }
 
 /// Statement type variants (internal to SqlStatement)
@@ -180,20 +176,7 @@ pub enum SqlStatementKind {
 impl SqlStatement {
     /// Create a SqlStatement with SQL text and kind
     pub fn new(sql_text: String, kind: SqlStatementKind) -> Self {
-        Self {
-            sql_text,
-            kind,
-            as_user_id: None,
-        }
-    }
-
-    /// Create a SqlStatement with AS USER impersonation
-    pub fn with_as_user(sql_text: String, kind: SqlStatementKind, as_user_id: UserId) -> Self {
-        Self {
-            sql_text,
-            kind,
-            as_user_id: Some(as_user_id),
-        }
+        Self { sql_text, kind }
     }
 
     /// Get the original SQL text
@@ -204,11 +187,6 @@ impl SqlStatement {
     /// Get the statement kind (for pattern matching)
     pub fn kind(&self) -> &SqlStatementKind {
         &self.kind
-    }
-
-    /// Get the AS USER impersonation user_id if present
-    pub fn as_user_id(&self) -> Option<&UserId> {
-        self.as_user_id.as_ref()
     }
 
     /// Check if this is a specific statement kind (helper for tests and matching)

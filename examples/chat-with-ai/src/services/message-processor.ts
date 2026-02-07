@@ -159,21 +159,29 @@ function sleep(ms: number): Promise<void> {
 
 async function setAiTyping(client: KalamDBClient, conversationId: string, state: 'thinking' | 'typing' | 'finished', ownerUser: Username) {
   const isTyping = state !== 'finished';
-  // Use AS USER to impersonate the conversation owner and insert into their STREAM table
-  const insertSql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'AI Assistant', ${isTyping}, '${state}') AS USER '${sqlEscape(ownerUser)}'`;
-  await client.query(insertSql).catch((err) => {
-    console.error('❌ setAiTyping INSERT failed:', err);
-    console.error('   SQL:', insertSql);
-  });
+  const insertSql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'AI Assistant', ${isTyping}, '${state}')`;
+  console.log(`   [DEBUG] Inserting typing indicator (${state}) for conversation ${conversationId} as '${ownerUser}'`);
+  console.log(`   [SQL] ${insertSql}`);
+  try {
+    const resp = await client.executeAsUser(insertSql, ownerUser);
+    console.log(`   ✓ setAiTyping INSERT succeeded (state='${state}') - response:`, resp.results?.[0]);
+  } catch (err) {
+    console.error(`   ❌ setAiTyping INSERT failed (state='${state}'):`, err);
+    console.error(`   [SQL] ${insertSql}`);
+  }
 }
 
 async function clearAiTyping(client: KalamDBClient, conversationId: string, ownerUser: Username) {
-  // Use AS USER to impersonate the conversation owner and insert into their STREAM table
-  const insertSql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'AI Assistant', false, 'finished') AS USER '${sqlEscape(ownerUser)}'`;
-  await client.query(insertSql).catch((err) => {
-    console.error('❌ clearAiTyping INSERT failed:', err);
-    console.error('   SQL:', insertSql);
-  });
+  const insertSql = `INSERT INTO chat.typing_indicators (conversation_id, user_name, is_typing, state) VALUES (${conversationId}, 'AI Assistant', false, 'finished')`;
+  console.log(`   [DEBUG] Clearing typing indicator for conversation ${conversationId} as '${ownerUser}'`);
+  console.log(`   [SQL] ${insertSql}`);
+  try {
+    const resp = await client.executeAsUser(insertSql, ownerUser);
+    console.log(`   ✓ clearAiTyping INSERT succeeded - response:`, resp.results?.[0]);
+  } catch (err) {
+    console.error(`   ❌ clearAiTyping INSERT failed:`, err);
+    console.error(`   [SQL] ${insertSql}`);
+  }
 }
 
 // ─── Message handler ────────────────────────────────────────────────────────
@@ -240,12 +248,12 @@ async function processMessage(
 
   // ── 4. Idempotency: skip if AI already replied ──────────────────────
   if (data.client_id) {
-    const minResp = await client.query(
+    const minResp = await client.executeAsUser(
       `SELECT MIN(id) as min_id FROM chat.messages
        WHERE conversation_id = ${data.conversation_id}
          AND role = 'user'
-         AND client_id = '${sqlEscape(data.client_id)}'
-         AS USER '${sqlEscape(conversationOwner)}'`
+         AND client_id = '${sqlEscape(data.client_id)}'`,
+      conversationOwner,
     );
     const minRows = parseRows<Record<string, unknown>>(minResp);
     const minId = minRows[0]?.min_id ? Number(minRows[0].min_id) : Number(data.id);
@@ -255,12 +263,12 @@ async function processMessage(
     }
   }
 
-  const countResp = await client.query(
+  const countResp = await client.executeAsUser(
     `SELECT COUNT(*) as cnt FROM chat.messages
      WHERE conversation_id = ${data.conversation_id}
        AND role = 'assistant'
-       AND id > ${data.id}
-       AS USER '${sqlEscape(conversationOwner)}'`
+       AND id > ${data.id}`,
+    conversationOwner,
   );
   const rows = parseRows<CountRow>(countResp);
   if (rows.length > 0 && Number(rows[0].cnt) > 0) {
@@ -275,14 +283,24 @@ async function processMessage(
   const aiReply = await generateAIResponse(data.content);
   await sleep(Math.min(3500, 1000 + aiReply.length * 8));
 
-  // ── 6. Insert reply (AS USER to insert into conversation owner's table) ─────
-  await client.query(
-    `INSERT INTO chat.messages (conversation_id, sender, role, content, status)
+  // ── 6. Insert reply in conversation owner's scope ─────
+  const messageInsertSql = `INSERT INTO chat.messages (conversation_id, sender, role, content, status)
      VALUES (${data.conversation_id}, 'AI Assistant', 'assistant', '${sqlEscape(aiReply)}', 'sent')
-     AS USER '${sqlEscape(conversationOwner)}'`
-  );
+     `;
+  console.log(`   [DEBUG] Inserting AI message reply for conversation ${data.conversation_id} as '${conversationOwner}'`);
+  console.log(`   [SQL] ${messageInsertSql}`);
+  console.log(`   [Content preview] ${aiReply.substring(0, 80)}...`);
+  try {
+    const resp = await client.executeAsUser(messageInsertSql, conversationOwner);
+    console.log(`   ✓ AI message INSERT succeeded for message ${data.id} - response:`, resp.results?.[0]);
+  } catch (err) {
+    console.error(`   ❌ AI message INSERT FAILED for message ${data.id}:`, err);
+    console.error(`   [SQL] ${messageInsertSql}`);
+    console.error(`   [User context] conversationOwner='${conversationOwner}'`);
+    throw err;  // Re-throw to see it in consumer logs
+  }
   await clearAiTyping(client, data.conversation_id, conversationOwner);
-  console.log(`   ✓ AI response inserted for message ${data.id}`);
+  console.log(`   ✓ AI response fully processed for message ${data.id}`);
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────

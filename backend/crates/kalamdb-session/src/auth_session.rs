@@ -109,6 +109,24 @@ impl AuthSession {
         }
     }
 
+    /// Create a new authenticated session with username, connection info, and auth method
+    pub fn with_username_and_auth_details(
+        user_id: UserId,
+        username: kalamdb_commons::UserName,
+        role: Role,
+        connection_info: ConnectionInfo,
+        auth_method: AuthMethod,
+    ) -> Self {
+        Self {
+            user_context: UserContext::client_with_username(user_id, username, role),
+            request_id: None,
+            ip_address: connection_info.remote_addr.clone(),
+            connection_info,
+            auth_method,
+            timestamp: SystemTime::now(),
+        }
+    }
+
     /// Create a session with a specific read context
     ///
     /// Use ReadContext::Internal for background jobs and notifications

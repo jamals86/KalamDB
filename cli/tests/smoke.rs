@@ -2,7 +2,7 @@
 //
 // Smoke tests are organized into subcategories:
 //   - usecases: Combined/integration use cases
-//   - auth: Authentication and authorization tests
+//   - impersonating: AS USER impersonation tests
 //   - subscription: Live query and subscription tests
 //   - cli: CLI command and cluster operation tests
 //   - tables: User and shared table tests
@@ -42,9 +42,13 @@ mod smoke_test_timing_output;
 #[path = "smoke/usecases/smoke_test_websocket_capacity.rs"]
 mod smoke_test_websocket_capacity;
 
-// Auth tests
-#[path = "smoke/auth/smoke_test_as_user_impersonation.rs"]
+// Impersonation tests
+#[path = "smoke/impersonating/smoke_test_as_user_impersonation.rs"]
 mod smoke_test_as_user_impersonation;
+#[path = "smoke/impersonating/smoke_test_as_user_chat_impersonation.rs"]
+mod smoke_test_as_user_chat_impersonation;
+#[path = "smoke/impersonating/smoke_test_as_user_authorization.rs"]
+mod smoke_test_as_user_authorization;
 
 // Subscription tests
 #[path = "smoke/subscription/smoke_test_stream_subscription.rs"]

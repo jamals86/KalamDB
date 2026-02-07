@@ -32,12 +32,14 @@ pub mod executor;
 pub mod functions;
 pub mod plan_cache;
 pub mod context;
+pub mod impersonation;
 
 pub use datafusion_session::DataFusionSessionFactory; // KalamSessionState removed in v3 refactor
 pub use executor::handlers::ExecutionResult;
 pub use executor::SqlExecutor;
-pub use functions::CurrentUserFunction;
+pub use functions::{CurrentRoleFunction, CurrentUserFunction, CurrentUserIdFunction};
 pub use context::{ExecutionContext, ExecutionMetadata, ScalarValue};
+pub use impersonation::SqlImpersonationService;
 
 // Re-export permissions from kalamdb-session for backward compatibility
 pub use kalamdb_session::{PermissionChecker, SessionError as TableAccessError};

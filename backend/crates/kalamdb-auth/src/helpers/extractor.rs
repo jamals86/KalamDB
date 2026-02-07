@@ -290,8 +290,9 @@ impl FromRequest for AuthSessionExtractor {
                     };
 
                     // Construct AuthSession with all extracted information
-                    let mut session = kalamdb_session::AuthSession::with_auth_details(
+                    let mut session = kalamdb_session::AuthSession::with_username_and_auth_details(
                         result.user.user_id,
+                        result.user.username,
                         result.user.role,
                         connection_info,
                         auth_method,

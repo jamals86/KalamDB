@@ -14,13 +14,13 @@ import { KalamDBClient, Auth, type QueryResponse, type ServerMessage, type Unsub
 let client: KalamDBClient | null = null;
 let currentToken: string | null = null;
 let isInitialized = false;
-let initializationPromise: Promise<KalamDBClient> | null = null;
 
 /**
  * Query queue to prevent concurrent WASM calls which cause "recursive borrow" errors.
  * WASM clients use RefCell internally which doesn't support concurrent access.
  */
 let queryQueue: Promise<unknown> = Promise.resolve();
+let lifecycleQueue: Promise<unknown> = Promise.resolve();
 
 /**
  * Queue a query to ensure sequential execution and prevent WASM borrow errors.
@@ -35,6 +35,18 @@ async function queueQuery<T>(fn: () => Promise<T>): Promise<T> {
   );
   // Update the queue to wait for this query (ignore errors to not block next queries)
   queryQueue = result.catch(() => {});
+  return result;
+}
+
+/**
+ * Queue client lifecycle changes (init/disconnect) so token switches are strictly ordered.
+ */
+async function queueLifecycle<T>(fn: () => Promise<T>): Promise<T> {
+  const result = lifecycleQueue.then(
+    () => fn(),
+    () => fn(),
+  );
+  lifecycleQueue = result.catch(() => {});
   return result;
 }
 
@@ -57,56 +69,39 @@ function getBackendUrl(): string {
  * Uses a promise lock to prevent concurrent initialization (which causes WASM crashes).
  */
 export async function initializeClient(jwtToken: string): Promise<KalamDBClient> {
-  // If same token and already initialized, return existing client
-  if (jwtToken === currentToken && client && isInitialized) {
-    console.log('[kalam-client] Returning existing initialized client');
-    return client;
-  }
-  
-  // If initialization is in progress with same token, wait for it
-  if (initializationPromise && jwtToken === currentToken) {
-    console.log('[kalam-client] Waiting for ongoing initialization...');
-    return initializationPromise;
-  }
-  
-  // Start new initialization
-  console.log('[kalam-client] initializeClient called');
-  
-  initializationPromise = (async () => {
-    try {
-      // If token changed, disconnect old client
-      if (client && jwtToken !== currentToken) {
-        console.log('[kalam-client] Token changed, disconnecting old client');
-        try {
-          await client.disconnect();
-        } catch {
-          // Ignore disconnect errors
-        }
-        client = null;
-        isInitialized = false;
-      }
-      
-      // Create new client with JWT auth
-      console.log('[kalam-client] Creating new KalamDBClient with JWT auth');
-      client = new KalamDBClient({
-        url: getBackendUrl(),
-        auth: Auth.jwt(jwtToken),
-      });
-      currentToken = jwtToken;
-      
-      // Initialize WASM (must be done before queries)
-      console.log('[kalam-client] Initializing WASM...');
-      await client.initialize();
-      isInitialized = true;
-      console.log('[kalam-client] WASM initialized successfully');
-      
+  return queueLifecycle(async () => {
+    if (jwtToken === currentToken && client && isInitialized) {
+      console.log('[kalam-client] Returning existing initialized client');
       return client;
-    } finally {
-      initializationPromise = null;
     }
-  })();
-  
-  return initializationPromise;
+
+    console.log('[kalam-client] initializeClient called');
+
+    if (client && jwtToken !== currentToken) {
+      console.log('[kalam-client] Token changed, disconnecting old client');
+      try {
+        await client.disconnect();
+      } catch {
+        // Ignore disconnect errors
+      }
+      client = null;
+      isInitialized = false;
+    }
+
+    const nextClient = new KalamDBClient({
+      url: getBackendUrl(),
+      auth: Auth.jwt(jwtToken),
+    });
+
+    console.log('[kalam-client] Initializing WASM...');
+    await nextClient.initialize();
+
+    client = nextClient;
+    currentToken = jwtToken;
+    isInitialized = true;
+    console.log('[kalam-client] WASM initialized successfully');
+    return nextClient;
+  });
 }
 
 /**
@@ -129,18 +124,21 @@ export async function setClientToken(token: string): Promise<void> {
  * Clear the client when user logs out
  */
 export async function clearClient(): Promise<void> {
-  console.log('[kalam-client] clearClient called');
-  if (client) {
-    try {
-      await client.disconnect();
-    } catch {
-      // Ignore disconnect errors on logout
+  await queueLifecycle(async () => {
+    console.log('[kalam-client] clearClient called');
+    const existingClient = client;
+    client = null;
+    currentToken = null;
+    isInitialized = false;
+
+    if (existingClient) {
+      try {
+        await existingClient.disconnect();
+      } catch {
+        // Ignore disconnect errors on logout
+      }
     }
-  }
-  client = null;
-  currentToken = null;
-  isInitialized = false;
-  initializationPromise = null;
+  });
 }
 
 /**

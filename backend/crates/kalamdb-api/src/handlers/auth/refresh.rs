@@ -6,13 +6,12 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{Duration, Utc};
 use kalamdb_auth::{
     authenticate, create_and_sign_token, create_auth_cookie, extract_client_ip_secure,
-    helpers::cookie::extract_auth_token,
     AuthRequest, CookieConfig, UserRepository,
 };
 use kalamdb_configs::AuthSettings;
 use std::sync::Arc;
 
-use super::map_auth_error_to_response;
+use super::{extract_bearer_or_cookie_token, map_auth_error_to_response};
 use super::models::{AuthErrorResponse, LoginResponse, UserInfo};
 use crate::limiter::RateLimiter;
 
@@ -36,14 +35,9 @@ pub async fn refresh_handler(
         ));
     }
 
-    // Extract token from cookie
-    let token = match extract_auth_token(req.cookies().ok().iter().flat_map(|c| c.iter().cloned()))
-    {
-        Some(t) => t,
-        None => {
-            return HttpResponse::Unauthorized()
-                .json(AuthErrorResponse::new("unauthorized", "No auth token found"));
-        },
+    let token = match extract_bearer_or_cookie_token(&req) {
+        Ok(t) => t,
+        Err(err) => return map_auth_error_to_response(err),
     };
 
     // Validate existing token via unified auth (uses configured trusted issuers)

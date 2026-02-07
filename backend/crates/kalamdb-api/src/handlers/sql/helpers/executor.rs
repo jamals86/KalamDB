@@ -3,6 +3,8 @@
 use kalamdb_core::sql::context::ExecutionContext;
 use kalamdb_core::sql::executor::{ExecutorMetadataAlias, ScalarValue, SqlExecutor};
 use kalamdb_core::sql::ExecutionResult;
+use kalamdb_commons::Role;
+use kalamdb_commons::models::UserId;
 use std::sync::Arc;
 
 use super::super::models::QueryResult;
@@ -14,18 +16,25 @@ pub async fn execute_single_statement(
     _app_context: &Arc<kalamdb_core::app_context::AppContext>,
     sql_executor: &Arc<SqlExecutor>,
     exec_ctx: &ExecutionContext,
+    execute_as_user: Option<UserId>,
     metadata: Option<&ExecutorMetadataAlias>,
     params: Vec<ScalarValue>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
+    let effective_ctx = if let Some(user_id) = execute_as_user {
+        exec_ctx.with_effective_identity(user_id, Role::User)
+    } else {
+        exec_ctx.clone()
+    };
+
     match sql_executor
-        .execute_with_metadata(sql, exec_ctx, metadata, params)
+        .execute_with_metadata(sql, &effective_ctx, metadata, params)
         .await
     {
         Ok(exec_result) => match exec_result {
             ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
             ExecutionResult::Rows {
                 batches, schema, ..
-            } => record_batch_to_query_result(batches, schema, Some(exec_ctx.user_role())),
+            } => record_batch_to_query_result(batches, schema, Some(effective_ctx.user_role())),
             ExecutionResult::Inserted { rows_affected } => Ok(QueryResult::with_affected_rows(
                 rows_affected,
                 Some(format!("Inserted {} row(s)", rows_affected)),

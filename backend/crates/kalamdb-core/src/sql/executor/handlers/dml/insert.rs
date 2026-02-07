@@ -87,15 +87,7 @@ impl StatementHandler for InsertHandler {
                 KalamDbError::InvalidOperation(format!("Table '{}' does not exist", table_id))
             })?;
 
-        // T163: Reject AS USER on Shared tables (Phase 7)
-        if statement.as_user_id().is_some() && matches!(table_def.table_type, TableType::Shared) {
-            return Err(KalamDbError::InvalidOperation(
-                "AS USER impersonation is not supported for SHARED tables".to_string(),
-            ));
-        }
-
-        // Determine effective user for AS USER before evaluating defaults
-        let effective_user_id = statement.as_user_id().unwrap_or(context.user_id());
+        let effective_user_id = context.user_id();
 
         if columns.is_empty() {
             // Positional mapping: column order from schema will be used later; here just store as v1,v2...
@@ -168,7 +160,7 @@ impl StatementHandler for InsertHandler {
 
             // Apply DEFAULT values for missing columns
             for col_def in &default_columns {
-                // Evaluate the default value using the effective user (AS USER subject)
+                // Evaluate defaults using the effective execution user.
                 let default_value = evaluate_default(
                     &col_def.default_value,
                     effective_user_id,
@@ -196,8 +188,6 @@ impl StatementHandler for InsertHandler {
             rows.push(Row::new(values));
         }
 
-        // T153: Execute native insert with impersonation support (Phase 7)
-        // Use as_user_id if present, otherwise use context.user_id
         let rows_affected = self
             .execute_native_insert(
                 &table_id,
@@ -226,16 +216,6 @@ impl StatementHandler for InsertHandler {
 
         // T050: Block anonymous users from write operations
         block_anonymous_write(context, "INSERT")?;
-
-        // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
-        if statement.as_user_id().is_some() {
-            use kalamdb_session::can_impersonate_user;
-            if !can_impersonate_user(context.user_role()) {
-                return Err(KalamDbError::Unauthorized(
-                    format!("Role {:?} is not authorized to use AS USER. Only Service, Dba, and System roles are permitted.", context.user_role())
-                ));
-            }
-        }
 
         use kalamdb_session::can_execute_dml;
         if can_execute_dml(context.user_role()) {

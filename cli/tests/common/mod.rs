@@ -626,6 +626,21 @@ fn force_reset_admin_for_url(base_url: &str) -> Result<(), Box<dyn std::error::E
     }
 }
 
+fn invalidate_cached_token_for_credentials(base_url: &str, username: &str, password: &str) {
+    let cache_key = format!("{}|{}:{}", base_url, username, password);
+
+    if let Ok(mut guard) = TOKEN_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        guard.remove(&cache_key);
+    }
+
+    let _ = test_auth_manager().with_shared_token_cache(|map| {
+        map.remove(&cache_key);
+    });
+}
+
 fn test_auth_manager() -> &'static TestAuthManager {
     TEST_AUTH_MANAGER.get_or_init(TestAuthManager::new)
 }
@@ -2527,6 +2542,12 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                             spawn_duration, wait_duration, total_duration_ms, stderr
                         );
                         let err_msg = format!("CLI command failed: {}", stderr);
+                        if err_msg.to_lowercase().contains("token expired") {
+                            invalidate_cached_token_for_credentials(url, username, password);
+                            last_err = Some(err_msg);
+                            retry_after_attempt = true;
+                            break;
+                        }
                         if err_msg.to_lowercase().contains("invalid username or password")
                             && (username == admin_username() || username == default_username())
                         {

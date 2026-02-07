@@ -99,8 +99,8 @@ fn smoke_as_user_blocked_for_regular_user() {
 
     // Attempt INSERT AS USER as regular user - should FAIL
     let insert_sql = format!(
-        "INSERT INTO {} (id, name) VALUES (1, 'Test') AS USER '{}'",
-        full_table, target_user_id
+        "EXECUTE AS USER '{}' (INSERT INTO {} (id, name) VALUES (1, 'Test'))",
+        target_user_id, full_table
     );
     let result = execute_sql_via_client_as(&regular_user, password, &insert_sql);
 
@@ -165,8 +165,8 @@ fn smoke_as_user_insert_with_service_role() {
 
     // INSERT AS USER target_user (executed by service user)
     let insert_sql = format!(
-        "INSERT INTO {} (id, amount) VALUES (100, '99.99') AS USER '{}'",
-        full_table, target_user_id
+        "EXECUTE AS USER '{}' (INSERT INTO {} (id, amount) VALUES (100, '99.99'))",
+        target_user_id, full_table
     );
     let result = execute_sql_via_client_as(&service_user, password, &insert_sql);
     assert!(result.is_ok(), "Service role should be able to use AS USER: {:?}", result);
@@ -240,15 +240,15 @@ fn smoke_as_user_update_with_dba_role() {
 
     // INSERT AS USER first
     let insert_sql = format!(
-        "INSERT INTO {} (id, status) VALUES (1, 'active') AS USER '{}'",
-        full_table, target_user_id
+        "EXECUTE AS USER '{}' (INSERT INTO {} (id, status) VALUES (1, 'active'))",
+        target_user_id, full_table
     );
     execute_sql_via_client_as(&dba_user, password, &insert_sql).expect("Failed to INSERT AS USER");
 
     // UPDATE AS USER
     let update_sql = format!(
-        "UPDATE {} SET status = 'inactive' WHERE id = 1 AS USER '{}'",
-        full_table, target_user_id
+        "EXECUTE AS USER '{}' (UPDATE {} SET status = 'inactive' WHERE id = 1)",
+        target_user_id, full_table
     );
     let result = execute_sql_via_client_as(&dba_user, password, &update_sql);
     assert!(result.is_ok(), "DBA should be able to UPDATE AS USER: {:?}", result);
@@ -312,8 +312,8 @@ fn smoke_as_user_delete_with_dba_role() {
 
     // INSERT AS USER first
     let insert_sql = format!(
-        "INSERT INTO {} (id, active) VALUES (1, true) AS USER '{}'",
-        full_table, target_user_id
+        "EXECUTE AS USER '{}' (INSERT INTO {} (id, active) VALUES (1, true))",
+        target_user_id, full_table
     );
     execute_sql_via_client_as(&dba_user, password, &insert_sql).expect("Failed to INSERT AS USER");
 
@@ -328,8 +328,10 @@ fn smoke_as_user_delete_with_dba_role() {
     );
 
     // DELETE AS USER
-    let delete_sql =
-        format!("DELETE FROM {} WHERE id = 1 AS USER '{}'", full_table, target_user_id);
+    let delete_sql = format!(
+        "EXECUTE AS USER '{}' (DELETE FROM {} WHERE id = 1)",
+        target_user_id, full_table
+    );
     let result = execute_sql_via_client_as(&dba_user, password, &delete_sql);
     assert!(result.is_ok(), "DBA should be able to DELETE AS USER: {:?}", result);
 
@@ -390,8 +392,8 @@ fn smoke_as_user_rejected_on_shared_table() {
 
     // Attempt INSERT AS USER on SHARED table - should FAIL
     let insert_sql = format!(
-        "INSERT INTO {} (config_key, config_value) VALUES ('k1', 'v1') AS USER '{}'",
-        full_table, target_user_id
+        "EXECUTE AS USER '{}' (INSERT INTO {} (config_key, config_value) VALUES ('k1', 'v1'))",
+        target_user_id, full_table
     );
     let result = execute_sql_via_client_as(&dba_user, password, &insert_sql);
 
@@ -458,8 +460,8 @@ fn smoke_as_user_full_workflow() {
         &service_user,
         password,
         &format!(
-            "INSERT INTO {} (id, title, done) VALUES (1, 'Alice Task 1', false) AS USER '{}'",
-            full_table, alice_user_id
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, title, done) VALUES (1, 'Alice Task 1', false))",
+            alice_user_id, full_table
         ),
     )
     .expect("Failed to INSERT AS USER alice");
@@ -468,8 +470,8 @@ fn smoke_as_user_full_workflow() {
         &service_user,
         password,
         &format!(
-            "INSERT INTO {} (id, title, done) VALUES (2, 'Alice Task 2', false) AS USER '{}'",
-            full_table, alice_user_id
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, title, done) VALUES (2, 'Alice Task 2', false))",
+            alice_user_id, full_table
         ),
     )
     .expect("Failed to INSERT second task AS USER alice");
@@ -479,8 +481,8 @@ fn smoke_as_user_full_workflow() {
         &service_user,
         password,
         &format!(
-            "INSERT INTO {} (id, title, done) VALUES (10, 'Bob Task 1', false) AS USER '{}'",
-            full_table, bob_user_id
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, title, done) VALUES (10, 'Bob Task 1', false))",
+            bob_user_id, full_table
         ),
     )
     .expect("Failed to INSERT AS USER bob");
@@ -523,7 +525,10 @@ fn smoke_as_user_full_workflow() {
     execute_sql_via_client_as(
         &service_user,
         password,
-        &format!("UPDATE {} SET done = true WHERE id = 1 AS USER '{}'", full_table, alice_user_id),
+        &format!(
+            "EXECUTE AS USER '{}' (UPDATE {} SET done = true WHERE id = 1)",
+            alice_user_id, full_table
+        ),
     )
     .expect("Failed to UPDATE AS USER alice");
 
@@ -545,7 +550,10 @@ fn smoke_as_user_full_workflow() {
     execute_sql_via_client_as(
         &service_user,
         password,
-        &format!("DELETE FROM {} WHERE id = 2 AS USER '{}'", full_table, alice_user_id),
+        &format!(
+            "EXECUTE AS USER '{}' (DELETE FROM {} WHERE id = 2)",
+            alice_user_id, full_table
+        ),
     )
     .expect("Failed to DELETE AS USER alice");
 
@@ -613,8 +621,8 @@ fn smoke_as_user_select_scopes_reads_for_user_tables() {
         &service_user,
         password,
         &format!(
-            "INSERT INTO {} (id, body) VALUES (1, 'u1-only') AS USER '{}'",
-            full_table, user1_id
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, body) VALUES (1, 'u1-only'))",
+            user1_id, full_table
         ),
     )
     .expect("Failed to insert row for user1");
@@ -623,8 +631,8 @@ fn smoke_as_user_select_scopes_reads_for_user_tables() {
         &service_user,
         password,
         &format!(
-            "INSERT INTO {} (id, body) VALUES (2, 'u2-only') AS USER '{}'",
-            full_table, user2_id
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, body) VALUES (2, 'u2-only'))",
+            user2_id, full_table
         ),
     )
     .expect("Failed to insert row for user2");
@@ -641,8 +649,8 @@ fn smoke_as_user_select_scopes_reads_for_user_tables() {
         &service_user,
         password,
         &format!(
-            "SELECT * FROM {} ORDER BY id AS USER '{}'",
-            full_table, user1_id
+            "EXECUTE AS USER '{}' (SELECT * FROM {} ORDER BY id)",
+            user1_id, full_table
         ),
     )
     .expect("Service SELECT AS USER user1 failed");
@@ -705,8 +713,8 @@ fn smoke_as_user_stream_table_isolation() {
         &service_user,
         password,
         &format!(
-            "INSERT INTO {} (id, payload) VALUES (1, 'stream-u1') AS USER '{}'",
-            full_table, user1_id
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, payload) VALUES (1, 'stream-u1'))",
+            user1_id, full_table
         ),
     )
     .expect("Failed to insert stream row for user1");
@@ -722,7 +730,7 @@ fn smoke_as_user_stream_table_isolation() {
     let service_as_user1 = execute_sql_via_client_as(
         &service_user,
         password,
-        &format!("SELECT * FROM {} AS USER '{}'", full_table, user1_id),
+        &format!("EXECUTE AS USER '{}' (SELECT * FROM {})", user1_id, full_table),
     )
     .expect("Service SELECT AS USER user1 on stream failed");
     assert!(service_as_user1.contains("stream-u1"));
@@ -730,7 +738,7 @@ fn smoke_as_user_stream_table_isolation() {
     let service_as_user2 = execute_sql_via_client_as(
         &service_user,
         password,
-        &format!("SELECT * FROM {} AS USER '{}'", full_table, user2_id),
+        &format!("EXECUTE AS USER '{}' (SELECT * FROM {})", user2_id, full_table),
     )
     .expect("Service SELECT AS USER user2 on stream failed");
     assert!(!service_as_user2.contains("stream-u1"));

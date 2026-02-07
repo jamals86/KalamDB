@@ -82,8 +82,10 @@ Quick validation tests organized into subcategories:
   - `smoke_test_schema_history.rs`
   - `smoke_test_websocket_capacity.rs`
 
-- **auth/** - Authentication smoke tests
+- **impersonating/** - AS USER impersonation smoke tests
   - `smoke_test_as_user_impersonation.rs`
+  - `smoke_test_as_user_authorization.rs`
+  - `smoke_test_as_user_chat_impersonation.rs`
 
 - **subscription/** - Live query smoke tests
   - `smoke_test_stream_subscription.rs`

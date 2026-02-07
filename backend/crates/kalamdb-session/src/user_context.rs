@@ -38,6 +38,8 @@ use std::any::Any;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UserContext {
     pub user_id: UserId,
+    /// Username (if available, for CURRENT_USER() function)
+    pub username: Option<kalamdb_commons::UserName>,
     pub role: Role,
     /// Read routing context (default: Client = requires leader)
     pub read_context: ReadContext,
@@ -47,6 +49,7 @@ impl Default for UserContext {
     fn default() -> Self {
         UserContext {
             user_id: UserId::anonymous(),
+            username: None,
             role: Role::Anonymous,
             read_context: ReadContext::Client, // Default to client reads (require leader)
         }
@@ -58,6 +61,22 @@ impl UserContext {
     pub fn new(user_id: UserId, role: Role, read_context: ReadContext) -> Self {
         Self {
             user_id,
+            username: None,
+            role,
+            read_context,
+        }
+    }
+
+    /// Create a new session context with username
+    pub fn with_username(
+        user_id: UserId,
+        username: kalamdb_commons::UserName,
+        role: Role,
+        read_context: ReadContext,
+    ) -> Self {
+        Self {
+            user_id,
+            username: Some(username),
             role,
             read_context,
         }
@@ -66,6 +85,15 @@ impl UserContext {
     /// Create a session context for a client request (requires leader)
     pub fn client(user_id: UserId, role: Role) -> Self {
         Self::new(user_id, role, ReadContext::Client)
+    }
+
+    /// Create a session context for a client request with username (requires leader)
+    pub fn client_with_username(
+        user_id: UserId,
+        username: kalamdb_commons::UserName,
+        role: Role,
+    ) -> Self {
+        Self::with_username(user_id, username, role, ReadContext::Client)
     }
 
     /// Create a session context for internal operations (can read from any node)

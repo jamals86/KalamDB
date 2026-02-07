@@ -84,6 +84,7 @@ export function ResultsPanel({
           success={!error}
           rowCount={rowCount}
           executionTime={executionTime}
+          executedAs={null}
           error={error}
           onExport={onExport}
         />

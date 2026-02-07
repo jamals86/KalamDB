@@ -11,6 +11,7 @@ use crate::sql::context::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
+use kalamdb_commons::schemas::TableType;
 use kalamdb_raft::{DataResponse, SharedDataCommand, UserDataCommand};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 
@@ -52,8 +53,7 @@ impl StatementHandler for DeleteHandler {
         let (namespace, table_name, where_pair, has_where_clause) =
             self.simple_parse_delete(sql, &default_namespace)?;
 
-        // T153: Use effective user_id for impersonation support (Phase 7)
-        let effective_user_id = statement.as_user_id().unwrap_or(context.user_id());
+        let effective_user_id = context.user_id();
 
         // Execute native delete
         let schema_registry = self.app_context.schema_registry();
@@ -68,14 +68,6 @@ impl StatementHandler for DeleteHandler {
                     table_name.as_str()
                 ))
             })?;
-
-        // T163: Reject AS USER on Shared tables (Phase 7)
-        use kalamdb_commons::schemas::TableType;
-        if statement.as_user_id().is_some() && matches!(def.table_type, TableType::Shared) {
-            return Err(KalamDbError::InvalidOperation(
-                "AS USER impersonation is not supported for SHARED tables".to_string(),
-            ));
-        }
 
         match def.table_type {
             TableType::User => {
@@ -275,16 +267,6 @@ impl StatementHandler for DeleteHandler {
 
         // T050: Block anonymous users from write operations
         block_anonymous_write(context, "DELETE")?;
-
-        // T152: Validate AS USER authorization - only Service/Dba/System can use AS USER (Phase 7)
-        if statement.as_user_id().is_some() {
-            use kalamdb_session::can_impersonate_user;
-            if !can_impersonate_user(context.user_role()) {
-                return Err(KalamDbError::Unauthorized(
-                    format!("Role {:?} is not authorized to use AS USER. Only Service, Dba, and System roles are permitted.", context.user_role())
-                ));
-            }
-        }
 
         use kalamdb_session::can_execute_dml;
         if can_execute_dml(context.user_role()) {

@@ -28,7 +28,7 @@ use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::{ExecutionPlan, Statistics};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::constants::SystemColumnNames;
-use kalamdb_commons::ids::UserTableRowId;
+use kalamdb_commons::ids::{SeqId, UserTableRowId};
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::{StorageKey, TableId};
 use kalamdb_system::SchemaRegistry as SchemaRegistryTrait;
@@ -368,11 +368,9 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
         if exists_in_cold {
             log::trace!("[UserTableProvider] PK {} exists in cold storage", id_value);
-            // For cold storage, we just check existence - return a dummy key
-            // The actual row_id is not needed for PK uniqueness check
-            return Ok(None); // Return None to indicate "exists but can't get key"
-            // Note: This is acceptable because for INSERT we just need to know it exists
-            // For UPDATE/DELETE we should use async methods
+            // Return a sentinel key to signal existence in cold storage.
+            // Callers that only check `is_some()` (PK uniqueness guards) will reject duplicates.
+            return Ok(Some(UserTableRowId::new(user_id.clone(), SeqId::new(0))));
         }
 
         Ok(None)
@@ -705,7 +703,19 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         updates: Row,
     ) -> Result<UserTableRowId, KalamDbError> {
         let pk_name = self.primary_key_field_name().to_string();
-        let pk_value_scalar = ScalarValue::Utf8(Some(pk_value.to_string()));
+        
+        // Get PK column data type from schema for proper type coercion
+        let schema = self.schema();
+        let pk_field = schema
+            .field_with_name(&pk_name)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("PK column '{}' not found in schema: {}", pk_name, e)))?;
+        let pk_column_type = pk_field.data_type();
+        
+        // Convert string PK value to proper ScalarValue based on column type
+        // This ensures Parquet queries work correctly with typed columns
+        use kalamdb_commons::conversions::parse_string_as_scalar;
+        let pk_value_scalar = parse_string_as_scalar(pk_value, pk_column_type)
+            .map_err(|e| KalamDbError::InvalidOperation(e))?;
 
         // Find latest resolved row for this PK under same user
         // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet scan)
@@ -714,8 +724,14 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 result
             } else {
                 // Not in hot storage, check cold storage
+                log::debug!(
+                    "[UPDATE] PK {} not found in hot storage, querying cold storage for user={}, pk={}",
+                    pk_name,
+                    user_id.as_str(),
+                    pk_value
+                );
                 base::find_row_by_pk(self, Some(user_id), pk_value).await?.ok_or_else(|| {
-                    KalamDbError::NotFound(format!("Row with {}={} not found", pk_name, pk_value))
+                    KalamDbError::NotFound(format!("Row with {}={} not found (checked both hot and cold storage)", pk_name, pk_value))
                 })?
             };
 

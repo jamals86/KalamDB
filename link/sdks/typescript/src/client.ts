@@ -246,6 +246,37 @@ export class KalamDBClient {
     return JSON.parse(resultStr) as QueryResponse;
   }
 
+  private static escapeSqlStringLiteral(value: string): string {
+    return value.replace(/'/g, "''");
+  }
+
+  private static wrapExecuteAsUser(sql: string, username: string): string {
+    const inner = sql.trim().replace(/;+\s*$/g, '');
+    if (!inner) {
+      throw new Error('executeAsUser requires a non-empty SQL statement');
+    }
+    const escapedUsername = KalamDBClient.escapeSqlStringLiteral(username.trim());
+    if (!escapedUsername) {
+      throw new Error('executeAsUser requires a non-empty username');
+    }
+    return `EXECUTE AS USER '${escapedUsername}' (${inner})`;
+  }
+
+  /**
+   * Execute a single SQL statement as another user.
+   *
+   * Wraps the SQL using:
+   * `EXECUTE AS USER 'username' ( <single statement> )`
+   */
+  async executeAsUser(
+    sql: string,
+    username: Username | string,
+    params?: unknown[],
+  ): Promise<QueryResponse> {
+    const wrappedSql = KalamDBClient.wrapExecuteAsUser(sql, String(username));
+    return this.query(wrappedSql, params);
+  }
+
   /**
    * Execute a SQL query with file uploads (FILE datatype).
    *

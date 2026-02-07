@@ -292,24 +292,25 @@ impl PkExistenceChecker {
             let pruned_paths = planner.plan_by_pk_value(m, pk_column_id, pk_value);
             if pruned_paths.is_empty() {
                 log::trace!(
-                    "[PkExistenceChecker] Manifest pruning: PK {} not in any segment range for {}.{} {}",
+                    "[PkExistenceChecker] Manifest pruning returned no candidate segments for PK {} on {}.{} {} - falling back to full parquet scan",
                     pk_value,
                     namespace.as_str(),
                     table.as_str(),
                     scope_label
                 );
-                return Ok(None); // Fast path: PK definitely not in cold storage
+                all_parquet_files
+            } else {
+                log::trace!(
+                    "[PkExistenceChecker] Manifest pruning: {} of {} segments may contain PK {} for {}.{} {}",
+                    pruned_paths.len(),
+                    m.segments.len(),
+                    pk_value,
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                pruned_paths
             }
-            log::trace!(
-                "[PkExistenceChecker] Manifest pruning: {} of {} segments may contain PK {} for {}.{} {}",
-                pruned_paths.len(),
-                m.segments.len(),
-                pk_value,
-                namespace.as_str(),
-                table.as_str(),
-                scope_label
-            );
-            pruned_paths
         } else {
             // No manifest - check all Parquet files
             all_parquet_files

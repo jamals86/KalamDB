@@ -3,6 +3,7 @@
 //! This module defines the structure for SQL execution responses from the `/v1/api/sql` endpoint.
 
 use kalamdb_commons::models::datatypes::KalamDataType;
+use kalamdb_commons::models::Username;
 use kalamdb_commons::schemas::SchemaField;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -217,6 +218,9 @@ pub struct QueryResult {
     /// Optional message for non-query statements (e.g., "Table created successfully")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+
+    /// Effective username this statement executed as.
+    pub as_user: Username,
 }
 
 /// Error details for failed SQL execution
@@ -285,6 +289,7 @@ impl QueryResult {
             rows: Some(rows),
             row_count,
             message: None,
+            as_user: Username::from("unknown"),
         }
     }
 
@@ -295,6 +300,7 @@ impl QueryResult {
             rows: None,
             row_count,
             message,
+            as_user: Username::from("unknown"),
         }
     }
 
@@ -305,6 +311,7 @@ impl QueryResult {
             rows: None,
             row_count: 0,
             message: Some(message),
+            as_user: Username::from("unknown"),
         }
     }
 
@@ -336,6 +343,7 @@ impl QueryResult {
             rows: Some(vec![row]),
             row_count: 1,
             message: None,
+            as_user: Username::from("unknown"),
         }
     }
 
@@ -343,11 +351,18 @@ impl QueryResult {
     pub fn column_names(&self) -> Vec<String> {
         self.schema.iter().map(|f| f.name.clone()).collect()
     }
+
+    /// Set the effective execution username for this result.
+    pub fn with_as_user(mut self, as_user: Username) -> Self {
+        self.as_user = as_user;
+        self
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::models::Username;
 
     #[test]
     fn test_success_response_serialization() {
@@ -444,6 +459,7 @@ mod tests {
         assert!(result.rows.is_none());
         assert!(result.schema.is_empty());
         assert_eq!(result.message, Some("Table created successfully".to_string()));
+        assert_eq!(result.as_user, Username::from("unknown"));
     }
 
     #[test]
@@ -454,5 +470,14 @@ mod tests {
         assert!(result.rows.is_none());
         assert!(result.schema.is_empty());
         assert_eq!(result.message, Some("5 rows inserted".to_string()));
+        assert_eq!(result.as_user, Username::from("unknown"));
+    }
+
+    #[test]
+    fn test_query_result_with_as_user() {
+        let result = QueryResult::with_message("ok".to_string())
+            .with_as_user(Username::from("alice"));
+
+        assert_eq!(result.as_user, Username::from("alice"));
     }
 }

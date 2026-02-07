@@ -90,6 +90,7 @@ pub use models::{
     TableId,
     UserId,
     UserName,
+    Username,
 };
 pub use schemas::{TableAccess, TableName, TableType};
 pub use serialization::KSerializable;

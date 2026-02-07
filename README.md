@@ -312,6 +312,26 @@ await client.disconnect();
 
 **📖 Complete SQL Reference**: See [SQL Syntax Documentation](docs/reference/sql.md) for the full command reference with all options.
 
+#### 5. Service-Side Impersonation + Topics (SQL Syntax)
+
+```sql
+-- Impersonation uses wrapper syntax only (single inner statement)
+EXECUTE AS USER 'service_bot' (
+  INSERT INTO chat.messages (conversation_id, role_id, content)
+  VALUES (1, 'assistant', 'I processed your request')
+);
+
+-- Topic routing and consumption
+CREATE TOPIC chat.message_events PARTITIONS 2;
+ALTER TOPIC chat.message_events
+ADD SOURCE chat.messages
+ON INSERT
+WITH (payload = 'full');
+
+CONSUME FROM chat.message_events GROUP 'chat-worker-1' FROM LATEST LIMIT 50;
+ACK chat.message_events GROUP 'chat-worker-1' UPTO OFFSET 50;
+```
+
 ---
 
 ## � Use Cases
