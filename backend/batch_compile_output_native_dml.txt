@@ -1,6 +1,0 @@
-    Checking kalamdb-tables v0.3.0-alpha1 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-tables)
-    Checking kalamdb-observability v0.3.0-alpha1 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-observability)
-    Checking kalamdb-core v0.3.0-alpha1 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-core)
-    Checking kalamdb-api v0.3.0-alpha1 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-api)
-    Checking kalamdb-server v0.3.0-alpha1 (/Users/jamal/git/KalamDB/backend)
-    Finished `dev` profile [unoptimized] target(s) in 4.90s

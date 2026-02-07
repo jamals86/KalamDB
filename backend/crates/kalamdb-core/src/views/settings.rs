@@ -448,9 +448,63 @@ impl VirtualView for SettingsView {
                         "rate_limit"
                     ),
                     (
+                        "rate_limit.max_messages_per_sec",
+                        config.rate_limit.max_messages_per_sec,
+                        "Maximum WebSocket messages per second per connection",
+                        "rate_limit"
+                    ),
+                    (
                         "rate_limit.max_subscriptions_per_user",
                         config.rate_limit.max_subscriptions_per_user,
                         "Maximum concurrent live query subscriptions",
+                        "rate_limit"
+                    ),
+                    (
+                        "rate_limit.max_auth_requests_per_ip_per_sec",
+                        config.rate_limit.max_auth_requests_per_ip_per_sec,
+                        "Maximum auth requests per second per IP (applies to /auth/login, /auth/refresh, /setup)",
+                        "rate_limit"
+                    ),
+                    (
+                        "rate_limit.max_connections_per_ip",
+                        config.rate_limit.max_connections_per_ip,
+                        "Maximum concurrent connections per IP address",
+                        "rate_limit"
+                    ),
+                    (
+                        "rate_limit.max_requests_per_ip_per_sec",
+                        config.rate_limit.max_requests_per_ip_per_sec,
+                        "Maximum requests per second per IP BEFORE authentication (if exceeded → IP BAN)",
+                        "rate_limit"
+                    ),
+                    (
+                        "rate_limit.request_body_limit_bytes",
+                        config.rate_limit.request_body_limit_bytes,
+                        "Maximum request body size in bytes",
+                        "rate_limit"
+                    ),
+                    (
+                        "rate_limit.ban_duration_seconds",
+                        config.rate_limit.ban_duration_seconds,
+                        "Duration in seconds to ban abusive IPs (default: 300 = 5 minutes)",
+                        "rate_limit"
+                    ),
+                    (
+                        "rate_limit.enable_connection_protection",
+                        config.rate_limit.enable_connection_protection,
+                        "Enable connection protection middleware",
+                        "rate_limit"
+                    ),
+                    (
+                        "rate_limit.cache_max_entries",
+                        config.rate_limit.cache_max_entries,
+                        "Maximum cached entries for rate limiting state",
+                        "rate_limit"
+                    ),
+                    (
+                        "rate_limit.cache_ttl_seconds",
+                        config.rate_limit.cache_ttl_seconds,
+                        "Time-to-idle for cached entries in seconds",
                         "rate_limit"
                     ),
                 ]
